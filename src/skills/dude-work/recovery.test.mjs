@@ -17196,7 +17196,10 @@ function t018WorkspaceSnapshot(root) {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       const absolute = path.join(directory, entry.name);
       if (entry.isDirectory()) walk(absolute);
-      else if (entry.isFile()) files.set(path.relative(root, absolute), sha256(fs.readFileSync(absolute)));
+      else if (entry.isFile()) files.set(
+        path.relative(root, absolute).split(path.sep).join('/'),
+        sha256(fs.readFileSync(absolute)),
+      );
     }
   };
   walk(root);

@@ -2906,6 +2906,41 @@ function buildCheckpointRecord(binding, prestate, session, inFlight, createdAt) 
 }
 
 /** @param {Record<string, unknown>} checkpoint */
+function buildCheckpointClaim(checkpoint) {
+  const body = {
+    version: 1,
+    checkpointKey: checkpoint.checkpointKey,
+    invocationIdentity: checkpoint.invocationIdentity,
+    workerToken: checkpoint.workerToken,
+    workerGeneration: checkpoint.workerGeneration,
+    createdAt: checkpoint.createdAt,
+  };
+  return { ...body, claimHash: sha256(canonicalJson(body)) };
+}
+
+/** @param {Record<string, unknown>} checkpoint @param {string} claimHash */
+function checkpointExpectation(checkpoint, claimHash) {
+  return {
+    claimHash,
+    recordHash: checkpoint.recordHash,
+    acceptedRevision: checkpoint.acceptedRevision,
+    hostRevision: checkpoint.hostRevision,
+  };
+}
+
+/** @param {unknown} value @param {string} label */
+function validateCheckpointExpectation(value, label) {
+  const expected = exactRecord(detachedData(value, label), [
+    'claimHash', 'recordHash', 'acceptedRevision', 'hostRevision',
+  ], [], label);
+  hash(expected.claimHash, `${label}.claimHash`);
+  hash(expected.recordHash, `${label}.recordHash`);
+  integer(expected.acceptedRevision, `${label}.acceptedRevision`);
+  integer(expected.hostRevision, `${label}.hostRevision`);
+  return expected;
+}
+
+/** @param {Record<string, unknown>} checkpoint */
 function restoredCorrection(checkpoint) {
   if (checkpoint.correction === null) return null;
   const stored = /** @type {Record<string, unknown>} */ (checkpoint.correction);
@@ -2951,7 +2986,7 @@ function validateCheckpointResult(value, operation, checkpointKey) {
   enumeration(candidate.status, CHECKPOINT_STATUSES[operation], `${label}.status`);
   const status = /** @type {string} */ (candidate.status);
   const extra = CHECKPOINT_RECORD_STATUSES.has(status)
-    ? ['record']
+    ? ['record', 'claimHash']
     : status === 'failed'
       ? ['reason']
       : status === 'cleared'
@@ -2963,7 +2998,13 @@ function validateCheckpointResult(value, operation, checkpointKey) {
   if (result.checkpointKey !== checkpointKey) {
     invalid(`${label}.checkpointKey`, 'must bind the derived workspace-target key');
   }
-  if (extra[0] === 'record') validateHostCheckpointRecord(result.record, `${label}.record`);
+  if (extra[0] === 'record') {
+    const checkpoint = validateHostCheckpointRecord(result.record, `${label}.record`);
+    if (checkpoint.checkpointKey !== checkpointKey) {
+      invalid(`${label}.record.checkpointKey`, 'must bind the derived workspace-target key');
+    }
+    hash(result.claimHash, `${label}.claimHash`);
+  }
   if (extra[0] === 'reason') text(result.reason, `${label}.reason`);
   if (extra[0] === 'diagnostic') validateCheckpointDiagnostic(result.diagnostic, `${label}.diagnostic`);
   return result;
@@ -3123,9 +3164,9 @@ function inFlightDescriptor(session, operation, request) {
  * Serialize host authority beneath the exclusive ownership claim.
  * @param {NonNullable<ReturnType<typeof trustedPorts>['checkpoint']>} store
  * @param {Record<string, unknown>} binding @param {Record<string, unknown>} prestate
- * @param {string} createdAt @param {Record<string, unknown>} claimed
+ * @param {string} createdAt @param {Record<string, unknown>} claimed @param {string} claimHash
  */
-function createCheckpointHost(store, binding, prestate, createdAt, claimed) {
+function createCheckpointHost(store, binding, prestate, createdAt, claimed, claimHash) {
   const checkpointKey = checkpointKeyOf(binding);
   let last = claimed;
   let projectionApplication = null;
@@ -3143,7 +3184,7 @@ function createCheckpointHost(store, binding, prestate, createdAt, claimed) {
       if (loaded.status === 'corrupt') return 'checkpoint-corrupt';
       if (loaded.status === 'failed') return 'checkpoint-load-failed';
       const current = /** @type {Record<string, unknown>} */ (loaded.record);
-      if (current.recordHash !== last.recordHash) return 'checkpoint-drift';
+      if (current.recordHash !== last.recordHash || loaded.claimHash !== claimHash) return 'checkpoint-drift';
       if (current.invocationIdentity !== session.invocationIdentity
         || current.workerToken !== session.workerToken
         || current.workerGeneration !== session.workerGeneration) return 'stale-worker';
@@ -3163,7 +3204,7 @@ function createCheckpointHost(store, binding, prestate, createdAt, claimed) {
           store.update(
             binding,
             activeWorker(session),
-            { acceptedRevision: last.acceptedRevision, hostRevision: last.hostRevision },
+            checkpointExpectation(last, claimHash),
             next,
           ),
           'update',
@@ -3175,7 +3216,7 @@ function createCheckpointHost(store, binding, prestate, createdAt, claimed) {
       if (updated.status === 'stale') return 'checkpoint-revision-conflict';
       if (updated.status === 'failed') return 'checkpoint-update-failed';
       const written = /** @type {Record<string, unknown>} */ (updated.record);
-      if (written.recordHash !== next.recordHash) return 'checkpoint-update-failed';
+      if (written.recordHash !== next.recordHash || updated.claimHash !== claimHash) return 'checkpoint-update-failed';
       last = written;
       return null;
     },
@@ -3214,7 +3255,7 @@ function createCheckpointHost(store, binding, prestate, createdAt, claimed) {
       let cleared;
       try {
         cleared = validateCheckpointResult(
-          store.clear(binding, activeWorker(session), last.hostRevision, reason),
+          store.clear(binding, activeWorker(session), checkpointExpectation(last, claimHash), reason),
           'clear',
           checkpointKey,
         );
@@ -3364,19 +3405,6 @@ export function createTemporaryCheckpointStore(optionsValue) {
     syncDirectory(root);
   }
 
-  /** @param {Record<string, unknown>} checkpoint */
-  function claimBody(checkpoint) {
-    const body = {
-      version: 1,
-      checkpointKey: checkpoint.checkpointKey,
-      invocationIdentity: checkpoint.invocationIdentity,
-      workerToken: checkpoint.workerToken,
-      workerGeneration: checkpoint.workerGeneration,
-      createdAt: checkpoint.createdAt,
-    };
-    return { ...body, claimHash: sha256(canonicalJson(body)) };
-  }
-
   /** @param {string} serialized */
   function parseClaim(serialized) {
     const parsed = JSON.parse(serialized);
@@ -3450,8 +3478,9 @@ export function createTemporaryCheckpointStore(optionsValue) {
     return checkpointKeyOf(validateCheckpointBinding(bindingValue, label));
   }
 
-  /** @param {string} key @param {Record<string, unknown>} pair @param {Record<string, unknown>} worker @param {Record<string, unknown>} expected */
-  function ownershipFailure(key, pair, worker, expected) {
+  /** @param {Record<string, unknown>} binding @param {Record<string, unknown>} pair @param {Record<string, unknown>} worker @param {Record<string, unknown>} expected */
+  function ownershipFailure(binding, pair, worker, expected) {
+    const key = checkpointKeyOf(binding);
     if (!pair.claimPresent || !pair.checkpointPresent) {
       return {
         version: 1,
@@ -3469,6 +3498,17 @@ export function createTemporaryCheckpointStore(optionsValue) {
     }
     const current = /** @type {Record<string, unknown>} */ (pair.checkpoint);
     const claim = /** @type {Record<string, unknown>} */ (pair.claim);
+    if (current.checkpointKey !== key || claim.checkpointKey !== key
+      || current.workspaceIdentity !== binding.workspaceIdentity
+      || canonicalJson(current.target) !== canonicalJson(binding.target)
+      || current.ownerIdentity !== binding.ownerIdentity) {
+      return {
+        version: 1,
+        status: 'stale',
+        checkpointKey: key,
+        diagnostic: diagnostic(key, true, true, claim, current, 'artifact-binding-mismatch'),
+      };
+    }
     if (current.invocationIdentity !== worker.invocationIdentity
       || claim.invocationIdentity !== worker.invocationIdentity
       || current.workerToken !== worker.workerToken
@@ -3487,6 +3527,14 @@ export function createTemporaryCheckpointStore(optionsValue) {
         status: 'stale',
         checkpointKey: key,
         diagnostic: diagnostic(key, true, true, claim, current, 'revision-mismatch'),
+      };
+    }
+    if (claim.claimHash !== expected.claimHash || current.recordHash !== expected.recordHash) {
+      return {
+        version: 1,
+        status: 'stale',
+        checkpointKey: key,
+        diagnostic: diagnostic(key, true, true, claim, current, 'artifact-hash-mismatch'),
       };
     }
     return null;
@@ -3520,7 +3568,8 @@ export function createTemporaryCheckpointStore(optionsValue) {
             ),
           };
         }
-        writeArtifact(root, key, claimPath, claimBody(next), true);
+        const claim = buildCheckpointClaim(next);
+        writeArtifact(root, key, claimPath, claim, true);
         try {
           writeArtifact(root, key, checkpointPath, next, true);
         } catch (error) {
@@ -3531,7 +3580,7 @@ export function createTemporaryCheckpointStore(optionsValue) {
           }
           throw error;
         }
-        return { version: 1, status: 'claimed', checkpointKey: key, record: next };
+        return { version: 1, status: 'claimed', checkpointKey: key, record: next, claimHash: claim.claimHash };
       } catch (error) {
         return failure(key === null ? sha256('checkpoint-key-underivable') : key, error);
       }
@@ -3574,7 +3623,7 @@ export function createTemporaryCheckpointStore(optionsValue) {
             diagnostic: diagnostic(key, true, true, claim, checkpoint, 'artifact-key-mismatch'),
           };
         }
-        return { version: 1, status: 'loaded', checkpointKey: key, record: checkpoint };
+        return { version: 1, status: 'loaded', checkpointKey: key, record: checkpoint, claimHash: claim.claimHash };
       } catch (error) {
         const safeKey = key === null ? sha256('checkpoint-key-underivable') : key;
         if (key !== null && !isStorageFault(error)) {
@@ -3591,7 +3640,8 @@ export function createTemporaryCheckpointStore(optionsValue) {
     update(bindingValue, worker, expected, nextCheckpoint) {
       let key = null;
       try {
-        key = derivedKey(bindingValue, 'checkpoint store update binding');
+        const binding = validateCheckpointBinding(bindingValue, 'checkpoint store update binding');
+        key = checkpointKeyOf(binding);
         const active = exactRecord(
           worker,
           ['invocationIdentity', 'workerToken', 'workerGeneration'],
@@ -3601,10 +3651,10 @@ export function createTemporaryCheckpointStore(optionsValue) {
         hash(active.invocationIdentity, 'checkpoint store update worker.invocationIdentity');
         hash(active.workerToken, 'checkpoint store update worker.workerToken');
         integer(active.workerGeneration, 'checkpoint store update worker.workerGeneration', true);
-        const revisions = exactRecord(expected, ['acceptedRevision', 'hostRevision'], [], 'checkpoint store update revisions');
+        const expectation = validateCheckpointExpectation(expected, 'checkpoint store update expectation');
         const next = validateHostCheckpointRecord(nextCheckpoint, 'checkpoint store update record');
         const pair = readPair(key);
-        const stale = ownershipFailure(key, pair, /** @type {Record<string, unknown>} */ (worker), revisions);
+        const stale = ownershipFailure(binding, pair, active, expectation);
         if (stale) return stale;
         const current = /** @type {Record<string, unknown>} */ (pair.checkpoint);
         if (next.checkpointKey !== key
@@ -3617,7 +3667,10 @@ export function createTemporaryCheckpointStore(optionsValue) {
         }
         const { root, checkpointPath } = artifactPaths(key);
         writeArtifact(root, key, checkpointPath, next, false);
-        return { version: 1, status: 'updated', checkpointKey: key, record: next };
+        return {
+          version: 1, status: 'updated', checkpointKey: key, record: next,
+          claimHash: /** @type {Record<string, unknown>} */ (pair.claim).claimHash,
+        };
       } catch (error) {
         return failure(key === null ? sha256('checkpoint-key-underivable') : key, error);
       }
@@ -3625,17 +3678,18 @@ export function createTemporaryCheckpointStore(optionsValue) {
     handoff(bindingValue, priorWorker, replacementWorker, expected, nextCheckpoint) {
       let key = null;
       try {
-        key = derivedKey(bindingValue, 'checkpoint store handoff binding');
+        const binding = validateCheckpointBinding(bindingValue, 'checkpoint store handoff binding');
+        key = checkpointKeyOf(binding);
         const prior = validateWorker(priorWorker, 'checkpoint store handoff prior worker');
         const replacement = validateWorker(replacementWorker, 'checkpoint store handoff replacement worker');
-        const revisions = exactRecord(expected, ['acceptedRevision', 'hostRevision'], [], 'checkpoint store handoff revisions');
+        const expectation = validateCheckpointExpectation(expected, 'checkpoint store handoff expectation');
         const next = validateHostCheckpointRecord(nextCheckpoint, 'checkpoint store handoff record');
         const pair = readPair(key);
-        const stale = ownershipFailure(key, pair, {
+        const stale = ownershipFailure(binding, pair, {
           invocationIdentity: next.invocationIdentity,
           workerToken: prior.workerToken,
           workerGeneration: prior.workerGeneration,
-        }, revisions);
+        }, expectation);
         if (stale) return stale;
         const current = /** @type {Record<string, unknown>} */ (pair.checkpoint);
         if (replacement.workerGeneration !== /** @type {number} */ (prior.workerGeneration) + 1
@@ -3652,31 +3706,48 @@ export function createTemporaryCheckpointStore(optionsValue) {
         }
         const { root, checkpointPath } = artifactPaths(key);
         writeArtifact(root, key, checkpointPath, next, false);
-        return { version: 1, status: 'handed-off', checkpointKey: key, record: next };
+        return {
+          version: 1, status: 'handed-off', checkpointKey: key, record: next,
+          claimHash: /** @type {Record<string, unknown>} */ (pair.claim).claimHash,
+        };
       } catch (error) {
         return failure(key === null ? sha256('checkpoint-key-underivable') : key, error);
       }
     },
-    clear(bindingValue, worker, expectedHostRevision, reason) {
+    clear(bindingValue, worker, expected, reason) {
       let key = null;
       try {
-        key = derivedKey(bindingValue, 'checkpoint store clear binding');
-        exactRecord(worker, ['invocationIdentity', 'workerToken', 'workerGeneration'], [], 'checkpoint store clear worker');
-        integer(expectedHostRevision, 'checkpoint store clear expectedHostRevision');
+        const binding = validateCheckpointBinding(bindingValue, 'checkpoint store clear binding');
+        key = checkpointKeyOf(binding);
+        const active = exactRecord(worker, ['invocationIdentity', 'workerToken', 'workerGeneration'], [], 'checkpoint store clear worker');
+        hash(active.invocationIdentity, 'checkpoint store clear worker.invocationIdentity');
+        hash(active.workerToken, 'checkpoint store clear worker.workerToken');
+        integer(active.workerGeneration, 'checkpoint store clear worker.workerGeneration', true);
+        const expectation = validateCheckpointExpectation(expected, 'checkpoint store clear expectation');
         text(reason, 'checkpoint store clear reason');
         const { claimPath, checkpointPath } = artifactPaths(key);
         const pair = readPair(key);
-        if (pair.checkpointPresent) {
-          const current = /** @type {Record<string, unknown>} */ (pair.checkpoint);
-          if (current.invocationIdentity !== /** @type {Record<string, unknown>} */ (worker).invocationIdentity
-            || current.workerToken !== /** @type {Record<string, unknown>} */ (worker).workerToken
-            || current.workerGeneration !== /** @type {Record<string, unknown>} */ (worker).workerGeneration
-            || current.hostRevision !== expectedHostRevision) {
-            invalid('checkpoint store clear', 'must be requested by the active worker at the exact host revision');
-          }
+        const stale = ownershipFailure(binding, pair, active, expectation);
+        if (stale) invalid('checkpoint store clear', `must match retained ownership: ${stale.diagnostic.detail}`);
+
+        // These comparisons detect observed drift, not an atomic two-file deletion.
+        // Keep the claim reserving the target until the exact checkpoint is absent.
+        const checkpointBytes = readBounded(checkpointPath);
+        if (checkpointBytes === null || parseCheckpoint(checkpointBytes).recordHash !== expectation.recordHash) {
+          invalid('checkpoint store clear', 'must retain the expected checkpoint before removal');
         }
-        fs.rmSync(checkpointPath, { force: true });
-        fs.rmSync(claimPath, { force: true });
+        fs.rmSync(checkpointPath);
+        if (probeFile(checkpointPath).present) {
+          invalid('checkpoint store clear', 'must establish checkpoint absence before claim removal');
+        }
+        const claimBytes = readBounded(claimPath);
+        if (claimBytes === null || parseClaim(claimBytes).claimHash !== expectation.claimHash) {
+          invalid('checkpoint store clear', 'must retain the expected claim before removal');
+        }
+        if (probeFile(checkpointPath).present) {
+          invalid('checkpoint store clear', 'must keep the checkpoint absent before claim removal');
+        }
+        fs.rmSync(claimPath);
         if (probeFile(checkpointPath).present || probeFile(claimPath).present) {
           invalid('checkpoint store clear', 'must leave no ownership claim or checkpoint behind');
         }
@@ -4218,6 +4289,7 @@ function openCheckpointHost(store, binding, prestate, session) {
   }
   const createdAt = nowStamp();
   const initialRecord = buildCheckpointRecord(binding, prestate, session, null, createdAt);
+  const claimHash = buildCheckpointClaim(initialRecord).claimHash;
   let claimed;
   try {
     claimed = validateCheckpointResult(store.claim(binding, initialRecord), 'claim', checkpointKey);
@@ -4226,7 +4298,8 @@ function openCheckpointHost(store, binding, prestate, session) {
   }
   if (claimed.status === 'occupied') return refuse('checkpoint-ownership-unavailable', claimed.diagnostic);
   if (claimed.status !== 'claimed'
-    || /** @type {Record<string, unknown>} */ (claimed.record).recordHash !== initialRecord.recordHash) {
+    || /** @type {Record<string, unknown>} */ (claimed.record).recordHash !== initialRecord.recordHash
+    || claimed.claimHash !== claimHash) {
     return refuse('checkpoint-claim-failed');
   }
   return {
@@ -4236,6 +4309,7 @@ function openCheckpointHost(store, binding, prestate, session) {
       prestate,
       createdAt,
       /** @type {Record<string, unknown>} */ (claimed.record),
+      claimHash,
     ),
   };
 }
@@ -4264,12 +4338,12 @@ function validateHandoffReceipt(value, label) {
   const receipt = exactRecord(value, [
     'version', 'checkpointKey', 'invocationIdentity', 'priorWorkerToken', 'priorWorkerGeneration',
     'workerToken', 'workerGeneration', 'acceptedStateHash', 'acceptedRevision', 'hostRevision',
-    'supervisorAuthorityIdentity', 'admissionIdentity', 'receiptHash',
+    'claimHash', 'recordHash', 'supervisorAuthorityIdentity', 'admissionIdentity', 'receiptHash',
   ], [], label);
   if (receipt.version !== 1) invalid(`${label}.version`, 'must be the literal 1');
   for (const field of [
     'checkpointKey', 'invocationIdentity', 'priorWorkerToken', 'workerToken',
-    'acceptedStateHash', 'supervisorAuthorityIdentity', 'admissionIdentity', 'receiptHash',
+    'acceptedStateHash', 'claimHash', 'recordHash', 'supervisorAuthorityIdentity', 'admissionIdentity', 'receiptHash',
   ]) {
     hash(receipt[field], `${label}.${field}`);
   }
@@ -4335,7 +4409,23 @@ function hostAdapterHandle(session, ports, checkpointHost, ownershipReport) {
       const reason = /** @type {string} */ (reasonValue);
       ledger.release();
       if (current.status === 'ended') return terminalResult(current);
-      if (current.status === 'hard-stop' && reason !== 'hard-stop-recorded') return terminalResult(current);
+      if (current.status === 'hard-stop'
+        && (reason !== 'hard-stop-recorded' || current.disposition === 'checkpoint-cleanup-failed')) {
+        return terminalResult(current);
+      }
+      // An original autonomous owner may now end before any adapter hard stop.
+      // Recorded adapter stops and replacement workers keep their existing boundary.
+      if (reason === 'hard-stop-recorded' && current.status === 'active'
+        && ports.supervisorSession.authority !== undefined
+        && /** @type {Record<string, unknown>} */ (
+          /** @type {Record<string, unknown>} */ (current.acceptedState).policy
+        ).mode === 'autonomous') {
+        const lost = survivingAuthorityFailure(current, ports, host, {
+          requireSupervisor: true,
+          requireSettled: true,
+        });
+        if (lost) return fail(current, lost);
+      }
       if (host) {
         const cleanup = host.clear(current, reason);
         // A failed clear never ends: it leaves the collision visible and blocks replacement work.
@@ -4509,7 +4599,7 @@ export function handoffHostWorker(inputValue, dependencies) {
         binding,
         { workerToken: prior.workerToken, workerGeneration: prior.workerGeneration },
         replacement,
-        { acceptedRevision: currentRecord.acceptedRevision, hostRevision: currentRecord.hostRevision },
+        checkpointExpectation(currentRecord, /** @type {string} */ (loaded.claimHash)),
         next,
       ),
       'handoff',
@@ -4520,7 +4610,8 @@ export function handoffHostWorker(inputValue, dependencies) {
   }
   if (handed.status === 'stale') return stop('stale-worker', handed.diagnostic);
   if (handed.status !== 'handed-off'
-    || /** @type {Record<string, unknown>} */ (handed.record).recordHash !== next.recordHash) {
+    || /** @type {Record<string, unknown>} */ (handed.record).recordHash !== next.recordHash
+    || handed.claimHash !== loaded.claimHash) {
     return stop('checkpoint-handoff-failed');
   }
   const receiptBody = {
@@ -4534,6 +4625,8 @@ export function handoffHostWorker(inputValue, dependencies) {
     acceptedStateHash: next.acceptedStateHash,
     acceptedRevision: next.acceptedRevision,
     hostRevision: next.hostRevision,
+    claimHash: loaded.claimHash,
+    recordHash: next.recordHash,
     supervisorAuthorityIdentity: admission.supervisorAuthorityIdentity,
     admissionIdentity: admission.admissionIdentity,
   };
@@ -4625,6 +4718,10 @@ export function resumeHostAdapter(inputValue, dependencies) {
     || checkpoint.acceptedStateHash !== receipt.acceptedStateHash) {
     return stop(checkpointKey, 'checkpoint-revision-conflict');
   }
+  // Resume inherits the pair retained by handoff, not a new baseline from load.
+  if (loaded.claimHash !== receipt.claimHash || checkpoint.recordHash !== receipt.recordHash) {
+    return stop(checkpointKey, 'checkpoint-drift');
+  }
   if (checkpoint.checkpointKey !== checkpointKey
     || receipt.checkpointKey !== checkpointKey
     || checkpoint.workspaceIdentity !== binding.workspaceIdentity
@@ -4699,6 +4796,7 @@ export function resumeHostAdapter(inputValue, dependencies) {
     prestate,
     /** @type {string} */ (checkpoint.createdAt),
     checkpoint,
+    /** @type {string} */ (receipt.claimHash),
   );
   const advanced = /** @type {Record<string, unknown>} */ (advanceHost(resumed, {
     // The replacement worker carries one pending notice; the first successful
