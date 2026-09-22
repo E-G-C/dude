@@ -14372,6 +14372,124 @@ function feature060Preimages(root) {
   ].map(relative => [relative, fs.readFileSync(path.join(root, relative))]));
 }
 
+nodeTest('material-input contract: real adapter admission refuses invalid scope without state or file changes', () => {
+  withSealedWorkspace(root => {
+    writeSealedTaskState(root);
+    const input = sealedInspectionInput(root, { policyMode: 'autonomous' });
+    const preimages = feature060Preimages(root);
+    for (const count of [0, 17]) {
+      const assessment = focusedRunnerRequest(root).assessment;
+      assessment.materialInputs.targets = Array.from(
+        { length: count }, (_, index) => `src/read-${String(index).padStart(2, '0')}.mjs`,
+      );
+      const errors = [];
+      const adapter = createHostAdapter(sealedInitial({ state: emptyState('autonomous') }), sealedPorts(
+        (command, request) => {
+          try {
+            return { status: 'returned', value: runCommand(command, request) };
+          } catch (error) {
+            errors.push(error instanceof Error ? error.message : String(error));
+            throw error;
+          }
+        },
+      ));
+      const before = acceptedAuthorityTuple(adapter.snapshot());
+      const refused = adapter.run(sealedRequest(adapter, 'authorize-attempt', {
+        authorization: { input, assessment },
+      }));
+      assert.equal(refused.outcome, 'closed-refusal');
+      assert.equal(refused.reason, 'runtime-threw');
+      assert.deepEqual(errors, ['Assessment.materialInputs.targets must contain 1 through 16 rows']);
+      assert.deepEqual(acceptedAuthorityTuple(refused.session), before);
+      assert.deepEqual(refused.session.acceptedState, emptyState('autonomous'));
+      assert.deepEqual(feature060Preimages(root), preimages);
+    }
+  });
+});
+
+nodeTest('material-input contract: a non-mutating verifier closes through ordinary autonomous attestation', async () => {
+  for (const count of [1, 16]) {
+    await withSealedWorkspace(async (root) => {
+      writeSealedTaskState(root);
+      const targets = Array.from({ length: count }, (_, index) => `src/read-${String(index).padStart(2, '0')}.mjs`);
+      fs.mkdirSync(path.join(root, 'src'));
+      const preimages = targets.map((relative, index) => {
+        const bytes = Buffer.from(`export const inspected = ${index};\n`);
+        fs.writeFileSync(path.join(root, relative), bytes);
+        return bytes;
+      });
+      const request = focusedRunnerRequest(root);
+      request.assessment.materialInputs = focusedMaterialInputs(targets);
+      delete request.specialistResult;
+      const pair = focusedSpecialistPair(request.assessment, `read-only-${count}`);
+      pair.verification.checks = targets.map((relative, index) => {
+        const bytes = fs.readFileSync(path.join(root, relative));
+        assert.deepEqual(bytes, preimages[index]);
+        return { definition: `Inspect ${relative}`, outcome: 'passed', evidence: bytes.toString('utf8') };
+      });
+      const pairBytes = canonicalJson(pair);
+      const checkpoint = memoryCheckpointStore();
+      let preflights = 0;
+      const result = await runHostAdapter(request, {
+        checkpoint: checkpoint.port,
+        exchange(challenge) {
+          assert.equal(challenge.kind, 'specialist-pair');
+          const state = focusedRunnerAcceptedState(challenge);
+          assert.deepEqual(state.pending[0].materialInputs.targets, targets);
+          const before = canonicalJson(state);
+          const prepared = prepareSpecialistResult(state, pair);
+          assert.deepEqual(prepared.completion.changedTargets, []);
+          assert.equal(canonicalJson(state), before);
+          preflights += 1;
+          return focusedChallengeResponse(challenge, 'specialistResult', pair);
+        },
+      });
+      assert.equal(preflights, 1);
+      assert.equal(result.outcome, 'ended', result.detail ?? result.reason);
+      assert.equal(result.reason, 'task-settled');
+      assert.equal(result.haltReport, null);
+      const state = focusedRunnerAcceptedState(result);
+      assert.equal(state.overallUsed, 1);
+      assert.deepEqual(state.pending, []);
+      assert.equal(state.completed.length, 1);
+      assert.ok(result.steps.some(step => step.reason === 'lane-receipt-committed'));
+      assert.match(fs.readFileSync(path.join(root, TASKS_PATH), 'utf8'), new RegExp(`- \\[x\\] ${TARGET.taskKey}`));
+      assert.equal(JSON.parse(fs.readFileSync(path.join(root, TASK_STATE_PATH), 'utf8'))[TASKS_PATH]
+        .glyphs[TARGET.taskKey], 'x');
+      targets.forEach((relative, index) => assert.deepEqual(fs.readFileSync(path.join(root, relative)), preimages[index]));
+      assert.equal(canonicalJson(pair), pairBytes);
+      assert.deepEqual(pair.changedTargets, []);
+      assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+    });
+  }
+});
+
+nodeTest('material-input contract: historical empty scopes remain readable and cancellable, not completable', () => {
+  const state = pendingState('autonomous');
+  state.pending[0].materialInputs.targets = [];
+  state.pending[0].approachHash = approachHash({
+    action: state.pending[0].action, materialInputs: state.pending[0].materialInputs,
+  });
+  const before = canonicalJson(state);
+  assert.doesNotThrow(() => validateRunState(state));
+  assert.throws(
+    () => prepareSpecialistResult(state, specialistResult('historical-read-only', 'accepted')),
+    /verification\.context\.attempt\.approachBasis\.materialInputs\.targets must contain 1 through 16 rows/,
+  );
+  const checkpoint = memoryCheckpointStore();
+  const adapter = createHostAdapter({ ...checkpointInitial(), state }, { checkpoint: checkpoint.port });
+  const ended = adapter.end('cancelled');
+  assert.equal(ended.outcome, 'ended');
+  assert.equal(ended.reason, 'cancelled');
+  assert.equal(ended.session.acceptedStateBytes, before);
+  assert.equal(ended.session.acceptedRevision, 0);
+  assert.equal(canonicalJson(state), before);
+  assert.equal(ended.session.acceptedState.overallUsed, 1);
+  assert.equal(ended.session.acceptedState.pending.length, 1);
+  assert.deepEqual(ended.session.acceptedState.completed, []);
+  assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+});
+
 nodeTest('Feature 060 T002: full state-bound preflight accepts 16 rows and rejects 17/18 without evidence loss', () => {
   const state = pendingState('autonomous');
   const adapter = createHostAdapter(sealedInitial({ state }));

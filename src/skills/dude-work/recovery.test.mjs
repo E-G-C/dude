@@ -81,6 +81,7 @@ import {
   validateEvaluationSequences,
   validateFileStateDescriptors,
   validateLearningReviewRefs,
+  validateMaterialInputsV1,
   writeSetIdentity,
   buildLearningReviewEvent,
   validateLearningReviewEvent,
@@ -3694,6 +3695,142 @@ test('material targets reject empty and relative segments without excluding cano
     ), /dot/);
     assert.deepEqual(first.state, before);
   }
+});
+
+for (const count of [0, 17]) {
+  test(`material-input contract: autonomous admission rejects ${count} targets before charging`, () => {
+    for (const mode of ['ordinary', 'recovery']) {
+      const state = emptyState({ mode: 'autonomous', recover: true });
+      const raw = withPolicyPlan(TARGET, transitionRaw(TARGET), 'autonomous');
+      const candidate = bindAssessment(TARGET, raw, transitionAssessment(
+        mode === 'ordinary' ? 'execute-task' : 'retry-task',
+        { targets: Array.from({ length: count }, (_, index) => `src/read-${String(index).padStart(2, '0')}.mjs`) },
+      ), undefined, 'autonomous');
+      const inspection = buildInspection(TARGET, collectEvidence(TARGET, raw, undefined, 'autonomous'));
+      const before = canonicalJson(state);
+      const captures = [raw.directIdeas[0].bytes, raw.tasks.bytes, raw.definitionPlan.bytes];
+      const captureBytes = captures.map(bytes => Buffer.from(bytes));
+
+      assert.doesNotThrow(() => validateAssessment(TARGET, inspection, candidate));
+      assert.throws(
+        () => authorizeRuntimeAttempt(state, TARGET, raw, candidate, mode),
+        /Assessment\.materialInputs\.targets must contain 1 through 16 rows/,
+        mode,
+      );
+      assert.equal(canonicalJson(state), before, mode);
+      assert.equal(state.overallUsed, 0);
+      assert.deepEqual(state.recoveryUsed, []);
+      assert.deepEqual(state.pending, []);
+      assert.deepEqual(state.completed, []);
+      assert.deepEqual(captures, captureBytes);
+    }
+  });
+}
+
+test('material-input contract: trusted consumer sets retain their exact 1 through 16 bounds', () => {
+  const inputs = { targets: ['src/read.mjs'], operations: ['execute-task'], checks: ['verification'] };
+  for (const field of ['targets', 'operations', 'checks']) {
+    for (const count of [0, 1, 16, 17]) {
+      const candidate = {
+        ...inputs,
+        [field]: Array.from({ length: count }, (_, index) => `read-${String(index).padStart(2, '0')}`),
+      };
+      if (count === 1 || count === 16) {
+        assert.strictEqual(validateMaterialInputsV1(candidate), candidate);
+      } else {
+        assert.throws(
+          () => validateMaterialInputsV1(candidate),
+          new RegExp(`MaterialInputsV1\\.${field} must contain 1 through 16 rows`),
+        );
+      }
+    }
+  }
+});
+
+test('material-input contract: guarded scopes, action none, and historical RunState stay compatible', () => {
+  for (const mode of ['guarded', 'autonomous']) {
+    const state = emptyState({ mode, recover: true });
+    const before = canonicalJson(state);
+    const refused = authorizeAttempt(
+      state, TARGET, transitionRaw(TARGET), transitionAssessment('none', { targets: [] }), 'recovery',
+    );
+    assert.equal(refused.reason, 'no-action');
+    assert.strictEqual(refused.state, state);
+    assert.equal(canonicalJson(state), before);
+  }
+
+  for (const targets of [
+    [],
+    Array.from({ length: 17 }, (_, index) => `src/read-${String(index).padStart(2, '0')}.mjs`),
+    ['a'.repeat(513)],
+    ['a'.repeat(1024)],
+  ]) {
+    const state = emptyState();
+    const authorized = authorizeAttempt(
+      state, TARGET, transitionRaw(TARGET), transitionAssessment('execute-task', { targets }), 'ordinary',
+    );
+    assert.equal(authorized.authorized, true);
+    const historical = clone(authorized.state);
+    historical.policy.mode = 'autonomous';
+    assert.doesNotThrow(() => validateRunState(historical));
+    const completed = completeAttempt(
+      authorized.state, completionInput(authorized.state.pending[0], { changedTargets: [] }),
+    );
+    assert.equal(completed.completed, true);
+    assert.equal(completed.state.overallUsed, 1);
+    assert.deepEqual(completed.state.pending, []);
+  }
+});
+
+test('material-input contract: autonomous admission retains canonical paths, Unicode, sorting, and action checks', () => {
+  const state = emptyState({ mode: 'autonomous' });
+  const raw = withPolicyPlan(TARGET, transitionRaw(TARGET), 'autonomous');
+  const valid = bindAssessment(
+    TARGET, raw, transitionAssessment('execute-task', { targets: ['src/read.mjs'] }), undefined, 'autonomous',
+  );
+  const before = canonicalJson(state);
+  const malformed = [
+    { targets: ['src//read.mjs'] },
+    { targets: ['src/./read.mjs'] },
+    { targets: ['src/../read.mjs'] },
+    { targets: ['src\\read.mjs'] },
+    { targets: ['src/\ud800.mjs'] },
+    { targets: ['src/read.mjs', 'src/read.mjs'] },
+    { targets: ['src/z.mjs', 'src/a.mjs'] },
+    { operations: ['execute-task/../read'] },
+    { operations: ['execute-task', 'execute-task'] },
+    { operations: ['retry-task', 'execute-task'] },
+    { checks: ['verification/./read'] },
+    { checks: ['verification', 'verification'] },
+    { checks: ['verification', 'lint'] },
+  ];
+  for (const inputs of malformed) {
+    assert.throws(() => authorizeRuntimeAttempt(state, TARGET, raw, {
+      ...valid, materialInputs: { ...valid.materialInputs, ...inputs },
+    }, 'ordinary'), TypeError);
+    assert.equal(canonicalJson(state), before);
+  }
+  for (const field of ['operations', 'checks']) {
+    for (const count of [0, 16, 17]) {
+      const inputs = Array.from({ length: count }, (_, index) => `read-${String(index).padStart(2, '0')}`);
+      const refused = authorizeRuntimeAttempt(state, TARGET, raw, {
+        ...valid, materialInputs: { ...valid.materialInputs, [field]: inputs },
+      }, 'ordinary');
+      assert.equal(refused.reason, 'invalid-action', `${field}:${count}`);
+      assert.strictEqual(refused.state, state);
+      assert.equal(canonicalJson(state), before);
+    }
+  }
+  const target = `src/${'\u00e9'.repeat(254)}`;
+  assert.equal(Buffer.byteLength(target), 512);
+  const accepted = authorizeRuntimeAttempt(state, TARGET, raw, {
+    ...valid, materialInputs: { ...valid.materialInputs, targets: [target] },
+  }, 'ordinary');
+  assert.equal(accepted.authorized, true);
+  assert.throws(() => authorizeRuntimeAttempt(state, TARGET, raw, {
+    ...valid, materialInputs: { ...valid.materialInputs, targets: [`${target}a`] },
+  }, 'ordinary'), /Assessment\.materialInputs\.targets\[0\].*1 through 512 UTF-8 bytes/);
+  assert.equal(canonicalJson(state), before);
 });
 
 test('B: RunState rejects every state with more than one pending authorization', () => {

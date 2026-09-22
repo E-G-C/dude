@@ -185,11 +185,22 @@ node .github/skills/dude-compose/compose.mjs list --use-case ui --json
 a pack without a declaration returns `[]`. The source catalog currently holds
 19 direct pack entries. The `a2a` entry now contains its complete planned source
 provider set: one read-only JavaScript advisor plus protocol and JavaScript
-knowledge skills. Catalog source availability is separate from installed host
-availability: A2A is not installed in this repository, full Compose verification
-remains pending, and no installed discovery or actual advice request has yet
-proved use. Installed pack files use the reserved `dude-pack-*` namespace and
-survive core upgrades.
+knowledge skills. Catalog source availability remains separate from installed
+host availability. Compose verification covered all 19 catalog packs with 56
+warnings, no failures, and no leftovers. In a disposable host, the four
+installed A2A files and profile survived `build-dev`; fresh advisor discovery
+and direct guidance reads then produced three observed responses: protocol
+guidance, JavaScript guidance, and refusal of an excluded request. Those
+disposable installations were removed afterward. A2A is now installed in this
+repository's dogfood profile through a separate explicit opt-in to support
+Feature 068. A fresh supported Copilot host session discovered and selected the
+installed advisor without making a model or advice call. That result does not
+prove that an already-running chat hot-reloaded its tool catalog. An existing
+chat may require a reload to discover a changed agent catalog. No
+other language source was delivered. Feature 068's scope choices remain
+unanswered or deferred; this activation neither completes its definition nor
+starts implementation. Installed pack files use the reserved `dude-pack-*`
+namespace and survive core upgrades.
 
 ## What Dude Writes
 

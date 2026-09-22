@@ -42,10 +42,21 @@ namespace, which the engine treats as a distinct ownership tier:
 Packs are added to this table as they are migrated out of core.
 
 `a2a` now contains its complete planned provider set in catalog source. That
-source availability does not make the providers available to an installed host.
-The pack is not installed in this repository, full Compose verification remains
-pending, and no fresh installed discovery or actual advice request has yet
-proved use.
+source availability alone does not activate the providers in a host. The
+19-pack Compose check completed with 56 warnings, zero failures, and zero
+leftovers. A JavaScript-only disposable install preserved its four generated
+files and profile through `build-dev`. Fresh advisor discovery and selection,
+followed by reads of the shipped guidance, produced three real responses:
+protocol guidance, JavaScript guidance, and refusal of an excluded request.
+Both disposable installations were removed afterward. A2A is now installed in
+this repository's dogfood profile through a separate explicit opt-in to support
+Feature 068. A fresh supported Copilot host session discovered and selected the
+installed advisor without making a model or advice call. That result does not
+prove that an already-running chat hot-reloaded its tool catalog. An existing
+chat may require a reload to discover a changed agent catalog. No
+other language source was delivered, and Feature 068's scope choices remain
+unanswered or deferred; activation neither completes its definition nor starts
+implementation.
 
 ## Layout
 

@@ -4415,7 +4415,10 @@ function validateAffectedTargetV2(value, label) {
   return target;
 }
 
-/** @param {unknown} value @param {string} [label] */
+/**
+ * Trusted material inputs include inspected artifacts even when changedTargets is empty.
+ * @param {unknown} value @param {string} [label]
+ */
 export function validateMaterialInputsV1(value, label = 'MaterialInputsV1') {
   const record = assertExactRecord(value, ['targets', 'operations', 'checks'], [], label);
   validateV2SortedSet(record.targets, assertV2SubjectIdentity, 1, 16, `${label}.targets`);
@@ -9694,6 +9697,8 @@ function authorizeInspectedAttempt(state, target, inspection, assessmentValue, m
     return authorizationRefusal(state, 'not-dispatchable');
   }
   if (policy.mode === 'autonomous') {
+    // Keep guarded and historical readers compatible, but admit only attestable inputs.
+    validateMaterialInputsV1(materialInputs, 'Assessment.materialInputs');
     if (state.overallUsed === Number.MAX_SAFE_INTEGER
       || (policy.overall !== 'unlimited' && state.overallUsed >= policy.overall)) {
       return authorizationRefusal(state, 'overall-exhausted');

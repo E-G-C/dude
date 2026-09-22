@@ -6,6 +6,17 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
 ```json
 {
   "installed": {
+    "a2a": {
+      "files": [
+        ".github/agents/dude-pack-a2a-javascript-specialist.agent.md",
+        ".github/skills/dude-pack-a2a-javascript",
+        ".github/skills/dude-pack-a2a-protocol"
+      ],
+      "source": {
+        "type": "local",
+        "location": "C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-potential-garbanzo\\library\\packs"
+      }
+    },
     "authoring": {
       "files": [
         ".github/agents/dude-pack-authoring-agent-smith.agent.md",
