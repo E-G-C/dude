@@ -14,6 +14,10 @@ The core rule: **density is the tell, not any single pattern.** One em dash, one
 question, or one tricolon can be fine and even good. The problem is when several tropes pile
 up, or one repeats across a piece. Write like a person: varied, specific, a little uneven.
 
+These are editing heuristics for making prose read better, not a method for proving a piece
+was or wasn't written by AI. A human can write a tricolon; a model can write plain, specific
+prose. Use this list to cut weak writing, not to accuse an author.
+
 ## How to apply this
 
 1. Draft in a natural voice first. Do not write against this list, or the prose turns stilted.
@@ -21,6 +25,18 @@ up, or one repeats across a piece. Write like a person: varied, specific, a litt
 3. Rewrite the densest offenders. You do not need zero instances, you need it to stop sounding generated.
 4. Do not overcorrect. Stripping every em dash and every list into identical short sentences is its own tell.
 5. When you cut a trope, say the real thing plainly instead of swapping in a different fancy construction.
+6. Leave official titles, product names, direct quotations, and link labels alone even when their
+   wording resembles a trope on this list; edit the surrounding prose instead.
+7. Leave factual lists, genuine before-and-after comparisons, and real chronological sequences alone.
+   Program stages such as learning, a hack week, and a showcase are legitimate sequence, not automatically
+   "journey" boilerplate.
+8. Leave substantive feature descriptions alone, such as "the generator produces a first draft BRD" or
+   "the agent exposes work-item status" — these are capabilities, not the unproved-gains claims covered
+   below.
+9. Keep useful invitations, genuine warmth, personality, and sentence variety. Do not flatten every
+   sentence or strip a piece of its personality to satisfy this list.
+10. Corrupted characters, copied editor control codes, broken tables, and plain typos are cleanup issues,
+    not evidence of AI writing; fix them as such and do not fold them into trope review.
 
 ## Fast self-check
 
@@ -78,6 +94,16 @@ the specific reason something matters, or cut the praise.
 intentionality, resilience, momentum, outcomes. A few are normal in planning language; a cluster hides
 who did what, for whom, and why it matters.
 
+**Claims that outrun the evidence.** Stating an aim or a capability as if it were an achieved result:
+"That momentum is already showing up", "reduce repetitive documentation, accelerate requirements
+gathering, improve consistency, and give teams more time for higher-value work" with no supporting
+example. Keep three things distinct: what a feature does, what it is meant to improve, and what has
+actually improved. A list of shipped projects shows activity, not a productivity gain. Concrete
+qualitative evidence (a named example, a quoted result) is enough; you do not need a metric for every
+claim. When there is no support, describe the capability plainly or label the benefit as an aim ("this
+is meant to reduce..."). Never invent a measurement, testimonial, or result to make the claim land; see
+fabricated precision below for invented statistics specifically.
+
 **Nominalization bloat.** Turning verbs into heavy nouns: "facilitate the implementation of" instead
 of "implement", "the creation of" instead of "create", "make a decision regarding" instead of "decide".
 Prefer the verb unless the noun is the actual subject.
@@ -90,7 +116,12 @@ the next sentence gives real actions, owners, or criteria.
 
 **Negative parallelism.** "It's not X, it's Y", the causal "not because X, but because Y", the
 em-dash dismissal "X -- not Y", and the cross-sentence "The question isn't X. The question is Y." The
-single most common AI tell. State the point directly. Avoid: "It's not bold. It's backwards."
+single most common AI tell. State the point directly. Avoid: "It's not bold. It's backwards." A softer
+variant does the same reframe without the negation: "goes beyond X: it is about Y". It reads gentler
+but still substitutes a formula for a direct claim; judge it with context rather than banning it
+outright — "the change goes beyond a new UI: it is about how teams request time off" may be a fair
+summary, while a stacked pile of "beyond X: about Y" lines across a piece is the same tell as the rest
+of this entry.
 
 **"Not X. Not Y. Just Z."** The dramatic countdown that negates two things before the real point.
 Avoid: "Not a bug. Not a feature. A fundamental design flaw."
@@ -119,7 +150,11 @@ bolting on a formal connector each sentence. Cut most of them; let the order car
 
 **"At its core" distillation.** Fake simplification before a vague summary: "At its core, X is about Y",
 "In essence", "Put simply", "Fundamentally". If the sentence after the phrase is clear, the phrase is
-dead weight. If it is vague, the phrase is camouflage.
+dead weight. If it is vague, the phrase is camouflage. The same move shows up as a slogan equation —
+"Right problem + right tool = AI magic" — a pseudo-formula that compresses a complicated claim into an
+unsupported promise. Real formulas and useful technical shorthand are not the target; the target is a
+made-up equation standing in for an argument. Replace it with the practical advice it's hiding: "Choose
+the simplest tool that meets the task's requirements."
 
 **"Whether you're..." audience sweep.** Pretending one piece fits everyone: "Whether you're a developer,
 leader, or curious beginner...". The audience list often says more about the template than the reader.
@@ -153,6 +188,13 @@ metronomic, break the pattern on purpose.
 **"Think of it as..."** The patronizing analogy reflex ("think of it like a highway for data").
 Often less clear than the plain concept. Explain the thing directly.
 
+**"No [occasion] would be complete without..."** A stock formula that substitutes interchangeable
+wording for actual information: "And, of course, no team outing would be complete without a few
+pictures!" Cut the setup, or replace it with a specific detail: "Photos from the Science Fair at
+Building 92." This is not a ban on warmth, humor, thanks, or photos — genuine friendly workplace
+language is fine. The tell is the formula standing in for something worth saying, not the warmth
+itself.
+
 **"Imagine a world where..."** The futurism invitation followed by a wish list of good outcomes.
 
 **False vulnerability.** Performative, risk-free candor: "and yes, I'm openly in love with...",
@@ -162,7 +204,10 @@ Often less clear than the plain concept. Explain the thing directly.
 reveal variant "none of them is the real story. The real story is...". If you must say it's clear, it isn't.
 
 **Grandiose stakes inflation.** Turning a narrow topic into world history: "this will fundamentally
-reshape how we think about everything", "will define the next era of computing".
+reshape how we think about everything", "will define the next era of computing", "changing not only
+how we build software, but how we think about engineering work itself". The last example is also
+negative parallelism (see above) doing double duty as inflated stakes; don't file it twice. Instead of
+the sweeping claim, state the supported, concrete change: what actually changed, for whom.
 
 **"Let's break this down."** The teacher voice for expert readers: "let's unpack this", "let's dive in".
 
@@ -228,6 +273,23 @@ sections from the reader's job, not from the generator's template.
 **Fractal summaries.** "What I'll tell you / what I'm telling you / what I told you" at every level.
 Every subsection, section, and the whole document each get a recap. Say it once.
 
+**Assumed confusion, scripted rescue.** A three-beat marketing sequence: assume the reader is
+overwhelmed ("Lost in the AI Tool Jungle?"), amplify the difficulty ("With so many AI tools
+available..."), then present an ordinary resource as the rescue ("Good news: you don't have to
+guess."). This is broader than one rhetorical question — flag the whole setup-amplify-rescue
+pattern. Replace it with a direct description of the resource and its use: "Use this guide to
+compare Microsoft AI tools for your task." Keep questions that genuinely help a reader pick the
+right resource; the trope is the manufactured overwhelm, not the question itself.
+
+**Summaries that recycle titles instead of summarizing.** A description repeats source titles or
+themes back ("the future of engineering", "from imperative to execution", "from vision to reality")
+or says the material offers "perspectives" without saying what it actually covers. This is not the
+same as the signposted conclusion or fractal summaries above: the failure here is an agenda dressed
+up as a summary. When a summary is promised, state content you actually read; when you haven't read
+the material, say plainly that it's a resource list. Never invent a takeaway from something unread.
+Keep the official titles and link labels themselves intact — the trope is claiming they were
+summarized, not the titles.
+
 **The dead metaphor.** One metaphor beaten into the ground 5-10 times across a piece. Introduce it,
 use it, move on. Avoid: "walls and doors" used thirty times.
 
@@ -255,7 +317,11 @@ the ending, these fill it with air. End on a real point, or just stop.
 
 **CTA and politeness sign-offs.** Tacked-on closers from assistant mode: "I hope this helps", "Feel free
 to reach out", "Happy to help", "Let me know if you need anything". Fine in a real message to a person;
-noise in docs, READMEs, and PR descriptions. Cut them unless you are actually writing to someone.
+noise in docs, READMEs, and PR descriptions. Cut them unless you are actually writing to someone. The
+same fatigue shows up as a repeated inspirational call to action — the same "get started today", "join
+the journey", or "don't miss out" landing at the end of every section. Cut the repeats, or replace one
+with a useful, specific action. A genuinely useful invitation is not the target: keep lines like "Bring
+your questions to AI Office Hours."
 
 ## Cross-file repetition check
 
