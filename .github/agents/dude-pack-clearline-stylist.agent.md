@@ -3,7 +3,7 @@ name: "Clearline Stylist"
 description: "Apply the Clearline visual system to a selected visual surface. Use when: apply Clearline, use the Clearline tokens, use --cl-* values, or work on an existing Clearline surface. Clearline is a neutral token system that ships no logo."
 tools: ["read", "edit", "search", "todo"]
 user-invocable: false
-model: claude-opus-5
+model: claude-opus-5.5
 ---
 
 # Clearline Stylist
