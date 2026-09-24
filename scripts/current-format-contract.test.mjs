@@ -6228,6 +6228,9 @@ const ADAPTER_SOURCE = 'src/skills/dude-work/host-adapter.mjs';
 const ADAPTER_RUNNER_SOURCE = 'src/skills/dude-work/host-adapter-runner.mjs';
 const ATTESTATION_SOURCE = 'src/skills/dude-work/specialist-attestation.mjs';
 const ADAPTER_BOUNDARY_SECTION = '## Host Adapter Runtime Boundary';
+const ORIGINAL_OWNER_FINALIZATION_SECTION = '### Original-Owner First-Assessment Finalization';
+const ORIGINAL_OWNER_FINALIZATION_DOC_SECTION = '#### Original-owner first-Assessment finalization';
+const ORIGINAL_OWNER_FINALIZATION_ANCHOR = '#original-owner-first-assessment-finalization';
 const ADAPTER_CONTINUITY_SECTION = '## Supervisor And Worker Continuity';
 const ADAPTER_INCIDENT_SECTION = '## Host Incidents And Recovery Notice';
 const ADAPTER_LIFECYCLE_SECTION = '## Checkpoint Lifecycle And Manual Cleanup';
@@ -6235,6 +6238,7 @@ const ADAPTER_STOPS_SECTION = '## Stops';
 
 const ADAPTER_OWNER_SECTIONS = [
   ADAPTER_BOUNDARY_SECTION,
+  ORIGINAL_OWNER_FINALIZATION_SECTION,
   ADAPTER_CONTINUITY_SECTION,
   ADAPTER_INCIDENT_SECTION,
   ADAPTER_LIFECYCLE_SECTION,
@@ -6286,6 +6290,316 @@ const ADAPTER_GENERATED_PAIRS = [
 function adapterOwnerSection(heading) {
   return markdownSection(read(ADAPTER_OWNER), heading);
 }
+
+const ORIGINAL_OWNER_FINALIZATION_REQUIREMENTS = [
+  ['only the original live owner at the matched first Assessment exchange is eligible',
+    'Inside the existing autonomous Lightweight runner', [[
+      /whether Work was entered directly or through Ship/,
+      /only when the original still-running owner receives an invalid or stale Assessment payload/,
+      /correctly matched first Assessment exchange for that claim/,
+      /rejection of the supplied value does not itself qualify/,
+      /stale ownership artifacts, which always disqualify this release/,
+    ]]],
+  ['live capabilities and fresh exact ownership bindings are required',
+    'The originally admitted', [[
+      /supervisor, worker, and adapter capabilities remain live and unchanged/,
+      /adapter still holds the authoritative accepted Work state/,
+      /Fresh checks must match the exact workspace, canonical target, defined owner, lane, task mapping and prestate/,
+      /complete settled claim\/checkpoint pair/,
+    ]]],
+  ['only successful read-only Inspections and no authorization or effects are eligible',
+    'Since the claim was admitted', [[
+      /every entered adapter operation has been a successful read-only Inspection/,
+      /No attempt authorization request, implementation or specialist dispatch/,
+      /side-effecting runtime or lane operation, or governance transition has been entered/,
+      /Unchanged counters alone do not establish this condition/,
+    ]]],
+  ['accepted state and prior accounting stay unchanged with no unfinished obligations',
+    'Canonical accepted-state', [[
+      /bytes, hash, and revision still equal admission/,
+      /including any nonzero accounting carried into this claim/,
+      /No pending attempt, completion, effect, correction/,
+      /unfinished learning, evaluation, projection, receipt, audit, or settlement obligation may remain/,
+    ]]],
+  ['only a settled first exchange with retained terminal evidence qualifies',
+    'The first exchange envelope', [[
+      /is correctly bound and settled/,
+      /runner has retained the original terminal row and halt evidence before release/,
+      /Malformed or missing envelopes, foreign, replayed, or out-of-order responses/,
+      /cancellation, missing exchange capability, EOF, transport or context loss/,
+      /later Assessment, recovery, governance, specialist, or capacity failures do not enter this exception/,
+      /A reason label alone grants no release authority/,
+    ]]],
+  ['one guarded existing end call rechecks the exact pair before removal',
+    'behind these guards', [[
+      /runner makes at most one call/,
+      /existing `end\('hard-stop-recorded'\)` boundary/,
+      /complete claim and checkpoint hashes are retained, validated as a pair, and rechecked at each removal boundary/,
+      /checkpoint is removed before the claim/,
+      /both artifacts must be freshly absent before cleanup succeeds/,
+      /neither atomic two-file deletion nor rollback, crash-proof result delivery/,
+    ]]],
+  ['cleanup preserves the hard stop and proves neither success nor supervisor death',
+    'Finalization never changes the Work decision', [[
+      /preserves the original `hard-stop` outcome, reason, detail, halt report, accepted state, counters, and history/,
+      /leaves task and lane state unchanged/,
+      /reports only resource disposition, not execution success or supervisor-death proof/,
+      /an `orphan` flag describes unresolved artifacts and does not prove that the supervisor died/,
+      /CLI emits one nonzero terminal result/,
+      /no cleanup prompt, extra challenge, correction, retry, dispatch, or new claim/,
+    ]]],
+  ['a later run needs explicit execution and fresh admission and cannot revive old work',
+    'A later Work or Ship run requires', [[
+      /separate explicit execution request and normal fresh admission/,
+      /including fresh absence and ownership checks/,
+      /Cleanup never starts another invocation, revives old RunState, continues the stopped goal, completes the task/,
+      /True orphans retain the independently confirmed supervisor-absence, exact-pair manual cleanup, and post-clean absence and admission rules/,
+      /Cancellation and supervisor, context, identity, or RunState loss keep their existing stops/,
+      /Successful same-invocation next-ready continuation and all learning, verification, review, settlement, close, and budget authority remain unchanged/,
+      /Never move this exception into Ship's pre-Work policy/,
+    ]]],
+];
+
+const ORIGINAL_OWNER_FINALIZATION_DOC_REQUIREMENTS = [
+  ['docs limit eligibility to the original live owner and matched first Assessment exchange',
+    'Autonomous Lightweight Work', [[
+      /whether entered directly or through Ship/,
+      /first Assessment exchange rejects an invalid or stale payload/,
+      /original still-running owner may release only its own unchanged claim\/checkpoint pair/,
+      /supplied rejection alone does not authorize cleanup/,
+      /Stale Assessment input is distinct from stale ownership artifacts, which make cleanup ineligible/,
+    ]]],
+  ['docs require unchanged live authority, read-only provenance, state, accounting, and pair',
+    'Eligibility requires', [[
+      /original retained supervisor, worker, and adapter capabilities and authoritative state/,
+      /only successful read-only Inspections since the claim/,
+      /no authorization request, dispatch, side-effecting lane or runtime operation, or governance transition/,
+      /unchanged accepted bytes, hash, revision, and prior accounting/,
+      /no pending or unfinished obligation/,
+      /fresh workspace, target, exact-owner, lane, task, and prestate agreement/,
+      /complete settled pair matching both retained hashes/,
+      /Unchanged counters or a rejection reason alone are insufficient/,
+    ]]],
+  ['docs exclude envelope, cancellation, transport, context, and later failures',
+    'Malformed, missing, foreign, replayed, or out-of-order response envelopes', [[
+      /cancellation, missing exchange capability, EOF, transport or context loss/,
+      /later Assessment, recovery, governance, specialist, or capacity failures keep their existing stop and orphan behavior/,
+      /retains the original terminal and halt evidence/,
+      /at most one call behind the eligibility guards to its existing end boundary/,
+      /rechecks the exact pair at each removal boundary/,
+      /reports success only after both artifacts are absent/,
+      /not atomic and promises no rollback or crash-proof result delivery/,
+    ]]],
+  ['docs preserve one nonzero hard stop and deny success, death proof, or restart actions',
+    'The CLI', [[
+      /still returns one nonzero hard-stop result/,
+      /original reason, detail, accepted state, accounting, history, and unchanged task and lane state/,
+      /mean only that the original owner's resources were released/,
+      /`orphan` never proves supervisor death/,
+      /no prompt, extra exchange, retry, dispatch, replacement claim, or automatic continuation/,
+    ]]],
+  ['docs require a later explicit request and preserve real-orphan and existing Work rules',
+    'A later Work or Ship run needs', [[
+      /separate explicit request and fresh admission/,
+      /Cleanup cannot revive old RunState, continue the goal, complete the task/,
+      /True orphans retain the existing independently confirmed supervisor-absence, exact-pair manual cleanup, and post-clean admission rules/,
+      /Cancellation, supervisor or context loss, successful same-invocation next-ready work/,
+      /existing learning, verification, review, settlement, close, and budget rules are unchanged/,
+      /not a new command or a Ship pre-Work policy/,
+    ]]],
+];
+
+const ORIGINAL_OWNER_FINALIZATION_FALSIFIERS = [
+  [
+    'only the original live owner at the matched first Assessment exchange is eligible',
+    'correctly matched first Assessment exchange for that claim',
+  ],
+  [
+    'only successful read-only Inspections and no authorization or effects are eligible',
+    'every entered adapter operation has been a successful read-only Inspection',
+  ],
+  [
+    'accepted state and prior accounting stay unchanged with no unfinished obligations',
+    'including any nonzero accounting carried into this claim',
+  ],
+  [
+    'a later run needs explicit execution and fresh admission and cannot revive old work',
+    'separate explicit execution request and normal fresh admission',
+  ],
+  [
+    'a later run needs explicit execution and fresh admission and cannot revive old work',
+    'independently confirmed supervisor-absence, exact-pair manual cleanup, and post-clean absence and admission rules',
+  ],
+];
+
+const ORIGINAL_OWNER_FINALIZATION_DOC_FALSIFIERS = [
+  [
+    'docs limit eligibility to the original live owner and matched first Assessment exchange',
+    'first Assessment exchange rejects an invalid or stale payload',
+  ],
+  [
+    'docs require unchanged live authority, read-only provenance, state, accounting, and pair',
+    'only successful read-only Inspections since the claim',
+  ],
+  [
+    'docs require unchanged live authority, read-only provenance, state, accounting, and pair',
+    'unchanged accepted bytes, hash, revision, and prior accounting',
+  ],
+  [
+    'docs require a later explicit request and preserve real-orphan and existing Work rules',
+    'separate explicit request and fresh admission',
+  ],
+  [
+    'docs require a later explicit request and preserve real-orphan and existing Work rules',
+    'independently confirmed supervisor-absence, exact-pair manual cleanup, and post-clean admission rules',
+  ],
+];
+
+/**
+ * Keep each finalization rule in its named section and prove that deleting one
+ * normalized clause fails even when the same words remain elsewhere.
+ * @param {string} section
+ * @param {Array<[string, string, RegExp[] | RegExp[][]]>} requirements
+ * @param {Array<[string, string]>} falsifiers
+ * @param {string} context
+ */
+function assertOriginalOwnerFinalizationGuidance(section, requirements, falsifiers, context) {
+  assertShipParagraphRequirements(section, requirements, context);
+
+  for (const [label, target] of falsifiers) {
+    const matches = requirements.filter(([requirementLabel]) => requirementLabel === label);
+    assert.equal(matches.length, 1, `${context}: one requirement owns ${label}`);
+    const requirement = matches[0];
+    const { anchor } = paragraphRequirement(requirement);
+    assert.notEqual(anchor, null, `${context}: ${label} has a bounded block anchor`);
+    const blocks = anchoredRuleBlocks(section, /** @type {string} */ (anchor));
+    assert.equal(blocks.length, 1, `${context}: ${label} has one section-bound owning block`);
+    const [block] = blocks;
+    const normalizedTarget = normalizeMarkdownBlock(target);
+    assert.equal(
+      block.normalized.split(normalizedTarget).length - 1,
+      1,
+      `${context}: ${label} has one normalized clause-deletion target`,
+    );
+
+    const rewrapped = section.replace(
+      block.raw,
+      block.normalized.replace(normalizedTarget, normalizedTarget.replace(' ', '\n  ')),
+    );
+    assert.equal(
+      missingParagraphRequirements(rewrapped, [requirement]).includes(label),
+      false,
+      `${context}: whitespace-only rewrap preserves ${label}`,
+    );
+
+    const deleted = section.replace(
+      block.raw,
+      block.normalized.replace(normalizedTarget, ''),
+    );
+    const maskedElsewhere = `${deleted}\n\nSimilar wording outside the owning block: ${normalizedTarget}`;
+    assert.ok(
+      missingParagraphRequirements(maskedElsewhere, [requirement]).includes(label),
+      `${context}: deleting ${label} fails even when similar words remain elsewhere`,
+    );
+  }
+}
+
+test('T003 original-owner first-Assessment finalization guidance is section-bound and deletion-falsifiable', () => {
+  const owner = adapterOwnerSection(ORIGINAL_OWNER_FINALIZATION_SECTION);
+  const docs = markdownSection(read('docs/commands.md'), ORIGINAL_OWNER_FINALIZATION_DOC_SECTION);
+
+  assert.deepEqual(
+    [ORIGINAL_OWNER_FINALIZATION_SECTION, ORIGINAL_OWNER_FINALIZATION_DOC_SECTION]
+      .map((heading) => `#${heading.replace(/^#{1,6}\s+/, '').toLowerCase().replace(/\s+/g, '-')}`),
+    [ORIGINAL_OWNER_FINALIZATION_ANCHOR, ORIGINAL_OWNER_FINALIZATION_ANCHOR],
+    'both exact headings expose the stable finalization anchor',
+  );
+  assertOriginalOwnerFinalizationGuidance(
+    owner,
+    ORIGINAL_OWNER_FINALIZATION_REQUIREMENTS,
+    ORIGINAL_OWNER_FINALIZATION_FALSIFIERS,
+    `${ADAPTER_OWNER} ${ORIGINAL_OWNER_FINALIZATION_SECTION}`,
+  );
+  assertOriginalOwnerFinalizationGuidance(
+    docs,
+    ORIGINAL_OWNER_FINALIZATION_DOC_REQUIREMENTS,
+    ORIGINAL_OWNER_FINALIZATION_DOC_FALSIFIERS,
+    `docs/commands.md ${ORIGINAL_OWNER_FINALIZATION_DOC_SECTION}`,
+  );
+});
+
+test('T003 original-owner first-Assessment finalization guidance matches the guarded runtime boundary', () => {
+  const runner = read(ADAPTER_RUNNER_SOURCE);
+  const adapter = read(ADAPTER_SOURCE);
+
+  assert.match(
+    runner,
+    /const finalize = allowInitial && challengeCount === 1\s+&& consumedChallenges\.size === 1 && outstandingChallenge === null/,
+    'only the correctly settled first Assessment exchange can nominate finalization',
+  );
+  assert.match(runner, /if \(adapter !== admittedAdapter\) return refuse\('owner-context-changed'\)/);
+  assert.match(
+    runner,
+    /current\.acceptedStateBytes !== admitted\.acceptedStateBytes[\s\S]{0,512}terminal\.acceptedRevision !== admittedRow\.acceptedRevision/,
+    'accepted source and terminal state must still equal admission',
+  );
+  assert.match(
+    runner,
+    /steps\.slice\(1, -1\)\.every\(step => \([\s\S]{0,320}step\.reason === 'inspection-refreshed'/,
+    'step provenance admits only successful read-only Inspections',
+  );
+  assert.match(
+    runner,
+    /current\.pendingEffect !== null \|\| current\.correction !== null \|\| current\.recoveryNotice !== null[\s\S]{0,640}return refuse\('owner-obligations-pending'\)/,
+    'pending runtime, evidence, and governance obligations refuse finalization',
+  );
+  assert.match(
+    runner,
+    /canonicalJson\(checkpointWorkspace\(freshLaneBinding\(root, target, owner\), root\)\)[\s\S]{0,192}canonicalJson\(admittedWorkspace\)/,
+    'fresh owner, lane, task, and prestate bindings must still match admission',
+  );
+  assert.equal(
+    [...runner.matchAll(/admittedAdapter\.end\('hard-stop-recorded'\)/g)].length,
+    1,
+    'the runner has one original-owner hard-stop release call',
+  );
+  assert.match(
+    runner,
+    /const terminal = \{[\s\S]{0,320}haltReport,[\s\S]{0,160}\};[\s\S]{0,480}\? finalizeRejectedAssessment\(terminal\)/,
+    'the terminal result and halt evidence are retained before finalization',
+  );
+  assert.match(
+    runner,
+    /ended\.outcome === 'ended' && ended\.reason === 'hard-stop-recorded'\s+\? \{ cleanup: 'cleared', orphan: false \}/,
+    'only a successful guarded end reports cleared non-orphan resources',
+  );
+
+  assert.match(
+    adapter,
+    /reason === 'hard-stop-recorded' && current\.status === 'active'[\s\S]{0,320}\.mode === 'autonomous'/,
+    'the adapter admits the release only for the original active autonomous owner',
+  );
+  assert.match(
+    adapter,
+    /survivingAuthorityFailure\(current, ports, host, \{\s+requireSupervisor: true,\s+requireSettled: true,\s+\}\)/,
+    'the adapter freshly requires the supervisor and settled pair',
+  );
+
+  const cleanupOrder = [
+    'fs.rmSync(checkpointPath);',
+    'must establish checkpoint absence before claim removal',
+    'parseClaim(claimBytes).claimHash !== expectation.claimHash',
+    'must keep the checkpoint absent before claim removal',
+    'fs.rmSync(claimPath);',
+    'must leave no ownership claim or checkpoint behind',
+  ].map((needle) => adapter.indexOf(needle));
+  assert.equal(cleanupOrder.includes(-1), false, 'the exact-pair removal guards are present');
+  assert.deepEqual(
+    cleanupOrder,
+    [...cleanupOrder].sort((left, right) => left - right),
+    'checkpoint removal, pair rechecks, claim removal, and final absence stay ordered',
+  );
+});
 
 test('T003 the adapter owns every ordinary Work runtime route', () => {
   const boundary = adapterOwnerSection(ADAPTER_BOUNDARY_SECTION);
@@ -6356,7 +6670,9 @@ test('T003 the adapter owns every ordinary Work runtime route', () => {
       [
         /exposes only async `runHostAdapter`/,
         /same live supervisor, adapter, current run, captures, pending effects, and replay ledger/,
-        /returns only `ended` or a genuine hard-stop orphan/,
+        /returns one terminal `ended` or `hard-stop` result/,
+        /narrow original-owner release below can make that hard stop non-orphan without turning it into an `ended` result/,
+        /other unresolved hard stops retain their existing orphan behavior/,
         /optional `dependencies\.exchange\(challenge\)` capability/,
         /exactly one bound `assessment`, `specialist-pair`, or `learning-review` challenge and response at a time/,
       ],
@@ -6383,8 +6699,11 @@ test('T003 the adapter owns every ordinary Work runtime route', () => {
         /`challenge-response-stale` applies only when the initial failure is the known noncurrent evidence hash/,
         /replacing only that field in an inert snapshot makes the whole Assessment valid/,
         /every other malformed Assessment or envelope is `challenge-response-invalid`/,
-        /malformed envelopes and exchange failures use fixed runner-owned detail/,
-        /never rejected strings, paths, evidence, hashes, exception messages, unknown field names, or validator messages/,
+        /Assessment payload rejection uses a fixed runner-owned failure class/,
+        /malformed envelopes and exchange failures use their own fixed runner-owned detail/,
+        /none may expose rejected strings, paths, evidence, hashes, exception messages, unknown field names, or validator messages/,
+        /payload rejection enters `### Original-Owner First-Assessment Finalization` only at that section's exact provenance and eligibility boundary/,
+        /Otherwise both rejection labels keep the existing terminal orphan hard stop with no retry, correction, cleanup, or path normalization/,
       ],
     ]],
     ['autonomous attestation is cooperative and host-derived', [
@@ -6586,6 +6905,12 @@ test('T003 checkpoint lifecycle keeps one exclusive claim and confirmed bounded-
     ['a failed clear blocks replacement instead of reporting an end', [
       [/A failed clear never reports an end/, /blocks replacement work/],
     ]],
+    ['the automatic release is one pre-authorization exception and broadens no other hard stop', [
+      [
+        /only automatic pre-authorization hard-stop release is `### Original-Owner First-Assessment Finalization`/,
+        /does not broaden any later or unrelated hard stop/,
+      ],
+    ]],
     ['age is diagnostic and authorizes nothing', [
       [
         /Creation and update times are diagnostic only/,
@@ -6606,6 +6931,12 @@ test('T003 checkpoint lifecycle keeps one exclusive claim and confirmed bounded-
         /Manual removal then targets only that bounded pair/,
         /post-clean load and claim preflight must prove both artifacts absent before a fresh exclusive claim/,
         /Partial cleanup, a changed artifact, reappearance, operation failure, or failed absence validation is a hard stop/,
+      ],
+    ]],
+    ['manual cleanup permits only later fresh admission and never revives prior authority', [
+      [
+        /Manual cleanup permits only a later user-authorized clean claim after existing cleanup and preflight requirements/,
+        /never a takeover, orphan resume, or cross-session continuation/,
       ],
     ]],
   ]);

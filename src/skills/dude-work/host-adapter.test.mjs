@@ -6,7 +6,8 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { test as nodeTest } from 'node:test';
+import { beforeEach, test as nodeTest } from 'node:test';
+import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 import { applyLightweightWorkRequest } from '../dude-lightweight-execution/board.mjs';
@@ -26,6 +27,7 @@ import {
   currentRunCapture,
   deriveEarliestRepeatRelationshipV1,
   deriveFailedApproachSetV1,
+  deriveSequenceIdentity,
   describeUnattendedHalt,
   inspect,
   inspectRetainedOccurrencesV2,
@@ -65,6 +67,9 @@ import {
   withHistoryIncidentWorkspace,
   withReferenceWorkspace,
 } from '../../../scripts/fixtures/064-work-receipt-overflow-handling/model-view-test-helpers.mjs';
+
+// Let completed test reports and child I/O drain before another CPU-heavy fixture.
+beforeEach(() => yieldToEventLoop());
 
 const {
   createHostAdapter: createAuthorizedHostAdapter,
@@ -2639,6 +2644,16 @@ function rewriteCheckpointRecord(root, key, mutate) {
   return next;
 }
 
+/** @param {string} root @param {string} key @param {(claim:Record<string, unknown>)=>void} mutate */
+function rewriteCheckpointClaim(root, key, mutate) {
+  const claim = JSON.parse(fs.readFileSync(artifactPath(root, key, 'claim'), 'utf8'));
+  delete claim.claimHash;
+  mutate(claim);
+  const next = { ...claim, claimHash: sha256(canonicalJson(claim)) };
+  fs.writeFileSync(artifactPath(root, key, 'claim'), canonicalJson(next), 'utf8');
+  return next;
+}
+
 /** @param {Record<string, unknown>} [overrides] */
 function checkpointInitial(overrides = {}) {
   return { ...sealedInitial(overrides), workspace: { ...WORKSPACE } };
@@ -2650,6 +2665,31 @@ function checkpointAdapter(root, dependencies = {}, overrides = {}) {
     checkpoint: createTemporaryCheckpointStore({ root }),
     .../** @type {Record<string, unknown>} */ (dependencies),
   });
+}
+
+/** @param {Record<string, unknown>} checkpoint */
+function checkpointClaim(checkpoint) {
+  const body = {
+    version: 1,
+    checkpointKey: checkpoint.checkpointKey,
+    invocationIdentity: checkpoint.invocationIdentity,
+    workerToken: checkpoint.workerToken,
+    workerGeneration: checkpoint.workerGeneration,
+    createdAt: checkpoint.createdAt,
+  };
+  return { ...body, claimHash: sha256(canonicalJson(body)) };
+}
+
+/** @param {string} root @param {string} key */
+function retainedCheckpointExpectation(root, key) {
+  const claim = JSON.parse(fs.readFileSync(artifactPath(root, key, 'claim'), 'utf8'));
+  const checkpoint = readCheckpointRecord(root, key);
+  return {
+    claimHash: claim.claimHash,
+    recordHash: checkpoint.recordHash,
+    acceptedRevision: checkpoint.acceptedRevision,
+    hostRevision: checkpoint.hostRevision,
+  };
 }
 
 let memoryStoreOrdinal = 0;
@@ -2688,17 +2728,27 @@ function memoryCheckpointStore(overrides = {}) {
   };
   /** @param {Record<string, unknown>} worker @param {Record<string, unknown>} expected @param {string} key */
   const ownershipFailure = (worker, expected, key) => {
+    assert.deepEqual(Object.keys(expected).sort(), ['acceptedRevision', 'claimHash', 'hostRevision', 'recordHash']);
+    assert.match(expected.claimHash, /^[0-9a-f]{64}$/);
+    assert.match(expected.recordHash, /^[0-9a-f]{64}$/);
+    assert.ok(Number.isSafeInteger(expected.acceptedRevision) && expected.acceptedRevision >= 0);
+    assert.ok(Number.isSafeInteger(expected.hostRevision) && expected.hostRevision >= 0);
     if (pair.claim === null || pair.checkpoint === null) {
       return { version: 1, status: 'stale', checkpointKey: key, diagnostic: diagnostic(key, 'partial-artifacts') };
     }
     const current = /** @type {Record<string, unknown>} */ (pair.checkpoint);
     if (current.invocationIdentity !== worker.invocationIdentity
+      || pair.claim.invocationIdentity !== worker.invocationIdentity
+      || current.checkpointKey !== key || pair.claim.checkpointKey !== key
       || current.workerToken !== worker.workerToken
       || current.workerGeneration !== worker.workerGeneration) {
       return { version: 1, status: 'stale', checkpointKey: key, diagnostic: diagnostic(key, 'worker-not-active') };
     }
     if (current.acceptedRevision !== expected.acceptedRevision || current.hostRevision !== expected.hostRevision) {
       return { version: 1, status: 'stale', checkpointKey: key, diagnostic: diagnostic(key, 'revision-mismatch') };
+    }
+    if (current.recordHash !== expected.recordHash || pair.claim.claimHash !== expected.claimHash) {
+      return { version: 1, status: 'stale', checkpointKey: key, diagnostic: diagnostic(key, 'artifact-hash-mismatch') };
     }
     return null;
   };
@@ -2711,14 +2761,9 @@ function memoryCheckpointStore(overrides = {}) {
       if (pair.claim !== null || pair.checkpoint !== null) {
         return { version: 1, status: 'occupied', checkpointKey: key, diagnostic: diagnostic(key, 'ownership-claim-active') };
       }
-      pair.claim = {
-        invocationIdentity: next.invocationIdentity,
-        workerToken: next.workerToken,
-        workerGeneration: next.workerGeneration,
-        createdAt: next.createdAt,
-      };
+      pair.claim = checkpointClaim(next);
       pair.checkpoint = clone(next);
-      return { version: 1, status: 'claimed', checkpointKey: key, record: clone(next) };
+      return { version: 1, status: 'claimed', checkpointKey: key, record: clone(next), claimHash: pair.claim.claimHash };
     },
     load(binding) {
       const key = keyOf(binding);
@@ -2730,7 +2775,7 @@ function memoryCheckpointStore(overrides = {}) {
       if (pair.claim === null || pair.checkpoint === null) {
         return { version: 1, status: 'corrupt', checkpointKey: key, diagnostic: diagnostic(key, 'partial-artifacts') };
       }
-      return { version: 1, status: 'loaded', checkpointKey: key, record: clone(pair.checkpoint) };
+      return { version: 1, status: 'loaded', checkpointKey: key, record: clone(pair.checkpoint), claimHash: pair.claim.claimHash };
     },
     update(binding, worker, expected, next) {
       const key = keyOf(binding);
@@ -2739,7 +2784,7 @@ function memoryCheckpointStore(overrides = {}) {
       const stale = ownershipFailure(worker, expected, key);
       if (stale) return stale;
       pair.checkpoint = clone(next);
-      return { version: 1, status: 'updated', checkpointKey: key, record: clone(next) };
+      return { version: 1, status: 'updated', checkpointKey: key, record: clone(next), claimHash: pair.claim.claimHash };
     },
     handoff(binding, prior, replacement, expected, next) {
       const key = keyOf(binding);
@@ -2757,14 +2802,13 @@ function memoryCheckpointStore(overrides = {}) {
         return { version: 1, status: 'stale', checkpointKey: key, diagnostic: diagnostic(key, 'replacement-not-fresh') };
       }
       pair.checkpoint = clone(next);
-      return { version: 1, status: 'handed-off', checkpointKey: key, record: clone(next) };
+      return { version: 1, status: 'handed-off', checkpointKey: key, record: clone(next), claimHash: pair.claim.claimHash };
     },
-    clear(binding, worker, expectedHostRevision, reason) {
+    clear(binding, worker, expected, reason) {
       const key = keyOf(binding);
       const fault = faulted('clear', key);
       if (fault) return fault;
-      const current = /** @type {Record<string, unknown>} */ (pair.checkpoint);
-      if (current && (current.workerToken !== worker.workerToken || current.hostRevision !== expectedHostRevision)) {
+      if (ownershipFailure(worker, expected, key)) {
         return { version: 1, status: 'failed', checkpointKey: key, reason: `clear-not-active:${reason}` };
       }
       pair.claim = null;
@@ -3510,13 +3554,560 @@ nodeTest('every allowed terminal boundary clears the bounded pair exactly once',
   });
 });
 
+for (const kind of ['claim', 'checkpoint']) {
+  nodeTest(`056 owner finalization refuses an independently rehashed ${kind} before deletion`, (context) => {
+    withTemporaryRoot((root) => {
+      const key = derivedCheckpointKey();
+      const store = createTemporaryCheckpointStore({ root });
+      const worker = checkpointAdapter(root, { checkpoint: store });
+      const before = worker.snapshot();
+      const originalClaim = fs.readFileSync(artifactPath(root, key, 'claim'), 'utf8');
+      const originalCheckpoint = readCheckpointRecord(root, key);
+      if (kind === 'claim') {
+        rewriteCheckpointClaim(root, key, (claim) => { claim.createdAt = '2000-01-01T00:00:00.000Z'; });
+      } else {
+        rewriteCheckpointRecord(root, key, (checkpoint) => {
+          checkpoint.inspectionIdentity = sha256('056 changed checkpoint inspection');
+        });
+      }
+      const claimBytes = fs.readFileSync(artifactPath(root, key, 'claim'), 'utf8');
+      const checkpointBytes = fs.readFileSync(artifactPath(root, key, 'checkpoint'), 'utf8');
+      const { claimHash, ...claimBody } = JSON.parse(claimBytes);
+      const { recordHash, ...checkpointBody } = JSON.parse(checkpointBytes);
+      assert.equal(claimHash, sha256(canonicalJson(claimBody)));
+      assert.equal(recordHash, sha256(canonicalJson(checkpointBody)));
+      assert.equal(checkpointBody.acceptedRevision, originalCheckpoint.acceptedRevision);
+      assert.equal(checkpointBody.hostRevision, originalCheckpoint.hostRevision);
+      assert.equal(claimBody.invocationIdentity, before.invocationIdentity);
+      assert.equal(checkpointBody.invocationIdentity, before.invocationIdentity);
+      assert.equal(claimBody.workerToken, before.workerToken);
+      assert.equal(checkpointBody.workerToken, before.workerToken);
+      assert.equal(claimBody.workerGeneration, before.workerGeneration);
+      assert.equal(checkpointBody.workerGeneration, before.workerGeneration);
+      assert.equal(
+        kind === 'claim' ? checkpointBytes : claimBytes,
+        kind === 'claim' ? canonicalJson(originalCheckpoint) : originalClaim,
+        'the companion artifact remains valid and unchanged',
+      );
+      assert.equal(store.load({
+        version: 1,
+        workspaceIdentity: WORKSPACE.workspaceIdentity,
+        target: clone(TARGET),
+        ownerIdentity: WORKSPACE.ownerIdentity,
+      }).status, 'loaded', 'both canonical artifacts pass parsing before the retained-version check');
+
+      const removals = [];
+      const remove = fs.rmSync;
+      const mocked = context.mock.method(fs, 'rmSync', (target, options) => {
+        removals.push(target);
+        return remove(target, options);
+      });
+      try {
+        const stopped = worker.end('hard-stop-recorded');
+        assert.equal(stopped.outcome, 'hard-stop');
+        assert.equal(stopped.reason, 'checkpoint-cleanup-failed');
+        assert.deepEqual(removals, []);
+        assert.deepEqual(acceptedAuthorityTuple(stopped.session), acceptedAuthorityTuple(before));
+        assert.equal(fs.readFileSync(artifactPath(root, key, 'claim'), 'utf8'), claimBytes);
+        assert.equal(fs.readFileSync(artifactPath(root, key, 'checkpoint'), 'utf8'), checkpointBytes);
+      } finally {
+        mocked.mock.restore();
+      }
+    });
+  });
+}
+
+for (const kind of ['claim', 'checkpoint']) {
+  for (const fault of ['missing', 'corrupt', 'noncanonical', 'oversize', 'directory']) {
+    nodeTest(`056 owner finalization refuses ${fault} ${kind} artifacts without removing the companion`, (context) => {
+      withTemporaryRoot((root) => {
+        const key = derivedCheckpointKey();
+        const worker = checkpointAdapter(root);
+        const target = artifactPath(root, key, kind);
+        const companion = artifactPath(root, key, kind === 'claim' ? 'checkpoint' : 'claim');
+        const companionBytes = fs.readFileSync(companion, 'utf8');
+        if (fault === 'missing' || fault === 'directory') fs.rmSync(target);
+        if (fault === 'directory') fs.mkdirSync(target);
+        if (fault === 'corrupt') fs.writeFileSync(target, '{', 'utf8');
+        if (fault === 'noncanonical') fs.appendFileSync(target, ' ', 'utf8');
+        if (fault === 'oversize') fs.writeFileSync(target, 'x'.repeat(65_537), 'utf8');
+        const remove = context.mock.method(fs, 'rmSync', () => assert.fail('initial refusal must remove neither artifact'));
+        try {
+          const stopped = worker.end('hard-stop-recorded');
+          assert.equal(stopped.outcome, 'hard-stop');
+          assert.equal(stopped.reason, 'checkpoint-cleanup-failed');
+          assert.equal(remove.mock.callCount(), 0);
+          assert.equal(fs.readFileSync(companion, 'utf8'), companionBytes);
+          assert.equal(fs.existsSync(target), fault !== 'missing');
+        } finally {
+          remove.mock.restore();
+        }
+      });
+    });
+  }
+}
+
+for (const [label, mutate, detail] of [
+  ['foreign invocation', (_binding, worker) => { worker.invocationIdentity = sha256('056 foreign invocation'); }, 'worker-not-active'],
+  ['wrong worker token', (_binding, worker) => { worker.workerToken = sha256('056 wrong worker'); }, 'worker-not-active'],
+  ['wrong worker generation', (_binding, worker) => { worker.workerGeneration += 1; }, 'worker-not-active'],
+  ['wrong accepted revision', (_binding, _worker, expected) => { expected.acceptedRevision += 1; }, 'revision-mismatch'],
+  ['wrong host revision', (_binding, _worker, expected) => { expected.hostRevision += 1; }, 'revision-mismatch'],
+  ['missing claim hash', (_binding, _worker, expected) => { delete expected.claimHash; }, 'claimHash'],
+  ['missing record hash', (_binding, _worker, expected) => { delete expected.recordHash; }, 'recordHash'],
+  ['malformed claim hash', (_binding, _worker, expected) => { expected.claimHash = 'bad'; }, 'claimHash'],
+  ['malformed record hash', (_binding, _worker, expected) => { expected.recordHash = 'bad'; }, 'recordHash'],
+  ['foreign claim hash', (_binding, _worker, expected) => { expected.claimHash = sha256('056 foreign claim'); }, 'artifact-hash-mismatch'],
+  ['foreign record hash', (_binding, _worker, expected) => { expected.recordHash = sha256('056 foreign record'); }, 'artifact-hash-mismatch'],
+  ['wrong owner', (binding) => { binding.ownerIdentity = sha256('056 wrong owner'); }, 'artifact-binding-mismatch'],
+  ['wrong workspace', (binding) => { binding.workspaceIdentity = sha256('056 wrong workspace'); }, 'artifacts-absent'],
+  ['wrong target', (binding) => { binding.target = clone(SECOND_TARGET); }, 'artifacts-absent'],
+]) {
+  nodeTest(`056 owner finalization refuses ${label} with an otherwise valid pair`, (context) => {
+    withTemporaryRoot((root) => {
+      const key = derivedCheckpointKey();
+      const store = createTemporaryCheckpointStore({ root });
+      let clearCalls = 0;
+      let checkedRefusal = false;
+      const worker = checkpointAdapter(root, {
+        checkpoint: {
+          ...store,
+          clear(binding, active, expected, reason) {
+            clearCalls += 1;
+            assert.deepEqual(expected, retainedCheckpointExpectation(root, key));
+            const suppliedBinding = clone(binding);
+            mutate(suppliedBinding, active, expected);
+            const result = store.clear(suppliedBinding, active, expected, reason);
+            assert.equal(result.status, 'failed');
+            assert.match(result.reason, new RegExp(detail));
+            checkedRefusal = true;
+            return result;
+          },
+        },
+      });
+      const before = retainedCheckpointExpectation(root, key);
+      const remove = context.mock.method(fs, 'rmSync', () => assert.fail('invalid authority must remove neither artifact'));
+      try {
+        const stopped = worker.end('hard-stop-recorded');
+        assert.equal(stopped.reason, 'checkpoint-cleanup-failed');
+        assert.equal(stopped.outcome, 'hard-stop');
+        assert.equal(checkedRefusal, true, 'the intended store guard, not a port assertion, refused');
+        assert.deepEqual(retainedCheckpointExpectation(root, key), before);
+        assert.equal(worker.end('hard-stop-recorded').outcome, 'hard-stop');
+        assert.equal(worker.end('natural-end').outcome, 'hard-stop');
+        assert.equal(clearCalls, 1, 'a failed cleanup is never retried');
+        assert.equal(remove.mock.callCount(), 0);
+      } finally {
+        remove.mock.restore();
+      }
+    });
+  });
+}
+
+for (const operation of ['claim', 'load', 'update', 'handoff']) {
+  for (const fault of ['missing', 'malformed', 'changed']) {
+    nodeTest(`056 owner finalization rejects a ${fault} claim hash in the ${operation} result`, () => {
+      withTemporaryRoot((root) => {
+        const key = derivedCheckpointKey();
+        const store = createTemporaryCheckpointStore({ root });
+        let corruptResult = operation === 'claim';
+        let corruptions = 0;
+        let clearExpectation;
+        const port = {
+          ...store,
+          [operation](...args) {
+            const result = store[operation](...args);
+            if (corruptResult && result.record) {
+              corruptions += 1;
+              if (fault === 'missing') delete result.claimHash;
+              else result.claimHash = fault === 'malformed' ? 'bad' : sha256('056 substituted claim hash');
+            }
+            return result;
+          },
+          clear(binding, worker, expected, reason) {
+            clearExpectation = clone(expected);
+            return store.clear(binding, worker, expected, reason);
+          },
+        };
+        const worker = checkpointAdapter(root, { checkpoint: port });
+        const initialExpectation = retainedCheckpointExpectation(root, key);
+        const claimBytes = fs.readFileSync(artifactPath(root, key, 'claim'), 'utf8');
+        let stopped;
+        corruptResult = true;
+        if (operation === 'claim') {
+          stopped = { outcome: worker.snapshot().status, reason: worker.snapshot().disposition };
+        } else if (operation === 'handoff') {
+          const before = worker.snapshot();
+          stopped = handoffHostWorker(handoffInput(before.invocationIdentity, before), supervisorPorts(port));
+          assert.equal(stopped.receipt, null);
+        } else {
+          stopped = worker.run(sealedResultRequest(worker));
+        }
+        assert.equal(stopped.outcome, 'hard-stop');
+        assert.equal(stopped.reason, operation === 'load'
+          ? fault === 'changed' ? 'checkpoint-drift' : 'checkpoint-corrupt'
+          : `checkpoint-${operation}-failed`);
+        assert.equal(corruptions, 1, 'the intended successful result reached the closed-result validator');
+        assert.equal(fs.readFileSync(artifactPath(root, key, 'claim'), 'utf8'), claimBytes);
+        if (operation === 'update') {
+          // The store wrote the next checkpoint, but its invalid response must
+          // not advance either of the host's retained expectations.
+          assert.notEqual(readCheckpointRecord(root, key).recordHash, initialExpectation.recordHash);
+          assert.equal(worker.end('hard-stop-recorded').reason, 'checkpoint-cleanup-failed');
+          assert.deepEqual(clearExpectation, initialExpectation);
+          assert.equal(fs.existsSync(artifactPath(root, key, 'checkpoint')), true);
+        }
+      });
+    });
+  }
+}
+
+for (const operation of ['update', 'handoff']) {
+  for (const kind of ['claim', 'checkpoint']) {
+    nodeTest(`056 owner finalization refuses rehashed ${kind} drift at the ${operation} port`, () => {
+      withTemporaryRoot((root) => {
+        const key = derivedCheckpointKey();
+        const store = createTemporaryCheckpointStore({ root });
+        let changedBytes;
+        let driftChecks = 0;
+        const port = {
+          ...store,
+          [operation](...args) {
+            if (kind === 'claim') {
+              rewriteCheckpointClaim(root, key, (claim) => { claim.createdAt = '2000-01-01T00:00:00.000Z'; });
+            } else {
+              rewriteCheckpointRecord(root, key, (checkpoint) => {
+                checkpoint.inspectionIdentity = sha256('056 drift at checkpoint port');
+              });
+            }
+            changedBytes = fs.readFileSync(artifactPath(root, key, kind), 'utf8');
+            const refused = store[operation](...args);
+            assert.equal(refused.status, 'stale');
+            assert.equal(refused.diagnostic.detail, 'artifact-hash-mismatch');
+            driftChecks += 1;
+            return refused;
+          },
+        };
+        const worker = checkpointAdapter(root, { checkpoint: port });
+        const before = worker.snapshot();
+        const stopped = operation === 'handoff'
+          ? handoffHostWorker(handoffInput(before.invocationIdentity, before), supervisorPorts(port))
+          : worker.run(sealedResultRequest(worker));
+        assert.equal(stopped.outcome, 'hard-stop');
+        assert.equal(driftChecks, 1);
+        assert.equal(fs.readFileSync(artifactPath(root, key, kind), 'utf8'), changedBytes);
+        assert.equal(readCheckpointRecord(root, key).hostRevision, before.hostRevision);
+        assert.equal(fs.readdirSync(artifactDirectory(root)).length, 2);
+      });
+    });
+  }
+}
+
+for (const kind of ['claim', 'checkpoint']) {
+  nodeTest(`056 owner finalization refuses rehashed ${kind} drift between handoff and resume`, () => {
+    withTemporaryRoot((root) => {
+      const key = derivedCheckpointKey();
+      const store = createTemporaryCheckpointStore({ root });
+      const calls = [];
+      const port = { ...store };
+      for (const operation of ['claim', 'load', 'update', 'handoff', 'clear']) {
+        port[operation] = (...args) => {
+          calls.push(operation);
+          return store[operation](...args);
+        };
+      }
+      const worker = checkpointAdapter(root, { checkpoint: port }, { state: emptyState('autonomous') });
+      const active = worker.snapshot();
+      const handed = handoffHostWorker(handoffInput(active.invocationIdentity, active), supervisorPorts(port));
+      assert.equal(handed.outcome, 'handed-off');
+      const originalClaim = fs.readFileSync(artifactPath(root, key, 'claim'), 'utf8');
+      const originalCheckpoint = fs.readFileSync(artifactPath(root, key, 'checkpoint'), 'utf8');
+      assert.equal(JSON.parse(originalCheckpoint).inFlight, null, 'handoff is settled before the drift');
+
+      if (kind === 'claim') {
+        rewriteCheckpointClaim(root, key, (claim) => { claim.createdAt = '2000-01-01T00:00:00.000Z'; });
+      } else {
+        rewriteCheckpointRecord(root, key, (checkpoint) => {
+          checkpoint.inspectionIdentity = sha256('056 changed inspection after settled handoff');
+        });
+      }
+      const claimBytes = fs.readFileSync(artifactPath(root, key, 'claim'), 'utf8');
+      const checkpointBytes = fs.readFileSync(artifactPath(root, key, 'checkpoint'), 'utf8');
+      const { claimHash, ...claimBody } = JSON.parse(claimBytes);
+      const { recordHash, ...checkpointBody } = JSON.parse(checkpointBytes);
+      const { claimHash: originalClaimHash, ...originalClaimBody } = JSON.parse(originalClaim);
+      const { recordHash: originalRecordHash, ...originalCheckpointBody } = JSON.parse(originalCheckpoint);
+      assert.equal(claimHash, sha256(canonicalJson(claimBody)));
+      assert.equal(recordHash, sha256(canonicalJson(checkpointBody)));
+      assert.deepEqual(claimBody, kind === 'claim'
+        ? { ...originalClaimBody, createdAt: '2000-01-01T00:00:00.000Z' }
+        : originalClaimBody);
+      assert.deepEqual(checkpointBody, kind === 'checkpoint'
+        ? { ...originalCheckpointBody, inspectionIdentity: sha256('056 changed inspection after settled handoff') }
+        : originalCheckpointBody);
+      assert.notEqual(kind === 'claim' ? claimHash : recordHash, kind === 'claim' ? originalClaimHash : originalRecordHash);
+      assert.equal(kind === 'claim' ? checkpointBytes : claimBytes, kind === 'claim' ? originalCheckpoint : originalClaim);
+      assert.equal(store.load({
+        version: 1,
+        workspaceIdentity: WORKSPACE.workspaceIdentity,
+        target: clone(TARGET),
+        ownerIdentity: WORKSPACE.ownerIdentity,
+      }).status, 'loaded', 'valid timestamps, canonical hashes, and pair bindings reach the version guard');
+
+      calls.length = 0;
+      const stopped = resumeHostAdapter(resumeInput(handed.receipt), resumePorts(port));
+      assert.equal(stopped.outcome, 'hard-stop');
+      assert.equal(stopped.reason, 'checkpoint-drift');
+      assert.equal(stopped.adapter, null);
+      assert.deepEqual(calls, ['load'], 'resume must not write or remove either changed artifact');
+      assert.equal(fs.readFileSync(artifactPath(root, key, 'claim'), 'utf8'), claimBytes);
+      assert.equal(fs.readFileSync(artifactPath(root, key, 'checkpoint'), 'utf8'), checkpointBytes);
+    });
+  });
+}
+
+nodeTest('056 owner finalization requires complete artifact expectations in a handoff receipt', () => {
+  withTemporaryRoot((root) => {
+    const key = derivedCheckpointKey();
+    const store = createTemporaryCheckpointStore({ root });
+    const calls = [];
+    const port = { ...store };
+    for (const operation of ['claim', 'load', 'update', 'handoff', 'clear']) {
+      port[operation] = (...args) => {
+        calls.push(operation);
+        return store[operation](...args);
+      };
+    }
+    const worker = checkpointAdapter(root, { checkpoint: port });
+    const active = worker.snapshot();
+    const handed = handoffHostWorker(handoffInput(active.invocationIdentity, active), supervisorPorts(port));
+    assert.equal(handed.outcome, 'handed-off');
+    const claimBytes = fs.readFileSync(artifactPath(root, key, 'claim'), 'utf8');
+    const checkpointBytes = fs.readFileSync(artifactPath(root, key, 'checkpoint'), 'utf8');
+    for (const field of ['claimHash', 'recordHash']) {
+      for (const fault of ['missing', 'malformed', 'unbound', 'changed']) {
+        const receipt = clone(handed.receipt);
+        if (fault === 'missing') delete receipt[field];
+        else receipt[field] = fault === 'malformed' ? 'bad' : sha256(`056 changed receipt ${field}`);
+        if (fault !== 'unbound') {
+          const { receiptHash: _receiptHash, ...body } = receipt;
+          receipt.receiptHash = sha256(canonicalJson(body));
+        }
+        calls.length = 0;
+        const stopped = resumeHostAdapter(resumeInput(receipt), resumePorts(port));
+        const label = `${fault} ${field}`;
+        assert.equal(stopped.outcome, 'hard-stop', label);
+        assert.equal(stopped.reason, fault === 'changed' ? 'checkpoint-drift' : 'resume-input-not-authorized', label);
+        assert.equal(stopped.adapter, null, label);
+        assert.deepEqual(calls, fault === 'changed' ? ['load'] : [], label);
+        assert.equal(fs.readFileSync(artifactPath(root, key, 'claim'), 'utf8'), claimBytes, label);
+        assert.equal(fs.readFileSync(artifactPath(root, key, 'checkpoint'), 'utf8'), checkpointBytes, label);
+      }
+    }
+  });
+});
+
+nodeTest('056 owner finalization preserves the immutable claim through update, handoff, resume, and clear', () => {
+  withTemporaryRoot((root) => {
+    const key = derivedCheckpointKey();
+    const store = createTemporaryCheckpointStore({ root });
+    const expectations = [];
+    const port = { ...store };
+    for (const operation of ['update', 'handoff', 'clear']) {
+      port[operation] = (...args) => {
+        const expected = args[operation === 'handoff' ? 3 : 2];
+        assert.deepEqual(expected, retainedCheckpointExpectation(root, key), operation);
+        expectations.push({ operation, expected: clone(expected) });
+        const result = store[operation](...args);
+        if (result.record) {
+          assert.equal(result.claimHash, expected.claimHash);
+          assert.deepEqual(Object.keys(result).sort(), ['checkpointKey', 'claimHash', 'record', 'status', 'version']);
+        }
+        return result;
+      };
+    }
+    const worker = checkpointAdapter(root, { checkpoint: port });
+    const initial = worker.snapshot();
+    const claimBytes = fs.readFileSync(artifactPath(root, key, 'claim'), 'utf8');
+    assert.deepEqual(JSON.parse(claimBytes), checkpointClaim(readCheckpointRecord(root, key)));
+    const accepted = worker.run(sealedResultRequest(worker));
+    assert.equal(accepted.outcome, 'accepted');
+    assert.equal(accepted.session.acceptedRevision, initial.acceptedRevision + 1);
+    const current = worker.snapshot();
+    const handed = handoffHostWorker(handoffInput(current.invocationIdentity, current), supervisorPorts(port));
+    assert.equal(handed.outcome, 'handed-off');
+    assert.equal(handed.receipt.claimHash, JSON.parse(claimBytes).claimHash);
+    assert.equal(handed.receipt.recordHash, readCheckpointRecord(root, key).recordHash);
+    const resumed = resumeHostAdapter(resumeInput(handed.receipt), resumePorts(port));
+    assert.equal(resumed.outcome, 'resumed');
+    assert.deepEqual(acceptedAuthorityTuple(resumed.adapter.snapshot()), acceptedAuthorityTuple(current));
+    assert.equal(fs.readFileSync(artifactPath(root, key, 'claim'), 'utf8'), claimBytes);
+    assert.equal(resumed.adapter.end('task-settled').outcome, 'ended');
+    assert.equal(resumed.adapter.end('hard-stop-recorded').outcome, 'ended');
+    assert.deepEqual(expectations.map(entry => entry.operation), ['update', 'update', 'handoff', 'update', 'clear']);
+    assert.equal(new Set(expectations.map(entry => entry.expected.claimHash)).size, 1);
+    assert.equal(new Set(expectations.map(entry => entry.expected.recordHash)).size, expectations.length);
+    assert.equal(canonicalJson(resumed.adapter.snapshot()).includes('claimHash'), false);
+    assert.deepEqual(fs.readdirSync(artifactDirectory(root)), []);
+  });
+});
+
+for (const [label, boundary, fault, expectedRemovals, remaining] of [
+  ['checkpoint removal failure', 'remove-checkpoint', 'fail', ['checkpoint'], ['checkpoint', 'claim']],
+  ['claim removal failure', 'remove-claim', 'fail', ['checkpoint', 'claim'], ['claim']],
+  ['checkpoint removal without effect', 'remove-checkpoint', 'no-removal', ['checkpoint'], ['checkpoint', 'claim']],
+  ['claim removal without effect', 'remove-claim', 'no-removal', ['checkpoint', 'claim'], ['claim']],
+  ['checkpoint absence failure', 'checkpoint-absence', 'fail', ['checkpoint'], ['claim']],
+  ['pre-claim absence failure', 'pre-claim-absence', 'fail', ['checkpoint'], ['claim']],
+  ['final checkpoint absence failure', 'final-checkpoint-absence', 'fail', ['checkpoint', 'claim'], []],
+  ['final claim absence failure', 'final-claim-absence', 'fail', ['checkpoint', 'claim'], []],
+  ['checkpoint revalidation failure', 'checkpoint-revalidation', 'fail', [], ['checkpoint', 'claim']],
+  ['claim revalidation failure', 'claim-revalidation', 'fail', ['checkpoint'], ['claim']],
+  ['checkpoint drift before removal', 'checkpoint-revalidation', 'replace-checkpoint', [], ['checkpoint', 'claim']],
+  ['checkpoint disappearance before removal', 'checkpoint-revalidation', 'delete-checkpoint', [], ['claim']],
+  ['claim drift after checkpoint removal', 'checkpoint-removed', 'replace-claim', ['checkpoint'], ['claim']],
+  ['claim drift at revalidation', 'claim-revalidation', 'replace-claim', ['checkpoint'], ['claim']],
+  ['claim disappearance at revalidation', 'claim-revalidation', 'delete-claim', ['checkpoint'], []],
+  ['checkpoint reappearance after removal', 'checkpoint-removed', 'replace-checkpoint', ['checkpoint'], ['checkpoint', 'claim']],
+  ['checkpoint reappearance during claim revalidation', 'claim-revalidation', 'replace-checkpoint', ['checkpoint'], ['checkpoint', 'claim']],
+  ['checkpoint reappearance after claim removal', 'claim-removed', 'replace-checkpoint', ['checkpoint', 'claim'], ['checkpoint']],
+  ['claim reappearance after removal', 'claim-removed', 'replace-claim', ['checkpoint', 'claim'], ['claim']],
+]) {
+  nodeTest(`056 owner finalization stops on ${label} without retry or replacement deletion`, (context) => {
+    withTemporaryRoot((root) => {
+      const key = derivedCheckpointKey();
+      const paths = {
+        checkpoint: artifactPath(root, key, 'checkpoint'),
+        claim: artifactPath(root, key, 'claim'),
+      };
+      const store = createTemporaryCheckpointStore({ root });
+      let clearCalls = 0;
+      const worker = checkpointAdapter(root, {
+        checkpoint: {
+          ...store,
+          clear(...args) {
+            clearCalls += 1;
+            return store.clear(...args);
+          },
+        },
+      });
+      const before = worker.snapshot();
+      const originalBytes = {
+        checkpoint: fs.readFileSync(paths.checkpoint, 'utf8'),
+        claim: fs.readFileSync(paths.claim, 'utf8'),
+      };
+      const replacements = {};
+      const removals = [];
+      const completedRemovals = new Set();
+      const reads = { checkpoint: 0, claim: 0 };
+      let checkpointAbsences = 0;
+      let injected = false;
+      const original = { read: fs.readFileSync, stat: fs.lstatSync, remove: fs.rmSync };
+      const inject = (at) => {
+        if (injected || boundary !== at) return false;
+        injected = true;
+        if (fault === 'fail') {
+          const error = new Error('056 injected storage failure');
+          throw Object.assign(error, { code: 'EACCES', syscall: at });
+        }
+        if (fault === 'no-removal') return true;
+        const kind = fault.endsWith('checkpoint') ? 'checkpoint' : 'claim';
+        if (fault.startsWith('delete-')) {
+          original.remove(paths[kind]);
+          return false;
+        }
+        const body = JSON.parse(originalBytes[kind]);
+        const hashField = kind === 'checkpoint' ? 'recordHash' : 'claimHash';
+        delete body[hashField];
+        if (kind === 'checkpoint') body.inspectionIdentity = sha256('056 replacement checkpoint');
+        else body.createdAt = '2000-01-01T00:00:00.000Z';
+        replacements[kind] = canonicalJson({ ...body, [hashField]: sha256(canonicalJson(body)) });
+        fs.writeFileSync(paths[kind], replacements[kind], 'utf8');
+        return false;
+      };
+      const mocks = [
+        context.mock.method(fs, 'readFileSync', (target, options) => {
+          for (const kind of ['checkpoint', 'claim']) {
+            if (target === paths[kind] && ++reads[kind] === 2) inject(`${kind}-revalidation`);
+          }
+          return original.read(target, options);
+        }),
+        context.mock.method(fs, 'lstatSync', (target, options) => {
+          if (target === paths.checkpoint && completedRemovals.has('checkpoint')) {
+            if (completedRemovals.has('claim')) inject('final-checkpoint-absence');
+            else inject(++checkpointAbsences === 1 ? 'checkpoint-absence' : 'pre-claim-absence');
+          }
+          if (target === paths.claim && completedRemovals.has('claim')) inject('final-claim-absence');
+          return original.stat(target, options);
+        }),
+        context.mock.method(fs, 'rmSync', (target, options) => {
+          const kind = target === paths.checkpoint ? 'checkpoint' : target === paths.claim ? 'claim' : 'foreign';
+          removals.push(kind);
+          assert.notEqual(kind, 'foreign', 'only the two fixture-derived paths may be removed');
+          assert.equal(options?.force, undefined, 'a disappeared artifact is a failure, not forced success');
+          if (inject(`remove-${kind}`)) {
+            completedRemovals.add(kind);
+            return;
+          }
+          original.remove(target, options);
+          completedRemovals.add(kind);
+          inject(`${kind}-removed`);
+        }),
+      ];
+      try {
+        const stopped = worker.end('hard-stop-recorded');
+        assert.equal(injected, true, `the ${boundary} boundary was reached`);
+        assert.equal(stopped.outcome, 'hard-stop');
+        assert.equal(stopped.reason, 'checkpoint-cleanup-failed');
+        assert.deepEqual(acceptedAuthorityTuple(stopped.session), acceptedAuthorityTuple(before));
+        assert.equal(worker.end('hard-stop-recorded').outcome, 'hard-stop');
+        assert.equal(worker.end('natural-end').outcome, 'hard-stop');
+        assert.equal(worker.run(sealedResultRequest(worker)).outcome, 'hard-stop');
+        assert.equal(clearCalls, 1);
+        assert.deepEqual(removals, expectedRemovals);
+      } finally {
+        for (const mocked of mocks.reverse()) mocked.mock.restore();
+      }
+      for (const kind of ['checkpoint', 'claim']) {
+        assert.equal(fs.existsSync(paths[kind]), remaining.includes(kind), kind);
+        if (remaining.includes(kind)) {
+          assert.equal(fs.readFileSync(paths[kind], 'utf8'), replacements[kind] ?? originalBytes[kind], kind);
+        }
+      }
+      if (remaining.length > 0) {
+        const collision = checkpointAdapter(root);
+        assert.equal(collision.snapshot().status, 'hard-stop', 'remaining artifacts still block fresh admission');
+        assert.equal(collision.snapshot().disposition,
+          remaining.length === 2 ? 'checkpoint-ownership-unavailable' : 'checkpoint-stale-orphan');
+      }
+    });
+  });
+}
+
+nodeTest('056 owner finalization refuses an already absent pair instead of treating cleanup as idempotent', (context) => {
+  withTemporaryRoot((root) => {
+    const key = derivedCheckpointKey();
+    const worker = checkpointAdapter(root);
+    fs.rmSync(artifactPath(root, key, 'checkpoint'));
+    fs.rmSync(artifactPath(root, key, 'claim'));
+    const remove = context.mock.method(fs, 'rmSync', () => assert.fail('absent pair must not be removed again'));
+    try {
+      assert.equal(worker.end('hard-stop-recorded').reason, 'checkpoint-cleanup-failed');
+      assert.equal(worker.end('hard-stop-recorded').outcome, 'hard-stop');
+      assert.equal(remove.mock.callCount(), 0);
+    } finally {
+      remove.mock.restore();
+    }
+  });
+});
+
 nodeTest('a failed clear reports a cleanup hard stop and keeps blocking replacement work', () => {
   withTemporaryRoot((root) => {
     const backing = createTemporaryCheckpointStore({ root });
     const worker = createHostAdapter(checkpointInitial(), {
       checkpoint: {
         ...backing,
-        clear(binding, activeWorker, expectedHostRevision, reason) {
+        clear(binding, activeWorker, expected, reason) {
           return {
             version: 1,
             status: 'failed',
@@ -6635,6 +7226,21 @@ function runFocusedRunnerCli(request, respond, options = {}) {
   });
 }
 
+nodeTest('foreground CLI test harness yields between cases so completed output can drain', async (context) => {
+  let drained = false;
+  let pendingFlush;
+  try {
+    await context.test('queue a completed-case flush', () => {
+      pendingFlush = setImmediate(() => { drained = true; });
+    });
+    await context.test('start the next synchronous fixture after the flush', () => {
+      assert.equal(drained, true, 'a chain of synchronous fixtures must not starve completed-case output');
+    });
+  } finally {
+    if (pendingFlush) clearImmediate(pendingFlush);
+  }
+});
+
 nodeTest('runner preflight refuses a blank lightweight task before exchange or persistence', async () => {
   await withSealedWorkspace(async (root) => {
     writeSealedTaskState(root);
@@ -6860,6 +7466,848 @@ nodeTest('issue #21: an unsafe snapshot halts autonomously with an actionable ex
     assert.deepEqual(fs.readFileSync(path.join(root, IDEA_PATH)), ownerBefore, 'owner stays exact');
     assert.deepEqual(fs.readFileSync(snapshotPath), unsafeSnapshot, 'unsafe snapshot bytes stay exact');
   });
+});
+
+for (const rejection of ['invalid', 'stale']) {
+  nodeTest(`056 owner finalization runner clears a matched first ${rejection} payload and preserves prior accounting`, async () => {
+    await withSealedWorkspace(async (root) => {
+      writeSealedTaskState(root);
+      const beforeFiles = laneSurfaceDigests(root);
+      const state = emptyState('autonomous');
+      state.overallUsed = 2;
+      state.recoveryUsed = [{ targetKey: targetKey(SECOND_TARGET), targetHash: targetHash(SECOND_TARGET), count: 1 }];
+      state.completed = [1, 2].map(ordinal => ({
+        evidenceHash: sha256(`056 prior evidence ${ordinal}`),
+        approachHash: sha256(`056 prior approach ${ordinal}`),
+        resultHash: sha256(`056 prior result ${ordinal}`),
+      }));
+      validateRunState(state);
+      const request = focusedRunnerRequest(root, { state, assessment: { invalid: '056 invalid initial input' } });
+      const store = createTemporaryCheckpointStore({ root });
+      const calls = [];
+      const runtimeCalls = [];
+      const challenges = [];
+      let retainedPair;
+      const checkpoint = {
+        ...store,
+        claim(...args) { calls.push('claim'); return store.claim(...args); },
+        clear(...args) {
+          calls.push('clear');
+          assert.equal(args[3], 'hard-stop-recorded');
+          return store.clear(...args);
+        },
+      };
+      const result = await runHostAdapter(request, {
+        checkpoint,
+        runtime: {
+          identity: sha256('056 first rejection runtime'),
+          invoke(command, input) {
+            runtimeCalls.push(command);
+            return { status: 'returned', value: runCommand(command, input) };
+          },
+        },
+        laneOwner: {
+          identity: sha256('056 forbidden lane owner'),
+          apply() { assert.fail('payload rejection must never enter the lane writer'); },
+        },
+        exchange(challenge) {
+          challenges.push(challenge);
+          assert.equal(challenge.kind, 'assessment');
+          assert.equal(challenges.length, 1, 'no prompt, correction challenge, or specialist dispatch');
+          retainedPair = fs.readdirSync(artifactDirectory(root))
+            .map(name => JSON.parse(fs.readFileSync(path.join(artifactDirectory(root), name), 'utf8')));
+          return focusedChallengeResponse(challenge, 'assessment', rejection === 'stale'
+            ? focusedChallengeAssessment(challenge, { evidenceHash: sha256('056 stale payload secret') })
+            : { secret: '056 invalid payload secret', path: 'C:\\private\\056-secret' });
+        },
+      });
+      assert.equal(result.outcome, 'hard-stop');
+      assert.equal(result.reason, `challenge-response-${rejection}`);
+      assert.equal(result.detail, rejection === 'stale' ? 'assessment' : 'Assessment: invalid-contract');
+      assert.deepEqual(result.haltReport, describeUnattendedHalt({ state, reason: result.reason }, null));
+      assert.equal(result.cleanup, 'cleared');
+      assert.equal(result.orphan, false);
+      assert.deepEqual(calls, ['claim', 'clear']);
+      assert.deepEqual(runtimeCalls, ['inspect', 'inspect']);
+      assert.deepEqual(fs.readdirSync(artifactDirectory(root)), []);
+      assert.equal(result.stateBase64, Buffer.from(canonicalJson(state)).toString('base64'));
+      assert.equal(result.stateHash, sha256(canonicalJson(state)));
+      assert.equal(result.acceptedRevision, 0);
+      assert.equal(result.hostRevision, challenges[0].hostRevision + 1, 'report the real end revision');
+      assert.deepEqual(laneSurfaceDigests(root), beforeFiles);
+      assert.equal(result.steps.filter(step => step.outcome === 'hard-stop').length, 1);
+      assert.equal(result.steps.at(-1).reason, result.reason, 'the retained Work stop is not replaced by resource end');
+      assert.equal(result.steps.at(-1).stateBase64, result.stateBase64);
+      const emitted = canonicalJson(result);
+      for (const secret of [
+        '056 invalid initial input', '056 invalid payload secret', '056-secret',
+        sha256('056 stale payload secret'),
+        ...retainedPair.flatMap(record => [record.invocationIdentity, record.workerToken, record.claimHash, record.recordHash])
+          .filter(value => value !== undefined),
+      ]) assert.equal(emitted.includes(secret), false, 'private and rejected data stay out of diagnostics');
+    });
+  });
+}
+
+/** @param {string} root */
+function ownerFinalizationStore(root) {
+  const store = createTemporaryCheckpointStore({ root });
+  const calls = [];
+  const port = { ...store };
+  for (const operation of ['claim', 'load', 'update', 'handoff', 'clear']) {
+    port[operation] = (...args) => {
+      calls.push(operation);
+      return store[operation](...args);
+    };
+  }
+  return { store, port, calls };
+}
+
+/** @param {Record<string, unknown>} result @param {Record<string, unknown>} state */
+function assertOwnerFinalizationStop(result, state) {
+  assert.equal(result.outcome, 'hard-stop');
+  assert.equal(result.reason, 'challenge-response-invalid');
+  assert.equal(result.detail, 'Assessment: invalid-contract');
+  assert.deepEqual(result.haltReport, describeUnattendedHalt({ state, reason: result.reason }, null));
+  assert.equal(result.stateBase64, Buffer.from(canonicalJson(state)).toString('base64'));
+  assert.equal(result.stateHash, sha256(canonicalJson(state)));
+  assert.equal(result.steps.filter(step => step.outcome === 'hard-stop').length, 1);
+  assert.equal(result.steps.at(-1).reason, result.reason);
+}
+
+nodeTest('056 owner finalization runner refuses lost supervisor and worker authority inside end', async () => {
+  const module = await workModuleWithObservation('host-adapter-runner.mjs', true);
+  for (const [fault, reason] of [
+    ['missing supervisor', 'supervisor-identity-missing'],
+    ['wrong supervisor identity', 'supervisor-identity-mismatch'],
+    ['wrong supervisor capability', 'supervisor-identity-mismatch'],
+    ['missing worker', 'supervisor-identity-mismatch'],
+    ['wrong worker token', 'stale-worker'],
+    ['wrong worker generation', 'stale-worker'],
+  ]) {
+    await withSealedWorkspace(async root => {
+      writeSealedTaskState(root);
+      const checkpoint = ownerFinalizationStore(root);
+      const request = focusedRunnerRequest(root, { assessment: null });
+      let challengeRevision;
+      let pairBefore;
+      const result = await module.runHostAdapter(request, {
+        checkpoint: checkpoint.port,
+        exchange(challenge) {
+          challengeRevision = challenge.hostRevision;
+          const supervisor = module.testOwnerContext.ports.supervisorSession;
+          const session = module.testOwnerContext.adapter.snapshot();
+          const workers = module.testAdapterModule.testAdmittedInvocations;
+          if (fault === 'missing supervisor') delete supervisor.admit;
+          if (fault === 'wrong supervisor identity') supervisor.identity = sha256('056 foreign supervisor');
+          if (fault === 'wrong supervisor capability') supervisor.admit = () => assert.fail('no readmission');
+          if (fault === 'missing worker') workers.delete(session.invocationIdentity);
+          if (fault === 'wrong worker token' || fault === 'wrong worker generation') {
+            workers.set(session.invocationIdentity, {
+              workerToken: fault === 'wrong worker token' ? sha256('056 foreign worker') : session.workerToken,
+              workerGeneration: session.workerGeneration + (fault === 'wrong worker generation' ? 1 : 0),
+            });
+          }
+          pairBefore = fs.readdirSync(artifactDirectory(root)).map(name => [
+            name, fs.readFileSync(path.join(artifactDirectory(root), name), 'utf8'),
+          ]);
+          return focusedChallengeResponse(challenge, 'assessment', {});
+        },
+      });
+      assertOwnerFinalizationStop(result, request.state);
+      assert.equal(result.cleanup, 'not-attempted', fault);
+      assert.equal(result.cleanupReason, reason, fault);
+      assert.equal(result.hostRevision, challengeRevision + 1, 'the adapter rejected the end, not a runner guess');
+      assert.equal(result.orphan, true);
+      assert.equal(checkpoint.calls.includes('clear'), false);
+      assert.deepEqual(fs.readdirSync(artifactDirectory(root)).map(name => [
+        name, fs.readFileSync(path.join(artifactDirectory(root), name), 'utf8'),
+      ]), pairBefore);
+    });
+  }
+});
+
+nodeTest('056 owner finalization runner refuses returned-state-only context and accepted authority drift', async () => {
+  const module = await workModuleWithObservation('host-adapter-runner.mjs', true);
+  for (const fault of ['missing adapter', 'returned state only', 'replaced handle', 'accepted bytes', 'accepted revision', 'worker identity']) {
+    await withSealedWorkspace(async root => {
+      writeSealedTaskState(root);
+      const checkpoint = ownerFinalizationStore(root);
+      const request = focusedRunnerRequest(root, { assessment: null });
+      let expectedState = request.state;
+      const result = await module.runHostAdapter(request, {
+        checkpoint: checkpoint.port,
+        exchange(challenge) {
+          const owner = module.testOwnerContext;
+          const context = module.testAdapterModule.testOwnerContext;
+          const session = clone(owner.adapter.snapshot());
+          if (fault === 'missing adapter') owner.replaceAdapter(null);
+          else if (fault === 'returned state only') {
+            owner.replaceAdapter({ snapshot: () => session, ownership: () => null });
+          } else if (fault === 'replaced handle') {
+            owner.replaceAdapter({ ...owner.adapter });
+          } else {
+            if (fault === 'accepted bytes') {
+              session.acceptedState.policy.overall += 1;
+              session.acceptedStateBytes = canonicalJson(session.acceptedState);
+              session.acceptedStateHash = sha256(session.acceptedStateBytes);
+              expectedState = session.acceptedState;
+            }
+            if (fault === 'worker identity') session.workerToken = sha256('056 substituted live worker');
+            else {
+              session.acceptedRevision += 1;
+              session.hostRevision += 1;
+            }
+            context.replaceSession(reidentifySession(session));
+            if (fault !== 'worker identity') {
+              assert.equal(context.host.settle(context.session), null, 'the changed accepted state is valid and checkpointed');
+            }
+          }
+          return focusedChallengeResponse(challenge, 'assessment', {});
+        },
+      });
+      assertOwnerFinalizationStop(result, expectedState);
+      assert.equal(result.cleanup, 'not-attempted', fault);
+      assert.equal(result.cleanupReason, fault.startsWith('accepted') ? 'accepted-state-changed' : 'owner-context-changed', fault);
+      assert.equal(checkpoint.calls.includes('clear'), false);
+      assert.equal(fs.readdirSync(artifactDirectory(root)).length, 2);
+      assert.equal(result.steps.some(step => step.step.includes('authorize')), false);
+    });
+  }
+});
+
+nodeTest('056 owner finalization runner reacquires exact owner workspace mapping and lane prestate', async () => {
+  for (const fault of ['owner bytes', 'owner resolution', 'task prestate', 'task mapping', 'lane bytes', 'workspace']) {
+    await withSealedWorkspace(async root => {
+      writeSealedTaskState(root);
+      const checkpoint = ownerFinalizationStore(root);
+      const request = focusedRunnerRequest(root, { assessment: null });
+      const alias = path.join(root, 'workspace-alias');
+      if (fault === 'workspace') {
+        fs.symlinkSync(root, alias, 'junction');
+        request.root = alias;
+      }
+      let afterDrift;
+      const result = await runHostAdapter(request, {
+        checkpoint: checkpoint.port,
+        exchange(challenge) {
+          if (fault === 'owner bytes') fs.appendFileSync(path.join(root, IDEA_PATH), '\n056 owner edit\n');
+          if (fault === 'owner resolution') {
+            const file = path.join(root, IDEA_PATH);
+            fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('status: defined', 'status: captured'));
+          }
+          if (fault === 'task prestate' || fault === 'task mapping') {
+            const file = path.join(root, TASKS_PATH);
+            fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(
+              fault === 'task prestate' ? '[~]' : TARGET.taskKey,
+              fault === 'task prestate' ? '[x]' : SECOND_TARGET.taskKey,
+            ));
+          }
+          if (fault === 'lane bytes') fs.appendFileSync(path.join(root, TASK_STATE_PATH), '\n');
+          if (fault === 'workspace') {
+            const replacement = path.join(root, 'replacement-workspace');
+            fs.mkdirSync(replacement);
+            fs.rmSync(alias);
+            fs.symlinkSync(replacement, alias, 'junction');
+          }
+          afterDrift = laneSurfaceDigests(root);
+          return focusedChallengeResponse(challenge, 'assessment', {});
+        },
+      });
+      assertOwnerFinalizationStop(result, request.state);
+      assert.equal(result.cleanup, 'not-attempted', fault);
+      assert.equal(result.cleanupReason, ['owner resolution', 'task mapping'].includes(fault)
+        ? 'owner-binding-unavailable' : 'owner-binding-changed', fault);
+      assert.equal(checkpoint.calls.includes('clear'), false);
+      assert.equal(fs.readdirSync(artifactDirectory(root)).length, 2);
+      assert.deepEqual(laneSurfaceDigests(root), afterDrift, 'finalization never repairs the changed binding');
+    });
+  }
+});
+
+for (const kind of ['claim', 'checkpoint']) {
+  nodeTest(`056 owner finalization runner consumes retained ${kind} comparison before clear`, async () => {
+    await withSealedWorkspace(async root => {
+      writeSealedTaskState(root);
+      const checkpoint = ownerFinalizationStore(root);
+      const request = focusedRunnerRequest(root, { assessment: null });
+      let changedBytes;
+      let changedPath;
+      const result = await runHostAdapter(request, {
+        checkpoint: checkpoint.port,
+        exchange(challenge) {
+          const name = fs.readdirSync(artifactDirectory(root)).find(entry => entry.endsWith(`.${kind}`));
+          const key = name.slice(0, -`.${kind}`.length);
+          if (kind === 'claim') rewriteCheckpointClaim(root, key, claim => { claim.createdAt = '2000-01-01T00:00:00.000Z'; });
+          else rewriteCheckpointRecord(root, key, record => { record.inspectionIdentity = sha256('056 changed stored inspection'); });
+          changedPath = path.join(artifactDirectory(root), name);
+          changedBytes = fs.readFileSync(changedPath, 'utf8');
+          return focusedChallengeResponse(challenge, 'assessment', {});
+        },
+      });
+      assertOwnerFinalizationStop(result, request.state);
+      assert.equal(result.cleanup, 'not-attempted');
+      assert.equal(result.cleanupReason, 'checkpoint-drift');
+      assert.equal(checkpoint.calls.includes('clear'), false, 'the retained adapter compares before calling clear');
+      assert.equal(fs.readFileSync(changedPath, 'utf8'), changedBytes);
+      assert.equal(fs.readdirSync(artifactDirectory(root)).length, 2);
+    });
+  });
+}
+
+nodeTest('056 owner finalization runner refuses pending attempts completions and evaluations', async () => {
+  for (const obligation of ['attempt', 'completion', 'evaluation']) {
+    await withSealedWorkspace(async root => {
+      writeSealedTaskState(root);
+      let state = pendingState('autonomous');
+      if (obligation === 'completion') {
+        const fixture = sealedTrustedFixture(state, '056 pending completion', 'accepted');
+        const captured = captureAdapter(state, fixture, root);
+        assert.equal(captured.captured.outcome, 'effect-required');
+        state = captured.captured.session.pendingEffect.provisionalState;
+      }
+      if (obligation === 'evaluation') {
+        state = emptyState('autonomous');
+        const sequence = {
+          target: canonicalTarget(TARGET),
+          taskKey: TARGET.taskKey,
+          ownerBindingHash: sha256('056 evaluation owner'),
+          planDescriptor: contentDescriptor('# Plan\n'),
+          registryHash: sha256('056 registry'),
+          contractHash: sha256('056 contract'),
+          bindingIdentity: sha256('056 evaluation binding'),
+          baselineCandidateIdentity: sha256('056 baseline'),
+          incumbentCandidateIdentity: sha256('056 incumbent'),
+          state: 'open',
+          recentComparisons: [],
+        };
+        state.evaluationSequences = [{ ...sequence, sequenceIdentity: deriveSequenceIdentity(sequence) }];
+      }
+      validateRunState(state);
+      const checkpoint = ownerFinalizationStore(root);
+      const request = focusedRunnerRequest(root, { assessment: null, state });
+      let challenges = 0;
+      const before = laneSurfaceDigests(root);
+      const result = await runHostAdapter(request, {
+        checkpoint: checkpoint.port,
+        exchange(challenge) {
+          challenges += 1;
+          assert.equal(challenge.kind, 'assessment');
+          return focusedChallengeResponse(challenge, 'assessment', {});
+        },
+      });
+      assertOwnerFinalizationStop(result, state);
+      assert.equal(challenges, 1, obligation);
+      assert.equal(result.cleanup, 'not-attempted', obligation);
+      assert.equal(result.cleanupReason, 'owner-obligations-pending', obligation);
+      assert.equal(checkpoint.calls.includes('clear'), false);
+      assert.deepEqual(laneSurfaceDigests(root), before);
+    });
+  }
+});
+
+nodeTest('056 owner finalization runner refuses a valid pending learning alternative', async () => {
+  await withSealedWorkspace(async root => {
+    const required = requiredGovernanceFixture(root);
+    const branch = projectedGovernanceBranch(root, required, 'selected-alternative');
+    const state = inspectedGovernanceBranch(root, branch, required);
+    const input = sealedRetentionInput(root, branch.learnedEvents, branch.learnedEvents, required.streams);
+    writeSealedTaskState(root);
+    const checkpoint = ownerFinalizationStore(root);
+    const before = laneSurfaceDigests(root);
+    const request = focusedRunnerRequest(root, {
+      assessment: null, state,
+      retainedEvidence: Object.fromEntries(['currentRun', 'verification', 'review', 'lint'].map(field => [field, input[field]])),
+    });
+    let challenges = 0;
+    const result = await runHostAdapter(request, {
+      checkpoint: checkpoint.port,
+      exchange(challenge) {
+        challenges += 1;
+        assert.equal(challenge.kind, 'assessment', 'the alternative is already inspected, not a learning-review request');
+        return focusedChallengeResponse(challenge, 'assessment', {});
+      },
+    });
+    assertOwnerFinalizationStop(result, state);
+    assert.equal(challenges, 1);
+    assert.equal(result.cleanupReason, 'owner-obligations-pending');
+    assert.equal(checkpoint.calls.includes('clear'), false);
+    assert.deepEqual(laneSurfaceDigests(root), before);
+  });
+});
+
+nodeTest('056 owner finalization runner refuses an unsettled checkpoint at the actual end boundary', async () => {
+  const module = await workModuleWithObservation('host-adapter-runner.mjs', true);
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const checkpoint = ownerFinalizationStore(root);
+    const request = focusedRunnerRequest(root, { assessment: null });
+    const result = await module.runHostAdapter(request, {
+      checkpoint: checkpoint.port,
+      exchange(challenge) {
+        const context = module.testAdapterModule.testOwnerContext;
+        const session = clone(context.session);
+        session.hostRevision += 1;
+        context.replaceSession(reidentifySession(session));
+        assert.equal(context.host.commit(context.session, {
+          semanticOperation: 'authorize-attempt',
+          expectedEffectIdentity: null,
+          expectedReceiptIdentity: null,
+          provisionalStateHash: null,
+        }), null, 'the retained checkpoint and its hash are current, but its operation is unfinished');
+        return focusedChallengeResponse(challenge, 'assessment', {});
+      },
+    });
+    assertOwnerFinalizationStop(result, request.state);
+    assert.equal(result.cleanup, 'not-attempted');
+    assert.equal(result.cleanupReason, 'effect-unverified');
+    assert.equal(checkpoint.calls.includes('clear'), false);
+    assert.equal(fs.readdirSync(artifactDirectory(root)).length, 2);
+  });
+});
+
+nodeTest('056 owner finalization runner refuses a valid pending effect without accepted-state drift', async () => {
+  const module = await workModuleWithObservation('host-adapter-runner.mjs', true);
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const pending = pendingState('autonomous');
+    const fixture = sealedTrustedFixture(pending, '056 unverified effect', 'accepted');
+    const captured = captureAdapter(pending, fixture, root).captured;
+    assert.equal(captured.outcome, 'effect-required');
+    const checkpoint = ownerFinalizationStore(root);
+    const request = focusedRunnerRequest(root, { assessment: null });
+    const result = await module.runHostAdapter(request, {
+      checkpoint: checkpoint.port,
+      exchange(challenge) {
+        const context = module.testAdapterModule.testOwnerContext;
+        const session = clone(context.session);
+        const effect = {
+          ...clone(captured.session.pendingEffect),
+          predecessorStateHash: session.acceptedStateHash,
+          predecessorAcceptedRevision: session.acceptedRevision,
+        };
+        const { effectIdentity: _identity, ...body } = effect;
+        session.pendingEffect = { ...body, effectIdentity: sha256(canonicalJson(body)) };
+        context.replaceSession(reidentifySession(session));
+        assert.equal(context.session.acceptedState.pending.length, 0, 'no pending attempt masks the effect guard');
+        assert.equal(context.session.acceptedStateBytes, canonicalJson(request.state));
+        return focusedChallengeResponse(challenge, 'assessment', {});
+      },
+    });
+    assertOwnerFinalizationStop(result, request.state);
+    assert.equal(result.cleanup, 'not-attempted');
+    assert.equal(result.cleanupReason, 'owner-obligations-pending');
+    assert.equal(checkpoint.calls.includes('clear'), false);
+  });
+});
+
+nodeTest('056 owner finalization runner checks operation entry independently of unchanged accounting', async () => {
+  const module = await workModuleWithObservation('host-adapter-runner.mjs', true);
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const checkpoint = ownerFinalizationStore(root);
+    const request = focusedRunnerRequest(root, { assessment: null });
+    let authorizationCalls = 0;
+    const result = await module.runHostAdapter(request, {
+      checkpoint: checkpoint.port,
+      runtime: {
+        identity: sha256('056 unchanged authorization refusal'),
+        invoke(command, input) {
+          if (command === 'authorize') {
+            authorizationCalls += 1;
+            return { status: 'empty' };
+          }
+          return { status: 'returned', value: runCommand(command, input) };
+        },
+      },
+      exchange(challenge) {
+        const owner = module.testOwnerContext;
+        const before = owner.adapter.snapshot();
+        const refused = owner.run('attempt:1:authorize-attempt', 'authorize-attempt', {
+          authorization: {
+            input: sealedTransportInput(sealedInspectionInput(root, { policyMode: 'autonomous' })),
+            assessment: focusedChallengeAssessment(challenge),
+          },
+        });
+        assert.equal(refused.outcome, 'closed-refusal');
+        assert.equal(owner.refreshInspection('attempt:1:fresh-inspection').terminal, null);
+        const after = owner.adapter.snapshot();
+        assert.deepEqual(acceptedAuthorityTuple(after), acceptedAuthorityTuple(before));
+        assert.equal(after.correction, null, 'a pending correction must not mask the step-provenance guard');
+        return focusedChallengeResponse(challenge, 'assessment', {});
+      },
+    });
+    assertOwnerFinalizationStop(result, request.state);
+    assert.equal(authorizationCalls, 1);
+    assert.equal(result.cleanup, 'not-attempted');
+    assert.equal(result.cleanupReason, 'claim-phase-changed');
+    assert.equal(checkpoint.calls.includes('clear'), false);
+  });
+});
+
+nodeTest('056 owner finalization runner refuses release when terminal state validation is unavailable', async context => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const checkpoint = ownerFinalizationStore(root);
+    const request = focusedRunnerRequest(root, { assessment: null });
+    const stateBase64 = Buffer.from(canonicalJson(request.state)).toString('base64');
+    const from = Buffer.from;
+    let decoding;
+    let refusedDecodes = 0;
+    let result;
+    try {
+      result = await runHostAdapter(request, {
+        checkpoint: checkpoint.port,
+        exchange(challenge) {
+          decoding = context.mock.method(Buffer, 'from', (value, encoding, length) => {
+            if (value === stateBase64 && encoding === 'base64') {
+              refusedDecodes += 1;
+              throw new TypeError('056 private terminal decoding error');
+            }
+            return from(value, encoding, length);
+          });
+          return focusedChallengeResponse(challenge, 'assessment', {});
+        },
+      });
+    } finally {
+      decoding?.mock.restore();
+    }
+    assert.equal(refusedDecodes, 1, 'only terminal report validation was faulted');
+    assert.equal(result.reason, 'challenge-response-invalid');
+    assert.equal(result.detail, 'Assessment: invalid-contract');
+    assert.equal(result.cleanup, 'not-attempted');
+    assert.equal(result.cleanupReason, 'terminal-report-unavailable');
+    assert.equal(result.stateBase64, stateBase64);
+    assert.equal(result.stateHash, sha256(canonicalJson(request.state)));
+    assert.deepEqual(result.haltReport, { halted: true, resolved: false, unresolved: ['reason', 'subject'] });
+    assert.equal(checkpoint.calls.includes('clear'), false);
+    assert.equal(fs.readdirSync(artifactDirectory(root)).length, 2);
+    assert.equal(canonicalJson(result).includes('056 private'), false);
+  });
+});
+
+nodeTest('056 owner finalization runner preserves framing missing-exchange and transport refusals', async () => {
+  for (const fault of ['malformed', 'foreign', 'order', 'missing exchange', 'missing response', 'EOF', 'transport invalid', 'unknown exception', 'replay']) {
+    await withSealedWorkspace(async root => {
+      writeSealedTaskState(root);
+      const checkpoint = ownerFinalizationStore(root);
+      const request = focusedRunnerRequest(root, { assessment: null });
+      let firstResponse;
+      let calls = 0;
+      const exchange = challenge => {
+        calls += 1;
+        const valid = focusedChallengeResponse(challenge, 'assessment', focusedChallengeAssessment(challenge));
+        if (fault === 'malformed') return { ...valid, secret: '056 malformed envelope secret' };
+        if (fault === 'foreign') return { ...valid, challengeIdentity: sha256('056 foreign response') };
+        if (fault === 'order') return focusedChallengeResponse(
+          { ...challenge, kind: 'specialist-pair' }, 'specialistResult', specialistResult('056 out of order', 'accepted'),
+        );
+        if (fault === 'missing response') return null;
+        if (fault === 'EOF') throw Object.assign(new Error('056 EOF secret'), { code: 'supervisor-context-lost' });
+        if (fault === 'transport invalid') {
+          throw Object.assign(new Error('056 parser secret'), { code: 'challenge-response-invalid' });
+        }
+        if (fault === 'unknown exception') throw Object.assign(new Error('056 unknown secret'), { code: 'caller-secret' });
+        if (calls === 1) { firstResponse = valid; return valid; }
+        return {
+          ...focusedChallengeResponse(challenge, 'specialistResult', specialistResult('056 replay', 'accepted')),
+          challengeIdentity: firstResponse.challengeIdentity,
+        };
+      };
+      const result = await runHostAdapter(request, {
+        checkpoint: checkpoint.port,
+        ...(fault === 'missing exchange' ? {} : { exchange }),
+      });
+      assert.equal(result.outcome, 'hard-stop', fault);
+      assert.equal(result.reason, {
+        malformed: 'challenge-response-invalid', foreign: 'challenge-response-foreign',
+        order: 'challenge-response-out-of-order', 'missing exchange': 'exchange-unavailable',
+        'missing response': 'exchange-context-lost', EOF: 'supervisor-context-lost',
+        'transport invalid': 'challenge-response-invalid', 'unknown exception': 'exchange-context-lost',
+        replay: 'challenge-response-replayed',
+      }[fault], fault);
+      assert.equal(result.cleanup, 'not-attempted', fault);
+      assert.equal(Object.hasOwn(result, 'cleanupReason'), false, 'these branches never nominate the new finalizer');
+      assert.equal(checkpoint.calls.includes('clear'), false);
+      assert.equal(checkpoint.calls.filter(call => call === 'claim').length, 1);
+      assert.equal(fs.readdirSync(artifactDirectory(root)).length, 2);
+      assert.equal(calls, fault === 'missing exchange' ? 0 : fault === 'replay' ? 2 : 1);
+      assert.equal(canonicalJson(result).includes('secret'), false);
+    });
+  }
+});
+
+nodeTest('056 owner finalization runner leaves authorization correction later Assessment specialist and governance failures on their old routes', async () => {
+  for (const phase of ['authorization correction', 'later assessment', 'specialist', 'governance']) {
+    await withSealedWorkspace(async root => {
+      writeSealedTaskState(root);
+      const checkpoint = ownerFinalizationStore(root);
+      const request = focusedRunnerRequest(root);
+      if (phase !== 'authorization correction') request.assessment = null;
+      let assessments = 0;
+      let authorizationCalls = 0;
+      let assessment;
+      let beforeRejection;
+      const result = await runHostAdapter(request, {
+        checkpoint: checkpoint.port,
+        runtime: {
+          identity: sha256(`056 later ${phase}`),
+          invoke(command, input) {
+            if (command === 'authorize') {
+              authorizationCalls += 1;
+              if (phase === 'authorization correction') return { status: 'empty' };
+            }
+            return { status: 'returned', value: runCommand(command, input) };
+          },
+        },
+        exchange(challenge) {
+          if (challenge.kind === 'assessment') {
+            assessments += 1;
+            if (phase === 'authorization correction' || (phase === 'later assessment' && assessments === 2)) {
+              beforeRejection = laneSurfaceDigests(root);
+              return focusedChallengeResponse(challenge, 'assessment', {});
+            }
+            assessment = focusedChallengeAssessment(challenge, assessments === 1 ? {} : {
+              action: 'retry-task',
+              materialInputs: { ...clone(MATERIAL_INPUTS), operations: ['retry-task'] },
+            });
+            return focusedChallengeResponse(challenge, 'assessment', assessment);
+          }
+          if (challenge.kind === 'specialist-pair') {
+            if (phase === 'specialist') {
+              beforeRejection = laneSurfaceDigests(root);
+              throw Object.assign(new Error('056 late specialist secret'), { code: 'challenge-response-invalid' });
+            }
+            return focusedChallengeResponse(challenge, 'specialistResult',
+              focusedSpecialistPair(assessment, '056 repeated rejection', 'rejected'));
+          }
+          assert.equal(challenge.kind, 'learning-review');
+          beforeRejection = laneSurfaceDigests(root);
+          return focusedChallengeResponse(challenge, 'review', {});
+        },
+      });
+      assert.equal(result.outcome, 'hard-stop', phase);
+      assert.equal(result.reason, 'challenge-response-invalid', phase);
+      if (phase === 'governance') assert.equal(result.detail, 'learning-review');
+      assert.equal(result.cleanup, 'not-attempted', phase);
+      assert.equal(Object.hasOwn(result, 'cleanupReason'), false);
+      assert.equal(checkpoint.calls.includes('clear'), false);
+      assert.deepEqual(laneSurfaceDigests(root), beforeRejection, phase);
+      if (phase === 'authorization correction') {
+        assert.equal(assessments, 1, 'even the first exchange is ineligible after authorization entry');
+        assert.equal(authorizationCalls, 2, 'the existing correction was consumed before reinspecting');
+        assert.equal(result.stateHash, sha256(canonicalJson(request.state)), 'no counters changed on either request');
+      }
+    });
+  }
+});
+
+for (const fault of ['checkpoint removal', 'claim removal', 'absence check', 'final absence check', 'reappearance', 'throwing clear', 'failed clear']) {
+  nodeTest(`056 owner finalization runner retains the Work stop across ${fault} failure without retry`, async context => {
+    const module = await workModuleWithObservation('host-adapter-runner.mjs', true);
+    await withSealedWorkspace(async root => {
+      writeSealedTaskState(root);
+      const checkpoint = ownerFinalizationStore(root);
+      const request = focusedRunnerRequest(root, { assessment: null });
+      const before = laneSurfaceDigests(root);
+      const removals = [];
+      let paths;
+      let checkpointBytes;
+      let clearCalls = 0;
+      let removedCheckpoint = false;
+      let removedClaim = false;
+      let injected = false;
+      let retainedTerminal;
+      const result = await module.runHostAdapter(request, {
+        checkpoint: {
+          ...checkpoint.port,
+          clear(...args) {
+            clearCalls += 1;
+            retainedTerminal = clone(module.testTerminal);
+            assertOwnerFinalizationStop(retainedTerminal, request.state);
+            assert.equal(retainedTerminal.cleanup, 'not-attempted', 'the complete terminal report exists before release');
+            const original = { remove: fs.rmSync, stat: fs.lstatSync };
+            const mocks = [
+              context.mock.method(fs, 'rmSync', (file, options) => {
+                assert.ok(Object.values(paths).includes(file));
+                const kind = file === paths.checkpoint ? 'checkpoint' : 'claim';
+                removals.push(kind);
+                if (fault === `${kind} removal`) {
+                  injected = true;
+                  throw new Error('056 private removal error');
+                }
+                original.remove(file, options);
+                if (kind === 'checkpoint') {
+                  removedCheckpoint = true;
+                  if (fault === 'reappearance') {
+                    injected = true;
+                    fs.writeFileSync(paths.checkpoint, checkpointBytes);
+                  }
+                } else removedClaim = true;
+              }),
+              context.mock.method(fs, 'lstatSync', (file, options) => {
+                if (fault === 'absence check' && file === paths.checkpoint && removedCheckpoint) {
+                  injected = true;
+                  throw new Error('056 private absence error');
+                }
+                if (fault === 'final absence check' && file === paths.claim && removedClaim) {
+                  injected = true;
+                  throw new Error('056 private final absence error');
+                }
+                return original.stat(file, options);
+              }),
+            ];
+            try {
+              if (fault === 'throwing clear') {
+                injected = true;
+                throw new Error('056 private clear exception');
+              }
+              if (fault === 'failed clear') {
+                injected = true;
+                return { version: 1, status: 'failed', checkpointKey: checkpoint.store.load(args[0]).checkpointKey, reason: '056 private backend error' };
+              }
+              return checkpoint.port.clear(...args);
+            } finally {
+              for (const mocked of mocks.reverse()) mocked.mock.restore();
+            }
+          },
+        },
+        exchange(challenge) {
+          paths = Object.fromEntries(fs.readdirSync(artifactDirectory(root)).map(name => [
+            name.endsWith('.claim') ? 'claim' : 'checkpoint', path.join(artifactDirectory(root), name),
+          ]));
+          checkpointBytes = fs.readFileSync(paths.checkpoint, 'utf8');
+          return focusedChallengeResponse(challenge, 'assessment', {});
+        },
+      });
+      assert.equal(injected, true, fault);
+      assertOwnerFinalizationStop(result, request.state);
+      assert.equal(result.cleanup, 'failed');
+      assert.equal(result.cleanupReason, 'checkpoint-cleanup-failed');
+      assert.equal(result.orphan, true);
+      assert.equal(result.hostRevision, retainedTerminal.hostRevision + 1);
+      assert.equal(clearCalls, 1);
+      assert.equal(checkpoint.calls.filter(call => call === 'claim').length, 1);
+      assert.deepEqual(removals, ['claim removal', 'final absence check'].includes(fault) ? ['checkpoint', 'claim']
+        : ['throwing clear', 'failed clear'].includes(fault) ? [] : ['checkpoint']);
+      assert.equal(fs.existsSync(paths.claim), fault !== 'final absence check');
+      if (fault === 'final absence check') {
+        assert.deepEqual(fs.readdirSync(artifactDirectory(root)), [], 'absence failure is not success, even after both removals');
+      }
+      if (fault === 'reappearance') assert.equal(fs.readFileSync(paths.checkpoint, 'utf8'), checkpointBytes);
+      assert.deepEqual(laneSurfaceDigests(root), before);
+      assert.equal(canonicalJson(result).includes('056 private'), false);
+      assert.equal(module.testOwnerContext.adapter.end('hard-stop-recorded').reason, 'checkpoint-cleanup-failed');
+      assert.equal(clearCalls, 1, 'even an explicit repeated end on this failed handle cannot retry');
+    });
+  });
+}
+
+nodeTest('056 owner finalization runner permits only separate fresh admission and rechecks both-absent collisions', async () => {
+  for (const collision of ['none', 'claim', 'checkpoint', 'both']) {
+    await withSealedWorkspace(async root => {
+      writeSealedTaskState(root);
+      const checkpoint = ownerFinalizationStore(root);
+      const request = focusedRunnerRequest(root, { assessment: null });
+      const pairs = [];
+      const port = {
+        ...checkpoint.port,
+        claim(...args) {
+          pairs.push(clone(args[1]));
+          return checkpoint.port.claim(...args);
+        },
+      };
+      let artifacts;
+      const stopped = await runHostAdapter(request, {
+        checkpoint: port,
+        exchange(challenge) {
+          artifacts = fs.readdirSync(artifactDirectory(root)).map(name => [
+            name, fs.readFileSync(path.join(artifactDirectory(root), name)),
+          ]);
+          return focusedChallengeResponse(challenge, 'assessment', {});
+        },
+      });
+      assertOwnerFinalizationStop(stopped, request.state);
+      assert.equal(stopped.cleanup, 'cleared');
+      assert.equal(pairs.length, 1, 'resource release creates no replacement claim');
+      assert.deepEqual(fs.readdirSync(artifactDirectory(root)), []);
+      const callsBefore = checkpoint.calls.length;
+      await assert.rejects(() => runHostAdapter(stopped, { checkpoint: port }), TypeError);
+      assert.equal(checkpoint.calls.length, callsBefore, 'a returned summary is neither a request nor owner authority');
+      for (const [name, bytes] of artifacts) {
+        if (collision === 'both' || name.endsWith(`.${collision}`)) {
+          fs.writeFileSync(path.join(artifactDirectory(root), name), bytes);
+        }
+      }
+      let exchanges = 0;
+      const later = await runHostAdapter(focusedRunnerRequest(root, { assessment: null }), {
+        checkpoint: port,
+        exchange(challenge) { exchanges += 1; return focusedCancelResponse(challenge); },
+      });
+      assert.equal(checkpoint.calls[callsBefore], 'load', 'separate explicit admission starts by checking both artifacts');
+      assert.equal(exchanges, collision === 'none' ? 1 : 0);
+      assert.equal(pairs.length, collision === 'none' ? 2 : 1);
+      if (collision === 'none') {
+        assert.equal(later.reason, 'cancelled');
+        assert.notEqual(pairs[0].invocationIdentity, pairs[1].invocationIdentity);
+        assert.notEqual(pairs[0].workerToken, pairs[1].workerToken);
+        assert.deepEqual(fs.readdirSync(artifactDirectory(root)), []);
+      } else {
+        assert.equal(later.outcome, 'hard-stop');
+        assert.equal(later.reason, collision === 'both' ? 'checkpoint-ownership-unavailable' : 'checkpoint-stale-orphan');
+        assert.equal(checkpoint.calls.slice(callsBefore).includes('clear'), false);
+      }
+    });
+  }
+});
+
+nodeTest('056 owner finalization foreground CLI reports one preserved hard stop with no extra prompt or claim', async () => {
+  for (const rejection of ['invalid', 'stale', 'EOF', 'malformed JSON']) {
+    await withSealedWorkspace(async root => {
+      writeSealedTaskState(root);
+      const request = focusedRunnerRequest(root, { assessment: null });
+      const before = laneSurfaceDigests(root);
+      const temp = path.join(root, 'runner-temp');
+      fs.mkdirSync(temp);
+      const env = { TMPDIR: temp, TMP: temp, TEMP: temp };
+      let observed;
+      if (rejection === 'malformed JSON') {
+        const child = spawnSync(process.execPath, [
+          fileURLToPath(new URL('./host-adapter-runner.mjs', import.meta.url)),
+        ], {
+          env: { ...process.env, ...env },
+          input: `${canonicalJson(request)}\n{056 private malformed JSON\n`,
+          encoding: 'utf8',
+        });
+        assert.equal(child.error, undefined);
+        observed = { code: child.status, stderr: child.stderr, rows: child.stdout.trim().split(/\r?\n/).map(line => JSON.parse(line)) };
+      } else {
+        observed = await runFocusedRunnerCli(request, challenge => rejection === 'EOF' ? null
+          : focusedChallengeResponse(challenge, 'assessment', rejection === 'stale'
+            ? focusedChallengeAssessment(challenge, { evidenceHash: sha256('056 private CLI stale hash') })
+            : { private: '056 private CLI payload' }), { env });
+      }
+      assert.equal(observed.code, 1, rejection);
+      assert.equal(observed.stderr, '');
+      assert.deepEqual(observed.rows.map(row => row.type), ['input-required', 'result']);
+      assert.equal(observed.rows[0].kind, 'assessment');
+      const result = observed.rows[1];
+      assert.equal(result.outcome, 'hard-stop');
+      assert.equal(result.reason, rejection === 'EOF' ? 'supervisor-context-lost'
+        : rejection === 'stale' ? 'challenge-response-stale' : 'challenge-response-invalid');
+      assert.equal(result.stateBase64, Buffer.from(canonicalJson(request.state)).toString('base64'));
+      assert.equal(result.stateHash, sha256(canonicalJson(request.state)));
+      assert.equal(result.acceptedRevision, 0);
+      assert.deepEqual(result.haltReport, describeUnattendedHalt({ state: request.state, reason: result.reason }, null));
+      const eligible = rejection === 'invalid' || rejection === 'stale';
+      assert.equal(result.cleanup, eligible ? 'cleared' : 'not-attempted');
+      assert.equal(result.orphan, !eligible);
+      assert.equal(result.hostRevision, observed.rows[0].hostRevision + (eligible ? 1 : 0));
+      assert.equal(fs.readdirSync(artifactDirectory(temp)).length, eligible ? 0 : 2);
+      assert.equal(canonicalJson(observed.rows).includes('056 private'), false);
+      assert.deepEqual(laneSurfaceDigests(root), before);
+    });
+  }
 });
 
 nodeTest('focused table A: sequential challenge protocol and foreground CLI', async () => {
@@ -7525,8 +8973,9 @@ nodeTest('focused table A: sequential challenge protocol and foreground CLI', as
       }
       if (row.detail !== undefined) {
         assert.equal(result.detail, row.detail, row.label);
-        assert.equal(result.orphan, true, row.label);
-        assert.equal(result.cleanup, 'not-attempted', row.label);
+        const finalized = row.detail === 'assessment' || row.detail === 'Assessment: invalid-contract';
+        assert.equal(result.orphan, !finalized, row.label);
+        assert.equal(result.cleanup, finalized ? 'cleared' : 'not-attempted', row.label);
         // No rejection may echo the refused Assessment's target text or hashes.
         const emitted = canonicalJson(result);
         for (const rejected of [
@@ -7554,7 +9003,8 @@ nodeTest('focused table A: sequential challenge protocol and foreground CLI', as
       }
       assert.equal(
         checkpoint.pair.checkpoint !== null,
-        row.checkpointPresent !== false,
+        row.checkpointPresent !== false
+          && row.detail !== 'assessment' && row.detail !== 'Assessment: invalid-contract',
         row.label,
       );
       if (row.kinds) assert.deepEqual(kinds, row.kinds, row.label);
@@ -7632,7 +9082,7 @@ nodeTest('focused table A: sequential challenge protocol and foreground CLI', as
     writeSealedTaskState(root);
     const temp = path.join(root, 'tmp');
     fs.mkdirSync(temp);
-    const env = { TMPDIR: temp };
+    const env = { TMPDIR: temp, TMP: temp, TEMP: temp };
     const stale = focusedRunnerRequest(root, {
       assessment: {
         ...focusedRunnerRequest(root).assessment,
@@ -10395,16 +11845,45 @@ nodeTest('T002 application requires exact owner, mapping and expected source byt
   }
 });
 
-/** Test-owned instrumentation of actual private memory, with no shipped introspection API. @param {'host-adapter.mjs'|'host-adapter-runner.mjs'} file */
-async function workModuleWithObservation(file) {
+/**
+ * Test-owned instrumentation of actual private memory, with no shipped introspection API.
+ * @param {'host-adapter.mjs'|'host-adapter-runner.mjs'} file @param {boolean} [observeOwner]
+ */
+async function workModuleWithObservation(file, observeOwner = false) {
   const url = new URL(file, import.meta.url);
   let source = fs.readFileSync(url, 'utf8');
   const adapter = file === 'host-adapter.mjs';
   const needle = adapter ? '  const ledger = createLaneLedger();' : '  const currentRun = [];';
   const variable = adapter ? 'testLaneLedger' : 'testCurrentRun';
   assert.equal(source.split(needle).length, 2, 'exactly one private memory owner');
-  source = source.replace(needle, `${needle}\n  ${variable} = ${adapter ? 'ledger' : 'currentRun'};`)
-    .replace(/from '(\.[^']+)'/g, (_match, relative) => `from '${new URL(relative, url).href}'`);
+  source = source.replace(needle, `${needle}\n  ${variable} = ${adapter ? 'ledger' : 'currentRun'};`);
+  if (observeOwner) {
+    source += '\nexport let testOwnerContext = null;\nexport const testModuleUrl = import.meta.url;\n';
+    if (adapter) {
+      source = source.replace(needle, `${needle}
+  testOwnerContext = {
+    get session() { return current; },
+    get host() { return host; },
+    replaceSession(value) { current = validateHostAdapterSession(value); },
+  };`);
+      source += '\nexport { ADMITTED_INVOCATIONS as testAdmittedInvocations };\n';
+    } else {
+      const observedAdapter = await workModuleWithObservation('host-adapter.mjs', true);
+      source = source.replace("from './host-adapter.mjs';", `from '${observedAdapter.testModuleUrl}';`);
+      source += `\nexport * as testAdapterModule from '${observedAdapter.testModuleUrl}';\nexport let testTerminal = null;\n`;
+      const admission = '    const admitted = adapter.snapshot();';
+      assert.equal(source.split(admission).length, 2);
+      source = source.replace(admission, `    testOwnerContext = {
+      ports, run, refreshInspection,
+      get adapter() { return adapter; },
+      replaceAdapter(value) { adapter = value; },
+    };\n${admission}`);
+      const terminal = '    if (finalizeRejectedAssessment === undefined) return terminal;';
+      assert.equal(source.split(terminal).length, 2);
+      source = source.replace(terminal, `    testTerminal = terminal;\n${terminal}`);
+    }
+  }
+  source = source.replace(/from '(\.[^']+)'/g, (_match, relative) => `from '${new URL(relative, url).href}'`);
   source += `\nexport let ${variable} = null;\n`;
   if (!adapter) source += 'export { authorityObservation as testAuthorityObservation };\n';
   return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
@@ -13179,7 +14658,12 @@ nodeTest('Feature 064 T003: the production runner cannot settle after a misbound
       invocationIdentity: activeCheckpoint.invocationIdentity,
       workerToken: activeCheckpoint.workerToken,
       workerGeneration: activeCheckpoint.workerGeneration,
-    }, activeCheckpoint.hostRevision, 'hard-stop-recorded');
+    }, {
+      claimHash: checkpoint.pair.claim.claimHash,
+      recordHash: activeCheckpoint.recordHash,
+      acceptedRevision: activeCheckpoint.acceptedRevision,
+      hostRevision: activeCheckpoint.hostRevision,
+    }, 'hard-stop-recorded');
     assert.equal(cleared.status, 'cleared');
     assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
     context.diagnostic(canonicalJson({

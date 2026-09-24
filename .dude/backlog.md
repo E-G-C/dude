@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **1** (1 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **9**
+- Ideas awaiting definition: **8**
 - Defined awaiting work: **0**
-- Completed: **61**
+- Completed: **62**
 
 ## Current
 
@@ -32,7 +32,6 @@ kanban
 
 - `053` · `design-stage-critique` — Design-Stage Critique (`.dude/ideas/053-design-stage-critique.md`)
 - `054` · `mockup-opens-in-review` — Mockup Opens in Review (`.dude/ideas/054-mockup-opens-in-review.md`)
-- `056` · `ship-orphan-cleanup` — Ship Orphan Cleanup (`.dude/ideas/056-ship-orphan-cleanup.md`)
 - `058` · `outcome-aligned-intake` — Outcome-Aligned Intake (`.dude/ideas/058-outcome-aligned-intake.md`)
 - `068` · `agent-to-agent-communication` — Local and remote agent communication (`.dude/ideas/068-agent-to-agent-communication.md`)
 - `069` · `dude-canvas-artifact-import` — Dude Canvas Artifact Import (`.dude/ideas/069-dude-canvas-artifact-import.md`)
@@ -95,6 +94,7 @@ kanban
 - `051` · `retrospective-rubber-duck-pack` — Retrospective Rubber Duck Pack (`.dude/ideas/051-retrospective-rubber-duck-pack.md`)
 - `052` · `dude-canvas-ui` — Dude Canvas UI (`.dude/ideas/052-dude-canvas-ui.md`)
 - `055` · `canvas-acceptance-reliability` — Canvas Acceptance Reliability (`.dude/ideas/055-canvas-acceptance-reliability.md`)
+- `056` · `ship-orphan-cleanup` — Ship Orphan Cleanup (`.dude/ideas/056-ship-orphan-cleanup.md`)
 - `057` · `dude-canvas-needs-you` — Dude Canvas Needs You (`.dude/ideas/057-dude-canvas-needs-you.md`)
 - `059` · `annotation-direct-manipulation` — Annotation Direct Manipulation (`.dude/ideas/059-annotation-direct-manipulation.md`)
 - `060` · `recoverable-work-handoffs` — Recoverable Work Handoffs (`.dude/ideas/060-recoverable-work-handoffs.md`)

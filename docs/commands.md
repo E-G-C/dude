@@ -466,6 +466,54 @@ and enter the runner with fresh bindings and the unchanged accepted state and
 policy. Failed setup or cleanup stops; direct glyph edits, the board CLI, and
 a second claim are not substitutes.
 
+#### Original-owner first-Assessment finalization
+
+Autonomous Lightweight Work, whether entered directly or through Ship, has one
+narrow cleanup case when its first Assessment exchange rejects an invalid or
+stale payload. The original still-running owner may release only its own
+unchanged claim/checkpoint pair. A rejected Assessment supplied in the initial
+request may first fall back to the existing exchange rules; the supplied
+rejection alone does not authorize cleanup. Stale Assessment input is distinct
+from stale ownership artifacts, which make cleanup ineligible.
+
+Eligibility requires the original retained supervisor, worker, and adapter
+capabilities and authoritative state; only successful read-only Inspections
+since the claim; no authorization request, dispatch, side-effecting lane or
+runtime operation, or governance transition; unchanged accepted bytes, hash,
+revision, and prior accounting; no pending or unfinished obligation; fresh
+workspace, target, exact-owner, lane, task, and prestate agreement; and a
+complete settled pair matching both retained hashes. Unchanged counters or a
+rejection reason alone are insufficient.
+
+Malformed, missing, foreign, replayed, or out-of-order response envelopes,
+cancellation, missing exchange capability, EOF, transport or context loss, and
+later Assessment, recovery, governance, specialist, or capacity failures keep
+their existing stop and orphan behavior. For an eligible payload rejection,
+Work retains the original terminal and halt evidence, makes at most one call
+behind the eligibility guards to its existing end boundary, rechecks the exact
+pair at each removal boundary, and reports success only after both artifacts
+are absent. Mismatch, partial state, drift, reappearance, or failure stops
+further removal. The two-file cleanup is not atomic and promises no rollback or
+crash-proof result delivery.
+
+The CLI still returns one nonzero hard-stop result with the original reason,
+detail, accepted state, accounting, history, and unchanged task and lane state.
+`cleanup: "cleared"` and `orphan: false` mean only that the original owner's
+resources were released. A not-attempted or failed cleanup keeps its own bounded
+reason separate from the rejection, and `orphan` never proves supervisor death.
+There is no prompt, extra exchange, retry, dispatch, replacement claim, or
+automatic continuation.
+
+A later Work or Ship run needs a separate explicit request and fresh admission.
+Cleanup cannot revive old RunState, continue the goal, complete the task, or
+derive authority from returned state, age, a PID, EOF, child exit, or model
+output. True orphans retain the existing independently confirmed
+supervisor-absence, exact-pair manual cleanup, and post-clean admission rules.
+Cancellation, supervisor or context loss, successful same-invocation next-ready
+work, and existing learning, verification, review, settlement, close, and
+budget rules are unchanged. This is internal Work behavior, not a new command
+or a Ship pre-Work policy.
+
 A separately authorized fresh runner request may supply `retainedEvidence` with
 exactly four arrays: `currentRun`, `verification`, `review`, and `lint`. Entries
 are existing captures with canonical `{base64}` bytes, retained unchanged from
