@@ -1484,10 +1484,10 @@ backlog-order changes still need procedural `backlog.mjs generate --write`.
 This repository keeps the product **core** in `src/` — the `dude` / `dude-<slug>`
 agents, `dude-<slug>` skills (including the engine libraries and their tests),
 and `dude.instructions.md`. `.github/` holds the **built dev bundle**: the core
-synced from `src/` by `scripts/build-dev.mjs`, plus the seven currently installed
-dogfood packs: `authoring`, `coding`, `design`, `release`, `rubber-duck`,
-`strata`, and `writing`. This lets the maintainer's own `@dude` work. Consumers
-never see `src/`.
+synced from `src/` by `scripts/build-dev.mjs`, plus any optional packs installed
+through Compose. The current pack selection is recorded in
+`.dude/metadata/profile.md`. This lets the maintainer's own `@dude` work.
+Consumers never see `src/`.
 
 - `scripts/build-release.mjs` stages a test-free core bundle from `src/` plus
   only `.dude/metadata/{bundle-manifest.md,profile.md}` as seeded release
@@ -1508,7 +1508,7 @@ workflow for each class.
 | Class | Authoritative edit surface | Output and ownership rule |
 |---|---|---|
 | Core | `src/**` | `node scripts/build-dev.mjs` writes the generated, committed `.github/**` core projection. Do not hand-edit generated core. |
-| Pack | `library/packs/<name>/**` | Install into a disposable root for live validation. Commit pack source only; do not promote it through the core build. |
+| Pack | `library/packs/<name>/**` | Use Compose to install or refresh here, or validate in a disposable root. Commit pack source only; do not promote it through the core build. |
 | Project-local | `.github/skills/project/**`, `.github/skills/dude-local-*/**`, `.github/workflows/**`, and `.dude/**` when the applicable workflow grants ownership | Edit project-owned files directly. They are not generated core. |
 | Docs-only | `README.md` and `docs/**` | Edit directly and run relevant documentation checks. Do not run `build-dev` unless `src/**` also changed. |
 
@@ -1585,8 +1585,10 @@ generated core output.
    means leaf; a present value is the sole composite declaration and contains a
    non-empty roster of unique stable stems.
 
-3. Create a disposable core bundle, then install the local pack with the
-  supported argument order:
+3. For live validation, install or refresh the pack here through the normal
+  Compose workflow. Any catalog pack can be used with explicit user intent;
+  the current installed set is not an allowlist. A disposable core bundle is
+  optional when you need isolated validation:
 
   ```bash
   node scripts/build-release.mjs --out <tmp> --tag v0.0.0
@@ -1601,8 +1603,9 @@ generated core output.
   change the repository's `.github/` bundle or promote the pack into core. A
   pristine root may warn that `.dude/ideas` is missing; require zero lint
   failures.
-4. Remove the disposable root after the check, including after an interrupted
-  attempt. It is temporary validation output and has no acceptance authority.
+4. If you created a disposable root, remove it after the check, including after
+  an interrupted attempt. It is temporary validation output and has no
+  acceptance authority.
 5. Run fresh final checks and review, then commit `library/packs/<name>/**`
   source only. Do not run core `build-dev` to promote a pack.
 
@@ -1618,7 +1621,8 @@ renderer; `add`, `refresh`, and `verify` use the packaged engine copy.
 
 Worked pack example: for a Beads workflow change, run
 `node --test library/packs/beads/skills/dude-pack-beads-workflow/beads.test.mjs`
-and compose verification. Then install and lint it in a disposable root:
+and compose verification. For an isolated check, install and lint it in a
+disposable root:
 
 ```bash
 PACK_ROOT="$(mktemp -d)"

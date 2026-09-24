@@ -2974,14 +2974,6 @@ test('agent configuration, projection, compose, upgrade, and CI docs describe th
   assert.match(compose, /command is selected before projection dependencies are loaded/);
   assert.match(compose, /`remove`, `list`, and\s+`status` do not load that configuration or the renderer/);
   assert.match(compose, /existing complete predecessor profile can make one in-memory transition/i);
-  assert.match(
-    markdownSection(commands, '### Repo layout: source vs built bundle'),
-    /seven currently installed\s+dogfood packs:\s+`authoring`,\s+`coding`,\s+`design`,\s+`release`,\s+`rubber-duck`,\s+`strata`,\s+and\s+`writing`/,
-  );
-  assert.match(
-    markdownSection(compose, '## Rules'),
-    /dogfood repo, compose may use only its seven currently installed profile\s+packs:\s+`authoring`,\s+`coding`,\s+`design`,\s+`release`,\s+`rubber-duck`,\s+`strata`,\s+and\s+`writing`[\s\S]{0,120}other catalog pack in a throwaway root/,
-  );
   assert.match(upgrade, /existing `.github\/skills\/dude-engine\/\*\*` ownership recursively includes/);
   assert.match(upgrade, /rollback\s+restorability/i);
   assert.match(upgrading, /ignored\s+and untracked[\s\S]{0,120}refuses/i);
@@ -2994,6 +2986,23 @@ test('agent configuration, projection, compose, upgrade, and CI docs describe th
   assert.match(ci, /node scripts\/build-dev\.mjs/);
   assert.match(ci, /node scripts\/build-release\.mjs --out dist/);
   assert.doesNotMatch(ci, /\bgit (?:branch|commit|push|switch)\b|\bgh pr\b/);
+});
+
+test('repository pack usage follows opt-in Compose without a fixed allowlist', () => {
+  const commands = read('docs/commands.md');
+  const layout = markdownSection(commands, '### Repo layout: source vs built bundle').replace(/\s+/g, ' ');
+  assert.match(layout, /plus any optional packs installed through Compose\./);
+  assert.match(layout, /current pack selection is recorded in `\.dude\/metadata\/profile\.md`/);
+
+  const rules = markdownSection(read('src/skills/dude-compose/SKILL.md'), '## Rules').replace(/\s+/g, ' ');
+  assert.doesNotMatch(rules, /dogfood repo, compose may use only/);
+  assert.match(rules, /Packs are \*\*opt-in\*\*\. Never install a pack without explicit user intent\./);
+  assert.match(rules, /Always preview before writing; always lint after\./);
+
+  const packChanges = markdownSection(commands, '#### Pack changes').replace(/\s+/g, ' ');
+  assert.match(packChanges, /Any catalog pack can be used with explicit user intent/);
+  assert.match(packChanges, /A disposable core bundle is optional when you need isolated validation/);
+  assert.doesNotMatch(read('.dude/memory/guardrails.md'), /use a disposable bundle for live validation/);
 });
 
 test('release assertions do not positively require or forbid the transitional migration provider', () => {
