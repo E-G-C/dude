@@ -10,7 +10,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import childProcess, { spawn, spawnSync } from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import { createHash, randomUUID } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
 import fs from 'node:fs';
@@ -19,11 +20,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
-import { createNeedsYou } from '../../src/extensions/dude/lib/needs-you.mjs';
+import { NEEDS_YOU_LIMITS, createNeedsYou } from '../../src/extensions/dude/lib/needs-you.mjs';
 import { createReview } from '../../src/extensions/dude/lib/review.mjs';
 import { buildReport, jsonBytes } from '../../src/extensions/dude/lib/review/data.mjs';
 import { decodePng } from '../../src/extensions/dude/lib/review/png.mjs';
 import { closeInstance, openInstance } from '../../src/extensions/dude/lib/canvas-server.mjs';
+import {
+  cmdAdd, cmdRemove, cmdRefresh, cmdPreviewRefresh, cmdStatus, packArtifacts, resolvePackDir,
+} from '../../src/skills/dude-compose/compose.mjs';
 import {
   createInspector,
   imageIsStatic,
@@ -36,7 +40,7 @@ const BROWSER = process.env.DUDE_CANVAS_BROWSER
   ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
 const REQUIRED = process.env.DUDE_CANVAS_BROWSER_REQUIRED === '1';
 const DEADLINE = 20_000;
-const PUBLISHED_APP_SHA256 = 'fcf3f9102f8eabd36f9bd0494a84695fda2891e1d53a7f05b03a1be2088a9463';
+const PUBLISHED_APP_SHA256 = 'd26d8ececcdf1e136538b6b9e309f5dbc95e65ab935901537b2e3e82a17286be';
 
 /** @param {string|Buffer} value */
 function hash(value) {
@@ -46,6 +50,16 @@ function hash(value) {
 /** @param {string|Buffer} value */
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
+}
+
+/**
+ * The spec binds the approved mock to its Windows-authored CRLF bytes, while
+ * the repository's `* text=auto eol=lf` attribute rewrites text to LF on
+ * checkout/restore. Bind that exact approved content, not a line-ending form.
+ * @param {Buffer} bytes
+ */
+function approvedDesignSha256(bytes) {
+  return sha256(Buffer.from(bytes.toString('latin1').replace(/\r?\n/g, '\r\n'), 'latin1'));
 }
 
 /** @param {string} root @param {string} relative @param {string|Buffer} value */
@@ -1103,7 +1117,7 @@ async function createReviewSourceObserver(page) {
               ariaLabel:focus?.getAttribute?.('aria-label') || null,
               text:focus?.innerText?.trim().slice(0, 120) || null,
             },
-            boxDisabled:document.querySelector('[aria-label="Box (B)"]')?.disabled ?? null,
+            boxDisabled:document.querySelector('[aria-label="Box (B)"]')?.matches(':disabled,[aria-disabled="true"]') ?? null,
           };
         })()`),
         observeRuntime(page, `(async () => {
@@ -1323,9 +1337,27 @@ async function shortPanelWheelPoints(page) {
  * @param {'standalone'|'positioned'|'overlay-negative'} variant
  */
 async function dispatchObservedReviewWheel(page, observer, variant) {
+  // A fractional fixture resize can have an inspector reread queued for the
+  // next source frame even when its client size is already admitted. Separate
+  // that work from the wheel experiment by observing an idle, progressing
+  // source and complete query/reply pairs, not just a responsive CDP channel.
+  await settleFocusPaint(page);
+  let idleKey = null, idleFrame = null;
+  const pre = await until(async () => {
+    const value = await observer.snapshot('pre-wheel');
+    const bridge = reviewBridgeSnapshot(value);
+    const key = JSON.stringify([value.source.view.signature,
+      value.source.probe.queries.length, value.owner.probe.replies.length]);
+    if (key !== idleKey) {
+      idleKey = key;
+      idleFrame = value.source.probe.frameCount;
+    }
+    const complete = bridge.correlations.length === bridge.queries;
+    return !value.owner.boxDisabled && complete
+      && value.source.probe.frameCount >= idleFrame + 2 ? value : null;
+  }, `${variant} source and bridge quiescent before native wheel`);
   const points = await shortPanelWheelPoints(page);
   const point = variant === 'overlay-negative' ? points?.overlay : points?.outside;
-  const pre = await observer.snapshot('pre-wheel');
   const marker = {
     parentWheel:pre.owner.probe.wheel.length,
     parentMousemove:pre.owner.probe.mousemove.length,
@@ -1369,21 +1401,26 @@ async function dispatchObservedReviewWheel(page, observer, variant) {
     });
   }
   let priorKey = null;
-  let stableTurns = 0;
+  let stableFrame = null;
   const post = await until(async () => {
     const value = await observer.snapshot('post-wheel');
-    const parentDelivered = value.owner.probe.wheel.length > marker.parentWheel;
-    const sourceDelivered = value.source.probe.wheel.length > marker.sourceWheel;
+    const parentEvents = value.owner.probe.wheel.slice(marker.parentWheel);
+    const sourceEvents = value.source.probe.wheel.slice(marker.sourceWheel);
+    const parentDelivered = parentEvents.reduce((sum, event) => sum + event.deltaY, 0) === request.deltaY;
+    const sourceDelivered = sourceEvents.reduce((sum, event) => sum + event.deltaY, 0) === request.deltaY;
     if (!parentDelivered && !sourceDelivered || value.owner.boxDisabled) return null;
     const bridge = reviewBridgeSnapshot(value);
+    if (bridge.correlations.length !== bridge.queries) return null;
     const key = JSON.stringify({
       signature:value.source.view.signature,
       scrollX:value.source.view.viewport.scrollX,
       scrollY:value.source.view.viewport.scrollY,
       latestBridgeId:bridge.latestView?.reply.id ?? null,
       latestBridgeScrollY:bridge.latestView?.reply.viewport.scrollY ?? null,
+      queries:bridge.queries,
+      replies:bridge.replies,
     });
-    stableTurns = key === priorKey ? stableTurns + 1 : 0;
+    if (key !== priorKey) stableFrame = value.source.probe.frameCount;
     priorKey = key;
     const changed = value.source.view.viewport.scrollY
       !== pre.source.view.viewport.scrollY;
@@ -1392,7 +1429,7 @@ async function dispatchObservedReviewWheel(page, observer, variant) {
       && bridge.latestView.reply.viewport.scrollY
         === value.source.view.viewport.scrollY
     );
-    return stableTurns >= 1 && bridgeCaughtUp ? value : null;
+    return value.source.probe.frameCount >= stableFrame + 2 && bridgeCaughtUp ? value : null;
   }, `${variant} native wheel delivery and settled source`);
   const parentEvents = post.owner.probe.wheel.slice(marker.parentWheel);
   const sourceEvents = post.source.probe.wheel.slice(marker.sourceWheel);
@@ -1573,32 +1610,49 @@ async function runShortPanelWheelControl(variant, record) {
     record.stage = 'subscribed-before-review';
     await click(page, button('Review design'));
     await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
-      && !document.querySelector('[aria-label="Box (B)"]').disabled`),
+      && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
     `${variant} focused Review engine`, 60_000);
     record.binding = await observer.bind();
     await viewport(page, 1000, 'light', 300, 2);
-    record.shortPanel = await until(() => observeRuntime(page, `(() => {
+    // Font/platform layout need not leave a fractional remainder. Deliberately
+    // arrange the old half-pixel edge instead of mistaking it for product UI.
+    // First annotation admission still owns pinning and replaces this height.
+    record.fractionalFixture = await evaluate(page, `(() => {
+      const frame = document.querySelector('.dude-review-frame');
+      const before = {rect:frame.getBoundingClientRect().toJSON(), clientHeight:frame.clientHeight};
+      frame.style.height = (frame.clientHeight - 0.5) + 'px';
+      return {before, arrangedHeight:frame.getBoundingClientRect().height};
+    })()`);
+    record.shortPanel = await until(async () => {
+      record.lastShortPanel = await observeRuntime(page, `(() => {
       const frame = document.querySelector('.dude-review-frame');
       if (!frame) return null;
       const rect = frame.getBoundingClientRect();
-      return frame.clientWidth === 942
+      const admitted = frame.clientWidth === 942
         && frame.clientHeight === 118
         && rect.width === 942
         && rect.height === 117.5
         && !frame.classList.contains('dude-review-frame-pinned')
         && document.querySelector('.dude-review-overlay')?.getAttribute('viewBox')
           === '0 0 942 118'
-        && !document.querySelector('[aria-label="Box (B)"]').disabled
-        ? {
+        && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]');
+      return {
+          admitted,
           viewport:{width:innerWidth,height:innerHeight,dpr:devicePixelRatio},
           frame:{
             clientWidth:frame.clientWidth,
             clientHeight:frame.clientHeight,
             rect:rect.toJSON(),
+            pinned:frame.classList.contains('dude-review-frame-pinned'),
           },
-          viewBox:document.querySelector('.dude-review-overlay').getAttribute('viewBox'),
-        } : null;
-    })()`), `${variant} exact unpinned short panel`);
+          viewBox:document.querySelector('.dude-review-overlay')?.getAttribute('viewBox'),
+          boxDisabled:document.querySelector('[aria-label="Box (B)"]')?.matches(':disabled,[aria-disabled="true"]'),
+        };
+      })()`);
+      if (!record.lastShortPanel?.admitted) return null;
+      const { viewport, frame, viewBox } = record.lastShortPanel;
+      return { viewport, frame: { clientWidth: frame.clientWidth, clientHeight: frame.clientHeight, rect: frame.rect }, viewBox };
+    }, `${variant} exact unpinned short panel`);
     record.qualification = await qualifyReviewSourceObserver(observer);
     record.stage = record.qualification.passed ? 'qualified' : 'qualification-failed';
     if (!record.qualification.passed) return record;
@@ -1642,11 +1696,13 @@ async function runShortPanelWheelControl(variant, record) {
   }
 }
 
-async function startBrowser(deviceScaleFactor = 1, stabilizeHeadlessTimeline = false) {
+async function startBrowser(deviceScaleFactor = 1, stabilizeHeadlessTimeline = false, captureParity = false) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-t011-profile-'));
   const browser = spawn(BROWSER, [
     '--headless=new',
-    '--disable-gpu',
+    // Pixel comparisons need the production capture's raster path and sRGB
+    // space. Disabling GPU only in the owner changed text edges by six levels.
+    ...(captureParity ? ['--force-color-profile=srgb'] : ['--disable-gpu']),
     '--disable-backgrounding-occluded-windows',
     ...(stabilizeHeadlessTimeline ? [
       '--disable-background-timer-throttling',
@@ -1709,20 +1765,27 @@ async function startBrowser(deviceScaleFactor = 1, stabilizeHeadlessTimeline = f
 }
 
 function installEmptyBoard() {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-t011-bd-'));
-  const executable = path.join(directory, process.platform === 'win32' ? 'bd.cmd' : 'bd');
-  if (process.platform === 'win32') {
-    fs.writeFileSync(executable, `@${JSON.stringify(process.execPath)} -e "process.stdout.write('[]')" %*\r\n`);
-  } else {
-    fs.writeFileSync(executable, '#!/usr/bin/env node\nprocess.stdout.write("[]");\n', { mode: 0o755 });
-  }
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${directory}${path.delimiter}${originalPath ?? ''}`;
+  // Match the owned Node-child fixture in browser.test.mjs and provider tests.
+  // Windows execFile cannot execute a .cmd shim without a shell.
+  const original = childProcess.execFile, children = new Set();
+  childProcess.execFile = (file, args, options, callback) => {
+    if (file !== 'bd') return original(file, args, options, callback);
+    assert.notEqual(path.resolve(options.cwd), ROOT, 'board reads belong only to disposable workspaces');
+    assert.deepEqual(args, ['list', '--all', '--limit', '0', '--json']);
+    const child = original(process.execPath, ['-e', 'process.stdout.write("[]")'], options, callback);
+    children.add(child);
+    child.once('close', () => children.delete(child));
+    return child;
+  };
+  syncBuiltinESMExports();
   return {
-    close() {
-      if (originalPath === undefined) delete process.env.PATH;
-      else process.env.PATH = originalPath;
-      fs.rmSync(directory, { recursive: true, force: true });
+    async close() {
+      childProcess.execFile = original;
+      syncBuiltinESMExports();
+      await Promise.all([...children].map(child => new Promise(resolve => {
+        child.once('close', resolve);
+        child.kill('SIGKILL');
+      })));
     },
   };
 }
@@ -1812,7 +1875,12 @@ async function createFixture(root, target = null, wrapReview = null) {
     session,
     async close({ removeRoot = true } = {}) {
       provider.dispose();
-      await closeInstance(instanceId);
+      const closing = closeInstance(instanceId);
+      await until(() => !instance.server.listening, 'owned fixture stops accepting connections');
+      // Drain only this fixture's streams after listening ends. A live browser
+      // must not strand teardown with a reconnecting EventSource.
+      instance.server.closeAllConnections();
+      await closing;
       if (removeRoot) fs.rmSync(root, { recursive: true, force: true });
     },
   };
@@ -1910,10 +1978,14 @@ function field(label) {
 /** @param {Cdp} page @param {string} expression */
 async function click(page, expression) {
   await until(() => evaluate(page, `Boolean(${expression})`), `rendered target ${expression}`);
+  await settleFocusPaint(page);
   await evaluate(page, `(() => {
     const node = ${expression};
     node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   })()`);
+  // Fluent's portaled surface can exist at its provisional origin before
+  // positioning/paint. Two wall-clock reads there are not a stable recipient.
+  await settleFocusPaint(page);
   let prior;
   const point = await until(async () => {
     const next = await evaluate(page, `(() => {
@@ -1927,19 +1999,43 @@ async function click(page, expression) {
         x, y, width: rect.width, height: rect.height,
         disabled: node.matches(':disabled,[aria-disabled="true"]'),
         hit: Boolean(hit && (node === hit || node.contains(hit))),
+        recipient: hit ? { tag:hit.tagName, role:hit.getAttribute('role'),
+          label:hit.getAttribute('aria-label'), text:hit.textContent?.slice(0,100) } : null,
       };
     })()`);
     const stable = next?.hit && !next.disabled && next.width >= 24 && next.height >= 24
       && prior?.x === next.x && prior?.y === next.y;
     prior = next;
     return stable ? next : null;
-  }, `stable, enabled 24px target ${expression}`);
+  }, `stable, enabled 24px target ${expression}`).catch(error => {
+    error.message += `; last native hit-test: ${JSON.stringify(prior)}`;
+    throw error;
+  });
+  await evaluate(page, `(() => {
+    const node = ${expression};
+    const describe = element => ({tag:element?.tagName,role:element?.getAttribute('role'),
+      label:element?.getAttribute('aria-label'),text:element?.textContent?.slice(0,100)});
+    const probe = {expected:describe(node),point:${JSON.stringify(point)},events:[]};
+    const receive = event => probe.events.push({type:event.type,isTrusted:event.isTrusted,
+      target:describe(event.target),intended:node.contains(event.target),connected:node.isConnected,
+      rect:node.getBoundingClientRect().toJSON(),x:event.clientX,y:event.clientY,at:performance.now(),
+      hasFocus:document.hasFocus(),hit:describe(document.elementFromPoint(event.clientX,event.clientY))});
+    for (const type of ['pointerdown','pointerup','click']) document.addEventListener(type, receive, true);
+    window.__t011ReadClick = () => {
+      for (const type of ['pointerdown','pointerup','click']) document.removeEventListener(type, receive, true);
+      delete window.__t011ReadClick;
+      return probe;
+    };
+  })()`);
   await page.send('Input.dispatchMouseEvent', {
     type: 'mousePressed', x: point.x, y: point.y, button: 'left', buttons: 1, clickCount: 1,
   });
   await page.send('Input.dispatchMouseEvent', {
     type: 'mouseReleased', x: point.x, y: point.y, button: 'left', buttons: 0, clickCount: 1,
   });
+  const delivered = await observeRuntime(page, 'window.__t011ReadClick()');
+  assert.ok(delivered.events.some(event => event.type === 'pointerdown' && event.isTrusted && event.intended),
+    `native press must reach the hit-tested target: ${JSON.stringify(delivered)}`);
 }
 
 /** @param {Cdp} page */
@@ -1986,6 +2082,7 @@ async function openReviewNotice(page, title) {
  * @param {string} expression
  */
 async function clickAtCurrentPosition(page, expression) {
+  await settleFocusPaint(page);
   let prior;
   const point = await until(async () => {
     const next = await evaluate(page, `(() => {
@@ -2080,7 +2177,17 @@ async function pressNavigationKey(page, key, code = key, modifiers = 0) {
 /** @param {Cdp} page @param {string} label @param {string} option */
 async function choose(page, label, option) {
   await click(page, field(label));
-  await click(page, `[...document.querySelectorAll('[role=option]')].find((node) => node.textContent.trim() === ${JSON.stringify(option)} && node.getClientRects().length)`);
+  const target = `[...document.querySelectorAll('[role=option]')].find((node) => node.textContent.trim() === ${JSON.stringify(option)} && node.getClientRects().length)`;
+  await click(page, target);
+  await until(() => evaluate(page, `${field(label)}?.textContent.trim() === ${JSON.stringify(option)}`),
+    `${label} displays the natively selected ${option}`).catch(async error => {
+    error.message += `; selected control: ${JSON.stringify(await observeRuntime(page, `({
+      displayed:(${field(label)})?.textContent,
+      hasFocus:document.hasFocus(), active:{tag:document.activeElement?.tagName,
+        role:document.activeElement?.getAttribute('role'),label:document.activeElement?.getAttribute('aria-label')}
+    })`))}`;
+    throw error;
+  });
 }
 
 /** @param {Cdp} page @param {number} width @param {'light'|'dark'} theme @param {number} [height] */
@@ -2126,6 +2233,7 @@ function evidence(context, slug) {
     'src/extensions/dude/frontend/app.jsx',
     'src/extensions/dude/frontend/needs-you.jsx',
     'src/extensions/dude/frontend/review.jsx',
+    'src/extensions/dude/frontend/settings.jsx',
     'src/extensions/dude/frontend/use-canvas-data.js',
     'src/extensions/dude/frontend/styles.js',
     'src/extensions/dude/frontend/theme.js',
@@ -2133,6 +2241,8 @@ function evidence(context, slug) {
     'src/extensions/dude/lib/needs-you.mjs',
     'src/extensions/dude/lib/review.mjs',
     'src/extensions/dude/lib/canvas-server.mjs',
+    'src/extensions/dude/lib/packs.mjs',
+    'src/skills/dude-compose/compose.mjs',
     'src/extensions/dude/ui/index.html',
     'src/extensions/dude/ui/assets/app.js',
   ];
@@ -2360,7 +2470,7 @@ async function triggerReviewCaptureRefusal(page, prompt) {
     node.innerText.includes(${JSON.stringify(prompt)}) && node.getClientRects().length)`);
   await click(page, button('Open Review'));
   await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
-    && !document.querySelector('[aria-label="Box (B)"]').disabled`), 'review regression engine ready', 30_000);
+    && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`), 'review regression engine ready', 30_000);
   await click(page, `document.querySelector('[aria-label="Box (B)"]')`);
   await openReviewDetails(page);
   await click(page, button('Add at center'));
@@ -2406,7 +2516,8 @@ function textContrastSnapshot(page) {
       .map((value) => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4)
       .reduce((sum, value, index) => sum + value * [.2126, .7152, .0722][index], 0);
     return [...document.querySelectorAll(
-      'h1,h2,h3,p,label,button:not(:disabled),[role=tab],[data-work-number]'
+      'h1,h2,h3,p,label,button:not(:disabled),[role=tab],[data-work-number],'
+      + '[data-pack-request-phase] > span,[data-pack-request-dialog] [role=region] > span'
     )]
       .filter((node) => node.getClientRects().length && node.textContent.trim())
       .map((node) => {
@@ -2494,6 +2605,11 @@ async function audit(page, output, name, deferredHorizontalFindings = null) {
   fs.writeFileSync(path.join(output.directory, `${name}.png`), image);
   const tree = await page.send('Accessibility.getFullAXTree');
   fs.writeFileSync(path.join(output.directory, `${name}.ax.json`), `${JSON.stringify(tree, null, 2)}\n`);
+  const packAnnouncement = await evaluate(page, `document.querySelector(
+    '[data-pack-request-dialog][open] [data-pack-request-phase]'
+  )?.firstElementChild?.textContent`);
+  if (packAnnouncement) assert.ok(axLiveRegions(tree).some(region => region.text.includes(packAnnouncement)),
+    `${name}: the exact pack outcome is exposed through a native live region`);
   const namedRoles = new Set([
     'button', 'checkbox', 'combobox', 'listbox', 'option', 'radio',
     'radiogroup', 'tab', 'tabpanel', 'textbox', 'toolbar',
@@ -2701,6 +2817,7 @@ function floatingControlSnapshot(page, expression) {
       && box.right <= bounds.right + 1 && box.bottom <= bounds.bottom + 1;
     const palette = node.closest('[data-review-tools]');
     const toolbar = node.closest('[role="toolbar"]');
+    const popover = node.closest('.fui-PopoverSurface');
     const hits = [[.5,.5],[.08,.08],[.92,.08],[.08,.92],[.92,.92]].map(([x,y]) => {
       const hit = document.elementFromPoint(box.x+x*box.width, box.y+y*box.height);
       return Boolean(hit && (hit === node || node.contains(hit)));
@@ -2773,6 +2890,15 @@ function floatingControlSnapshot(page, expression) {
       inPanel:within(document.querySelector('[data-review-workspace]').getBoundingClientRect()),
       inPalette:!palette || within(palette.getBoundingClientRect()),
       inScroller:!toolbar || within(toolbar.getBoundingClientRect()),
+      popover:popover ? {
+        label:popover.getAttribute('aria-label'),
+        rect:popover.getBoundingClientRect().toJSON(),
+        containsTarget:within(popover.getBoundingClientRect()),
+        inViewport:popover.getBoundingClientRect().left >= 0
+          && popover.getBoundingClientRect().top >= 0
+          && popover.getBoundingClientRect().right <= document.documentElement.clientWidth
+          && popover.getBoundingClientRect().bottom <= document.documentElement.clientHeight,
+      } : null,
       scroller:toolbar ? {
         box:toolbar.getBoundingClientRect().toJSON(),
         scrollTop:toolbar.scrollTop, scrollLeft:toolbar.scrollLeft,
@@ -3271,6 +3397,971 @@ function browserReady(context) {
   return true;
 }
 
+function packTree(absolute) {
+  let stat;
+  try { stat = fs.lstatSync(absolute); }
+  catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+  assert.equal(stat.isSymbolicLink(), false, 'the owned pack fixture contains no linked source or destination');
+  return stat.isDirectory() ? Object.fromEntries(fs.readdirSync(absolute).sort()
+    .map(name => [name, packTree(path.join(absolute, name))])) : hash(fs.readFileSync(absolute));
+}
+
+async function packImpact(fixture) {
+  if (fixture.operation === 'refresh') {
+    const preview = await cmdPreviewRefresh(fixture.args);
+    assert.equal(preview.ok, true, preview.error);
+    return preview.result;
+  }
+  if (fixture.operation === 'remove') {
+    const status = cmdStatus({ root: fixture.root });
+    assert.equal(status.ok, true, status.error);
+    return status.result.installed.alpha;
+  }
+  const source = resolvePackDir(fixture.args);
+  assert.ok(!('error' in source), source.error);
+  const manifest = fs.readFileSync(path.join(source.packDir, 'pack.md'), 'utf8');
+  assert.match(manifest, /tools: \[node\]/);
+  const tool = spawnSync(process.execPath, ['--version'], { encoding: 'utf8' });
+  assert.equal(tool.status, 0);
+  return { source: source.sourceIdentity, files: packArtifacts(source.packDir).map(item => item.destRel).sort(),
+    tools: [{ name: 'node', available: true, version: tool.stdout.trim() }] };
+}
+
+function packImpactBasis(fixture, impact) {
+  return {
+    profile: hash(fs.readFileSync(fixture.profilePath)),
+    source: packTree(path.join(fixture.library, 'alpha')),
+    targets: Object.fromEntries([...new Set([...impact.files, ...(impact.removed || [])])].sort()
+      .map(file => [file, packTree(path.join(fixture.root, ...file.split('/')))])),
+  };
+}
+
+async function publishPackPermission(fixture, receipt, impact, prefix = '') {
+  await until(() => fixture.provider.read().packRequests.some(item => item.packReceipt === receipt.packReceipt
+    && ['delivered', 'waiting_owner'].includes(item.phase)), 'owner receives the delivered pack request');
+  const basis = packImpactBasis(fixture, impact);
+  const request = {
+    ...requestFor(fixture, 'permission', {
+      operation: `pack:${fixture.operation}`,
+      targets: [
+        { target: '.dude/metadata/profile.md', revision: basis.profile },
+        { target: 'pack:alpha source', revision: hash(JSON.stringify(basis.source)) },
+        ...Object.entries(basis.targets).map(([target, value]) => ({ target, revision: hash(JSON.stringify(value)) })),
+      ],
+      consequences: fixture.operation === 'refresh'
+        ? 'Generated installed edits can be overwritten. Keep persistent customization under dude-local-*.'
+        : fixture.operation === 'remove'
+          ? 'Delete only these exact recorded safe files. Preserve unrecorded residue and unrelated work.'
+          : 'Install these prospective namespaced artifacts from this source. Required tools: node; no tools will be installed.',
+      eligibility: 'The owner rechecks this profile, source, affected targets, and tools before applying.',
+      confirmation: `${fixture.operation.toUpperCase()} PACK alpha`,
+    }),
+    requestRef: `pack:${receipt.packReceipt}`,
+    revision: hash(JSON.stringify({ impact, basis })),
+    source: { kind: 'session', revision: receipt.receipt.providerGeneration },
+    prompt: `${prefix}Preview ${fixture.operation} alpha:\n${JSON.stringify(impact, null, 2)}`,
+  };
+  return { ...(await publish(fixture, request)), request, impact, basis };
+}
+
+function packOwnerAcknowledgment(fixture, receipt, result, outcome = 'applied', mutation = 'applied', note = 'Owner verified the actual Compose result and installed bytes.') {
+  const { receiptId, owner, operation, name, workspaceId, sessionId, providerGeneration } = receipt.receipt;
+  const status = cmdStatus({ root: fixture.root });
+  return {
+    recognizes: 'pack_result', receiptId, owner, operation, name, workspaceId, sessionId, providerGeneration,
+    outcome, mutation, result, note,
+    profileRevision: status.ok ? hash(fs.readFileSync(fixture.profilePath)) : null,
+    source: status.ok ? status.result.installed[name]?.source || null : null,
+  };
+}
+
+async function packOwnerTool(fixture, acknowledgment) {
+  const result = await fixture.provider.tool.handler({ op: 'acknowledge', acknowledgment }, {
+    sessionId: fixture.session.sessionId, toolName: 'dude_needs_you', toolCallId: randomUUID(),
+    signal: new AbortController().signal,
+  });
+  return { type: result.resultType, body: JSON.parse(result.textResultForLlm) };
+}
+
+async function packPhase(page, phase) {
+  await until(() => evaluate(page, `document.querySelector(
+    '[data-pack-request-dialog][open] [data-pack-request-phase]'
+  )?.getAttribute('data-pack-request-phase') === ${JSON.stringify(phase)}`), `pack request phase ${phase}`);
+}
+
+async function openPack(page, operation) {
+  await click(page, `document.querySelector('#dude-tab-settings')`);
+  await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+    ?.getAttribute('aria-busy') === 'false' && Boolean(document.querySelector('[data-settings]'))`), 'current Settings read');
+  if (operation === 'install') await click(page, `document.querySelector('[data-pack-context="available"]')`);
+  await click(page, `document.querySelector('[data-pack-row="alpha"]')`);
+}
+
+async function requestPackFromUi(page, fixture, double = false) {
+  const action = `document.querySelector('[data-pack-operation="${fixture.operation}"]')`;
+  if (double) {
+    assert.equal(await evaluate(page, `${action}.disabled`), false);
+    await evaluate(page, `(() => { const action = ${action}; action.click(); action.click(); })()`);
+  } else await click(page, action);
+  return until(() => fixture.provider.read().packRequests.at(-1), 'real prepared pack receipt');
+}
+
+async function answerPackPermission(page, fixture, permission, decline = false, outcome = decline ? 'declined' : 'accepted') {
+  await packPhase(page, 'waiting_permission');
+  assert.equal(await evaluate(page, `document.querySelector('[data-pack-permission]').getAttribute('data-pack-permission')`),
+    permission.record.requestHandle, 'the shortcut binds the current permission handle, not a feature or source path');
+  await click(page, button('Open Needs you'));
+  await visible(page, permission.request.prompt);
+  assert.equal(await evaluate(page, `document.querySelectorAll('[data-pack-request-dialog]:modal').length`), 0);
+  if (decline) {
+    await click(page, button('Decline'));
+    await fill(page, field('Reason for declining'), 'Leave this pack unchanged.');
+    await click(page, button('Send decline'));
+  } else {
+    await fill(page, field('Enter the exact confirmation'), permission.request.fields.confirmation);
+    if (!await evaluate(page, `${field('I grant permission for this operation on these exact targets.')}.checked`)) {
+      await click(page, field('I grant permission for this operation on these exact targets.'));
+    }
+    await click(page, button('Send permission'));
+  }
+  const answer = JSON.parse((await permission.result).textResultForLlm);
+  assert.equal(answer.status, 'awaiting_acknowledgment');
+  assert.equal(answer.acceptedAnswer, false, 'the permission response still needs owner recognition');
+  assert.equal(answer.response.action, decline ? 'decline' : 'consent');
+  assert.equal(await evaluate(page, `document.activeElement.getAttribute('aria-label')`), 'Response status',
+    'consumed permission controls leave focus on their live outcome, never the body');
+  assert.ok(await evaluate(page, `parseFloat(getComputedStyle(document.activeElement).outlineWidth) >= 2`),
+    'the focused permission outcome has a visible token-based focus outline');
+  if (!decline) {
+    assert.deepEqual(answer.response.targets, permission.request.fields.targets);
+    assert.equal(answer.response.confirmation, permission.request.fields.confirmation);
+  }
+  const record = fixture.provider.read().requests.find(item => item.requestHandle === permission.record.requestHandle);
+  await acknowledge(fixture, record.receipt, outcome, permission.request.source);
+  await click(page, button('Back to pack request'));
+  await packPhase(page, 'waiting_owner');
+  return answer;
+}
+
+async function withPackJourney(context, operation, options, run) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-t004-packs-'));
+  const root = path.join(directory, 'workspace'), library = path.join(root, 'library', 'packs');
+  const profilePath = path.join(root, '.dude', 'metadata', 'profile.md');
+  const output = evidence(context, `t004-settings-${operation}-${options.name || 'journey'}`);
+  const board = installEmptyBoard();
+  let fixture, driver;
+  const network = [], errors = [];
+  try {
+    write(root, '.dude/metadata/profile.md', '# Install Profile\n\n```json\n{"installed":{}}\n```\n');
+    for (const file of ['agent-model-map.mjs', 'agent-projection.mjs']) {
+      write(root, `.github/skills/dude-engine/lib/${file}`,
+        fs.readFileSync(path.join(ROOT, 'src', 'skills', 'dude-engine', 'lib', file)));
+    }
+    write(root, '.github/skills/dude-engine/config/agent-models.json',
+      fs.readFileSync(path.join(ROOT, 'src', 'config', 'agent-models.json')));
+    write(root, 'library/packs/alpha/pack.md',
+      '---\nname: alpha\ndescription: "Actual disposable pack <script>inert()</script>"\nuse-cases: [ui]\nrequires:\n  tools: [node]\n---\n# Alpha\n');
+    write(root, 'library/packs/alpha/agents/dude-pack-alpha-worker.agent.md',
+      '---\nname: Alpha Worker\ndescription: "Disposable worker"\ntools: [read, search]\nmodel-class: balanced\n---\nFixture v1.\n');
+    write(root, 'library/packs/alpha/skills/dude-pack-alpha-helper/SKILL.md',
+      '---\nname: dude-pack-alpha-helper\ndescription: "Disposable helper"\n---\n# Helper\n');
+    write(root, 'library/packs/alpha/instructions/dude-pack-alpha-old.instructions.md', '# Old instruction\n');
+    write(root, '.github/agents/dude-local-unrelated.agent.md', 'Unrelated file; preserve it.\n');
+    write(root, '.github/agents/dude-pack-alpha-residue.agent.md', 'Unrecorded residue; never removal authority.\n');
+    const args = { root, library, name: 'alpha', fetch: false };
+    assert.notEqual(fs.realpathSync(root), fs.realpathSync(ROOT));
+    if (operation !== 'install') {
+      const installed = await cmdAdd(args);
+      assert.equal(installed.ok, true, installed.error);
+    }
+    if (operation === 'refresh' && options.changed) {
+      write(root, 'library/packs/alpha/agents/dude-pack-alpha-worker.agent.md',
+        fs.readFileSync(path.join(library, 'alpha', 'agents', 'dude-pack-alpha-worker.agent.md'), 'utf8')
+          .replace('Fixture v1.', 'Fixture v2.'));
+      fs.rmSync(path.join(library, 'alpha', 'instructions', 'dude-pack-alpha-old.instructions.md'));
+      write(root, 'library/packs/alpha/instructions/dude-pack-alpha-new.instructions.md', '# New instruction\n');
+      fs.appendFileSync(path.join(root, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), '\nEdited generated destination.\n');
+    }
+    if (options.offline) {
+      fs.renameSync(library, path.join(root, 'offline-packs'));
+      const absentSource = path.join(directory, 'unavailable-catalog');
+      fs.mkdirSync(absentSource);
+      write(root, '.dude/metadata/bundle-manifest.md', '# Bundle Manifest\n\n```json\n'
+        + JSON.stringify({ source_repo: absentSource, source_ref: 'main' }) + '\n```\n');
+    }
+    const work = createIdea(root, 1, 'retained-work', 'defined');
+    fixture = { ...(await createFixture(root)), directory, library, profilePath, args, operation, work };
+    driver = await startBrowser(1, true);
+    driver.page.on('Runtime.exceptionThrown', event => errors.push(event.exceptionDetails));
+    driver.page.on('Network.requestWillBeSent', event => {
+      if (event.request.url.startsWith(fixture.instance.url)) network.push({
+        method: event.request.method, path: new URL(event.request.url).pathname,
+        ...(event.request.postData ? { body: JSON.parse(event.request.postData) } : {}),
+      });
+    });
+    await navigate(driver.page, fixture);
+    await run({ fixture, page: driver.page, output, network, driver });
+    assert.deepEqual(errors, []);
+    const approved = '.dude/specs/063-dude-canvas-settings/design/pack-management.html';
+    assert.equal(approvedDesignSha256(fs.readFileSync(path.join(ROOT, ...approved.split('/')))),
+      '54d4fb8eff0fe9a85a2291b12f5dfa83651418b161f6cb0b76bf280db0b7c6a0');
+    output.results.push({
+      case: options.name || operation, browser: driver.version.Browser, node: process.version,
+      requests: network, sends: fixture.sends, feed: fixture.provider.read(), files: packTree(root),
+      approvedDesign: approved,
+      limits: 'Real product/provider/HTTP/Compose with disposable bundles and SDK-session/owner stand-ins. No actual model, embedded host, or native OS/browser-chrome zoom claim.',
+    });
+  } catch (error) {
+    if (driver) {
+      const image = await driver.page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+      fs.writeFileSync(path.join(output.directory, 'failure.png'), Buffer.from(image.data, 'base64'));
+      writeEvidenceJson(output, 'failure', {
+        message: error.message, network, errors, feed: fixture?.provider.read(),
+        dom: await evaluate(driver.page, `document.body.innerText`),
+        focus: await evaluate(driver.page, `({tag:document.activeElement.tagName,
+          label:document.activeElement.getAttribute('aria-label'),text:document.activeElement.textContent})`),
+      });
+    }
+    throw error;
+  } finally {
+    // End the owned EventSource before server teardown, including a pending
+    // pack read. It must not reconnect while the server drains that reader.
+    await runCleanupSteps(
+      async () => {
+        if (driver) {
+          await driver.page.send('Fetch.disable').catch(() => {});
+          await cleanupBrowserDriver(driver);
+        }
+      },
+      async () => { if (fixture) await fixture.close({ removeRoot: false }); },
+      () => board.close(),
+      () => fs.rmSync(directory, { recursive: true, force: true }),
+    );
+  }
+}
+
+test('T004 Settings install: exact one-send request, actual impact, literal consent, owner result, and retained work', {
+  timeout: 240_000, concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  for (const disposition of ['applied', 'declined']) await context.test(disposition, async t => {
+    await withPackJourney(t, 'install', { name: disposition }, async ({ fixture, page, output, network }) => {
+      await click(page, `document.querySelector('[data-work-path="${fixture.work.ideaPath}"]')`);
+      await click(page, `document.querySelector('[data-task-key="T001@a1111111"]')`);
+      await click(page, button('New idea'));
+      await fill(page, field('Your idea'), 'Keep this unsent idea while changing a pack.');
+      await openPack(page, 'install');
+      const before = packTree(fixture.root);
+      let sent;
+      fixture.session.send = async input => {
+        fixture.sends.push(input);
+        sent = { input, messageId: randomUUID() };
+        return sent.messageId;
+      };
+      const receipt = await requestPackFromUi(page, fixture, true);
+      await packPhase(page, 'admitted');
+      await until(() => fixture.sends.length === 1, 'SDK send after admitted eligibility rechecks');
+      assert.equal(fixture.sends.length, 1);
+      assert.deepEqual(network.filter(item => item.path === '/api/packs/request').map(item => item.body), [
+        { op: 'prepare', operation: 'install', name: 'alpha' },
+        { op: 'submit', operation: 'install', name: 'alpha', packReceipt: receipt.packReceipt },
+      ]);
+      assert.deepEqual(packTree(fixture.root), before, 'admission and HTTP 202 cannot change packs');
+      fixture.provider.onEvent({ id: randomUUID(), type: 'user.message',
+        data: { content: sent.input.prompt, messageId: sent.messageId, delivery: 'idle' } });
+      await packPhase(page, 'delivered');
+      const impact = await packImpact(fixture);
+      assert.deepEqual(packTree(fixture.root), before, 'a real impact preview supplies no consent');
+      assert.equal(await evaluate(page, `document.querySelectorAll('[data-settings] form').length`), 0,
+        'the request layer does not collect a second permission form');
+
+      if (disposition === 'applied') {
+        for (const theme of /** @type {const} */ (['light', 'dark'])) {
+          for (const width of [1440, 768, 360, 180]) {
+            await viewport(page, width, theme, width === 180 ? 450 : 900);
+            const focus = [];
+            for (let index = 0; index < 10; index += 1) {
+              await pressNavigationKey(page, 'Tab', 'Tab', index >= 5 ? 8 : 0);
+              const inside = await evaluate(page, `document.querySelector('[data-pack-request-dialog]:modal')
+                .contains(document.activeElement) && document.activeElement !== document.body`);
+              focus.push(inside);
+              assert.equal(inside, true, 'every Tab transition stays in the top request layer');
+            }
+            await audit(page, output, `pack-request-${width}-${theme}`);
+            output.results.push({ case: 'request-focus', width, theme, focus });
+          }
+        }
+        await viewport(page, 360, 'light');
+        await press(page, 'Escape');
+        assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').matches(':modal')`), true,
+          'closing the request reconciles the retained wide detail to the current narrow width');
+        assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').contains(document.activeElement)`), true);
+        await press(page, 'Escape');
+        assert.equal(await evaluate(page, `document.activeElement.getAttribute('data-pack-row')`), 'alpha');
+        await click(page, button('View pack request'));
+        await packPhase(page, 'delivered');
+      }
+      const permission = await publishPackPermission(fixture, receipt, impact);
+      await packPhase(page, 'waiting_permission');
+      if (disposition === 'applied') {
+        await click(page, button('Open Needs you'));
+        await visible(page, permission.request.prompt);
+        for (const file of impact.files) assert.equal(await evaluate(page, `document.querySelector('#dude-panel-needs')
+          .textContent.includes(${JSON.stringify(file)})`), true);
+        await visible(page, 'Required tools: node');
+        await visible(page, JSON.stringify(impact.source.location));
+        await click(page, button('Send permission'));
+        await visible(page, 'Confirm the exact operation');
+        await fill(page, field('Enter the exact confirmation'), 'INSTALL SOME OTHER PACK');
+        await click(page, field('I grant permission for this operation on these exact targets.'));
+        await click(page, button('Send permission'));
+        assert.equal(network.filter(item => item.path === '/api/needs-you/respond').length, 0);
+        assert.deepEqual(packTree(fixture.root), before, 'invalid literal confirmation performs zero writes');
+        await click(page, button('Back to pack request'));
+        await packPhase(page, 'waiting_permission');
+        await click(page, button('Open Needs you'));
+        assert.equal(await evaluate(page, `${field('Enter the exact confirmation')}.value`), 'INSTALL SOME OTHER PACK');
+        assert.equal(await evaluate(page, `${field('I grant permission for this operation on these exact targets.')}.checked`), true);
+        await audit(page, output, 'install-permission-360-light');
+        await click(page, button('Back to pack request'));
+      }
+
+      await answerPackPermission(page, fixture, permission, disposition === 'declined');
+      assert.deepEqual(packTree(fixture.root), before, 'even accepted permission cannot perform a frontend pack write');
+      let result = null;
+      if (disposition === 'applied') {
+        assert.deepEqual(packImpactBasis(fixture, impact), permission.basis);
+        result = await cmdAdd(fixture.args);
+        assert.equal(result.ok, true, result.error);
+        assert.deepEqual(result.result.files, impact.files);
+        fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+        await until(() => evaluate(page, `document.querySelector('[data-pack-total="installed"]')?.textContent === '1'`),
+          'authoritative membership reread before owner acknowledgment');
+        await packPhase(page, 'waiting_owner');
+        assert.equal(fixture.provider.read().packRequests[0].applied, false);
+        const mismatch = await packOwnerTool(fixture, {
+          ...packOwnerAcknowledgment(fixture, receipt, result), sessionId: randomUUID(),
+        });
+        assert.equal(mismatch.type, 'failure');
+        assert.equal(mismatch.body.reason, 'acknowledgment_conflict');
+        await packPhase(page, 'waiting_owner');
+      }
+      const owner = await packOwnerTool(fixture, packOwnerAcknowledgment(fixture, receipt, result,
+        disposition, disposition === 'applied' ? 'applied' : 'none',
+        disposition === 'applied' ? 'Owner verified installed files and recorded source.' : 'The user declined; no files changed.'));
+      assert.equal(owner.type, 'success');
+      await packPhase(page, disposition);
+      if (disposition === 'declined') assert.deepEqual(packTree(fixture.root), before);
+      else {
+        assert.deepEqual(cmdStatus({ root: fixture.root }).result.installed.alpha, {
+          files: impact.files, source: impact.source,
+        });
+        assert.deepEqual(owner.body.receipt.reread.entry, cmdStatus({ root: fixture.root }).result.installed.alpha);
+      }
+      await audit(page, output, `install-${disposition}`);
+      await click(page, button('Return to packs'));
+      if (await evaluate(page, `Boolean(document.querySelector('[data-pack-detail]:modal'))`)) await press(page, 'Escape');
+      await click(page, button('New idea'));
+      assert.equal(await evaluate(page, `${field('Your idea')}.value`), 'Keep this unsent idea while changing a pack.');
+      await click(page, button('Now'));
+      assert.equal(await evaluate(page, `document.querySelector('[data-task-key="T001@a1111111"]')
+        ?.getAttribute('aria-expanded')`), 'true');
+      await click(page, `document.querySelector('#dude-tab-settings')`);
+      await click(page, `document.querySelector('[aria-label="Reload packs"]')`);
+      await click(page, button('View pack request'));
+      await packPhase(page, disposition);
+      assert.equal(fixture.sends.length, 1, 'navigation and read refresh never replay the operation');
+    });
+  });
+});
+
+test('T004 Settings permission acknowledgment is not a pack result in either Needs you view', {
+  timeout: 120_000, concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  await withPackJourney(context, 'install', { name: 'permission-applied' }, async ({ fixture, page, output }) => {
+    await openPack(page, 'install');
+    const before = packTree(fixture.root);
+    const receipt = await requestPackFromUi(page, fixture);
+    const impact = await packImpact(fixture);
+    const permission = await publishPackPermission(fixture, receipt, impact);
+    await answerPackPermission(page, fixture, permission, false, 'applied');
+    const permissionRecord = fixture.provider.read().requests.find(item =>
+      item.requestHandle === permission.record.requestHandle);
+    assert.equal(permissionRecord.receipt.acknowledgment.outcome, 'applied',
+      'the real provider accepts ordinary applied acknowledgment with its session source');
+    assert.equal(fixture.provider.read().packRequests[0].phase, 'waiting_owner');
+    assert.equal(fixture.provider.read().packRequests[0].receipt.acknowledgment, null);
+    assert.deepEqual(packTree(fixture.root), before, 'permission acknowledgment did not install anything');
+
+    const permissionViews = async stage => {
+      if (await evaluate(page, `Boolean(document.querySelector('[data-pack-request-dialog]:modal'))`)) {
+        await press(page, 'Escape');
+      }
+      await click(page, `document.querySelector('#dude-tab-needs')`);
+      await visible(page, 'Owner applied this exact response after rereading.');
+      const selected = await evaluate(page, `(() => {
+        const node = document.querySelector('[aria-label="Response status"]');
+        return {title:node.querySelector('.fui-MessageBarTitle')?.textContent, text:node.textContent};
+      })()`);
+      await click(page, button('All requests'));
+      const listing = await evaluate(page, `document.querySelector('[aria-label="Request receipts"]').innerText`);
+      output.results.push({ case: 'permission-result-distinction', stage, selected, listing,
+        permission: fixture.provider.read().requests.find(item => item.requestHandle === permission.record.requestHandle),
+        pack: fixture.provider.read().packRequests[0] });
+      writeEvidenceJson(output, 'permission-result-distinction', output.results);
+      assert.equal(selected.title, 'Permission acknowledged',
+        'ordinary permission acknowledgment cannot claim that the pack operation was applied');
+      assert.match(listing, /Permission acknowledged · dude/);
+      assert.doesNotMatch(listing, /(?:^|\n)Applied · dude/);
+      await click(page, `document.querySelector('[aria-label="Request receipts"] button')`);
+      // Explicit tab navigation intentionally clears the nested return link.
+      // Reopen the retained request through Settings, as an ordinary caller.
+      await click(page, `document.querySelector('#dude-tab-settings')`);
+      await click(page, button('View pack request'));
+    };
+    await permissionViews('no pack result or installed facts');
+    await packPhase(page, 'waiting_owner');
+
+    assert.deepEqual(packImpactBasis(fixture, impact), permission.basis);
+    const result = await cmdAdd(fixture.args);
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(result.result.files, impact.files);
+    fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+    await packPhase(page, 'waiting_owner');
+    const exactResult = packOwnerAcknowledgment(fixture, receipt, result);
+    // Keep the successful Compose result and every authority field valid.
+    // Only the receipt differs, so an earlier payload guard cannot confound
+    // the correlation oracle. Membership alone still proves no acknowledgment.
+    const mismatched = await packOwnerTool(fixture, {
+      ...exactResult, receiptId: randomUUID(),
+    });
+    assert.equal(mismatched.type, 'failure');
+    assert.equal(mismatched.body.reason, 'unknown_receipt');
+    assert.equal(fixture.provider.read().packRequests[0].receipt.acknowledgment, null);
+    await packPhase(page, 'waiting_owner');
+    await permissionViews('mismatched result refused');
+
+    const owner = await packOwnerTool(fixture, exactResult);
+    assert.equal(owner.type, 'success');
+    await packPhase(page, 'applied');
+    await permissionViews('validated result after actual Compose install');
+    await packPhase(page, 'applied');
+
+    // Keep the same successful receipt but change the current authority. A
+    // read must remove the business-success claim without replaying the send.
+    fs.appendFileSync(fixture.profilePath, '\nChanged profile commentary after the verified install.\n');
+    await press(page, 'Escape');
+    await click(page, `document.querySelector('[aria-label="Reload packs"]')`);
+    await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+      .getAttribute('aria-busy') === 'false'`), 'changed installed authority read');
+    await click(page, button('View pack request'));
+    await packPhase(page, 'stale');
+    await permissionViews('successful receipt no longer agrees with current authority');
+    assert.equal(fixture.sends.length, 1);
+    await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+      .getAttribute('aria-busy') === 'false'`), 'final permission regression pack read completes');
+    await settleFocusPaint(page);
+    await audit(page, output, 'permission-acknowledgment-distinct-from-pack-result');
+  });
+});
+
+test('T004 Settings remove: recorded files only, with and without a catalog', {
+  timeout: 180_000, concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  for (const offline of [false, true]) await context.test(offline ? 'catalog unavailable' : 'catalog current', async t => {
+    await withPackJourney(t, 'remove', { name: offline ? 'offline' : 'local', offline }, async ({ fixture, page, output }) => {
+      await openPack(page, 'remove');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-operation="remove"]').disabled`), false);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-operation="refresh"]').disabled`), offline);
+      if (offline) {
+        assert.equal(await evaluate(page, `document.querySelector('[data-pack-total="available"]').textContent`), '?');
+        await visible(page, 'Catalog: unavailable');
+      }
+      const before = packTree(fixture.root), impact = await packImpact(fixture);
+      assert.equal(impact.files.some(file => /residue|unrelated/.test(file)), false);
+      const receipt = await requestPackFromUi(page, fixture);
+      const permission = await publishPackPermission(fixture, receipt, impact);
+      await answerPackPermission(page, fixture, permission);
+      assert.deepEqual(packTree(fixture.root), before);
+      assert.deepEqual(packImpactBasis(fixture, impact), permission.basis);
+      const result = cmdRemove(fixture.args);
+      assert.equal(result.ok, true, result.error);
+      assert.deepEqual(result.result.files, impact.files);
+      assert.equal(fixture.provider.read().packRequests[0].applied, false);
+      const owner = await packOwnerTool(fixture, packOwnerAcknowledgment(fixture, receipt, result));
+      assert.equal(owner.type, 'success');
+      await packPhase(page, 'applied');
+      assert.equal(Object.hasOwn(cmdStatus({ root: fixture.root }).result.installed, 'alpha'), false);
+      for (const file of impact.files) assert.equal(fs.existsSync(path.join(fixture.root, ...file.split('/'))), false);
+      const after = packTree(fixture.root);
+      for (const file of ['dude-pack-alpha-residue.agent.md', 'dude-local-unrelated.agent.md']) {
+        assert.equal(after['.github'].agents[file], before['.github'].agents[file]);
+      }
+      assert.equal(fixture.sends.length, 1);
+      await audit(page, output, `remove-${offline ? 'without-catalog' : 'with-catalog'}`);
+    });
+  });
+});
+
+test('T004 Settings refresh: complete impact, overwrite warning, fresh consent on drift, and unchanged-membership control', {
+  timeout: 240_000, concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  for (const variant of ['changed', 'drift', 'unchanged']) await context.test(variant, async t => {
+    await withPackJourney(t, 'refresh', { name: variant, changed: variant !== 'unchanged' }, async ({ fixture, page, output }) => {
+      await openPack(page, 'refresh');
+      const before = packTree(fixture.root), profileBefore = fs.readFileSync(fixture.profilePath);
+      const receipt = await requestPackFromUi(page, fixture);
+      let impact = await packImpact(fixture);
+      assert.deepEqual(packTree(fixture.root), before, 'Compose dry-run does not write profile or projected artifacts');
+      if (variant !== 'unchanged') {
+        assert.ok(impact.replaced.includes('.github/agents/dude-pack-alpha-worker.agent.md'));
+        assert.deepEqual(impact.added, ['.github/instructions/dude-pack-alpha-new.instructions.md']);
+        assert.deepEqual(impact.removed, ['.github/instructions/dude-pack-alpha-old.instructions.md']);
+      } else {
+        assert.deepEqual(impact.added, []);
+        assert.deepEqual(impact.removed, []);
+      }
+      let permission = await publishPackPermission(fixture, receipt, impact);
+      await packPhase(page, 'waiting_permission');
+      await click(page, button('Open Needs you'));
+      await visible(page, 'Generated installed edits can be overwritten');
+      await visible(page, 'dude-local-*');
+      for (const kind of ['replaced', 'added', 'removed']) {
+        assert.equal(await evaluate(page, `document.querySelector('#dude-panel-needs').textContent
+          .includes(${JSON.stringify(`"${kind}"`)})`), true);
+      }
+      await audit(page, output, `refresh-${variant}-permission`);
+      await click(page, button('Back to pack request'));
+      await answerPackPermission(page, fixture, permission);
+      assert.deepEqual(packTree(fixture.root), before);
+      if (variant === 'drift') {
+        const source = path.join(fixture.library, 'alpha', 'agents', 'dude-pack-alpha-worker.agent.md');
+        fs.writeFileSync(source, fs.readFileSync(source, 'utf8').replace('Fixture v2.', 'Fixture v3.'));
+        fs.appendFileSync(path.join(fixture.root, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), '\nLater target edit.\n');
+        assert.notDeepEqual(packImpactBasis(fixture, impact), permission.basis, 'owner detects actual source and target drift');
+        const drifted = packTree(fixture.root), oldPermission = permission;
+        impact = await packImpact(fixture);
+        permission = await publishPackPermission(fixture, receipt, impact, 'Source or target changed. Fresh confirmation required. ');
+        assert.notEqual(permission.request.revision, oldPermission.request.revision);
+        assert.notEqual(permission.record.requestHandle, oldPermission.record.requestHandle);
+        await packPhase(page, 'waiting_permission');
+        await click(page, button('Open Needs you'));
+        await visible(page, 'Fresh confirmation required.');
+        assert.equal(await evaluate(page, `${field('Enter the exact confirmation')}.value`), '');
+        assert.equal(await evaluate(page, `${field('I grant permission for this operation on these exact targets.')}.checked`), false);
+        await click(page, button('Send permission'));
+        assert.deepEqual(packTree(fixture.root), drifted, 'earlier consent does not authorize the changed basis');
+        await click(page, button('Back to pack request'));
+        await answerPackPermission(page, fixture, permission);
+      }
+      assert.deepEqual(packImpactBasis(fixture, impact), permission.basis);
+      const result = await cmdRefresh(fixture.args);
+      assert.equal(result.ok, true, result.error);
+      assert.deepEqual(result.result.files, impact.files);
+      assert.deepEqual(result.result.replaced, impact.replaced);
+      assert.deepEqual(result.result.added, impact.added);
+      assert.deepEqual(result.result.removed, impact.removed);
+      fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+      await packPhase(page, 'waiting_owner');
+      assert.equal(fixture.provider.read().packRequests[0].applied, false, 'membership and actual writes alone do not prove the request');
+      if (variant === 'unchanged') {
+        assert.deepEqual(fs.readFileSync(fixture.profilePath), profileBefore);
+        assert.deepEqual(packTree(fixture.root), before, 'the unchanged refresh still requires its actual result');
+      } else {
+        const installed = fs.readFileSync(path.join(fixture.root, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), 'utf8');
+        assert.match(installed, variant === 'drift' ? /Fixture v3/ : /Fixture v2/);
+        assert.doesNotMatch(installed, /Edited generated destination|Later target edit/);
+      }
+      const owner = await packOwnerTool(fixture, packOwnerAcknowledgment(fixture, receipt, result));
+      assert.equal(owner.type, 'success');
+      await packPhase(page, 'applied');
+      assert.deepEqual(owner.body.receipt.acknowledgment.result, result);
+      assert.deepEqual(owner.body.receipt.reread.entry, cmdStatus({ root: fixture.root }).result.installed.alpha);
+      assert.equal(fixture.sends.length, 1, 'fresh permission does not resend the pack request');
+      await audit(page, output, `refresh-${variant}-applied`);
+    });
+  });
+});
+
+test('T004 Settings boundaries: busy, queue, waiter, uncertainty, stale results, and degraded lifetime never fake success or replay', {
+  timeout: 240_000, concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  for (const boundary of ['busy', 'queue', 'waiter', 'uncertain', 'stale', 'profile unavailable', 'provider ended']) {
+    await context.test(boundary, async t => {
+      await withPackJourney(t, boundary === 'stale' ? 'refresh' : 'install', { name: boundary.replaceAll(' ', '-') },
+        async ({ fixture, page, output, network }) => {
+          await openPack(page, fixture.operation);
+          const before = packTree(fixture.root);
+          const action = `document.querySelector('[data-pack-operation="${fixture.operation}"]')`;
+          if (boundary === 'waiter') {
+            const waiting = await publish(fixture, requestFor(fixture, 'fact', { input: { kind: 'text' } }));
+            await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+              .getAttribute('aria-busy') === 'false' && !document.querySelector('[data-pack-detail]')`),
+            'replacement read invalidates the prior selection');
+            await click(page, `document.querySelector('[data-pack-row="alpha"]')`);
+            assert.equal(await evaluate(page, `${action}.disabled`), true);
+            await evaluate(page, `${action}.click()`);
+            assert.equal(network.filter(item => item.path === '/api/packs/request').length, 0);
+            assert.equal(fixture.sends.length, 0);
+            assert.deepEqual(packTree(fixture.root), before);
+            await audit(page, output, 'waiter-withholds-install');
+            waiting.controller.abort();
+            await waiting.result;
+            return;
+          }
+          if (boundary === 'busy') fixture.provider.onEvent({ id: randomUUID(), type: 'assistant.turn_start', data: {} });
+          if (boundary === 'queue') fixture.session.rpc.queue.pendingItems = async () => ({
+            items: [{ id: 'owned-queued-input' }], steeringMessages: [], inFlightSteeringCount: 0,
+          });
+          if (['busy', 'queue'].includes(boundary)) {
+            await click(page, action);
+            await packPhase(page, 'unavailable');
+            await visible(page, 'no waiting request or queued input');
+            assert.deepEqual(network.filter(item => item.path === '/api/packs/request').map(item => item.body),
+              [{ op: 'prepare', operation: 'install', name: 'alpha' }]);
+            assert.equal(fixture.sends.length, 0);
+            assert.deepEqual(packTree(fixture.root), before);
+            await audit(page, output, `${boundary}-refusal`);
+            return;
+          }
+          if (boundary === 'uncertain') fixture.session.send = async input => {
+            fixture.sends.push(input);
+            fixture.provider.onEvent({ id: randomUUID(), type: 'user.message',
+              data: { content: input.prompt, messageId: randomUUID(), delivery: 'idle' } });
+            throw new Error('Owned possible-delivery failure; not safe to repeat.');
+          };
+          const receipt = await requestPackFromUi(page, fixture);
+          if (boundary === 'stale') {
+            const impact = await packImpact(fixture);
+            const permission = await publishPackPermission(fixture, receipt, impact);
+            await answerPackPermission(page, fixture, permission);
+            const result = await cmdRefresh(fixture.args);
+            assert.equal(result.ok, true, result.error);
+            assert.deepEqual(packTree(fixture.root), before, 'unchanged membership/bytes cannot validate a mismatched result');
+            const owner = await packOwnerTool(fixture, {
+              ...packOwnerAcknowledgment(fixture, receipt, result), profileRevision: hash('different profile basis'),
+            });
+            assert.equal(owner.type, 'failure');
+            assert.equal(owner.body.reason, 'pack_state_mismatch');
+          } else if (boundary === 'profile unavailable') {
+            await packPhase(page, 'delivered');
+            fs.writeFileSync(fixture.profilePath, '# Invalid profile\n\n```json\nnot json\n```\n');
+            const owner = await packOwnerTool(fixture, packOwnerAcknowledgment(fixture, receipt, null,
+              'unavailable', 'none', 'The profile became unreadable. No pack operation ran.'));
+            assert.equal(owner.type, 'success');
+          } else if (boundary === 'provider ended') {
+            await packPhase(page, 'delivered');
+            let pendingRead;
+            page.on('Fetch.requestPaused', event => { pendingRead = event; });
+            await page.send('Fetch.enable', { patterns: [{ urlPattern: '*/api/packs', requestStage: 'Response' }] });
+            fixture.provider.dispose('session_ended');
+            await until(() => pendingRead, 'real lifetime-replacement pack read held before adoption');
+            assert.equal(await evaluate(page, `document.querySelector('[aria-label="Reload packs"]').getAttribute('aria-busy')`), 'true',
+              'a provider-lifetime reread reports loading until its actual response is adopted');
+            await page.send('Fetch.continueRequest', { requestId: pendingRead.requestId });
+            await page.send('Fetch.disable');
+          }
+          const phase = boundary === 'stale' ? 'stale' : boundary === 'uncertain' ? 'uncertain' : 'unavailable';
+          await packPhase(page, phase);
+          assert.equal(fixture.provider.read().packRequests[0].applied, false);
+          if (boundary !== 'profile unavailable') assert.deepEqual(packTree(fixture.root), before);
+          await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+            .getAttribute('aria-busy') === 'false'`), 'pack facts settle after the provider outcome');
+          await audit(page, output, `${boundary.replaceAll(' ', '-')}-outcome`);
+          await click(page, button('Return to packs'));
+          if (await evaluate(page, `Boolean(document.querySelector('[data-pack-detail]:modal'))`)) await press(page, 'Escape');
+          await click(page, `document.querySelector('[aria-label="Reload packs"]')`);
+          await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]').getAttribute('aria-busy') === 'false'`),
+            'explicit read completes without operation replay');
+          await click(page, button('View pack request'));
+          await packPhase(page, phase);
+          await navigate(page, fixture);
+          await click(page, `document.querySelector('#dude-tab-settings')`);
+          await click(page, button('View pack request'));
+          await packPhase(page, phase);
+          assert.equal(fixture.sends.length, 1);
+          assert.equal(network.filter(item => item.path === '/api/packs/request').length, 2,
+            'tab reload and navigation acquire facts only, never a new prepare/submit');
+        });
+    });
+  }
+});
+
+test('T004 Settings races: cross-tab prepare exclusion and a late old-root response cannot resend or retarget', {
+  timeout: 180_000, concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  for (const boundary of ['cross-tab', 'root replacement']) await context.test(boundary, async t => {
+    await withPackJourney(t, 'install', { name: boundary.replaceAll(' ', '-') }, async ({ fixture, page, output, network }) => {
+      await openPack(page, 'install');
+      const before = packTree(fixture.root);
+      let prepared, peer;
+      const peerRequests = [];
+      page.on('Fetch.requestPaused', event => {
+        if (JSON.parse(event.request.postData || '{}').op === 'prepare') prepared = event;
+        else void page.send('Fetch.continueRequest', { requestId: event.requestId });
+      });
+      try {
+        if (boundary === 'cross-tab') {
+          peer = await startBrowser(1, true);
+          peer.page.on('Network.requestWillBeSent', event => {
+            if (event.request.url.endsWith('/api/packs/request')) peerRequests.push(JSON.parse(event.request.postData));
+          });
+          await navigate(peer.page, fixture);
+          await openPack(peer.page, 'install');
+          await peer.page.send('Fetch.enable', { patterns: [{ urlPattern: '*/api/needs-you', requestStage: 'Response' }] });
+        }
+        await page.send('Fetch.enable', { patterns: [{ urlPattern: '*/api/packs/request', requestStage: 'Response' }] });
+        await click(page, `document.querySelector('[data-pack-operation="install"]')`);
+        await until(() => prepared, 'real prepared response held at the transport boundary');
+        assert.equal(fixture.provider.read().packRequests[0].phase, 'prepared');
+        assert.equal(fixture.sends.length, 0);
+        if (peer) {
+          await click(peer.page, `document.querySelector('[data-pack-operation="install"]')`);
+          await packPhase(peer.page, 'unavailable');
+          await visible(peer.page, 'Another pack request needs owner reconciliation');
+          assert.equal(fixture.sends.length, 0);
+          assert.equal(fixture.provider.read().packRequests.length, 1);
+          assert.deepEqual(peerRequests, [{ op: 'prepare', operation: 'install', name: 'alpha' }]);
+          await peer.page.send('Fetch.disable');
+        } else {
+          await until(() => !fixture.instance.packRead, 'owned pack reader is idle before replacing its root');
+          const previousRoot = path.join(fixture.directory, 'previous-root');
+          fs.renameSync(fixture.root, previousRoot);
+          fs.cpSync(previousRoot, fixture.root, { recursive: true });
+          await fixture.provider.refresh();
+          await until(() => evaluate(page, `Boolean(document.querySelector('#dude-panel-overview h1'))
+            && !document.querySelector('[data-settings]')`), 'new inode invalidates old workspace UI authority');
+        }
+        await page.send('Fetch.continueRequest', { requestId: prepared.requestId });
+        await page.send('Fetch.disable');
+        if (peer) {
+          await packPhase(page, 'delivered');
+          assert.equal(fixture.sends.length, 1);
+          assert.deepEqual(JSON.parse(fixture.sends[0].prompt.split('\n').at(-1)), {
+            receiptId: fixture.provider.read().packRequests[0].packReceipt, owner: 'dude',
+            operation: 'install', name: 'alpha', workspaceId: fixture.provider.read().workspaceId,
+            sessionId: fixture.session.sessionId, providerGeneration: fixture.provider.read().providerGeneration,
+          });
+          assert.equal(network.filter(item => item.path === '/api/packs/request').length, 2);
+          await audit(page, output, 'cross-tab-single-delivery');
+          await click(page, button('Return to packs'));
+          await click(page, button('New idea'));
+          await fill(page, field('Your idea'), 'Retain this draft; do not race the pack request.');
+          for (const label of ['Save', 'Submit']) assert.equal(await evaluate(page, `${button(label)}.disabled`), true);
+          assert.equal(network.filter(item => item.path.startsWith('/api/needs-you/capture')).length, 0);
+          await click(page, `document.querySelector('#dude-tab-settings')`);
+          await click(page, button('View pack request'));
+          await packPhase(page, 'delivered');
+          assert.equal(fixture.sends.length, 1, 'an unrelated draft cannot replace or resend the admitted pack target');
+        } else {
+          await click(page, `document.querySelector('#dude-tab-settings')`);
+          await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]').getAttribute('aria-busy') === 'false'`),
+            'replacement root reread without old request authority');
+          assert.equal(fixture.sends.length, 0);
+          assert.deepEqual(network.filter(item => item.path === '/api/packs/request').map(item => item.body),
+            [{ op: 'prepare', operation: 'install', name: 'alpha' }]);
+          assert.equal(await evaluate(page, `document.querySelectorAll('[data-pack-request-phase="applied"]').length`), 0);
+          await audit(page, output, 'old-root-not-submitted');
+        }
+        assert.deepEqual(packTree(fixture.root), before);
+      } finally {
+        if (peer) {
+          await peer.page.send('Fetch.disable').catch(() => {});
+          await cleanupBrowserDriver(peer);
+        }
+      }
+    });
+  });
+});
+
+test('T004 Settings transport loss: a known-unsent request recovers by explicit action, and a possibly delivered submit stays locked without replay', {
+  timeout: 300_000, concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  for (const loss of ['prepare request', 'prepare response', 'submit request', 'submit response']) await context.test(loss, async t => {
+    await withPackJourney(t, 'install', { name: `${loss.replace(' ', '-')}-loss` }, async ({ fixture, page, output, network }) => {
+      const [op, stage] = loss.split(' ');
+      const unsent = op === 'prepare', delivered = loss === 'submit response';
+      const draft = 'Keep this idea draft through a lost pack request.';
+      const action = `document.querySelector('[data-pack-operation="install"]')`;
+      const locked = /Another pack request needs owner reconciliation/;
+      const packPosts = () => network.filter(item => item.path === '/api/packs/request').map(item => item.body.op);
+      const reloadPacks = async label => {
+        const reads = network.filter(item => item.method === 'GET' && item.path === '/api/packs').length;
+        await click(page, `document.querySelector('[aria-label="Reload packs"]')`);
+        await until(() => network.filter(item => item.method === 'GET' && item.path === '/api/packs').length > reads, label);
+      };
+      // The provider's operation bound reads this clock. Hold it for a lost
+      // submit, so checks before the bound cannot race real time. Whole
+      // milliseconds keep a later advance of one bound exact.
+      let clock = Math.ceil(performance.now());
+      if (op === 'submit') t.mock.method(performance, 'now', () => clock);
+      await click(page, `document.querySelector('#dude-tab-new')`);
+      await fill(page, field('Your idea'), draft);
+      await openPack(page, 'install');
+      const before = packTree(fixture.root);
+      let failed = null;
+      const stopFailing = page.on('Fetch.requestPaused', event => {
+        if (!failed && JSON.parse(event.request.postData || '{}').op === op) {
+          failed = { at: Date.now(), stage: event.responseStatusCode === undefined ? 'request' : 'response' };
+          void page.send('Fetch.failRequest', { requestId: event.requestId, errorReason: 'ConnectionReset' });
+        } else void page.send('Fetch.continueRequest', { requestId: event.requestId });
+      });
+      await page.send('Fetch.enable', { patterns: [{ urlPattern: '*/api/packs/request',
+        requestStage: stage === 'request' ? 'Request' : 'Response' }] });
+      await click(page, action);
+      await until(() => failed, `ConnectionReset on the ${loss}`);
+      const [phase, message] = unsent ? ['unavailable', 'Nothing was sent; you can request it again.']
+        : delivered ? ['delivered', 'Waiting for the owner to preview the impact and request permission.']
+          : ['uncertain', 'Delivery may be uncertain; nothing will be resent.'];
+      await packPhase(page, phase);
+      await visible(page, message);
+      await page.send('Fetch.disable');
+      stopFailing();
+      assert.equal(failed.stage, stage);
+      const lostPosts = unsent ? ['prepare'] : ['prepare', 'submit'];
+      assert.deepEqual(packPosts(), lostPosts);
+      assert.deepEqual(fixture.provider.read().packRequests.map(item => item.phase),
+        loss === 'prepare request' ? [] : [delivered ? 'delivered' : 'prepared'],
+        'only a request-stage prepare loss leaves no provider receipt');
+      assert.equal(fixture.sends.length, delivered ? 1 : 0);
+      await audit(page, output, `${loss.replace(' ', '-')}-loss`);
+
+      // The explicit way back: close the request, then reload and navigate.
+      await click(page, button('Return to packs'));
+      assert.equal(await evaluate(page, `${action}.disabled`), !unsent);
+      if (unsent) assert.doesNotMatch(await evaluate(page, describedText(action)), locked);
+      else assert.match(await evaluate(page, describedText(action)), locked);
+      if (loss === 'prepare response') {
+        assert.equal(fixture.provider.read().packRequests[0].phase, 'prepared',
+          'the tab does not wait on the unsent receipt that the provider still holds');
+      }
+      await reloadPacks('explicit pack reread');
+      await openPack(page, 'install');
+      assert.equal(await evaluate(page, `${action}.disabled`), !unsent);
+      await click(page, `document.querySelector('#dude-tab-overview')`);
+      await click(page, `document.querySelector('#dude-tab-new')`);
+      assert.equal(await evaluate(page, `${field('Your idea')}.value`), draft);
+      for (const label of ['Save', 'Submit']) assert.equal(await evaluate(page, `${button(label)}.disabled`), !unsent);
+      if (!unsent) await visible(page, 'A pack request is in progress or needs owner reconciliation.');
+      await openPack(page, 'install');
+      assert.equal(await evaluate(page, `${action}.disabled`), !unsent);
+      assert.deepEqual(packPosts(), lostPosts, 'recovery, reload, and navigation never resubmit');
+      assert.equal(fixture.sends.length, delivered ? 1 : 0);
+      assert.deepEqual(packTree(fixture.root), before);
+
+      if (op === 'submit') {
+        // One operation bound later, only the retired record of a receipt that
+        // never left prepared proves this lost submit was never sent. A
+        // delivered receipt keeps the same uncertain attempt locked.
+        clock += NEEDS_YOU_LIMITS.operationMs;
+        await reloadPacks('explicit reread after the operation bound');
+        await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+          .getAttribute('aria-busy') === 'false'`), 'the reread after the operation bound is adopted');
+        assert.deepEqual(fixture.provider.read().packRequests.map(item => [item.phase, item.reason]),
+          [delivered ? ['delivered', null] : ['stale', 'pack_receipt_expired']]);
+        await click(page, button('View pack request'));
+        await packPhase(page, delivered ? 'delivered' : 'stale');
+        if (!delivered) await visible(page, 'This prepared request was never submitted and has expired. Nothing was sent.');
+        await audit(page, output, `${loss.replace(' ', '-')}-loss-after-bound`);
+        await click(page, button('Return to packs'));
+        await openPack(page, 'install');
+        assert.equal(await evaluate(page, `${action}.disabled`), delivered);
+        if (delivered) assert.match(await evaluate(page, describedText(action)), locked);
+        else assert.doesNotMatch(await evaluate(page, describedText(action)), locked);
+        await click(page, `document.querySelector('#dude-tab-new')`);
+        assert.equal(await evaluate(page, `${field('Your idea')}.value`), draft);
+        for (const label of ['Save', 'Submit']) assert.equal(await evaluate(page, `${button(label)}.disabled`), delivered);
+        assert.deepEqual(packPosts(), lostPosts, 'the reread after the bound never resubmits');
+        assert.equal(fixture.sends.length, delivered ? 1 : 0);
+        assert.deepEqual(packTree(fixture.root), before);
+        if (delivered) return;
+        await openPack(page, 'install');
+      }
+
+      // Only the user's new request sends. An unsent provider receipt excludes
+      // until its operation bound, then retires when this admission observes it.
+      if (loss === 'prepare response') {
+        await new Promise(resolve => setTimeout(resolve, Math.max(0, failed.at + NEEDS_YOU_LIMITS.operationMs - Date.now())));
+      }
+      await click(page, action);
+      await packPhase(page, 'delivered');
+      assert.deepEqual(packPosts(), [...lostPosts, 'prepare', 'submit']);
+      const feed = fixture.provider.read().packRequests;
+      assert.deepEqual(feed.map(item => [item.phase, item.reason]),
+        [...(loss === 'prepare request' ? [] : [['stale', 'pack_receipt_expired']]), ['delivered', null]]);
+      assert.equal(fixture.sends.length, 1);
+      assert.equal(JSON.parse(fixture.sends[0].prompt.split('\n').at(-1)).receiptId, feed.at(-1).packReceipt);
+      assert.deepEqual(packTree(fixture.root), before);
+    });
+  });
+});
+
+test('T004 Settings caught Compose failures distinguish verified restoration from uncertain state', {
+  timeout: 180_000, concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  for (const mutation of ['restored', 'uncertain']) await context.test(mutation, async t => {
+    await withPackJourney(t, 'refresh', { name: mutation, changed: true }, async ({ fixture, page, output }) => {
+      await openPack(page, 'refresh');
+      const receipt = await requestPackFromUi(page, fixture);
+      const impact = await packImpact(fixture);
+      const permission = await publishPackPermission(fixture, receipt, impact);
+      await answerPackPermission(page, fixture, permission);
+      assert.deepEqual(packImpactBasis(fixture, impact), permission.basis);
+      const before = packTree(fixture.root);
+      const originalWrite = fs.writeFileSync, originalCopy = fs.copyFileSync;
+      let result, applicationFailures = 0, restorationFailures = 0;
+      try {
+        fs.writeFileSync = (file, ...args) => {
+          if (path.dirname(String(file)) === path.dirname(fixture.profilePath)
+            && path.basename(String(file)).startsWith('profile.md.tmp-')) {
+            applicationFailures += 1;
+            throw new Error('Owned disposable profile-write failure.');
+          }
+          return originalWrite(file, ...args);
+        };
+        if (mutation === 'uncertain') fs.copyFileSync = (source, destination, ...args) => {
+          if (String(source).includes('dude-compose-refresh-alpha-txn-')
+            && String(destination) === path.join(fixture.root, '.github', 'agents', 'dude-pack-alpha-worker.agent.md')) {
+            restorationFailures += 1;
+            throw new Error('Owned disposable restoration-copy failure.');
+          }
+          return originalCopy(source, destination, ...args);
+        };
+        result = await cmdRefresh(fixture.args);
+      } finally {
+        fs.writeFileSync = originalWrite;
+        fs.copyFileSync = originalCopy;
+      }
+      assert.equal(result.ok, false);
+      assert.equal(result.mutation, mutation);
+      assert.equal(applicationFailures, 1, 'the fault reaches the real profile transaction');
+      assert.equal(restorationFailures, mutation === 'uncertain' ? 1 : 0);
+      if (mutation === 'restored') assert.deepEqual(packTree(fixture.root), before);
+      else assert.notDeepEqual(packTree(fixture.root), before);
+      const phase = mutation === 'restored' ? 'failed' : 'uncertain';
+      const owner = await packOwnerTool(fixture, packOwnerAcknowledgment(fixture, receipt, result, phase, mutation,
+        mutation === 'restored' ? 'Verified restoration of the pre-operation files after the caught failure.'
+          : 'A restoration copy failed; the resulting state is uncertain.'));
+      assert.equal(owner.type, 'success');
+      await packPhase(page, phase);
+      assert.equal(owner.body.applied, false);
+      await visible(page, mutation === 'restored' ? 'not a crash-recovery guarantee' : 'could not establish the resulting state');
+      await audit(page, output, `refresh-${mutation}`);
+      assert.equal(fixture.sends.length, 1);
+    });
+  });
+});
+
 test('T011 browser: published blank capture, ordinary-chat refresh, local state, root identity, and responsive shell', {
   timeout: 240_000,
   concurrency: false,
@@ -3300,8 +4391,8 @@ test('T011 browser: published blank capture, ordinary-chat refresh, local state,
 
     // Assert the approved stable shell, not the removed Now rail/dual chooser.
     assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[role=tab]')].map((node) => node.innerText.trim())`),
-      ['Overview', 'Now', 'Needs you', 'New idea']);
-    assert.equal(await evaluate(page, `document.querySelectorAll('[role=tab]').length`), 4);
+      ['Overview', 'Now', 'Needs you', 'New idea', 'Settings']);
+    assert.equal(await evaluate(page, `document.querySelectorAll('[role=tab]').length`), 5);
     assert.equal(await evaluate(page, `document.body.innerText.includes('Details')
       || document.body.innerText.includes('Browse features')`), false);
     await visible(page, 'Welcome to Dude');
@@ -3461,7 +4552,7 @@ test('T011 browser: published blank capture, ordinary-chat refresh, local state,
     if (browserState) {
       await cleanupBrowserDriver(browserState);
     }
-    board.close();
+    await board.close();
   }
 });
 
@@ -3777,7 +4868,15 @@ test('T002 production shell: one numbered finder, selected-only Overview, Clear,
     await fill(page, field('Search work'), '035');
     let failedTarget = null;
     page.on('Fetch.requestPaused', event => {
-      if (event.request.url.endsWith('/api/refresh')) failedTarget = event;
+      if (!event.request.url.endsWith('/api/refresh')) return;
+      if (JSON.parse(event.request.postData || '{}').target === '.dude/ideas/035-record-035.md') {
+        failedTarget = event;
+      } else {
+        // Clear can still have a legitimate unselected read in flight. Drain
+        // it normally; this fixture faults only the newly selected target.
+        void page.send('Fetch.continueRequest', { requestId: event.requestId })
+          .catch(error => runtimeErrors.push({ fixture: 'continue prior refresh', message: error.message }));
+      }
     });
     await page.send('Fetch.enable', {
       patterns: [{ urlPattern: '*/api/refresh', requestStage: 'Response' }],
@@ -3786,9 +4885,16 @@ test('T002 production shell: one numbered finder, selected-only Overview, Clear,
     await pressNavigationKey(page, 'ArrowDown');
     await press(page, 'Enter');
     await until(() => failedTarget, 'selected target response to fail');
+    assert.deepEqual(JSON.parse(failedTarget.request.postData), { target: '.dude/ideas/035-record-035.md' },
+      'the transport fault must reach the newly selected target, not an earlier queued read');
     await page.send('Fetch.failRequest', { requestId: failedTarget.requestId, errorReason: 'ConnectionReset' });
     await page.send('Fetch.disable');
-    await visible(page, 'Current instruction unavailable');
+    try { await visible(page, 'Current instruction unavailable'); }
+    catch (error) {
+      writeEvidenceJson(output, 'selected-read-failure', { failedRequest: failedTarget.request,
+        network: network.slice(-24), dom: await evaluate(page, 'document.body.innerText') });
+      throw error;
+    }
     assert.equal(await evaluate(page, `document.querySelector('h1')?.textContent
       .replace(/\\s+/g, ' ').trim()`), '035 record 035');
     assert.equal(await evaluate(page, `document.body.innerText.includes('Current instruction for record-034')`), false);
@@ -3825,18 +4931,20 @@ test('T002 production shell: one numbered finder, selected-only Overview, Clear,
     const tabs = await evaluate(page, `[...document.querySelectorAll('[role=tab]')].map(node => ({
       text: node.innerText.trim(), current: node.getAttribute('aria-current')
     }))`);
-    assert.deepEqual(tabs.map(({ text }) => text), ['Overview', 'Now', 'Needs you', 'New idea']);
+    assert.deepEqual(tabs.map(({ text }) => text), ['Overview', 'Now', 'Needs you', 'New idea', 'Settings']);
     assert.equal(tabs.filter(({ current }) => current === 'page').length, 1);
-    assert.equal(await evaluate(page, `document.body.innerText.includes('Settings')
-      || document.body.innerText.includes('Switch work')
+    assert.equal(await evaluate(page, `document.body.innerText.includes('Switch work')
       || document.body.innerText.includes('Kanban')`), false);
     assert.equal(await evaluate(page, `document.querySelector('[data-navigation-pane]').getBoundingClientRect().width`), 48);
     await click(page, `document.querySelector('[aria-label="Expand navigation pane"]')`);
+    await until(() => evaluate(page, `Boolean(document.querySelector('[aria-label="Collapse navigation pane"]'))`),
+      'desktop navigation accepts its single activation');
+    await settleFocusPaint(page);
     assert.equal(await evaluate(page, `document.querySelector('[data-navigation-pane]').getBoundingClientRect().width`), 208);
     assert.equal(await evaluate(page, `document.querySelectorAll('[data-navigation-dialog]').length`), 0);
     assert.equal(await evaluate(page, `document.querySelector('main').inert`), false);
     await audit(page, output, 't002-navigation-expanded-1440-light');
-    await evaluate(page, `document.querySelector('#dude-tab-new').focus()`);
+    await evaluate(page, `document.querySelector('#dude-tab-settings').focus()`);
     await pressNavigationKey(page, 'Tab');
     assert.equal(await evaluate(page, `document.querySelector('[data-navigation-pane]').contains(document.activeElement)`), false,
       'desktop rail does not trap normal Tab navigation');
@@ -3846,11 +4954,24 @@ test('T002 production shell: one numbered finder, selected-only Overview, Clear,
     // Assert narrow disclosure is a 260px modal, inerts existing and newly
     // portaled background, and traps both Tab directions.
     await viewport(page, 719, 'light');
-    assert.equal(await evaluate(page, `Math.round(document.querySelector('[data-navigation-pane]').getBoundingClientRect().height)`), 49);
+    assert.deepEqual(await evaluate(page, `(() => {
+      const rail = document.querySelector('[data-navigation-pane]'), r = rail.getBoundingClientRect();
+      const main = document.querySelector('main').getBoundingClientRect();
+      const settings = document.querySelector('#dude-tab-settings').getBoundingClientRect();
+      return { width: r.width, x: r.x, direction: getComputedStyle(rail).flexDirection,
+        beside: r.right <= main.left, tall: r.height > 49,
+        settingsAtBottom: settings.bottom <= r.bottom && r.bottom - settings.bottom <= 12 };
+    })()`), { width: 48, x: 0, direction: 'column', beside: true, tall: true, settingsAtBottom: true });
     await click(page, `document.querySelector('[aria-label="Expand navigation pane"]')`);
     await until(() => evaluate(page, `Boolean(document.querySelector('[data-navigation-dialog]'))`),
       'narrow navigation dialog');
-    assert.equal(await evaluate(page, `Math.round(document.querySelector('[data-navigation-dialog]').getBoundingClientRect().width)`), 260);
+    const dialogBeforePaint = await evaluate(page,
+      `document.querySelector('[data-navigation-dialog]').getBoundingClientRect().toJSON()`);
+    await settleFocusPaint(page);
+    const dialogAfterPaint = await evaluate(page,
+      `document.querySelector('[data-navigation-dialog]').getBoundingClientRect().toJSON()`);
+    writeEvidenceJson(output, 'navigation-dialog-paint', { before: dialogBeforePaint, after: dialogAfterPaint });
+    assert.equal(Math.round(dialogAfterPaint.width), 260);
     assert.equal(await evaluate(page, `document.querySelector('header').inert
       && document.querySelector('main').inert && document.querySelector('footer').inert`), true);
     await evaluate(page, `(() => {
@@ -3898,6 +5019,9 @@ test('T002 production shell: one numbered finder, selected-only Overview, Clear,
     '719 to 720 navigation dismissal');
     assert.equal(await evaluate(page, `document.querySelector('[data-navigation-pane]').getBoundingClientRect().width`), 48);
     await click(page, `document.querySelector('[aria-label="Expand navigation pane"]')`);
+    await until(() => evaluate(page, `Boolean(document.querySelector('[aria-label="Collapse navigation pane"]'))`),
+      '720px navigation accepts its single activation');
+    await settleFocusPaint(page);
     assert.equal(await evaluate(page, `document.querySelector('[data-navigation-pane]').getBoundingClientRect().width`), 208);
     await viewport(page, 719, 'light');
     await until(() => evaluate(page, `!document.querySelector('[data-navigation-dialog]')
@@ -3957,7 +5081,7 @@ test('T002 production shell: one numbered finder, selected-only Overview, Clear,
       localState: { requestDraftRetained: true, ideaDraftRetained: true },
       races: { lateARejectedForB: true, failedTargetRetainedIdentity: true },
       unavailable: { retained: records[37].ideaPath, replacement: '.dude/ideas/099-record-038.md' },
-      rail: { desktop: [48, 208], compactRow: 49, narrowOverlay: 260, breakpoint: 720 },
+      rail: { desktop: [48, 208], compactVerticalWidth: 48, narrowOverlay: 260, breakpoint: 720 },
       visualMatrix,
       scale: { devicePixelRatio: 2, nativeZoomClaimed: false, reducedMotion: true },
       approvedDesign: { path: path.relative(ROOT, approvedPath), sha256: approvedSha256 },
@@ -3971,7 +5095,7 @@ test('T002 production shell: one numbered finder, selected-only Overview, Clear,
     if (browserState) await browserState.page.send('Fetch.disable').catch(() => {});
     if (fixture) await fixture.close();
     if (browserState) await cleanupBrowserDriver(browserState);
-    board.close();
+    await board.close();
   }
 });
 
@@ -4376,7 +5500,7 @@ test('T003 production Now: source-backed task detail, freshness guards, responsi
     await click(page, `document.querySelector('[data-task-key="${activeKey}"]')`);
     await click(page, button('Review design'));
     await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
-      && !document.querySelector('[aria-label="Box (B)"]').disabled`), 'T003 retained Review ready', 60_000);
+      && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`), 'T003 retained Review ready', 60_000);
     await click(page, `document.querySelector('[aria-label="Box (B)"]')`);
     await openReviewDetails(page);
     await click(page, button('Add at center'));
@@ -4546,7 +5670,7 @@ test('T003 production Now: source-backed task detail, freshness guards, responsi
     if (fixture) await fixture.close({ removeRoot: fs.existsSync(fixture.root) });
     if (movedRoot) fs.rmSync(movedRoot, { recursive: true, force: true });
     if (browserState) await cleanupBrowserDriver(browserState);
-    board.close();
+    await board.close();
   }
 });
 
@@ -4830,13 +5954,36 @@ test('T004 contextual requests: exact scope, independent drafts, truthful Browsi
     await evaluate(page, `(() => {
       const button = document.querySelector('[data-history-entry="${historyA.submissionId}"]');
       button.scrollIntoView({ block: 'center' });
-      button.focus();
+      button.focus({ preventScroll: true });
       window.__t004HistoryOrigin = button;
       window.__t004HistoryScroll = button.closest('[role="tabpanel"]').scrollTop;
+      const activated = event => {
+        const node = event.target.closest?.('[data-history-entry="${historyA.submissionId}"]');
+        if (!node) return;
+        window.__t004HistoryActivation = {
+          isTrusted:event.isTrusted, submissionId:node.dataset.historyEntry,
+          focused:document.activeElement === node,
+          scrollTop:node.closest('[role="tabpanel"]').scrollTop,
+        };
+        document.removeEventListener('click', activated, true);
+      };
+      document.addEventListener('click', activated, true);
     })()`);
-    const historyScroll = await evaluate(page, `window.__t004HistoryScroll`);
-    assert.ok(historyScroll > 0, `history focus fixture scrolls the Context panel: ${historyScroll}`);
-    await click(page, `document.querySelector('[data-history-entry="${historyA.submissionId}"]')`);
+    await settleFocusPaint(page);
+    const historyEntry = await evaluate(page, `(() => {
+      const node = document.querySelector('[data-history-entry="${historyA.submissionId}"]');
+      return {arrangedScroll:window.__t004HistoryScroll, scrollTop:node.closest('[role="tabpanel"]').scrollTop,
+        rect:node.getBoundingClientRect().toJSON()};
+    })()`);
+    assert.ok(historyEntry.scrollTop > 0, `history focus fixture scrolls the Context panel: ${historyEntry.scrollTop}`);
+    await clickAtCurrentPosition(page, `document.querySelector('[data-history-entry="${historyA.submissionId}"]')`);
+    const historyActivation = await evaluate(page, 'window.__t004HistoryActivation');
+    writeEvidenceJson(output, 'history-native-entry', { ...historyEntry, activation: historyActivation });
+    assert.equal(historyActivation?.isTrusted, true, 'the exact history entry receives a native click');
+    assert.equal(historyActivation.submissionId, historyA.submissionId);
+    assert.equal(historyActivation.focused, true);
+    const historyScroll = historyActivation.scrollTop;
+    assert.ok(historyScroll > 0, 'the native history invocation has a nonzero return position');
     await visible(page, `Submission: ${historyA.submissionId}`);
     assert.equal(await evaluate(page, `Boolean(document.querySelector('[aria-label="Browsing"]'))`), false,
       'displayed history scope, not background request B, labels the selected A identity');
@@ -4937,7 +6084,7 @@ test('T004 contextual requests: exact scope, independent drafts, truthful Browsi
       removeRoot: fs.existsSync(fixture.root),
     });
     await Promise.allSettled(publications.map(publication => publication.result));
-    board.close();
+    await board.close();
   }
 });
 
@@ -5058,7 +6205,7 @@ test('T004 Review opening: late success and error cannot override newer navigati
     const third = await beginOpen(sameRequest.request, 'third same-request');
     await continueOpen(third);
     await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
-      && !document.querySelector('[aria-label="Box (B)"]')?.disabled`),
+      && !document.querySelector('[aria-label="Box (B)"]')?.matches(':disabled,[aria-disabled="true"]')`),
     'newest same-request Review engine', 60_000);
     await evaluate(page, `(() => {
       window.__t004RaceWorkspace = document.querySelector('[data-review-workspace]');
@@ -5337,7 +6484,7 @@ test('T004 Review opening: late success and error cannot override newer navigati
     if (fixture) await fixture.close({ removeRoot: fs.existsSync(fixture.root) });
     if (movedRoot) fs.rmSync(movedRoot, { recursive: true, force: true });
     await Promise.allSettled(publications.map(publication => publication.result));
-    board.close();
+    await board.close();
   }
 });
 
@@ -5703,7 +6850,7 @@ test('T011 browser: complete finder, six owner forms, keyboard context, late rea
     if (browserState) {
       await cleanupBrowserDriver(browserState);
     }
-    board.close();
+    await board.close();
   }
 });
 
@@ -5729,7 +6876,7 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
     const preview = createPreview(root, /** @type {any} */ (feature));
     const fixture = await createFixture(root);
     fixtures.push(fixture);
-    browserState = await startBrowser();
+    browserState = await startBrowser(1, false, true);
     const { page } = browserState;
     page.on('Runtime.exceptionThrown', (event) => runtimeErrors.push(event));
     page.on('Network.requestWillBeSent', (event) => {
@@ -5764,7 +6911,7 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
       node.innerText.includes('Annotate the exact current revision') && node.getClientRects().length)`);
     await click(page, button('Open Review'));
     await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
-      && !document.querySelector('[aria-label="Box (B)"]').disabled`), 'mounted production Review engine', 30_000);
+      && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`), 'mounted production Review engine', 30_000);
 
     const toolbarControlNames = [
       'Move tools', 'Select (V)', 'Comment (C)', 'Box (B)', 'Circle (O)', 'Arrow (A)', 'Line (L)', 'Highlight (H)',
@@ -5910,7 +7057,18 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
     );
 
     await click(page, button('Back'));
-    assert.ok(['Open Review', 'Needs you'].includes(await evaluate(page, `document.activeElement?.innerText.trim()`)),
+    const returnFocus = () => observeRuntime(page, `(() => {
+      const node = document.activeElement;
+      return {tag:node?.tagName, text:node?.innerText.trim(), id:node?.id,
+        hasFocus:document.hasFocus(), visible:document.visibilityState,
+        reviewVisible:Boolean(document.querySelector('[data-review-workspace]')?.getClientRects().length)};
+    })()`);
+    const immediateReturnFocus = await returnFocus();
+    await settleFocusPaint(page);
+    const framedReturnFocus = await returnFocus();
+    writeEvidenceJson(output, 'back-return-focus', { immediate: immediateReturnFocus, postFrame: framedReturnFocus });
+    assert.equal(framedReturnFocus.hasFocus, true, 'the returned document receives native focus');
+    assert.ok(['Open Review', 'Needs you'].includes(framedReturnFocus.text),
       'Back restores the exact entry control or its stable Needs you tab fallback');
     await click(page, button('Open Review'));
     await visible(page, 'Comments (1)');
@@ -5992,7 +7150,7 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
     await until(() => evaluate(page, `!document.querySelector('[aria-label="Close comments"]')
       ?.getClientRects().length`), 'closed pending comment drawer');
     await evaluate(page, `document.querySelector('[data-review-return]').focus()`);
-    await until(() => evaluate(page, `!document.querySelector('[aria-label="Box (B)"]').disabled`),
+    await until(() => evaluate(page, `!document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
       'Review actionable after pending drawer close');
     await evaluate(page, `new Promise((resolve) => requestAnimationFrame(() =>
       Promise.resolve().then(() => requestAnimationFrame(resolve))))`);
@@ -6438,6 +7596,9 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
       aligned,
       adjacent,
     };
+    writeEvidenceJson(output, 'review-send-alignment.metrics', {
+      geometry: paletteOwnerGeometry, ownerScale, pngScale, alignedControl, chromeExclusion,
+    });
     assert.ok(alignedControl.samples > 100 && alignedControl.distinctSourceColors > 16,
       'the alignment control must contain real text edges rather than a uniform background');
     assert.equal(alignedControl.changedWhenMenuOpened, 0,
@@ -6627,7 +7788,7 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
       node.innerText.includes('Approval that will become stale') && node.getClientRects().length)`);
     assert.equal(await evaluate(page, `${button('Approve this revision')}.disabled`), true);
     await click(page, button('Open Review'));
-    await until(() => evaluate(page, `!document.querySelector('[aria-label="Box (B)"]').disabled`), 'fresh approval view');
+    await until(() => evaluate(page, `!document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`), 'fresh approval view');
     await click(page, button('Back'));
     await click(page, field('I approve the exact revision I reviewed.'));
     fs.appendFileSync(path.join(root, ...preview.artifact.path.split('/')), '\n<!-- drift before approval -->\n');
@@ -6659,7 +7820,7 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
       .length`), 1, 'the stale prior Review remains retained only until the explicit successor entry');
     await click(page, button('Open Review'));
     await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
-      && !document.querySelector('[aria-label="Box (B)"]').disabled`),
+      && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
     'second real feedback Review', 60_000);
     await click(page, `document.querySelector('[aria-label="Box (B)"]')`);
     await openReviewDetails(page);
@@ -6760,7 +7921,7 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
       node.innerText.includes('Approve the newly viewed exact revision') && node.getClientRects().length)`);
     assert.equal(await evaluate(page, `${field('I approve the exact revision I reviewed.')}.checked`), false);
     await click(page, button('Open Review'));
-    await until(() => evaluate(page, `!document.querySelector('[aria-label="Box (B)"]').disabled`), 'successor Review entry');
+    await until(() => evaluate(page, `!document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`), 'successor Review entry');
     await click(page, button('Back'));
     assert.equal(await evaluate(page, `${field('I approve the exact revision I reviewed.')}.checked`), false);
     await click(page, field('I approve the exact revision I reviewed.'));
@@ -6892,7 +8053,7 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
     if (browserState) {
       await cleanupBrowserDriver(browserState);
     }
-    board.close();
+    await board.close();
   }
 });
 
@@ -7534,7 +8695,7 @@ test('T012 Send recovery: retained geometry stays visible and non-consuming whil
     if (browserState) {
       await cleanupBrowserDriver(browserState);
     }
-    board.close();
+    await board.close();
   }
 });
 
@@ -7606,7 +8767,7 @@ test('T012 Send acknowledgment precedence: declined and unavailable receipts rep
       await click(page, `document.querySelector('[data-work-path="${feature.ideaPath}"]')`);
       await click(page, button('Review design'));
       await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
-        && !document.querySelector('[aria-label="Box (B)"]').disabled`),
+        && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
       `${expectation.outcome} Review engine`, 60_000);
       await click(page, `document.querySelector('[aria-label="Box (B)"]')`);
       await openReviewDetails(page);
@@ -7744,7 +8905,7 @@ test('T012 Send acknowledgment precedence: declined and unavailable receipts rep
     if (browserState) {
       await cleanupBrowserDriver(browserState);
     }
-    board.close();
+    await board.close();
   }
 });
 
@@ -7862,7 +9023,7 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     wheelObserver = await createReviewSourceObserver(page);
     await click(page, button('Review design'));
     await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
-      && !document.querySelector('[aria-label="Box (B)"]').disabled`),
+      && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
     'focused floating-toolbar Review engine', 60_000);
     wheelExperiment.variants.positioned.binding = await wheelObserver.bind();
     const shortPanelFixture = Object.freeze({
@@ -7876,6 +9037,12 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       shortPanelFixture.viewport.height,
       shortPanelFixture.viewport.dpr,
     );
+    wheelExperiment.variants.positioned.fractionalFixture = await evaluate(page, `(() => {
+      const frame = document.querySelector('.dude-review-frame');
+      const before = {rect:frame.getBoundingClientRect().toJSON(), clientHeight:frame.clientHeight};
+      frame.style.height = (frame.clientHeight - 0.5) + 'px';
+      return {before, arrangedHeight:frame.getBoundingClientRect().height};
+    })()`);
     let shortViewport;
     try {
       // This synthetic fixture has one approved short-panel geometry. Capture
@@ -7893,7 +9060,7 @@ test('T012 review regression: short-panel floating tools stay inside their palet
           && height === expected.rawHeight
           && !frame.classList.contains('dude-review-frame-pinned')
           && viewBox === '0 0 ' + frame.clientWidth + ' ' + frame.clientHeight
-          && !document.querySelector('[aria-label="Box (B)"]').disabled
+          && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')
           ? {
             width:frame.clientWidth,
             height:frame.clientHeight,
@@ -7926,7 +9093,7 @@ test('T012 review regression: short-panel floating tools stay inside their palet
             rect:frame.getBoundingClientRect().toJSON(),
           } : null,
           overlayViewBox:document.querySelector('.dude-review-overlay')?.getAttribute('viewBox') || null,
-          boxDisabled:document.querySelector('[aria-label="Box (B)"]')?.disabled ?? null,
+          boxDisabled:document.querySelector('[aria-label="Box (B)"]')?.matches(':disabled,[aria-disabled="true"]') ?? null,
           reviewInspection:parentNotice ? {
             available:true,
             source:'parent-visible-review-notice',
@@ -8045,10 +9212,16 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       '[data-review-tools-menu] [role="menuitem"]'
     )].find(node => node.textContent.trim() === ${JSON.stringify(label)})`;
     const toggle = `document.querySelector('[data-review-tools] [aria-label^="Switch tools to"]')`;
-    const settlePalette = () => evaluate(
-      page,
-      'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
-    );
+    const settlePalette = async () => {
+      await settleFocusPaint(page);
+      await until(async () => {
+        const value = await paletteState();
+        return Math.abs(value.palette.left - (value.stage.left + value.layout.stageClientLeft
+          + value.layout.left + value.offset.x)) < 0.01
+          && Math.abs(value.palette.top - (value.stage.top + value.layout.stageClientTop
+          + value.layout.top + value.offset.y)) < 0.01;
+      }, 'painted palette agrees with its exposed layout offset');
+    };
     const waitForPaletteUncovered = () => until(() => evaluate(page, `(() => {
       const toolbar = document.querySelector('[data-review-tools] [role="toolbar"]');
       const palette = document.querySelector('[data-review-tools]');
@@ -8170,8 +9343,8 @@ test('T012 review regression: short-panel floating tools stay inside their palet
         tool:overlay?.getAttribute('data-tool') || null,
         saveDisabled:${button('Save markup')}
           ?.matches(':disabled,[aria-disabled="true"]') ?? null,
-        undoDisabled:${tool('Undo annotation')}?.disabled ?? null,
-        redoDisabled:${tool('Redo annotation')}?.disabled ?? null,
+        undoDisabled:${tool('Undo annotation')}?.matches(':disabled,[aria-disabled="true"]') ?? null,
+        redoDisabled:${tool('Redo annotation')}?.matches(':disabled,[aria-disabled="true"]') ?? null,
       };
     })()`);
     const pinSnapshot = () => evaluate(page, `(() => {
@@ -8457,6 +9630,7 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       ));
     }
     await checkpoint('keyboard-chooser-focused');
+    await settleFocusPaint(page);
     await recordTarget('keyboard-chooser-focused', field('Choose an element'));
     await saveRegressionProof(page, output, 'keyboard-chooser-focused', {});
     const positionedChooserBefore = await reviewChooserSnapshot(page);
@@ -9097,7 +10271,7 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     await revealFloatingTool(page, 'Undo annotation');
     await clickAtCurrentPosition(page, tool('Undo annotation'));
     await until(() => evaluate(page, `Boolean(${button('Comments (2)')})
-      && !${tool('Redo annotation')}.disabled`), 'undo keyboard comment text edit');
+      && !${tool('Redo annotation')}.matches(':disabled,[aria-disabled="true"]')`), 'undo keyboard comment text edit');
     await revealFloatingTool(page, 'Undo annotation');
     await clickAtCurrentPosition(page, tool('Undo annotation'));
     await until(() => evaluate(page, `Boolean(${button('Comments (1)')})`),
@@ -9215,7 +10389,7 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     await viewport(page, 1000, 'light', 300, 2);
     await until(() => evaluate(page, `document.querySelector('.dude-review-frame').clientWidth === ${shortViewport.width}
       && document.querySelector('.dude-review-frame').clientHeight === ${shortViewport.height}
-      && !${tool('Box (B)')}.disabled`), 'return to the original panel size');
+      && !${tool('Box (B)')}.matches(':disabled,[aria-disabled="true"]')`), 'return to the original panel size');
 
     // A movable palette is presentation-only. Derive every clamp bound from
     // offset layout (which transforms cannot change), then drive only trusted
@@ -9649,21 +10823,30 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     await clickAtCurrentPosition(page, toggle);
     await until(() => evaluate(page, `${toggle}.getAttribute('aria-label') === 'Switch tools to vertical'`),
       'movable palette horizontal placement');
+    const horizontalBeforeFrame = await paletteState();
+    await settleFocusPaint(page);
     const horizontalHome = await paletteState();
     assert.deepEqual(horizontalHome.offset, {x:0, y:0});
+    assertLayoutPlacement(horizontalHome, 'horizontal reset after its native frame');
     await dragPalette(-120, -20);
     const horizontalOffset = (await paletteState()).offset;
     assert.notDeepEqual(horizontalOffset, {x:0, y:0});
     await clickAtCurrentPosition(page, toggle);
     await until(() => evaluate(page, `${toggle}.getAttribute('aria-label') === 'Switch tools to horizontal'`),
       'movable palette vertical placement');
+    const verticalBeforeFrame = await paletteState();
+    await settleFocusPaint(page);
     const verticalHome = await paletteState();
     assert.deepEqual(verticalHome.offset, {x:0, y:0});
     assert.deepEqual(verticalHome.frame, movableBaseline.frame);
+    assertLayoutPlacement(verticalHome, 'vertical reset after its native frame');
+    assert.equal(verticalHome.grip.hit.every(Boolean), true, 'the reset palette remains natively reachable');
     movementState.orientationReset = {
       verticalOffset,
+      horizontalBeforeFrame,
       horizontalHome,
       horizontalOffset,
+      verticalBeforeFrame,
       verticalHome,
     };
     movementState.frameResizeObservations = await evaluate(page, 'window.floatingFrameSizes');
@@ -9674,7 +10857,7 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     await revealFloatingTool(page, 'Undo annotation');
     await clickAtCurrentPosition(page, tool('Undo annotation'));
     await until(() => evaluate(page, `Boolean(${button('Comments (1)')})
-      && !${tool('Redo annotation')}.disabled`), 'native Undo of pointer comment text');
+      && !${tool('Redo annotation')}.matches(':disabled,[aria-disabled="true"]')`), 'native Undo of pointer comment text');
     await revealFloatingTool(page, 'Undo annotation');
     await clickAtCurrentPosition(page, tool('Undo annotation'));
     await until(() => evaluate(page, `Boolean(${button('Comments (0)')})`), 'native Undo');
@@ -9726,7 +10909,7 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       'return destination after empty Review');
     await click(page, button('Review design'));
     await until(() => evaluate(page, `Boolean(${button('Comments (0)')})
-      && !${tool('Box (B)')}.disabled`), 'unchanged empty Review reactivation');
+      && !${tool('Box (B)')}.matches(':disabled,[aria-disabled="true"]')`), 'unchanged empty Review reactivation');
     const emptyReturned = await pinSnapshot();
     assert.equal(emptyReturned.sameIframe, true,
       'leave and return retains the exact pinned iframe');
@@ -9746,7 +10929,7 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     await viewport(page, 1000, 'light', 300, 2);
     await until(() => evaluate(page, `document.querySelector('.dude-review-frame').clientWidth === ${pointerPin.frame.clientWidth}
       && document.querySelector('.dude-review-frame').clientHeight === ${pointerPin.frame.clientHeight}
-      && !${tool('Select (V)')}.disabled`), 'original panel restored after empty return');
+      && !${tool('Select (V)')}.matches(':disabled,[aria-disabled="true"]')`), 'original panel restored after empty return');
     pinningState.emptyReturn.restored = await pinSnapshot();
     await revealFloatingTool(page, 'Select (V)');
     await clickAtCurrentPosition(page, tool('Select (V)'));
@@ -9901,11 +11084,15 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       browserStorageAfter:browserStorageAfterPaletteMove,
     };
 
-    // Assert: every revealed target fits its scroller, palette, and panel.
-    // Hidden tool rectangles are never accepted as evidence of reachability.
+    // Tools fit their scroller/palette/panel. The chooser is instead owned by
+    // Fluent's viewport-positioned Notes and more portal, which may overlap
+    // the header in a short panel; it must fit that visible, hittable surface.
     const findings = [];
     for (const target of targets) {
-      if (!target.inViewport || !target.inPanel || !target.inPalette || !target.inScroller
+      const inOwner = target.checkpoint === 'keyboard-chooser-focused'
+        ? target.popover?.label === 'Notes and more' && target.popover.containsTarget && target.popover.inViewport
+        : target.inPanel;
+      if (!target.inViewport || !inOwner || !target.inPalette || !target.inScroller
         || !target.hits.every(Boolean) || target.box.width < 24 || target.box.height < 24) {
         findings.push({issue:'revealed target is not wholly painted and hittable', target});
       }
@@ -10227,8 +11414,8 @@ test('T012 review regression: short-panel floating tools stay inside their palet
         positionedCleanup.fixture = true;
         positionedCleanup.fixtureRootExists = fs.existsSync(fixtureRoot);
       },
-      () => {
-        board.close();
+      async () => {
+        await board.close();
         positionedCleanup.board = true;
       },
     );
@@ -10309,7 +11496,7 @@ test('T012 review regression: master-detail selection and focusable saved state 
     await visible(page, 'Defined feature');
     await click(page, button('Review design'));
     await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
-      && !document.querySelector('[aria-label="Box (B)"]').disabled`),
+      && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
     'selection/save Review engine', 60_000);
     await evaluate(page, `(() => {
       window.__t012NativeInput = [];
@@ -10448,7 +11635,7 @@ test('T012 review regression: master-detail selection and focusable saved state 
     const shortFrames = [];
     for (const theme of /** @type {const} */ (['light', 'dark'])) {
       await viewport(page, 1000, theme, 300, 2);
-      await until(() => evaluate(page, `!document.querySelector('[aria-label="Box (B)"]').disabled`),
+      await until(() => evaluate(page, `!document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
         `${theme} unpinned short Review remains actionable`, 60_000);
       const trigger = await evaluate(page, `(() => {
         const node = ${button('Notes and more')};
@@ -10470,11 +11657,30 @@ test('T012 review regression: master-detail selection and focusable saved state 
         },
         `${theme} short-panel disclosure names and previews its grouped contents`,
       );
+      // Exercise the real hover state before opening the grouped disclosure.
+      // A tooltip that was never shown cannot prove it is suppressed on open.
+      await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 998, y: 298 });
+      await page.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved', x: trigger.rect.x + trigger.rect.width / 2,
+        y: trigger.rect.y + trigger.rect.height / 2,
+      });
+      await until(() => evaluate(page, `[...document.querySelectorAll('[role="tooltip"]')].some(node => {
+        const style = getComputedStyle(node);
+        return node.textContent === ${JSON.stringify(trigger.description)}
+          && style.visibility !== 'hidden' && style.display !== 'none'
+          && node.getBoundingClientRect().width > 0;
+      })`), `${theme} native hover displays the Notes and more contents preview`);
       await clickAtCurrentPosition(page, button('Notes and more'));
       await until(() => evaluate(page, `Boolean(document.querySelector(
         '.fui-PopoverSurface[aria-label="Notes and more"]'
       )?.getClientRects().length)`), `${theme} short Notes and more surface`);
       await settleFiniteMotion(`${theme} short Notes and more motion`);
+      await until(() => evaluate(page, `[...document.querySelectorAll('[role="tooltip"]')]
+        .every(node => {
+          const box = node.getBoundingClientRect(), style = getComputedStyle(node);
+          return style.display === 'none' || style.visibility === 'hidden'
+            || box.width === 0 || box.height === 0;
+        })`), `${theme} trigger tooltip finishes closing when its disclosure opens`);
       const details = await evaluate(page, `(() => {
         const surface = document.querySelector('.fui-PopoverSurface[aria-label="Notes and more"]');
         const rect = surface.getBoundingClientRect();
@@ -10558,7 +11764,7 @@ test('T012 review regression: master-detail selection and focusable saved state 
     assert.equal(shortFrames[0].badge, 'Review');
 
     await viewport(page, 1000, 'light', 900, 2);
-    await until(() => evaluate(page, `!document.querySelector('[aria-label="Box (B)"]').disabled`),
+    await until(() => evaluate(page, `!document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
       'fresh full-height Review after short-panel checks', 60_000);
     await clickAtCurrentPosition(page, `document.querySelector('[aria-label="Box (B)"]')`);
     await openReviewDetails(page);
@@ -11699,7 +12905,7 @@ test('T012 review regression: master-detail selection and focusable saved state 
       await cleanupBrowserDriver(browserState);
     }
     if (fixture) await fixture.close();
-    board.close();
+    await board.close();
   }
 });
 
@@ -11773,8 +12979,17 @@ test('T012 review regression: double-click opens an annotation comment while dra
     await visible(page, 'Defined feature');
     await click(page, button('Review design'));
     await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
-      && !document.querySelector('[aria-label="Box (B)"]').disabled`),
+      && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
     'open-comment Review engine', 60_000);
+    // Keep fractional geometry coverage intentional. The native frame may be
+    // integral (718px on Windows); pinning must still resolve a half-pixel
+    // outer edge without changing the admitted client geometry or origin.
+    observations.fractionalFixture = await evaluate(page, `(() => {
+      const frame = document.querySelector('.dude-review-frame');
+      const before = {rect:frame.getBoundingClientRect().toJSON(), clientHeight:frame.clientHeight};
+      frame.style.height = (frame.clientHeight - 0.5) + 'px';
+      return {before, arrangedHeight:frame.getBoundingClientRect().height};
+    })()`);
 
     const tool = label => `document.querySelector('[data-review-tools] [aria-label="${label}"]')`;
     const workingFile = () => {
@@ -12004,6 +13219,7 @@ test('T012 review regression: double-click opens an annotation comment while dra
       'pointer-created boxes still retain their inspected element anchors',
     );
     const pinnedFrame = await frameSnapshot();
+    observations.frame = { beforePin: frame, pinned: pinnedFrame };
     assert.deepEqual(
       {
         ...pinnedFrame,
@@ -12013,7 +13229,7 @@ test('T012 review regression: double-click opens an annotation comment while dra
       'admitting the boxes retains the exact client geometry, origin, width, and viewBox',
     );
     assert.equal(frame.rect.height, frame.clientHeight - 0.5,
-      'the unpinned flex frame begins on the observed half-pixel outer edge');
+      'the deliberately fractional unpinned fixture starts on a half-pixel outer edge');
     assert.equal(pinnedFrame.rect.height, pinnedFrame.clientHeight,
       'pinning resolves only that outer half-pixel edge to the validated client height');
     assert.equal(await evaluate(page,
@@ -12787,7 +14003,7 @@ test('T012 review regression: double-click opens an annotation comment while dra
       await cleanupBrowserDriver(browserState);
     }
     if (fixture) await fixture.close();
-    board.close();
+    await board.close();
   }
 });
 
@@ -12844,7 +14060,7 @@ test('T012 accessibility: selected annotation label meets text contrast in fresh
         await visible(page, 'Defined feature');
         await click(page, button('Review design'));
         await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
-          && !document.querySelector('[aria-label="Box (B)"]').disabled
+          && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')
           && [...document.querySelectorAll('[data-review-workspace] > header .fui-Badge')]
             .some(node => node.textContent.trim() === 'Review')`),
         `${theme} fresh Review ready`, 60_000);
@@ -12924,7 +14140,7 @@ test('T012 accessibility: selected annotation label meets text contrast in fresh
       'both theme measurements came from separate fresh reviews',
     );
   } finally {
-    board.close();
+    await board.close();
   }
 });
 
@@ -13016,7 +14232,7 @@ test('T012 review regression: real keyboard focus visibly paints floating tools 
     })()`);
     await click(page, button('Review design'));
     await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
-      && !document.querySelector('[aria-label="Highlight (H)"]').disabled`),
+      && !document.querySelector('[aria-label="Highlight (H)"]').matches(':disabled,[aria-disabled="true"]')`),
     'focus-visibility Review engine', 60_000);
     await viewport(page, 1000, 'light', 300, 2);
     // Bind focus painting to the admitted short frame rather than the obsolete
@@ -13057,6 +14273,8 @@ test('T012 review regression: real keyboard focus visibly paints floating tools 
           targetFocusVisible:event.target?.matches?.(':focus-visible') || false,
           targetFuiFocusVisible:event.target?.hasAttribute?.('data-fui-focus-visible') || false,
           navigating:window.__keyborg?.core?.isNavigatingWithKeyboard ?? null,
+          hasFocus:document.hasFocus(), visible:document.visibilityState, at:performance.now(),
+          targetDisabled:event.target?.disabled ?? null, activeTag:document.activeElement?.tagName,
         }), true);
       }
       for (const type of ['keydown','keyup']) {
@@ -13072,14 +14290,17 @@ test('T012 review regression: real keyboard focus visibly paints floating tools 
       }
       new MutationObserver(records => {
         for (const record of records) {
-          if (record.attributeName === 'data-fui-focus-visible') save({
+          if (['data-fui-focus-visible','disabled','aria-disabled','tabindex'].includes(record.attributeName)) save({
             kind:'attribute', target:label(record.target),
+            attribute:record.attributeName, oldValue:record.oldValue,
+            disabled:record.target.disabled ?? null, hasFocus:document.hasFocus(), at:performance.now(),
+            inactive:record.target.matches(':disabled,[aria-disabled="true"]'), reason:record.target.title,
             present:record.target.hasAttribute('data-fui-focus-visible'),
             active:label(document.activeElement),
             navigating:window.__keyborg?.core?.isNavigatingWithKeyboard ?? null,
           });
         }
-      }).observe(document.documentElement, {subtree:true,attributes:true});
+      }).observe(document.documentElement, {subtree:true,attributes:true,attributeOldValue:true});
     })()`);
 
     const tool = label => `document.querySelector('[data-review-tools] [aria-label="${label}"]')`;
@@ -13429,10 +14650,47 @@ test('T012 review regression: real keyboard focus visibly paints floating tools 
         tabPath.push(await evaluate(page, `document.activeElement?.getAttribute('aria-label')
           || document.activeElement?.innerText?.trim()`));
       }
+      const receiver = () => observeRuntime(page, `(() => {
+        const selected = ${selectedTool};
+        return {at:performance.now(), activeTag:document.activeElement?.tagName,
+          active:document.activeElement?.getAttribute('aria-label'),
+          hasFocus:document.hasFocus(), visible:document.visibilityState,
+          selectedFocused:document.activeElement === selected,
+          selectedDisabled:selected.matches(':disabled,[aria-disabled="true"]'),
+          selectedNativeDisabled:selected.disabled,
+          selectedConnected:selected.isConnected,
+          targetDisabled:(${toggle}).disabled};
+      })()`);
+      const arrivalReceiver = await receiver();
+      const refreshControl = [];
+      if (theme === 'light' && placement === 'vertical') {
+        // Resize the real, still-unpinned source while the selected toolbar
+        // item owns native focus. Each real inspector reread emits a busy
+        // transition; no mocked state or programmatic focus can satisfy this.
+        for (const height of [302, 300]) {
+          const mark = await eventMark();
+          await viewport(page, 1000, theme, height, 2);
+          await until(async () => (await eventsSince(mark)).some(event => event.kind === 'attribute'
+            && event.target === 'Highlight (H)' && event.inactive),
+          'real source reread makes the native predecessor temporarily inactive');
+          await until(() => evaluate(page, `!(${selectedTool}).matches(':disabled,[aria-disabled="true"]')
+            && document.querySelector('.dude-review-overlay').getAttribute('viewBox') === '0 0 '
+              + document.querySelector('.dude-review-frame').clientWidth + ' '
+              + document.querySelector('.dude-review-frame').clientHeight`), 'source reread finishes');
+          await settleFocusPaint(page);
+          const after = await receiver();
+          refreshControl.push({ height, after, events: await eventsSince(mark) });
+          if (!after.selectedFocused) findings.push({
+            id, issue: 'a transient source reread dropped native toolbar focus', height, after,
+          });
+        }
+      }
       const keyboardBefore = await state(`${id}-keyboard-predecessor`, toggle);
       const predecessor = await evaluate(page, `document.activeElement?.getAttribute('aria-label')
         || document.activeElement?.innerText?.trim()`);
+      const beforeInputReceiver = await receiver();
       await pressNavigationKey(page, 'Tab');
+      const afterInputReceiver = await receiver();
       const keyboard = await state(`${id}-keyboard-focused`, toggle);
       const keyboardEvents = await eventsSince(keyboardMark);
       const keyboardPaint = focusPaintDifference(
@@ -13450,6 +14708,10 @@ test('T012 review regression: real keyboard focus visibly paints floating tools 
         navigation: 'native forward Tab path to the selected toolbar item, then native Tab to the pinned toggle',
         tabPath,
         predecessor,
+        arrivalReceiver,
+        refreshControl,
+        beforeInputReceiver,
+        afterInputReceiver,
         unfocused: serializableState(unfocused),
         programmatic: serializableState(programmatic),
         programmaticEvents,
@@ -13518,7 +14780,7 @@ test('T012 review regression: real keyboard focus visibly paints floating tools 
       await cleanupBrowserDriver(browserState);
     }
     if (fixture) await fixture.close();
-    board.close();
+    await board.close();
   }
 });
 
@@ -13677,7 +14939,7 @@ test('T012 browser: published capture warnings are closed, accessible, and retai
       await click(page, button('Open Review'));
       await visible(page, 'Image capture unavailable. Read notice');
       await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
-        && !document.querySelector('[aria-label="Box (B)"]').disabled`),
+        && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
       `${diagnostic.key} Review engine ready`, 30_000);
       const baseCapture = baseCaptures.find((entry) => entry.requestRef === request.requestRef)?.capture;
       const renderedCapture = diagnostic.injected ?? baseCapture;
@@ -13767,20 +15029,84 @@ test('T012 browser: published capture warnings are closed, accessible, and retai
           renderedCapture,
           'the UI oracle is rooted in the actual owned exit-23 preflight',
         );
-        const savePosts = network.filter(({ url }) => url.endsWith('/api/needs-you/review/save')).length;
+        const saveCount = () => network.filter(({ url }) => url.endsWith('/api/needs-you/review/save')).length;
+        const savePosts = saveCount();
         const sealPosts = network.filter(({ url }) => url.endsWith('/api/needs-you/review/seal')).length;
         const responsePosts = network.filter(({ url }) => url.endsWith('/api/needs-you/respond')).length;
+        const saveControl = button('Save markup');
+        const alreadySaved = 'Markup is already saved. Your work is kept as you go, so there is nothing waiting to save.';
+        const savedState = `${saveControl}.matches('[aria-disabled="true"]')
+          && ${describedText(saveControl)} === ${JSON.stringify(alreadySaved)}`;
         await click(page, `document.querySelector('[aria-label="Box (B)"]')`);
         await openReviewDetails(page);
         await click(page, button('Add at center'));
         await visible(page, 'Comments (1)');
-        await until(() => evaluate(page, `!${button('Save markup')}.disabled`),
-          'capture-unavailable Save markup enabled');
-        await click(page, button('Save markup'));
+        // Tool selection and Add at center each arm Review's 700 ms autosave,
+        // which may already have saved or be saving this markup. Poll until the
+        // explicit control is either truly enabled and hit-tested, or inactive
+        // only because the markup is saved. The trusted press follows the
+        // enabled observation with no intervening wait. An autosave landing in
+        // that gap replaces the explicit save and does not add to it, because
+        // save() awaits the in-flight save and posts only a dirty revision.
+        const activation = await until(async () => {
+          const savesBefore = saveCount();
+          const observed = await evaluate(page, `(() => {
+            const node = ${saveControl};
+            const rect = node.getBoundingClientRect();
+            const x = rect.left + rect.width / 2;
+            const y = rect.top + rect.height / 2;
+            const hit = document.elementFromPoint(x, y);
+            const state = {
+              enabled: !node.disabled && node.getAttribute('aria-disabled') !== 'true',
+              saved: ${savedState},
+              disabled: node.disabled,
+              ariaDisabled: node.getAttribute('aria-disabled'),
+              description: ${describedText(saveControl)},
+              x, y,
+              hit: Boolean(hit && (node === hit || node.contains(hit))),
+            };
+            if (state.enabled && state.hit) {
+              const events = [];
+              const receive = (event) => events.push({ type: event.type, isTrusted: event.isTrusted,
+                intended: node.contains(event.target) });
+              for (const type of ['pointerdown', 'click']) document.addEventListener(type, receive, true);
+              window.__t012ReadSaveActivation = () => {
+                for (const type of ['pointerdown', 'click']) document.removeEventListener(type, receive, true);
+                delete window.__t012ReadSaveActivation;
+                return events;
+              };
+            }
+            return state;
+          })()`);
+          return (observed.enabled && observed.hit) || observed.saved ? { ...observed, savesBefore } : null;
+        }, 'capture-unavailable Save markup enabled or already saved');
+        if (activation.enabled) {
+          await page.send('Input.dispatchMouseEvent', {
+            type: 'mousePressed', x: activation.x, y: activation.y, button: 'left', buttons: 1, clickCount: 1,
+          });
+          await page.send('Input.dispatchMouseEvent', {
+            type: 'mouseReleased', x: activation.x, y: activation.y, button: 'left', buttons: 0, clickCount: 1,
+          });
+          const delivered = await observeRuntime(page, 'window.__t012ReadSaveActivation()');
+          assert.ok(delivered.some((event) => event.type === 'pointerdown' && event.isTrusted && event.intended),
+            `the trusted Save markup press reaches the enabled control: ${JSON.stringify({ activation, delivered })}`);
+        }
+        const savesRequired = activation.enabled ? activation.savesBefore + 1 : savePosts + 1;
         await until(
-          () => network.filter(({ url }) => url.endsWith('/api/needs-you/review/save')).length === savePosts + 1,
-          'one capture-unavailable working save',
+          async () => saveCount() >= savesRequired && await evaluate(page, savedState),
+          'capture-unavailable working markup saved',
         );
+        if (activation.enabled) {
+          assert.equal(saveCount(), activation.savesBefore + 1,
+            'one enabled Save markup activation performs exactly one working save');
+        } else {
+          assert.deepEqual(
+            { disabled: activation.disabled, ariaDisabled: activation.ariaDisabled, description: activation.description },
+            { disabled: false, ariaDisabled: 'true', description: alreadySaved },
+            'an autosaved Save markup stays focusable and is inactive only because the markup is saved',
+          );
+        }
+        assert.ok(saveCount() > savePosts, 'capture-unavailable markup reaches at least one working save');
         await openReviewDetails(page);
         await visible(page, 'Working markup matches the saved revision');
         const sendDisabled = await evaluate(page, `(() => {
@@ -13824,6 +15150,12 @@ test('T012 browser: published capture warnings are closed, accessible, and retai
           live,
           baseCapture: baseCaptures.find((entry) => entry.requestRef === request.requestRef)?.capture,
           workingAnnotations: working.state.annotations.length,
+          saveActivation: {
+            path: activation.enabled ? 'explicit' : 'autosaved',
+            savesBeforeMutation: savePosts,
+            savesBeforeActivation: activation.savesBefore,
+            savesAfter: saveCount(),
+          },
         });
       }
       rendered.push({
@@ -14067,7 +15399,7 @@ test('T011 review regression: dynamic status notices reach native live regions',
     if (browserState) {
       await cleanupBrowserDriver(browserState);
     }
-    board.close();
+    await board.close();
   }
 });
 
@@ -14180,7 +15512,7 @@ test('T011 review regression: Review capture refusal notice has a valid accessib
     if (browserState) {
       await cleanupBrowserDriver(browserState);
     }
-    board.close();
+    await board.close();
   }
 });
 
@@ -15106,13 +16438,52 @@ test('T011 review regression: latest history navigation wins over superseded rea
       diagnosticRetentionError = error;
       context.diagnostic(`T011 history diagnostic retention failed: ${error.message}`);
     }
-    fixture?.provider.dispose();
-    if (fixture) await closeInstance(fixture.instanceId);
-    if (fixture?.root) fs.rmSync(fixture.root, { recursive: true, force: true });
-    if (browserState) {
-      await cleanupBrowserDriver(browserState);
-    }
-    board.close();
+    const cleanup = [];
+    const cleanupStep = async (name, run, timeout = 10_000) => {
+      const step = { name, startedAtMs: Date.now() - diagnosticStartedAt, status: 'running' };
+      cleanup.push(step);
+      const retain = () => writeEvidenceJson(output, 'history-navigation-race.cleanup', {
+        bodyStatus: diagnostic.status, cleanup,
+        serverListening: fixture?.instance.server.listening ?? null,
+        activeResources: process.getActiveResourcesInfo(),
+        nonterminal: network.filter(entry => entry.phase === 'requested' && !terminal.has(entry.requestId)),
+      });
+      retain();
+      console.log(`T011 history cleanup: ${name} started`);
+      let timer;
+      try {
+        await Promise.race([
+          Promise.resolve().then(run),
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`Owned history cleanup deadline: ${name}`)), timeout);
+          }),
+        ]);
+        step.status = 'completed';
+      } catch (error) {
+        step.status = 'failed';
+        step.error = error.message;
+        throw error;
+      } finally {
+        clearTimeout(timer);
+        step.finishedAtMs = Date.now() - diagnosticStartedAt;
+        retain();
+        console.log(`T011 history cleanup: ${name} ${step.status}`);
+      }
+    };
+    let closing;
+    await runCleanupSteps(
+      () => cleanupStep('provider disposal', () => fixture?.provider.dispose()),
+      () => cleanupStep('server close before browser', () => {
+        closing = fixture ? closeInstance(fixture.instanceId) : Promise.resolve();
+        return closing;
+      }, 5_000),
+      () => cleanupStep('browser close', () => browserState && cleanupBrowserDriver(browserState)),
+      () => cleanupStep('server drained after browser', () => closing, 5_000),
+      () => cleanupStep('fixture root removal', () => {
+        if (fixture?.root) fs.rmSync(fixture.root, { recursive: true, force: true });
+      }),
+      () => cleanupStep('owned board children', () => board.close()),
+    );
     if (!diagnosticFailure && diagnosticRetentionError) throw diagnosticRetentionError;
   }
 });
@@ -15549,6 +16920,6 @@ test('T012 review regression: the selected-element context summary collapses sou
     }
     if (browserState) await cleanupBrowserDriver(browserState);
     if (fixture) await fixture.close();
-    board.close();
+    await board.close();
   }
 });

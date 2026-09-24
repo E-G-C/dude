@@ -8,14 +8,14 @@
  * Screenshots are evidence only and deliberately live outside the repository.
  */
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import childProcess, { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -41,9 +41,19 @@ function cssRgb(color) {
   return `rgb(${Number.parseInt(color.slice(1, 3), 16)}, ${Number.parseInt(color.slice(3, 5), 16)}, ${Number.parseInt(color.slice(5, 7), 16)})`;
 }
 
-/** @param {string} value */
+/** @param {string|Buffer} value */
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
+}
+
+/**
+ * The spec binds the approved mock to its Windows-authored CRLF bytes, while
+ * the repository's `* text=auto eol=lf` attribute rewrites text to LF on
+ * checkout/restore. Bind that exact approved content, not a line-ending form.
+ * @param {Buffer} bytes
+ */
+function approvedDesignSha256(bytes) {
+  return sha256(Buffer.from(bytes.toString('latin1').replace(/\r?\n/g, '\r\n'), 'latin1'));
 }
 
 /** @param {string} slug @param {string} number */
@@ -319,6 +329,90 @@ function createReviewWorkspaceFixture() {
     write,
     close() { fs.rmSync(directory, { recursive: true, force: true }); },
   };
+}
+
+// Extend the existing disposable workspace, without applying any packs. The
+// profile is deliberately not alphabetized: its order is part of the read UI.
+function addSettingsPackFixture(workspace, source) {
+  const installedNames = ['zulu', 'alpha', 'retired', 'delta', 'golf', 'juliet', 'mike', 'papa'];
+  const names = ['alpha', 'bravo', 'charlie', 'constructor', 'delta', 'echo', 'foxtrot',
+    'golf', 'hotel', 'india', 'juliet', 'kilo', 'lima', 'mike', 'november', 'oscar', 'papa', 'zulu'];
+  const tags = name => name === 'alpha' ? ['bundle-authoring']
+    : name === 'bravo' ? ['writing']
+    : ['papa', 'zulu', 'foxtrot', 'oscar'].includes(name) ? ['ui', 'visual-design']
+      : ['charlie', 'lima'].includes(name) ? [] : ['ui-tools'];
+  const description = name => name === 'lima' ? '' : `${source} ${name} full description. `
+    + (name === 'zulu' ? 'Long source-backed detail remains readable, including every recorded file. '.repeat(24) : '')
+    + '<script>window.packMetadataExecuted = true</script>';
+  const installed = Object.fromEntries(installedNames.map(name => [name, {
+    files: Array.from({ length: name === 'zulu' ? 18 : 1 }, (_, index) =>
+      `.github/agents/dude-pack-${name}-recorded-${index + 1}-worker.agent.md`).sort(),
+    source: name === 'zulu'
+      ? { type: 'remote', repository: 'https://example.test/recorded-packs',
+        requested_ref: 'v1.2.3', resolved_commit: 'a'.repeat(40) }
+      : { type: 'local', location: '/recorded/catalog/independent-of-current-origin' },
+  }]));
+  const profile = `# Install Profile\n\n\`\`\`json\n${JSON.stringify({ installed }, null, 2)}\n\`\`\`\n`;
+  workspace.write('.dude/metadata/profile.md', profile);
+  // Residue is not membership, even for an Object.prototype property name.
+  workspace.write('.github/agents/dude-pack-constructor-residue.agent.md', 'Unrecorded residue.\n');
+  const catalogRoot = source === 'local' ? workspace.root : path.join(workspace.directory, 'remote-catalog');
+  for (const name of names) {
+    const directory = path.join(catalogRoot, 'library', 'packs', name);
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, 'pack.md'), [
+      '---', `name: ${name}`, `description: ${JSON.stringify(description(name))}`,
+      ...(tags(name).length ? [`use-cases: ${JSON.stringify(tags(name))}`] : []), '---', '', `# ${name}`, '',
+    ].join('\n'));
+  }
+  let origin = 'local';
+  if (source === 'remote') {
+    // A file:// Git source exercises Compose's configured remote clone, without
+    // sending repository contents to a network service or touching this checkout.
+    const git = (...args) => {
+      const result = spawnSync('git', ['--no-pager', '-c', 'commit.gpgsign=false',
+        '-c', `core.hooksPath=${path.join(workspace.directory, 'no-hooks')}`, ...args],
+      { cwd: catalogRoot, encoding: 'utf8', windowsHide: true });
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      return result.stdout.trim();
+    };
+    git('init', '-q', '-b', 'main');
+    git('add', 'library');
+    git('-c', 'user.email=fixture@example.test', '-c', 'user.name=Canvas Fixture',
+      'commit', '-qm', 'Disposable pack catalog');
+    const repository = pathToFileURL(catalogRoot).href;
+    origin = `${repository} @ main`;
+    workspace.write('.dude/metadata/bundle-manifest.md',
+      `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify({ source_repo: repository, source_ref: 'main' })}\n\`\`\`\n`);
+  }
+  return { installed, installedNames, names, tags, description, profile, catalogRoot, origin,
+    availableNames: names.filter(name => !Object.hasOwn(installed, name)) };
+}
+
+// Same owned Node-child boundary used by canvas-server.test.mjs. These work
+// fixtures have an empty tracked board; they must not depend on the host's bd,
+// ancestor database discovery, or a Windows .cmd executable shim.
+function emptyTrackedBoardFixture(workspace) {
+  const original = childProcess.execFile, children = new Set();
+  childProcess.execFile = (file, args, options, callback) => {
+    if (file !== 'bd' || options.cwd !== workspace.root) return original(file, args, options, callback);
+    assert.deepEqual(args, ['list', '--all', '--limit', '0', '--json']);
+    const child = original(process.execPath, ['-e', 'process.stdout.write("[]")'], options, callback);
+    children.add(child);
+    child.once('close', () => children.delete(child));
+    return child;
+  };
+  syncBuiltinESMExports();
+  const close = async () => {
+    childProcess.execFile = original;
+    syncBuiltinESMExports();
+    await Promise.all([...children].map(child => new Promise(resolve => {
+      child.once('close', resolve);
+      child.kill('SIGKILL');
+    })));
+  };
+  close.isIdle = () => children.size === 0;
+  return close;
 }
 
 /**
@@ -681,6 +775,37 @@ async function focus(page, selector) {
     node.focus();
     return document.activeElement === node;
   })()`);
+}
+
+// Native input at a stable, hit-testable point; DOM click() cannot establish
+// reachability in the narrow rail, filter popup, or detail overlay.
+async function clickSettingsControl(page, expression) {
+  let previous = null;
+  const point = await until(async () => {
+    const current = await evaluate(page, `(() => {
+      const node = ${expression};
+      if (!node || node.matches(':disabled,[aria-disabled="true"]')) return null;
+      node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      const rect = node.getBoundingClientRect();
+      const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+      const hit = document.elementFromPoint(x, y);
+      return { x, y, width: rect.width, height: rect.height, hit: Boolean(hit && (hit === node || node.contains(hit))),
+        hitRole: hit?.getAttribute('role'), hitText: hit?.textContent.slice(0, 120), hitTag: hit?.tagName };
+    })()`);
+    const stable = current?.hit && current.width >= 24 && current.height >= 24
+      && previous?.x === current.x && previous?.y === current.y;
+    previous = current;
+    return stable ? current : null;
+  }, `reachable Settings control ${expression}`).catch(error => {
+    throw new Error(`${error.message}; last hit test: ${JSON.stringify(previous)}`, { cause: error });
+  });
+  await page.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed', x: point.x, y: point.y, button: 'left', buttons: 1, clickCount: 1,
+  });
+  await page.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased', x: point.x, y: point.y, button: 'left', buttons: 0, clickCount: 1,
+  });
+  await settleBrowserWork(page);
 }
 
 /** @param {Cdp} page @param {string} key @param {string} [code] @param {{shift?:boolean}} [options] */
@@ -2939,7 +3064,7 @@ test('T012 anchoring regression: nested-scroll Open comment clips then recovers 
         )));
         assert.equal(
           productAppSha256,
-          'fcf3f9102f8eabd36f9bd0494a84695fda2891e1d53a7f05b03a1be2088a9463',
+          'd26d8ececcdf1e136538b6b9e309f5dbc95e65ab935901537b2e3e82a17286be',
           'the exact-source regression executes the current published product UI',
         );
         const exactHarnessOptions = {
@@ -11024,7 +11149,775 @@ test('T010 review regression: keyboard focus remains visible when source paint m
         assert.deepEqual(failures, [], failures.join('\n'));
       });
 
-test('T002 production shell retains the mounted Review frame, markup, and caret across rail navigation and Clear', {
+test('T002 Settings reads real local and configured-remote pack authorities only on entry', {
+  timeout: 180_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  const [{ createNeedsYou }, { openInstance, closeInstance }] = await Promise.all([
+    import('../../src/extensions/dude/lib/needs-you.mjs'),
+    import('../../src/extensions/dude/lib/canvas-server.mjs'),
+  ]);
+  for (const source of ['local', 'remote']) await context.test(source, async currentCase => {
+    const workspace = createReviewWorkspaceFixture();
+    currentCase.after(() => workspace.close());
+    const packs = addSettingsPackFixture(workspace, source);
+    const output = createT010Evidence(currentCase, `t002-settings-${source}`);
+    const releaseTracking = emptyTrackedBoardFixture(workspace);
+    const sends = [], network = [], runtimeErrors = [];
+    const provider = createNeedsYou({ root: workspace.root });
+    const session = {
+      sessionId: `t002-packs-${randomUUID()}`,
+      send: async input => { sends.push(input); return 'unexpected-pack-send'; },
+      rpc: { queue: { pendingItems: async () => ({ items: [], steeringMessages: [], inFlightSteeringCount: 0 }) } },
+    };
+    provider.bindSession(session);
+    provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+    const request = {
+      owner: 'dude', requestRef: randomUUID(), revision: randomUUID(), class: 'fact',
+      scope: workspace.stable.scope,
+      source: { kind: 'file', path: workspace.stable.ideaPath,
+        revision: workspace.revision(fs.readFileSync(path.join(workspace.root, workspace.stable.ideaPath))) },
+      prompt: 'Keep this unsent response while inspecting workspace packs.',
+      whyHuman: 'The current owner needs the user’s wording.', unblocks: 'The owner can continue.', blocking: true,
+      fields: { input: { kind: 'text' } },
+    };
+    const controller = new AbortController();
+    const toolResult = provider.tool.handler({ op: 'request', request }, {
+      sessionId: session.sessionId, toolName: 'dude_needs_you', toolCallId: randomUUID(), signal: controller.signal,
+    });
+    const id = `t002-packs-${randomUUID()}`;
+    let instance, driver;
+    try {
+      await until(() => provider.read().requests.some(record => record.request.requestRef === request.requestRef
+        && record.phase === 'pending'), 'real provider fact request');
+      instance = await openInstance(id, () => {}, null, { root: workspace.root }, provider);
+      driver = await startBrowser();
+      const { page } = driver;
+      page.on('Runtime.exceptionThrown', event => runtimeErrors.push(event.exceptionDetails));
+      page.on('Network.requestWillBeSent', event => {
+        if (event.request.url.startsWith(instance.url)) network.push({
+          method: event.request.method, path: new URL(event.request.url).pathname,
+        });
+      });
+      // Observe real server responses. Holding an already parsed body models a
+      // late transport completion despite abort; it never fabricates pack data.
+      await page.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+        const original = window.fetch;
+        window.packReadProbe = { snapshots: [], held: [], hold: false, hints: 0 };
+        const OriginalEventSource = window.EventSource;
+        window.EventSource = class extends OriginalEventSource {
+          constructor(...args) {
+            super(...args);
+            for (const type of ['workspace', 'needs-you']) {
+              this.addEventListener(type, () => { window.packReadProbe.hints += 1; });
+            }
+          }
+        };
+        window.fetch = async (...args) => {
+          const response = await original(...args);
+          if (new URL(args[0], location.href).pathname === '/api/packs') {
+            const read = response.json.bind(response);
+            response.json = async () => {
+              const value = await read();
+              window.packReadProbe.snapshots.push(value);
+              if (window.packReadProbe.hold) await new Promise(resolve => window.packReadProbe.held.push(resolve));
+              if (window.packReadProbe.failNext) {
+                window.packReadProbe.failNext = false;
+                throw new Error('Test-owned unreadable transport result');
+              }
+              return value;
+            };
+          }
+          return response;
+        };
+      })()` });
+      const node = selector => `document.querySelector(${JSON.stringify(selector)})`;
+      const click = selector => clickSettingsControl(page, node(selector));
+      const packRows = () => evaluate(page, `[...document.querySelectorAll('[data-pack-row]')]
+        .map(node => node.getAttribute('data-pack-row'))`);
+      const totals = () => evaluate(page, `[...document.querySelectorAll('[data-pack-total]')]
+        .filter(node => getComputedStyle(node).visibility === 'visible').map(node => node.textContent)`);
+      const ready = () => until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+        ?.getAttribute('aria-busy') === 'false' && window.packReadProbe.snapshots.length > 0`), 'settled pack snapshot');
+      const selectTag = async tag => {
+        await click('[data-pack-toolbar] [role="combobox"]');
+        await clickSettingsControl(page, `[...document.querySelectorAll('[role="option"]')]
+          .find(node => node.textContent.trim() === ${JSON.stringify(tag || 'All use cases')})`);
+      };
+      const screenshot = async name => {
+        const result = await page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+        return output.image(`${name}.png`, Buffer.from(result.data, 'base64'));
+      };
+      const viewport = async (width, theme, height = 900, scale = 1) => {
+        await page.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: scale, mobile: false });
+        await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
+        if (await evaluate(page, `Boolean(document.querySelector('.fui-FluentProvider'))`)) {
+          await until(() => evaluate(page, `getComputedStyle(document.querySelector('.fui-FluentProvider'))
+            .getPropertyValue('--colorNeutralForeground1').trim() === ${JSON.stringify(theme === 'dark' ? '#ffffff' : '#242424')}`),
+          'Settings adopts the requested host appearance');
+        }
+        await evaluate(page, `(async () => {
+          const finite = document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime));
+          await Promise.all(finite.map(animation => animation.finished.catch(() => undefined)));
+        })()`);
+        await settleBrowserWork(page);
+      };
+      await navigate(page, null, 1440, 'light', new URL(instance.url).origin);
+      await until(() => evaluate(page, `document.body.innerText.includes('Connected')
+        && document.querySelectorAll('[data-work-path]').length === 2`), 'current ordinary workspace');
+      assert.equal(network.filter(entry => entry.path === '/api/packs').length, 0,
+        'ordinary Overview does not acquire the catalog');
+      await focus(page, 'input[type="search"]');
+      await page.send('Input.insertText', { text: '701' });
+      await until(() => evaluate(page, `document.querySelectorAll('[data-work-path]').length === 1`), 'work finder query');
+      assert.equal(await evaluate(page, `Boolean(document.querySelector('#dude-tab-settings'))`), true,
+        'one visible bottom Settings cog is available in the existing workspace');
+      await evaluate(page, `window.packReadProbe.hold = true`);
+      await focus(page, '#dude-tab-settings');
+      await key(page, 'Enter');
+      await until(() => evaluate(page, `window.packReadProbe.held.length === 1`), 'first real pack response held before adoption');
+      assert.deepEqual(await totals(), ['?', '?'], 'an initial read has unknown totals, not two empty lists');
+      assert.deepEqual(await packRows(), []);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-toolbar] [role="combobox"]').disabled`), true);
+      assert.doesNotMatch(await evaluate(page, `document.querySelector('[data-pack-coverage]').textContent`), /remain inspectable/);
+      await screenshot('initial-loading');
+      await evaluate(page, `window.packReadProbe.hold = false; window.packReadProbe.held.splice(0).forEach(resolve => resolve())`);
+      await until(() => evaluate(page, `document.querySelector('[data-pack-context="installed"]')
+        ?.getAttribute('aria-selected') === 'true' && document.querySelectorAll('[data-pack-row]').length === 5`),
+      'Installed page one from the real pack GET');
+      assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-pack-row]')]
+        .map(node => node.getAttribute('data-pack-row'))`), packs.installedNames.slice(0, 5));
+      await ready();
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-toolbar] [role="combobox"]').textContent.trim()`), 'All use cases');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-page]').textContent`), 'Page 1 of 2');
+      assert.equal(await evaluate(page, `document.querySelectorAll('[data-pack-detail]').length`), 0);
+      assert.equal(await evaluate(page, `document.querySelectorAll('[data-settings] [role="grid"]').length`), 1);
+      assert.equal(await evaluate(page, `document.querySelectorAll('[data-settings] input[type="search"]').length`), 0);
+      assert.deepEqual(await totals(), ['8', '11']);
+      assert.equal(await evaluate(page, `window.packReadProbe.snapshots.at(-1).catalog.origin`), packs.origin);
+
+      // Query, selected work, task inspection, and both kinds of unsent input
+      // are independent of the workspace Settings destination.
+      await click('#dude-tab-overview');
+      assert.equal(await evaluate(page, `document.querySelector('input[type="search"]').value`), '701');
+      await click(`[data-work-path="${workspace.stable.ideaPath}"]`);
+      await until(() => evaluate(page, `Boolean(document.querySelector('[data-task-filter="todo"]'))`), 'source-backed task filter');
+      await click('[data-task-filter="todo"]');
+      await click('[data-task-key="T001@aaaaaaaa"]');
+      await click('#dude-tab-new');
+      await focus(page, '#dude-panel-new textarea');
+      await page.send('Input.insertText', { text: '  An unsent new idea stays in this tab.  ' });
+      await click('#dude-tab-needs');
+      await clickSettingsControl(page, `[...document.querySelectorAll('#dude-panel-needs button')]
+        .find(node => node.textContent.includes(${JSON.stringify(request.prompt)}))`);
+      await until(() => evaluate(page, `Boolean(document.querySelector('#dude-panel-needs textarea:not(:disabled)'))`), 'current response field');
+      await focus(page, '#dude-panel-needs textarea');
+      await page.send('Input.insertText', { text: '  Retain this exact unsent answer.  ' });
+      await click('#dude-tab-settings');
+      await ready();
+      await click('#dude-tab-context');
+      await until(() => evaluate(page, `document.querySelector('[data-task-filter="todo"]')?.getAttribute('aria-pressed') === 'true'
+        && document.querySelector('[data-task-detail]')?.getAttribute('data-task-detail') === 'T001@aaaaaaaa'`), 'retained task inspection and filter');
+      await click('#dude-tab-new');
+      assert.equal(await evaluate(page, `document.querySelector('#dude-panel-new textarea').value`), '  An unsent new idea stays in this tab.  ');
+      await click('#dude-tab-needs');
+      assert.equal(await evaluate(page, `document.querySelector('#dude-panel-needs textarea').value`), '  Retain this exact unsent answer.  ');
+      await click('#dude-tab-settings');
+      await ready();
+      assert.equal(await evaluate(page, `document.querySelector('[data-work-selector] [aria-label="Working on"]').textContent.includes('701')`), true);
+
+      const discoveryReadCount = network.filter(entry => entry.path === '/api/packs').length;
+      // Walk the full profile order, then filter from page two. The selected
+      // papa survives only because it also belongs to the new visible page.
+      const installedTraversal = await packRows();
+      await click('[aria-label="Next pack page"]');
+      installedTraversal.push(...await packRows());
+      assert.deepEqual(installedTraversal, packs.installedNames);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-count]').textContent`), '6–8 of 8');
+      assert.equal(await evaluate(page, `document.querySelector('[aria-label="Next pack page"]').disabled`), true);
+      assert.equal(await evaluate(page, `document.activeElement === document.querySelector('[data-settings] h1')`), true);
+      await click('[data-pack-row="papa"]');
+      await selectTag('ui');
+      assert.deepEqual(await packRows(), ['zulu', 'papa']);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]')?.getAttribute('data-pack-detail')`), 'papa');
+      assert.match(await evaluate(page, `document.querySelector('[data-pack-tag-coverage]').textContent`), /1 installed pack has unavailable use cases/);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-count]').textContent`), '1–2 of 2 known matches');
+      await selectTag('bundle-authoring');
+      assert.deepEqual(await packRows(), ['alpha']);
+      assert.equal(await evaluate(page, `document.querySelectorAll('[data-pack-detail]').length`), 0);
+      assert.equal(await evaluate(page, `document.activeElement === document.querySelector('[data-pack-toolbar] [role="combobox"]')`), true,
+        'filter invalidation does not steal focus back to a removed row');
+      await selectTag('writing');
+      assert.deepEqual(await packRows(), []);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-count]').textContent`), '0 known matches',
+        'zero known installed matches does not claim complete tag coverage');
+      assert.match(await evaluate(page, `document.querySelector('[data-pack-tag-coverage]').textContent`), /1 installed pack/);
+      await click('[data-pack-toolbar] > button');
+      assert.deepEqual(await packRows(), packs.installedNames.slice(0, 5));
+      assert.equal(await evaluate(page, `document.activeElement === document.querySelector('[data-pack-toolbar] [role="combobox"]')`), true);
+      await focus(page, '[data-pack-row="zulu"]');
+      await key(page, 'Enter');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-description]').textContent`), packs.description('zulu'));
+      assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-pack-detail] li code')].map(node => node.textContent)`), packs.installed.zulu.files);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-origin]').textContent`), packs.origin);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').textContent.includes('https://example.test/recorded-packs')`), true);
+      assert.equal(await evaluate(page, `window.packMetadataExecuted === undefined`), true);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').matches(':modal')`), false);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').getBoundingClientRect().width`), 320);
+      await screenshot('wide-installed-detail');
+      await key(page, 'Escape');
+      assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-pack-row')`), 'zulu');
+      await click('[data-pack-row="retired"]');
+      assert.match(await evaluate(page, `document.querySelector('[data-pack-description]').textContent`), /unavailable/);
+      assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-pack-detail] li code')].map(node => node.textContent)`), packs.installed.retired.files);
+      await click('[aria-label="Next pack page"]');
+      assert.equal(await evaluate(page, `document.querySelectorAll('[data-pack-detail]').length`), 0,
+        'paging cannot retain detail for a now-hidden pack');
+      await click('[data-pack-context="available"]');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-page]').textContent`), 'Page 1 of 3');
+      const availableTraversal = [];
+      for (let pageNumber = 1; pageNumber <= 3; pageNumber += 1) {
+        const rows = await packRows();
+        assert.ok(rows.length <= 5 && rows.length > 0);
+        availableTraversal.push(...rows);
+        if (rows.includes('lima')) {
+          await click('[data-pack-row="lima"]');
+          assert.equal(await evaluate(page, `document.querySelector('[data-pack-description]').textContent`), 'No description declared.');
+          assert.match(await evaluate(page, `document.querySelector('[data-pack-detail]').textContent`), /No use cases declared/);
+          await key(page, 'Escape');
+        }
+        if (pageNumber < 3) await click('[aria-label="Next pack page"]');
+      }
+      assert.deepEqual(availableTraversal, packs.availableNames);
+      await selectTag('ui');
+      assert.deepEqual(await packRows(), ['foxtrot', 'oscar'], 'exact tag matching excludes ui-tools and reaches past page one');
+      await screenshot('available-full-context-ui-filter');
+      await selectTag('bundle-authoring');
+      assert.deepEqual(await packRows(), []);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-count]').textContent`), '0 matches');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-page]').textContent`), 'No pages');
+      assert.equal(await evaluate(page, `[...document.querySelectorAll('[data-pack-pager] button')].every(node => node.disabled)`), true);
+      await click('[data-pack-toolbar] > button');
+      await click('[data-pack-row="constructor"]');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').textContent.includes('Recorded installed source')`), false,
+        'prototype names and leftover files never create membership');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').textContent.includes('Not acquired in this snapshot.')`), true);
+      assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-pack-actions] button')]
+        .map(node => ({ action: node.textContent.trim(), disabled: node.disabled }))`),
+      [{ action: 'Install', disabled: true }],
+      'only the visible available selection owns Install; the existing waiting request withholds it');
+      assert.equal(network.filter(entry => entry.path === '/api/packs/request').length, 0,
+        'read-only browsing never prepares or submits a pack operation');
+      await click('[aria-label="Close pack details"]');
+      assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-pack-row')`), 'constructor');
+      await selectTag('ui-tools');
+      assert.equal((await packRows()).includes('charlie'), false, 'known untagged records match All only');
+      await focus(page, '[data-pack-context="available"]');
+      await key(page, 'Home');
+      await until(() => evaluate(page, `document.querySelector('[data-pack-context="installed"]').getAttribute('aria-selected') === 'true'`),
+        'native context Home selection');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-toolbar] [role="combobox"]').textContent.trim()`), 'All use cases');
+      await key(page, 'ArrowRight');
+      await until(() => evaluate(page, `document.querySelector('[data-pack-context="available"]').getAttribute('aria-selected') === 'true'`),
+        'native context arrow selection');
+      await key(page, 'ArrowLeft');
+      await key(page, 'End');
+      await until(() => evaluate(page, `document.querySelector('[data-pack-context="available"]').getAttribute('aria-selected') === 'true'`),
+        'native context End selection');
+      await click('[data-pack-context="installed"]');
+      assert.equal(network.filter(entry => entry.path === '/api/packs').length, discoveryReadCount,
+        'context, tag, Clear, page, and disclosure changes acquire no new catalog');
+
+      const visual = [];
+      for (const theme of ['light', 'dark']) for (const [width, height] of [[360, 900], [768, 900], [1440, 900], [180, 450]]) {
+        await viewport(width, theme, height);
+        const geometry = await evaluate(page, `(() => {
+          const rect = selector => {
+            const r = document.querySelector(selector).getBoundingClientRect();
+            return { x: r.x, y: r.y, width: r.width, height: r.height, right: r.right, bottom: r.bottom };
+          };
+          const targets = ['#dude-tab-settings', '[data-pack-context="installed"]', '[data-pack-context="available"]',
+            '[data-pack-toolbar] [role="combobox"]', '[data-pack-toolbar] > button',
+            '[aria-label="Previous pack page"]', '[aria-label="Next pack page"]'];
+          return {
+            width: innerWidth, documentWidth: document.documentElement.scrollWidth,
+            rail: rect('[data-navigation-pane]'), main: rect('main'), command: rect('header'),
+            scroll: rect('[data-pack-scroll]'), first: rect('[data-pack-row]'), pager: rect('[data-pack-pager]'),
+            settings: rect('#dude-tab-settings'),
+            orientation: document.querySelector('[aria-label="Workspace views"]').getAttribute('aria-orientation'),
+            targets: targets.map(selector => {
+              const node = document.querySelector(selector), r = node.getBoundingClientRect();
+              const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+              return { selector, width: r.width, height: r.height, visible: r.x >= 0 && r.y >= 0
+                && r.right <= innerWidth && r.bottom <= innerHeight, hit: hit === node || node.contains(hit) };
+            }),
+            nav: [...document.querySelectorAll('[data-navigation-pane] [role=tab]')].map(node => {
+              const r = node.getBoundingClientRect(); return { x: r.x, y: r.y };
+            }),
+          };
+        })()`);
+        assert.equal(geometry.documentWidth, width, `no page-wide overflow at ${width} ${theme}`);
+        assert.equal(geometry.orientation, 'vertical');
+        assert.equal(geometry.rail.x, 0);
+        assert.equal(geometry.rail.width, 48);
+        assert.equal(geometry.main.x, 48);
+        assert.ok(geometry.rail.y >= geometry.command.bottom, 'command bar stays above the rail');
+        assert.ok(geometry.settings.bottom <= geometry.rail.bottom && geometry.rail.bottom - geometry.settings.bottom <= 10);
+        assert.ok(geometry.nav.every((item, index, rows) => item.x === rows[0].x && (!index || item.y > rows[index - 1].y)));
+        for (const target of geometry.targets) {
+          assert.ok(target.visible && target.hit && target.width >= 24 && target.height >= 24, JSON.stringify({ width, theme, target }));
+        }
+        assert.ok(geometry.scroll.height >= geometry.first.height && geometry.first.height >= 24,
+          'a complete compact row trigger fits, including the 180x450 proxy');
+        assert.ok(geometry.first.bottom <= geometry.pager.y);
+        const tree = await page.send('Accessibility.getFullAXTree');
+        const namedRoles = new Set(['button', 'tab', 'tablist', 'tabpanel', 'combobox', 'grid', 'toolbar', 'textbox']);
+        assert.deepEqual(tree.nodes.filter(entry => !entry.ignored && namedRoles.has(entry.role?.value) && !entry.name?.value), []);
+        const colors = await evaluate(page, `(() => {
+          const selectors = ['[data-settings] h1', '[data-pack-toolbar] label', '[data-pack-toolbar] [role="combobox"]',
+            '[data-pack-toolbar] > button', '[data-pack-row] span', '[data-pack-count]', '[data-pack-page]'];
+          const background = node => {
+            for (let n = node; n; n = n.parentElement) {
+              const color = getComputedStyle(n).backgroundColor;
+              if (color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') return color;
+            }
+            throw new Error('No painted background');
+          };
+          return selectors.map(selector => { const n = document.querySelector(selector);
+            return { selector, color: getComputedStyle(n).color, background: background(n) }; });
+        })()`);
+        for (const sample of colors) assert.ok(contrast(sample.color, sample.background) >= 4.5, JSON.stringify({ width, theme, sample }));
+        const image = await screenshot(`installed-entry-${width}x${height}-${theme}`);
+        await evaluate(page, `document.querySelector('[data-pack-scroll]').scrollTop = 10000`);
+        const afterScroll = await evaluate(page, `({
+          cog: document.querySelector('#dude-tab-settings').getBoundingClientRect().bottom,
+          pager: document.querySelector('[data-pack-pager]').getBoundingClientRect().y,
+          toolbar: document.querySelector('[data-pack-toolbar]').getBoundingClientRect().bottom,
+          scroll: document.querySelector('[data-pack-scroll]').scrollTop
+        })`);
+        assert.equal(afterScroll.cog, geometry.settings.bottom);
+        assert.equal(afterScroll.pager, geometry.pager.y);
+        if (width === 180) assert.ok(afterScroll.scroll > 0, 'short viewport exercises actual result scrolling');
+        await evaluate(page, `document.querySelector('[data-pack-scroll]').scrollTop = 0`);
+        await click('[data-pack-row="zulu"]');
+        const modal = width < 1100;
+        assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').matches(':modal')`), modal);
+        const detailGeometry = await evaluate(page, `(() => {
+          const r = document.querySelector('[data-pack-detail]').getBoundingClientRect();
+          return { right: r.right, width: r.width, height: r.height };
+        })()`);
+        assert.equal(detailGeometry.right, width);
+        assert.equal(detailGeometry.width, modal ? Math.min(420, width - 16) : 320);
+        await evaluate(page, `document.querySelector('[data-pack-detail-body]').scrollTop = 10000`);
+        assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail-body]').scrollTop > 0`), true);
+        await settleBrowserWork(page);
+        const fileVisibility = await evaluate(page, `(() => {
+          const body = document.querySelector('[data-pack-detail-body]');
+          const file = document.querySelector('[data-pack-detail] li:last-child');
+          const r = file.getBoundingClientRect(), b = body.getBoundingClientRect();
+          const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          return { text: file.textContent, visible: r.top >= b.top && r.bottom <= b.bottom,
+            hit: hit === file || file.contains(hit), scrollTop: body.scrollTop, scrollHeight: body.scrollHeight,
+            fileTop: r.top, fileBottom: r.bottom, bodyTop: b.top, bodyBottom: b.bottom, hitText: hit?.textContent.slice(0, 100) };
+        })()`);
+        assert.ok(fileVisibility.visible && fileVisibility.hit, JSON.stringify({ width, theme, fileVisibility }));
+        assert.equal(fileVisibility.text, packs.installed.zulu.files.at(-1));
+        const detailImage = await screenshot(`installed-detail-scrolled-${width}x${height}-${theme}`);
+        if (modal) {
+          for (const shift of [false, true]) for (let step = 0; step < 10; step += 1) {
+            await key(page, 'Tab', 'Tab', { shift });
+            assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').contains(document.activeElement)`), true,
+              'every narrow detail Tab transition stays in the native modal');
+          }
+        } else {
+          await focus(page, '[data-pack-detail] footer button');
+          await key(page, 'Tab');
+          assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').contains(document.activeElement)`), false,
+            'wide detail does not trap Tab');
+          await key(page, 'Tab', 'Tab', { shift: true });
+          assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').contains(document.activeElement)`), true,
+            'normal reverse Tab returns to the nonmodal pane before its scoped Escape');
+        }
+        await key(page, 'Escape');
+        assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-pack-row')`), 'zulu');
+        const rowFocus = await evaluate(page, `(() => {
+          const style = getComputedStyle(document.activeElement);
+          return { style: style.outlineStyle, width: style.outlineWidth, color: style.outlineColor };
+        })()`);
+        assert.notEqual(rowFocus.style, 'none', 'keyboard-returned row has a visible focus indicator');
+        assert.ok(Number.parseFloat(rowFocus.width) >= 2);
+        await click('[data-pack-context="available"]');
+        assert.deepEqual(await packRows(), packs.availableNames.slice(0, 5));
+        const availableImage = await screenshot(`available-entry-${width}x${height}-${theme}`);
+        await selectTag('bundle-authoring');
+        assert.deepEqual(await packRows(), []);
+        const emptyGeometry = await evaluate(page, `(() => {
+          const toolbar = document.querySelector('[data-pack-toolbar]').getBoundingClientRect();
+          const pager = document.querySelector('[data-pack-pager]').getBoundingClientRect();
+          const clear = document.querySelector('[data-pack-toolbar] > button').getBoundingClientRect();
+          const hit = document.elementFromPoint(clear.x + clear.width / 2, clear.y + clear.height / 2);
+          return { width: document.documentElement.scrollWidth, toolbarBottom: toolbar.bottom,
+            pagerTop: pager.top, pagerBottom: pager.bottom, clearHit: hit?.closest('button')?.textContent === 'Clear' };
+        })()`);
+        assert.equal(emptyGeometry.width, width);
+        assert.ok(emptyGeometry.toolbarBottom < emptyGeometry.pagerTop && emptyGeometry.pagerBottom <= height && emptyGeometry.clearHit,
+          'zero matches keeps visible, hit-testable Clear and the pinned pager');
+        await click('[data-pack-toolbar] > button');
+        await click('[data-pack-context="installed"]');
+        await click('[aria-label="Expand navigation pane"]');
+        const navGeometry = await evaluate(page, `(() => {
+          const pane = document.querySelector('[data-navigation-dialog]') || document.querySelector('[data-navigation-pane]');
+          const r = pane.getBoundingClientRect();
+          return { modal: pane.getAttribute('role') === 'dialog', x: r.x, width: r.width, bottom: r.bottom,
+            tabs: [...pane.querySelectorAll('[role="tab"]')].map(node => {
+              const t = node.getBoundingClientRect(), hit = document.elementFromPoint(t.x + t.width / 2, t.y + t.height / 2);
+              return { label: node.getAttribute('aria-label'), width: t.width, height: t.height,
+                top: t.top, bottom: t.bottom, right: t.right, hit: node === hit || node.contains(hit) };
+            }) };
+        })()`);
+        assert.equal(navGeometry.modal, width < 720);
+        assert.equal(navGeometry.x, 0);
+        assert.equal(navGeometry.width, width < 720 ? Math.min(260, width - 16) : 208);
+        assert.deepEqual(navGeometry.tabs.map(item => item.label), ['Overview', 'Now', 'Needs you', 'New idea', 'Settings']);
+        for (const target of navGeometry.tabs) assert.ok(target.hit && target.width >= 24 && target.height >= 24
+          && target.top >= 0 && target.bottom <= height && target.right <= width, JSON.stringify({ width, theme, target }));
+        assert.ok(navGeometry.bottom - navGeometry.tabs.at(-1).bottom <= 14, 'expanded Settings stays at the visible bottom');
+        const navigationImage = await screenshot(`navigation-expanded-${width}x${height}-${theme}`);
+        if (width < 720) await key(page, 'Escape');
+        else await click('[aria-label="Collapse navigation pane"]');
+        assert.equal(await evaluate(page, `document.activeElement?.getAttribute('aria-label')`), 'Expand navigation pane');
+        visual.push({ width, height, theme, geometry, detailGeometry, fileVisibility, colors, rowFocus,
+          navGeometry, axNodes: tree.nodes.length, image, detailImage, availableImage, navigationImage });
+      }
+      await viewport(1440, 'light');
+      await click('[data-pack-row="zulu"]');
+      await viewport(768, 'light');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').matches(':modal')`), true);
+      await viewport(1440, 'light');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').matches(':modal')`), false);
+      await key(page, 'Escape');
+      await click('[aria-label="Expand navigation pane"]');
+      assert.equal(await evaluate(page, `document.querySelector('[data-navigation-pane]').getBoundingClientRect().width`), 208);
+      assert.equal(await evaluate(page, `document.querySelector('#dude-tab-settings').innerText.trim()`), 'Settings');
+      await screenshot('expanded-rail-1440-light');
+      await viewport(719, 'light');
+      assert.equal(await evaluate(page, `document.querySelector('[data-navigation-pane]').getBoundingClientRect().width`), 48);
+      assert.ok(await evaluate(page, `document.querySelector('[data-navigation-pane]').getBoundingClientRect().height > 700`),
+        '719px keeps the approved vertical rail, not the obsolete 49px horizontal bar');
+      await click('[aria-label="Expand navigation pane"]');
+      for (const shift of [false, true]) for (let step = 0; step < 8; step += 1) {
+        await key(page, 'Tab', 'Tab', { shift });
+        assert.equal(await evaluate(page, `document.querySelector('[data-navigation-dialog]').contains(document.activeElement)`), true);
+      }
+      await screenshot('navigation-overlay-719-light');
+      await key(page, 'Escape');
+      assert.equal(await evaluate(page, `document.activeElement?.getAttribute('aria-label')`), 'Expand navigation pane');
+      await click('[aria-label="Expand navigation pane"]');
+      await viewport(720, 'light', 450, 2);
+      assert.equal(await evaluate(page, `document.querySelectorAll('[data-navigation-dialog]').length`), 0);
+      assert.equal(await evaluate(page, `document.activeElement?.getAttribute('aria-label')`), 'Expand navigation pane');
+      const reflow200 = [];
+      for (const theme of ['light', 'dark']) {
+        // CDP page scale is visual magnification: it halves the visual viewport
+        // but deliberately does not change the CSS layout breakpoint. Compare
+        // that with the separate half-width/DPR2 reflow proxy, which does.
+        await page.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
+        await viewport(768, theme, 900);
+        const baseline = await evaluate(page, `({
+          innerWidth,
+          devicePixelRatio,
+          visualWidth: visualViewport.width,
+          visualScale: visualViewport.scale,
+          documentWidth: document.documentElement.scrollWidth,
+          railWidth: document.querySelector('[data-navigation-pane]').getBoundingClientRect().width
+        })`);
+        await page.send('Emulation.setPageScaleFactor', { pageScaleFactor: 2 });
+        await settleBrowserWork(page);
+        const magnified = await evaluate(page, `({
+          innerWidth,
+          devicePixelRatio,
+          visualWidth: visualViewport.width,
+          visualScale: visualViewport.scale,
+          documentWidth: document.documentElement.scrollWidth,
+          railWidth: document.querySelector('[data-navigation-pane]').getBoundingClientRect().width,
+          navigationDialog: Boolean(document.querySelector('[data-navigation-dialog]'))
+        })`);
+        assert.equal(magnified.innerWidth, baseline.innerWidth,
+          'visual page scale must not be mislabeled as CSS reflow');
+        assert.equal(magnified.visualScale, 2);
+        assert.equal(magnified.visualWidth, baseline.visualWidth / 2);
+        assert.equal(magnified.documentWidth, baseline.documentWidth);
+        assert.equal(magnified.navigationDialog, false);
+        const magnifiedImage = await screenshot(`page-scale-200-768-${theme}`);
+        await page.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
+        await viewport(384, theme, 450, 2);
+        const proxy = await evaluate(page, `(() => {
+          const toolbar = document.querySelector('[data-pack-toolbar]').getBoundingClientRect();
+          const pager = document.querySelector('[data-pack-pager]').getBoundingClientRect();
+          const row = document.querySelector('[data-pack-row]').getBoundingClientRect();
+          const settings = document.querySelector('#dude-tab-settings').getBoundingClientRect();
+          return {innerWidth,devicePixelRatio,visualWidth:visualViewport.width,
+            visualScale:visualViewport.scale,documentWidth:document.documentElement.scrollWidth,
+            railWidth:document.querySelector('[data-navigation-pane]').getBoundingClientRect().width,
+            toolbarBottom:toolbar.bottom,pagerBottom:pager.bottom,rowHeight:row.height,
+            settingsBottom:settings.bottom,viewportHeight:innerHeight};
+        })()`);
+        assert.equal(proxy.innerWidth, 384);
+        assert.equal(proxy.devicePixelRatio, 2);
+        assert.equal(proxy.visualScale, 1);
+        assert.equal(proxy.documentWidth, 384);
+        assert.equal(proxy.railWidth, 48);
+        assert.ok(proxy.toolbarBottom < proxy.pagerBottom && proxy.pagerBottom <= proxy.viewportHeight);
+        assert.ok(proxy.rowHeight >= 24);
+        assert.ok(proxy.settingsBottom <= proxy.viewportHeight);
+        await click('[aria-label="Expand navigation pane"]');
+        assert.equal(await evaluate(page, `document.querySelector('[data-navigation-dialog]')
+          ?.getAttribute('role')`), 'dialog',
+        'the half-width proxy reaches narrow reflow rather than retaining the magnified wide layout');
+        const proxyImage = await screenshot(`reflow-200-proxy-384x450-${theme}-dpr2`);
+        await key(page, 'Escape');
+        reflow200.push({
+          theme, baseline, magnified, proxy, magnifiedImage, proxyImage,
+          distinction: 'CDP page-scale 2 is visual magnification only; 384 CSS px at DPR2 is the explicit half-width reflow proxy. Neither claims browser-chrome or OS zoom.',
+        });
+      }
+      await viewport(180, 'dark', 450, 2);
+      await click('[aria-label="Find work"]');
+      assert.equal(await evaluate(page, `document.querySelector('#dude-panel-overview h1')?.textContent`), 'Overview',
+        'compact global work finder opens the existing work view, not pack search');
+      await click('#dude-tab-settings');
+      await ready();
+      await viewport(1440, 'light');
+
+      // Explicit reload keeps the context but resets all view values. Holding
+      // the real response also proves independently retained stale inspection.
+      await click('[data-pack-context="available"]');
+      await selectTag('ui');
+      await click('[data-pack-row="oscar"]');
+      await click('[aria-label="Reload packs"]');
+      await ready();
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-context="available"]').getAttribute('aria-selected')`), 'true');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-toolbar] [role="combobox"]').textContent.trim()`), 'All use cases');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-page]').textContent`), 'Page 1 of 3');
+      assert.equal(await evaluate(page, `document.querySelectorAll('[data-pack-detail]').length`), 0);
+      await click('[data-pack-context="installed"]');
+      await evaluate(page, `window.packReadProbe.hold = true`);
+      await click('[aria-label="Reload packs"]');
+      await until(() => evaluate(page, `window.packReadProbe.held.length === 1`), 'held real pack response');
+      assert.deepEqual(await packRows(), packs.installedNames.slice(0, 5));
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-toolbar] [role="combobox"]').disabled`), true);
+      assert.deepEqual(await totals(), ['?', '?']);
+      assert.match(await evaluate(page, `document.querySelector('[data-pack-count]').textContent`), /last read/);
+      await click('[data-pack-row="zulu"]');
+      assert.match(await evaluate(page, `document.querySelector('[data-pack-detail]').textContent`), /stale.*inspection only/s);
+      await screenshot('stale-installed-inspection');
+      await click('[aria-label="Close pack details"]');
+      await click('#dude-tab-overview');
+      const replacement = Object.fromEntries(Object.entries(packs.installed).filter(([name]) => name !== 'alpha'));
+      workspace.write('.dude/metadata/profile.md', `# Install Profile\n\n\`\`\`json\n${JSON.stringify({ installed: replacement })}\n\`\`\`\n`);
+      await click('#dude-tab-settings');
+      await evaluate(page, `(() => {
+        window.packReadProbe.adoptions = [];
+        window.packReadProbe.observer = new MutationObserver(() => {
+          const count = document.querySelector('[data-pack-total="installed"]')?.textContent;
+          if (count) window.packReadProbe.adoptions.push(count);
+        });
+        window.packReadProbe.observer.observe(document.querySelector('[data-settings]'), { subtree: true, childList: true, characterData: true });
+        window.packReadProbe.hold = false;
+        window.packReadProbe.held.splice(0).forEach(resolve => resolve());
+      })()`);
+      await ready();
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-total="installed"]').textContent`), '7');
+      assert.equal(await evaluate(page, `window.packReadProbe.adoptions.includes('8')`), false,
+        'an old completed read is not adopted after Settings deactivation/reactivation');
+      assert.deepEqual(await packRows(), packs.installedNames.filter(name => name !== 'alpha').slice(0, 5));
+      await evaluate(page, `window.packReadProbe.observer.disconnect()`);
+      workspace.write('.dude/metadata/profile.md', packs.profile);
+      await click('[aria-label="Reload packs"]');
+      await ready();
+      await evaluate(page, `window.packReadProbe.failNext = true`);
+      await click('[aria-label="Reload packs"]');
+      await ready();
+      assert.deepEqual(await totals(), ['?', '?']);
+      assert.deepEqual(await packRows(), packs.installedNames.slice(0, 5));
+      assert.match(await evaluate(page, `document.querySelector('[data-pack-coverage]').textContent`),
+        /Pack information could not be read\. No pack change was requested/);
+      await screenshot('transport-failure-stale-inspection');
+      await click('[aria-label="Reload packs"]');
+      await ready();
+
+      const manifestPath = path.join(workspace.root, '.dude/metadata/bundle-manifest.md');
+      const catalogPath = path.join(packs.catalogRoot, 'library/packs/alpha/pack.md');
+      const originalCatalog = fs.readFileSync(catalogPath);
+      const originalManifest = source === 'remote' ? fs.readFileSync(manifestPath) : null;
+      if (source === 'local') fs.writeFileSync(catalogPath, '---\nname: alpha\nuse-cases: invalid scalar\n---\n');
+      else workspace.write('.dude/metadata/bundle-manifest.md',
+        `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify({ source_repo: pathToFileURL(path.join(workspace.directory, 'absent-remote')).href, source_ref: 'main' })}\n\`\`\`\n`);
+      await click('[aria-label="Reload packs"]');
+      await ready();
+      assert.deepEqual(await packRows(), packs.installedNames.slice(0, 5));
+      assert.deepEqual(await totals(), ['8', '?']);
+      await click('[data-pack-row="zulu"]');
+      assert.match(await evaluate(page, `document.querySelector('[data-pack-description]').textContent`), /unavailable/);
+      assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-pack-detail] li code')].map(node => node.textContent)`), packs.installed.zulu.files);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-origin]').textContent`), 'Unavailable',
+        'failed metadata is not borrowed from the previous source');
+      await click('[aria-label="Close pack details"]');
+      await click('[data-pack-context="available"]');
+      assert.deepEqual(await packRows(), []);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-page]').textContent`), 'Unavailable');
+      await viewport(180, 'light', 450);
+      await screenshot('catalog-unavailable-180x450');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-pager]').getBoundingClientRect().bottom <= innerHeight`), true);
+      if (source === 'local') fs.writeFileSync(catalogPath, originalCatalog);
+      else fs.writeFileSync(manifestPath, originalManifest);
+      await click('[aria-label="Reload packs"]');
+      await ready();
+      assert.deepEqual(await packRows(), packs.availableNames.slice(0, 5));
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-context="available"]').getAttribute('aria-selected')`), 'true');
+      await viewport(1440, 'light');
+
+      workspace.write('.dude/metadata/profile.md', '# Install Profile\n\n```json\n{"installed":{"zulu":{"files":["../unsafe"]}}}\n```\n');
+      await click('[aria-label="Reload packs"]');
+      await ready();
+      assert.deepEqual(await packRows(), []);
+      assert.deepEqual(await totals(), ['?', '?']);
+      assert.equal(await evaluate(page, `window.packReadProbe.snapshots.at(-1).installed`), null);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-page]').textContent`), 'Unavailable');
+      workspace.write('.dude/metadata/profile.md', packs.profile);
+      await click('[aria-label="Reload packs"]');
+      await ready();
+      if (source === 'local') {
+        workspace.write('.dude/metadata/profile.md', '# Install Profile\n\n```json\n{"installed":{}}\n```\n');
+        const library = path.join(workspace.root, 'library/packs');
+        fs.renameSync(library, `${library}-held`);
+        fs.mkdirSync(library);
+        await click('[aria-label="Reload packs"]');
+        await ready();
+        assert.deepEqual(await totals(), ['0', '0']);
+        assert.equal(await evaluate(page, `document.querySelector('[data-pack-page]').textContent`), 'No pages');
+        await click('[data-pack-context="installed"]');
+        assert.match(await evaluate(page, `document.querySelector('[data-pack-empty]').textContent`), /No installed packs/);
+        await screenshot('confirmed-empty-installed');
+      }
+      assert.equal(sends.length, 0);
+      assert.equal(network.some(entry => entry.path.startsWith('/api/packs') && entry.method !== 'GET'), false);
+      assert.equal(provider.read().requests.find(record => record.request.requestRef === request.requestRef).phase, 'pending');
+      assert.deepEqual(runtimeErrors, []);
+      if (source === 'local') {
+        // Replace only this disposable root after the server has completed an
+        // old read. Even a late parsed result cannot carry facts across inodes.
+        await evaluate(page, `window.packReadProbe.hold = true`);
+        await click('[aria-label="Reload packs"]');
+        await until(() => evaluate(page, `window.packReadProbe.held.length === 1`), 'old-root parsed response');
+        assert.deepEqual(await totals(), ['?', '?']);
+        assert.equal(await evaluate(page, `document.querySelector('[data-pack-count]').textContent`), 'Count unavailable',
+          'a stale empty snapshot is not a current empty count');
+        assert.doesNotMatch(await evaluate(page, `document.querySelector('[data-pack-empty]').textContent`), /No installed packs|contains no packs/);
+        await until(() => releaseTracking.isIdle() && !instance.packRead, 'owned readers reaped before fixture root replacement');
+        const oldRootIdentity = await evaluate(page, `window.packReadProbe.snapshots.at(-1).rootIdentity`);
+        const oldRoot = path.join(workspace.directory, 'previous-root');
+        fs.renameSync(workspace.root, oldRoot);
+        fs.cpSync(oldRoot, workspace.root, { recursive: true });
+        workspace.write('.dude/metadata/profile.md', '# Install Profile\n\n```json\n'
+          + JSON.stringify({ installed: { fresh: { files: ['.github/agents/dude-pack-fresh-worker.agent.md'],
+            source: { type: 'local', location: '/replacement-root/source' } } } }) + '\n```\n');
+        const previousHints = await evaluate(page, `window.packReadProbe.hints`);
+        await provider.refresh();
+        // Publication on the server is not delivery to the hook. Release the
+        // late body only after its invalidation hint reaches the real renderer.
+        await until(() => evaluate(page, `window.packReadProbe.hints > ${previousHints}`), 'root invalidation hint delivered');
+        await evaluate(page, `window.packReadProbe.hold = false; window.packReadProbe.held.splice(0).forEach(resolve => resolve())`);
+        await until(() => evaluate(page, `Boolean(document.querySelector('#dude-panel-overview h1'))
+          && !document.querySelector('[data-settings]') && Boolean(document.querySelector('input[type="search"]'))`),
+        'root replacement releases the old Settings and work selection');
+        await click('#dude-tab-settings');
+        await ready();
+        assert.deepEqual(await packRows(), ['fresh']);
+        assert.deepEqual(await totals(), ['1', '0']);
+        assert.notEqual(await evaluate(page, `window.packReadProbe.snapshots.at(-1).rootIdentity`), oldRootIdentity);
+        assert.equal(await evaluate(page, `document.querySelectorAll('[data-pack-detail]').length`), 0);
+        await screenshot('replacement-root-current-read');
+      }
+      const comparisons = [];
+      if (source === 'local') {
+        // Compare the authored product with the exact approved RIGHT-panel
+        // artifact, never the unselected left comparison or frozen pack rows.
+        const approved = '.dude/specs/063-dude-canvas-settings/design/pack-management.html';
+        const approvedHash = approvedDesignSha256(fs.readFileSync(path.join(ROOT, approved)));
+        assert.equal(approvedHash, '54d4fb8eff0fe9a85a2291b12f5dfa83651418b161f6cb0b76bf280db0b7c6a0');
+        for (const entry of visual) {
+          await viewport(entry.width, entry.theme, entry.height);
+          await page.send('Page.navigate', { url: pathToFileURL(path.join(ROOT, approved)).href });
+          await until(() => evaluate(page, `document.querySelectorAll('#pack-rows .pack-open').length === 5`), 'approved right-panel reference');
+          await settleBrowserWork(page);
+          const reference = await evaluate(page, `(() => {
+            const rail = document.querySelector('.rail').getBoundingClientRect();
+            const main = document.querySelector('#main').getBoundingClientRect();
+            const cog = document.querySelector('.rail [data-settings]').getBoundingClientRect();
+            const toolbar = document.querySelector('#pack-toolbar').getBoundingClientRect();
+            const pager = document.querySelector('#catalog-pager').getBoundingClientRect();
+            const scroll = document.querySelector('#results-scroll').getBoundingClientRect();
+            return { railWidth: rail.width, mainX: main.x, mainWidth: main.width,
+              cogBottomGap: rail.bottom - cog.bottom, direction: getComputedStyle(document.querySelector('.rail')).flexDirection,
+              toolbarBottom: toolbar.bottom, scrollTop: scroll.top, scrollBottom: scroll.bottom, pagerTop: pager.top,
+              documentWidth: document.documentElement.scrollWidth };
+          })()`);
+          assert.equal(reference.railWidth, entry.geometry.rail.width);
+          assert.equal(reference.mainX, entry.geometry.main.x);
+          assert.equal(reference.mainWidth, entry.geometry.main.width);
+          assert.equal(reference.direction, 'column');
+          assert.ok(reference.cogBottomGap <= 10 && reference.toolbarBottom <= reference.scrollTop
+            && reference.scrollBottom <= reference.pagerTop);
+          assert.equal(reference.documentWidth, entry.width);
+          const installedImage = await screenshot(`approved-right-installed-${entry.width}x${entry.height}-${entry.theme}`);
+          await click('#available-tab');
+          const availableImage = await screenshot(`approved-right-available-${entry.width}x${entry.height}-${entry.theme}`);
+          await click('#pack-rows .pack-open');
+          const referenceDetail = await evaluate(page, `(() => {
+            const node = document.querySelector('#pack-details'), r = node.getBoundingClientRect();
+            return { width: r.width, right: r.right, modal: node.matches(':modal') };
+          })()`);
+          assert.equal(referenceDetail.width, entry.detailGeometry.width);
+          assert.equal(referenceDetail.right, entry.detailGeometry.right);
+          assert.equal(referenceDetail.modal, entry.width < 1100);
+          const detailImage = await screenshot(`approved-right-detail-${entry.width}x${entry.height}-${entry.theme}`);
+          comparisons.push({ width: entry.width, height: entry.height, theme: entry.theme, approved, approvedHash,
+            reference, referenceDetail, installedImage, availableImage, detailImage,
+            product: { installed: entry.image, available: entry.availableImage, detail: entry.detailImage },
+            differences: 'Product retains the live command bar and omits mock-only chrome and state selectors. Real pack actions are withheld while this fixture has a waiting request. Fluent controls wrap at short reflow; data comes from the test workspace, not the mock.' });
+        }
+        assert.deepEqual(runtimeErrors, []);
+      }
+      output.json('settings-result.json', { browser: driver.info.Browser, node: process.version, source, origin: packs.origin,
+        installedTraversal, availableTraversal, visual, reflow200, comparisons, network, sends: sends.length,
+        sourceHashes: Object.fromEntries(['src/extensions/dude/frontend/settings.jsx', 'src/extensions/dude/frontend/use-canvas-data.js',
+          'src/extensions/dude/ui/assets/app.js'].map(relative => [relative, sha256(fs.readFileSync(path.join(ROOT, relative)))])),
+        limits: 'T002 read/discovery only. No pack-operation or embedded-host result. Reflow proxies are not browser-chrome/OS zoom.' });
+    } catch (error) {
+      if (driver) {
+        const capture = await driver.page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+        output.image('failure.png', Buffer.from(capture.data, 'base64'));
+      }
+      context.diagnostic(JSON.stringify({ source, network, runtimeErrors,
+        projectionDiagnostics: instance?.projection?.diagnostics, freshness: instance?.freshness,
+        dom: driver && await evaluate(driver.page, `document.body.innerText`) }));
+      throw error;
+    } finally {
+      controller.abort();
+      await toolResult.catch(() => {});
+      try {
+        if (driver) await cleanupBrowserDriver(driver);
+      } finally {
+        try { if (instance) await closeInstance(id); }
+        finally { provider.dispose(); await releaseTracking(); }
+      }
+    }
+  });
+});
+
+test('T002 production shell retains the mounted Review frame, markup, and caret across Settings, rail navigation, and Clear', {
   timeout: 180_000,
   concurrency: false,
 }, async (context) => {
@@ -11045,6 +11938,7 @@ test('T002 production shell retains the mounted Review frame, markup, and caret 
         ]);
         const workspace = createReviewWorkspaceFixture();
         const feature = workspace.stable;
+        const releaseTracking = emptyTrackedBoardFixture(workspace);
         const adapter = createReview({ root: workspace.root });
         const sends = [];
         const session = {
@@ -11173,7 +12067,7 @@ test('T002 production shell retains the mounted Review frame, markup, and caret 
             'selected stable Review fixture');
           await click(button('Review design'));
           await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
-            && !document.querySelector('[aria-label="Box (B)"]').disabled`),
+            && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
           'T002 Review engine ready', 60_000);
           assert.equal(await evaluate(page, `document.querySelectorAll('[data-work-selector] input[type=search]').length`), 0);
           assert.equal(await evaluate(page, `document.querySelectorAll('[data-work-selector] [role=combobox]').length`), 0);
@@ -11305,11 +12199,37 @@ test('T002 production shell retains the mounted Review frame, markup, and caret 
           });
           await click(button('Review design'));
           await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
-            && !document.querySelector('[aria-label="Box (B)"]').disabled`),
+            && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
           'same Review after task dock inspection', 60_000);
           assert.equal(network.filter(entry =>
             entry.method === 'POST' && entry.path === '/api/needs-you/review/open').length,
           reviewOpenPosts, 'task dock return reuses the retained Review allocation');
+
+          // Settings is a workspace read, not a new Review or work selection.
+          // The pinned frame and persisted markup retain their exact lifetimes.
+          await click(`document.querySelector('#dude-tab-settings')`);
+          await until(() => evaluate(page, `Boolean(document.querySelector('[data-settings]'))
+            && document.querySelector('[aria-label="Reload packs"]')?.getAttribute('aria-busy') === 'false'`),
+          'Settings read beside the retained Review');
+          const settingsNavigation = await evaluate(page, `({
+            sameFrame: document.querySelector('.dude-review-frame') === window.__t002ReviewFrame,
+            sameWorkspace: document.querySelector('[data-review-workspace]') === window.__t002ReviewWorkspace,
+            sameOverlay: document.querySelector('.dude-review-overlay') === window.__t002ReviewOverlay,
+            hidden: !document.querySelector('[data-review-workspace]').getClientRects().length,
+            selection: document.querySelector('[data-work-selector] [aria-label="Working on"]')?.textContent.includes('701')
+          })`);
+          assert.deepEqual(settingsNavigation, {
+            sameFrame: true, sameWorkspace: true, sameOverlay: true, hidden: true, selection: true,
+          });
+          assert.deepEqual(JSON.parse(fs.readFileSync(working.file, 'utf8')), working.value,
+            'pack reads do not rewrite retained Review work');
+          await click(`document.querySelector('#dude-tab-context')`);
+          await until(() => evaluate(page, `Boolean(document.querySelector('[data-task-detail="T001@aaaaaaaa"]'))`),
+            'task inspection retained through Settings');
+          await click(button('Review design'));
+          await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
+            && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`), 'same Review after Settings', 60_000);
+          assert.equal(network.filter(entry => entry.path === '/api/needs-you/review/open').length, reviewOpenPosts);
 
           // Act: expand the nonmodal desktop rail, leave focused Review through
           // a real destination, and Clear the selected work while it is hidden.
@@ -11393,7 +12313,7 @@ test('T002 production shell retains the mounted Review frame, markup, and caret 
             'independent request after Clear');
           await click(button('Open Review'));
           await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
-            && !document.querySelector('[aria-label="Box (B)"]').disabled`),
+            && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
           'retained Review active after Clear', 60_000);
           const reopened = await evaluate(page, `(() => {
             const frame = document.querySelector('.dude-review-frame');
@@ -11466,6 +12386,7 @@ test('T002 production shell retains the mounted Review frame, markup, and caret 
             browser: browserState.info.Browser,
             before,
             taskNavigation,
+            settingsNavigation,
             expanded,
             panned,
             reopened,
@@ -11514,6 +12435,7 @@ test('T002 production shell retains the mounted Review frame, markup, and caret 
           } finally {
             provider.dispose();
           }
+          await releaseTracking();
           workspace.close();
           profileOwnership.assertReapedSince(
             0,

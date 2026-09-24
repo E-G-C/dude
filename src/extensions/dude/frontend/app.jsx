@@ -7,16 +7,17 @@ import {
 } from '@fluentui/react-components';
 import {
   AddRegular, ArrowClockwiseRegular, ArrowLeftRegular, CheckmarkRegular, CircleRegular,
-  CommentRegular, DismissRegular, GridRegular, NavigationRegular, RecordRegular, SearchRegular, WarningRegular,
+  CommentRegular, DismissRegular, GridRegular, NavigationRegular, RecordRegular, SearchRegular, SettingsRegular, WarningRegular,
 } from '@fluentui/react-icons';
 import { mergeClasses, useCanvasStyles } from './styles.js';
 import { darkTheme, lightTheme, useHostAppearance } from './theme.js';
 import { currentRequests, matchesRequestScope, NeedsYou, NewIdea, Notice, previewEligibility } from './needs-you.jsx';
 import { loadReviewEngine, ReviewHistory, ReviewWorkspace } from './review.jsx';
-import { requestKey, useCanvasData } from './use-canvas-data.js';
+import { packPermission, requestKey, useCanvasData } from './use-canvas-data.js';
+import { Settings } from './settings.jsx';
 
-const TABS = [['overview', 'Overview'], ['context', 'Now'], ['needs', 'Needs you'], ['new', 'New idea']];
-const TAB_ICONS = { overview: GridRegular, context: RecordRegular, needs: CommentRegular, new: AddRegular };
+const TABS = [['overview', 'Overview'], ['context', 'Now'], ['needs', 'Needs you'], ['new', 'New idea'], ['settings', 'Settings']];
+const TAB_ICONS = { overview: GridRegular, context: RecordRegular, needs: CommentRegular, new: AddRegular, settings: SettingsRegular };
 const SCOPES = [['open', 'Open'], ['closed', 'Closed'], ['all', 'All']];
 const GROUPS = {
   active: 'In progress', blocked: 'Blocked', next: 'Next by recorded dependencies',
@@ -293,7 +294,7 @@ function ReviewEntry({ context, data, onReview }) {
     : <Text className={s.eyebrow}>{eligible.reason}</Text>;
 }
 
-function Overview({ data, rows, selection, finder, scroll, position, onOpen, onNew, resultsRef, resultsId }) {
+function Overview({ data, rows, selection, finder, scroll, position, onOpen, onNew, resultsRef, resultsId, finderControl }) {
   const s = useCanvasStyles();
   const inventory = data.index?.coverage.inventory || data.projection?.coverage.inventory;
   const blank = data.index?.workspace === 'blank' && inventory?.state === 'current' && !rows.length;
@@ -302,8 +303,9 @@ function Overview({ data, rows, selection, finder, scroll, position, onOpen, onN
       <h1 className={s.title} tabIndex={-1}>Overview</h1>
       <Button icon={<AddRegular />} onClick={onNew}>New idea</Button>
     </div><p className={s.overviewIntro}>{selection
-      ? 'Filtered to the work you are on. Use Clear in the command bar to find different work. Nothing is closed or discarded.'
-      : 'Nothing is selected. Numbers show capture chronology, not priority, dependencies, or execution order.'}</p></header>
+      ? 'Filtered to the work you are on. Use Clear in the work selector to find different work. Nothing is closed or discarded.'
+      : 'Nothing is selected. Numbers show capture chronology, not priority, dependencies, or execution order.'}</p>
+      {finderControl}</header>
     {selection ? <WorkResults rows={rows} selection={selection} finder={finder} scroll={scroll} position={position}
       onOpen={onOpen} resultsRef={resultsRef} resultsId={resultsId} />
       : data.loading ? <Spinner label="Reading repository state" /> : blank ? <section className={s.empty}>
@@ -592,6 +594,15 @@ function ActivityRail({ tab, onNavigate, onExpand }) {
       toggle.current?.focus({ preventScroll: true });
     }
   }, [expanded, narrow]);
+  const destination = ([value, label]) => {
+    const Icon = TAB_ICONS[value];
+    return <Tab key={value} value={value} id={`dude-tab-${value}`} icon={<Icon />}
+      className={mergeClasses(s.railTab, expanded && s.railTabExpanded)}
+      aria-label={label} title={label} aria-current={tab === value ? 'page' : undefined}
+      aria-controls={`dude-panel-${value}`}>
+      <span className={expanded ? s.railLabel : s.visuallyHidden}>{label}</span>
+    </Tab>;
+  };
   return <nav className={mergeClasses(s.rail, expanded && !narrow && s.railExpanded)}
     aria-label="Workspace navigation" data-navigation-pane>
     <Button ref={toggle} className={s.railToggle} appearance="subtle" icon={<NavigationRegular />}
@@ -620,18 +631,11 @@ function ActivityRail({ tab, onNavigate, onExpand }) {
         {modal && <div className={s.navHeading}><Text weight="semibold">Navigation</Text>
           <Button appearance="subtle" icon={<DismissRegular />} aria-label="Close navigation pane" onClick={() => dismiss()} />
         </div>}
-        <TabList className={s.railList} aria-label="Workspace views" vertical={!narrow || expanded}
+        <TabList className={s.railList} aria-label="Workspace views" vertical
           size="small" selectedValue={tab} selectTabOnFocus={false}
           onTabSelect={(_, input) => modal ? dismiss(input.value) : onNavigate(input.value)}>
-          {TABS.map(([value, label]) => {
-            const Icon = TAB_ICONS[value];
-            return <Tab key={value} value={value} id={`dude-tab-${value}`} icon={<Icon />}
-              className={mergeClasses(s.railTab, expanded && s.railTabExpanded)}
-              aria-label={label} title={label} aria-current={tab === value ? 'page' : undefined}
-              aria-controls={`dude-panel-${value}`}>
-              <span className={expanded ? s.railLabel : s.visuallyHidden}>{label}</span>
-            </Tab>;
-          })}
+          <div className={s.railDestinations}>{TABS.slice(0, -1).map(destination)}</div>
+          <div className={s.railFooter}>{destination(TABS.at(-1))}</div>
         </TabList>
       </div>
     </div>
@@ -646,8 +650,11 @@ function App() {
   const [review, setReview] = useState(null), [reviewActive, setReviewActive] = useState(false);
   const [reviewed, setReviewed] = useState(null), [history, setHistory] = useState(null), [message, setMessage] = useState('');
   const [finderOpen, setFinderOpen] = useState(false);
+  const [compactCommands, setCompactCommands] = useState(() => window.matchMedia('(max-width: 479px)').matches);
   const [taskView, setTaskView] = useState({ scope: null, taskKey: null, filter: 'all' });
-  const data = useCanvasData(selection);
+  const [packReturn, setPackReturn] = useState(null);
+  const settingsActive = tab === 'settings' && !reviewActive && !history;
+  const data = useCanvasData(selection, { packsActive: settingsActive || Boolean(packReturn) });
   const root = useRef(null), scroll = useRef(0), main = useRef(null), focusNext = useRef(null), opening = useRef(null);
   const reviewReturn = useRef(null), historyRead = useRef(null), latestData = useRef(data);
   const search = useRef(null), selector = useRef(null), results = useRef(null), position = useRef(null);
@@ -674,7 +681,13 @@ function App() {
     setTaskView({ ...scopedTasks, taskKey: null });
   }
   const overviewActive = tab === 'overview' && !reviewActive && !history;
-  const popupOpen = !selection && !overviewActive && finderOpen;
+  const popupOpen = !compactCommands && !selection && !overviewActive && finderOpen;
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 479px)');
+    const change = () => { setCompactCommands(media.matches); setFinderOpen(false); };
+    media.addEventListener('change', change);
+    return () => media.removeEventListener('change', change);
+  }, []);
   const cancelHistory = useCallback(() => {
     historyRead.current?.abort();
     historyRead.current = null;
@@ -686,6 +699,7 @@ function App() {
       setTab('overview'); setSelection(null); setSelectedRequest(null); setFinder(DEFAULT_FINDER);
       setIdea(''); setDrafts({}); setReview(null); setReviewActive(false); setReviewed(null); setHistory(null);
       setMessage('');
+      setPackReturn(null);
       reviewReturn.current = null;
       setFinderOpen(false); position.current = null; focusResults.current = false;
       scroll.current = 0; focusNext.current = 'heading';
@@ -757,6 +771,7 @@ function App() {
     opening.current = null;
     // Navigation releases the focused child, never its retained entry object.
     focusResults.current = false;
+    setPackReturn(null);
     setHistory(null); setReviewActive(false); setFinderOpen(false); setMessage('');
     focusNext.current = focus; setTab(destination);
   }, [cancelHistory]);
@@ -804,6 +819,18 @@ function App() {
   const selectRequest = key => {
     setSelectedRequest(key);
     navigate('needs');
+  };
+  const openPackPermission = receipt => {
+    const record = packPermission(latestData.current, receipt);
+    if (!record) {
+      setMessage('This pack permission is no longer current. Nothing was sent. Read the current request before responding.');
+      data.reconcile();
+      return;
+    }
+    const key = requestKey(latestData.current.needs, record);
+    navigate('needs');
+    setSelectedRequest(key);
+    setPackReturn(key);
   };
   const requestEntry = context => {
     const records = currentRequests(context, latestData.current);
@@ -901,6 +928,14 @@ function App() {
   };
   const unavailable = data.issues.needs || data.needs?.coverage.state === 'unavailable';
   const readAt = data.projection?.complete ? data.projection.readAt : null;
+  const finderControl = <WorkFinder selection={selection} row={selectedRow} browsing={browsing}
+    finder={finder} onFinder={value => {
+      scroll.current = 0; position.current = null; focusResults.current = false; setFinder(value);
+    }} onClear={clearWork} search={search} onFocus={() => { if (!finderDismissed.current) showFinder(); }}
+    onSearch={showFinder} onKeyDown={event => {
+      if (!['ArrowDown', 'Enter'].includes(event.key)) return;
+      event.preventDefault(); showFinder(); focusResults.current = true; focusWorkResult();
+    }} resultsId={overviewActive || popupOpen ? resultsId : undefined} />;
   // Fluent forwards provider classes to portals. Keep viewport layout on the
   // child so dropdowns/drawers do not inherit a page-sized background or height.
   return <FluentProvider theme={theme === 'dark' ? darkTheme : lightTheme}>
@@ -909,22 +944,19 @@ function App() {
         <div className={s.titlebar}><Text weight="semibold">Dude</Text>
           <Text className={s.workspaceLabel}>{data.needs ? 'Joined workspace' : 'Workspace'}</Text></div>
         <div ref={selector} className={s.selector} data-work-selector>
-          <WorkFinder selection={selection} row={selectedRow} browsing={browsing}
-            finder={finder} onFinder={value => {
-              scroll.current = 0; position.current = null; focusResults.current = false; setFinder(value);
-            }} onClear={clearWork} search={search} onFocus={() => { if (!finderDismissed.current) showFinder(); }}
-            onSearch={showFinder} onKeyDown={event => {
-              if (!['ArrowDown', 'Enter'].includes(event.key)) return;
-              event.preventDefault(); showFinder(); focusResults.current = true; focusWorkResult();
-            }} resultsId={overviewActive || popupOpen ? resultsId : undefined} />
+          {compactCommands ? <Button appearance="subtle" icon={<SearchRegular />} aria-label="Find work"
+            title="Find work" className={s.railToggle} onClick={() => navigate('overview', selection ? 'heading' : 'search')} />
+            : finderControl}
           {popupOpen && <div className={s.finderPopup}>
             <WorkResults rows={rows} finder={finder} scroll={scroll} position={position} onOpen={openWork}
               resultsRef={results} resultsId={resultsId} />
           </div>}
         </div>
         <Toolbar className={s.refresh} aria-label="Workspace actions"><ToolbarButton className={s.refreshButton} icon={<ArrowClockwiseRegular />}
-          aria-label="Refresh" title="Refresh" aria-busy={data.loading || data.selecting} onClick={data.refresh}>
-          <span className={s.refreshLabel}>Refresh</span>
+          aria-label={settingsActive ? 'Reload packs' : 'Refresh'} title={settingsActive ? 'Reload pack information' : 'Refresh'}
+          aria-busy={settingsActive ? data.packsLoading : data.loading || data.selecting}
+          onClick={settingsActive ? data.reloadPacks : data.refresh}>
+          <span className={s.refreshLabel}>{settingsActive ? 'Reload packs' : 'Refresh'}</span>
         </ToolbarButton></Toolbar>
       </header>
       {message && <Notice intent="warning" title="Action unavailable">{message}</Notice>}
@@ -936,9 +968,12 @@ function App() {
       <main ref={main} className={s.product} aria-label="Workspace">
         {TABS.map(([value]) => <div key={value} id={`dude-panel-${value}`} role="tabpanel"
           aria-labelledby={`dude-tab-${value}`} hidden={reviewActive || Boolean(history) || value !== tab}
-          className={mergeClasses(s.detail, value === 'overview' && s.overviewPanel)}>
-          {reviewActive || history || value !== tab ? null : value === 'overview' ? <Overview data={data} rows={rows} selection={selection} finder={finder}
-            scroll={scroll} position={position} onOpen={openWork} onNew={newIdea} resultsRef={results} resultsId={resultsId} />
+          className={mergeClasses(s.detail, value === 'overview' && s.overviewPanel, value === 'settings' && s.settingsPanel)}>
+          {value === 'settings' ? (settingsActive || packReturn) && <Settings key={data.rootKey} data={data}
+            active={settingsActive} onPermission={openPackPermission} />
+            : reviewActive || history || value !== tab ? null : value === 'overview' ? <Overview data={data} rows={rows} selection={selection} finder={finder}
+            scroll={scroll} position={position} onOpen={openWork} onNew={newIdea} resultsRef={results} resultsId={resultsId}
+            finderControl={compactCommands ? finderControl : null} />
             : value === 'context' ? <Context key={data.rootKey} selection={selection} data={data} rows={rows}
               orientation={orientation} taskKey={visibleTask?.taskKey || null} taskFilter={scopedTasks.filter}
               onTask={taskKey => {
@@ -956,7 +991,8 @@ function App() {
               : value === 'needs' ? <NeedsYou data={data} selected={selectedRequest} drafts={drafts}
                 onDraft={(key, value) => setDrafts(previous => ({ ...previous, [key]: value }))}
                 onSelect={selectRequest} scopeTitle={scopeTitle(displayedRequest?.request.scope, rows)} browsingLabel={browsingLabel}
-                onReview={openReview} reviewedKey={reviewed} onNew={newIdea} />
+                onReview={openReview} reviewedKey={reviewed} onNew={newIdea}
+                onReturn={packReturn ? () => navigate('settings') : null} />
                 : <NewIdea value={idea} onChange={setIdea} data={data}
                   onCancel={() => navigate('needs')} />}
         </div>)}
@@ -968,9 +1004,11 @@ function App() {
           browsingLabel={browsingLabel} onReturn={returnHistory} />}
       </main>
       </div>
-      <footer className={mergeClasses(s.footer, reviewActive && s.focusedFooter)}
-        aria-label="Workspace status" tabIndex={reviewActive ? 0 : undefined}>
-        <span>{data.loading ? 'Reading workspace…' : data.issues.index ? 'Work coverage unavailable'
+      <footer className={mergeClasses(s.footer, reviewActive && s.focusedFooter, settingsActive && s.settingsFooter)}
+        aria-label="Workspace status" tabIndex={reviewActive || settingsActive ? 0 : undefined}>
+        {settingsActive ? <span>{data.packsLoading ? 'Reading packs…'
+          : `Installed: ${data.packs?.coverage.installed.state || 'unavailable'} · Catalog: ${data.packs?.coverage.catalog.state || 'unavailable'}`}</span>
+          : <><span>{data.loading ? 'Reading workspace…' : data.issues.index ? 'Work coverage unavailable'
           : `Work coverage: ${data.index?.coverage.work.state || 'unavailable'}`}</span>
         <span>{unavailable || !data.needs ? 'Current request coverage unavailable'
           : `Current request coverage: ${data.needs.coverage.state}`}</span>
@@ -979,7 +1017,7 @@ function App() {
           : data.issues.orientation ? 'unavailable' : data.freshness?.state || 'unavailable'}</span>
         <span className={s.readTime}>{readAt ? <>Last complete read <time dateTime={readAt}>
           {new Date(readAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
-        </time></> : 'No complete read'}</span>
+        </time></> : 'No complete read'}</span></>}
       </footer>
     </div></AriaLiveAnnouncer>
   </FluentProvider>;

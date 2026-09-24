@@ -799,10 +799,10 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   assert.ok(application.length > 100_000, 'the application bundle must contain the browser runtime');
   const gzip = gzipSync(applicationBytes, { level: 9 });
   const repeatedGzip = gzipSync(applicationBytes, { level: 9 });
-  assert.equal(applicationBytes.length, 916_082, 'committed app.js raw byte size');
+  assert.equal(applicationBytes.length, 954_844, 'committed app.js raw byte size');
   assert.equal(
     sha256(applicationBytes),
-    'fcf3f9102f8eabd36f9bd0494a84695fda2891e1d53a7f05b03a1be2088a9463',
+    'd26d8ececcdf1e136538b6b9e309f5dbc95e65ab935901537b2e3e82a17286be',
     'committed app.js raw SHA-256',
   );
   assertPortableGzip(gzip, repeatedGzip, applicationBytes, 'Node zlib level-9 app.js');
@@ -888,7 +888,7 @@ test('metafile-derived legal inventory contains every contributing package and c
       name: '@fluentui/react-tooltip',
       version: '9.10.5',
       inputCount: 6,
-      bytesInOutput: 8_329,
+      bytesInOutput: 8_321,
     },
   ], 'the shipped menu, motion implementation, and tooltip contribute real app.js bytes');
   for (const { name, version } of menuGraphPackages) {
@@ -1101,15 +1101,16 @@ function t011Sources() {
 
 function assertT011WorkspaceContract() {
   const { app, hook, needs, review, styles, theme } = t011Sources();
-  assert.match(app, /const TABS = \[\['overview', 'Overview'\], \['context', 'Now'\], \['needs', 'Needs you'\], \['new', 'New idea'\]\]/);
+  assert.match(app, /const TABS = \[\['overview', 'Overview'\], \['context', 'Now'\], \['needs', 'Needs you'\], \['new', 'New idea'\], \['settings', 'Settings'\]\]/);
   assert.equal((app.match(/<WorkFinder\b/g) ?? []).length, 1);
   assert.equal((app.match(/<FluentProvider\b/g) ?? []).length, 1);
   assert.match(app, /<TabList[\s\S]*?aria-label="Workspace views"[\s\S]*?selectTabOnFocus=\{false\}/);
-  assert.match(app, /<header className=\{s\.commands\}>[\s\S]*?<WorkFinder[\s\S]*?<\/header>[\s\S]*?<ActivityRail[\s\S]*?<main ref=\{main\} className=\{s\.product\} aria-label="Workspace">/);
+  assert.match(app, /const finderControl = <WorkFinder\b/);
+  assert.match(app, /<header className=\{s\.commands\}>[\s\S]*?: finderControl\}[\s\S]*?<\/header>[\s\S]*?<ActivityRail[\s\S]*?<main ref=\{main\} className=\{s\.product\} aria-label="Workspace">/);
   assert.match(app, /<main ref=\{main\} className=\{s\.product\} aria-label="Workspace">/);
-  assert.match(app, /<footer className=\{mergeClasses\(s\.footer, reviewActive && s\.focusedFooter\)\}[\s\S]*?aria-label="Workspace status"/);
+  assert.match(app, /<footer className=\{mergeClasses\(s\.footer, reviewActive && s\.focusedFooter, settingsActive && s\.settingsFooter\)\}[\s\S]*?aria-label="Workspace status"/);
   assert.match(app, /<ReviewWorkspace[\s\S]*?active=\{reviewActive && !history\}/);
-  assert.doesNotMatch(app, /FeatureChooser|Browse features|Switch work|Settings|Kanban|Dude — Now/);
+  assert.doesNotMatch(app, /FeatureChooser|Browse features|Switch work|Kanban|Dude — Now/);
   assert.match(styles, /makeStyles\(/);
   assert.match(theme, /webDarkTheme, webLightTheme/);
   assert.match(needs, /MessageBar[\s\S]*?layout="multiline"/);
@@ -1123,6 +1124,9 @@ function assertT011WorkspaceContract() {
       '/api/needs-you/capture-receipt',
       '/api/needs-you/respond',
       '/api/needs-you/review/open',
+      '/api/packs',
+      '/api/packs/request',
+      '/api/packs/request',
       '/api/refresh',
       '/api/work-index',
     ].sort(),
@@ -1202,7 +1206,7 @@ function assertT011EpochAndFocus() {
   const { app, hook } = t011Sources();
   assert.equal((hook.match(/new EventSource\('\/events'\)/g) ?? []).length, 1);
   assert.match(hook, /events\.addEventListener\('workspace', \(\) => queue\(true\)\)/);
-  assert.match(hook, /events\.addEventListener\('needs-you', \(\) => queue\(\)\)/);
+  assert.match(hook, /events\.addEventListener\('needs-you', \(\) => queue\(false, false\)\)/);
   assert.match(hook, /if \(pending\.epoch !== epoch\)/);
   assert.match(hook, /locks\.current\.add\(key\); \/\/ Synchronous guard before fetch/);
   assert.match(hook, /Nothing will be resent/);
@@ -1237,9 +1241,12 @@ function assertT011StableNavigation() {
   const rail = app.slice(app.indexOf('function ActivityRail'), app.indexOf('function App'));
   const appBody = app.slice(app.indexOf('function App'));
   assert.equal((app.match(/const TABS =/g) ?? []).length, 1);
-  assert.match(app, /const TAB_ICONS = \{ overview: GridRegular, context: RecordRegular, needs: CommentRegular, new: AddRegular \}/);
-  assert.match(rail, /TABS\.map\(\(\[value, label\]\) => \{[\s\S]*?return <Tab/);
-  assert.doesNotMatch(rail.slice(rail.indexOf('TABS.map(([value, label])'), rail.indexOf('</TabList>')), /\bdisabled\b/);
+  assert.match(app, /const TAB_ICONS = \{ overview: GridRegular, context: RecordRegular, needs: CommentRegular, new: AddRegular, settings: SettingsRegular \}/);
+  assert.match(rail, /const destination = \(\[value, label\]\) => \{[\s\S]*?return <Tab/);
+  assert.match(rail, /<div className=\{s\.railDestinations\}>\{TABS\.slice\(0, -1\)\.map\(destination\)\}<\/div>\s*<div className=\{s\.railFooter\}>\{destination\(TABS\.at\(-1\)\)\}<\/div>/);
+  const destinationTab = rail.slice(rail.indexOf('const destination = ([value, label])'), rail.indexOf('return <nav'));
+  assert.match(destinationTab, /<Tab\b/);
+  assert.doesNotMatch(destinationTab, /\bdisabled\b/);
   assert.match(rail, /<nav[\s\S]*?aria-label="Workspace navigation" data-navigation-pane>/);
   assert.match(rail, /aria-expanded=\{expanded\} aria-controls=\{id\}/);
   assert.match(rail, /role=\{modal \? 'dialog' : undefined\} aria-modal=\{modal \? true : undefined\}/);

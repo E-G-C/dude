@@ -140,6 +140,7 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
   const [inspector, setInspector] = useState(false);
   const [source, setSource] = useState(false);
   const [details, setDetails] = useState(false);
+  const [detailsTip, setDetailsTip] = useState(false);
   // Presentation only, for this open workspace. Nothing is stored, and the
   // palette is out of flow, so neither placement changes the frame geometry.
   const [toolsVertical, setToolsVertical] = useState(true);
@@ -589,7 +590,10 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
         </Tooltip>
         <Button size="small" icon={<CommentRegular />} ref={commentsAction}
           onClick={() => setInspector(true)}>Comments ({state?.annotations.length || 0})</Button>
-        <Popover open={details && active} onOpenChange={(_, input) => setDetails(input.open)}
+        <Popover open={details && active} onOpenChange={(_, input) => {
+          setDetailsTip(false);
+          setDetails(input.open);
+        }}
           positioning={{ position: 'below', align: 'start', autoSize: 'height', overflowBoundaryPadding: 8 }}>
           {/* Named after the one thing kept here that exists nowhere else, plus
               the overflow wording Edge uses for "Settings and more". The tip
@@ -599,6 +603,8 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
               keyboard reviewer too. */}
           <PopoverTrigger disableButtonEnhancement>
             <Tooltip withArrow relationship="description" positioning="below"
+              visible={active && !details && detailsTip}
+              onVisibleChange={(_, input) => setDetailsTip(input.visible)}
               content={{ id: detailsHint, children: detailsContents }}>
               <Button size="small" aria-describedby={detailsHint}>Notes and more</Button>
             </Tooltip>
@@ -747,15 +753,21 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
           </Menu>
           <Toolbar vertical={toolsVertical} aria-label="Annotation tools" checkedValues={{ tool: [state?.tool || 'select'] }}
             className={mergeClasses(s.drawingTools, toolsVertical ? s.drawingToolsVertical : s.drawingToolsHorizontal)}>
+            {/* A source reread can briefly suspend commands under native
+                keyboard focus. Fluent blocks activation without moving that
+                focus to BODY; unavailable/stale tools stay natively disabled. */}
             {TOOLS.map(([tool, label, Icon, shortcut]) => <ToolbarToggleButton key={tool}
               className={s.toolButton} name="tool" value={tool} icon={<Icon />} disabled={busy}
+              disabledFocusable={actionable && state.busy}
               aria-label={`${label} (${shortcut})`} title={busy ? disabledReason : `${label} (${shortcut})`}
               aria-describedby={busy ? reviewHint : undefined}
               onClick={() => void command({ type: 'tool', tool })} />)}
             <ToolbarDivider />
             <ToolbarButton className={s.toolButton} icon={<ArrowUndoRegular />} aria-label="Undo annotation" disabled={busy || !state?.canUndo}
+              disabledFocusable={actionable && state.busy && state.canUndo}
               onClick={() => void command({ type: 'undo' })} />
             <ToolbarButton className={s.toolButton} icon={<ArrowRedoRegular />} aria-label="Redo annotation" disabled={busy || !state?.canRedo}
+              disabledFocusable={actionable && state.busy && state.canRedo}
               onClick={() => void command({ type: 'redo' })} />
           </Toolbar>
           {/* Keep the presentation switch outside the tool scroller. It remains

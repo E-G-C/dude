@@ -1,15 +1,16 @@
-import React, { useId, useState } from 'react';
+import React, { useId, useRef, useState } from 'react';
 import {
   Badge, Button, Checkbox, Dropdown, Field, MessageBar, MessageBarBody, MessageBarTitle,
   Option, Radio, RadioGroup, Text, Textarea,
 } from '@fluentui/react-components';
 import { ArrowLeftRegular, CommentRegular } from '@fluentui/react-icons';
 import { useCanvasStyles } from './styles.js';
-import { authorityKey, requestKey } from './use-canvas-data.js';
+import { authorityKey, packRequestPending, requestKey } from './use-canvas-data.js';
 
-export function Notice({ title, children, intent = 'info' }) {
+export function Notice({ title, children, intent = 'info', focusRef }) {
   const s = useCanvasStyles();
-  return <MessageBar intent={intent} layout="multiline" className={s.notice}>
+  return <MessageBar intent={intent} layout="multiline" className={s.notice}
+    ref={focusRef} tabIndex={focusRef ? -1 : undefined} aria-label={focusRef ? 'Response status' : undefined}>
     <MessageBarBody>{title && <MessageBarTitle>{title}</MessageBarTitle>}{children}</MessageBarBody>
   </MessageBar>;
 }
@@ -32,6 +33,7 @@ const CLASSES = {
 const PHASES = {
   publishing: 'Checking the source', pending: 'Current request', responding: 'Responding',
   awaiting_acknowledgment: 'Awaiting acknowledgment', accepted: 'Accepted', applied: 'Applied',
+  permission_acknowledged: 'Permission acknowledged',
   declined: 'Declined', deferred: 'Deferred', source_changed: 'Stale context',
   outside_input_available: 'Outside input received', cancelled: 'Cancelled',
   unavailable: 'Unavailable', uncertain: 'Delivery uncertain', capture_intent: 'Capture requested',
@@ -101,13 +103,25 @@ function exceedsTextLimit(value, data) {
   return new TextEncoder().encode(value).length > data.needs.limits.textBytes;
 }
 
-export function ResponseStatus({ record, attempt, draft = false, capture = false }) {
+// The Dude-owned session permission for a Settings pack request (see
+// packPermission). Other owners' permissions keep their ordinary semantics.
+const isPackPermission = request => request?.class === 'permission' && request.owner === 'dude'
+  && request.requestRef.startsWith('pack:') && String(request.fields?.operation).startsWith('pack:');
+
+// A canvas_response acknowledges the permission, not the separate pack_result.
+// Only the pack request view establishes an applied operation from that result
+// and its agreeing current installed authority.
+function responsePhase(record, phase) {
+  return phase === 'applied' && isPackPermission(record?.request) ? 'permission_acknowledged' : phase;
+}
+
+export function ResponseStatus({ record, attempt, draft = false, capture = false, focusRef }) {
   const s = useCanvasStyles();
   const receipt = record?.receipt || attempt?.receipt;
   const acknowledgment = receipt?.acknowledgment;
   const prior = acknowledgment && !receipt.current;
-  const phase = acknowledgment?.outcome || (record?.phase !== 'pending' ? record?.phase : null)
-    || attempt?.phase || (draft ? 'responding' : 'pending');
+  const phase = responsePhase(record, acknowledgment?.outcome || (record?.phase !== 'pending' ? record?.phase : null)
+    || attempt?.phase || (draft ? 'responding' : 'pending'));
   const saved = capture && record?.saved && acknowledgment?.outcome === 'applied'
     && receipt.current && receipt.reread?.canonicalIdeaPath;
   const title = saved ? 'Idea saved' : prior ? `Previously recorded: ${PHASES[phase] || phase}`
@@ -120,6 +134,7 @@ export function ResponseStatus({ record, attempt, draft = false, capture = false
     awaiting_acknowledgment: 'Sent to the joined owner. Acceptance and application are not yet confirmed.',
     accepted: 'The owner accepted this response. Application is not yet confirmed.',
     applied: 'The owner confirmed application and reread the source.',
+    permission_acknowledged: 'The owner acknowledged this permission response. Check the pack request for a verified operation result.',
     declined: 'The owner declined this response. A fresh request is needed before responding again.',
     deferred: record?.durable
       ? 'The owner recorded a source-backed deferral. It remains discoverable in the recorded context.'
@@ -134,7 +149,7 @@ export function ResponseStatus({ record, attempt, draft = false, capture = false
     issued: 'Capture was prepared. Nothing has been sent or saved.',
   };
   const attemptMessage = !record || ['pending', 'publishing', attempt?.phase].includes(record.phase) ? attempt?.message : null;
-  return <Notice title={title} intent={intent}>
+  return <Notice title={title} intent={intent} focusRef={focusRef}>
     <div className={s.tight}>
       <Text>{saved ? 'The owner acknowledged capture and Canvas reread the canonical idea.'
         : prior ? 'This is a recorded past outcome. Its source or provider is no longer current; that does not undo the earlier capture or application.'
@@ -156,8 +171,9 @@ export function NewIdea({ value, onChange, onCancel, data }) {
   const capture = otherCapture ? null : candidate;
   const unreconciled = feed?.captures.some(item => !item.receipt.acknowledgment && item.phase !== 'unavailable'
     && !(item.phase === 'issued' && item.captureReceipt === attempt?.captureReceipt && attempt.retryable));
+  const packWaiting = packRequestPending(data);
   const idle = feed && !data.issues.needs && feed.coverage.state !== 'unavailable'
-    && feed.capture.idle && !feed.capture.waitingRequests.length && !unreconciled;
+    && feed.capture.idle && !feed.capture.waitingRequests.length && !unreconciled && !packWaiting;
   const refusedBeforeSend = candidate?.phase === 'unavailable' && candidate.reason === 'idle_required';
   const locked = attempt && !attempt.retryable && !refusedBeforeSend
     && !(otherCapture && candidate.receipt.acknowledgment) && (!capture?.saved || value === attempt.intent);
@@ -191,7 +207,8 @@ export function NewIdea({ value, onChange, onCancel, data }) {
       Your draft was not the intent recorded by this receipt. Nothing will be sent automatically.
     </Notice> : (attempt || capture) && <ResponseStatus record={capture} attempt={attempt} capture />}
     {!idle && (!attempt || capture?.saved) && <Notice title="Waiting for the joined agent">
-      {data.issues.needs || (feed?.capture.waitingRequests.length
+      {data.issues.needs || (packWaiting ? 'A pack request is in progress or needs owner reconciliation. Your idea draft stays here.'
+        : feed?.capture.waitingRequests.length
         ? 'Another request is waiting. Respond in Needs you first; New idea will not interrupt or bind itself to that request.'
         : 'Capture requires a current idle session with no unreconciled capture. Your draft stays here.')}
     </Notice>}
@@ -202,6 +219,8 @@ export function NewIdea({ value, onChange, onCancel, data }) {
 function RequestForm({ record, data, value, onChange, onReview, reviewed }) {
   const s = useCanvasStyles();
   const request = record.request, fields = request.fields;
+  const statusFocus = useRef(null);
+  const pack = isPackPermission(request);
   const [error, setError] = useState('');
   const attempt = data.attempts[requestKey(data.needs, record)];
   const busy = Boolean(attempt && !attempt.retryable) || record.responding || record.reviewing;
@@ -213,7 +232,10 @@ function RequestForm({ record, data, value, onChange, onReview, reviewed }) {
       setError("The response exceeds the provider's UTF-8 byte limit. Edit it before sending; your text has not been truncated.");
       return;
     }
-    setError(''); void data.respond(record, response);
+    setError('');
+    // Move before the consumed permission controls become disabled/removed.
+    if (pack) statusFocus.current?.focus();
+    void data.respond(record, response);
   };
   const requireText = text => {
     if (text?.trim()) {
@@ -264,7 +286,7 @@ function RequestForm({ record, data, value, onChange, onReview, reviewed }) {
     kind: 'feature', status: 'defined', ...request.scope,
   }, data) : null;
   return <div className={s.stack}>
-    <ResponseStatus record={record} attempt={attempt}
+    <ResponseStatus record={record} attempt={attempt} focusRef={pack ? statusFocus : undefined}
       draft={Object.values(value).some(entry => typeof entry === 'string' ? Boolean(entry) : entry === true)} />
     <form className={s.stack} onSubmit={submit}>
       {(request.class === 'fact' || request.class === 'onboarding') && (fields.input.kind === 'text' ? textField()
@@ -380,7 +402,7 @@ function RequestForm({ record, data, value, onChange, onReview, reviewed }) {
   </div>;
 }
 
-export function NeedsYou({ data, selected, onSelect, drafts, onDraft, onReview, reviewedKey, onNew, scopeTitle, browsingLabel }) {
+export function NeedsYou({ data, selected, onSelect, drafts, onDraft, onReview, reviewedKey, onNew, scopeTitle, browsingLabel, onReturn }) {
   const s = useCanvasStyles(), heading = useId();
   const feed = data.needs;
   const records = feed?.requests || [];
@@ -391,12 +413,13 @@ export function NeedsYou({ data, selected, onSelect, drafts, onDraft, onReview, 
   if (record) {
     const request = record.request, key = requestKey(feed, record);
     return <div className={s.measure}>
+      {onReturn && <Button className={s.back} icon={<ArrowLeftRegular />} onClick={onReturn}>Back to pack request</Button>}
       <Button className={s.back} icon={<ArrowLeftRegular />} onClick={() => onSelect(null)}>All requests</Button>
       <header className={s.detailHeader}>
         <div className={s.row}><Badge appearance="tint">{CLASSES[request.class]}</Badge>
           <Text className={s.eyebrow}>{request.blocking ? 'Blocking clarification in this context' : 'Advisory request'}</Text></div>
         <h1 className={s.title}>Needs you</h1>
-        <p className={s.lead}>{request.prompt}</p>
+        <p className={request.class === 'permission' ? s.prose : s.lead}>{request.prompt}</p>
       </header>
       <section className={s.scope} aria-label="Request scope">
         <Text className={s.eyebrow}>This request is about</Text>
@@ -422,6 +445,7 @@ export function NeedsYou({ data, selected, onSelect, drafts, onDraft, onReview, 
   }
   const past = records.filter(item => item.phase !== 'pending');
   return <div className={s.measure}>
+    {onReturn && <Button className={s.back} icon={<ArrowLeftRegular />} onClick={onReturn}>Back to pack request</Button>}
     <h1 className={s.title} id={heading}>Needs you</h1>
     {uncertain && <Notice intent="warning" title={unavailable ? 'Current request coverage unavailable' : 'Some request coverage is unavailable'}>
       {data.issues.needs || feed?.coverage.reason || 'Affected contexts cannot establish whether further input is needed.'}
@@ -448,7 +472,7 @@ export function NeedsYou({ data, selected, onSelect, drafts, onDraft, onReview, 
       {past.map(item => <Button key={item.requestHandle} className={s.requestOption}
         onClick={() => onSelect(requestKey(feed, item))}>
         <span className={s.tight}><Text>{item.request.prompt}</Text>
-          <Text className={s.eyebrow}>{PHASES[item.phase] || item.phase} · {item.request.owner}</Text></span>
+          <Text className={s.eyebrow}>{PHASES[responsePhase(item, item.phase)] || item.phase} · {item.request.owner}</Text></span>
       </Button>)}
     </section>}
   </div>;

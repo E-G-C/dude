@@ -2510,3 +2510,168 @@ test('remove accepts changed source bytes while add retains force semantics', as
     cleanup(changed);
   }
 });
+
+test('T003 remote refresh preview is not an apply token; the owner must retain and re-establish its reviewed commit', async () => {
+  const remote = createRemoteCatalog();
+  const moving = createReleasedRoot(), pinned = createReleasedRoot();
+  try {
+    writeRemotePack(remote.repo, 'demo', 'reviewed');
+    const reviewedCommit = commitRemote(remote.repo, 'reviewed source');
+    for (const root of [moving, pinned]) {
+      writeManifestSource(root, remote.source, 'main');
+      assert.equal((await addPack(root, 'demo')).ok, true);
+    }
+    const args = root => ({ root, library: path.join(root, 'library/packs'), name: 'demo' });
+    const previews = [];
+    for (const root of [moving, pinned]) {
+      const before = mutationSnapshot(root);
+      const preview = await cmdPreviewRefresh(args(root));
+      assert.equal(preview.ok, true, preview.error);
+      assert.equal(preview.result.source.resolved_commit, reviewedCommit);
+      assertMutationUnchanged(root, before);
+      previews.push(preview.result);
+    }
+
+    writeRemotePack(remote.repo, 'demo', 'moved');
+    const movedCommit = commitRemote(remote.repo, 'source moved after preview');
+    assert.notEqual(movedCommit, reviewedCommit);
+    // Ordinary refresh intentionally prepares again. This is the unsafe
+    // assumption the Canvas owner guidance must not make about an old preview.
+    const unbound = await cmdRefresh(args(moving));
+    assert.equal(unbound.ok, true, unbound.error);
+    assert.equal(readProfile(moving).installed.demo.source.resolved_commit, movedCommit);
+    assertInstalledVersion(moving, 'demo', 'moved');
+
+    // The existing source/ref interface supports the reviewed exact commit.
+    // Re-preview that basis rather than treating the first dry-run as a token.
+    const reviewedArgs = { ...args(pinned), source: previews[1].source.repository, ref: reviewedCommit };
+    const before = mutationSnapshot(pinned);
+    const rechecked = await cmdPreviewRefresh(reviewedArgs);
+    assert.equal(rechecked.ok, true, rechecked.error);
+    assert.equal(rechecked.result.source.resolved_commit, reviewedCommit);
+    assert.equal(rechecked.result.source.requested_ref, reviewedCommit);
+    for (const key of ['files', 'replaced', 'added', 'removed']) {
+      assert.deepEqual(rechecked.result[key], previews[1][key]);
+    }
+    assertMutationUnchanged(pinned, before);
+    const applied = await cmdRefresh(reviewedArgs);
+    assert.equal(applied.ok, true, applied.error);
+    assert.equal(readProfile(pinned).installed.demo.source.resolved_commit, reviewedCommit);
+    assertInstalledVersion(pinned, 'demo', 'reviewed');
+  } finally {
+    cleanup(moving); cleanup(pinned);
+    fs.rmSync(remote.parent, { recursive: true, force: true });
+  }
+});
+
+test('T003 source CLI --envelope prints the unchanged engine envelope for add, remove, and refresh; --json keeps its shape', async () => {
+  // Arrange: the CLI root and an engine-control root receive the same pack and
+  // operations, so every CLI envelope is compared with the engine's own return.
+  const root = createRoot();
+  const control = createRoot();
+  try {
+    for (const target of [root, control]) {
+      writePack(target, 'demo', [packAgent('demo', 'worker', { name: 'Demo Worker' })], { skill: true });
+    }
+    /** @param {ReturnType<typeof runCompose>} result @param {number} status */
+    const stdoutJson = (result, status) => {
+      assert.equal(result.status, status, result.stderr);
+      assert.equal(result.stderr, '');
+      return JSON.parse(result.stdout);
+    };
+    /** @param {object} value */
+    const keys = (value) => Object.keys(value).sort();
+
+    // Act / Assert: install success is exactly the engine envelope.
+    const added = stdoutJson(runCompose(root, 'add', 'demo', '--envelope'), 0);
+    assert.deepEqual(added, await addPack(control, 'demo'));
+    assert.deepEqual(keys(added), ['code', 'ok', 'result']);
+    assert.deepEqual(keys(added.result), ['added', 'files', 'origin']);
+
+    // Refresh success: --json keeps its flattened shape; --envelope does not.
+    const expectedRefresh = await refreshPack(control, 'demo');
+    assert.equal(expectedRefresh.ok, true, expectedRefresh.error);
+    assert.deepEqual(stdoutJson(runCompose(root, 'refresh', 'demo', '--json'), 0),
+      { ok: true, ...expectedRefresh.result });
+    const refreshed = stdoutJson(runCompose(root, 'refresh', 'demo', '--envelope'), 0);
+    assert.deepEqual(refreshed, await refreshPack(control, 'demo'));
+    assert.deepEqual(keys(refreshed), ['code', 'ok', 'result']);
+
+    // Refresh pre-mutation failure: an occupied new destination refuses first.
+    for (const target of [root, control]) {
+      const packDir = path.join(target, 'library', 'packs', 'demo');
+      fs.mkdirSync(path.join(packDir, 'instructions'), { recursive: true });
+      fs.writeFileSync(path.join(packDir, 'instructions', 'dude-pack-demo-guide.instructions.md'), '# demo guide\n');
+      fs.writeFileSync(
+        path.join(target, '.github', 'instructions', 'dude-pack-demo-guide.instructions.md'),
+        '# pre-existing foreign artifact\n',
+      );
+    }
+    const expectedFailure = await refreshPack(control, 'demo');
+    assert.equal(expectedFailure.mutation, 'none');
+    const before = mutationSnapshot(root);
+    assert.deepEqual(stdoutJson(runCompose(root, 'refresh', 'demo', '--json'), 2),
+      { ok: false, error: expectedFailure.error }, 'the --json failure shape is unchanged');
+    const failed = stdoutJson(runCompose(root, 'refresh', 'demo', '--envelope'), 2);
+    assert.deepEqual(failed, expectedFailure);
+    assert.deepEqual(failed, { ok: false, code: 2, mutation: 'none', error: expectedFailure.error });
+    assert.match(failed.error, /destination ownership conflict/);
+    assertMutationUnchanged(root, before);
+
+    // Remove success.
+    const removed = stdoutJson(runCompose(root, 'remove', 'demo', '--envelope'), 0);
+    assert.deepEqual(removed, cmdRemove({ root: control, name: 'demo' }));
+    assert.deepEqual(keys(removed.result), ['files', 'removed']);
+
+    // Add failure: the retained foreign instruction still blocks a new install.
+    const addFailure = stdoutJson(runCompose(root, 'add', 'demo', '--envelope'), 2);
+    assert.deepEqual(addFailure, await addPack(control, 'demo'));
+    assert.deepEqual(keys(addFailure), ['code', 'error', 'ok']);
+    assert.equal(addFailure.code, 2);
+    assert.match(addFailure.error, /already exists as a core, project, or foreign artifact/);
+
+    // The flag is a usage error outside the three result-bearing operations.
+    for (const command of ['list', 'status', 'verify']) {
+      assert.deepEqual(stdoutJson(runCompose(root, command, '--envelope'), 1), {
+        ok: false, code: 1, error: '--envelope is only supported by add, remove, and refresh',
+      });
+    }
+    const help = runCompose(root, '--help');
+    assert.equal(help.status, 0);
+    assert.match(help.stdout, /--envelope {8}unchanged engine result envelope for add\/remove\/refresh/);
+  } finally {
+    cleanup(root);
+    cleanup(control);
+  }
+});
+
+test('T003 source Compose guidance owns Canvas permission, exact-source rechecks, result shape and failure limits', () => {
+  const text = fs.readFileSync(new URL('./SKILL.md', import.meta.url), 'utf8');
+  const section = text.split('## Canvas Pack Requests And Results\n')[1]?.split('\n## Add Flow')[0];
+  assert.ok(section, 'the shipped source skill must contain the owner handoff');
+  const prose = section.replace(/\s+/g, ' ');
+  for (const requirement of [
+    'The HTTP handler never runs Compose mutations.',
+    'The click, prepared receipt, admission, delivery, and accepted permission reply are not an Applied result.',
+    'Missing tools are a refusal, not permission to install prerequisites.',
+    'unrecorded residue do not change that set.',
+    'a later refresh prepares again and is not inherently bound to that preview.',
+    '--ref <resolved_commit>',
+    'Drift or an unprovable basis requires a fresh preview and literal confirmation.',
+    'Decline performs no pack/profile write.',
+    'result` is the complete unchanged Compose envelope.',
+    '`node .github/skills/dude-compose/compose.mjs add|remove|refresh <name> --envelope`',
+    'Forward the step 4 command\'s stdout unchanged as `result`',
+    'never upgrade uncertainty to restoration.',
+    'Never enqueue, replay, or retry that receipt.',
+    'The idea-specific capture acknowledgment and six human request classes are unchanged.',
+  ]) assert.ok(prose.includes(requirement), `missing owner contract: ${requirement}`);
+  const example = JSON.parse(section.match(/```json\n(\{\n[\s\S]*?)\n```/)[1]);
+  assert.equal(example.op, 'acknowledge');
+  assert.deepEqual(Object.keys(example.acknowledgment).sort(), [
+    'recognizes', 'receiptId', 'owner', 'operation', 'name', 'workspaceId', 'sessionId', 'providerGeneration',
+    'outcome', 'mutation', 'result', 'profileRevision', 'source', 'note',
+  ].sort());
+  assert.equal(example.acknowledgment.recognizes, 'pack_result');
+  assert.deepEqual(Object.keys(example.acknowledgment.result.result).sort(), ['added', 'files', 'origin']);
+});

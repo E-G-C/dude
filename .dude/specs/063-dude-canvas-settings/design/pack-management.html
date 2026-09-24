@@ -1,0 +1,1121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+  <title>Dude Canvas Settings — pack management design preview</title>
+  <link rel="icon" href="data:,">
+  <script>
+    // Preview-only appearance override, matching the 052/062 reference convention.
+    // No appearance preference is exposed or stored by the proposed Settings UI.
+    const appearance = window.matchMedia('(prefers-color-scheme: dark)');
+    const followHost = () => document.documentElement.classList.toggle('proto-host-dark', appearance.matches);
+    followHost();
+    appearance.addEventListener('change', followHost);
+    const previewTheme = new URLSearchParams(location.search).get('theme');
+    if (previewTheme === 'light' || previewTheme === 'dark') document.documentElement.dataset.protoTheme = previewTheme;
+  </script>
+  <!--
+    CANONICAL 063 PROPOSAL — separate pack contexts. Exploring, not approved.
+    Primary artifact: .dude/specs/063-dude-canvas-settings/design/pack-management.html
+    Prior proposals remain preserved at design/pack-management-v1.html,
+    design/pack-management-v2.html, design/pack-management-v3.html, and the
+    user-rejected combined page at design/pack-management-v4.html.
+
+    This is a self-contained design artifact, not product source or a live client.
+    There are no requests, imports, forms, storage, agent messages, or pack writes.
+    Operation buttons open LOCAL UNSENT LAYOUTS. They never change membership.
+    CSP also denies connections and form submission.
+
+    Provenance:
+      Membership, exact recorded paths, source type/location:
+        .dude/metadata/profile.md, installed map, read during this definition.
+      Complete local and remote Compose list outputs, captured by the coordinator:
+        063-discovery-local-catalog.json — origin local.
+        063-discovery-remote-catalog.json — origin
+        https://github.com/E-G-C/dude @ 80f468f281398f39b9c547f279c9ebc17bfa1308.
+      Both complete outputs are embedded below, including their source-specific
+      descriptions. They are frozen evidence, never fetched by this file.
+      LOCAL_TOOLS retains the earlier local library/packs/<name>/pack.md capture.
+      Null means that local requires.tools field was omitted, not that no tools
+      are required. This local supplement is NEVER displayed as remote evidence.
+      Remote tools, manifests, projected paths, and refresh impacts are unacquired.
+      Context counts and facets derive from complete records before pagination.
+      Loading/failure are labeled illustrations; recovery restores captured data.
+
+    Visual basis:
+      .dude/specs/052-dude-canvas-ui/design/fluent-desktop-workspace.html
+      .dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html
+      Fluent token values below are retained from these approved references.
+      Overview/WorkResults in src/extensions/dude/frontend/app.jsx and its styles
+      supply the compact header, visible controls, and bounded table rhythm.
+      references/dude-overview-user-reference.png is context only, not UI pixels.
+      Composition retains the command bar, 48/208px rail, and status bar.
+      Installed/Available are exclusive tabs, never stacked sections or an All
+      context. Both filter before five-row paging. One selected detail uses a
+      320px right pane or narrow overlay; actions remain unsent layouts.
+      The user's correction keeps the rail vertical on the left at EVERY
+      viewport/zoom, with Settings at its visible bottom. This departs from the
+      inherited 062 horizontal narrow rail without changing that reference.
+      Narrow labels open in a left-side overlay. Settings follows the WinUI
+      NavigationView footer convention. Existing work, response, capture, and
+      Review views link to the actual 062 artifact, not a second product.
+
+    Local interactions: rail expansion, context tabs, exact use-case/Clear
+    filtering, both pagers, single-selection detail, mock-only catalog scenarios,
+    unsent operations, dialog/drawer focus return, and restoring snapshots.
+    ?theme=light|dark is renderer-only, not a product setting.
+    No render, accessibility measurement, or live-operation result is claimed.
+  -->
+  <style>
+    :root {
+      --spacingHorizontalXXS: 2px; --spacingHorizontalXS: 4px;
+      --spacingHorizontalS: 8px; --spacingHorizontalM: 12px;
+      --spacingHorizontalL: 16px; --spacingHorizontalXL: 20px; --spacingHorizontalXXL: 24px;
+      --spacingVerticalXXS: 2px; --spacingVerticalXS: 4px;
+      --spacingVerticalS: 8px; --spacingVerticalM: 12px;
+      --spacingVerticalL: 16px; --spacingVerticalXL: 20px; --spacingVerticalXXL: 24px;
+      --fontSizeBase200: 12px; --fontSizeBase300: 14px; --fontSizeBase400: 16px;
+      --fontSizeBase500: 20px; --fontSizeBase600: 24px;
+      --lineHeightBase200: 16px; --lineHeightBase300: 20px; --lineHeightBase400: 22px;
+      --lineHeightBase500: 28px; --lineHeightBase600: 32px;
+      --fontWeightRegular: 400; --fontWeightSemibold: 600;
+      --fontFamilyBase: 'Segoe UI', 'Segoe UI Web (West European)', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', sans-serif;
+      --fontFamilyMonospace: Consolas, 'Courier New', Courier, monospace;
+      --borderRadiusSmall: 2px; --borderRadiusMedium: 4px; --borderRadiusLarge: 6px;
+      --strokeWidthThin: 1px; --strokeWidthThick: 2px; --strokeWidthThicker: 3px;
+      --shell-bar: 44px; --shell-rail: 48px; --shell-dock: 320px; --shell-status: 26px;
+    }
+    .theme-system, html[data-proto-theme="light"] .theme-system {
+      --colorNeutralBackground1: #ffffff; --colorNeutralBackground1Hover: #f5f5f5;
+      --colorNeutralBackground1Selected: #ebebeb; --colorSubtleBackgroundHover: #f5f5f5;
+      --colorSubtleBackgroundSelected: #ebebeb; --colorNeutralBackground2: #fafafa;
+      --colorNeutralBackground3: #f5f5f5; --colorNeutralBackground4: #f0f0f0;
+      --colorNeutralForeground1: #242424; --colorNeutralForeground2: #424242;
+      --colorNeutralForeground3: #616161; --colorNeutralForegroundOnBrand: #ffffff;
+      --colorNeutralStroke1: #d1d1d1; --colorNeutralStroke2: #e0e0e0;
+      --colorNeutralStrokeAccessible: #616161;
+      --colorBrandBackground: #0f6cbd; --colorBrandBackgroundHover: #115ea3;
+      --colorBrandForeground1: #0f6cbd; --colorBrandForeground2: #115ea3;
+      --colorCompoundBrandStroke: #0f6cbd; --colorStrokeFocus2: #000000;
+      --colorPaletteRedForeground1: #bc2f32; --colorPaletteRedBackground1: #fdf3f4;
+      --colorPaletteRedBorder2: #d13438;
+      --shadow16: 0 0 2px rgba(0,0,0,.12), 0 8px 16px rgba(0,0,0,.14);
+    }
+    .proto-host-dark .theme-system, html[data-proto-theme="dark"] .theme-system {
+      --colorNeutralBackground1: #292929; --colorNeutralBackground1Hover: #3d3d3d;
+      --colorNeutralBackground1Selected: #383838; --colorSubtleBackgroundHover: #383838;
+      --colorSubtleBackgroundSelected: #333333; --colorNeutralBackground2: #1f1f1f;
+      --colorNeutralBackground3: #141414; --colorNeutralBackground4: #0a0a0a;
+      --colorNeutralForeground1: #ffffff; --colorNeutralForeground2: #d6d6d6;
+      --colorNeutralForeground3: #adadad; --colorNeutralForegroundOnBrand: #ffffff;
+      --colorNeutralStroke1: #666666; --colorNeutralStroke2: #525252;
+      --colorNeutralStrokeAccessible: #adadad;
+      --colorBrandBackground: #115ea3; --colorBrandBackgroundHover: #0f6cbd;
+      --colorBrandForeground1: #479ef5; --colorBrandForeground2: #62abf5;
+      --colorCompoundBrandStroke: #479ef5; --colorStrokeFocus2: #ffffff;
+      --colorPaletteRedForeground1: #e37d80; --colorPaletteRedBackground1: #3b2325;
+      --colorPaletteRedBorder2: #d13438;
+      --shadow16: 0 0 2px rgba(0,0,0,.24), 0 8px 16px rgba(0,0,0,.28);
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0; height: 100vh; height: 100dvh; display: flex; flex-direction: column;
+      font: var(--fontWeightRegular) var(--fontSizeBase300)/var(--lineHeightBase300) var(--fontFamilyBase);
+      color: var(--colorNeutralForeground1); background: var(--colorNeutralBackground3);
+    }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: var(--fontSizeBase600); line-height: var(--lineHeightBase600); font-weight: var(--fontWeightSemibold); }
+    h2 { font-size: var(--fontSizeBase400); line-height: var(--lineHeightBase400); font-weight: var(--fontWeightSemibold); }
+    h3 { font-size: var(--fontSizeBase300); line-height: var(--lineHeightBase300); font-weight: var(--fontWeightSemibold); }
+    a { color: var(--colorBrandForeground1); text-underline-offset: 3px; }
+    button, select { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    :where(a, button, select, summary, [tabindex]):focus-visible {
+      outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2);
+      outline-offset: var(--spacingHorizontalXXS); border-radius: var(--borderRadiusMedium);
+    }
+    [hidden] { display: none !important; }
+    svg { width: 20px; height: 20px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+    code { font: var(--fontSizeBase200)/var(--lineHeightBase300) var(--fontFamilyMonospace); overflow-wrap: anywhere; }
+    .quiet { color: var(--colorNeutralForeground3); }
+    .caption { font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); }
+    .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+    .stack { display: flex; flex-direction: column; gap: var(--spacingVerticalM); min-width: 0; }
+    .row { display: flex; align-items: center; gap: var(--spacingHorizontalS); flex-wrap: wrap; min-width: 0; }
+    .between { justify-content: space-between; }
+    .button {
+      display: inline-flex; align-items: center; justify-content: center; gap: var(--spacingHorizontalS);
+      min-height: 32px; padding: var(--spacingVerticalXS) var(--spacingHorizontalM);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground1);
+      color: var(--colorNeutralForeground1); text-decoration: none; font-weight: var(--fontWeightSemibold);
+    }
+    .button:hover { background: var(--colorNeutralBackground1Hover); }
+    .button:disabled { cursor: default; color: var(--colorNeutralForeground3); background: var(--colorNeutralBackground2); }
+    .subtle { border-color: transparent; background: transparent; }
+    .subtle:hover { background: var(--colorSubtleBackgroundHover); }
+    .primary { background: var(--colorBrandBackground); border-color: var(--colorBrandBackground); color: var(--colorNeutralForegroundOnBrand); }
+    .primary:hover { background: var(--colorBrandBackgroundHover); }
+    .icon-button { width: 32px; height: 32px; min-width: 32px; padding: 4px; }
+    .badge {
+      display: inline-flex; align-items: center; padding: 2px 6px; border: 1px solid var(--colorNeutralStroke2);
+      border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground2);
+      color: var(--colorNeutralForeground2); font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200);
+    }
+    .proto {
+      flex: 0 0 auto; padding: var(--spacingVerticalXS) var(--spacingHorizontalS);
+      /* Supplementary explanation yields height to the essential rail targets. */
+      max-height: 20dvh; overflow-y: auto;
+      background: var(--colorNeutralBackground4); color: var(--colorNeutralForeground2);
+      border-bottom: var(--strokeWidthThick) dashed var(--colorNeutralStrokeAccessible);
+    }
+    .proto p { margin-top: var(--spacingVerticalXS); max-width: 110ch; }
+    .proto > details > summary { font-size: var(--fontSizeBase200); font-weight: var(--fontWeightSemibold); }
+    .prototype-content { padding: var(--spacingVerticalS) var(--spacingHorizontalS); }
+    .skip-link { position: absolute; left: 8px; top: -80px; z-index: 20; }
+    .skip-link:focus { top: 8px; }
+    #app { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; background: var(--colorNeutralBackground1); }
+    .command-bar {
+      flex: 0 0 auto; display: flex; align-items: center; gap: var(--spacingHorizontalM);
+      min-height: var(--shell-bar); padding: var(--spacingVerticalXS) var(--spacingHorizontalL);
+      border-bottom: 1px solid var(--colorNeutralStroke2);
+    }
+    .brand { font-weight: var(--fontWeightSemibold); font-size: var(--fontSizeBase400); }
+    .bar-rule { width: 1px; align-self: stretch; margin-block: 4px; background: var(--colorNeutralStroke2); }
+    .finder-reference { justify-content: flex-start; min-width: 0; max-width: 420px; flex: 1 1 200px; }
+    .finder-reference span { overflow-wrap: anywhere; }
+    .reload { margin-inline-start: auto; flex-shrink: 0; }
+    .shell-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: row; }
+    .rail {
+      flex: 0 0 var(--shell-rail); width: var(--shell-rail); display: flex; flex-direction: column;
+      min-height: 0; align-items: center; padding: var(--spacingVerticalS) var(--spacingHorizontalS);
+      background: var(--colorNeutralBackground2); border-inline-end: 1px solid var(--colorNeutralStroke2);
+      gap: var(--spacingVerticalL);
+    }
+    .rail > .icon-button { flex-shrink: 0; }
+    .navigation-items { display: flex; flex-direction: column; gap: var(--spacingVerticalXS); width: 100%; flex: 1; min-height: 0; }
+    .work-destinations { display: flex; flex-direction: column; gap: var(--spacingVerticalXS); min-height: 0; overflow-y: auto; }
+    /* Only the work links scroll in a short rail; the Settings footer stays put.
+       The inset leaves room for keyboard focus without widening the icon rail. */
+    .rail .work-destinations { width: calc(100% + 16px); margin-inline: -8px; padding: 4px 8px; scrollbar-width: none; }
+    .nav-item {
+      display: flex; align-items: center; gap: var(--spacingHorizontalS); min-height: 32px; min-width: 32px;
+      flex-shrink: 0;
+      padding: 5px; border: 1px solid transparent; border-radius: var(--borderRadiusMedium);
+      text-decoration: none; color: var(--colorNeutralForeground2); background: transparent;
+    }
+    .nav-item:hover { background: var(--colorSubtleBackgroundHover); }
+    .nav-label { display: none; min-width: 0; overflow-wrap: anywhere; }
+    .settings-footer { flex-shrink: 0; margin-top: auto; padding-top: var(--spacingVerticalS); border-top: 1px solid var(--colorNeutralStroke2); }
+    .nav-item[aria-current="page"] {
+      position: relative; color: var(--colorBrandForeground1); background: var(--colorSubtleBackgroundSelected);
+    }
+    .nav-item[aria-current="page"]::before {
+      content: ""; position: absolute; left: -5px; top: 6px; bottom: 6px;
+      width: var(--strokeWidthThicker); background: var(--colorCompoundBrandStroke); border-radius: var(--borderRadiusSmall);
+    }
+    #app.rail-expanded .rail { flex-basis: 208px; width: 208px; align-items: stretch; }
+    #app.rail-expanded .nav-label, .dialog-nav .nav-label { display: inline; }
+    .nav-reference { margin-inline-start: auto; font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground3); }
+    .product { display: flex; min-width: 0; min-height: 0; flex: 1; overflow-wrap: anywhere; }
+    .workspace { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1; min-height: 0; min-width: 0; }
+    .workspace.has-details { grid-template-columns: minmax(0, 1fr) var(--shell-dock); }
+    main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .packs-heading { display: flex; align-items: center; gap: var(--spacingHorizontalS); flex-shrink: 0; padding: 4px 16px; }
+    .packs-heading h1 { font-size: var(--fontSizeBase500); line-height: var(--lineHeightBase500); }
+    .context-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex-shrink: 0; max-width: 360px; border-bottom: 1px solid var(--colorNeutralStroke2); }
+    .context-tab { display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; min-height: 36px; padding: 4px 8px; border: 0; border-bottom: 3px solid transparent; color: var(--colorNeutralForeground2); background: transparent; }
+    .context-tab:hover { background: var(--colorSubtleBackgroundHover); }
+    .context-tab[aria-selected="true"] { color: var(--colorBrandForeground1); border-bottom-color: var(--colorCompoundBrandStroke); font-weight: var(--fontWeightSemibold); }
+    .tab-count { font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); }
+    #pack-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+    .catalog-controls { display: grid; grid-template-columns: auto minmax(0, 280px) auto; align-items: center; gap: 8px; flex-shrink: 0; padding: 8px 16px; border-bottom: 1px solid var(--colorNeutralStroke2); }
+    .catalog-controls label { font-weight: var(--fontWeightSemibold); }
+    .catalog-controls select { min-width: 0; margin: 0; }
+    #clear-filter { justify-self: start; }
+    .proto select { min-width: 0; }
+    #results-scroll { flex: 1; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; }
+    #pack-table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+    #pack-table th { position: sticky; top: 0; z-index: 1; text-align: left; font-weight: var(--fontWeightRegular); background: var(--colorNeutralBackground2); }
+    #pack-table th, #pack-table td { padding: 6px 16px; border-bottom: 1px solid var(--colorNeutralStroke2); overflow-wrap: anywhere; vertical-align: middle; }
+    #pack-table th:first-child { width: 45%; }
+    .pack-row { cursor: pointer; }
+    .pack-row:hover { background: var(--colorNeutralBackground1Hover); }
+    .pack-row.selected { background: var(--colorNeutralBackground1Selected); }
+    .pack-open { display: block; min-height: 32px; width: 100%; padding: 4px; border: 0; border-radius: var(--borderRadiusMedium); text-align: left; font: inherit; font-weight: var(--fontWeightSemibold); color: var(--colorBrandForeground1); background: transparent; overflow-wrap: anywhere; }
+    .pack-tags { color: var(--colorNeutralForeground2); }
+    #catalog-message { padding: 16px; }
+    #tag-coverage { padding: 4px 8px; color: var(--colorNeutralForeground3); }
+    .catalog-pager { display: flex; align-items: center; gap: 8px; flex-shrink: 0; padding: 4px 16px; border-top: 1px solid var(--colorNeutralStroke2); background: var(--colorNeutralBackground2); }
+    .pager-metrics { flex: 1; min-width: 0; text-align: center; }
+    .pager-metrics p { font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); }
+    .pager-button { flex-shrink: 0; }
+    .pack-actions { display: flex; gap: var(--spacingHorizontalS); flex-wrap: wrap; }
+    .description { color: var(--colorNeutralForeground2); }
+    details { min-width: 0; }
+    summary { cursor: pointer; min-height: 28px; padding-block: var(--spacingVerticalXS); color: var(--colorBrandForeground1); }
+    dl { display: grid; grid-template-columns: minmax(92px, .45fr) minmax(0, 1fr); gap: var(--spacingVerticalS) var(--spacingHorizontalM); margin: 0; }
+    dt { color: var(--colorNeutralForeground3); }
+    dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+    .file-list { padding-inline-start: var(--spacingHorizontalXL); margin: var(--spacingVerticalS) 0 0; }
+    .file-list li + li { margin-top: var(--spacingVerticalXS); }
+    .flow { padding-inline-start: var(--spacingHorizontalXL); margin-bottom: 0; }
+    .flow li + li { margin-top: var(--spacingVerticalM); }
+    .notice { padding: var(--spacingVerticalM) var(--spacingHorizontalM); border: 1px dashed var(--colorNeutralStrokeAccessible); background: var(--colorNeutralBackground2); overflow-wrap: anywhere; }
+    .status-bar {
+      flex: 0 0 auto; min-height: var(--shell-status);
+      max-height: 20dvh; overflow-y: auto;
+      padding: var(--spacingVerticalXS) var(--spacingHorizontalM); border-top: 1px solid var(--colorNeutralStroke2);
+      background: var(--colorNeutralBackground2); color: var(--colorNeutralForeground2);
+      font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200);
+    }
+    dialog {
+      color: var(--colorNeutralForeground1); background: var(--colorNeutralBackground1);
+      border: 1px solid var(--colorNeutralStrokeAccessible); border-radius: var(--borderRadiusLarge);
+      box-shadow: var(--shadow16); padding: var(--spacingVerticalXXL) var(--spacingHorizontalXXL);
+      width: min(620px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto;
+    }
+    dialog::backdrop { background: rgba(0,0,0,.4); }
+    .dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--spacingHorizontalM); }
+    .dialog-header h2 { font-size: var(--fontSizeBase500); line-height: var(--lineHeightBase500); overflow-wrap: anywhere; }
+    #operation-dialog > .stack { gap: var(--spacingVerticalL); }
+    select { display: block; width: 100%; min-height: 32px; margin-top: 4px; padding: 4px 8px; border: 1px solid var(--colorNeutralStrokeAccessible); border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground1); }
+    .state-layout { padding: var(--spacingVerticalM) var(--spacingHorizontalM); border-inline-start: 3px solid var(--colorCompoundBrandStroke); background: var(--colorNeutralBackground2); }
+    .state-layout[data-tone="error"] { border-color: var(--colorPaletteRedBorder2); background: var(--colorPaletteRedBackground1); }
+    .state-layout[data-tone="error"] h3 { color: var(--colorPaletteRedForeground1); }
+    .state-layout p { margin-top: var(--spacingVerticalS); }
+    .dialog-footer { padding-top: var(--spacingVerticalM); border-top: 1px solid var(--colorNeutralStroke2); display: flex; justify-content: flex-end; }
+    #nav-dialog { position: fixed; margin: 0; left: 0; top: 0; width: 260px; max-width: calc(100vw - 16px); height: 100dvh; max-height: 100dvh; padding: 12px; border-radius: 0; }
+    #nav-dialog[open] { display: flex; flex-direction: column; }
+    #nav-dialog > .row, #nav-dialog > p { flex-shrink: 0; }
+    #dialog-navigation { display: flex; flex: 1; min-height: 0; }
+    .dialog-nav { margin-top: var(--spacingVerticalM); min-height: 0; }
+    #pack-details { position: static; margin: 0; padding: 0; width: var(--shell-dock); max-width: none; height: 100%; max-height: none; min-height: 0; overflow: hidden; border: 0; border-inline-start: 1px solid var(--colorNeutralStroke2); border-radius: 0; box-shadow: none; }
+    #pack-details[open] { display: flex; flex-direction: column; }
+    #pack-details:modal { position: fixed; inset: 0 0 0 auto; width: min(420px, calc(100vw - 16px)); height: 100dvh; max-height: 100dvh; border: 1px solid var(--colorNeutralStrokeAccessible); box-shadow: var(--shadow16); }
+    .pack-detail-header { display: flex; align-items: flex-start; gap: 8px; flex-shrink: 0; padding: 12px; border-bottom: 1px solid var(--colorNeutralStroke2); }
+    .pack-detail-heading { flex: 1; min-width: 0; }
+    .pack-detail-heading h2 { overflow-wrap: anywhere; }
+    #pack-detail-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
+    #pack-details dl { grid-template-columns: 1fr; gap: 4px; }
+    #pack-details dd + dt { margin-top: 8px; }
+    .pack-detail-footer { flex-shrink: 0; padding: 8px 12px; border-top: 1px solid var(--colorNeutralStroke2); }
+    @media (max-width: 1099px) {
+      .workspace.has-details { grid-template-columns: minmax(0, 1fr); }
+      /* A top operation modal may defer the native pane-to-drawer transition. */
+      #pack-details[open] { position: fixed; inset: 0 0 0 auto; width: min(420px, calc(100vw - 16px)); height: 100dvh; max-height: 100dvh; }
+    }
+    @media (max-width: 719px) {
+      /* Narrowing changes label disclosure, never the rail's side or direction.
+         Keep the viewport-sized shell; the content pane owns list scrolling. */
+      .command-bar { gap: 8px; padding-inline: 12px; flex-wrap: wrap; }
+      .brand-sub, .reload-label { display: none; }
+      .finder-reference { flex-basis: 150px; }
+      .reload { width: 32px; height: 32px; padding: 4px; }
+      #app.rail-expanded .rail .nav-label, .rail .nav-label { display: none; }
+      dl { grid-template-columns: 1fr; gap: var(--spacingVerticalXS); }
+      dd + dt { margin-top: var(--spacingVerticalS); }
+      dialog { padding: var(--spacingVerticalL) var(--spacingHorizontalL); }
+    }
+    @media (max-width: 479px) {
+      .command-bar { flex-wrap: nowrap; padding: 4px 8px; }
+      .bar-rule, .finder-label { display: none; }
+      .finder-reference { flex: 0 0 32px; width: 32px; max-width: 32px; padding: 4px; }
+      .packs-heading { padding: 2px 8px; }
+      .workspace-caption { display: none; }
+      .context-tabs { max-width: none; }
+      .context-tab { min-height: 32px; padding: 3px 1px; gap: 2px; border-bottom-width: 2px; }
+      .catalog-controls { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "label clear" "filter filter"; gap: 4px; padding: 4px 8px; }
+      .catalog-controls label { grid-area: label; font-size: var(--fontSizeBase200); }
+      #clear-filter { grid-area: clear; padding-inline: 6px; }
+      #use-case-filter { grid-area: filter; padding-inline: 4px; }
+      #pack-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+      #pack-table, #pack-table tbody, #pack-table tr, #pack-table td { display: block; }
+      #pack-table tr { border-bottom: 1px solid var(--colorNeutralStroke2); padding: 2px 8px; }
+      #pack-table td { border: 0; padding: 0; }
+      #pack-table .pack-tags { font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); padding: 0 4px 4px; }
+      .catalog-pager { padding: 4px 8px; gap: 4px; }
+      .pager-button { width: 28px; min-width: 28px; padding: 3px; }
+      .pager-label { display: none; }
+      #catalog-message { padding: 8px; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }
+    @media (forced-colors: active) { .nav-item[aria-current="page"] { outline: 2px solid Highlight; } }
+  </style>
+</head>
+<body class="theme-system">
+  <a class="skip-link button" href="#settings-title">Skip to Settings</a>
+  <section class="proto" aria-label="Design preview, outside the product UI">
+    <details id="mock-catalog-controls">
+      <summary>063 preview · exploring</summary>
+      <div class="prototype-content stack">
+        <p id="preview-notice" class="caption">Frozen data, not a live client. Actions open unsent layouts only. This proposal is not approved and changes no packs. Canvas still starts in Overview; this file opens Settings for inspection.</p>
+        <label for="catalog-scenario" class="caption">Mock-only source/state</label>
+        <select id="catalog-scenario" aria-describedby="catalog-scenario-note">
+          <option value="local">Local catalog snapshot</option>
+          <option value="remote">Remote catalog snapshot</option>
+          <option value="loading">Remote loading (illustration)</option>
+          <option value="error">Remote failure (illustration)</option>
+        </select>
+        <p id="catalog-scenario-note" class="caption">Production uses its configured source, not this selector. Reload snapshot restores embedded data, retains the pack context, and resets the filter, page, and selection. Recovery from either illustrated failure/loading state restores the remote capture locally; it never fetches.</p>
+        <p class="caption"><span id="catalog-source-kind"></span>: <code id="catalog-origin"></code></p>
+        <details id="snapshot-sources">
+          <summary>Snapshot provenance</summary>
+          <div class="stack caption">
+            <p>Membership, recorded paths, and recorded installed source come from <a href="../../../metadata/profile.md" target="_blank" rel="noopener noreferrer"><code>.dude/metadata/profile.md</code> (new tab)</a>.</p>
+            <p>Complete coordinator-captured Compose outputs are inline: <code>063-discovery-local-catalog.json</code> and <code>063-discovery-remote-catalog.json</code>. The remote origin is <code>https://github.com/E-G-C/dude @ 80f468f281398f39b9c547f279c9ebc17bfa1308</code>. This file makes no live read or configuration change.</p>
+            <p>Local tools retain the earlier <code>library/packs/&lt;name&gt;/pack.md</code> capture. Remote tools, manifest details, and operation impacts remain unacquired; local values are not substituted.</p>
+            <p id="snapshot-totals"></p>
+            <p>Recorded installed source identifies origin, not current reachability or installed-byte integrity. All metadata is inert.</p>
+          </div>
+        </details>
+        <div class="stack caption">
+          <a href="references/dude-overview-user-reference.png" target="_blank" rel="noopener noreferrer">User's Overview reference (new tab)</a>
+          <a href="../../052-dude-canvas-ui/design/fluent-desktop-workspace.html" target="_blank" rel="noopener noreferrer">052 baseline (new tab)</a>
+          <a href="../spec.md" target="_blank" rel="noopener noreferrer">063 specification (new tab)</a>
+          <p>Other rail destinations open the actual 062 reference. Use native Canvas Review to annotate this proposal; these links and layouts confer no response or approval authority.</p>
+        </div>
+      </div>
+    </details>
+  </section>
+  <div id="app">
+    <header class="command-bar">
+      <span class="brand">Dude</span><span class="brand-sub caption quiet">Workspace</span><span class="bar-rule" aria-hidden="true"></span>
+      <a class="button finder-reference" href="../../062-dude-canvas-workspace-integration/design/workspace-integration.html?view=overview" target="_blank" rel="noopener noreferrer" aria-label="Work finder in the approved 062 reference, opens a new tab">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m15.5 15.5 5 5"></path></svg>
+        <span class="finder-label">Work finder <span class="caption quiet">· 062 reference</span></span>
+      </a>
+      <button class="button subtle reload" id="reload-snapshot" type="button" aria-label="Reload captured pack data only; no workspace read">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M20 12a8 8 0 1 0-2 5"></path></svg>
+        <span class="reload-label">Reload snapshot</span>
+      </button>
+    </header>
+    <div class="shell-body">
+      <nav class="rail" aria-label="Canvas navigation">
+        <button class="button subtle icon-button" id="nav-toggle" type="button" aria-label="Expand navigation" aria-expanded="false" aria-controls="rail-items">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>
+        </button>
+        <div class="navigation-items" id="rail-items">
+          <div class="work-destinations">
+          <a class="nav-item" href="../../062-dude-canvas-workspace-integration/design/workspace-integration.html?view=overview" target="_blank" rel="noopener noreferrer" aria-label="Overview, unchanged 062 reference, opens a new tab" title="Overview · 062 reference (new tab)">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"></rect><rect x="14" y="4" width="6" height="6" rx="1"></rect><rect x="4" y="14" width="6" height="6" rx="1"></rect><rect x="14" y="14" width="6" height="6" rx="1"></rect></svg>
+            <span class="nav-label">Overview</span><span class="nav-label nav-reference">ref</span>
+          </a>
+          <a class="nav-item" href="../../062-dude-canvas-workspace-integration/design/workspace-integration.html?view=now&amp;select=062" target="_blank" rel="noopener noreferrer" aria-label="Now and Tasks, unchanged 062 reference, opens a new tab" title="Now / Tasks · 062 reference (new tab)">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="3"></circle></svg>
+            <span class="nav-label">Now</span><span class="nav-label nav-reference">ref</span>
+          </a>
+          <a class="nav-item" href="../../062-dude-canvas-workspace-integration/design/workspace-integration.html?view=needs" target="_blank" rel="noopener noreferrer" aria-label="Needs you and Review entry, unchanged 062 reference, opens a new tab" title="Needs you · 062 reference (new tab)">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-8l-6 3v-3a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"></path><path d="M7 9h10M7 13h7"></path></svg>
+            <span class="nav-label">Needs you</span><span class="nav-label nav-reference">ref</span>
+          </a>
+          <a class="nav-item" href="../../062-dude-canvas-workspace-integration/design/workspace-integration.html?view=new" target="_blank" rel="noopener noreferrer" aria-label="New idea, unchanged 062 reference, opens a new tab" title="New idea · 062 reference (new tab)">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 4v16M4 12h16"></path></svg>
+            <span class="nav-label">New idea</span><span class="nav-label nav-reference">ref</span>
+          </a>
+          </div>
+          <div class="settings-footer">
+            <button class="nav-item" type="button" data-settings aria-current="page" aria-label="Settings, current page" title="Settings">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 3-.5 2.3-1.8 1L4.5 6 2.7 9l1.7 1.6v2.8L2.7 15l1.8 3 2.2-.3 1.8 1L9 21h6l.5-2.3 1.8-1 2.2.3 1.8-3-1.7-1.6v-2.8L21.3 9l-1.8-3-2.2.3-1.8-1L15 3Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              <span class="nav-label">Settings</span>
+            </button>
+          </div>
+        </div>
+      </nav>
+      <div class="product">
+        <div class="workspace" id="pack-workspace">
+          <main id="main" aria-label="Workspace pack settings">
+            <header class="packs-heading">
+              <h1 id="settings-title" tabindex="-1">Packs</h1>
+              <span class="workspace-caption caption quiet">Workspace settings</span>
+            </header>
+            <div class="context-tabs" role="tablist" aria-label="Pack context">
+              <button class="context-tab" id="installed-tab" type="button" role="tab" data-context="installed" aria-selected="true" aria-controls="pack-panel">Installed <span id="installed-count" class="tab-count"></span></button>
+              <button class="context-tab" id="available-tab" type="button" role="tab" data-context="available" aria-selected="false" aria-controls="pack-panel" tabindex="-1">Available <span id="available-count" class="tab-count"></span></button>
+            </div>
+            <section id="pack-panel" role="tabpanel" aria-labelledby="installed-tab">
+              <div class="catalog-controls" id="pack-toolbar">
+                <label for="use-case-filter">Use case</label>
+                <select id="use-case-filter" aria-controls="pack-rows" aria-describedby="tag-coverage"></select>
+                <button class="button" id="clear-filter" type="button" aria-label="Clear use-case filter">Clear</button>
+              </div>
+              <h2 id="results-heading" class="visually-hidden" tabindex="-1">Installed packs</h2>
+              <div id="results-scroll">
+                <p id="tag-coverage" class="caption" hidden></p>
+                <div id="catalog-message" class="stack" hidden></div>
+                <table id="pack-table" role="table" aria-label="Installed packs">
+                  <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Pack</th><th role="columnheader" scope="col">Use cases</th></tr></thead>
+                  <tbody id="pack-rows" role="rowgroup"></tbody>
+                </table>
+                <noscript><p class="notice">Enable local JavaScript to inspect these embedded records. No live data is loaded.</p></noscript>
+              </div>
+              <nav id="catalog-pager" class="catalog-pager" aria-label="Pack result pages">
+                <button class="button pager-button" id="previous-page" type="button" aria-controls="pack-rows" aria-label="Previous pack page">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"></path></svg><span class="pager-label">Previous</span>
+                </button>
+                <div class="pager-metrics" role="status" aria-live="polite" aria-atomic="true">
+                  <p id="catalog-summary"></p><p id="catalog-page" class="quiet"></p>
+                </div>
+                <button class="button pager-button" id="next-page" type="button" aria-controls="pack-rows" aria-label="Next pack page">
+                  <span class="pager-label">Next</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6"></path></svg>
+                </button>
+              </nav>
+            </section>
+          </main>
+          <dialog id="pack-details" aria-labelledby="pack-detail-title" aria-describedby="pack-detail-scope">
+            <header class="pack-detail-header">
+              <div class="pack-detail-heading"><p id="pack-detail-scope" class="caption quiet"></p><h2 id="pack-detail-title"></h2></div>
+              <button class="button subtle icon-button" id="pack-detail-close" type="button" aria-label="Close pack details" autofocus>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"></path></svg>
+              </button>
+            </header>
+            <div id="pack-detail-body" class="stack"></div>
+            <footer class="pack-detail-footer"><button class="button" id="pack-detail-back" type="button">Back to results</button></footer>
+          </dialog>
+        </div>
+      </div>
+    </div>
+    <footer class="status-bar">
+      <span id="local-status" role="status" aria-live="polite" aria-atomic="true">Frozen preview. No request sent.</span>
+    </footer>
+  </div>
+  <dialog id="nav-dialog" aria-labelledby="nav-dialog-title">
+    <div class="row between"><h2 id="nav-dialog-title">Navigation</h2><button class="button subtle" type="button" id="nav-close" autofocus>Close</button></div>
+    <p class="caption quiet">Other views are 062 references, opened in a new tab.</p>
+    <nav id="dialog-navigation" aria-label="Expanded Canvas navigation"></nav>
+  </dialog>
+  <dialog id="operation-dialog" aria-labelledby="request-title" aria-describedby="request-boundary">
+    <div class="stack">
+      <div class="dialog-header"><div class="stack"><span class="badge">UNSENT DESIGN LAYOUT</span><h2 id="request-title"></h2></div><button class="button subtle" type="button" id="request-close" autofocus>Close</button></div>
+      <p id="request-boundary" class="notice">Local explanation only. No request, confirmation, receipt, or owner result exists for this preview.</p>
+      <dl id="request-facts"></dl>
+      <section class="stack" aria-labelledby="impact-title"><h3 id="impact-title">What Dude must preview</h3><div id="request-impact" class="stack"></div></section>
+      <div>
+        <label for="request-state">Inspect a state layout <span class="caption quiet">(illustration, not workspace state)</span></label>
+        <select id="request-state">
+          <option value="unsent">Unsent request</option>
+          <option value="permission">Needs your confirmation</option>
+          <option value="waiting">Waiting for owner result</option>
+          <option value="busy">Request unavailable</option>
+          <option value="stale">Preview or target changed</option>
+          <option value="declined">Declined</option>
+          <option value="failed">Application failed</option>
+          <option value="uncertain">Delivery uncertain</option>
+        </select>
+      </div>
+      <section class="state-layout" id="state-layout" aria-live="polite" aria-atomic="true"><h3 id="state-heading"></h3><p id="state-description"></p></section>
+      <details>
+        <summary>Production handoff, not implemented in this file</summary>
+        <ol class="flow">
+          <li>The explicit pack action requests the selected operation from the same active Dude session, after its idle, identity, queue, and receipt checks.</li>
+          <li>Dude prepares current effects and uses the existing Needs You permission flow. Clicking the pack action does not supply literal confirmation.</li>
+          <li>Only the owner executes the existing pack engine. Applied requires its successful result and a fresh authoritative installed-state read. Failed or uncertain delivery is never automatically retried.</li>
+        </ol>
+      </details>
+      <div class="dialog-footer"><button class="button primary" type="button" id="request-done">Return to packs</button></div>
+    </div>
+  </dialog>
+  <script type="application/json" id="profile-snapshot">
+  {
+    "installed": {
+      "authoring": {
+        "files": [
+          ".github/agents/dude-pack-authoring-agent-smith.agent.md",
+          ".github/agents/dude-pack-authoring-instruction-smith.agent.md",
+          ".github/agents/dude-pack-authoring-pack-smith.agent.md",
+          ".github/agents/dude-pack-authoring-prompt-smith.agent.md",
+          ".github/agents/dude-pack-authoring-skill-smith.agent.md",
+          ".github/skills/dude-pack-authoring-instruction-conventions",
+          ".github/skills/dude-pack-authoring-pack-conventions",
+          ".github/skills/dude-pack-authoring-prompt-conventions"
+        ],
+        "source": { "type": "local", "location": "/Users/eg/work/dude/library/packs" }
+      },
+      "clearline": {
+        "files": [
+          ".github/agents/dude-pack-clearline-stylist.agent.md",
+          ".github/prompts/dude-pack-clearline-apply-visual-system.prompt.md",
+          ".github/skills/dude-pack-clearline-visual"
+        ],
+        "source": { "type": "local", "location": "/Users/eg/work/dude/library/packs" }
+      },
+      "coding": {
+        "files": [
+          ".github/agents/dude-pack-coding-architect.agent.md",
+          ".github/agents/dude-pack-coding-coder.agent.md",
+          ".github/agents/dude-pack-coding-reviewer.agent.md",
+          ".github/agents/dude-pack-coding-tester.agent.md",
+          ".github/instructions/dude-pack-coding-engineering-standards.instructions.md",
+          ".github/instructions/dude-pack-coding-host-controls.instructions.md",
+          ".github/skills/dude-pack-coding-spec-artifacts"
+        ],
+        "source": { "type": "local", "location": "/Users/eg/work/dude/library/packs" }
+      },
+      "design": {
+        "files": [
+          ".github/skills/dude-pack-design-frontend-aesthetics",
+          ".github/skills/dude-pack-design-workflow"
+        ],
+        "source": { "type": "local", "location": "/Users/eg/work/dude/library/packs" }
+      },
+      "fluent-ui": {
+        "files": [".github/agents/dude-pack-fluent-ui-specialist.agent.md"],
+        "source": { "type": "local", "location": "/Users/eg/work/dude/library/packs" }
+      },
+      "release": {
+        "files": [
+          ".github/agents/dude-pack-release-manager.agent.md",
+          ".github/skills/dude-pack-release-pipeline-parity",
+          ".github/skills/dude-pack-release-tag-driven-versioning",
+          ".github/skills/dude-pack-release-writeback-via-pr"
+        ],
+        "source": { "type": "local", "location": "/Users/eg/work/dude/library/packs" }
+      },
+      "rubber-duck": {
+        "files": [".github/agents/dude-pack-rubber-duck-retrospective.agent.md"],
+        "source": { "type": "local", "location": "/Users/eg/work/dude/library/packs" }
+      },
+      "strata": {
+        "files": [
+          ".github/agents/dude-pack-strata-stylist.agent.md",
+          ".github/prompts/dude-pack-strata-apply-visual-system.prompt.md",
+          ".github/skills/dude-pack-strata-visual"
+        ],
+        "source": { "type": "local", "location": "/Users/eg/work/dude/library/packs" }
+      },
+      "writing": {
+        "files": [
+          ".github/skills/dude-pack-writing-avoid-ai-tropes",
+          ".github/skills/dude-pack-writing-style"
+        ],
+        "source": { "type": "local", "location": "/Users/eg/work/dude/library/packs" }
+      }
+    }
+  }
+  </script>
+  <script type="application/json" id="local-catalog-snapshot">
+  {
+    "ok": true,
+    "packs": [
+      {"name":"authoring","installed":true,"description":"Bundle-authoring specialists — expert smiths for creating agents, skills, instructions, prompts, and packs. Dev tooling for building and maintaining Dude bundles.","use_cases":["bundle-authoring"]},
+      {"name":"beads","installed":false,"description":"Current-only tracked execution via Beads for canonical .dude/specs features, with exact-owner import, Beads-authoritative work, and a one-way tasks.md mirror.","use_cases":["work-tracking"]},
+      {"name":"clearline","installed":true,"description":"Framework-agnostic visual system for interfaces, graphics, documents, and slides: calm neutrals, four accents, Inter typography, an 8-point grid with 4-point half steps, a shared left edge, and an optional project-supplied mark.","use_cases":["ui","visual-design"]},
+      {"name":"coding","installed":true,"description":"Software-development specialists for implementation, architecture, testing, and independent code review, with shared engineering standards.","use_cases":["software-development"]},
+      {"name":"copilot-sdk","installed":false,"description":"GitHub Copilot SDK specialist for SDK app architecture, hooks, custom agents, MCP, skills, authentication, deployment, and Rust integration.","use_cases":["software-development"]},
+      {"name":"design","installed":true,"description":"A visual design-proposal lane: mood, layout, look-and-feel, mockups, surface design, brand direction, preview approval, and applying an approved visual spec — overlaid on the task/verification lifecycle.","use_cases":["ui","visual-design"]},
+      {"name":"docsy","installed":false,"description":"Docsy Hugo theme specialist: install paths, content authoring, theme customization, shortcodes, search/i18n/versioning, deployment, and AI-agent support.","use_cases":["documentation","web-development"]},
+      {"name":"fluent-ui","installed":true,"description":"Fluent UI React v9 specialist for design system compliance, component selection, theming, layout patterns, and accessible UI composition.","use_cases":["ui"]},
+      {"name":"hugo","installed":false,"description":"Hugo site architecture, templates, asset pipeline, migration, and troubleshooting specialists for Hugo static sites.","use_cases":["web-development"]},
+      {"name":"newsroom","installed":false,"description":"Turn transcripts, notes, and calendar invites into Hugo news articles and events: a newsroom writer + event deep-fetcher, with article, calendar-event, and static-safe-time skills.","use_cases":["web-development","writing"]},
+      {"name":"practices","installed":false,"description":"Engineering-practice workflows. Currently: tests-first (TDD) implementation discipline.","use_cases":["software-development"]},
+      {"name":"release","installed":true,"description":"Release engineering specialist + skills for tag-driven versioning, GitHub Actions / Azure Pipelines parity, and protected-branch version write-back.","use_cases":["release-management"]},
+      {"name":"rubber-duck","installed":true,"description":"Read-only, non-authoritative retrospective for successful feature and Ship completion.","use_cases":["retrospective"]},
+      {"name":"rust","installed":false,"description":"Rust specialist for Cargo workspaces, async/concurrency, ownership-heavy code, performance work, and Tauri desktop/mobile backends.","use_cases":["software-development"]},
+      {"name":"strata","installed":true,"description":"Layered visual system for interfaces, graphics, data visualization, and documents: one structural language with two colour palettes, plane-and-rule elevation with no drop shadows, working UI type scale, 4/8 spacing, motion, and measured accessibility — in CSS, SCSS, JSON, and Tailwind, with a folder-local token validator.","use_cases":["ui","visual-design"]},
+      {"name":"technical-docs","installed":false,"description":"Create or update traceable technical documents from software repositories, source code, configuration, tests, transcripts, notes, drafts, and existing Markdown. Scales beyond the context window with an evidence ledger, incremental drafting, and coverage and lint gates.","use_cases":["documentation","writing"]},
+      {"name":"web","installed":false,"description":"Backend and frontend specialist agents for web application work (APIs, services, persistence + UI, components, accessibility).","use_cases":["api","ui","web-development"]},
+      {"name":"writing","installed":true,"description":"Write plain, concise, actionable documents, feature definitions, and user replies, and remove common AI writing tells.","use_cases":["writing"]}
+    ],
+    "enabled_packs":["authoring","clearline","coding","design","fluent-ui","release","rubber-duck","strata","writing"],
+    "origin":"local"
+  }
+  </script>
+  <script type="application/json" id="remote-catalog-snapshot">
+  {
+    "ok": true,
+    "packs": [
+      {"name":"authoring","installed":true,"description":"Bundle-authoring specialists — expert smiths for creating agents, skills, instructions, prompts, and packs. Dev tooling for building and maintaining Dude bundles.","use_cases":["bundle-authoring"]},
+      {"name":"beads","installed":false,"description":"Current-only tracked execution via Beads for canonical .dude/specs features, with exact-owner import, Beads-authoritative work, and a one-way tasks.md mirror.","use_cases":["work-tracking"]},
+      {"name":"clearline","installed":true,"description":"Framework-agnostic visual system for interfaces, graphics, documents, and slides: calm neutrals, four accents, Inter typography, an 8-point grid with 4-point half steps, a shared left edge, and an optional project-supplied mark.","use_cases":["ui","visual-design"]},
+      {"name":"coding","installed":true,"description":"Software-development specialists for implementation, architecture, testing, and independent code review, with shared engineering standards.","use_cases":["software-development"]},
+      {"name":"copilot-sdk","installed":false,"description":"GitHub Copilot SDK specialist for SDK app architecture, hooks, custom agents, MCP, skills, authentication, deployment, and Rust integration.","use_cases":["software-development"]},
+      {"name":"design","installed":true,"description":"A visual design-proposal lane: mood, layout, look-and-feel, mockups, surface design, brand direction, preview approval, and applying an approved visual spec — overlaid on the task/verification lifecycle.","use_cases":["ui","visual-design"]},
+      {"name":"docsy","installed":false,"description":"Docsy Hugo theme specialist: install paths, content authoring, theme customization, shortcodes, search/i18n/versioning, deployment, and AI-agent support.","use_cases":["documentation","web-development"]},
+      {"name":"fluent-ui","installed":true,"description":"Fluent UI React v9 specialist for design system compliance, component selection, theming, layout patterns, and accessible UI composition.","use_cases":["ui"]},
+      {"name":"hugo","installed":false,"description":"Hugo site architecture, templates, asset pipeline, migration, and troubleshooting specialists for Hugo static sites.","use_cases":["web-development"]},
+      {"name":"newsroom","installed":false,"description":"Turn transcripts, notes, and calendar invites into Hugo news articles and events: a newsroom writer + event deep-fetcher, with article, calendar-event, and static-safe-time skills.","use_cases":["web-development","writing"]},
+      {"name":"practices","installed":false,"description":"Engineering-practice workflows. Currently: tests-first (TDD) implementation discipline.","use_cases":["software-development"]},
+      {"name":"release","installed":true,"description":"Release engineering specialist + skills for tag-driven versioning, GitHub Actions / Azure Pipelines parity, and protected-branch version write-back.","use_cases":["release-management"]},
+      {"name":"rubber-duck","installed":true,"description":"Read-only, non-authoritative retrospective for successful feature and Ship completion.","use_cases":["retrospective"]},
+      {"name":"rust","installed":false,"description":"Rust specialist for Cargo workspaces, async/concurrency, ownership-heavy code, performance work, and Tauri desktop/mobile backends.","use_cases":["software-development"]},
+      {"name":"strata","installed":true,"description":"Layered visual system for interfaces, graphics, data visualization, and documents: one structural language with two colour palettes, plane-and-rule elevation with no drop shadows, working UI type scale, 4/8 spacing, motion, and measured accessibility — in CSS, SCSS, JSON, and Tailwind, with a folder-local token validator.","use_cases":["ui","visual-design"]},
+      {"name":"technical-docs","installed":false,"description":"Create or update traceable technical documents from software repositories, source code, configuration, tests, transcripts, notes, drafts, and existing Markdown. Scales beyond the context window with an evidence ledger, incremental drafting, and coverage and lint gates.","use_cases":["documentation","writing"]},
+      {"name":"web","installed":false,"description":"Backend and frontend specialist agents for web application work (APIs, services, persistence + UI, components, accessibility).","use_cases":["api","ui","web-development"]},
+      {"name":"writing","installed":true,"description":"Write clear, professional, actionable prose and remove common AI writing tells from human-facing content.","use_cases":["writing"]}
+    ],
+    "enabled_packs":["authoring","clearline","coding","design","fluent-ui","release","rubber-duck","strata","writing"],
+    "origin":"https://github.com/E-G-C/dude @ 80f468f281398f39b9c547f279c9ebc17bfa1308"
+  }
+  </script>
+  <script>
+    'use strict';
+    const LOCAL_CATALOG = JSON.parse(document.getElementById('local-catalog-snapshot').textContent);
+    const REMOTE_CATALOG = JSON.parse(document.getElementById('remote-catalog-snapshot').textContent);
+    // Separate local-manifest evidence, never a remote catalog field.
+    const LOCAL_TOOLS = {
+      authoring: [], beads: ['bd'], clearline: null, coding: [], 'copilot-sdk': null,
+      design: null, docsy: ['hugo'], 'fluent-ui': null, hugo: ['hugo'], newsroom: ['hugo'],
+      practices: null, release: null, 'rubber-duck': [], rust: ['cargo'], strata: null,
+      'technical-docs': [], web: null, writing: null,
+    };
+    const INSTALLED = JSON.parse(document.getElementById('profile-snapshot').textContent).installed;
+    const PAGE_SIZE = 5;
+    const catalogScenario = document.getElementById('catalog-scenario');
+    const useCaseFilter = document.getElementById('use-case-filter');
+    const clearFilter = document.getElementById('clear-filter');
+    const packDetails = document.getElementById('pack-details');
+    const packWorkspace = document.getElementById('pack-workspace');
+    const detailNarrow = window.matchMedia('(max-width: 1099px)');
+    let activeContext = 'installed';
+    let currentPage = 1;
+    let selectedPackName = null;
+    let detailReturn = null;
+    const status = document.getElementById('local-status');
+    const operationDialog = document.getElementById('operation-dialog');
+    const requestState = document.getElementById('request-state');
+    let operationReturn = null;
+
+    function textElement(tag, text, className = '') {
+      const element = document.createElement(tag);
+      element.textContent = text;
+      if (className) element.className = className;
+      return element;
+    }
+    function fact(list, label, content) {
+      const term = textElement('dt', label);
+      const value = document.createElement('dd');
+      value.append(typeof content === 'string' ? document.createTextNode(content) : content);
+      list.append(term, value);
+    }
+    function currentCatalog() {
+      return catalogScenario.value === 'local' ? LOCAL_CATALOG
+        : catalogScenario.value === 'remote' ? REMOTE_CATALOG : null;
+    }
+    function scenarioSource() {
+      return catalogScenario.value === 'local' ? LOCAL_CATALOG.origin : REMOTE_CATALOG.origin;
+    }
+    function catalogReference(name) {
+      const catalog = currentCatalog();
+      if (!catalog) return 'Catalog record unavailable in this illustrated read state.';
+      if (!catalog.packs.some(pack => pack.name === name)) return 'No record in the captured catalog.';
+      if (catalogScenario.value === 'remote') return `Captured remote catalog entry: ${name}. Manifest details not acquired.`;
+      const link = textElement('a', `library/packs/${name}/pack.md (new tab)`);
+      link.href = `../../../../library/packs/${name}/pack.md`;
+      link.target = '_blank'; link.rel = 'noopener noreferrer';
+      return link;
+    }
+    function declaredTools(name) {
+      if (catalogScenario.value !== 'local') return 'Not acquired from the remote catalog capture; local declarations are not substituted.';
+      if (!Object.hasOwn(LOCAL_TOOLS, name)) return 'Not acquired in the local manifest capture.';
+      const tools = LOCAL_TOOLS[name];
+      return tools === null ? 'Field not declared; prerequisites are not established here.'
+        : tools.length ? `${tools.join(', ')} — declared, availability not checked.`
+          : 'Empty tools declaration; this preview checks no tools.';
+    }
+    function recordedPaths(entry) {
+      const disclosure = document.createElement('details');
+      disclosure.append(textElement('summary', `Recorded paths (${entry.files.length})`));
+      const files = document.createElement('ul'); files.className = 'file-list';
+      entry.files.forEach(path => {
+        const item = document.createElement('li');
+        item.append(textElement('code', path)); files.append(item);
+      });
+      disclosure.append(files);
+      return disclosure;
+    }
+    function requestButton(operation, name) {
+      const labels = { install: 'Install…', remove: 'Remove…', refresh: 'Refresh pack…' };
+      const button = textElement('button', labels[operation], 'button');
+      button.type = 'button'; button.dataset.operation = operation; button.dataset.pack = name;
+      button.setAttribute('aria-label', `Preview ${operation} request for ${name}; nothing is sent`);
+      button.setAttribute('aria-describedby', 'preview-notice');
+      button.addEventListener('click', () => openRequest(operation, name, button));
+      return button;
+    }
+    function contextLabel() { return activeContext === 'installed' ? 'Installed' : 'Available'; }
+    function viewModel() {
+      const catalog = currentCatalog();
+      const entries = activeContext === 'installed'
+        ? Object.entries(INSTALLED).map(([name, entry]) => ({
+          name, entry, metadata: catalog?.packs.find(pack => pack.name === name),
+        }))
+        : catalog ? catalog.packs.filter(pack => !Object.hasOwn(INSTALLED, pack.name))
+          .map(metadata => ({ name: metadata.name, entry: null, metadata })) : null;
+      if (!entries) return { catalog, entries: null, matches: null, rows: [], unknownTags: 0, pageCount: null, offset: 0 };
+      const unknownTags = entries.filter(pack => !pack.metadata).length;
+      // Filter the entire authority-backed context, not a previously sliced page.
+      const matches = entries.filter(pack => !useCaseFilter.value || pack.metadata?.use_cases.includes(useCaseFilter.value));
+      const pageCount = Math.ceil(matches.length / PAGE_SIZE);
+      currentPage = Math.max(1, Math.min(currentPage, pageCount || 1));
+      const offset = (currentPage - 1) * PAGE_SIZE;
+      return { catalog, entries, matches, rows: matches.slice(offset, offset + PAGE_SIZE), unknownTags, pageCount, offset };
+    }
+    function rowTrigger(name) {
+      return document.querySelector(`#pack-rows [data-open-pack="${CSS.escape(name)}"]`);
+    }
+    function markSelection() {
+      document.querySelectorAll('#pack-rows .pack-row').forEach(row => {
+        const selected = row.dataset.pack === selectedPackName && packDetails.open;
+        row.classList.toggle('selected', selected);
+        row.querySelector('.pack-open').setAttribute('aria-expanded', String(selected));
+      });
+    }
+    function closePackDetails(restoreFocus = true) {
+      detailReturn = restoreFocus && selectedPackName ? { context: activeContext, name: selectedPackName } : null;
+      selectedPackName = null;
+      if (operationDialog.open) { operationReturn = null; operationDialog.close(); }
+      packWorkspace.classList.remove('has-details');
+      document.getElementById('pack-detail-body').replaceChildren();
+      delete packDetails.dataset.pack;
+      if (packDetails.open) packDetails.close();
+      markSelection();
+    }
+    function syncDetailPresentation(focus = false) {
+      // An operation is the top layer; reconcile the underlying pane on return.
+      if (!selectedPackName || operationDialog.open) return;
+      const modal = detailNarrow.matches;
+      if (packDetails.open && packDetails.matches(':modal') !== modal) packDetails.close();
+      packWorkspace.classList.toggle('has-details', !modal);
+      if (!packDetails.open) {
+        if (modal) packDetails.showModal();
+        else packDetails.show();
+      }
+      markSelection();
+      if (focus) document.getElementById('pack-detail-close').focus();
+    }
+    function openPackDetails(name) {
+      const pack = viewModel().rows.find(row => row.name === name);
+      if (!pack) { status.textContent = 'That pack is no longer on the visible page.'; return; }
+      selectedPackName = name; detailReturn = null;
+      packDetails.dataset.pack = name;
+      document.getElementById('pack-detail-title').textContent = name;
+      document.getElementById('pack-detail-scope').textContent = `${contextLabel()} · Workspace scope · Captured`;
+      const body = document.getElementById('pack-detail-body'); body.replaceChildren();
+      body.append(textElement('p', pack.metadata ? pack.metadata.description
+        : 'Catalog description unavailable. The installed record remains readable.', 'description'));
+      const actions = document.createElement('div'); actions.className = 'pack-actions';
+      (pack.entry ? ['refresh', 'remove'] : ['install']).forEach(operation => actions.append(requestButton(operation, name)));
+      body.append(actions, textElement('p', 'Actions preview an unsent Dude request. They do not apply changes or give consent.', 'caption quiet'));
+      const fields = document.createElement('dl');
+      fact(fields, 'Use cases', pack.metadata ? pack.metadata.use_cases.join(', ') || 'None declared' : 'Unavailable from this catalog read');
+      fact(fields, 'Current catalog origin', textElement('code', scenarioSource()));
+      fact(fields, 'Catalog record', catalogReference(name));
+      fact(fields, 'Declared tools', declaredTools(name));
+      if (pack.entry) {
+        fact(fields, 'Recorded installed source', pack.entry.source.type);
+        fact(fields, 'Recorded location', textElement('code', pack.entry.source.location));
+        fact(fields, 'Membership authority', '.dude/metadata/profile.md');
+      } else {
+        fact(fields, 'Projected files', 'Unacquired; Dude must preview current effects before asking for consent.');
+      }
+      body.append(fields);
+      if (pack.entry) body.append(recordedPaths(pack.entry));
+      body.append(textElement('p', 'Recorded origin is not a reachability or installed-byte check. This file uses frozen snapshots only.', 'caption quiet'));
+      syncDetailPresentation(true);
+      status.textContent = `Inspecting ${name}. No request sent.`;
+    }
+    function packRow(pack) {
+      const row = document.createElement('tr'); row.className = 'pack-row'; row.dataset.pack = pack.name;
+      row.setAttribute('role', 'row');
+      const identity = document.createElement('td');
+      identity.setAttribute('role', 'cell');
+      const button = textElement('button', pack.name, 'pack-open');
+      button.type = 'button'; button.dataset.openPack = pack.name;
+      button.setAttribute('aria-label', `Open ${contextLabel().toLowerCase()} pack ${pack.name} details`);
+      button.setAttribute('aria-controls', 'pack-details'); button.setAttribute('aria-expanded', 'false');
+      identity.append(button);
+      const tags = textElement('td', pack.metadata
+        ? pack.metadata.use_cases.join(', ') || 'None declared' : 'Unavailable', 'pack-tags');
+      tags.setAttribute('role', 'cell');
+      row.append(identity, tags);
+      row.addEventListener('click', () => openPackDetails(pack.name));
+      button.addEventListener('keydown', event => {
+        const keys = ['ArrowUp', 'ArrowDown', 'Home', 'End'];
+        if (!keys.includes(event.key)) return;
+        const buttons = [...document.querySelectorAll('#pack-rows .pack-open')];
+        const index = buttons.indexOf(button);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+          : Math.max(0, Math.min(buttons.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
+        event.preventDefault(); buttons[next].focus();
+      });
+      return row;
+    }
+    function renderContext() {
+      const model = viewModel();
+      if (selectedPackName && !model.rows.some(pack => pack.name === selectedPackName)) closePackDetails(false);
+      const catalog = model.catalog;
+      const installedTotal = Object.keys(INSTALLED).length;
+      const availableTotal = catalog ? catalog.packs.filter(pack => !Object.hasOwn(INSTALLED, pack.name)).length : null;
+      document.getElementById('installed-count').textContent = String(installedTotal);
+      const availableCount = document.getElementById('available-count');
+      availableCount.textContent = availableTotal === null ? '?' : String(availableTotal);
+      availableCount.title = availableTotal === null ? 'Available count unknown' : `${availableTotal} available packs`;
+      document.querySelectorAll('.context-tab[data-context]').forEach(tab => {
+        const current = tab.dataset.context === activeContext;
+        const count = tab.dataset.context === 'installed' ? installedTotal : availableTotal;
+        tab.setAttribute('aria-selected', String(current)); tab.tabIndex = current ? 0 : -1;
+        tab.setAttribute('aria-label', `${tab.dataset.context === 'installed' ? 'Installed' : 'Available'}, ${count === null ? 'count unknown' : `${count} packs`}`);
+      });
+      document.getElementById('pack-panel').setAttribute('aria-labelledby', `${activeContext}-tab`);
+      document.getElementById('pack-panel').dataset.context = activeContext;
+      document.getElementById('pack-panel').dataset.coverage = model.entries ? 'captured'
+        : catalogScenario.value === 'loading' ? 'loading' : 'failed';
+      document.getElementById('results-heading').textContent = `${contextLabel()} pack results`;
+      document.getElementById('pack-table').setAttribute('aria-label', `${contextLabel()} packs`);
+      useCaseFilter.disabled = !catalog;
+      useCaseFilter.title = catalog ? useCaseFilter.value || 'All use cases'
+        : 'Catalog tags unavailable; installed records remain readable in All.';
+      clearFilter.disabled = !useCaseFilter.value;
+      const rows = document.getElementById('pack-rows'); rows.replaceChildren();
+      const message = document.getElementById('catalog-message'); message.replaceChildren(); message.hidden = true;
+      const coverage = document.getElementById('tag-coverage');
+      coverage.hidden = !model.unknownTags || !useCaseFilter.value;
+      coverage.textContent = model.unknownTags ? catalog
+        ? `${model.unknownTags} installed records have unknown tags${useCaseFilter.value ? '; only known matches are shown' : ''}.`
+        : 'Catalog tags unavailable.' : '';
+      const summary = document.getElementById('catalog-summary');
+      const pageLabel = document.getElementById('catalog-page');
+      const previous = document.getElementById('previous-page'), next = document.getElementById('next-page');
+      previous.disabled = true; next.disabled = true;
+      previous.setAttribute('aria-label', `Previous ${activeContext} pack page`);
+      next.setAttribute('aria-label', `Next ${activeContext} pack page`);
+      document.getElementById('snapshot-totals').textContent = catalog
+        ? `${installedTotal} installed; ${catalog.packs.length} catalog records; ${availableTotal} available. Context totals are independent of filtering and paging.`
+        : `${installedTotal} installed records are readable; catalog and Available totals are unknown in this illustration.`;
+      if (!model.entries) {
+        summary.textContent = 'Unknown'; pageLabel.textContent = 'Unavailable';
+        summary.removeAttribute('title');
+        summary.setAttribute('aria-label', 'Available result count unknown; catalog coverage is unavailable.');
+        pageLabel.setAttribute('aria-label', 'Page count unavailable');
+        message.hidden = false;
+        message.append(textElement('h3', catalogScenario.value === 'loading' ? 'Catalog loading' : 'Catalog unavailable'),
+          textElement('p', 'Illustration only. Installed records remain readable in Installed. Reload snapshot restores captured remote data locally; no fetch runs.'));
+      } else {
+        model.rows.forEach(pack => rows.append(packRow(pack)));
+        summary.textContent = model.matches.length
+          ? `${model.offset + 1}-${Math.min(model.offset + PAGE_SIZE, model.matches.length)} of ${model.matches.length}`
+          : '0 matches';
+        summary.title = `${model.matches.length} ${useCaseFilter.value && model.unknownTags ? 'known ' : ''}matches of ${model.entries.length} ${activeContext} packs`;
+        summary.setAttribute('aria-label', `${summary.textContent}. ${summary.title}.`);
+        pageLabel.textContent = model.pageCount ? `${currentPage} / ${model.pageCount}` : 'No pages';
+        pageLabel.setAttribute('aria-label', model.pageCount ? `Page ${currentPage} of ${model.pageCount}` : 'No result pages');
+        previous.disabled = currentPage <= 1;
+        next.disabled = !model.pageCount || currentPage >= model.pageCount;
+        if (!model.matches.length) {
+          message.hidden = false;
+          message.append(textElement('h3', useCaseFilter.value ? `No matching ${activeContext} packs` : `No ${activeContext} packs`),
+            textElement('p', useCaseFilter.value ? 'Use Clear to return to All use cases.' : 'This is a confirmed empty context in the captured data.'));
+        }
+      }
+      document.getElementById('pack-table').hidden = !model.rows.length;
+      markSelection();
+    }
+    function renderSnapshot() {
+      closePackDetails(false); currentPage = 1;
+      const catalog = currentCatalog();
+      useCaseFilter.replaceChildren();
+      const all = textElement('option', 'All use cases'); all.value = ''; useCaseFilter.append(all);
+      if (catalog) [...new Set(catalog.packs.flatMap(pack => pack.use_cases))].sort().forEach(tag => {
+        const option = textElement('option', tag); option.value = tag; useCaseFilter.append(option);
+      });
+      useCaseFilter.value = '';
+      document.getElementById('catalog-origin').textContent = scenarioSource();
+      document.getElementById('catalog-source-kind').textContent = catalogScenario.value === 'local'
+        ? 'Captured local source' : catalogScenario.value === 'remote' ? 'Captured remote source'
+          : catalogScenario.value === 'loading' ? 'Illustrated remote loading' : 'Illustrated remote failure';
+      renderContext(); document.getElementById('results-scroll').scrollTop = 0;
+    }
+
+    const STATES = {
+      unsent: ['Unsent request layout', 'In production, this pack action would request Dude to prepare the selected change. This preview cannot establish session eligibility and sends nothing. The request itself is not permission to apply.', 'normal'],
+      permission: ['Needs your confirmation — illustration', 'Dude would show fresh affected targets, their revisions, consequences, and the exact literal confirmation here through Needs You. Those current values are not acquired in this preview. No confirmation input or consent is accepted.', 'normal'],
+      waiting: ['Waiting for owner result — illustration', 'A delivered request or an accepted answer would still not mean Applied. The interface must wait for the exact owner result and a fresh authoritative installed-state read. This preview has neither.', 'normal'],
+      busy: ['Request unavailable — illustration', 'A busy session, live waiter, queued chat input, unreconciled receipt, or changed identity would refuse a new request. Nothing would be queued or automatically retried. No such live condition has been observed by this file.', 'normal'],
+      stale: ['Preview or target changed — illustration', 'If reviewed source, installed state, or affected targets changed, Dude would stop and request a fresh impact preview and literal confirmation. Earlier consent would not transfer.', 'normal'],
+      declined: ['Declined — illustration only', 'After a real decline, the request would not authorize any pack write. This is explanatory copy, not a recorded user choice or a claim that an operation was attempted.', 'normal'],
+      failed: ['Application failed — illustration only', 'The real result must distinguish no change, verified restoration after a caught failure, and uncertain state. It cannot promise recovery from process or machine failure. No failure or restoration has been observed here.', 'error'],
+      uncertain: ['Delivery uncertain — illustration only', 'If delivery could not be established, the request would not be replayed. Dude would need to reconcile it. Current installed membership alone cannot prove which request caused a change.', 'error'],
+    };
+    function renderState() {
+      const [heading, description, tone] = STATES[requestState.value];
+      document.getElementById('state-heading').textContent = heading;
+      document.getElementById('state-description').textContent = description;
+      document.getElementById('state-layout').dataset.tone = tone;
+    }
+    function openRequest(operation, name, trigger) {
+      const allowed = activeContext === 'installed' ? ['refresh', 'remove'] : ['install'];
+      if (selectedPackName !== name || !allowed.includes(operation) || !viewModel().rows.some(pack => pack.name === name)) {
+        status.textContent = 'Select a current pack before previewing its operation.'; return;
+      }
+      operationReturn = trigger;
+      operationDialog.dataset.operation = operation; operationDialog.dataset.pack = name;
+      const verb = { install: 'Install', remove: 'Remove', refresh: 'Refresh' }[operation];
+      document.getElementById('request-title').textContent = `${verb} ${name}`;
+      const facts = document.getElementById('request-facts'); facts.replaceChildren();
+      fact(facts, 'Scope', 'This workspace, not the selected feature');
+      fact(facts, 'Pack', name);
+      fact(facts, 'Catalog record', catalogReference(name));
+      fact(facts, 'Owner', 'Dude in the same active session, in the planned production flow');
+      const impact = document.getElementById('request-impact'); impact.replaceChildren();
+      const entry = INSTALLED[name];
+      if (operation === 'install') {
+        impact.append(textElement('p', 'Dude must show the current source, projected artifacts, required tools, and any destination conflict before asking for confirmation. No install preview has been run here.'),
+          textElement('p', `Declared tools: ${declaredTools(name)}`, 'caption quiet'));
+      } else if (operation === 'remove') {
+        impact.append(textElement('p', 'Only the exact recorded safe paths may be removed. These captured paths are context, not deletion authority; Dude must revalidate current membership, ownership, and revisions.'),
+          recordedPaths(entry),
+          textElement('p', 'Unrecorded residue and unrelated files are outside this deletion set.', 'caption quiet'));
+      } else {
+        impact.append(textElement('p', 'Refresh can overwrite edits to generated installed files. Keep persistent customization under dude-local-*.', 'notice'));
+        const changes = document.createElement('dl');
+        ['Replaced paths', 'Added paths', 'Removed paths'].forEach(label => fact(changes, label, 'Not acquired; requires a current Compose refresh preview.'));
+        impact.append(changes, recordedPaths(entry),
+          textElement('p', 'A refresh preview is neither consent nor an apply token. Changed source, state, or targets require fresh confirmation.', 'caption quiet'));
+      }
+      requestState.value = 'unsent'; renderState();
+      operationDialog.showModal();
+      document.getElementById('request-close').focus();
+      status.textContent = `Showing an unsent ${operation} layout for ${name}. Nothing sent.`;
+    }
+    requestState.addEventListener('change', renderState);
+    document.getElementById('request-close').addEventListener('click', () => operationDialog.close());
+    document.getElementById('request-done').addEventListener('click', () => operationDialog.close());
+    operationDialog.addEventListener('close', () => {
+      syncDetailPresentation();
+      if (operationReturn?.isConnected && operationReturn.getClientRects().length) operationReturn.focus();
+      status.textContent = 'Layout closed. Captured membership unchanged; no request sent.';
+    });
+    function dismissOnBackdrop(dialog, dismiss = () => dialog.close()) {
+      dialog.addEventListener('click', event => {
+        if (event.target !== dialog) return;
+        const box = dialog.getBoundingClientRect();
+        if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dismiss();
+      });
+    }
+    dismissOnBackdrop(operationDialog);
+    // The v1 keyDown/keyUp traces reached BODY after each modal's final control.
+    // Loop only the known Tab boundaries; leave interior focus, native inertness,
+    // Escape, and dismissal alone. These endpoints are stable in both layouts.
+    function loopDialogTabEdges(dialog, first, last) {
+      dialog.addEventListener('keydown', event => {
+        if (!dialog.open || !dialog.matches(':modal') || event.key !== 'Tab' || event.defaultPrevented
+          || event.altKey || event.ctrlKey || event.metaKey) return;
+        if (document.activeElement !== (event.shiftKey ? first : last)) return;
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      });
+    }
+    loopDialogTabEdges(operationDialog, document.getElementById('request-close'), document.getElementById('request-done'));
+    loopDialogTabEdges(packDetails, document.getElementById('pack-detail-close'), document.getElementById('pack-detail-back'));
+    document.getElementById('pack-detail-close').addEventListener('click', () => closePackDetails());
+    document.getElementById('pack-detail-back').addEventListener('click', () => closePackDetails());
+    packDetails.addEventListener('cancel', event => { event.preventDefault(); closePackDetails(); });
+    packDetails.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !packDetails.matches(':modal')) {
+        event.preventDefault(); event.stopPropagation(); closePackDetails();
+      }
+    });
+    packDetails.addEventListener('close', () => {
+      if (packDetails.open) return;
+      const destination = detailReturn; detailReturn = null;
+      if (destination?.context === activeContext) {
+        (rowTrigger(destination.name) || document.getElementById('results-heading')).focus();
+      }
+    });
+    dismissOnBackdrop(packDetails, () => closePackDetails());
+    detailNarrow.addEventListener('change', () => syncDetailPresentation(true));
+
+    const app = document.getElementById('app');
+    const navToggle = document.getElementById('nav-toggle');
+    const navDialog = document.getElementById('nav-dialog');
+    const narrow = window.matchMedia('(max-width: 719px)');
+    const dialogNav = document.getElementById('rail-items').cloneNode(true);
+    dialogNav.removeAttribute('id'); dialogNav.classList.add('dialog-nav');
+    document.getElementById('dialog-navigation').append(dialogNav);
+    loopDialogTabEdges(navDialog, document.getElementById('nav-close'), dialogNav.querySelector('[data-settings]'));
+    let expanded = false;
+    let navReturn = navToggle;
+    function syncNavigation() {
+      app.classList.toggle('rail-expanded', !narrow.matches && expanded);
+      navToggle.setAttribute('aria-expanded', String(narrow.matches ? navDialog.open : expanded));
+      navToggle.setAttribute('aria-controls', narrow.matches ? 'nav-dialog' : 'rail-items');
+      navToggle.setAttribute('aria-label', narrow.matches ? 'Open labeled navigation' : expanded ? 'Collapse navigation' : 'Expand navigation');
+    }
+    navToggle.addEventListener('click', () => {
+      if (narrow.matches) {
+        navReturn = navToggle;
+        navDialog.showModal();
+        document.getElementById('nav-close').focus();
+      } else expanded = !expanded;
+      syncNavigation();
+    });
+    document.getElementById('nav-close').addEventListener('click', () => navDialog.close());
+    navDialog.addEventListener('close', () => {
+      syncNavigation();
+      navReturn.focus();
+      navReturn = navToggle;
+    });
+    dismissOnBackdrop(navDialog);
+    narrow.addEventListener('change', () => {
+      if (navDialog.open) navDialog.close();
+      syncNavigation();
+    });
+    document.querySelectorAll('[data-settings]').forEach(button => button.addEventListener('click', () => {
+      const heading = document.getElementById('settings-title');
+      if (navDialog.open) { navReturn = heading; navDialog.close(); }
+      else heading.focus();
+      status.textContent = 'Settings. Workspace scope; no feature selection changed.';
+    }));
+    dialogNav.querySelectorAll('a').forEach(link => link.addEventListener('click', () => navDialog.close()));
+    catalogScenario.addEventListener('change', () => {
+      renderSnapshot();
+      status.textContent = catalogScenario.value === 'loading' ? 'Illustrated catalog loading. No fetch is running.'
+        : catalogScenario.value === 'error' ? 'Illustrated catalog failure. Installed records remain readable.'
+          : 'Captured catalog selected locally. No fetch or operation.';
+    });
+    useCaseFilter.addEventListener('change', () => {
+      currentPage = 1; renderContext(); document.getElementById('results-scroll').scrollTop = 0;
+    });
+    clearFilter.addEventListener('click', () => {
+      useCaseFilter.value = ''; currentPage = 1; renderContext();
+      document.getElementById('results-scroll').scrollTop = 0; useCaseFilter.focus();
+    });
+    function switchContext(context) {
+      if (context === activeContext) return;
+      closePackDetails(false); activeContext = context; currentPage = 1; useCaseFilter.value = '';
+      renderContext(); document.getElementById('results-scroll').scrollTop = 0;
+    }
+    const contextTabs = [...document.querySelectorAll('.context-tab[data-context]')];
+    contextTabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => switchContext(tab.dataset.context));
+      tab.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? contextTabs.length - 1
+          : (index + (event.key === 'ArrowRight' ? 1 : -1) + contextTabs.length) % contextTabs.length;
+        switchContext(contextTabs[next].dataset.context); contextTabs[next].focus();
+      });
+    });
+    function movePage(delta) {
+      currentPage += delta; renderContext(); document.getElementById('results-scroll').scrollTop = 0;
+      document.getElementById('results-heading').focus();
+    }
+    document.getElementById('previous-page').addEventListener('click', () => movePage(-1));
+    document.getElementById('next-page').addEventListener('click', () => movePage(1));
+    document.getElementById('reload-snapshot').addEventListener('click', () => {
+      const recovering = !currentCatalog();
+      if (recovering) catalogScenario.value = 'remote';
+      renderSnapshot();
+      status.textContent = recovering
+        ? 'Captured remote records restored locally. No fetch, pack change, or request.'
+        : 'Captured data restored. No workspace reread, pack change, or request.';
+    });
+    renderSnapshot();
+    syncNavigation();
+  </script>
+</body>
+</html>

@@ -4,7 +4,8 @@
  *
  * Registers the single `dude` canvas, opens it on a loopback server, reads one
  * authoritative projection, serves the work and Needs You workspace, and
- * closes cleanly. The joined provider owns bounded human handoffs.
+ * closes cleanly. The joined provider owns bounded human and pack handoffs;
+ * its existing tool also receives correlated owner results, never pack writes.
  *
  * Wiring only; the loopback server lives in ./lib/canvas-server.mjs and the
  * browser entry in ./ui/index.html. `stdout` is reserved for JSON-RPC, so
@@ -47,7 +48,7 @@ const session = await joinSession({
     createCanvas({
       id: 'dude',
       displayName: 'Dude',
-      description: 'Discover recorded work, respond to current owner requests, and review canonical designs.',
+      description: 'Discover recorded work, respond to current owner requests, review canonical designs, and request owner-confirmed pack changes.',
       open: async (ctx) => {
         const target = exactTarget(ctx);
         const readInput = { root, ...(target === undefined ? {} : { target }) };

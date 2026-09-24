@@ -48,7 +48,8 @@ node .github/skills/dude-compose/compose.mjs list --use-case ui --json
 
 `--use-case <id>` matches one declared value exactly. List JSON keeps its
 existing pack fields and adds `use_cases`; a pack without a declaration returns
-`[]`.
+`[]`. Canvas Settings applies the same exact match to the complete catalog; see
+[Settings: optional packs](#settings-optional-packs).
 
 ### GitHub Issue Input
 
@@ -1006,6 +1007,79 @@ falls back to ending the spawned browser PID's process tree when bounded
 shutdown has not reaped it; a failed fallback contributes cleanup uncertainty.
 That Windows path was not exercised in the documented Darwin acceptance.
 
+#### Settings: optional packs
+
+Settings is the cog at the bottom of the left navigation rail. It manages the
+current workspace's optional packs and has no other configuration. Entering or
+leaving it keeps the selected work, task inspection, unsent answers and idea
+text, and retained Review work. Canvas still opens in Overview.
+
+While Settings is open, it reads the same authorities as `compose.mjs status`
+and `list`: the installed map in `.dude/metadata/profile.md` and the catalog.
+The catalog is the local `library/packs/` when present; otherwise it is the
+upstream source pinned in the bundle manifest. Settings has no source, ref, or
+path control. Its command-bar Refresh becomes Reload packs, which rereads pack
+information only. Reading or reloading never requests a pack change, and a
+failed or slow catalog read is reported rather than replaced with cached data.
+
+Installed and Available are separate tabs. Settings opens on Installed, All use
+cases, and page 1, with no pack selected. Tab counts are full totals: Available
+counts only catalog packs outside installed membership, and an unknown count
+shows `?`. Use case filters the complete active tab by exact declared value
+before paging, so a match on a later page is still found. Results show five
+rows per page. Changing the tab, reloading, choosing a use case, or Clear
+returns to page 1; changing the tab or reloading also resets All use cases.
+There is no free-text pack search.
+
+Choose a row, or press Enter on it, to open its details in a right-hand pane on
+wide layouts or an overlay on narrow ones. Close, Escape, or Back to results
+returns to that row. Details show the full description, use cases, and current
+catalog origin, plus an installed pack's recorded source and exact recorded
+files. A recorded source says where the files came from; it does not verify
+installed bytes. Settings does not read required tools or projected files; Dude
+shows them in its impact preview. Changing the tab or page, or reloading,
+closes the detail. A use-case change keeps it only while that pack is still
+visible.
+
+If the catalog cannot be read, Installed remains inspectable from its recorded
+names, files, and source. Available and use-case filtering are unavailable, not
+empty. An installed pack that is missing from the catalog has unknown use
+cases: it appears under All use cases, and a specific use case reports
+incomplete tag coverage instead of treating it as a nonmatch.
+
+Installed details offer Refresh pack and Remove; Available details offer
+Install. Each action is a request to Dude, not an operation. Canvas checks the
+joined workspace, session, and pack eligibility, then sends one fixed request
+for that exact operation and pack to the joined session. It refuses before
+sending while the session is busy, a request is waiting, chat input is queued,
+or an earlier capture or pack request is unreconciled. It never queues,
+retries, or resends a pack request, including after a reload or reconnect.
+Closing the request dialog or navigating away does not cancel an admitted
+request; View pack request reopens its status.
+
+Dude then follows the ordinary `dude-compose` flow. Its impact preview shows the
+install source, namespaced artifacts, destination conflicts, and required
+tools; only the pack's recorded safe files for removal; or the replaced, added,
+and removed sets for refresh. A refresh warns that installed edits can be
+overwritten; keep persistent customizations under `dude-local-*`. Dude then asks
+for permission in Needs you with an exact phrase such as `INSTALL PACK <name>`,
+`REMOVE PACK <name>`, or `REFRESH PACK <name>`. Open Needs you goes to that
+request, and Back to pack request returns to Settings. Only that literal
+confirmation consents. A decline changes nothing, and a changed source,
+installed state, or target requires a fresh preview and confirmation. Missing
+tools refuse an install; Settings never installs prerequisites.
+
+The request status separates prepared, admitted (delivery unconfirmed),
+delivered, permission requested, and waiting for the owner result. A click, a
+delivery, or an acknowledged permission reply is not Applied. Settings shows
+Applied only when Dude's result for that exact request reports success and a
+fresh read of the installed profile agrees. Declined, Failed, Unavailable,
+Stale, and Uncertain keep their meaning even if the profile later shows that
+pack. After a caught failure, the result states whether Dude verified
+restoration or the state is uncertain; neither is recovery from process or
+machine failure. After provider replacement, a reread shows current membership
+but cannot establish whether the earlier request succeeded.
+
 #### Reloading the development canvas
 
 The Canvas Refresh control rereads workspace data; it reloads neither the
@@ -1589,6 +1663,15 @@ scoped dependency prerequisites, including build parity.
 Check TAP for the named T010, T011, and T012 cases registered in these suites,
 with a nonzero executed count, zero exit status, and no required browser skips.
 A successful file wrapper or screenshots alone do not establish execution.
+
+Browser coverage is split on Windows. There, `t011-browser.test.mjs` skips the
+named case `T012 browser: published capture warnings are closed, accessible,
+and retain save-only markup`, because its test-owned failing browser uses the
+POSIX executable contract. Run that case under WSL or Docker with Linux
+Chromium, from a copy of the checkout on the Linux filesystem that has its own
+`npm ci --prefix scripts/dude-canvas-ui`. Never run it from the shared `/mnt/c`
+checkout. Accept the Windows skip only for that named case.
+
 Coverage includes 360, 768, and 1440 CSS pixels in both themes, all six request
 forms and response/coverage states, full work-finder discovery, query and scroll
 retention, late responses, the null-idle capture race, and ordinary-chat refresh
@@ -1623,11 +1706,22 @@ These Node/browser suites use SDK-session stand-ins with real provider, HTTP,
 filesystem, browser, and capture behavior. They do not establish installed CLI
 or desktop-app behavior.
 
+Settings coverage uses the same stand-ins. `browser.test.mjs` reads local and
+configured-remote catalogs; the remote case clones a disposable `file://` Git
+source, not a network host. `t011-browser.test.mjs` drives Install, Remove, and
+Refresh through the real provider, HTTP routes, and Compose commands in
+disposable bundles, while test code acts as the owner that previews, confirms,
+and acknowledges. These suites do not exercise a model-driven coordinator. The
+installed-host driver below adds one deterministic local-pack install round trip
+through the installed selected-Dude owner, exact permission, Compose, result
+acknowledgment, and authoritative provider reread. The recorded Windows run
+below executed it; macOS behavior of the current driver is unverified.
+
 ##### Installed Copilot host
 
 Invoke `scripts/dude-canvas-ui/t012-installed-host.mjs` explicitly; recursive
-`*.test.mjs` discovery does not run it. Use existing installed CLI, runtime, and
-browser artifacts:
+`*.test.mjs` discovery does not run it. Use existing installed SDK, CLI,
+runtime, and browser artifacts. On macOS:
 
 ```bash
 DUDE_COPILOT_CLI="$(command -v copilot)" \
@@ -1637,9 +1731,35 @@ DUDE_CANVAS_ARTIFACTS_DIR="/absolute/path/to/acceptance-artifacts" \
   node scripts/dude-canvas-ui/t012-installed-host.mjs
 ```
 
-The current driver loads the SDK from the fixed macOS app-bundle path
-`/Applications/GitHub Copilot.app/Contents/Resources/copilot-sdk`. It does not
-install Copilot, an SDK, or a browser. Its evidence parent receives a unique
+On Windows, from the repository root in PowerShell, with paths for the local
+install:
+
+```powershell
+$env:DUDE_COPILOT_SDK = "$env:LOCALAPPDATA\Programs\GitHub Copilot\copilot-sdk"
+$env:DUDE_COPILOT_CLI = "$env:LOCALAPPDATA\github-copilot-sdk\cli\<version>\copilot.exe"
+$env:COPILOT_CLI_RESOLVED_DIST_DIR = "$env:LOCALAPPDATA\copilot\pkg\win32-x64\<version>"
+$env:DUDE_COPILOT_RUNTIME = Join-Path $env:COPILOT_CLI_RESOLVED_DIST_DIR 'index.js'
+$env:DUDE_CANVAS_BROWSER = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+node scripts/dude-canvas-ui/t012-installed-host.mjs
+```
+
+`DUDE_COPILOT_SDK` names the directory that contains the installed SDK's
+`index.js`. `DUDE_COPILOT_RUNTIME` names the runtime `index.js`; otherwise the
+driver uses `index.js` in `COPILOT_CLI_RESOLVED_DIST_DIR`. On macOS, unset
+overrides keep the recorded defaults: the SDK at
+`/Applications/GitHub Copilot.app/Contents/Resources/copilot-sdk`, the CLI at
+`/opt/homebrew/bin/copilot`, the cached `darwin-arm64` runtime, and macOS
+Edge. On every other platform, the driver has no defaults and fails before
+startup unless each of these is named. On Windows, the CLI must be the
+`copilot.exe` launcher, not a `.cmd` or `.bat` shim. Windows sessions run in
+that launcher, as the installed app runs its CLI, so the CLI starts the Dude
+extension with the launcher's single executable rather than Node. The driver
+sets the launcher's `COPILOT_CLI_DIST_DIR` to the directory that contains the
+runtime `index.js`, so the launcher loads that runtime package instead of
+extracting another copy into each isolated profile. macOS sessions still run
+the runtime `index.js` under Node. The driver does not install Copilot, an SDK,
+or a browser. Its evidence parent, the optional
+`DUDE_CANVAS_ARTIFACTS_DIR` or the OS temporary directory, receives a unique
 `installed-host-*` directory with a manifest.
 
 The driver builds the current release into owned blank Git/non-Git fixtures,
@@ -1650,28 +1770,89 @@ profile projection/augmentation, or deselection. Dude's shipped tools explicitly
 include one `dude_needs_you` grant; Spec Lead's remain `read`/`edit`/`search`.
 
 A credential-free local deterministic model chooses actual offered `task`,
-`skill`, `create`, `view`, `edit`, `bash`, and `dude_needs_you` calls; only actual
-owner tools make post-seed canonical writes. For blank capture, Spec Lead stages
+`skill`, `create`, `view`, `edit`, `bash` (`powershell` on Windows), and
+`dude_needs_you` calls; only actual owner tools make post-seed canonical writes.
+On Windows, scripted owner commands use PowerShell quoting and its call
+operator, and scripted owner text uses the CRLF line endings that the installed
+`create` tool writes. Each Windows host gets an isolated `HOME`, `USERPROFILE`,
+`APPDATA`, `LOCALAPPDATA`, and `TEMP`/`TMP` under its disposable data directory,
+and process checks use CIM in place of `ps`. For blank capture, Spec Lead stages
 the draft, then Dude invokes the shipped first-capture publisher, rereads the
 canonical draft, and acknowledges. Two actual report/PNG replies reach original
 waiters A/B; Dude delegates B/C revisions through Spec Lead's normal
 `view`/`edit`/`view` tools, with acknowledgments and fresh requests before explicit
-approval of current C.
+approval of current C. The pack case seeds one inert local catalog pack in its
+disposable release fixture. Settings sends that exact install once; installed
+Dude reads eligibility and source, publishes literal permission, runs the
+installed Compose `add --envelope` and lint commands after consent, rereads the
+profile, and reports that Compose stdout unchanged as the owner result. The
+provider independently rereads the installed authority before the UI may show
+Applied. The scripted local model establishes
+that exact owner/tool path, not unscripted planning quality or behavior for a
+remote catalog.
+
+On Windows, every host also checks that the extension process and its parent
+run the configured launcher. Before Settings drives the pack case, the driver
+reads `GET /api/packs` from the installed extension on every platform. The read
+must return status 200 within 15 seconds with a current local catalog that
+contains the fixture pack, and the manifest records its elapsed time. That bound
+exceeds the reader's 5-second deadline plus its stop window, so a hung read
+fails the run instead of stalling it.
+
+Two bounded real-host probes run only on Windows. Each starts the launcher
+through the CLI's own extension launch contract (the
+`preloads/extension_bootstrap.mjs` argument, `COPILOT_EXTENSION_PARENT_PID`
+naming the driver, and `EXTENSION_PATH` naming the probe), then times one read
+by the installed reader in that runtime. The installed reader starts a separate
+catalog helper process for each catalog read. The reader probe reads the same
+fixture, records the runtime's `execPath` and Node version, and is the real-host
+check of that helper's launch.
+
+The stall probe points a disposable release's catalog source at a local
+`git://` peer that never answers. Git must reach the peer, and the read must end
+with `catalog_timeout` between 5 and 7.5 seconds, leaving no open connection and
+no `dude-canvas-packs-*` temporary root. Those checks show that the deadline
+stopped the helper's process tree, including the Git process that held the
+connection. None of these pack reads has run on macOS or in the embedded
+desktop panel.
+
+The catalog helper depends on the CLI's `extension_bootstrap.mjs` launch
+contract (the bootstrap's basename in `process.argv`, plus `EXTENSION_PATH` and
+`COPILOT_EXTENSION_PARENT_PID`), so re-run this driver, including its real-host
+probes, whenever the Copilot CLI version changes. A changed contract shows up in
+Settings as an ordinary `Catalog: unavailable`.
 
 The recorded 2026-09-08 run used Darwin arm64, Node 26.8.1, CLI 1.0.83-5
-(protocol 3), and Edge 133.0.3065.69. This establishes normal installed tool
-execution and Spec Lead delegation with scripted model choices, not unscripted
-remote-model reasoning. The SDK reported `ui.canvases: false`; Edge rendered the
-returned URL separately. Desktop panel chrome, embedding/sizing, theme/focus,
-and reload/Review-entry behavior still require host-only smoke after automatable
-coverage. This evidence does not verify other operating systems or browser
-versions.
+(protocol 3), and Edge 133.0.3065.69. It predates the pack case and the Windows
+port. It is not evidence that the new round trip executed, and macOS behavior
+of the current driver is unverified. An earlier 2026-09-23 Windows run passed
+the blank, pack, Review, and control cases, but it hosted the CLI runtime and
+its extensions in Node (`node.exe`), not in `copilot.exe`. It therefore missed
+the installed-host defect in which Settings reported the catalog reader as
+unavailable. The current driver's 2026-09-23 run used Windows (win32 x64), Node
+24.21.0 for the driver, and CLI 1.0.87-0 hosted by `copilot.exe`, whose
+extension runtime reported Node v24.20.0. It also used the installed Copilot
+app's SDK and Edge 154.0.4258.32. Every host ran the extension in the launcher.
+The installed extension's pack read and the reader probe both reported a
+current catalog, and the stall probe and the blank, pack, Review, and control
+cases passed. The pack case reached Applied after the provider's authoritative
+reread. Scripting dictionary evidence is Darwin-only: `/usr/bin/sdef` and
+app-bundle probing run only there. On other platforms, the manifest records an
+explicit not-applicable diagnostic in place of that evidence.
 
-The installed failure control received a matching `user.message` receipt before
-transport failure, so it stayed awaiting acknowledgment without duplicate
-submission. Pre-receipt uncertainty could not be induced in that run; the
-provider/browser negative controls cover that case, not a fresh installed
-occurrence.
+These runs establish normal installed tool execution and Spec Lead delegation
+with scripted model choices, not unscripted remote-model reasoning. In each, the
+SDK reported `ui.canvases: false`, and Edge rendered the returned URL
+separately. Desktop panel chrome, embedding/sizing, theme/focus, Settings
+presentation in the embedded panel, and reload/Review-entry behavior still
+require host-only smoke after automatable coverage. This evidence does not
+verify other operating systems or browser versions.
+
+In each recorded run, the installed failure control received a matching
+`user.message` receipt before transport failure. It stayed awaiting
+acknowledgment without duplicate submission. Pre-receipt uncertainty could not
+be induced in any run; the provider/browser negative controls cover that
+case, not a fresh installed occurrence.
 
 ### Releases and CI
 
