@@ -455,9 +455,12 @@ function trackingAbsenceIdentity(root, operation) {
             const pointer = metadata(directory, '.git');
             const match = /^gitdir: (.+)$/.exec(pointer);
             // Do not turn ambiguous drive-relative or network indirection into
-            // new filesystem probes outside the local discovery basis.
+            // new filesystem probes outside the local discovery basis. Off
+            // Windows, refuse Windows-only absolute syntax but keep the native
+            // absolute pointer that `git worktree add` writes by default.
             if (!match || /^[\\/]{2}/.test(match[1]) || /^[A-Za-z]:(?:$|[^\\/])/.test(match[1])
-              || (process.platform !== 'win32' && path.win32.isAbsolute(match[1]))) throw unavailable();
+              || (process.platform !== 'win32' && path.win32.isAbsolute(match[1])
+                && !path.posix.isAbsolute(match[1]))) throw unavailable();
             const gitDirectory = path.resolve(directory, match[1]);
             const commonDirectory = path.dirname(path.dirname(gitDirectory));
             const mainRoot = path.dirname(commonDirectory);

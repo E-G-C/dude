@@ -40,7 +40,7 @@ const BROWSER = process.env.DUDE_CANVAS_BROWSER
   ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
 const REQUIRED = process.env.DUDE_CANVAS_BROWSER_REQUIRED === '1';
 const DEADLINE = 20_000;
-const PUBLISHED_APP_SHA256 = 'd26d8ececcdf1e136538b6b9e309f5dbc95e65ab935901537b2e3e82a17286be';
+const PUBLISHED_APP_SHA256 = '503ee6224573b8624899de3670686ce758f7c91c4d338fd9c46e2eea4fcb84f5';
 
 /** @param {string|Buffer} value */
 function hash(value) {
@@ -2807,6 +2807,77 @@ function shortReviewToolbarSnapshot(page, checkpoint) {
         .find(node => /^Comments \\(\\d+\\)$/.test(node.innerText.trim()))?.innerText.trim() || null,
     };
   })()`);
+}
+
+/**
+ * Measure the Source disclosure as a reviewer meets it: the positioned surface,
+ * its own scrollport and focus, and whether revealing it grew the page. Found
+ * by its contents, so a surface that lacks the current label is still measured.
+ * @param {Cdp} page
+ */
+function sourceDisclosureSnapshot(page) {
+  return evaluate(page, `(() => {
+    const surface = [...document.querySelectorAll('.fui-PopoverSurface')]
+      .find(node => node.textContent.includes('Reviewed source') && node.getClientRects().length);
+    if (!surface) return null;
+    const root = document.documentElement;
+    const box = surface.getBoundingClientRect();
+    const view = {top:box.top + surface.clientTop};
+    view.bottom = view.top + surface.clientHeight;
+    const last = [...surface.querySelectorAll('.fui-Text')].at(-1)?.getBoundingClientRect();
+    const style = getComputedStyle(surface);
+    return {
+      label:surface.getAttribute('aria-label'),
+      placement:surface.getAttribute('data-popper-placement'),
+      box:box.toJSON(),
+      scrollTop:surface.scrollTop,
+      scrollHeight:surface.scrollHeight, clientHeight:surface.clientHeight,
+      scrollWidth:surface.scrollWidth, clientWidth:surface.clientWidth,
+      overflowY:style.overflowY, overscrollBehaviorY:style.overscrollBehaviorY,
+      focused:document.activeElement === surface,
+      focusVisible:surface.matches(':focus-visible'),
+      outline:{style:style.outlineStyle, width:style.outlineWidth, offset:style.outlineOffset},
+      focusTokens:{focus2:style.getPropertyValue('--colorStrokeFocus2').trim()},
+      withinViewport:box.left >= -1 && box.top >= -1
+        && box.right <= root.clientWidth + 1 && box.bottom <= root.clientHeight + 1,
+      lastLine:last ? {
+        top:last.top, bottom:last.bottom,
+        visible:last.top >= view.top - 1 && last.bottom <= view.bottom + 1,
+      } : null,
+      page:{
+        clientWidth:root.clientWidth, clientHeight:root.clientHeight,
+        scrollWidth:root.scrollWidth, scrollHeight:root.scrollHeight,
+        scrollX, scrollY,
+        overflow:{
+          horizontal:root.scrollWidth > root.clientWidth + 1,
+          vertical:root.scrollHeight > root.clientHeight + 1,
+        },
+      },
+    };
+  })()`);
+}
+
+/**
+ * Wait for Fluent to place the Source surface and finish its entrance motion.
+ * @param {Cdp} page
+ * @param {string} label
+ */
+async function openedSourceDisclosure(page, label) {
+  await until(async () => Boolean((await sourceDisclosureSnapshot(page))?.placement), `${label} positioned`);
+  await settleFocusPaint(page);
+  return sourceDisclosureSnapshot(page);
+}
+
+/**
+ * Close Source with Escape and wait for native focus to return to its trigger.
+ * @param {Cdp} page
+ * @param {string} label
+ */
+async function escapeSourceDisclosure(page, label) {
+  await press(page, 'Escape');
+  await until(async () => !await sourceDisclosureSnapshot(page)
+    && await evaluate(page, `document.activeElement === (${button('Source')})`),
+  `${label} Escape closes Source back to its trigger`);
 }
 
 /** Measure the revealed target, not the offscreen DOM rectangle of a scrolled tool. */
@@ -9183,6 +9254,7 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       edges: [],
       orientationReset: null,
       persistence: null,
+      panelRoundTrip: null,
       frameResizeObservations: [],
     };
     const pinningState = {
@@ -9192,6 +9264,7 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       annotatedResize: null,
       emptyReturn: null,
       genuineFrameChange: null,
+      sourceDisclosure: {unpinned: null, pinned: null},
       wheelDelivery: wheelExperiment,
     };
     context.after(() => writeEvidenceJson(output, 'short-panel-observations', {
@@ -9212,15 +9285,22 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       '[data-review-tools-menu] [role="menuitem"]'
     )].find(node => node.textContent.trim() === ${JSON.stringify(label)})`;
     const toggle = `document.querySelector('[data-review-tools] [aria-label^="Switch tools to"]')`;
+    // `offsetLeft`/`offsetTop` round a half-pixel layout box to whole pixels;
+    // Linux Chrome's font metrics give this stage a 119.5px height, so a
+    // bottom-anchored palette sits at 69.5px. Compare the painted box with the
+    // resolved used insets instead: transforms cannot change them, and on
+    // whole-pixel layouts they equal the offsets the clamp bounds use.
     const settlePalette = async () => {
       await settleFocusPaint(page);
-      await until(async () => {
-        const value = await paletteState();
-        return Math.abs(value.palette.left - (value.stage.left + value.layout.stageClientLeft
-          + value.layout.left + value.offset.x)) < 0.01
-          && Math.abs(value.palette.top - (value.stage.top + value.layout.stageClientTop
-          + value.layout.top + value.offset.y)) < 0.01;
-      }, 'painted palette agrees with its exposed layout offset');
+      await until(() => evaluate(page, `(() => {
+        const palette = document.querySelector('[data-review-tools]');
+        const stage = palette.parentElement;
+        const stageBox = stage.getBoundingClientRect(), box = palette.getBoundingClientRect();
+        const style = getComputedStyle(palette);
+        const [x, y] = palette.getAttribute('data-review-tools-offset').split(',').map(Number);
+        return Math.abs(box.left - (stageBox.left + stage.clientLeft + parseFloat(style.left) + x)) < 0.01
+          && Math.abs(box.top - (stageBox.top + stage.clientTop + parseFloat(style.top) + y)) < 0.01;
+      })()`), 'painted palette agrees with its exposed layout offset');
     };
     const waitForPaletteUncovered = () => until(() => evaluate(page, `(() => {
       const toolbar = document.querySelector('[data-review-tools] [role="toolbar"]');
@@ -9878,11 +9958,17 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       'keyboard-selected vertical tools');
     await checkpoint('keyboard-vertical');
 
+    // Take this checkpoint only once Fluent has placed Source: a page
+    // scrollbar here would narrow the still-unpinned frame it compares.
     await clickAtCurrentPosition(page, button('Source'));
+    pinningState.sourceDisclosure.unpinned =
+      await openedSourceDisclosure(page, 'Source over the unpinned short panel');
     await checkpoint('source-open');
-    await press(page, 'Escape');
-    await until(() => evaluate(page, `document.activeElement === (${button('Source')})`),
-      'Source returns focus to its trigger');
+    assert.equal(pinningState.sourceDisclosure.unpinned.withinViewport, true,
+      'Source fits the short panel');
+    assert.deepEqual(pinningState.sourceDisclosure.unpinned.page.overflow,
+      {horizontal:false, vertical:false}, 'revealing Source adds no page scrollbar');
+    await escapeSourceDisclosure(page, 'unpinned short-panel');
 
     // Arrange: select Comment with a trusted pointer and target the approved
     // mock's unique header. This first commit is the exact point where the
@@ -10661,15 +10747,56 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       chosenPointerPosition,
     };
 
-    // The parked position survives ordinary Review disclosure navigation.
+    // The parked position survives ordinary Review disclosure navigation. Keep
+    // Source open until it is placed, so the check sees a disclosure that was
+    // actually shown, then return to the parked spot once it has closed. While
+    // it is open, the pinned frame, its iframe, and the marker geometry hold;
+    // only focus moves, into Source.
+    const pinnedGeometry = ({frame, viewBox, markers, outer:{focused, ...outer}, sameIframe}) => ({
+      frame, viewBox, markers, outer, sameIframe,
+    });
+    const pinnedBeforeSource = pinnedGeometry(await pinSnapshot());
     await clickAtCurrentPosition(page, button('Source'));
-    await press(page, 'Escape');
-    await until(() => evaluate(page, `document.activeElement === (${button('Source')})`),
-      'Source closes back to its native trigger after a palette move');
+    pinningState.sourceDisclosure.pinned =
+      await openedSourceDisclosure(page, 'Source over the parked palette');
+    assert.equal(pinningState.sourceDisclosure.pinned.withinViewport, true,
+      'Source fits the short panel over the parked palette');
+    assert.deepEqual(pinningState.sourceDisclosure.pinned.page.overflow,
+      {horizontal:false, vertical:false}, 'revealing Source over a pinned frame adds no page scrollbar');
+    assert.deepEqual(pinnedGeometry(await pinSnapshot()), pinnedBeforeSource,
+      'revealing Source leaves the pinned frame, its iframe, and the marker geometry unchanged');
+    assert.deepEqual(currentWorkingState().annotations, [annotationBeforeMove],
+      'revealing Source leaves the stored annotation unchanged');
+    await escapeSourceDisclosure(page, 'parked-palette');
+    // The stage observer answers at the next rendering step after Source
+    // unmounts, before that frame paints; read the palette after it.
+    await settlePalette();
     const stayed = await paletteState();
     assert.deepEqual(stayed.offset, pointerMoved.offset);
     assert.deepEqual(stayed.palette, pointerMoved.palette);
     assert.deepEqual(stayed.frame, movableBaseline.frame);
+
+    // A narrower panel shows the parked palette clamped to the smaller stage,
+    // the way a window stays on screen. Restoring the panel restores the spot
+    // the reviewer chose instead of keeping the narrower clamp.
+    await viewport(page, 900, 'light', 300, 2);
+    await until(async () => (await paletteState()).layout.stageClientWidth
+      < movableBaseline.layout.stageClientWidth, 'narrower Review panel');
+    await settlePalette();
+    const narrowed = await paletteState();
+    assertLayoutPlacement(narrowed, 'parked palette in a narrower panel');
+    assert.equal(narrowed.offset.x, narrowed.layout.maxX,
+      'a narrower panel clamps the parked palette to its right edge');
+    await viewport(page, 1000, 'light', 300, 2);
+    await until(async () => (await paletteState()).layout.stageClientWidth
+      === movableBaseline.layout.stageClientWidth, 'Review panel restored to its original width');
+    await settlePalette();
+    const restored = await paletteState();
+    assert.deepEqual(restored.offset, pointerMoved.offset,
+      'restoring the panel returns the palette to its parked spot');
+    assert.deepEqual(restored.palette, pointerMoved.palette);
+    assert.deepEqual(restored.frame, movableBaseline.frame);
+    movementState.panelRoundTrip = {narrowed, restored};
 
     // The exact mock area hidden at home is drawable immediately after the
     // click-only move. Undo only this second box so the pre-existing history
@@ -10741,9 +10868,10 @@ test('T012 review regression: short-panel floating tools stay inside their palet
 
     // Reach the grip through native Tab order, then verify both key steps and
     // the palette-specific live region without confusing it with the workflow
-    // status region that shares role=status.
+    // status region that shares role=status. The path starts from Source.
     await clickAtCurrentPosition(page, button('Source'));
-    await press(page, 'Escape');
+    await openedSourceDisclosure(page, 'Source before the grip Tab path');
+    await escapeSourceDisclosure(page, 'grip Tab path');
     const gripTabPath = await tabToGrip();
     const keyboardBefore = await paletteState();
     assert.equal(keyboardBefore.grip.hit.every(Boolean), true);
@@ -11745,6 +11873,86 @@ test('T012 review regression: master-detail selection and focusable saved state 
       )?.getClientRects().length
         && document.activeElement === (${button('Notes and more')})`),
       `${theme} short disclosure returns native focus`);
+
+      // Source reuses that fit, so a long identity scrolls inside the surface
+      // instead of growing the page, whose scrollbar would narrow the frame.
+      // Wheel and keyboard both reach its end, and keyboard focus is painted.
+      const frameBeforeSource = await frameSnapshot();
+      await clickAtCurrentPosition(page, button('Source'));
+      const pointerSource = await openedSourceDisclosure(page, `${theme} short pointer Source`);
+      const pointerSourceShot = await captureFocusScreenshot(page, output,
+        `source-short-pointer-1000x300-dpr2-${theme}`);
+      assert.equal(pointerSource.withinViewport, true, `${theme} Source fits the 300px panel`);
+      assert.deepEqual(pointerSource.page.overflow, {horizontal:false,vertical:false},
+        `${theme} revealing Source adds no page scrollbar`);
+      assert.deepEqual(await frameSnapshot(), frameBeforeSource,
+        `${theme} revealing Source leaves the fresh reviewed frame unchanged`);
+      assert.equal(pointerSource.scrollHeight > pointerSource.clientHeight, true,
+        `${theme} short Source exposes its own scroller`);
+      assert.equal(pointerSource.scrollWidth <= pointerSource.clientWidth, true,
+        `${theme} long Source identities wrap instead of clipping`);
+      assert.equal(pointerSource.label, 'Source', `${theme} Source surface is named after its trigger`);
+      assert.equal(pointerSource.focused, true, `${theme} opening Source focuses its scrollable surface`);
+      const wheelPoint = {
+        x:pointerSource.box.left + pointerSource.box.width / 2,
+        y:pointerSource.box.top + pointerSource.box.height / 2,
+      };
+      assert.equal(await evaluate(page, `Boolean(document.elementFromPoint(${wheelPoint.x}, ${wheelPoint.y})
+        ?.closest('.fui-PopoverSurface[aria-label="Source"]'))`), true,
+      `${theme} the native wheel point lands on the Source surface`);
+      await page.send('Input.dispatchMouseEvent', {type:'mouseMoved', ...wheelPoint});
+      await page.send('Input.dispatchMouseEvent', {
+        type:'mouseWheel', ...wheelPoint, deltaX:0, deltaY:120,
+      });
+      const wheeledSource = await until(async () => {
+        const value = await sourceDisclosureSnapshot(page);
+        return value?.scrollTop > 0 ? value : null;
+      }, `${theme} native wheel scrolls Source`);
+      await pressNavigationKey(page, 'End');
+      const endedSource = await until(async () => {
+        const value = await sourceDisclosureSnapshot(page);
+        return value?.focused && value.lastLine?.visible
+          && value.scrollTop >= value.scrollHeight - value.clientHeight - 1 ? value : null;
+      }, `${theme} native End reveals the rest of Source`);
+      await pressNavigationKey(page, 'Home');
+      const homeSource = await until(async () => {
+        const value = await sourceDisclosureSnapshot(page);
+        return value?.focused && value.scrollTop <= 1 ? value : null;
+      }, `${theme} native Home returns to the start of Source`);
+      for (const [input, value] of [['wheel', wheeledSource], ['End', endedSource], ['Home', homeSource]]) {
+        assert.deepEqual(
+          {overflow:value.page.overflow, x:value.page.scrollX, y:value.page.scrollY},
+          {overflow:{horizontal:false,vertical:false}, x:0, y:0},
+          `${theme} ${input} scrolling stays inside Source`,
+        );
+      }
+      assert.deepEqual(await frameSnapshot(), frameBeforeSource,
+        `${theme} scrolling Source leaves the fresh reviewed frame unchanged`);
+      await escapeSourceDisclosure(page, `${theme} short pointer`);
+      // Enter on the returned trigger reopens Source with keyboard focus.
+      await press(page, 'Enter');
+      const keyboardSource = await openedSourceDisclosure(page, `${theme} short keyboard Source`);
+      const keyboardSourceShot = await captureFocusScreenshot(page, output,
+        `source-short-keyboard-1000x300-dpr2-${theme}`);
+      const sourceFocusPaint = focusPaintDifference(
+        pointerSourceShot, keyboardSourceShot, pointerSource, keyboardSource);
+      assert.equal(keyboardSource.focused && keyboardSource.focusVisible, true,
+        `${theme} keyboard-opened Source surface matches :focus-visible`);
+      assert.deepEqual(keyboardSource.outline, {style:'solid', width:'2px', offset:'-2px'},
+        `${theme} keyboard-focused Source uses the inset scroller focus ring`);
+      assert.ok(sourceFocusPaint.perimeterChangedPixels >= 40
+        && sourceFocusPaint.focusTokenPerimeterPixels >= 20
+        && sourceFocusPaint.maxChannelDelta >= 24,
+      `${theme} keyboard focus visibly paints the Source surface: ${JSON.stringify({
+        ...sourceFocusPaint, samples:undefined,
+      })}`);
+      await escapeSourceDisclosure(page, `${theme} short keyboard`);
+      observations.shortPanel.at(-1).source = {
+        pointer:pointerSource, pointerScreenshot:pointerSourceShot.evidence,
+        wheel:wheeledSource, end:endedSource, home:homeSource,
+        keyboard:keyboardSource, keyboardScreenshot:keyboardSourceShot.evidence,
+        focusPaint:sourceFocusPaint,
+      };
     }
     assert.deepEqual(
       shortFrames.map(frame => ({
@@ -11796,8 +12004,29 @@ test('T012 review regression: master-detail selection and focusable saved state 
     // Save markup uses Fluent's documented focusable-disabled state. Attribute
     // semantics are not accepted as proof of inactivity: native Enter, Space,
     // and pointer activation must leave the already-observed save transport and
-    // working bytes unchanged.
+    // working bytes unchanged. The traversal starts from Source, which in a
+    // normal panel shows all of itself without moving the fourteen markers.
+    const markerRects = () => evaluate(page, `[...document.querySelectorAll(
+      '.dude-review-overlay [data-annotation]'
+    )].map(node => node.getBoundingClientRect().toJSON())`);
+    const normalFrameBeforeSource = await frameSnapshot();
+    const normalMarkersBeforeSource = await markerRects();
+    const normalAnnotationsBeforeSource = workingState().annotations;
+    assert.equal(normalMarkersBeforeSource.length, 14, 'fourteen painted markers before Source opens');
     await clickAtCurrentPosition(page, button('Source'));
+    const normalSource = await openedSourceDisclosure(page, 'normal-panel Source');
+    observations.normalPanelSource = normalSource;
+    assert.equal(normalSource.withinViewport, true, 'Source fits a normal panel');
+    assert.deepEqual(normalSource.page.overflow, {horizontal:false,vertical:false},
+      'revealing Source in a normal panel adds no page scrollbar');
+    assert.deepEqual(await frameSnapshot(), normalFrameBeforeSource,
+      'revealing Source leaves the pinned reviewed frame unchanged');
+    assert.deepEqual(await markerRects(), normalMarkersBeforeSource,
+      'revealing Source leaves every painted marker in place');
+    assert.deepEqual(workingState().annotations, normalAnnotationsBeforeSource,
+      'revealing Source leaves the stored annotation geometry unchanged');
+    assert.equal(normalSource.scrollHeight <= normalSource.clientHeight && normalSource.lastLine?.visible, true,
+      'a normal panel shows the whole reviewed source identity without scrolling');
     await press(page, 'Escape');
     await settleFiniteMotion('Source disclosure close motion');
     await until(() => evaluate(page, `document.activeElement === (${button('Source')})`),

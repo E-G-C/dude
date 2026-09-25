@@ -496,6 +496,13 @@ export const useCanvasStyles = makeStyles({
   reviewBarItem: { flexShrink: 0 },
   // Exact path and revision stay one click away in an overlay, so revealing
   // them cannot resize the admitted frame or push the mock down the panel.
+  // Like Notes and more, the surface scrolls itself once Fluent caps it at the
+  // room left in a short panel: a page scrollbar would still narrow the frame.
+  // It takes focus on open, so keyboard scrolling shows where focus is.
+  sourceSurface: {
+    boxSizing: 'border-box', overflowY: 'auto', overscrollBehavior: 'contain',
+    '&:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '-2px' },
+  },
   sourceDetails: { maxWidth: '480px', display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS },
   // The stage fills the actual remaining pane, not an estimated dvh band.
   // Notices and forms live in a popover; their arrival, wrapping, or disclosure

@@ -3064,7 +3064,7 @@ test('T012 anchoring regression: nested-scroll Open comment clips then recovers 
         )));
         assert.equal(
           productAppSha256,
-          'd26d8ececcdf1e136538b6b9e309f5dbc95e65ab935901537b2e3e82a17286be',
+          '503ee6224573b8624899de3670686ce758f7c91c4d338fd9c46e2eea4fcb84f5',
           'the exact-source regression executes the current published product UI',
         );
         const exactHarnessOptions = {
@@ -5971,6 +5971,379 @@ test('T012 admission race: an old selector response cannot cross an adopted nest
             },
             trace,
           });
+        } finally {
+          if (harness) await harness.close();
+        }
+      });
+
+/**
+ * Test-owned probes for the T002 command-order regressions. The page probes are
+ * installed before the engine remounts, so their result gate is registered
+ * before the engine's own result listener. Armed with `{afterId, ordinal}`, the
+ * gate holds the ordinal-th bridge result whose id is past `afterId` and passes
+ * every other message; the test later reposts that exact result from the
+ * source frame. A frame watcher records the frame's own ResizeObserver sizes
+ * and marks the next animation frame after a change, which runs after the
+ * engine's resize frame for the same notification.
+ * @param {Awaited<ReturnType<typeof createT010ReviewHarness>>} harness
+ */
+async function t002CommandProbes(harness) {
+        const page = harness.page;
+        await evaluate(page, `(() => {
+          const gate = globalThis.__t002Gate = { rule: null, seen: 0, held: null };
+          addEventListener('message', event => {
+            const iframe = document.querySelector('.dude-review-frame iframe');
+            if (!gate.rule || gate.held || !iframe || event.source !== iframe.contentWindow
+              || event.origin !== 'null' || event.data?.type !== 'dude-review-result'
+              || !(event.data.id > gate.rule.afterId)) return;
+            gate.seen += 1;
+            if (gate.seen !== gate.rule.ordinal) return;
+            event.stopImmediatePropagation();
+            gate.held = structuredClone(event.data);
+          });
+          globalThis.__t002Arm = rule => Boolean(Object.assign(gate, { rule, seen: 0, held: null }));
+          const results = globalThis.__t002Results = {};
+          globalThis.__t002Start = (label, action) => {
+            results[label] = null;
+            window.__review.command(action).then(
+              value => { results[label] = { status: 'resolved', id: typeof value === 'string' ? value : null }; },
+              error => { results[label] = { status: 'rejected', code: error.code ?? null }; },
+            );
+            return true;
+          };
+          globalThis.__t002WatchFrame = () => {
+            globalThis.__t002FrameWatch?.observer.disconnect();
+            const watch = globalThis.__t002FrameWatch = { sizes: [], changed: false, painted: false, observer: null };
+            watch.observer = new ResizeObserver(entries => {
+              const height = entries.at(-1).contentRect.height;
+              watch.sizes.push(height);
+              if (watch.changed || watch.sizes.length < 2 || height === watch.sizes[0]) return;
+              watch.changed = true;
+              requestAnimationFrame(() => { watch.painted = true; });
+            });
+            watch.observer.observe(document.querySelector('.dude-review-frame'));
+            return true;
+          };
+          return true;
+        })()`);
+        const reopen = await harness.postJson('/api/needs-you/review/open', {
+          requestHandle: harness.record.requestHandle,
+          revision: harness.request.revision,
+          submissionId: harness.opened.submissionId,
+        });
+        assert.equal(reopen.response.status, 202);
+        await harness.mount(reopen.payload);
+        const source = await attachT010SourceFrame(harness);
+        await source.evaluate(`(() => {
+          const trace = globalThis.__t002Trace = [];
+          addEventListener('message', event => {
+            if (event.source !== parent || event.data?.type !== 'dude-review-query') return;
+            trace.push({ id: event.data.id, op: event.data.op, selector: event.data.selector ?? null });
+          });
+          return true;
+        })()`);
+        return {
+          arm: rule => evaluate(page, `__t002Arm(${JSON.stringify(rule)})`),
+          start: (label, action) => evaluate(page, `__t002Start(${JSON.stringify(label)}, ${JSON.stringify(action)})`),
+          startHeld: (rule, label, action) => evaluate(page,
+            `__t002Arm(${JSON.stringify(rule)}) && __t002Start(${JSON.stringify(label)}, ${JSON.stringify(action)})`),
+          held: description => until(() => evaluate(page, 'structuredClone(globalThis.__t002Gate.held)'), description, 3_000),
+          release: held => source.evaluate(`parent.postMessage(${JSON.stringify(held)}, '*'); true`),
+          settled: labels => until(async () => {
+            const value = await evaluate(page, 'structuredClone(globalThis.__t002Results)');
+            return labels.every(label => value[label]) ? value : null;
+          }, `settled ${labels.join(' and ')}`, 10_000),
+          traceLength: () => source.evaluate('globalThis.__t002Trace.length'),
+          trace: async (from = 0) => (await source.evaluate('structuredClone(globalThis.__t002Trace)')).slice(from),
+          state: () => evaluate(page, 'window.__review.getState()'),
+          async idle(label) {
+            await settleBrowserWork(page);
+            await until(() => evaluate(page, `(() => {
+              const state = window.__review.getState(), frame = document.querySelector('.dude-review-frame');
+              return !state.busy && state.view.viewport.width === frame.clientWidth
+                && state.view.viewport.height === frame.clientHeight;
+            })()`), `${label}: an idle review that has read the current frame size`);
+          },
+        };
+      }
+
+test('T002 a queued element choice waits for the whole command it follows', {
+        timeout: 120_000,
+        concurrency: false,
+      }, async (context) => {
+        if (!t010BrowserReady(context)) return;
+        const profileOwnership = trackT010ReviewProfiles();
+        context.after(() => profileOwnership.finish(
+          'T002 command order leaves no exact Review profile created by this test process',
+        ));
+        const evidence = createT010Evidence(context, 't002-command-order');
+        const observed = {
+          case: context.name,
+          expected: 'An element choice made while an add or an earlier choice is admitting waits for that whole command, so neither is refused as busy.',
+        };
+        context.after(() => evidence.json('command-order-result.json', observed));
+        const html = [
+          '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">',
+          '<style>html,body{margin:0;width:100%;height:100%;overflow:hidden}',
+          'button{position:absolute;top:24px;width:120px;height:40px}',
+          '#first{left:16px}#second{left:176px}#third{left:336px}</style>',
+          '<button id="first">First target</button><button id="second">Second target</button>',
+          '<button id="third">Third target</button>',
+        ].join('');
+        let harness;
+        try {
+          // Arrange: one committed box pins the viewport first, so no pin-size
+          // report can land inside the races below; #first is the chosen target.
+          harness = await createT010ReviewHarness(context, {
+            number: '768',
+            slug: 'command-order',
+            html,
+            width: 480,
+            height: 360,
+            theme: 'light',
+            profileOwnership,
+          });
+          const probes = await t002CommandProbes(harness);
+          observed.browser = harness.browser.info.Browser;
+          await harness.command({ type: 'tool', tool: 'box' });
+          const pinnedId = await harness.command({ type: 'addAtCenter' });
+          await harness.command({ type: 'element', selector: '#first' });
+
+          // Act: start the first command and hold its first view read, choose an
+          // element while that read is held, then repost the exact result from
+          // the source frame and let both commands finish.
+          const race = async (label, first, choice) => {
+            await probes.idle(label);
+            const from = await probes.traceLength();
+            const changesFrom = await evaluate(harness.page, 'window.__reviewChanges.length');
+            await probes.startHeld({ afterId: -1, ordinal: 1 }, 'first', first);
+            const held = await probes.held(`${label}: the first command's view read is held at the real bridge boundary`);
+            await probes.start('choice', choice);
+            await settleBrowserWork(harness.page);
+            const whileHeld = await probes.trace(from);
+            assert.deepEqual(whileHeld.map(({ op }) => op), ['view'],
+              `${label}: only the first command's view read is out; the choice queues without reading`);
+            assert.equal(held.id, whileHeld[0].id, `${label}: the held result answers that view read`);
+            await probes.arm(null);
+            await probes.release(held);
+            const results = await probes.settled(['first', 'choice']);
+            await probes.idle(`${label} settled`);
+            const state = await probes.state();
+            return {
+              first: results.first,
+              choice: results.choice,
+              whileHeld,
+              trace: await probes.trace(from),
+              targets: (await evaluate(harness.page,
+                'window.__reviewChanges.map(entry => entry.target?.selector ?? null)')).slice(changesFrom),
+              annotations: state.annotations.map(({ id, tool }) => ({ id, tool })),
+              target: state.target?.selector ?? null,
+              error: state.error,
+              busy: state.busy,
+              stale: state.stale,
+            };
+          };
+          observed.pinnedId = pinnedId;
+          observed.added = await race('add then choice', { type: 'addAtCenter' }, { type: 'element', selector: '#second' });
+          observed.chosen = await race('choice then choice',
+            { type: 'element', selector: '#third' }, { type: 'element', selector: '#first' });
+          observed.messages = await evaluate(harness.page, 'window.__reviewMessages.map(({ code }) => code)');
+          const { added, chosen } = observed;
+          const outcome = result => `${result.status}${result.code ? `:${result.code}` : ''}`;
+
+          // Assert: the requested box is admitted before the choice reads the
+          // view, an earlier choice applies before a later one, and nothing
+          // reports a busy refusal.
+          assert.deepEqual(
+            {
+              addAtCenter: outcome(added.first),
+              choiceAfterAdd: outcome(added.choice),
+              earlierChoice: outcome(chosen.first),
+              laterChoice: outcome(chosen.choice),
+            },
+            { addAtCenter: 'resolved', choiceAfterAdd: 'resolved', earlierChoice: 'resolved', laterChoice: 'resolved' },
+            'no command is refused while an element choice waits behind it',
+          );
+          assert.deepEqual(added.annotations, [
+            { id: pinnedId, tool: 'box' },
+            { id: added.first.id, tool: 'box' },
+          ], 'exactly the requested box is added');
+          assert.equal(added.target, '#second');
+          assert.ok(chosen.targets.lastIndexOf('#third') >= 0
+            && chosen.targets.lastIndexOf('#third') < chosen.targets.lastIndexOf('#first'),
+          `the choices apply in the order they were made: ${JSON.stringify(chosen.targets)}`);
+          assert.deepEqual(
+            { target: chosen.target, annotations: chosen.annotations.length, error: chosen.error, busy: chosen.busy, stale: chosen.stale },
+            { target: '#first', annotations: 2, error: null, busy: false, stale: false },
+          );
+          assert.equal(observed.messages.includes('review_busy'), false, 'no busy refusal is reported');
+        } finally {
+          if (harness) await harness.close();
+        }
+      });
+
+test('T002 a size reported while a command is admitting is reread after it, and a real resize still refuses', {
+        timeout: 120_000,
+        concurrency: false,
+      }, async (context) => {
+        if (!t010BrowserReady(context)) return;
+        const profileOwnership = trackT010ReviewProfiles();
+        context.after(() => profileOwnership.finish(
+          'T002 admission resize leaves no exact Review profile created by this test process',
+        ));
+        const evidence = createT010Evidence(context, 't002-admission-resize');
+        const observed = {
+          case: context.name,
+          expected: 'A real resize during an admission refuses it and is reread; the first pin\'s half-pixel resize is reread after a queued element choice instead of refusing it.',
+        };
+        context.after(() => evidence.json('admission-resize-result.json', observed));
+        const html = [
+          '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">',
+          '<style>html,body{margin:0;width:100%;height:100%;overflow:hidden}',
+          'button{position:absolute;top:24px;width:120px;height:40px}',
+          '#first{left:16px}#second{left:176px}</style>',
+          '<button id="first">First target</button><button id="second">Second target</button>',
+        ].join('');
+        let harness;
+        try {
+          harness = await createT010ReviewHarness(context, {
+            number: '769',
+            slug: 'admission-resize',
+            html,
+            width: 480,
+            height: 360,
+            theme: 'light',
+            profileOwnership,
+          });
+          const probes = await t002CommandProbes(harness);
+          observed.browser = harness.browser.info.Browser;
+          // The panel, not the engine, sets the frame's unpinned size.
+          const panel = height => evaluate(harness.page, `(() => {
+            document.querySelector('[data-t010-regression-host]').style.height = ${JSON.stringify(height)};
+            return true;
+          })()`);
+          const frame = () => evaluate(harness.page, `(() => {
+            const node = document.querySelector('.dude-review-frame');
+            return { height: node.getBoundingClientRect().height, clientHeight: node.clientHeight,
+              pinned: node.style.height || null, read: window.__review.getState().view.viewport.height };
+          })()`);
+          const watchFrame = async label => {
+            await evaluate(harness.page, '__t002WatchFrame()');
+            await until(() => evaluate(harness.page, 'globalThis.__t002FrameWatch.sizes.length > 0'),
+              `${label}: the frame size baseline`);
+          };
+          const reported = async label => {
+            await until(() => evaluate(harness.page, 'globalThis.__t002FrameWatch.painted'),
+              `${label}: the frame's size change is reported and the next frame has run`, 3_000);
+            return evaluate(harness.page, 'structuredClone(globalThis.__t002FrameWatch.sizes)');
+          };
+          const reads = rows => rows.map(({ op, selector }) => (selector ? `${op} ${selector}` : op));
+          const summary = state => ({
+            target: state.target?.selector ?? null,
+            annotations: state.annotations.map(({ id, tool }) => ({ id, tool })),
+            error: state.error?.code ?? null,
+            busy: state.busy,
+            stale: state.stale,
+          });
+
+          // Arrange: a chosen target and an unpinned frame half a pixel off its
+          // whole-pixel read, the layout T002 met on Linux.
+          await harness.command({ type: 'element', selector: '#first' });
+          await panel('calc(100vh + 2.5px)');
+          await probes.idle('half-pixel panel');
+          observed.halfPixel = await frame();
+          assert.deepEqual(
+            { fraction: observed.halfPixel.height % 1, pinned: observed.halfPixel.pinned },
+            { fraction: 0.5, pinned: null },
+            `the unpinned frame is a half pixel off its read size: ${JSON.stringify(observed.halfPixel)}`,
+          );
+
+          // Act 1: hold Add comment's element read, its last read before it is
+          // admitted, and really shorten the panel meanwhile.
+          await watchFrame('real resize');
+          const realFrom = await probes.traceLength();
+          await probes.startHeld({ afterId: -1, ordinal: 4 }, 'comment', { type: 'addComment' });
+          const heldComment = await probes.held('the Add comment element read is held');
+          await panel('calc(100vh - 18px)');
+          const realSizes = await reported('real resize');
+          const realWhileHeld = await probes.trace(realFrom);
+          await probes.arm(null);
+          await probes.release(heldComment);
+          const realResult = (await probes.settled(['comment'])).comment;
+          await probes.idle('after the real resize');
+          observed.real = { sizes: realSizes, whileHeld: realWhileHeld, result: realResult,
+            frame: await frame(), state: summary(await probes.state()), trace: await probes.trace(realFrom) };
+          assert.deepEqual(reads(realWhileHeld.slice(0, 4)), ['view', 'selector #first', 'view', 'selector #first']);
+          assert.equal(heldComment.id, realWhileHeld[3].id, 'the held result is the Add comment element read');
+          assert.deepEqual([realSizes[0], realSizes.at(-1)], [observed.halfPixel.height, 340],
+            'the panel really shortened the frame');
+          assert.equal(realResult.status, 'rejected', `a real resize refuses the older admission: ${JSON.stringify(realResult)}`);
+          assert.deepEqual(
+            { annotations: observed.real.state.annotations, stale: observed.real.state.stale,
+              pinned: observed.real.frame.pinned, read: observed.real.frame.read },
+            { annotations: [], stale: false, pinned: null, read: 340 },
+            'nothing is admitted and the new size is reread',
+          );
+
+          // Act 2: restore the half-pixel panel, hold Add at center's first view
+          // read, and choose #second while it is held. The next three results are
+          // the add's target check and settle read, then the choice's first read:
+          // hold that one while the pin's half-pixel resize is reported and the
+          // engine's resize frame runs, then release it.
+          await panel('calc(100vh + 2.5px)');
+          await probes.idle('half-pixel panel again');
+          observed.beforePin = await frame();
+          assert.deepEqual({ fraction: observed.beforePin.height % 1, pinned: observed.beforePin.pinned },
+            { fraction: 0.5, pinned: null });
+          await harness.command({ type: 'tool', tool: 'box' });
+          await watchFrame('first pin');
+          const pinFrom = await probes.traceLength();
+          await probes.startHeld({ afterId: -1, ordinal: 1 }, 'add', { type: 'addAtCenter' });
+          const heldAdd = await probes.held('the Add at center view read is held');
+          await probes.start('choice', { type: 'element', selector: '#second' });
+          await settleBrowserWork(harness.page);
+          const queued = await probes.trace(pinFrom);
+          assert.deepEqual(reads(queued), ['view'], 'the choice queues without reading while the add read is held');
+          await probes.arm({ afterId: heldAdd.id, ordinal: 3 });
+          await probes.release(heldAdd);
+          const heldChoice = await probes.held('the queued choice view read is held');
+          observed.add = (await probes.settled(['add'])).add;
+          assert.equal(observed.add.status, 'resolved',
+            `the first annotation is admitted while the choice waits: ${JSON.stringify(observed.add)}`);
+          observed.pinSizes = await reported('first pin');
+          observed.pinWhileHeld = await probes.trace(pinFrom);
+          assert.deepEqual([observed.pinSizes[0], observed.pinSizes.at(-1)],
+            [observed.beforePin.height, observed.beforePin.clientHeight], 'pinning reports its half-pixel resize');
+          assert.deepEqual(reads(observed.pinWhileHeld), ['view', 'selector #first', 'view', 'view'],
+            'only the choice read is out while the pin resize is reported');
+          assert.equal(heldChoice.id, observed.pinWhileHeld[3].id, 'the held result is the choice view read');
+          await probes.arm(null);
+          await probes.release(heldChoice);
+          observed.choice = (await probes.settled(['add', 'choice'])).choice;
+          await probes.idle('after the pin');
+          observed.afterPin = { frame: await frame(), state: summary(await probes.state()), trace: await probes.trace(pinFrom) };
+          observed.messages = await evaluate(harness.page, 'window.__reviewMessages.map(({ code }) => code)');
+
+          // Assert: the choice applies over the admitted, pinned box, and the
+          // reported size is still reread, after the choice.
+          assert.equal(observed.choice.status, 'resolved',
+            `the queued choice is not refused by the pin's resize reread: ${JSON.stringify(observed.choice)}`);
+          assert.deepEqual(observed.afterPin.state, {
+            target: '#second',
+            annotations: [{ id: observed.add.id, tool: 'box' }],
+            error: null,
+            busy: false,
+            stale: false,
+          });
+          assert.deepEqual(
+            { pinned: observed.afterPin.frame.pinned, clientHeight: observed.afterPin.frame.clientHeight,
+              read: observed.afterPin.frame.read },
+            { pinned: `${observed.beforePin.clientHeight}px`, clientHeight: observed.beforePin.clientHeight,
+              read: observed.beforePin.clientHeight },
+          );
+          const choiceRead = observed.afterPin.trace.findIndex(({ op, selector }) => op === 'selector' && selector === '#second');
+          assert.ok(choiceRead > 3 && observed.afterPin.trace.slice(choiceRead + 1).some(({ op }) => op === 'view'),
+            `the reported size is reread after the choice: ${JSON.stringify(reads(observed.afterPin.trace))}`);
         } finally {
           if (harness) await harness.close();
         }
@@ -12018,11 +12391,14 @@ test('T002 production shell retains the mounted Review frame, markup, and caret 
           })()`;
           const click = async expression => {
             await until(() => evaluate(page, `Boolean(${expression})`), `rendered T002 target ${expression}`);
-            let previous = null;
+            // Keep the last two probes so a timeout says whether the target was
+            // absent, disabled, covered (and by what), or still moving.
+            let previous = null, earlier = null;
             const point = await until(async () => {
               const current = await evaluate(page, `(() => {
                 const node = ${expression};
-                if (!node || node.matches(':disabled,[aria-disabled="true"]')) return null;
+                if (!node) return { absent: true };
+                if (node.matches(':disabled,[aria-disabled="true"]')) return { disabled: true };
                 node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
                 const rect = node.getBoundingClientRect();
                 const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
@@ -12030,13 +12406,17 @@ test('T002 production shell retains the mounted Review frame, markup, and caret 
                 return {
                   x, y, width: rect.width, height: rect.height,
                   hit: Boolean(hit && (hit === node || node.contains(hit))),
+                  hitTag: hit?.tagName, hitRole: hit?.getAttribute('role'), hitText: hit?.textContent.slice(0, 120),
                 };
               })()`);
               const stable = current?.hit && current.width >= 24 && current.height >= 24
                 && previous?.x === current.x && previous?.y === current.y;
+              earlier = previous;
               previous = current;
               return stable ? current : null;
-            }, `stable T002 target ${expression}`);
+            }, `stable T002 target ${expression}`).catch(error => {
+              throw new Error(`${error.message}; last probes: ${JSON.stringify([earlier, previous])}`, { cause: error });
+            });
             await page.send('Input.dispatchMouseEvent', {
               type: 'mousePressed', x: point.x, y: point.y,
               button: 'left', buttons: 1, clickCount: 1,

@@ -1479,6 +1479,9 @@ function copiedExtensionHarness() {
     'process.stdout.write = () => { stdoutWrites += 1; return true; };',
     'try {',
     "  fs.mkdirSync('.dude/ideas', { recursive: true });",
+    // A bare missing bd can be verified optional absence. Initialization
+    // evidence keeps this initial read unavailable on every host.
+    "  fs.mkdirSync('.beads');",
     "  fs.writeFileSync('.dude/ideas/001-initial-unavailable.md', [",
     "    '---', 'title: initial-unavailable', 'slug: initial-unavailable',",
     "    'status: draft', 'spec_path:', '---', '', '## Idea', '', 'Initial acquisition fixture.',",

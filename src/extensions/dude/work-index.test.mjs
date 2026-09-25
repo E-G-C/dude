@@ -732,6 +732,16 @@ test('066 optional-Beads local and linked absence must be safe while footprints 
     { name: 'unresolved .git pointer', setup: (_parent, root) => write(root, '.git', 'gitdir: ../missing/.git/worktrees/linked\n') },
     { name: 'network Git indirection', setup: (_parent, root) => write(root, '.git', 'gitdir: //fixture.invalid/share/main/.git/worktrees/linked\n') },
     { name: 'drive-relative Git indirection', setup: (_parent, root) => write(root, '.git', 'gitdir: C:main/.git/worktrees/linked\n') },
+    { name: 'Windows drive-absolute Git indirection off Windows',
+      skip: process.platform === 'win32' && 'drive-absolute pointers are native Windows syntax',
+      setup(_parent, root) {
+        // Consistent metadata under a literal C: directory would otherwise
+        // resolve as a relative POSIX pointer; Windows-only syntax stays uncertain.
+        const gitDirectory = path.join(root, 'C:', 'main', '.git', 'worktrees', 'linked');
+        write(root, '.git', 'gitdir: C:/main/.git/worktrees/linked\n');
+        write(gitDirectory, 'commondir', '../..\n');
+        write(gitDirectory, 'gitdir', `${path.join(root, '.git')}\n`);
+      } },
     { name: 'nonstandard Git common location', setup: (_parent, root) => write(root, '.git/commondir', '../external\n') },
     { name: 'conflicting linked commondir', setup(parent, root) {
       const { gitDirectory } = optionalBeadsWorktree(parent, root);
@@ -763,7 +773,7 @@ test('066 optional-Beads local and linked absence must be safe while footprints 
     ` },
   ];
   for (const layout of layouts) {
-    await t.test(layout.name, () => {
+    await t.test(layout.name, { skip: layout.skip }, () => {
       const parent = optionalBeadsRoot();
       const root = path.join(parent, 'workspace');
       try {
@@ -1845,7 +1855,10 @@ test('T011 work-index cancellation shares a decreasing deadline and resolves onl
     fs.writeFileSync(executable, [
       '#!/usr/bin/env node',
       "const fs = require('node:fs');",
-      `fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
+      // Publish by rename: a watcher can otherwise read the created but still
+      // empty file, and process.kill(0, 0) probes this test's process group.
+      `fs.writeFileSync(${JSON.stringify(`${pidPath}.tmp`)}, String(process.pid));`,
+      `fs.renameSync(${JSON.stringify(`${pidPath}.tmp`)}, ${JSON.stringify(pidPath)});`,
       'setInterval(() => {}, 1000);',
       '',
     ].join('\n'), { mode: 0o755 });
@@ -1868,6 +1881,8 @@ test('T011 work-index cancellation shares a decreasing deadline and resolves onl
         timer.unref();
       });
       const pid = Number(fs.readFileSync(pidPath, 'utf8'));
+      assert.ok(Number.isSafeInteger(pid) && pid > 0, `the fixture must publish its own PID: ${pid}`);
+      assert.doesNotThrow(() => process.kill(pid, 0), 'the exact production child is running before cancellation');
 
       // Act
       controller.abort();

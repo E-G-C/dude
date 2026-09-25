@@ -128,7 +128,7 @@ const PACK_SOURCE_PATH =
 const PACK_DESTINATION =
   `.github/instructions/dude-pack-${PACK_NAME}-owner.instructions.md`;
 const PROFILE_PATH = '.dude/metadata/profile.md';
-const SOURCE_APP_SHA256 = 'd26d8ececcdf1e136538b6b9e309f5dbc95e65ab935901537b2e3e82a17286be';
+const SOURCE_APP_SHA256 = '503ee6224573b8624899de3670686ce758f7c91c4d338fd9c46e2eea4fcb84f5';
 const SOURCE_LEGAL_SHA256 = '3be2d01e3b59529e54cde5f17aee76c168bcde63245c21ec387cf70ba7a6d869';
 /**
  * The Review gesture behavior lives in these static modules, not in the bundled
@@ -137,7 +137,7 @@ const SOURCE_LEGAL_SHA256 = '3be2d01e3b59529e54cde5f17aee76c168bcde63245c21ec387
  * Canvas server actually serves.
  */
 const SOURCE_REVIEW_MODULES = Object.freeze({
-  'ui/review/engine.mjs': '69e1b1b1ebae71e4f64f6d3a477ec375924a243e515b994f8ccfd78884d78c50',
+  'ui/review/engine.mjs': 'c2edc7410e59f78b3ce3a6936218e36975aac89eab7705eae2a29858ceaee766',
   'ui/review/geometry.mjs': 'e3e000908c5ee2f033448215eec606cae2931b062d0f3d75d049844c4a8f4def',
   'ui/review/styles.css': '20e3430b0e0111584f2c4d06352f69182cdeb3eff522db1a088d858fc23871af',
 });
