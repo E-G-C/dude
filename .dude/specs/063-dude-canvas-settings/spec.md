@@ -27,7 +27,7 @@ In scope:
 
 Excluded are free-text pack search, other configuration, model mappings, host appearance controls, artifact import, bundle upgrades, pack authoring or direct artifact editing, custom source/ref controls, forced overwrites, bulk operations, arbitrary commands, and automatic prerequisite installation. The global work finder stays separate. Add no backend search service, catalog cache, persistent filter/page preferences, separate application, engine, tracker, durable request store, or compatibility migration.
 
-The four separate Settings intentions remain capture-only drafts: `.dude/ideas/069-dude-canvas-artifact-import.md`, `.dude/ideas/070-dude-canvas-skill-customization.md`, `.dude/ideas/071-dude-canvas-pack-authoring.md`, and `.dude/ideas/072-dude-canvas-bundle-upgrade.md`. They establish product continuity, not requirements or execution dependencies for 063. Add no placeholder controls or packages for them. Preserve the broader 052 vision, the current approved 062 workspace adaptation, and the working 057 interactions without changing their scope or history.
+The four separate Settings intentions remain capture-only drafts: `.dude/ideas/073-dude-canvas-artifact-import.md`, `.dude/ideas/070-dude-canvas-skill-customization.md`, `.dude/ideas/071-dude-canvas-pack-authoring.md`, and `.dude/ideas/072-dude-canvas-bundle-upgrade.md`. They establish product continuity, not requirements or execution dependencies for 063. Add no placeholder controls or packages for them. Preserve the broader 052 vision, the current approved 062 workspace adaptation, and the working 057 interactions without changing their scope or history.
 
 ## User Scenarios & Testing
 

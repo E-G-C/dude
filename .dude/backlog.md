@@ -34,10 +34,10 @@ kanban
 - `054` · `mockup-opens-in-review` — Mockup Opens in Review (`.dude/ideas/054-mockup-opens-in-review.md`)
 - `058` · `outcome-aligned-intake` — Outcome-Aligned Intake (`.dude/ideas/058-outcome-aligned-intake.md`)
 - `068` · `agent-to-agent-communication` — Local and remote agent communication (`.dude/ideas/068-agent-to-agent-communication.md`)
-- `069` · `dude-canvas-artifact-import` — Dude Canvas Artifact Import (`.dude/ideas/069-dude-canvas-artifact-import.md`)
 - `070` · `dude-canvas-skill-customization` — Dude Canvas Skill Customization (`.dude/ideas/070-dude-canvas-skill-customization.md`)
 - `071` · `dude-canvas-pack-authoring` — Dude Canvas Pack Authoring (`.dude/ideas/071-dude-canvas-pack-authoring.md`)
 - `072` · `dude-canvas-bundle-upgrade` — Dude Canvas Bundle Upgrade (`.dude/ideas/072-dude-canvas-bundle-upgrade.md`)
+- `073` · `dude-canvas-artifact-import` — Dude Canvas Artifact Import (`.dude/ideas/073-dude-canvas-artifact-import.md`)
 
 ## Completed
 
