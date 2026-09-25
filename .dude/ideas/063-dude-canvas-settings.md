@@ -67,7 +67,7 @@ The current 062 specification records its workspace design as approved and exclu
 
 ### Separate Settings Captures
 
-- Artifact import: `.dude/ideas/069-dude-canvas-artifact-import.md`.
+- Artifact import: `.dude/ideas/073-dude-canvas-artifact-import.md`.
 - Skill customization: `.dude/ideas/070-dude-canvas-skill-customization.md`.
 - Pack authoring: `.dude/ideas/071-dude-canvas-pack-authoring.md`.
 - Bundle upgrade: `.dude/ideas/072-dude-canvas-bundle-upgrade.md`.
