@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **1** (1 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **4**
+- Ideas awaiting definition: **7**
 - Defined awaiting work: **1**
-- Completed: **62**
+- Completed: **63**
 
 ## Current
 
@@ -33,7 +33,10 @@ kanban
 - `053` · `design-stage-critique` — Design-Stage Critique (`.dude/ideas/053-design-stage-critique.md`)
 - `054` · `mockup-opens-in-review` — Mockup Opens in Review (`.dude/ideas/054-mockup-opens-in-review.md`)
 - `058` · `outcome-aligned-intake` — Outcome-Aligned Intake (`.dude/ideas/058-outcome-aligned-intake.md`)
-- `063` · `dude-canvas-settings` — Dude Canvas Settings (`.dude/ideas/063-dude-canvas-settings.md`)
+- `070` · `dude-canvas-skill-customization` — Dude Canvas Skill Customization (`.dude/ideas/070-dude-canvas-skill-customization.md`)
+- `071` · `dude-canvas-pack-authoring` — Dude Canvas Pack Authoring (`.dude/ideas/071-dude-canvas-pack-authoring.md`)
+- `072` · `dude-canvas-bundle-upgrade` — Dude Canvas Bundle Upgrade (`.dude/ideas/072-dude-canvas-bundle-upgrade.md`)
+- `073` · `dude-canvas-artifact-import` — Dude Canvas Artifact Import (`.dude/ideas/073-dude-canvas-artifact-import.md`)
 
 ### Defined awaiting work
 
@@ -99,6 +102,7 @@ kanban
 - `059` · `annotation-direct-manipulation` — Annotation Direct Manipulation (`.dude/ideas/059-annotation-direct-manipulation.md`)
 - `060` · `recoverable-work-handoffs` — Recoverable Work Handoffs (`.dude/ideas/060-recoverable-work-handoffs.md`)
 - `061` · `work-inspection-source-capacity` — Work Inspection Source Capacity (`.dude/ideas/061-work-inspection-source-capacity.md`)
+- `063` · `dude-canvas-settings` — Dude Canvas Settings (`.dude/ideas/063-dude-canvas-settings.md`)
 - `064` · `work-receipt-overflow-handling` — Work Receipt Overflow Handling (`.dude/ideas/064-work-receipt-overflow-handling.md`)
 - `065` · `work-history-event-compaction` — Work History Event Compaction (`.dude/ideas/065-work-history-event-compaction.md`)
 - `066` · `canvas-without-beads` — Canvas Without Beads (`.dude/ideas/066-canvas-without-beads.md`)

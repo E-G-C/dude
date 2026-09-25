@@ -30,6 +30,7 @@ import {
 } from './projection.mjs';
 import { NEEDS_YOU_LIMITS, NeedsYouError } from './needs-you.mjs';
 import { REVIEW_LIMITS, ReviewError } from './review.mjs';
+import { readPacks } from './packs.mjs';
 
 const UI_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
 
@@ -84,6 +85,7 @@ const MAX_BODY_BYTES = 4 * 1024;
  * @property {AbortSignal} signal
  * @property {ReturnType<import('./needs-you.mjs').createNeedsYou>|null} needsYou
  * @property {(()=>void)|null} unsubscribeNeedsYou
+ * @property {{root:string,controller:AbortController,readers:number,promise:ReturnType<typeof readPacks>}|null} packRead
  */
 
 /**
@@ -289,6 +291,83 @@ async function handleRequest(instance, req, res) {
     return;
   }
 
+  if (pathname === '/api/packs/request' && instance.readInput && instance.needsYou) {
+    if (req.method !== 'POST' || req.url !== pathname) {
+      sendJson(res, 404, { error: 'Not found.' });
+      return;
+    }
+    if (req.headers.origin !== new URL(instance.url).origin) {
+      sendJson(res, 403, { error: 'Same-origin action required.' });
+      return;
+    }
+    if (req.headers['content-type']?.split(';', 1)[0].trim().toLowerCase() !== 'application/json') {
+      sendJson(res, 415, { error: 'JSON action required.' });
+      return;
+    }
+    const provider = instance.needsYou;
+    const body = await readJsonBody(req, NEEDS_YOU_LIMITS.bodyBytes);
+    if (instance.signal.aborted || !provider.matchesRoot(instance.readInput.root)) throw new NeedsYouError('identity_mismatch');
+    // Only a provider-issued prepare/submit receipt crosses this boundary.
+    // Compose previews, consent, and all pack writes remain with the owner.
+    sendJson(res, 202, await provider.requestPack(body, { signal: instance.signal }));
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/api/packs' && instance.readInput) {
+    if (Number(req.headers['content-length'] ?? 0) !== 0 || req.headers['transfer-encoding']) {
+      sendJson(res, 400, { error: 'Pack reads do not accept a body.' });
+      return;
+    }
+    const root = instance.readInput.root;
+    let pending = instance.packRead;
+    // A cancelled read still owns its reader process tree and temporary root
+    // until its bounded stop and removal finish. Do not let rapid abort/reload
+    // cycles overlap them.
+    while (pending && (pending.controller.signal.aborted || pending.root !== root)) {
+      pending.controller.abort();
+      await pending.promise.catch(() => null);
+      pending = instance.packRead;
+    }
+    if (res.destroyed) return;
+    if (instance.signal.aborted) {
+      sendJson(res, 503, { error: 'packs_unavailable', message: 'The Canvas lifetime ended during the pack read.' });
+      return;
+    }
+    if (!pending) {
+      const controller = new AbortController();
+      const promise = readPacks(root, AbortSignal.any([instance.signal, controller.signal]));
+      pending = { root, controller, readers: 0, promise };
+      instance.packRead = pending;
+      const owned = pending;
+      const forget = () => { if (instance.packRead === owned) instance.packRead = null; };
+      void promise.then(forget, forget);
+    }
+    // Coalesce only an in-flight read. The last disconnected reader cancels its
+    // acquisition; neither a completed snapshot nor an abandoned fetch is cached.
+    const owned = pending;
+    owned.readers += 1;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      if (--owned.readers === 0) owned.controller.abort();
+    };
+    res.once('close', release);
+    try {
+      const result = await owned.promise;
+      if (res.destroyed) return;
+      if (instance.signal.aborted || instance.readInput?.root !== root) {
+        sendJson(res, 409, { error: 'identity_mismatch', message: 'The workspace or Canvas lifetime changed. Reload to read current packs.' });
+      } else sendJson(res, 200, result);
+    } catch {
+      if (!res.destroyed) sendJson(res, 503, { error: 'packs_unavailable', message: 'The pack read was cancelled or became unavailable.' });
+    } finally {
+      res.off('close', release);
+      release();
+    }
+    return;
+  }
+
   if (req.method === 'GET' && pathname === '/api/freshness') {
     if (!instance.readInput) {
       sendJson(res, 200, { projection: instance.projection, freshness: instance.freshness });
@@ -413,6 +492,7 @@ async function startInstance(instanceId, log, projection, readInput, signal, nee
     url: '',
     needsYou,
     unsubscribeNeedsYou: null,
+    packRead: null,
   };
 
   instance.server.on('request', (req, res) => {
@@ -432,9 +512,13 @@ async function startInstance(instanceId, log, projection, readInput, signal, nee
         || req.url?.startsWith('/api/needs-you/respond') || req.url?.startsWith('/review-source/'))) {
         sendJson(res, error.status, { error: error.code, message: error.message });
       }
-      else if (error instanceof NeedsYouError && req.url?.startsWith('/api/needs-you')) {
+      else if (error instanceof NeedsYouError
+        && (req.url?.startsWith('/api/needs-you') || req.url?.startsWith('/api/packs/request'))) {
         sendJson(res, error.status, { error: error.code });
-      } else if (req.url?.startsWith('/api/needs-you') && !(error instanceof SyntaxError)) {
+      } else if (req.url?.startsWith('/api/packs/request') && error instanceof SyntaxError) {
+        sendJson(res, 400, { error: 'invalid_input' });
+      } else if ((req.url?.startsWith('/api/needs-you') || req.url?.startsWith('/api/packs/request'))
+        && !(error instanceof SyntaxError)) {
         sendJson(res, 503, { error: 'provider_unavailable' });
       } else sendJson(res, 400, { error: 'Request failed.' });
     });
@@ -526,6 +610,8 @@ async function stopInstance(instance) {
   instance.unsubscribeNeedsYou = null;
   for (const client of instance.eventClients) client.end();
   instance.eventClients.clear();
+  // Also await an acquisition whose last HTTP reader already disconnected.
+  await instance.packRead?.promise.catch(() => null);
   if (!instance.server.listening) return;
   await new Promise((resolve) => instance.server.close(() => resolve(undefined)));
 }

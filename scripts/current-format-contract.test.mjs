@@ -1036,11 +1036,27 @@ test('specialist dispatch is closed over the direct roster and limits exact arti
     ? 'artifact-owner precedence'
     : 'semantic scope';
   assert.equal(incidentalRoutePath, 'semantic scope');
-  const semanticSignal = /\b(?:test|regression|edge case)\b/i.exec(incidentalTask)?.[0].toLowerCase();
-  assert.equal(semanticSignal, 'regression');
-  const semanticOwners = roster.filter((agent) => (
-    `${agent.description}\n${agent.scope}`.toLowerCase().includes(semanticSignal)
-  ));
+  assert.match(incidentalTask, /\b(?:test|regression|edge case)\b/i);
+  const testingScopeSignals = [
+    /\btests?\b/i,
+    /\btest-only work\b/i,
+    /\btest planning\/authoring\b/i,
+    /\bunit\/integration\/E2E coverage\b/i,
+    /\bfixtures\b[^\n]*\bmocks\b[^\n]*\bfactories\b/i,
+    /\breproduction\b[^\n]*\bacceptance validation\b/i,
+  ];
+  const rankedSemanticOwners = roster.map((agent) => {
+    const routingMetadata = `${agent.description}\n${agent.scope}`;
+    return {
+      agent,
+      specificity: testingScopeSignals.filter((pattern) => pattern.test(routingMetadata)).length,
+    };
+  });
+  const highestSpecificity = Math.max(...rankedSemanticOwners.map(({ specificity }) => specificity));
+  assert.ok(highestSpecificity > 0, `credible semantic owner for ${incidentalTask}`);
+  const semanticOwners = rankedSemanticOwners
+    .filter(({ specificity }) => specificity === highestSpecificity)
+    .map(({ agent }) => agent);
   assert.equal(semanticOwners.length, 1, `unique semantic owner for ${incidentalTask}`);
   assert.equal(semanticOwners[0].name, 'Tester');
   assert.notEqual(semanticOwners[0].name, 'Instruction Smith');
@@ -2974,14 +2990,6 @@ test('agent configuration, projection, compose, upgrade, and CI docs describe th
   assert.match(compose, /command is selected before projection dependencies are loaded/);
   assert.match(compose, /`remove`, `list`, and\s+`status` do not load that configuration or the renderer/);
   assert.match(compose, /existing complete predecessor profile can make one in-memory transition/i);
-  assert.match(
-    markdownSection(commands, '### Repo layout: source vs built bundle'),
-    /seven currently installed\s+dogfood packs:\s+`authoring`,\s+`coding`,\s+`design`,\s+`release`,\s+`rubber-duck`,\s+`strata`,\s+and\s+`writing`/,
-  );
-  assert.match(
-    markdownSection(compose, '## Rules'),
-    /dogfood repo, compose may use only its seven currently installed profile\s+packs:\s+`authoring`,\s+`coding`,\s+`design`,\s+`release`,\s+`rubber-duck`,\s+`strata`,\s+and\s+`writing`[\s\S]{0,120}other catalog pack in a throwaway root/,
-  );
   assert.match(upgrade, /existing `.github\/skills\/dude-engine\/\*\*` ownership recursively includes/);
   assert.match(upgrade, /rollback\s+restorability/i);
   assert.match(upgrading, /ignored\s+and untracked[\s\S]{0,120}refuses/i);
@@ -2994,6 +3002,23 @@ test('agent configuration, projection, compose, upgrade, and CI docs describe th
   assert.match(ci, /node scripts\/build-dev\.mjs/);
   assert.match(ci, /node scripts\/build-release\.mjs --out dist/);
   assert.doesNotMatch(ci, /\bgit (?:branch|commit|push|switch)\b|\bgh pr\b/);
+});
+
+test('repository pack usage follows opt-in Compose without a fixed allowlist', () => {
+  const commands = read('docs/commands.md');
+  const layout = markdownSection(commands, '### Repo layout: source vs built bundle').replace(/\s+/g, ' ');
+  assert.match(layout, /plus any optional packs installed through Compose\./);
+  assert.match(layout, /current pack selection is recorded in `\.dude\/metadata\/profile\.md`/);
+
+  const rules = markdownSection(read('src/skills/dude-compose/SKILL.md'), '## Rules').replace(/\s+/g, ' ');
+  assert.doesNotMatch(rules, /dogfood repo, compose may use only/);
+  assert.match(rules, /Packs are \*\*opt-in\*\*\. Never install a pack without explicit user intent\./);
+  assert.match(rules, /Always preview before writing; always lint after\./);
+
+  const packChanges = markdownSection(commands, '#### Pack changes').replace(/\s+/g, ' ');
+  assert.match(packChanges, /Any catalog pack can be used with explicit user intent/);
+  assert.match(packChanges, /A disposable core bundle is optional when you need isolated validation/);
+  assert.doesNotMatch(read('.dude/memory/guardrails.md'), /use a disposable bundle for live validation/);
 });
 
 test('release assertions do not positively require or forbid the transitional migration provider', () => {
@@ -4244,8 +4269,44 @@ function boundedShipInventory(relativeRoot) {
   return inventory;
 }
 
-/** @param {string} relative */
-function prohibitedShipArtifact(relative) {
+/**
+ * An evidence-availability report is documentary evidence, not a durable Ship
+ * disposition carrier. Require its contents to establish that distinction;
+ * an audit-like filename alone remains prohibited.
+ * @param {string} normalized
+ * @param {string | undefined} source
+ */
+function isReadOnlyEvidenceAudit(normalized, source) {
+  if (!normalized.toLowerCase().endsWith('.json')) return false;
+  let jsonSource = source;
+  if (jsonSource === undefined) {
+    const absolute = path.join(ROOT, normalized);
+    if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) return false;
+    jsonSource = fs.readFileSync(absolute, 'utf8');
+  }
+
+  let document;
+  try {
+    document = JSON.parse(jsonSource);
+  } catch {
+    return false;
+  }
+  if (document === null || typeof document !== 'object' || Array.isArray(document)) return false;
+  const safety = document.safety;
+  return typeof document.owner === 'string'
+    && !/\bShip\b/i.test(document.owner)
+    && typeof document.scope === 'string'
+    && /\bread-only\b/i.test(document.scope)
+    && /\b(?:availability|evidence|histor(?:y|ical))\b/i.test(document.scope)
+    && !/\b(?:Ship|checkpoint|answerability|autonom(?:y|ous)|dispositions?)\b/i.test(document.scope)
+    && safety !== null
+    && typeof safety === 'object'
+    && safety.repositoryWrites === false
+    && safety.workflowExecution === false;
+}
+
+/** @param {string} relative @param {string} [source] */
+function prohibitedShipArtifact(relative, source) {
   const normalized = relative.split(path.sep).join('/');
   if (SHIP_AUTHORITY_PATHS.has(normalized)) return null;
   if (!SHIP_INVENTORY_ROOTS.some((root) => normalized === root || normalized.startsWith(`${root}/`))) {
@@ -4275,6 +4336,13 @@ function prohibitedShipArtifact(relative) {
   }
   const match = SHIP_PROHIBITED_PATH_CONCEPTS
     .find(([, concept]) => components.includes(concept));
+  if (
+    match?.[1] === 'audit'
+    && !featureScoped
+    && isReadOnlyEvidenceAudit(normalized, source)
+  ) {
+    return null;
+  }
   return match?.[0] ?? null;
 }
 
@@ -4936,6 +5004,72 @@ test('Ship adds no resolver, command, mode, parser, lane, taxonomy, score, regis
   ]) {
     assert.equal(prohibitedShipArtifact(relative), null, `allow ${relative}`);
   }
+});
+
+test('Ship artifact classification distinguishes read-only evidence from persistent audit carriers', () => {
+  const documentaryAudit = {
+    owner: 'Tester',
+    scope: 'Bounded read-only availability audit of historical verification evidence.',
+    safety: {
+      repositoryWrites: false,
+      workflowExecution: false,
+    },
+  };
+  const documentaryPath = '.dude/metadata/history/older-evidence-audit.json';
+  assert.equal(
+    prohibitedShipArtifact(documentaryPath, JSON.stringify(documentaryAudit)),
+    null,
+    'read-only historical evidence is not a Ship audit carrier',
+  );
+  const repositoryEvidenceAudits = boundedShipInventory('.dude/metadata')
+    .filter((relative) => /audit\.json$/i.test(relative))
+    .filter((relative) => isReadOnlyEvidenceAudit(relative, undefined));
+  assert.ok(repositoryEvidenceAudits.length > 0, 'repository inventory contains read-only evidence audit coverage');
+  for (const relative of repositoryEvidenceAudits) {
+    assert.equal(
+      prohibitedShipArtifact(relative),
+      null,
+      `${relative}: documentary evidence is not a Ship audit carrier`,
+    );
+  }
+
+  const carrierMutations = [
+    ['Ship-owned audit', {
+      ...documentaryAudit,
+      owner: 'Ship',
+    }],
+    ['write-capable audit', {
+      ...documentaryAudit,
+      safety: { ...documentaryAudit.safety, repositoryWrites: true },
+    }],
+    ['workflow-executing audit', {
+      ...documentaryAudit,
+      safety: { ...documentaryAudit.safety, workflowExecution: true },
+    }],
+    ['persistent disposition audit', {
+      ...documentaryAudit,
+      scope: 'Persistent disposition audit carrier for autonomous decisions.',
+    }],
+    ['Ship-disposition evidence audit', {
+      ...documentaryAudit,
+      scope: 'Bounded read-only historical evidence audit of Ship checkpoint dispositions.',
+    }],
+  ];
+  for (const [label, document] of carrierMutations) {
+    assert.equal(
+      prohibitedShipArtifact(documentaryPath, JSON.stringify(document)),
+      'persistent audit carrier',
+      `reject ${label}`,
+    );
+  }
+  assert.equal(
+    prohibitedShipArtifact(
+      '.dude/metadata/history/ship-evidence-audit.json',
+      JSON.stringify(documentaryAudit),
+    ),
+    'persistent audit carrier',
+    'an explicitly Ship-scoped audit remains prohibited',
+  );
 });
 
 test('Ship rejects closed prohibited capabilities in existing owner prose', () => {
@@ -9659,22 +9793,62 @@ test('bounded verification dispatch keeps coordinator ownership and continuation
 });
 
 test('bounded verification dispatch keeps the catalog Tester runner-first and evidence-bounded', () => {
-  const source = read('library/packs/coding/agents/dude-pack-coding-tester.agent.md');
-  const section = normalizeMarkdownBlock(markdownSection(source, '## Existing Runner Fast Path'));
-  for (const requirement of [
-    'satisfy applicable safety, approval, and authority gates',
-    'run the exact command and any supplied selector in the stated working directory',
-    'Run before scanning surrounding implementation, tests, documentation, or whole packages',
-    'Return promptly when the result proves the assigned acceptance slice',
-    'Expand investigation only on an actual failure or an explicitly assigned uncovered gap',
-    'Keep ordinary investigation for test authoring, failure reproductions, and unspecified runners',
-  ]) assert.ok(section.includes(requirement), requirement);
-  const evidence = normalizeMarkdownBlock(markdownSection(source, '## Return format'));
-  for (const requirement of [
-    'the exact command, observed exit status, selected pass/fail/skip counts as reported by the runner',
-    'relevant failure output, and remaining evidence gaps',
-    'Do not self-approve',
-  ]) assert.ok(evidence.includes(requirement), requirement);
+  const catalogTester = read('library/packs/coding/agents/dude-pack-coding-tester.agent.md');
+  const installedTester = read('.github/agents/dude-pack-coding-tester.agent.md');
+  const dependencyHeading = '## Required shared standards';
+  const fastPathHeading = '## Existing-runner fast path';
+  for (const [label, source] of [
+    ['catalog Tester', catalogTester],
+    ['installed Tester', installedTester],
+  ]) {
+    const dependency = normalizeMarkdownBlock(markdownSection(source, dependencyHeading));
+    assert.match(
+      dependency,
+      /Before substantive work, read `\.github\/instructions\/dude-pack-coding-engineering-standards\.instructions\.md`/,
+      `${label}: explicit shared-standard dependency`,
+    );
+
+    const fastPath = normalizeMarkdownBlock(markdownSection(source, fastPathHeading));
+    for (const [guarantee, pattern] of [
+      ['delegates to shared existing-runner verification', /shared \*\*existing-runner verification\*\*[^\n]*execution-only work with a supplied runner/i],
+      ['runs the supplied selection in place before broad investigation', /required instructions\/safety gates[^\n]*exact command\/selector[^\n]*stated directory[^\n]*not a repository-wide investigation/i],
+      ['stops at the assigned slice', /Stop when the assigned slice is proved/i],
+      ['does not expand or manufacture a passing run', /investigate only relevant failures\/gaps[^\n]*do not replace missing selectors[^\n]*broaden suites[^\n]*edit failing tests[^\n]*install tooling to pass/i],
+    ]) assert.match(fastPath, pattern, `${label}: ${guarantee}`);
+  }
+  assert.equal(
+    markdownSection(installedTester, dependencyHeading),
+    markdownSection(catalogTester, dependencyHeading),
+    'installed Tester preserves the catalog shared-standard dependency',
+  );
+  assert.equal(
+    markdownSection(installedTester, fastPathHeading),
+    markdownSection(catalogTester, fastPathHeading),
+    'installed Tester preserves the catalog fast path',
+  );
+
+  const catalogStandards = read(
+    'library/packs/coding/instructions/dude-pack-coding-engineering-standards.instructions.md',
+  );
+  const installedStandards = read(
+    '.github/instructions/dude-pack-coding-engineering-standards.instructions.md',
+  );
+  const sharedHeading = '## Existing-runner verification';
+  const shared = normalizeMarkdownBlock(markdownSection(catalogStandards, sharedHeading));
+  for (const [guarantee, pattern] of [
+    ['checks safety, authority, and location first', /load required instructions and verify safety, authorization, and working directory/i],
+    ['runs the exact selection before surrounding reads', /run the exact command\/selectors before browsing surrounding code, tests, or docs/i],
+    ['does not broaden or edit to obtain a pass', /do not substitute\/broaden suites, edit files, or install tooling to obtain a pass/i],
+    ['bounds investigation to the assigned evidence', /Stop when the assigned acceptance slice is established[^\n]*Investigate only actual failures or assigned evidence gaps/i],
+    ['returns exact runner evidence', /exact command, directory, observed exit status, runner-reported pass\/fail\/skip counts, failure output, and gaps/i],
+    ['does not treat a missing selector as success', /Missing\/zero-test results prove no coverage/i],
+    ['retains ordinary investigation outside execution-only work', /Use ordinary investigation for authoring, reproduction, or unspecified runners/i],
+  ]) assert.match(shared, pattern, `shared existing-runner verification: ${guarantee}`);
+  assert.equal(
+    markdownSection(installedStandards, sharedHeading),
+    markdownSection(catalogStandards, sharedHeading),
+    'installed shared standards preserve the catalog existing-runner contract',
+  );
 });
 
 test('release manager PR-first delivery requires integration and preserves operation authority', () => {

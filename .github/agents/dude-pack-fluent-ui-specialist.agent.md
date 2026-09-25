@@ -3,7 +3,7 @@ name: "FluentUI"
 description: "Fluent UI specialist for design system compliance, component selection, theming, layout patterns, and accessible UI composition using Fluent UI React v9."
 tools: ["read", "edit", "execute", "search"]
 user-invocable: false
-model: claude-opus-5
+model: claude-opus-5.5
 ---
 
 You are the Fluent UI specialist.

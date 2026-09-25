@@ -36,6 +36,8 @@
  *   --ref <ref>       upstream ref for source resolution (default: manifest / main)
  *   --no-fetch        never fetch; require the pack in the local catalog
  *   --json            machine-readable output
+ *   --envelope        for add/remove/refresh, print the unchanged engine result
+ *                     envelope in place of --json output (a Canvas pack result)
  *   --force           overwrite existing destination files on add
  *
  * Exit codes: 0 ok, 1 usage error, 2 operation error.
@@ -1431,6 +1433,8 @@ Flags:
   --ref <ref>       upstream ref for source resolution (default: manifest / main)
   --no-fetch        never fetch; require the pack in the local catalog
   --json            machine-readable output
+  --envelope        unchanged engine result envelope for add/remove/refresh,
+                    in place of --json output
   --dry-run         preview refresh without writing
   --force           overwrite existing files on add
   --use-case <id>   exact discovery filter for list
@@ -1438,16 +1442,17 @@ Flags:
 
 /**
  * @param {string[]} argv
- * @returns {{ cmd?: string, name?: string, root: string, library?: string, json: boolean, force: boolean, dryRun: boolean, help: boolean, useCase?: string, useCaseSeen?: boolean, usageError?: string }}
+ * @returns {{ cmd?: string, name?: string, root: string, library?: string, json: boolean, envelope: boolean, force: boolean, dryRun: boolean, help: boolean, useCase?: string, useCaseSeen?: boolean, usageError?: string }}
  */
 function parseArgs(argv) {
   /** @type {any} */
-  const out = { root: process.cwd(), json: false, force: false, dryRun: false, fetch: true, help: false };
+  const out = { root: process.cwd(), json: false, envelope: false, force: false, dryRun: false, fetch: true, help: false };
   /** @type {string[]} */
   const positionals = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') out.json = true;
+    else if (a === '--envelope') out.envelope = true;
     else if (a === '--dry-run') out.dryRun = true;
     else if (a === '--force') out.force = true;
     else if (a === '--no-fetch') out.fetch = false;
@@ -1483,11 +1488,27 @@ function parseArgs(argv) {
   if (out.useCaseSeen && out.cmd !== 'list') {
     out.usageError ||= '--use-case is only supported by list';
   }
+  if (out.envelope && !['add', 'remove', 'refresh'].includes(out.cmd)) {
+    out.usageError ||= '--envelope is only supported by add, remove, and refresh';
+  }
   return out;
 }
 
-/** @param {any} r @param {boolean} json @param {string | undefined} useCase */
-function report(r, json, useCase) {
+/** @param {any} r @param {boolean} json @param {string | undefined} useCase @param {boolean} [envelope] */
+function report(r, json, useCase, envelope = false) {
+  if (envelope) {
+    // The engine's own result envelope, which a Canvas pack acknowledgment
+    // forwards unchanged. Unlike --json, it keeps `code` and refresh's
+    // `mutation` and never flattens `result` or adds a plan.
+    process.stdout.write(JSON.stringify(
+      r.ok
+        ? { ok: true, code: r.code, result: r.result }
+        : { ok: false, code: r.code, error: r.error, ...(r.mutation === undefined ? {} : { mutation: r.mutation }) },
+      null,
+      2,
+    ) + '\n');
+    return;
+  }
   if (json) {
     process.stdout.write(JSON.stringify(
       r.ok
@@ -1554,7 +1575,7 @@ function report(r, json, useCase) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.usageError) {
-    report({ ok: false, code: 1, error: args.usageError }, args.json, args.useCase);
+    report({ ok: false, code: 1, error: args.usageError }, args.json, args.useCase, args.envelope);
     process.exit(1);
   }
   if (args.help || !args.cmd) {
@@ -1610,7 +1631,7 @@ async function main() {
       r = { ok: false, code: 1, error: `unknown command: ${args.cmd}` };
   }
 
-  report(r, args.json, args.useCase);
+  report(r, args.json, args.useCase, args.envelope);
   process.exit(r.code);
 }
 

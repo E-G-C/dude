@@ -52,26 +52,30 @@ export const useCanvasStyles = makeStyles({
   },
   shellBody: {
     display: 'flex', flex: 1, minWidth: 0, minHeight: 0,
-    '@media (max-width: 719px)': { flexDirection: 'column' },
   },
   rail: {
     boxSizing: 'border-box', position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center',
-    width: '48px', flexShrink: 0, gap: tokens.spacingVerticalL, paddingBlock: tokens.spacingVerticalS,
+    width: '48px', minHeight: 0, flexShrink: 0, gap: tokens.spacingVerticalL, paddingBlock: tokens.spacingVerticalS,
     backgroundColor: tokens.colorNeutralBackground2,
     borderInlineEnd: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    '@media (max-width: 719px)': {
-      flexDirection: 'row', width: '100%', minHeight: '48px', gap: tokens.spacingHorizontalS,
-      padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`, borderInlineEndWidth: 0,
-      borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    },
   },
   railExpanded: {
     width: '208px', alignItems: 'stretch', paddingInline: tokens.spacingHorizontalS,
     '& > button': { alignSelf: 'flex-start' },
   },
   railToggle: { flexShrink: 0, width: '32px', minWidth: '32px', height: '32px', padding: 0 },
-  railContents: { display: 'flex', flexDirection: 'inherit', minWidth: 0 },
-  railList: { padding: 0, gap: tokens.spacingVerticalXS, minWidth: 0, width: '100%' },
+  railContents: { display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, width: '100%' },
+  railList: { padding: 0, flex: 1, minHeight: 0, minWidth: 0, width: '100%' },
+  railDestinations: {
+    display: 'flex', flexDirection: 'column', alignItems: 'center', minHeight: 0,
+    overflowY: 'auto', overflowX: 'hidden', scrollbarWidth: 'none',
+    padding: tokens.spacingHorizontalXXS, gap: tokens.spacingVerticalXS,
+  },
+  railFooter: {
+    display: 'flex', justifyContent: 'center', flexShrink: 0, marginTop: 'auto',
+    marginInline: tokens.spacingHorizontalXS, paddingTop: tokens.spacingVerticalS,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+  },
   railTab: {
     boxSizing: 'border-box', width: '32px', minWidth: '32px', height: '32px', minHeight: '32px', padding: 0,
     justifyContent: 'center', flexShrink: 0,
@@ -83,19 +87,18 @@ export const useCanvasStyles = makeStyles({
     fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200,
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
-  navLayer: { position: 'absolute', top: '100%', insetInline: 0, zIndex: 1000001 },
+  navLayer: { position: 'fixed', inset: 0, zIndex: 1000001 },
   navDimmer: { position: 'fixed', inset: 0, backgroundColor: tokens.colorBackgroundOverlay },
   navOverlay: {
-    position: 'relative', boxSizing: 'border-box', width: '260px', maxWidth: 'calc(100vw - 32px)',
-    maxHeight: 'min(60dvh, calc(100dvh - 120px))', overflowY: 'auto', overscrollBehavior: 'contain',
-    marginInlineStart: tokens.spacingHorizontalL, marginTop: tokens.spacingVerticalXS,
-    padding: tokens.spacingHorizontalS, backgroundColor: tokens.colorNeutralBackground1,
+    position: 'relative', boxSizing: 'border-box', width: '260px', maxWidth: 'calc(100vw - 16px)',
+    height: '100dvh', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+    padding: tokens.spacingHorizontalM, backgroundColor: tokens.colorNeutralBackground1,
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: tokens.borderRadiusMedium, boxShadow: tokens.shadow16,
+    boxShadow: tokens.shadow16,
   },
   navHeading: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    gap: tokens.spacingHorizontalS, paddingBottom: tokens.spacingVerticalS,
+    gap: tokens.spacingHorizontalS, paddingBottom: tokens.spacingVerticalS, flexShrink: 0,
   },
   product: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0, containerType: 'inline-size' },
   detail: {
@@ -105,6 +108,144 @@ export const useCanvasStyles = makeStyles({
   },
   measure: { maxWidth: '76ch', display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL },
   overviewPanel: { padding: 0, scrollbarGutter: 'auto', '@container (max-width: 700px)': { padding: 0 } },
+  settingsPanel: { padding: 0, overflow: 'hidden', scrollbarGutter: 'auto', '@container (max-width: 700px)': { padding: 0 } },
+  packLayout: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', height: '100%', minHeight: 0, minWidth: 0 },
+  packLayoutSelected: {
+    gridTemplateColumns: 'minmax(0, 1fr) 320px',
+    '@media (max-width: 1099px)': { gridTemplateColumns: 'minmax(0, 1fr)' },
+  },
+  packBrowser: { display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, containerType: 'inline-size' },
+  packHeading: {
+    display: 'flex', alignItems: 'center', flexShrink: 0, gap: tokens.spacingHorizontalS,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalL}`,
+    '& h1:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
+    '@media (max-width: 479px)': { padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}` },
+  },
+  packScope: { '@media (max-width: 479px)': { position: 'absolute', clipPath: 'inset(50%)', width: '1px', height: '1px', overflow: 'hidden' } },
+  packTabs: { flexShrink: 0, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', maxWidth: '360px', minWidth: 0 },
+  packTab: {
+    minWidth: 0, minHeight: '36px', padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`, justifyContent: 'center',
+    '& > span': { minWidth: 0 },
+    '@container (max-width: 300px)': { paddingInline: tokens.spacingHorizontalXXS, minHeight: '32px' },
+  },
+  packTabCount: { fontSize: tokens.fontSizeBase200, fontWeight: tokens.fontWeightRegular },
+  packPanel: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 },
+  packToolbar: {
+    // The inline Fluent listbox must paint above the sticky table header.
+    position: 'relative', zIndex: 2,
+    display: 'flex', gap: tokens.spacingHorizontalS, alignItems: 'center', flexShrink: 0, minWidth: 0,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '@container (max-width: 479px)': {
+      padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+    },
+  },
+  packFilterField: {
+    display: 'grid', gridTemplateColumns: 'minmax(80px, 1fr) minmax(0, 280px)', alignItems: 'center',
+    columnGap: tokens.spacingHorizontalS, flex: '1 1 540px', minWidth: 0, maxWidth: '660px',
+    '& label': { padding: 0, margin: 0, fontWeight: tokens.fontWeightSemibold },
+    '@container (max-width: 479px)': {
+      gridTemplateColumns: 'minmax(0, 1fr)', gap: tokens.spacingVerticalXS,
+      '& label': { minHeight: '32px', display: 'flex', alignItems: 'center', fontSize: tokens.fontSizeBase200, paddingRight: '52px' },
+    },
+  },
+  packFilter: {
+    minWidth: 0, width: '100%',
+    '& button': { minWidth: 0 },
+    '@container (max-width: 300px)': { '& button': { paddingInline: tokens.spacingHorizontalXS } },
+  },
+  packClear: {
+    flexShrink: 0, minWidth: 0,
+    '@container (max-width: 479px)': { position: 'absolute', top: tokens.spacingVerticalXS, right: tokens.spacingHorizontalS, paddingInline: tokens.spacingHorizontalS },
+  },
+  packScroll: { flex: 1, minHeight: 0, minWidth: 0, overflowY: 'auto', overscrollBehavior: 'contain' },
+  packTableHeader: {
+    position: 'sticky', top: 0, zIndex: 1, backgroundColor: tokens.colorNeutralBackground2,
+    '& [role="columnheader"]': { paddingBlock: 0, color: tokens.colorNeutralForeground2 },
+    '@container (max-width: 479px)': { position: 'absolute', clipPath: 'inset(50%)', width: '1px', height: '1px', overflow: 'hidden' },
+  },
+  packRow: {
+    cursor: 'pointer', minHeight: '44px',
+    '@container (max-width: 479px)': { flexDirection: 'column', alignItems: 'stretch', paddingBlock: tokens.spacingVerticalXS },
+  },
+  packCell: {
+    boxSizing: 'border-box', flex: '1 1 0px', minWidth: 0,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`, overflowWrap: 'anywhere',
+    '@container (max-width: 479px)': { flex: 'auto', minHeight: 0, padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalM}` },
+  },
+  packNameCell: {
+    flexBasis: '45%', flexGrow: 0, color: tokens.colorBrandForeground2,
+    '@container (max-width: 479px)': { flexBasis: 'auto', minHeight: '28px' },
+  },
+  packTagsCell: {
+    color: tokens.colorNeutralForeground2,
+    '@container (max-width: 479px)': { '& > span': { fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200 } },
+  },
+  packReadNotice: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, margin: 0,
+    padding: tokens.spacingHorizontalS, color: tokens.colorNeutralForeground2, overflowWrap: 'anywhere',
+  },
+  packPager: {
+    display: 'flex', alignItems: 'center', flexShrink: 0, gap: tokens.spacingHorizontalS,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalL}`, minWidth: 0,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground2,
+    '@container (max-width: 479px)': { paddingInline: tokens.spacingHorizontalS, gap: tokens.spacingHorizontalXS },
+  },
+  packMetrics: {
+    flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, textAlign: 'center',
+    fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200, overflowWrap: 'anywhere',
+  },
+  packPageButton: { flexShrink: 0, '@container (max-width: 479px)': { width: '28px', minWidth: '28px', paddingInline: tokens.spacingHorizontalXXS } },
+  packPageLabel: { '@container (max-width: 479px)': { display: 'none' } },
+  packDetail: {
+    position: 'static', margin: 0, padding: 0, boxSizing: 'border-box', width: '320px', height: '100%', maxHeight: 'none',
+    minWidth: 0, minHeight: 0, maxWidth: 'none', overflow: 'hidden', color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground1, border: 0, borderInlineStart: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '&[open]': { display: 'flex', flexDirection: 'column' },
+    '&:modal': {
+      position: 'fixed', inset: '0 0 0 auto', width: 'min(420px, calc(100vw - 16px))', height: '100dvh',
+      border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAccessible}`, boxShadow: tokens.shadow16,
+    },
+    '&::backdrop': { backgroundColor: tokens.colorBackgroundOverlay },
+    '@media (max-width: 1099px)': {
+      position: 'fixed', inset: '0 0 0 auto', width: 'min(420px, calc(100vw - 16px))', height: '100dvh',
+    },
+  },
+  packRequestDialog: {
+    padding: 0, boxSizing: 'border-box', width: 'min(560px, calc(100vw - 16px))',
+    maxWidth: 'none', maxHeight: 'calc(100dvh - 16px)', overflow: 'hidden',
+    color: tokens.colorNeutralForeground1, backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAccessible}`,
+    borderRadius: tokens.borderRadiusLarge, boxShadow: tokens.shadow16,
+    '&[open]': { display: 'flex', flexDirection: 'column' },
+    '&::backdrop': { backgroundColor: tokens.colorBackgroundOverlay },
+  },
+  packDetailHeader: {
+    display: 'flex', alignItems: 'flex-start', flexShrink: 0, gap: tokens.spacingHorizontalS,
+    padding: tokens.spacingHorizontalM, borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '& h2': { overflowWrap: 'anywhere' },
+  },
+  packDetailBody: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL,
+    flex: 1, minHeight: 0, minWidth: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: tokens.spacingHorizontalM,
+    '&:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '-2px' },
+  },
+  packDetailFooter: { flexShrink: 0, padding: tokens.spacingHorizontalS, borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}` },
+  packMetadata: {
+    margin: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: tokens.spacingVerticalXS,
+    '& dt': { color: tokens.colorNeutralForeground2 },
+    '& dd': { margin: 0, minWidth: 0, overflowWrap: 'anywhere' },
+    '& dd + dt': { marginTop: tokens.spacingVerticalS },
+  },
+  packMetadataHeading: { margin: 0, fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300, fontWeight: tokens.fontWeightSemibold },
+  packFiles: {
+    '& summary': { cursor: 'pointer', minHeight: '28px', color: tokens.colorBrandForeground1 },
+    '& summary:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
+    '& ul': { paddingInlineStart: tokens.spacingHorizontalXL, marginBlock: tokens.spacingVerticalS },
+    '& li + li': { marginTop: tokens.spacingVerticalXS },
+  },
+  settingsFooter: { maxHeight: '20dvh', overflowY: 'auto', overflowWrap: 'anywhere' },
   overview: { width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' },
   overviewHeader: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS, padding: tokens.spacingHorizontalL, flexShrink: 0 },
   overviewIntro: { margin: 0, maxWidth: '85ch', color: tokens.colorNeutralForeground2, overflowWrap: 'anywhere' },
@@ -125,6 +266,7 @@ export const useCanvasStyles = makeStyles({
   workingTitle: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, lineHeight: tokens.lineHeightBase200 },
   workControls: {
     display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS, minWidth: 0,
+    '@media (max-width: 479px)': { flexWrap: 'wrap', '& > :first-child': { flexBasis: '100%' } },
   },
   searchField: { flex: 1, minWidth: 0 },
   scopeField: {
@@ -325,7 +467,10 @@ export const useCanvasStyles = makeStyles({
     borderLeft: `${tokens.strokeWidthThick} solid ${tokens.colorBrandStroke1}`,
     padding: tokens.spacingHorizontalM, backgroundColor: tokens.colorNeutralBackground2,
   },
-  notice: { minWidth: 0, overflowWrap: 'anywhere', flexShrink: 0 },
+  notice: {
+    minWidth: 0, overflowWrap: 'anywhere', flexShrink: 0,
+    '&[tabindex="-1"]:focus': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
+  },
   requestOption: { width: '100%', justifyContent: 'start', textAlign: 'left', minHeight: '48px', whiteSpace: 'normal', overflowWrap: 'anywhere' },
   hidden: { display: 'none' },
   // The frozen mock can pan inside the stage; chrome stays outside its scroller.
@@ -351,6 +496,13 @@ export const useCanvasStyles = makeStyles({
   reviewBarItem: { flexShrink: 0 },
   // Exact path and revision stay one click away in an overlay, so revealing
   // them cannot resize the admitted frame or push the mock down the panel.
+  // Like Notes and more, the surface scrolls itself once Fluent caps it at the
+  // room left in a short panel: a page scrollbar would still narrow the frame.
+  // It takes focus on open, so keyboard scrolling shows where focus is.
+  sourceSurface: {
+    boxSizing: 'border-box', overflowY: 'auto', overscrollBehavior: 'contain',
+    '&:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '-2px' },
+  },
   sourceDetails: { maxWidth: '480px', display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS },
   // The stage fills the actual remaining pane, not an estimated dvh band.
   // Notices and forms live in a popover; their arrival, wrapping, or disclosure

@@ -543,6 +543,17 @@
     },
     "updated_at": "2026-09-19T04:49:55.000Z"
   },
+  ".dude/specs/063-dude-canvas-settings/tasks.md": {
+    "glyphs": {
+      "T001@c7f3a1d9": "x",
+      "T002@e4b8d2a6": "x",
+      "T003@a9d1f6c3": "x",
+      "T004@b2e7c4f8": "x",
+      "T005@d6a3b9e1": "x",
+      "T006@f8c2e5a7": "x"
+    },
+    "updated_at": "2026-09-24T02:05:00.199Z"
+  },
   ".dude/specs/064-work-receipt-overflow-handling/tasks.md": {
     "glyphs": {
       "T001@c064a71e": "x",

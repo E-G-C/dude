@@ -140,12 +140,15 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
   const [inspector, setInspector] = useState(false);
   const [source, setSource] = useState(false);
   const [details, setDetails] = useState(false);
+  const [detailsTip, setDetailsTip] = useState(false);
   // Presentation only, for this open workspace. Nothing is stored, and the
   // palette is out of flow, so neither placement changes the frame geometry.
   const [toolsVertical, setToolsVertical] = useState(true);
   const [toolsSpot, setToolsSpot] = useState(TOOLS_HOME_SPOT);
   const [toolsMenu, setToolsMenu] = useState(false);
   const band = useRef(null), palette = useRef(null);
+  // The spot the reviewer chose, and the spot the current stage can show.
+  const toolsParked = useRef(TOOLS_HOME);
   const toolsAt = useRef(TOOLS_HOME), toolsDrag = useRef(null), toolsDragged = useRef(false);
   const toolsFrame = useRef(null);
   const moveHint = useId(), reviewHint = useId(), saveHint = useId(), detailsHint = useId(), sendHint = useId();
@@ -378,17 +381,22 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
       ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [inspector, active, selected?.id]);
 
-  // Recover a parked palette if the stage itself gets shorter or narrower. This
+  // Keep the parked palette on the stage the way a window stays on screen:
+  // while the stage is shorter or narrower, show the parked spot clamped to it,
+  // and bring it back when the room returns. A disclosure whose classic
+  // scrollbar briefly narrows the page must not move the tools for good. This
   // only reads geometry and rewrites a transform; it never sizes the frame.
   useEffect(() => {
     const stage = band.current;
     if (!stage) return undefined;
     const observer = new ResizeObserver(() => {
-      const current = toolsAt.current;
       const limits = toolsLimits(palette.current, stage);
-      if (toolsDrag.current) toolsDrag.current.limits = limits;
-      if (!current.x && !current.y) return;
-      const next = clampToolsOffset(current, limits);
+      const drag = toolsDrag.current;
+      if (drag) drag.limits = limits;
+      if (!limits) return;
+      // A drag owns the painted spot until it ends and parks its own result.
+      const next = clampToolsOffset(drag ? toolsAt.current : toolsParked.current, limits);
+      const current = toolsAt.current;
       if (next.x === current.x && next.y === current.y) return;
       paintTools(next);
       setToolsSpot(describeToolsSpot(next));
@@ -405,11 +413,13 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
     palette.current.style.transform = `translate(${next.x}px, ${next.y}px)`;
     palette.current.dataset.reviewToolsOffset = `${next.x},${next.y}`;
   };
-  const parkTools = desired => {
-    const next = clampToolsOffset(desired, toolsLimits(palette.current, band.current));
+  // Record where the reviewer put the tools, then show and announce that spot.
+  const commitTools = next => {
+    toolsParked.current = { x: next.x, y: next.y };
     paintTools(next);
     setToolsSpot(describeToolsSpot(next));
   };
+  const parkTools = desired => commitTools(clampToolsOffset(desired, toolsLimits(palette.current, band.current)));
   const parkToolsAtCorner = (x, y) => {
     // Use the actual layout limits, not guessed destinations that the clamp
     // would override. Each named corner is reachable in either orientation.
@@ -441,11 +451,7 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
     const drag = toolsDrag.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     cancelAnimationFrame(toolsFrame.current); toolsFrame.current = null;
-    if (drag.moved) {
-      const next = clampToolsOffset(drag.desired, drag.limits);
-      paintTools(next);
-      setToolsSpot(describeToolsSpot(next));
-    }
+    if (drag.moved) commitTools(clampToolsOffset(drag.desired, drag.limits));
     toolsDrag.current = null;
     toolsDragged.current = drag.moved;
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
@@ -559,11 +565,16 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
       <Badge className={s.reviewBarItem} appearance="tint" color={state?.stale ? 'warning' : 'informative'}>
         {state?.stale ? 'Stale source' : savedEvidence || state?.status === 'sealed' ? 'Sealed evidence' : state?.ready ? 'Review' : 'Loading mock'}
       </Badge>
-      <Popover open={source} onOpenChange={(_, input) => setSource(input.open)}>
+      <Popover open={source} onOpenChange={(_, input) => setSource(input.open)}
+        positioning={{ autoSize: 'height', overflowBoundaryPadding: 8 }}>
         <PopoverTrigger disableButtonEnhancement>
           <Button appearance="subtle" className={s.reviewBarItem} icon={<DocumentRegular />}>Source</Button>
         </PopoverTrigger>
-        <PopoverSurface>
+        {/* Sized like Notes and more: a long identity scrolls inside the room
+            left in the panel rather than adding a page scrollbar. Fluent
+            focuses a surface that has a tabIndex when it opens, so the keyboard
+            can scroll it, and Escape hands focus back to Source. */}
+        <PopoverSurface className={s.sourceSurface} tabIndex={-1} aria-label="Source">
           <div className={s.sourceDetails}>
             <Text weight="semibold">Request scope</Text>
             <ScopeIdentity scope={entry.record.request.scope} title={scopeTitle} browsingLabel={browsingLabel} />
@@ -589,7 +600,10 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
         </Tooltip>
         <Button size="small" icon={<CommentRegular />} ref={commentsAction}
           onClick={() => setInspector(true)}>Comments ({state?.annotations.length || 0})</Button>
-        <Popover open={details && active} onOpenChange={(_, input) => setDetails(input.open)}
+        <Popover open={details && active} onOpenChange={(_, input) => {
+          setDetailsTip(false);
+          setDetails(input.open);
+        }}
           positioning={{ position: 'below', align: 'start', autoSize: 'height', overflowBoundaryPadding: 8 }}>
           {/* Named after the one thing kept here that exists nowhere else, plus
               the overflow wording Edge uses for "Settings and more". The tip
@@ -599,6 +613,8 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
               keyboard reviewer too. */}
           <PopoverTrigger disableButtonEnhancement>
             <Tooltip withArrow relationship="description" positioning="below"
+              visible={active && !details && detailsTip}
+              onVisibleChange={(_, input) => setDetailsTip(input.visible)}
               content={{ id: detailsHint, children: detailsContents }}>
               <Button size="small" aria-describedby={detailsHint}>Notes and more</Button>
             </Tooltip>
@@ -627,8 +643,13 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
               </Notice>}
               <div className={s.picker}>
                 <div className={s.pickerField}>
+                  {/* Fluent's Dropdown ignores open-state changes while it is
+                      disabled, so disabling it for a brief source reread strands
+                      an open listbox over the picker buttons. The engine queues
+                      the element command behind that reread; only a Review that
+                      cannot act disables the chooser. */}
                   <SelectField label="Choose an element" value={state?.target?.selector}
-                    disabled={busy} options={(state?.targets || []).map(target => [target.selector, target.label || target.selector])}
+                    disabled={!actionable} options={(state?.targets || []).map(target => [target.selector, target.label || target.selector])}
                     onChange={selector => void command({ type: 'element', selector })} />
                 </div>
                 <Button disabled={busy || !state?.target} onClick={async () => {
@@ -747,15 +768,21 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
           </Menu>
           <Toolbar vertical={toolsVertical} aria-label="Annotation tools" checkedValues={{ tool: [state?.tool || 'select'] }}
             className={mergeClasses(s.drawingTools, toolsVertical ? s.drawingToolsVertical : s.drawingToolsHorizontal)}>
+            {/* A source reread can briefly suspend commands under native
+                keyboard focus. Fluent blocks activation without moving that
+                focus to BODY; unavailable/stale tools stay natively disabled. */}
             {TOOLS.map(([tool, label, Icon, shortcut]) => <ToolbarToggleButton key={tool}
               className={s.toolButton} name="tool" value={tool} icon={<Icon />} disabled={busy}
+              disabledFocusable={actionable && state.busy}
               aria-label={`${label} (${shortcut})`} title={busy ? disabledReason : `${label} (${shortcut})`}
               aria-describedby={busy ? reviewHint : undefined}
               onClick={() => void command({ type: 'tool', tool })} />)}
             <ToolbarDivider />
             <ToolbarButton className={s.toolButton} icon={<ArrowUndoRegular />} aria-label="Undo annotation" disabled={busy || !state?.canUndo}
+              disabledFocusable={actionable && state.busy && state.canUndo}
               onClick={() => void command({ type: 'undo' })} />
             <ToolbarButton className={s.toolButton} icon={<ArrowRedoRegular />} aria-label="Redo annotation" disabled={busy || !state?.canRedo}
+              disabledFocusable={actionable && state.busy && state.canRedo}
               onClick={() => void command({ type: 'redo' })} />
           </Toolbar>
           {/* Keep the presentation switch outside the tool scroller. It remains
@@ -767,8 +794,7 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
               // Each placement anchors to its own corner, so start it there.
               setToolsMenu(false);
               setToolsVertical(value => !value);
-              paintTools(TOOLS_HOME);
-              setToolsSpot(TOOLS_HOME_SPOT);
+              commitTools(TOOLS_HOME);
             }} />
           <span id={moveHint} className={s.visuallyHidden}>
             Click or tap to choose a corner or reset the tools. Drag to park them elsewhere.

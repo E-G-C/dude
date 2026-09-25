@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "submissionId": "5a8ec724-79c3-4ef1-99dd-3afcb6d267f2",
+  "scope": {
+    "kind": "feature",
+    "ideaPath": ".dude/ideas/063-dude-canvas-settings.md",
+    "specPath": ".dude/specs/063-dude-canvas-settings/spec.md"
+  },
+  "preview": {
+    "artifact": {
+      "path": ".dude/specs/063-dude-canvas-settings/design/pack-management.html",
+      "revision": "sha256:76cd1d783bc07a4cfc65394834877b3f58ec8994a172bb3707131a87fdf81975"
+    },
+    "assets": []
+  },
+  "requestRef": "settings-discovery-76cd1d783bc0",
+  "requestRevision": "settings-discovery-76cd1d783bc0",
+  "state": {
+    "annotations": [],
+    "notes": "",
+    "tool": "select",
+    "selectedId": null,
+    "caret": null,
+    "view": null,
+    "palette": null
+  }
+}

@@ -67,6 +67,8 @@ export function mountReview(container, { review, requestHandle, revision, theme,
   let past = [], future = [], saveTimer = null, scrollFrame = null, resizeFrame = null;
   let changeRevision = 0, savedRevision = 0, nextId = 0, scrollDelta = { x: 0, y: 0 };
   let inactiveView = null, resuming = null;
+  // Settles when the last requested annotation or element command finishes.
+  let admitting = null;
   let viewportPinned = false;
   let frameLoaded = false, initializing = null, readinessTimer = null;
   let scrolling = null, refreshFrame = null, externalScroll = false, epoch = 0, pointed = null;
@@ -337,7 +339,12 @@ export function mountReview(container, { review, requestHandle, revision, theme,
       catch (error) { if (error.code !== 'review_superseded') throw error; }
     }
     checkEpoch(currentEpoch);
+    // This read covers any scheduled rescan and any size a ResizeObserver
+    // already reported (such as the one-time half-pixel pin normalization).
+    // A late animation frame must not start a second read in the middle of a
+    // command's admission and supersede it.
     cancelAnimationFrame(refreshFrame); refreshFrame = null;
+    cancelAnimationFrame(resizeFrame); resizeFrame = null;
     externalScroll = false;
     const work = (async () => {
       const result = await query(op, fields);
@@ -822,12 +829,25 @@ export function mountReview(container, { review, requestHandle, revision, theme,
         delta: { x: Math.max(-1000000, Math.min(1000000, d.x)), y: Math.max(-1000000, Math.min(1000000, d.y)) } }).catch(reportError);
     });
   }
-  async function command(action) {
+  // An element choice waits for the annotation or element command requested
+  // before it to finish, not just for that command's view read. Both would
+  // wake when the read settles, and the choice would start its own read
+  // first, which refuses the earlier command as busy.
+  function command(action) {
+    const work = perform(action);
+    if (['addComment', 'addAtCenter', 'element'].includes(action?.type)) {
+      const settled = admitting = work.then(() => {}, () => {});
+      void settled.then(() => { if (admitting === settled) admitting = null; });
+    }
+    return work;
+  }
+  async function perform(action) {
     try {
       requireValue(action && typeof action === 'object');
       if (action.type === 'save') return await save();
       if (action.type === 'seal') return await seal(action.text);
       const currentEpoch = epoch;
+      if (action.type === 'element' && admitting) await admitting;
       if (resuming) await resuming;
       while (scrolling) {
         try { await scrolling; }
@@ -1031,7 +1051,11 @@ export function mountReview(container, { review, requestHandle, revision, theme,
       markStale('review_source_changed', 'The review size changed. Marker positions no longer match this view.');
     }
     else if (!sealing && resizeFrame === null) resizeFrame = requestAnimationFrame(() => {
-      resizeFrame = null; void refreshView().catch(reportError);
+      resizeFrame = null;
+      // A size reported while a command is still admitting, such as the
+      // first annotation's own pin, is reread after it rather than across it.
+      const reread = () => void refreshView().catch(reportError);
+      if (admitting) void admitting.then(reread); else reread();
     });
   });
   observer.observe(frame);

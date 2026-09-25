@@ -28,8 +28,8 @@
         "fast": "gpt-5.6-sol-fast",
         "balanced": "gpt-5.6-sol-fast",
         "reasoning": "gpt-6-astra",
-        "visual": "claude-opus-5",
-        "coding": "gpt-6-astra"
+        "visual": "claude-opus-5.5",
+        "coding": "claude-opus-5.5"
       }
     }
   }

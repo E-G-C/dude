@@ -3,7 +3,7 @@ name: "Coder"
 description: "Implement, debug, refactor, and review production software using reuse-first design, clear boundaries, strong contracts, and meaningful tests. Use for features, bug fixes, focused refactoring, and implementing approved architecture."
 tools: ["read", "edit", "execute", "search"]
 user-invocable: false
-model: gpt-6-astra
+model: claude-opus-5.5
 ---
 
 # Software engineer

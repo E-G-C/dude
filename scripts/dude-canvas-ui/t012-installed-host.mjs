@@ -5,22 +5,28 @@
  * This is an explicitly invoked acceptance driver, not a recursively discovered
  * unit test. It installs the current release into owned fixtures, starts the
  * installed Copilot CLI over the documented SDK stdio transport, lets that CLI
- * discover and fork the shipped Dude extension, and drives the returned Canvas
- * URL with an owned Edge/CDP process.
+ * discover and start the shipped Dude extension, and drives the returned Canvas
+ * URL with an owned Edge/CDP process. On Windows the runtime process is the
+ * installed launcher itself, so the extension host is its single executable,
+ * as in the installed app.
  *
  * The loopback model is deterministic and contains no credentials. It chooses
  * only predeclared tools actually offered by the CLI. The selected Dude session
  * projection delegates staging/revision work to the exact installed Spec Lead;
  * those agents use skill/create/view/edit/bash, and Dude invokes/acknowledges the
- * shipped handoff. The model fixture itself performs no post-seed canonical
- * write. This proves installed owner execution and waiter correlation, not
- * unscripted model reasoning or desktop-app rendering.
+ * shipped handoff. A separate disposable pack fixture drives Settings through
+ * owner preview, exact permission, Compose application, pack-result
+ * acknowledgment, and the provider's authoritative reread. The model fixture
+ * itself performs no post-seed canonical write. This proves installed owner
+ * execution and waiter correlation, not unscripted model reasoning or
+ * desktop-app rendering.
  */
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -28,24 +34,84 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
-const SDK = '/Applications/GitHub Copilot.app/Contents/Resources/copilot-sdk';
-const CLI = process.env.DUDE_COPILOT_CLI ?? '/opt/homebrew/bin/copilot';
+const WINDOWS = process.platform === 'win32';
+
+/**
+ * Darwin keeps the recorded macOS install defaults. No other host layout is
+ * recorded here, so elsewhere every installed artifact must be named.
+ * @param {string|undefined} configured @param {string} name @param {string} darwinDefault
+ */
+function installedArtifact(configured, name, darwinDefault) {
+  if (configured !== undefined) return configured;
+  if (process.platform === 'darwin') return darwinDefault;
+  throw new Error(`${name} must name the installed artifact on ${process.platform}; `
+    + 'only the macOS app install has recorded defaults.');
+}
+
+/** Directory containing the installed SDK's index.js. */
+const SDK = installedArtifact(
+  process.env.DUDE_COPILOT_SDK,
+  'DUDE_COPILOT_SDK',
+  '/Applications/GitHub Copilot.app/Contents/Resources/copilot-sdk',
+);
+const CLI = installedArtifact(process.env.DUDE_COPILOT_CLI, 'DUDE_COPILOT_CLI', '/opt/homebrew/bin/copilot');
+if (WINDOWS && /\.(?:bat|cmd)$/i.test(CLI)) {
+  // Node spawns batch shims only through cmd.exe quoting; the exact launcher needs none.
+  throw new Error(`DUDE_COPILOT_CLI must name the copilot.exe launcher on Windows, not ${CLI}`);
+}
 const CLI_RUNTIME = process.env.DUDE_COPILOT_RUNTIME
   ?? path.join(
-    process.env.COPILOT_CLI_RESOLVED_DIST_DIR
-      ?? path.join(os.homedir(), 'Library/Caches/copilot/pkg/darwin-arm64/1.0.83-5'),
+    installedArtifact(
+      process.env.COPILOT_CLI_RESOLVED_DIST_DIR,
+      'DUDE_COPILOT_RUNTIME or COPILOT_CLI_RESOLVED_DIST_DIR',
+      path.join(os.homedir(), 'Library/Caches/copilot/pkg/darwin-arm64/1.0.83-5'),
+    ),
     'index.js',
   );
-const BROWSER = process.env.DUDE_CANVAS_BROWSER
-  ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
+/**
+ * The installed app runs its CLI launcher as the runtime process, and that CLI
+ * starts extensions with its own executable, a single-executable application
+ * rather than Node. Windows sessions run the same way. The launcher's own
+ * COPILOT_CLI_DIST_DIR selection loads the CLI_RUNTIME package rather than
+ * extracting another copy into each isolated profile, so only the host
+ * executable differs from a Node-hosted runtime. macOS keeps its recorded
+ * Node-hosted runtime; the launcher host is unverified there.
+ */
+const SESSION_RUNTIME = WINDOWS ? CLI : CLI_RUNTIME;
+const CLI_DIST_DIR = path.dirname(CLI_RUNTIME);
+const BROWSER = installedArtifact(
+  process.env.DUDE_CANVAS_BROWSER,
+  'DUDE_CANVAS_BROWSER',
+  '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+);
+/** Windows PowerShell 5.1 ships with every supported Windows release. */
+const WINDOWS_POWERSHELL = WINDOWS
+  ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+  : null;
+/**
+ * The installed CLI offers its platform shell tool: `bash` on POSIX hosts and
+ * `powershell` on Windows. Scripted owner commands use that shell's quoting;
+ * PowerShell needs its call operator to run a quoted executable path.
+ */
+const SHELL_TOOL = WINDOWS ? 'powershell' : 'bash';
+const SHELL_INVOKE = WINDOWS ? '& ' : '';
+/**
+ * The installed Windows CLI `create` tool writes new files with CRLF whatever
+ * the requested line endings, and `view` returns those bytes. Scripted owner
+ * text uses that platform form, so exact-byte checks compare what it writes.
+ * @param {string} text
+ */
+function ownerText(text) {
+  return WINDOWS ? text.replace(/\r?\n/g, '\r\n') : text;
+}
 const ARTIFACTS = path.resolve(
   process.env.DUDE_CANVAS_ARTIFACTS_DIR
     ?? path.join(os.tmpdir(), 'dude-canvas-t012-installed-host'),
 );
-const RUN = fs.realpathSync(fs.mkdtempSync(path.join(
-  fs.mkdirSync(ARTIFACTS, { recursive: true }) || ARTIFACTS,
-  'installed-host-',
-)));
+// Recursive mkdir returns the first directory it created (on Windows as a
+// \\?\ namespaced path), not ARTIFACTS itself, so only ARTIFACTS is the parent.
+fs.mkdirSync(ARTIFACTS, { recursive: true });
+const RUN = fs.realpathSync(fs.mkdtempSync(path.join(ARTIFACTS, 'installed-host-')));
 const DEADLINE = 30_000;
 const MAX_MODEL_BODY = 4 * 1024 * 1024;
 const REVIEW_SLUG = 't012-installed-review';
@@ -55,7 +121,14 @@ const SPEC_PATH = `.dude/specs/${REVIEW_ID}-${REVIEW_SLUG}/spec.md`;
 const DESIGN_ROOT = `.dude/specs/${REVIEW_ID}-${REVIEW_SLUG}/design`;
 const MOCK_PATH = `${DESIGN_ROOT}/mock.html`;
 const CSS_PATH = `${DESIGN_ROOT}/mock.css`;
-const SOURCE_APP_SHA256 = 'fcf3f9102f8eabd36f9bd0494a84695fda2891e1d53a7f05b03a1be2088a9463';
+const PACK_NAME = 'installed-roundtrip';
+const PACK_MANIFEST_PATH = `library/packs/${PACK_NAME}/pack.md`;
+const PACK_SOURCE_PATH =
+  `library/packs/${PACK_NAME}/instructions/dude-pack-${PACK_NAME}-owner.instructions.md`;
+const PACK_DESTINATION =
+  `.github/instructions/dude-pack-${PACK_NAME}-owner.instructions.md`;
+const PROFILE_PATH = '.dude/metadata/profile.md';
+const SOURCE_APP_SHA256 = '503ee6224573b8624899de3670686ce758f7c91c4d338fd9c46e2eea4fcb84f5';
 const SOURCE_LEGAL_SHA256 = '3be2d01e3b59529e54cde5f17aee76c168bcde63245c21ec387cf70ba7a6d869';
 /**
  * The Review gesture behavior lives in these static modules, not in the bundled
@@ -64,7 +137,7 @@ const SOURCE_LEGAL_SHA256 = '3be2d01e3b59529e54cde5f17aee76c168bcde63245c21ec387
  * Canvas server actually serves.
  */
 const SOURCE_REVIEW_MODULES = Object.freeze({
-  'ui/review/engine.mjs': '69e1b1b1ebae71e4f64f6d3a477ec375924a243e515b994f8ccfd78884d78c50',
+  'ui/review/engine.mjs': 'c2edc7410e59f78b3ce3a6936218e36975aac89eab7705eae2a29858ceaee766',
   'ui/review/geometry.mjs': 'e3e000908c5ee2f033448215eec606cae2931b062d0f3d75d049844c4a8f4def',
   'ui/review/styles.css': '20e3430b0e0111584f2c4d06352f69182cdeb3eff522db1a088d858fc23871af',
 });
@@ -138,9 +211,29 @@ function command(executable, args, options = {}) {
   };
 }
 
+/** @param {string} script @param {NodeJS.ProcessEnv} [env] */
+function windowsPowerShell(script, env = process.env) {
+  assert.ok(WINDOWS_POWERSHELL, 'Windows PowerShell probes run only on Windows');
+  return command(WINDOWS_POWERSHELL, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
+    env,
+    windowsHide: true,
+  });
+}
+
 /** @param {number} pid */
 function processRow(pid) {
-  const result = command('/bin/ps', ['-p', String(pid), '-o', 'pid=,ppid=,comm=']);
+  let result;
+  if (WINDOWS) {
+    // No ps on Windows; CIM reports the same pid, parent pid, and executable.
+    // An absent process is an empty successful query, never a failed probe.
+    result = windowsPowerShell(`Get-CimInstance Win32_Process -Filter 'ProcessId=${Number(pid)}' | `
+      + "ForEach-Object { '{0} {1} {2}' -f $_.ProcessId, $_.ParentProcessId, "
+      + '$(if ($_.ExecutablePath) { $_.ExecutablePath } else { $_.Name }) }');
+    assert.ok(result.exitCode === 0 && !result.error,
+      `Windows process probe failed for ${pid}: ${result.error ?? result.stderr}`);
+  } else {
+    result = command('/bin/ps', ['-p', String(pid), '-o', 'pid=,ppid=,comm=']);
+  }
   const match = result.stdout.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
   return match ? { pid: Number(match[1]), ppid: Number(match[2]), executable: match[3] } : null;
 }
@@ -210,6 +303,19 @@ function toolMessageText(body, toolCallId) {
   return contentText(toolMessage(body, toolCallId).content);
 }
 
+/**
+ * Separate a shell tool result's command output from the installed CLI's
+ * closing status line, such as `<shellId: 1 completed with exit code 0>`.
+ * @param {string} text
+ */
+function shellToolOutput(text) {
+  const status = /\r?\n<[^<>\r\n]* exit code (-?\d+)>\s*$/.exec(text);
+  return {
+    stdout: status ? text.slice(0, status.index) : text,
+    exitCode: status ? Number(status[1]) : null,
+  };
+}
+
 /** @param {any} body @param {string} toolCallId */
 function toolDetails(body, toolCallId) {
   const message = toolMessage(body, toolCallId);
@@ -256,9 +362,16 @@ function requireToolSchema(body, name, required) {
   return tool.function.name;
 }
 
-/** @param {string} value */
+/** One literal word in the installed CLI's platform shell. @param {string} value */
 function shellArg(value) {
-  return `'${value.replaceAll("'", "'\\''")}'`;
+  return WINDOWS
+    ? `'${value.replaceAll("'", "''")}'`
+    : `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+/** @param {string[]} words literal or already quoted words, executable first */
+function shellCommand(words) {
+  return `${SHELL_INVOKE}${words.join(' ')}`;
 }
 
 /** @param {unknown} value @param {Set<unknown>} [seen] @returns {Buffer[]} */
@@ -495,7 +608,7 @@ function blankSlug(kind) {
 /** @param {{root:string,intent:string,slug:string,evidence:string}} options */
 function captureFixture(options) {
   const title = options.slug.split('-').map((part) => part[0].toUpperCase() + part.slice(1)).join(' ');
-  const bytes = Buffer.from([
+  const bytes = Buffer.from(ownerText([
     '---',
     `title: ${title}`,
     `slug: ${options.slug}`,
@@ -511,7 +624,7 @@ function captureFixture(options) {
     '',
     '- 2026-09-08 12:00:00 UTC - Captured through the isolated installed Canvas acceptance.',
     '',
-  ].join('\n'));
+  ].join('\n')));
   return {
     slug: options.slug,
     stagePath: path.join(options.evidence, 'spec-lead-staged-idea.md'),
@@ -524,6 +637,114 @@ function captureFixture(options) {
       '.github/skills/dude-feature-definition/publish-first-capture.mjs',
     ),
   };
+}
+
+/** @param {string} root */
+function packFixture(root) {
+  const manifest = Buffer.from([
+    '---',
+    `name: ${PACK_NAME}`,
+    'description: "Deterministic installed-host pack round trip."',
+    'use-cases: [testing]',
+    'requires:',
+    '  tools: [node]',
+    '---',
+    `# ${PACK_NAME}`,
+    '',
+  ].join('\n'));
+  const instruction = Buffer.from([
+    '---',
+    'applyTo: "**"',
+    'description: "Disposable installed-host pack acceptance artifact."',
+    '---',
+    '',
+    '# Installed host pack acceptance',
+    '',
+    'This inert fixture proves the actual installed Compose projection.',
+    '',
+  ].join('\n'));
+  const compose = path.join(root, '.github/skills/dude-compose/compose.mjs');
+  const lint = path.join(root, '.github/skills/dude-lint/lint.mjs');
+  const library = path.join(root, 'library', 'packs');
+  const profile = path.join(root, ...PROFILE_PATH.split('/'));
+  const destination = path.join(root, ...PACK_DESTINATION.split('/'));
+  const source = {
+    type: 'local',
+    location: path.resolve(library),
+  };
+  const listCommand = shellCommand([
+    shellArg(process.execPath),
+    shellArg(compose),
+    'list',
+    '--root',
+    shellArg(root),
+    '--library',
+    shellArg(library),
+    '--no-fetch',
+    '--json',
+  ]);
+  const addCommand = shellCommand([
+    shellArg(process.execPath),
+    shellArg(compose),
+    'add',
+    PACK_NAME,
+    '--root',
+    shellArg(root),
+    '--library',
+    shellArg(library),
+    '--no-fetch',
+    '--envelope',
+  ]);
+  const lintCommand = shellCommand([
+    shellArg(process.execPath),
+    shellArg(lint),
+    shellArg(root),
+  ]);
+  return {
+    root,
+    manifest,
+    instruction,
+    compose,
+    lint,
+    library,
+    profile,
+    destination,
+    source,
+    listCommand,
+    addCommand,
+    lintCommand,
+    files: [PACK_DESTINATION],
+    result: {
+      ok: true,
+      code: 0,
+      result: {
+        added: PACK_NAME,
+        files: [PACK_DESTINATION],
+        origin: 'local',
+      },
+    },
+  };
+}
+
+/** @param {string} root */
+function seedPackFixture(root) {
+  const fixture = packFixture(root);
+  write(root, PACK_MANIFEST_PATH, fixture.manifest);
+  write(root, PACK_SOURCE_PATH, fixture.instruction);
+  assert.equal(fs.realpathSync(fixture.library), fixture.source.location);
+  assert.equal(fs.existsSync(fixture.destination), false);
+  return fixture;
+}
+
+/** @param {string} root */
+function installedProfile(root) {
+  const bytes = fs.readFileSync(path.join(root, ...PROFILE_PATH.split('/')));
+  const match = /```json\s*\r?\n([\s\S]*?)\r?\n```/.exec(bytes.toString('utf8'));
+  assert.ok(match, 'installed profile has one fenced JSON object');
+  const value = JSON.parse(match[1]);
+  assert.ok(value && typeof value === 'object' && value.installed
+    && typeof value.installed === 'object' && !Array.isArray(value.installed));
+  return { bytes, value };
 }
 
 /**
@@ -634,7 +855,7 @@ function createBlankModel(options) {
         assert.equal(state.phase, 'capture-spec-read');
         assert.equal(lastTool?.tool_call_id, `call_${options.kind}_spec_read_stage`);
         const stagedRead = toolMessageText(body, lastTool.tool_call_id);
-        assert.ok(stagedRead.includes(options.intent));
+        assert.ok(stagedRead.includes(ownerText(options.intent)));
         assert.ok(stagedRead.includes(`slug: ${options.slug}`));
         state.phase = 'capture-await-parent-task';
         answerModel(res, body, {
@@ -722,10 +943,11 @@ function createBlankModel(options) {
       if (state.phase === 'capture-await-parent-task') {
         assert.equal(lastTool?.tool_call_id, state.ownerExecution.delegationCallId);
         const taskResult = toolMessageText(body, lastTool.tool_call_id);
-        assert.ok(taskResult.includes(ownerFixture.stagePath));
+        // The Spec Lead reports JSON, so a Windows path arrives with escaped backslashes.
+        assert.ok(taskResult.includes(JSON.stringify(ownerFixture.stagePath).slice(1, -1)));
         assert.ok(taskResult.includes(ownerFixture.revision));
-        const bash = requireToolSchema(body, 'bash', ['command', 'description']);
-        const publisherCommand = [
+        const shell = requireToolSchema(body, SHELL_TOOL, ['command', 'description']);
+        const publisherCommand = shellCommand([
           shellArg(process.execPath),
           shellArg(ownerFixture.publisher),
           '--root',
@@ -734,12 +956,12 @@ function createBlankModel(options) {
           shellArg(options.slug),
           '--stage',
           shellArg(ownerFixture.stagePath),
-        ].join(' ');
+        ]);
         state.ownerExecution.publisherCommand = publisherCommand;
         state.phase = 'capture-publish';
         answerModel(res, body, toolCall(
           state.ownerExecution.publisherCallId,
-          bash,
+          shell,
           {
             command: publisherCommand,
             description: 'Publish staged idea with shipped helper',
@@ -768,7 +990,7 @@ function createBlankModel(options) {
       if (state.phase === 'capture-canonical-read') {
         assert.equal(lastTool?.tool_call_id, state.ownerExecution.canonicalReadCallId);
         const canonicalRead = toolMessageText(body, lastTool.tool_call_id);
-        assert.ok(canonicalRead.includes(options.intent));
+        assert.ok(canonicalRead.includes(ownerText(options.intent)));
         assert.ok(canonicalRead.includes(`slug: ${options.slug}`));
         requireToolSchema(body, offered.name, ['op']);
         state.ownerExecution.canonicalReadRevision = ownerFixture.revision;
@@ -813,6 +1035,375 @@ function createBlankModel(options) {
   server.requestTimeout = 10_000;
   server.headersTimeout = 10_000;
   return { server, state };
+}
+
+/**
+ * Deterministic selected-Dude model for one installed Settings install.
+ * Every read and mutation is made through an actually offered owner tool.
+ * @param {string} root
+ */
+function createPackModel(root) {
+  const fixture = packFixture(root);
+  const beforeProfile = installedProfile(root);
+  assert.equal(Object.hasOwn(beforeProfile.value.installed, PACK_NAME), false);
+  assert.equal(fs.existsSync(fixture.destination), false);
+  const state = {
+    phase: 'bootstrap',
+    requests: 0,
+    packPromptRequests: 0,
+    toolName: null,
+    offeredTools: [],
+    binding: null,
+    preview: null,
+    permission: null,
+    permissionAcknowledgment: null,
+    compose: null,
+    verification: null,
+    result: null,
+    ownerToolCalls: [],
+    beforeProfileRevision: revision(beforeProfile.bytes),
+    modelError: null,
+  };
+  const call = {
+    skill: 'call_t012_pack_skill',
+    list: 'call_t012_pack_list',
+    manifest: 'call_t012_pack_manifest',
+    source: 'call_t012_pack_source',
+    permission: 'call_t012_pack_permission',
+    permissionAck: 'call_t012_pack_permission_ack',
+    add: 'call_t012_pack_add',
+    lint: 'call_t012_pack_lint',
+    profile: 'call_t012_pack_profile',
+    result: 'call_t012_pack_result',
+  };
+  const recordCall = (callId, tool, details = {}) => {
+    state.ownerToolCalls.push({ callId, tool, ...details });
+  };
+  const server = http.createServer(async (req, res) => {
+    try {
+      assert.equal(req.socket.remoteAddress, '127.0.0.1');
+      assert.equal(req.method, 'POST');
+      assert.equal(req.url, '/v1/chat/completions');
+      let raw = '';
+      for await (const chunk of req) {
+        raw += chunk;
+        assert.ok(Buffer.byteLength(raw) <= MAX_MODEL_BODY);
+      }
+      const body = JSON.parse(raw);
+      state.requests += 1;
+      assert.ok(state.requests <= 32, 'installed pack model request bound exceeded');
+      assert.equal(isSpecLeadTurn(body), false, 'the selected Dude owns the pack workflow');
+      recordToolSchemas('selected-dude-pack', body);
+      const offered = offeredDudeTool(body);
+      state.toolName = offered.name;
+      state.offeredTools = offered.offered;
+      const lastUser = [...(body.messages ?? [])].reverse().find((message) => message?.role === 'user');
+      const prompt = contentText(lastUser?.content);
+      const lastTool = [...(body.messages ?? [])].reverse().find((message) => message?.role === 'tool');
+      const lastId = lastTool?.tool_call_id ?? null;
+
+      if (state.phase === 'bootstrap') {
+        state.phase = 'idle';
+        answerModel(res, body, {
+          role: 'assistant',
+          content: 'T012_PACK_HOST_IDLE',
+        }, 'stop');
+        return;
+      }
+      if (state.phase === 'idle') {
+        assert.ok(prompt.includes('Dude Canvas explicit pack request in this joined workspace/session.'));
+        const jsonLine = prompt.split(/\r?\n/).reverse().find((line) => line.trim().startsWith('{'));
+        assert.ok(jsonLine, 'pack request omitted its exact receipt binding');
+        const binding = JSON.parse(jsonLine);
+        assert.equal(binding.owner, 'dude');
+        assert.equal(binding.operation, 'install');
+        assert.equal(binding.name, PACK_NAME);
+        state.packPromptRequests += 1;
+        assert.equal(state.packPromptRequests, 1, 'the installed request is sent exactly once');
+        state.binding = binding;
+        const skill = requireToolSchema(body, 'skill', ['skill']);
+        recordCall(call.skill, skill, { skill: 'dude-compose' });
+        state.phase = 'pack-skill';
+        answerModel(res, body, toolCall(call.skill, skill, {
+          skill: 'dude-compose',
+        }), 'tool_calls');
+        return;
+      }
+      if (state.phase === 'pack-skill') {
+        assert.equal(lastId, call.skill);
+        const shell = requireToolSchema(body, SHELL_TOOL, ['command', 'description']);
+        recordCall(call.list, shell, { command: fixture.listCommand, mutation: false });
+        state.phase = 'pack-list';
+        answerModel(res, body, toolCall(call.list, shell, {
+          command: fixture.listCommand,
+          description: 'Read installed pack eligibility from Compose',
+          mode: 'sync',
+          initial_wait: 30,
+        }), 'tool_calls');
+        return;
+      }
+      if (state.phase === 'pack-list') {
+        assert.equal(lastId, call.list);
+        const listing = toolMessageText(body, lastId);
+        assert.ok(listing.includes(PACK_NAME), 'Compose list omitted the fixture pack');
+        assert.match(listing, /"installed"\s*:\s*false/,
+          'Compose list did not establish uninstalled eligibility');
+        assert.equal(fs.existsSync(fixture.destination), false,
+          'read-only eligibility performed no projected write');
+        assert.deepEqual(installedProfile(root).value, beforeProfile.value,
+          'read-only eligibility performed no profile write');
+        const view = requireToolSchema(body, 'view', ['path']);
+        const target = path.join(root, ...PACK_MANIFEST_PATH.split('/'));
+        recordCall(call.manifest, view, { path: target, mutation: false });
+        state.phase = 'pack-manifest';
+        answerModel(res, body, toolCall(call.manifest, view, { path: target }), 'tool_calls');
+        return;
+      }
+      if (state.phase === 'pack-manifest') {
+        assert.equal(lastId, call.manifest);
+        const manifest = toolMessageText(body, lastId);
+        assert.ok(manifest.includes(`name: ${PACK_NAME}`));
+        assert.ok(manifest.includes('tools: [node]'));
+        const view = requireToolSchema(body, 'view', ['path']);
+        const target = path.join(root, ...PACK_SOURCE_PATH.split('/'));
+        recordCall(call.source, view, { path: target, mutation: false });
+        state.phase = 'pack-source';
+        answerModel(res, body, toolCall(call.source, view, { path: target }), 'tool_calls');
+        return;
+      }
+      if (state.phase === 'pack-source') {
+        assert.equal(lastId, call.source);
+        const source = toolMessageText(body, lastId);
+        assert.ok(source.includes('actual installed Compose projection'));
+        assert.equal(fs.existsSync(fixture.destination), false,
+          'owner preview performed no projected write');
+        assert.deepEqual(installedProfile(root).value, beforeProfile.value,
+          'owner preview performed no profile write');
+        state.preview = {
+          operation: 'install',
+          name: PACK_NAME,
+          source: fixture.source,
+          files: fixture.files,
+          tools: [{ name: 'node', available: true, version: process.version }],
+          profileRevision: revision(beforeProfile.bytes),
+          sourceRevision: revision(Buffer.concat([fixture.manifest, fixture.instruction])),
+          targetRevision: 'absent',
+        };
+        requireToolSchema(body, offered.name, ['op']);
+        const request = {
+          owner: 'dude',
+          requestRef: `pack:${state.binding.receiptId}`,
+          scope: { kind: 'session' },
+          source: { kind: 'session', revision: state.binding.providerGeneration },
+          revision: `t012-pack-permission-${sha256(JSON.stringify(state.preview)).slice(0, 16)}`,
+          class: 'permission',
+          prompt: `Install ${PACK_NAME} from the reviewed local source into this disposable workspace.`,
+          whyHuman: 'The actual Compose projection writes the named installed pack artifact and profile membership.',
+          unblocks: 'The owner can recheck the reviewed basis, apply Compose once, and report the correlated result.',
+          blocking: true,
+          fields: {
+            operation: 'pack:install',
+            targets: [
+              { target: PROFILE_PATH, revision: state.preview.profileRevision },
+              { target: `pack:${PACK_NAME} source`, revision: state.preview.sourceRevision },
+              { target: PACK_DESTINATION, revision: state.preview.targetRevision },
+            ],
+            consequences: `Install ${PACK_DESTINATION} from ${fixture.source.location}. Required tool: node (${process.version}); no prerequisite is installed.`,
+            eligibility: 'Compose reported the exact pack available and not installed; the owner will recheck profile, source, and destination before applying.',
+            confirmation: `INSTALL PACK ${PACK_NAME}`,
+          },
+        };
+        state.permissionRequest = request;
+        recordCall(call.permission, offered.name, {
+          op: 'request',
+          requestRef: request.requestRef,
+          operation: request.fields.operation,
+        });
+        state.phase = 'permission-waiting';
+        answerModel(res, body, toolCall(call.permission, offered.name, {
+          op: 'request',
+          request,
+        }), 'tool_calls');
+        return;
+      }
+      if (state.phase === 'permission-waiting') {
+        assert.equal(lastId, call.permission);
+        const details = toolDetails(body, lastId);
+        assert.equal(details.status, 'awaiting_acknowledgment');
+        assert.equal(details.acceptedAnswer, false);
+        assert.equal(details.response.class, 'permission');
+        assert.equal(details.response.action, 'consent');
+        assert.equal(details.response.operation, 'pack:install');
+        assert.equal(details.response.confirmation, `INSTALL PACK ${PACK_NAME}`);
+        assert.deepEqual(details.response.targets, state.permissionRequest.fields.targets);
+        assert.equal(fs.existsSync(fixture.destination), false,
+          'accepted permission still performs no frontend or provider write');
+        assert.deepEqual(installedProfile(root).value, beforeProfile.value,
+          'accepted permission alone performs no profile write');
+        state.permission = details;
+        requireToolSchema(body, offered.name, ['op']);
+        const receipt = details.receipt;
+        const acknowledgment = {
+          receiptId: receipt.receiptId,
+          owner: receipt.owner,
+          requestRef: receipt.requestRef,
+          scope: receipt.scope,
+          previousRevision: receipt.previousRevision,
+          recognizes: receipt.recognizes,
+          outcome: 'accepted',
+          note: 'The owner recognized the exact installed-host pack permission response.',
+          source: receipt.source,
+        };
+        recordCall(call.permissionAck, offered.name, {
+          op: 'acknowledge',
+          recognizes: acknowledgment.recognizes,
+        });
+        state.phase = 'permission-ack';
+        answerModel(res, body, toolCall(call.permissionAck, offered.name, {
+          op: 'acknowledge',
+          acknowledgment,
+        }), 'tool_calls');
+        return;
+      }
+      if (state.phase === 'permission-ack') {
+        assert.equal(lastId, call.permissionAck);
+        const details = toolDetails(body, lastId);
+        assert.equal(details.status, 'accepted');
+        state.permissionAcknowledgment = details;
+        assert.equal(fs.existsSync(fixture.destination), false,
+          'owner recognition alone performs no Compose write');
+        const shell = requireToolSchema(body, SHELL_TOOL, ['command', 'description']);
+        recordCall(call.add, shell, { command: fixture.addCommand, mutation: true });
+        state.phase = 'pack-add';
+        answerModel(res, body, toolCall(call.add, shell, {
+          command: fixture.addCommand,
+          description: 'Apply exact consented pack with Compose',
+          mode: 'sync',
+          initial_wait: 30,
+        }), 'tool_calls');
+        return;
+      }
+      if (state.phase === 'pack-add') {
+        assert.equal(lastId, call.add);
+        const composeText = toolMessageText(body, lastId);
+        assert.ok(composeText.includes(PACK_NAME), 'Compose add result omitted the exact pack');
+        assert.ok(composeText.includes(PACK_DESTINATION),
+          'Compose add result omitted the actual projected artifact');
+        assert.equal(fs.readFileSync(fixture.destination).equals(fixture.instruction), true,
+          'Compose did not project the exact reviewed source bytes');
+        const profile = installedProfile(root);
+        assert.deepEqual(profile.value.installed[PACK_NAME], {
+          files: fixture.files,
+          source: fixture.source,
+        });
+        // The owner forwards what this tool call actually printed, never a
+        // predetermined result. The fixture value is only the expected oracle.
+        const observed = shellToolOutput(composeText);
+        assert.ok(observed.exitCode === null || observed.exitCode === 0,
+          `Compose add exited with ${observed.exitCode}`);
+        const envelope = JSON.parse(observed.stdout);
+        assert.deepEqual(envelope, fixture.result,
+          'Compose add --envelope printed the exact engine result envelope');
+        state.compose = {
+          command: fixture.addCommand,
+          toolResult: composeText,
+          stdout: observed.stdout,
+          exitCode: observed.exitCode,
+          result: envelope,
+          destinationRevision: revision(fs.readFileSync(fixture.destination)),
+        };
+        const shell = requireToolSchema(body, SHELL_TOOL, ['command', 'description']);
+        recordCall(call.lint, shell, { command: fixture.lintCommand, mutation: false });
+        state.phase = 'pack-lint';
+        answerModel(res, body, toolCall(call.lint, shell, {
+          command: fixture.lintCommand,
+          description: 'Verify installed pack projection with shipped lint',
+          mode: 'sync',
+          initial_wait: 30,
+        }), 'tool_calls');
+        return;
+      }
+      if (state.phase === 'pack-lint') {
+        assert.equal(lastId, call.lint);
+        const lintText = toolMessageText(body, lastId);
+        assert.match(lintText, /0 failure\(s\)/,
+          'post-Compose installed verification did not report zero failures');
+        state.verification = {
+          command: fixture.lintCommand,
+          toolResult: lintText,
+        };
+        const view = requireToolSchema(body, 'view', ['path']);
+        recordCall(call.profile, view, { path: fixture.profile, mutation: false });
+        state.phase = 'pack-profile';
+        answerModel(res, body, toolCall(call.profile, view, {
+          path: fixture.profile,
+        }), 'tool_calls');
+        return;
+      }
+      if (state.phase === 'pack-profile') {
+        assert.equal(lastId, call.profile);
+        const profileText = toolMessageText(body, lastId);
+        assert.ok(profileText.includes(PACK_NAME));
+        assert.ok(profileText.includes(PACK_DESTINATION));
+        const profile = installedProfile(root);
+        assert.deepEqual(profile.value.installed[PACK_NAME], {
+          files: fixture.files,
+          source: fixture.source,
+        });
+        requireToolSchema(body, offered.name, ['op']);
+        const acknowledgment = {
+          recognizes: 'pack_result',
+          ...state.binding,
+          outcome: 'applied',
+          mutation: 'applied',
+          result: state.compose.result,
+          profileRevision: revision(profile.bytes),
+          source: fixture.source,
+          note: 'Installed Dude applied Compose once, verified zero lint failures, reread the profile, and reported the exact local source and file.',
+        };
+        recordCall(call.result, offered.name, {
+          op: 'acknowledge',
+          recognizes: acknowledgment.recognizes,
+          operation: acknowledgment.operation,
+          name: acknowledgment.name,
+        });
+        state.phase = 'pack-result';
+        answerModel(res, body, toolCall(call.result, offered.name, {
+          op: 'acknowledge',
+          acknowledgment,
+        }), 'tool_calls');
+        return;
+      }
+      assert.equal(state.phase, 'pack-result');
+      assert.equal(lastId, call.result);
+      const details = toolDetails(body, lastId);
+      assert.equal(details.phase, 'applied');
+      assert.equal(details.applied, true);
+      assert.equal(details.receipt.freshness, 'current');
+      assert.deepEqual(details.receipt.reread.entry, {
+        files: fixture.files,
+        source: fixture.source,
+      });
+      assert.equal(details.receipt.reread.profileRevision,
+        revision(installedProfile(root).bytes));
+      assert.deepEqual(details.receipt.acknowledgment.result, JSON.parse(state.compose.stdout),
+        'the provider accepted the observed Compose stdout as the pack result');
+      state.result = details;
+      state.phase = 'complete';
+      answerModel(res, body, {
+        role: 'assistant',
+        content: 'T012_INSTALLED_PACK_COMPLETE',
+      }, 'stop');
+    } catch (error) {
+      state.modelError = safeError(error);
+      note('pack-model-refusal', { error: state.modelError });
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'Bounded T012 pack fixture refused request' } }));
+    }
+  });
+  server.requestTimeout = 10_000;
+  server.headersTimeout = 10_000;
+  return { server, state, fixture };
 }
 
 /**
@@ -1633,12 +2224,15 @@ async function startBrowser() {
 
 /** @param {ReturnType<typeof spawn>} browser */
 async function stopBrowser(browser) {
-  if (!browser.pid || browser.exitCode !== null || browser.signalCode !== null) return;
+  const exited = () => browser.exitCode !== null || browser.signalCode !== null;
+  if (!browser.pid || exited()) return;
   process.kill(browser.pid, 'SIGTERM');
-  await until(() => browser.exitCode !== null || browser.signalCode !== null, 'owned UI browser exit', 3_000)
-    .catch(() => {
-      if (browser.exitCode === null && browser.signalCode === null) process.kill(browser.pid, 'SIGKILL');
-    });
+  try {
+    await until(exited, 'owned UI browser exit', 3_000);
+  } catch {
+    if (!exited()) process.kill(browser.pid, 'SIGKILL');
+    await until(exited, 'owned UI browser exit after SIGKILL', 3_000);
+  }
 }
 
 function button(text) {
@@ -1834,6 +2428,183 @@ async function closeServer(server) {
 }
 
 /**
+ * The SDK replaces the runtime's inherited environment. Windows processes,
+ * PowerShell, and the extension's capture-browser lookup still need these
+ * system roots. Profile and temporary roots point into this host's owned data,
+ * so the CLI, its shell, and any capture browser write no user profile state.
+ * @param {string} data
+ */
+function windowsHostEnvironment(data) {
+  const system = Object.fromEntries([
+    'SystemRoot', 'windir', 'SystemDrive', 'ComSpec', 'PATHEXT',
+    'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432',
+  ].map((name) => [name, process.env[name]]).filter(([, value]) => value !== undefined));
+  const temporary = path.join(data, 'tmp');
+  return {
+    ...system,
+    HOME: path.join(data, 'home'),
+    USERPROFILE: path.join(data, 'home'),
+    APPDATA: path.join(data, 'config'),
+    LOCALAPPDATA: path.join(data, 'cache'),
+    TEMP: temporary,
+    TMP: temporary,
+  };
+}
+
+/** Windows path identity for one executable. @param {string} actual @param {string} expected */
+function sameExecutable(actual, expected) {
+  return path.resolve(actual).toLowerCase() === path.resolve(expected).toLowerCase();
+}
+
+/**
+ * Read packs inside the launcher's real extension runtime, in-process, to
+ * record its execPath and Node version. This depends on the installed CLI's
+ * own extension launch contract, which may change with the CLI: the launcher
+ * started with its preloads/extension_bootstrap.mjs, COPILOT_EXTENSION_PARENT_PID
+ * naming this driver, and EXTENSION_PATH naming the probe. The probe imports
+ * the fixture's installed reader and reads its disposable local catalog.
+ * readPacks launches its catalog helper through this same bootstrap contract
+ * (readerLaunch in lib/packs.mjs), so the probe is also its real-host check.
+ * @param {string} root seeded, disposable release fixture
+ */
+async function probeRealHostPackRead(root) {
+  const evidence = await runRealHostPackProbe('real-host-pack-probe', root);
+  assert.deepEqual(evidence.result.coverage.catalog, { state: 'current', reason: null, message: null });
+  assert.equal(evidence.result.origin, 'local');
+  assert.deepEqual(evidence.result.packs, [PACK_NAME]);
+  note('real-host-pack-probe', { execPath: evidence.result.execPath, node: evidence.result.node,
+    elapsedMs: evidence.result.elapsedMs, catalog: evidence.result.coverage.catalog.state,
+    packs: evidence.result.packs });
+  return evidence;
+}
+
+/**
+ * Stall a real-host catalog read on a silent git:// peer, which Git never
+ * times out. The installed reader must end the read at its deadline by
+ * stopping the whole helper tree in the launcher's runtime: the relaunched
+ * launcher, the PATH git wrapper and the real git. A disposable release has no
+ * local catalog, so its configured source is the only one.
+ */
+async function probeRealHostPackStall() {
+  const root = path.join(RUN, 'real-host-pack-stall');
+  buildRelease({ repoRoot: ROOT, outDir: root, ref: 'v0.0.0-t012' });
+  assert.equal(fs.existsSync(path.join(root, 'library', 'packs')), false);
+  // Git cannot create a checkout whose files exceed the Windows path limit, as
+  // they would below this run's artifact root. Keep the host's temp root short.
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-t012-stall-'));
+  /** @type {Set<import('node:net').Socket>} */
+  const sockets = new Set();
+  let connections = 0;
+  const peer = net.createServer((socket) => {
+    connections += 1;
+    sockets.add(socket);
+    socket.on('error', () => {});
+    socket.once('close', () => sockets.delete(socket));
+    socket.resume();
+  });
+  await new Promise((resolve, reject) => {
+    peer.once('error', reject);
+    peer.listen(0, '127.0.0.1', () => resolve(undefined));
+  });
+  let probed;
+  try {
+    const { port } = /** @type {import('node:net').AddressInfo} */ (peer.address());
+    write(root, '.dude/metadata/bundle-manifest.md', `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify({
+      source_repo: `git://127.0.0.1:${port}/catalog.git`, source_ref: 'main' })}\n\`\`\`\n`);
+    const evidence = await runRealHostPackProbe('real-host-pack-stall-probe', root, data);
+    const stall = {
+      data,
+      connections,
+      openAfterRead: sockets.size,
+      acquisitionRootsAfterRead: fs.readdirSync(path.join(data, 'tmp'))
+        .filter((name) => name.startsWith('dude-canvas-packs-')),
+    };
+    fs.writeFileSync(path.join(evidence.directory, 'stall.json'), `${JSON.stringify(stall, null, 2)}\n`);
+    assert.deepEqual(evidence.result.coverage.catalog, { state: 'unavailable', reason: 'catalog_timeout',
+      message: 'The catalog read timed out. Reload to try a fresh read.' });
+    assert.ok(evidence.result.elapsedMs >= 5_000 && evidence.result.elapsedMs < 7_500,
+      `real-host stalled read ended within the deadline plus stop window: ${evidence.result.elapsedMs} ms`);
+    assert.ok(stall.connections >= 1, 'real-host git reached the silent peer');
+    assert.equal(stall.openAfterRead, 0, 'no real-host git process still holds the stalled connection');
+    assert.deepEqual(stall.acquisitionRootsAfterRead, [], 'the real-host acquisition root was removed');
+    note('real-host-pack-stall-probe', { execPath: evidence.result.execPath, elapsedMs: evidence.result.elapsedMs,
+      catalog: evidence.result.coverage.catalog.reason, ...stall });
+    probed = { ...evidence, stall };
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise((resolve) => peer.close(() => resolve(undefined)));
+  }
+  // Only a passed probe removes its temp root; a failed one keeps it as evidence.
+  fs.rmSync(data, { recursive: true, force: true });
+  return probed;
+}
+
+/**
+ * Launch the real extension runtime on a probe that times readPacks with the
+ * given root's installed reader, and record the result as evidence.
+ * @param {string} name evidence directory under this run
+ * @param {string} root disposable release fixture
+ * @param {string} [data] the host's profile and temporary roots
+ */
+async function runRealHostPackProbe(name, root, data = path.join(RUN, name, 'data')) {
+  const directory = path.join(RUN, name);
+  fs.mkdirSync(directory, { recursive: true });
+  fs.mkdirSync(path.join(data, 'tmp'), { recursive: true });
+  const probe = path.join(directory, 'probe.mjs');
+  const reader = path.join(root, '.github', 'extensions', 'dude', 'lib', 'packs.mjs');
+  fs.writeFileSync(probe, [
+    "import { pathToFileURL } from 'node:url';",
+    `const { readPacks } = await import(pathToFileURL(${JSON.stringify(reader)}).href);`,
+    'const started = performance.now();',
+    `const snapshot = await readPacks(${JSON.stringify(root)}, AbortSignal.timeout(20_000));`,
+    'const elapsedMs = Math.round(performance.now() - started);',
+    'process.stdout.write(JSON.stringify({ execPath: process.execPath, node: process.version, elapsedMs,',
+    '  coverage: snapshot.coverage, origin: snapshot.catalog?.origin ?? null,',
+    "  packs: snapshot.catalog?.packs.map((pack) => pack.name) ?? null }) + '\\n');",
+    'process.exit(0);',
+  ].join('\n'));
+  const bootstrap = path.join(CLI_DIST_DIR, 'preloads', 'extension_bootstrap.mjs');
+  const child = spawn(CLI, [bootstrap], {
+    cwd: root,
+    env: {
+      PATH: process.env.PATH,
+      ...windowsHostEnvironment(data),
+      COPILOT_CLI_DIST_DIR: CLI_DIST_DIR,
+      COPILOT_EXTENSION_PARENT_PID: String(process.pid),
+      EXTENSION_PATH: probe,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  const exit = await bounded(name, () => new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, signal) => resolve({ code, signal }));
+  })).catch((error) => {
+    child.kill();
+    throw error;
+  });
+  const line = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1) ?? '';
+  const evidence = {
+    launcher: CLI,
+    bootstrap,
+    launchContract: 'CLI launcher + preloads/extension_bootstrap.mjs + COPILOT_EXTENSION_PARENT_PID + EXTENSION_PATH',
+    exit,
+    result: line ? JSON.parse(line) : null,
+    stderrTail: stderr.split(/\r?\n/).filter(Boolean).slice(-8),
+  };
+  fs.writeFileSync(path.join(directory, 'evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`);
+  assert.equal(exit.code, 0, `${name} exited ${exit.code}: ${stderr.slice(-2_000)}`);
+  assert.ok(evidence.result, `${name} printed no result`);
+  assert.equal(sameExecutable(evidence.result.execPath, CLI), true,
+    `${name} ran outside the launcher: ${evidence.result.execPath}`);
+  return { ...evidence, directory, data };
+}
+
+/**
  * @param {{
  *   root:string,
  *   data:string,
@@ -1862,6 +2633,8 @@ async function createInstalledHost(options) {
     COPILOT_PROVIDER_TYPE: 'openai',
     COPILOT_MODEL: 'gpt-4.1',
     DUDE_CANVAS_BROWSER: BROWSER,
+    ...(WINDOWS ? windowsHostEnvironment(options.data) : {}),
+    ...(WINDOWS ? { COPILOT_CLI_DIST_DIR: CLI_DIST_DIR } : {}),
   };
   const record = {
     caseName: options.caseName,
@@ -1887,7 +2660,7 @@ async function createInstalledHost(options) {
     : null;
   record.rawProfiles = rawProfiles;
   const client = new CopilotClient({
-    connection: RuntimeConnection.forStdio({ path: CLI_RUNTIME }),
+    connection: RuntimeConnection.forStdio({ path: SESSION_RUNTIME }),
     workingDirectory: options.root,
     baseDirectory: path.join(options.data, 'copilot'),
     env,
@@ -1960,7 +2733,7 @@ async function createInstalledHost(options) {
       const exactPublisher = request.kind === 'shell'
         && blankPlan
         && typeof request.fullCommandText === 'string'
-        && request.fullCommandText.startsWith(`${shellArg(process.execPath)} ${shellArg(path.join(
+        && request.fullCommandText.startsWith(`${SHELL_INVOKE}${shellArg(process.execPath)} ${shellArg(path.join(
           options.root,
           '.github/skills/dude-feature-definition/publish-first-capture.mjs',
         ))} `)
@@ -1970,13 +2743,32 @@ async function createInstalledHost(options) {
         )
         && !/[\n\r`;]|&&|\|\||\$\(/.test(request.fullCommandText)
         && request.toolCallId === `call_${options.caseName}_publish_capture`;
+      const installedPack = packFixture(options.root);
+      const exactPackRead = request.kind === 'read'
+        && (
+          (request.toolCallId === 'call_t012_pack_manifest'
+            && request.path === path.join(options.root, ...PACK_MANIFEST_PATH.split('/')))
+          || (request.toolCallId === 'call_t012_pack_source'
+            && request.path === path.join(options.root, ...PACK_SOURCE_PATH.split('/')))
+          || (request.toolCallId === 'call_t012_pack_profile'
+            && request.path === installedPack.profile)
+        );
+      const packShells = new Map([
+        ['call_t012_pack_list', installedPack.listCommand],
+        ['call_t012_pack_add', installedPack.addCommand],
+        ['call_t012_pack_lint', installedPack.lintCommand],
+      ]);
+      const exactPackShell = request.kind === 'shell'
+        && packShells.get(String(request.toolCallId)) === request.fullCommandText
+        && !/[\n\r`;]|&&|\|\||\$\(/.test(String(request.fullCommandText));
       const exactHandoff = request.kind === 'custom-tool'
         && toolName === 'dude_needs_you'
         && request.args && typeof request.args === 'object'
         && ['request', 'acknowledge'].includes(request.args.op)
-        && /^(?:call_blank-(?:non-git|git)_capture_ack|call_t012_(?:review_[abc]|ack_[abc]|permission|cancel|outside))$/
+        && /^(?:call_blank-(?:non-git|git)_capture_ack|call_t012_(?:review_[abc]|ack_[abc]|permission|cancel|outside|pack_(?:permission|permission_ack|result)))$/
           .test(String(request.toolCallId));
-      const accepted = (exactSession && (exactHandoff || exactPublisher))
+      const accepted = (exactSession
+        && (exactHandoff || exactPublisher || exactPackRead || exactPackShell))
         || exactStageCreate || exactStageRead || exactCanonicalRead
         || exactSkillRead || exactMockEdit || exactMockRead;
       const permissionInput = request.kind === 'read'
@@ -2086,6 +2878,12 @@ async function createInstalledHost(options) {
   assert.ok(record.hostProcess);
   assert.equal(record.hostProcess.ppid, process.pid,
     'extension parent is not this driver-owned installed CLI');
+  if (WINDOWS) {
+    assert.equal(sameExecutable(record.hostProcess.executable, CLI), true,
+      `installed CLI runtime is not the configured launcher: ${record.hostProcess.executable}`);
+    assert.equal(sameExecutable(record.extensionProcess.executable, CLI), true,
+      `extension host is not the launcher's single executable: ${record.extensionProcess.executable}`);
+  }
   const canvases = await session.rpc.canvas.list();
   record.canvasList = canvases;
   const capability = canvases.canvases.find((entry) => (
@@ -2133,12 +2931,17 @@ async function closeInstalledHost(host) {
     await host.client.forceStop();
     host.record.cleanup.forcedOwnedClientStop = true;
   }
-  host.record.cleanup.extensionStillRunning = Boolean(
-    host.record.extensionProcess && processRow(host.record.extensionProcess.pid),
-  );
-  host.record.cleanup.hostStillRunning = Boolean(
-    host.record.hostProcess && processRow(host.record.hostProcess.pid),
-  );
+  try {
+    host.record.cleanup.extensionStillRunning = Boolean(
+      host.record.extensionProcess && processRow(host.record.extensionProcess.pid),
+    );
+    host.record.cleanup.hostStillRunning = Boolean(
+      host.record.hostProcess && processRow(host.record.hostProcess.pid),
+    );
+  } catch (error) {
+    // Leave both unknown so the final cleanup assertions fail rather than pass.
+    host.record.cleanup.processProbeError = safeError(error);
+  }
 }
 
 /** @param {Awaited<ReturnType<typeof createInstalledHost>>} host */
@@ -2220,6 +3023,8 @@ function installedParity(root) {
     'extension.mjs',
     'lib/canvas-server.mjs',
     'lib/projection.mjs',
+    'lib/packs.mjs',
+    'lib/catalog-reader.mjs',
     'lib/needs-you.mjs',
     'lib/review.mjs',
     'lib/review/browser.mjs',
@@ -2292,6 +3097,131 @@ async function driveBlankCapture(page, canvasUrl, intent) {
   assert.deepEqual(runtimeErrors, []);
   assert.equal(network.filter((entry) => entry.path === '/api/needs-you/capture').length, 1);
   return { network, screenshot: await screenshot(page, `blank-${sha256(intent).slice(0, 8)}`) };
+}
+
+/**
+ * Drive the complete installed Settings request while the deterministic owner
+ * above performs preview, permission recognition, Compose, verification, and
+ * result acknowledgment through the installed CLI.
+ * @param {Cdp} page
+ * @param {string} canvasUrl
+ * @param {ReturnType<typeof packFixture>} fixture
+ * @param {ReturnType<typeof createPackModel>['state']} model
+ */
+async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, model) {
+  const network = [];
+  const runtimeErrors = [];
+  page.on('Runtime.exceptionThrown', (event) => runtimeErrors.push(event));
+  page.on('Network.requestWillBeSent', (event) => {
+    if (event.request.url.startsWith(canvasUrl)) {
+      network.push({
+        method: event.request.method,
+        path: new URL(event.request.url).pathname,
+        body: event.request.postData ? JSON.parse(event.request.postData) : null,
+      });
+    }
+  });
+  const beforeProfile = fs.readFileSync(fixture.profile);
+  assert.equal(fs.existsSync(fixture.destination), false);
+  await navigate(page, canvasUrl, 1440);
+  await click(page, `document.querySelector('#dude-tab-settings')`);
+  await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+    ?.getAttribute('aria-busy') === 'false'`), 'installed Settings pack read');
+  assert.equal(await evaluate(page, `document.querySelector('[data-pack-context="installed"]')
+    ?.getAttribute('aria-selected')`), 'true');
+  await click(page, `document.querySelector('[data-pack-context="available"]')`);
+  await until(() => evaluate(page, `Boolean(document.querySelector(
+    '[data-pack-row="${PACK_NAME}"]'
+  ))`), 'installed-host available pack row');
+  await click(page, `document.querySelector('[data-pack-row="${PACK_NAME}"]')`);
+  assert.equal(await evaluate(page, `document.querySelector('[data-pack-description]')
+    ?.textContent.trim()`), 'Deterministic installed-host pack round trip.');
+  const action = `document.querySelector('[data-pack-operation="install"]')`;
+  assert.equal(await evaluate(page, `${action}.disabled`), false);
+  await evaluate(page, `(() => { const action = ${action}; action.click(); action.click(); })()`);
+  await until(() => model.phase === 'permission-waiting' || model.modelError,
+    'installed owner permission publication', 45_000);
+  if (model.modelError) throw new Error(model.modelError);
+  await until(() => evaluate(page, `document.querySelector(
+    '[data-pack-request-dialog][open] [data-pack-request-phase]'
+  )?.getAttribute('data-pack-request-phase') === 'waiting_permission'`),
+  'installed pack request waits for exact permission', 45_000);
+  assert.equal(model.packPromptRequests, 1);
+  assert.equal(fs.existsSync(fixture.destination), false,
+    'no projected artifact exists before exact consent');
+  assert.equal(fs.readFileSync(fixture.profile).equals(beforeProfile), true,
+    'profile bytes remain exact before consent');
+  assert.deepEqual(model.preview, {
+    operation: 'install',
+    name: PACK_NAME,
+    source: fixture.source,
+    files: fixture.files,
+    tools: [{ name: 'node', available: true, version: process.version }],
+    profileRevision: revision(beforeProfile),
+    sourceRevision: revision(Buffer.concat([fixture.manifest, fixture.instruction])),
+    targetRevision: 'absent',
+  });
+  const pending = await readNeedsYou(canvasUrl);
+  assert.equal(pending.packRequests.length, 1);
+  assert.equal(pending.packRequests[0].operation, 'install');
+  assert.equal(pending.packRequests[0].name, PACK_NAME);
+  assert.equal(pending.packRequests[0].phase, 'waiting_permission');
+  await click(page, button('Open Needs you'));
+  await visible(page, model.permissionRequest.prompt);
+  await fill(page, field('Enter the exact confirmation'), `INSTALL PACK ${PACK_NAME}`);
+  await click(page, field('I grant permission for this operation on these exact targets.'));
+  await click(page, button('Send permission'));
+  await visible(page, 'Awaiting acknowledgment');
+  await until(() => model.phase === 'complete' || model.modelError,
+    'installed Compose result acknowledgment', 60_000);
+  if (model.modelError) throw new Error(model.modelError);
+  await until(async () => !(await evaluate(page, `document.body.innerText.includes('Reading repository state')`))
+    && (await readNeedsYou(canvasUrl)).packRequests[0]?.phase === 'applied',
+  'installed authoritative pack reread', 45_000);
+  if (await evaluate(page, `Boolean(${button('Back to pack request')})`)) {
+    await click(page, button('Back to pack request'));
+  } else {
+    await click(page, `document.querySelector('#dude-tab-settings')`);
+    await click(page, button('View pack request'));
+  }
+  await until(() => evaluate(page, `document.querySelector(
+    '[data-pack-request-dialog][open] [data-pack-request-phase]'
+  )?.getAttribute('data-pack-request-phase') === 'applied'`),
+  'installed pack dialog displays correlated Applied');
+  const provider = await readNeedsYou(canvasUrl);
+  assert.equal(provider.packRequests.length, 1);
+  const result = provider.packRequests[0];
+  assert.equal(result.applied, true);
+  assert.equal(result.receipt.freshness, 'current');
+  assert.deepEqual(result.receipt.acknowledgment.result, JSON.parse(model.compose.stdout),
+    'the Applied receipt carries the observed Compose --envelope stdout, not a predetermined result');
+  assert.deepEqual(result.receipt.reread.entry, {
+    files: fixture.files,
+    source: fixture.source,
+  });
+  assert.equal(result.receipt.reread.profileRevision,
+    revision(fs.readFileSync(fixture.profile)));
+  assert.equal(fs.readFileSync(fixture.destination).equals(fixture.instruction), true);
+  assert.deepEqual(installedProfile(fixture.root).value.installed[PACK_NAME], {
+    files: fixture.files,
+    source: fixture.source,
+  });
+  assert.equal(model.ownerToolCalls.filter(entry => entry.callId === 'call_t012_pack_add').length, 1);
+  assert.equal(network.filter(entry => entry.path === '/api/packs/request').length, 2);
+  assert.deepEqual(network.filter(entry => entry.path === '/api/packs/request').map(entry => entry.body.op),
+    ['prepare', 'submit']);
+  assert.deepEqual(runtimeErrors, []);
+  return {
+    network,
+    provider,
+    preview: model.preview,
+    permission: model.permission,
+    permissionAcknowledgment: model.permissionAcknowledgment,
+    compose: model.compose,
+    verification: model.verification,
+    result: model.result,
+    screenshot: await screenshot(page, 'installed-pack-applied'),
+  };
 }
 
 const SAVED_MARKUP_DESCRIPTION =
@@ -2638,6 +3568,24 @@ async function driveReviewRound(page, version, prompt, gestureRoot = null) {
       .filter(Boolean).join(' ')
       === 'Markup is already saved. Your work is kept as you go, so there is nothing waiting to save.';
   })()`), `installed Review ${version} saved markup`);
+  if (saveTarget.ariaDisabled !== 'true') {
+    // The press leaves the pointer on Save markup, whose described tip then
+    // opens over the palette below it. Rest the pointer on the request heading,
+    // as a reviewer's would leave, and prove the tip closes before the next control.
+    const rest = await evaluate(page, `(() => {
+      const node = document.querySelector('[data-review-workspace] h1');
+      const rect = node?.getBoundingClientRect();
+      const x = rect && rect.left + rect.width / 2, y = rect && rect.top + rect.height / 2;
+      return node && document.elementFromPoint(x, y) === node ? {x, y} : null;
+    })()`);
+    assert.ok(rest, 'the Review request heading is a pointer-reachable resting place');
+    await movePointer(page, rest);
+    await until(() => evaluate(page, `(() => {
+      const ids = (${button('Save markup')}?.getAttribute('aria-describedby') || '')
+        .split(/\\s+/).filter(Boolean);
+      return ids.length > 0 && ids.every(id => !document.getElementById(id)?.getClientRects().length);
+    })()`), `installed Review ${version} Save markup tip closed`);
+  }
   const armedManipulation = gestureRoot
     ? await driveArmedManipulation(page, gestureRoot, version)
     : null;
@@ -2651,8 +3599,13 @@ async function driveReviewRound(page, version, prompt, gestureRoot = null) {
   };
   assert.equal(beforeReturn.comments, 'Comments (2)');
   await click(page, button('Back'));
-  const returnFocus = await evaluate(page, `document.activeElement?.innerText.trim()
-    || document.activeElement?.getAttribute('aria-label') || null`);
+  // Pressing Back focuses it first; the product returns focus in its next
+  // effect, so read that settled focus rather than the press itself.
+  const returnFocus = await until(() => evaluate(page, `(() => {
+    const text = document.activeElement?.innerText.trim()
+      || document.activeElement?.getAttribute('aria-label') || null;
+    return ['Open Review', 'Needs you'].includes(text) ? text : null;
+  })()`), `installed Review ${version} return focus`);
   assert.ok(['Open Review', 'Needs you'].includes(returnFocus));
   await click(page, button('Open Review'));
   await visible(page, 'Comments (2)');
@@ -2710,6 +3663,9 @@ const manifest = {
   platform: `${process.platform} ${process.arch}`,
   cli: CLI,
   cliRuntime: CLI_RUNTIME,
+  sessionRuntime: SESSION_RUNTIME,
+  cliDistDir: WINDOWS ? CLI_DIST_DIR : null,
+  extensionHost: null,
   sdk: SDK,
   browser: BROWSER,
   installedCliVersion: null,
@@ -2717,6 +3673,7 @@ const manifest = {
   approvedMockHashes: {},
   source: {},
   blankCases: [],
+  packCase: null,
   reviewCase: null,
   installedControls: null,
   desktopPanelCapability: null,
@@ -2744,25 +3701,55 @@ try {
   };
   const appHelp = command(CLI, ['app', '--help']);
   assert.equal(appHelp.exitCode, 0, appHelp.stderr);
-  const appScripting = command('/usr/bin/sdef', ['/Applications/GitHub Copilot.app']);
+  // sdef and the app bundle exist only on macOS; elsewhere record why no probe ran.
+  const appScripting = process.platform === 'darwin'
+    ? command('/usr/bin/sdef', ['/Applications/GitHub Copilot.app'])
+    : null;
   manifest.desktopPanelCapability = {
     appHelp: appHelp.stdout.trim(),
-    scriptingDictionary: {
-      exitCode: appScripting.exitCode,
-      available: appScripting.exitCode === 0,
-      diagnostic: appScripting.exitCode === 0 ? null : appScripting.stderr.trim(),
-    },
+    scriptingDictionary: appScripting
+      ? {
+        exitCode: appScripting.exitCode,
+        available: appScripting.exitCode === 0,
+        diagnostic: appScripting.exitCode === 0 ? null : appScripting.stderr.trim(),
+      }
+      : {
+        applicable: false,
+        exitCode: null,
+        available: null,
+        diagnostic: `Not applicable on ${process.platform}: /usr/bin/sdef and the macOS app bundle are Darwin-only; no scripting-dictionary probe ran and no evidence was recorded.`,
+      },
     supportedIsolatedPanelAutomation: false,
     reason: 'The SDK control host reports ui.canvases=false and canvas.open returns provider metadata plus a URL, not a desktop panel handle. The installed app command accepts no session/canvas argument, so no CLI selector reaches one panel, and native embedding stays unverified here. A nonzero scriptingDictionary exit records only that the probe did not complete, with its diagnostic, and is not evidence that the app lacks a dictionary. Attaching to the foreground app could change the active parent session.',
     remainingSmoke: [
       'Open the Dude panel in the disposable installed workspace.',
       'Confirm usable current panel sizing, current light/dark theme, and keyboard focus entry.',
+      'Open the visible bottom Settings destination; confirm the embedded panel keeps its left rail, toolbar, pager, and current-theme contrast without host-chrome clipping.',
+      `Select ${PACK_NAME} under Available, activate Install once, inspect the exact preview, enter INSTALL PACK ${PACK_NAME}, and confirm the correlated Applied result after the authoritative installed-state refresh.`,
       'With the work finder set to Closed, enter Review design and return; confirm the Closed finder context remains.',
       'Reload once, then close and reopen the panel; confirm the current Canvas reconnects.',
     ],
   };
-  manifest.browserVersionCommand = command(BROWSER, ['--version']);
+  if (!appScripting) {
+    note('desktop-scripting-dictionary-not-applicable', {
+      platform: process.platform,
+      diagnostic: manifest.desktopPanelCapability.scriptingDictionary.diagnostic,
+    });
+  }
+  // On Windows, read the executable's version resource instead of starting a
+  // second browser instance for --version; CDP reports the running build below.
+  manifest.browserVersionCommand = WINDOWS
+    ? windowsPowerShell(
+      "$item = Get-Item -LiteralPath $env:DUDE_T012_BROWSER; '{0} {1}' -f "
+        + '$item.VersionInfo.ProductName, $item.VersionInfo.ProductVersion',
+      { ...process.env, DUDE_T012_BROWSER: BROWSER },
+    )
+    : command(BROWSER, ['--version']);
   assert.equal(manifest.browserVersionCommand.exitCode, 0, manifest.browserVersionCommand.stderr);
+  if (WINDOWS) {
+    assert.match(manifest.browserVersionCommand.stdout.trim(), /\s\d+(?:\.\d+){3}$/,
+      `browser executable has no version resource: ${BROWSER}`);
+  }
   for (const [relative, expected] of Object.entries(APPROVED_HASHES)) {
     const actual = sha256(sourceBytes(relative));
     assert.equal(actual, expected, `approved mock changed: ${relative}`);
@@ -2822,7 +3809,7 @@ try {
     const staged = fs.readFileSync(expectedCapture.stagePath, 'utf8');
     assert.equal(staged, expectedCapture.bytes.toString('utf8'));
     assert.equal(canonical, staged);
-    assert.ok(canonical.includes(intent));
+    assert.ok(canonical.includes(ownerText(intent)));
     assert.equal(fs.existsSync(path.join(root, '.dude/specs')), false);
     assert.equal(fs.existsSync(path.join(root, '.beads')), false);
     const snapshot = await (await fetch(new URL('/api/needs-you', host.canvas.url))).json();
@@ -2859,7 +3846,7 @@ try {
       browser,
       noSpecOrTasks: true,
       realModelReasoning: false,
-      ownerRoute: 'selected installed Dude session projection delegated exact staging to the installed Spec Lead, invoked the shipped publisher through bash, reread the canonical draft through view, then acknowledged; the model fixture made no file write',
+      ownerRoute: `selected installed Dude session projection delegated exact staging to the installed Spec Lead, invoked the shipped publisher through ${SHELL_TOOL}, reread the canonical draft through view, then acknowledged; the model fixture made no file write`,
     });
     note('blank-case-passed', {
       kind,
@@ -2870,6 +3857,110 @@ try {
     await closeInstalledHost(host);
     await closeServer(model.server);
   }
+
+  const packRoot = path.join(RUN, 'pack-roundtrip');
+  const packData = path.join(RUN, 'pack-roundtrip-runtime');
+  const packRelease = buildRelease({
+    repoRoot: ROOT,
+    outDir: packRoot,
+    ref: 'v0.0.0-t012',
+  });
+  const packParity = installedParity(packRoot);
+  const installedPack = seedPackFixture(packRoot);
+  const realHostPackProbe = WINDOWS ? await probeRealHostPackRead(packRoot) : null;
+  const realHostPackStallProbe = WINDOWS ? await probeRealHostPackStall() : null;
+  const packModel = createPackModel(packRoot);
+  modelServers.push(packModel.server);
+  const packModelUrl = await listen(packModel.server);
+  const packHost = await createInstalledHost({
+    root: packRoot,
+    data: packData,
+    modelUrl: packModelUrl,
+    caseName: 'pack-roundtrip',
+  });
+  hosts.push(packHost);
+  const packIdle = await packHost.session.sendAndWait({
+    prompt: 'T012 installed pack round trip bootstrap.',
+  }, 30_000);
+  assert.equal(packIdle?.data.content, 'T012_PACK_HOST_IDLE');
+  assert.equal(packModel.state.phase, 'idle');
+  // The installed extension's own pack read, before Settings drives it. The
+  // bound exceeds the reader's deadline plus stop window, so a hung read fails.
+  const hostPackStarted = Date.now();
+  const hostPackResponse = await fetch(new URL('/api/packs', packHost.canvas.url), {
+    signal: AbortSignal.timeout(15_000),
+  });
+  assert.equal(hostPackResponse.status, 200, 'installed-host pack read status');
+  const hostPackSnapshot = await hostPackResponse.json();
+  const hostPackRead = {
+    extensionExecutable: packHost.record.extensionProcess.executable,
+    elapsedMs: Date.now() - hostPackStarted,
+    coverage: hostPackSnapshot.coverage,
+    origin: hostPackSnapshot.catalog?.origin ?? null,
+    packs: hostPackSnapshot.catalog?.packs.map((pack) => pack.name) ?? null,
+  };
+  assert.deepEqual(hostPackRead.coverage.catalog, { state: 'current', reason: null, message: null },
+    `installed-host catalog read: ${JSON.stringify(hostPackRead.coverage)}`);
+  assert.equal(hostPackRead.origin, 'local');
+  assert.deepEqual(hostPackRead.packs, [PACK_NAME]);
+  note('installed-host-pack-read', hostPackRead);
+  const packBrowser = await driveInstalledPackRoundTrip(
+    browserState.page,
+    packHost.canvas.url,
+    installedPack,
+    packModel.state,
+  );
+  await until(async () => !(await packHost.session.rpc.metadata.isProcessing()).processing,
+    'installed pack session idle', 30_000);
+  assert.equal(packModel.state.phase, 'complete');
+  assert.equal(packModel.state.packPromptRequests, 1);
+  assert.equal(packHost.record.permissions.filter((entry) => entry.decision === 'reject').length, 0);
+  assert.equal(packHost.record.agentAfterSelectionCheck.agent?.name, 'Dude');
+  assert.equal(packHost.record.events['subagent.deselected'] ?? 0, 0);
+  manifest.packCase = {
+    root: packRoot,
+    data: packData,
+    releaseFiles: packRelease.files.length,
+    parity: packParity,
+    fixture: {
+      name: PACK_NAME,
+      manifest: PACK_MANIFEST_PATH,
+      source: PACK_SOURCE_PATH,
+      destination: PACK_DESTINATION,
+      recordedSource: installedPack.source,
+    },
+    host: packHost.record,
+    hostPackRead,
+    realHostPackProbe,
+    realHostPackStallProbe,
+    model: packModel.state,
+    browser: packBrowser,
+    installedEntry: installedProfile(packRoot).value.installed[PACK_NAME],
+    actualComposeApplication: true,
+    authoritativeProviderReread: true,
+    realModelReasoning: false,
+    desktopAppRendererObserved: false,
+    ownerRoute: 'selected installed Dude loaded dude-compose, read actual eligibility/manifest/source, published and recognized exact permission, ran the installed Compose add --envelope and lint commands once, reread the profile through view, then acknowledged with the observed Compose stdout unchanged as the pack result for the provider reread',
+  };
+  note('pack-case-passed', {
+    sessionId: packHost.record.sessionId,
+    name: PACK_NAME,
+    destination: PACK_DESTINATION,
+    packReceipt: packBrowser.provider.packRequests[0].packReceipt,
+  });
+  manifest.extensionHost = {
+    // The OS process table names the extension's executable; the probe reports
+    // execPath and Node version from inside that same executable.
+    executable: packHost.record.extensionProcess.executable,
+    execPath: realHostPackProbe?.result.execPath ?? null,
+    node: realHostPackProbe?.result.node ?? null,
+    nodeEvidence: realHostPackProbe
+      ? 'in-process probe through the installed CLI extension launch contract'
+      : `not collected on ${process.platform}; the launcher host is unverified here`,
+  };
+  await browserState.page.send('Page.navigate', { url: 'about:blank' });
+  await closeInstalledHost(packHost);
+  await closeServer(packModel.server);
 
   const root = path.join(RUN, 'review-git');
   const data = path.join(RUN, 'review-git-runtime');
@@ -3374,21 +4465,59 @@ try {
   }
   if (browserState) {
     browserState.page.close();
-    await stopBrowser(browserState.browser);
-    manifest.cleanup.uiBrowserStillRunning = Boolean(
-      browserState.browser.pid && processRow(browserState.browser.pid),
-    );
+    try {
+      await stopBrowser(browserState.browser);
+    } catch (error) {
+      manifest.cleanup.uiBrowserStopError = safeError(error);
+    }
+    try {
+      manifest.cleanup.uiBrowserStillRunning = Boolean(
+        browserState.browser.pid && processRow(browserState.browser.pid),
+      );
+    } catch (error) {
+      manifest.cleanup.uiBrowserProbeError = safeError(error);
+    }
   }
   manifest.endedAt = new Date().toISOString();
-  manifest.cleanup.approvedMockRechecked = Object.entries(APPROVED_HASHES).every(
-    ([relative, expected]) => sha256(sourceBytes(relative)) === expected,
-  );
+  try {
+    manifest.cleanup.approvedMockRechecked = Object.entries(APPROVED_HASHES).every(
+      ([relative, expected]) => sha256(sourceBytes(relative)) === expected,
+    );
+  } catch (error) {
+    manifest.cleanup.approvedMockRecheckError = safeError(error);
+  }
+  // PASS was set before this cleanup ran; an unconfirmed cleanup or post-run
+  // check is an evidence gap, so it fails the run while keeping its diagnostics.
+  const cleanupFailures = [];
+  if (browserState) {
+    if (manifest.cleanup.uiBrowserStopError) cleanupFailures.push('UI browser stop failed');
+    if (manifest.cleanup.uiBrowserProbeError) cleanupFailures.push('UI browser process probe failed');
+    else if (manifest.cleanup.uiBrowserStillRunning !== false) {
+      cleanupFailures.push('UI browser still running after cleanup');
+    }
+  }
+  if (manifest.cleanup.approvedMockRechecked !== true) {
+    cleanupFailures.push('approved mocks changed or could not be rechecked after the run');
+  }
+  if (cleanupFailures.length) {
+    manifest.cleanup.failures = cleanupFailures;
+    if (manifest.result === 'PASS') {
+      manifest.result = 'FAIL';
+      manifest.exitCode = 1;
+      manifest.error = `cleanup failed after acceptance: ${cleanupFailures.join('; ')}`;
+    }
+    note('cleanup-failed', { failures: cleanupFailures });
+    process.exitCode = 1;
+  }
   fs.writeFileSync(path.join(RUN, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   process.stdout.write(`${JSON.stringify({
     result: manifest.result,
     exitCode: manifest.exitCode,
     run: RUN,
     blankCases: manifest.blankCases.length,
+    packRoundTrip: manifest.packCase?.browser?.provider?.packRequests?.[0]?.phase ?? null,
+    extensionHost: manifest.extensionHost,
+    hostPackRead: manifest.packCase?.hostPackRead?.coverage?.catalog?.state ?? null,
     reviewSubmissions: manifest.reviewCase?.model?.rounds?.map((entry) => entry.submissionId) ?? [],
     error: manifest.error ?? null,
   })}\n`);

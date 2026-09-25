@@ -9,9 +9,11 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { deflateSync, inflateSync } from 'node:zlib';
@@ -24,6 +26,8 @@ import {
 } from './lib/needs-you.mjs';
 import { createReview, REVIEW_LIMITS, ReviewError } from './lib/review.mjs';
 import { closeInstance, openInstance } from './lib/canvas-server.mjs';
+import { cmdStatus } from '../../skills/dude-compose/compose.mjs';
+import { serializeProfileDocument } from '../../skills/dude-engine/lib/profile.mjs';
 
 let fixtureSequence = 0;
 let invocationSequence = 0;
@@ -393,9 +397,729 @@ function createProviderFixture(root, options = {}) {
   return { provider, ...sessionFixture };
 }
 
+/** Admission fixtures seed read authority; only the HTTP/Compose integration
+ * tests below canvas-server.test.mjs claim an actual pack application.
+ * @param {'install'|'remove'|'refresh'} [operation]
+ */
+function packProviderFixture(operation = 'install') {
+  const root = temporaryRoot();
+  const source = { type: 'local', location: path.join(root, 'library/packs') };
+  const entry = { files: ['.github/agents/dude-pack-alpha-worker.agent.md'], source };
+  const profile = installed => write(root, '.dude/metadata/profile.md', serializeProfileDocument({ installed }, { root }));
+  write(root, 'library/packs/alpha/pack.md', '---\nname: alpha\ndescription: "Inert pack metadata"\n---\n');
+  profile(operation === 'install' ? {} : { alpha: entry });
+  if (operation !== 'install') write(root, entry.files[0], 'Existing installed fixture.\n');
+  const fixture = createProviderFixture(root);
+  const idle = () => fixture.provider.onEvent(/** @type {any} */ ({
+    id: randomUUID(), type: 'session.idle', data: { aborted: false },
+  }));
+  fixture.state.send = async ({ prompt }) => {
+    const messageId = `pack-message-${fixture.calls.sends.length}`;
+    fixture.provider.onEvent(/** @type {any} */ ({ type: 'user.message', data: { content: prompt, messageId, delivery: 'idle' } }));
+    return messageId;
+  };
+  idle();
+  return { ...fixture, root, operation, source, entry, profile, idle,
+    prepare: () => fixture.provider.requestPack({ op: 'prepare', operation, name: 'alpha' }),
+    submit: receipt => fixture.provider.requestPack({ op: 'submit', operation, name: 'alpha', packReceipt: receipt.packReceipt }),
+    cleanup() { fixture.provider.dispose(); fs.rmSync(root, { recursive: true, force: true }); },
+  };
+}
+
+/** @param {ReturnType<typeof packProviderFixture>} fixture @param {any} view @param {object} [overrides] */
+function packAcknowledgment(fixture, view, overrides = {}) {
+  const { receiptId, owner, operation, name, workspaceId, sessionId, providerGeneration } = view.receipt;
+  const status = cmdStatus({ root: fixture.root });
+  assert.equal(status.ok, true);
+  return {
+    receiptId, owner, operation, name, workspaceId, sessionId, providerGeneration,
+    recognizes: 'pack_result', outcome: 'declined', mutation: 'none', result: null,
+    profileRevision: revision(bytes(fixture.root, '.dude/metadata/profile.md')),
+    source: Object.hasOwn(status.result.installed, name) ? status.result.installed[name].source : null,
+    note: 'The owner declined this request without applying a change.',
+    ...overrides,
+  };
+}
+
+test('T003 pack HTTP payloads and receipt targets are closed, bounded, and never accept command data', async () => {
+  const fixture = packProviderFixture();
+  const before = snapshotFiles(fixture.root);
+  try {
+    const valid = { op: 'prepare', operation: 'install', name: 'alpha' };
+    const invalid = [
+      { ...valid, op: 'execute' }, { ...valid, operation: 'upgrade' }, { ...valid, operation: 'INSTALL' },
+      { ...valid, name: '../alpha' }, { ...valid, name: 'alpha;echo nope' }, { ...valid, name: 'alpha\n' },
+      { ...valid, name: 'a'.repeat(161) }, { ...valid, packReceipt: randomUUID() },
+      ...['root', 'path', 'source', 'ref', 'force', 'prompt', 'shell', 'command', 'owner', 'providerGeneration']
+        .map(key => ({ ...valid, [key]: 'not authority' })),
+    ];
+    for (const body of invalid) {
+      await assert.rejects(fixture.provider.requestPack(body), { code: 'invalid_input' }, JSON.stringify(body));
+      assert.equal(fixture.provider.read().packRequests.length, 0);
+    }
+    await assert.rejects(fixture.provider.requestPack({ ...valid, prompt: 'x'.repeat(NEEDS_YOU_LIMITS.bodyBytes) }),
+      { code: 'invalid_input' });
+    const prepared = await fixture.prepare();
+    const submit = { op: 'submit', operation: 'install', name: 'alpha', packReceipt: prepared.packReceipt };
+    await assert.rejects(fixture.provider.requestPack({ ...submit, operation: 'remove' }), { code: 'identity_mismatch' });
+    await assert.rejects(fixture.provider.requestPack({ ...submit, name: 'beta' }), { code: 'identity_mismatch' });
+    await assert.rejects(fixture.provider.requestPack({ ...submit, force: true }), { code: 'invalid_input' });
+    await assert.rejects(fixture.provider.requestPack({ ...submit, packReceipt: randomUUID() }), { code: 'unknown_receipt' });
+    assert.equal(fixture.provider.read().packRequests[0].phase, 'prepared', 'invalid companion data cannot burn the valid receipt');
+    assert.equal((await fixture.submit(prepared)).phase, 'delivered');
+    assert.equal(fixture.calls.sends.length, 1);
+    assert.deepEqual(snapshotFiles(fixture.root), before);
+  } finally { fixture.cleanup(); }
+});
+
+test('T003 pack admission checks idle, live waiters, queues, eligibility, and valid installed authority before allocation', async t => {
+  const cases = [
+    ['busy', f => f.provider.onEvent({ type: 'assistant.turn_start', data: {} }), 'idle_required'],
+    ['aborted idle', f => f.provider.onEvent({ type: 'session.idle', data: { aborted: true } }), 'idle_required'],
+    ['live waiter', async f => { await publishRequest(f.provider, sessionRequest('fact'), f.session.sessionId); }, 'idle_required'],
+    ['queued input', f => { f.state.pendingItems = () => ({ items: [{}], steeringMessages: [] }); }, 'idle_required'],
+    ['queued steering', f => { f.state.pendingItems = () => ({ items: [], steeringMessages: [{}], inFlightSteeringCount: 0 }); }, 'idle_required'],
+    ['queue unavailable', f => { f.state.pendingItems = () => { throw new Error('Private queue detail'); }; }, 'operation_unavailable'],
+    ['installed install', f => f.profile({ alpha: f.entry }), 'pack_ineligible'],
+    ['invalid profile', f => write(f.root, '.dude/metadata/profile.md', 'invalid profile'), 'source_unavailable'],
+    ['invalid catalog', f => write(f.root, 'library/packs/alpha/pack.md', '---\nuse-cases: invalid\n---\n'), 'source_unavailable'],
+    ['missing exact pack', f => fs.rmSync(path.join(f.root, 'library/packs/alpha'), { recursive: true }), 'pack_ineligible'],
+    ['hyphen collision', f => f.profile({ 'alpha-child': {
+      files: ['.github/agents/dude-pack-alpha-child-worker.agent.md'], source: f.source,
+    } }), 'pack_ineligible'],
+  ];
+  for (const [label, arrange, reason] of cases) await t.test(label, async () => {
+    const f = packProviderFixture();
+    try {
+      await arrange(f);
+      const before = snapshotFiles(f.root);
+      await assert.rejects(f.prepare(), { code: reason });
+      assert.equal(f.calls.sends.length, 0);
+      assert.equal(f.provider.read().packRequests.length, 0);
+      assert.deepEqual(snapshotFiles(f.root), before);
+    } finally { f.cleanup(); }
+  });
+  for (const operation of ['remove', 'refresh']) await t.test(`${operation} needs own installed membership`, async () => {
+    const f = packProviderFixture();
+    try {
+      for (const name of ['alpha', 'constructor']) {
+        await assert.rejects(f.provider.requestPack({ op: 'prepare', operation, name }), { code: 'pack_ineligible' });
+      }
+      assert.equal(f.calls.sends.length, 0);
+    } finally { f.cleanup(); }
+  });
+  await t.test('remove remains admissible without catalog authority', async () => {
+    const f = packProviderFixture('remove');
+    try {
+      write(f.root, 'library/packs/alpha/pack.md', '---\nuse-cases: invalid\n---\n');
+      assert.equal((await f.submit(await f.prepare())).phase, 'delivered');
+      assert.equal(f.calls.sends.length, 1);
+    } finally { f.cleanup(); }
+  });
+});
+
+test('T003 capture and pack preparation share one exclusion, including interleaved queue reads', async t => {
+  await t.test('capture receipt already issued', async () => {
+    const f = packProviderFixture();
+    try {
+      await f.provider.issueCaptureReceipt({ requestHandle: null });
+      await assert.rejects(f.prepare(), { code: 'capture_unreconciled' });
+      assert.equal(f.provider.read().packRequests.length, 0);
+    } finally { f.cleanup(); }
+  });
+  await t.test('pack acquisition excludes a capture that started earlier and twenty other tabs', async () => {
+    const f = packProviderFixture();
+    const firstQueue = deferred(), entered = deferred();
+    f.state.pendingItems = () => {
+      if (f.calls.queue === 1) { entered.resolve(); return firstQueue.promise; }
+      return { items: [], steeringMessages: [] };
+    };
+    const capture = f.provider.issueCaptureReceipt({ requestHandle: null });
+    const rejectedCapture = assert.rejects(capture, { code: 'pack_unreconciled' });
+    try {
+      await entered.promise;
+      const pack = f.prepare();
+      const tabs = Array.from({ length: 20 }, () => assert.rejects(f.prepare(), { code: 'pack_unreconciled' }));
+      firstQueue.resolve({ items: [], steeringMessages: [] });
+      await rejectedCapture;
+      const prepared = await pack;
+      await Promise.all(tabs);
+      assert.equal(f.provider.read().captures.length, 0);
+      assert.equal(f.provider.read().packRequests.length, 1);
+      await assert.rejects(f.provider.issueCaptureReceipt({ requestHandle: null }), { code: 'pack_unreconciled' });
+      const results = await Promise.allSettled([f.submit(prepared), f.submit(prepared)]);
+      assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+      assert.equal(results.find(result => result.status === 'rejected').reason.code, 'already_consumed');
+      f.idle();
+      await assert.rejects(f.prepare(), { code: 'pack_unreconciled' }, 'a new idle hint cannot clear an unacknowledged send');
+      await assert.rejects(f.provider.issueCaptureReceipt({ requestHandle: null }), { code: 'pack_unreconciled' });
+      assert.equal(f.calls.sends.length, 1);
+    } finally {
+      firstQueue.resolve({ items: [], steeringMessages: [] });
+      f.cleanup();
+    }
+  });
+});
+
+test('T004 an unsubmitted prepared pack receipt excludes while fresh, then retires lazily and never sends', async t => {
+  // The provider allocated this receipt, but its tab lost the response and
+  // never submitted it. Only an observation after one operation bound retires it.
+  const abandon = async (f, context) => {
+    // Whole milliseconds keep the held clock's arithmetic exact: from a fractional
+    // start, (start + operationMs) - start can round just under the retirement bound.
+    let now = Math.ceil(performance.now());
+    context.mock.method(performance, 'now', () => now);
+    const abandoned = await f.prepare();
+    assert.equal(abandoned.phase, 'prepared');
+    const start = now;
+    for (const elapsed of [0, NEEDS_YOU_LIMITS.operationMs - 1]) {
+      now = start + elapsed;
+      await assert.rejects(f.prepare(), { code: 'pack_unreconciled' }, 'a fresh receipt still excludes other tabs');
+      await assert.rejects(f.provider.issueCaptureReceipt({ requestHandle: null }), { code: 'pack_unreconciled' });
+      assert.equal((await f.provider.refresh()).packRequests[0].phase, 'prepared');
+    }
+    now = start + NEEDS_YOU_LIMITS.operationMs;
+    assert.equal(f.provider.read().packRequests[0].phase, 'prepared', 'no timer changed it before an observation');
+    return abandoned;
+  };
+  const assertRetired = f => {
+    const view = f.provider.read().packRequests[0];
+    assert.equal(view.phase, 'stale');
+    assert.equal(view.reason, 'pack_receipt_expired');
+    assert.equal(view.receipt.freshness, 'stale');
+    assert.equal(view.receipt.acknowledgment, null);
+    assert.equal(view.applied, false);
+  };
+  for (const observer of ['feed refresh', 'late submit', 'pack admission', 'idea capture']) await t.test(observer, async t => {
+    const f = packProviderFixture();
+    try {
+      const abandoned = await abandon(f, t);
+      if (observer === 'feed refresh') await f.provider.refresh();
+      if (observer === 'late submit') await assert.rejects(f.submit(abandoned), { code: 'already_consumed' });
+      if (observer === 'idea capture') {
+        assert.equal((await f.provider.issueCaptureReceipt({ requestHandle: null })).status, 'prepared');
+        assertRetired(f);
+        await assert.rejects(f.submit(abandoned), { code: 'already_consumed' });
+        assert.equal(f.calls.sends.length, 0);
+        return;
+      }
+      // A new explicit request is admitted and sends once; the old one never can.
+      const fresh = await f.prepare();
+      assertRetired(f);
+      await assert.rejects(f.submit(abandoned), { code: 'already_consumed' });
+      assert.equal((await f.submit(fresh)).phase, 'delivered');
+      await assert.rejects(f.submit(abandoned), { code: 'already_consumed' });
+      await assert.rejects(f.prepare(), { code: 'pack_unreconciled' }, 'the live request keeps the exclusion');
+      assert.equal(f.calls.sends.length, 1);
+      assert.equal(JSON.parse(f.calls.sends[0].prompt.split('\n').at(-1)).receiptId, fresh.packReceipt);
+    } finally { f.cleanup(); }
+  });
+});
+
+test('T003 pack receipt is burned on every final-queue refusal, with fresh valid companion inputs', async t => {
+  const cases = [
+    ['queued input', f => { f.queueResult = { items: [{}], steeringMessages: [] }; }, 'idle_required'],
+    ['new waiter', async f => { await publishRequest(f.provider, sessionRequest('permission'), f.session.sessionId); }, 'idle_required'],
+    ['new turn', f => f.provider.onEvent({ type: 'assistant.turn_start', data: {} }), 'idle_required'],
+    ['root abort', f => f.provider.onEvent({ type: 'abort', data: {} }), 'idle_required'],
+    ['provider ends', f => f.provider.dispose(), 'operation_unavailable'],
+    ['session identity', f => { f.session.sessionId = 'replacement-session'; }, 'identity_mismatch'],
+    ['profile bytes', f => write(f.root, '.dude/metadata/profile.md', `${bytes(f.root, '.dude/metadata/profile.md')}\nChanged basis.\n`), 'source_changed'],
+    ['source configuration', f => write(f.root, '.dude/metadata/bundle-manifest.md', '# Changed source configuration\n'), 'source_changed'],
+    ['catalog metadata', f => write(f.root, 'library/packs/alpha/pack.md', '---\nname: alpha\ndescription: "Changed during final queue read"\n---\n'), 'source_changed'],
+    ['unsafe profile destination', f => {
+      // This is a removal fixture so changing the recorded destination alone
+      // must be caught; profile bytes and every identity input remain current.
+      fs.rmSync(path.join(f.root, f.entry.files[0]));
+      fs.mkdirSync(path.join(f.root, 'linked-target'));
+      fs.symlinkSync(path.join(f.root, 'linked-target'), path.join(f.root, f.entry.files[0]), 'junction');
+    }, 'source_unavailable', 'remove'],
+  ];
+  for (const [label, arrange, reason, operation] of cases) await t.test(label, async () => {
+    const f = packProviderFixture(operation ?? 'install');
+    const entered = deferred(), released = deferred();
+    try {
+      const prepared = await f.prepare();
+      let once = true;
+      f.state.pendingItems = () => {
+        if (once) { once = false; entered.resolve(); return released.promise; }
+        return { items: [], steeringMessages: [] };
+      };
+      const submitting = assert.rejects(f.submit(prepared), { code: reason });
+      await entered.promise;
+      await arrange(f);
+      released.resolve(f.queueResult ?? { items: [], steeringMessages: [] });
+      await submitting;
+      assert.equal(f.calls.sends.length, 0);
+      assert.ok(['unavailable', 'stale'].includes(f.provider.read().packRequests[0].phase));
+      await assert.rejects(f.submit(prepared), { code: 'already_consumed' });
+    } finally { released.resolve({ items: [], steeringMessages: [] }); f.cleanup(); }
+  });
+});
+
+test('T003 profile and catalog drift between prepare and submit cannot be retargeted or undone into authority', async t => {
+  for (const change of ['profile', 'metadata', 'source', 'root']) await t.test(change, async () => {
+    const f = packProviderFixture();
+    const moved = `${f.root}-previous`;
+    try {
+      const prepared = await f.prepare();
+      if (change === 'profile') f.profile({ alpha: f.entry });
+      if (change === 'metadata') write(f.root, 'library/packs/alpha/pack.md', '---\nname: alpha\ndescription: "Changed metadata"\n---\n');
+      if (change === 'source') write(f.root, '.dude/metadata/bundle-manifest.md', '# Changed configuration\n');
+      if (change === 'root') {
+        fs.renameSync(f.root, moved);
+        fs.cpSync(moved, f.root, { recursive: true });
+      }
+      await assert.rejects(f.submit(prepared),
+        error => error instanceof NeedsYouError && ['source_changed', 'pack_ineligible', 'identity_mismatch'].includes(error.code));
+      assert.equal(f.calls.sends.length, 0);
+      assert.equal(f.provider.read().packRequests[0].phase, 'stale');
+      await assert.rejects(f.submit(prepared), { code: 'already_consumed' });
+    } finally {
+      f.cleanup();
+      fs.rmSync(moved, { recursive: true, force: true });
+    }
+  });
+});
+
+test('T003 send admission, correlated idle delivery and uncertainty never imply application or authorize replay', async t => {
+  const cases = [
+    ['SDK rejects before observed delivery', () => { throw new Error('Private SDK message'); }],
+    ['SDK rejects after possible delivery', (f, prompt) => {
+      f.provider.onEvent({ type: 'user.message', data: { content: prompt, messageId: 'expected', delivery: 'idle' } });
+      throw new Error('Response lost after delivery');
+    }],
+    ['wrong message id', (f, prompt) => {
+      f.provider.onEvent({ type: 'user.message', data: { content: prompt, messageId: 'other', delivery: 'idle' } });
+      return 'expected';
+    }],
+    ['queued rather than idle delivery', (f, prompt) => {
+      f.provider.onEvent({ type: 'user.message', data: { content: prompt, messageId: 'expected', delivery: 'queued' } });
+      return 'expected';
+    }],
+    ['missing message id', (f, prompt) => {
+      f.provider.onEvent({ type: 'user.message', data: { content: prompt, delivery: 'idle' } });
+      return 'expected';
+    }],
+  ];
+  for (const [label, send] of cases) await t.test(label, async () => {
+    const f = packProviderFixture();
+    try {
+      const prepared = await f.prepare();
+      f.state.send = ({ prompt }) => send(f, prompt);
+      await assert.rejects(f.submit(prepared), { code: 'pack_send_uncertain' });
+      f.idle();
+      assert.equal(f.provider.read().packRequests[0].phase, 'uncertain');
+      await assert.rejects(f.submit(prepared), { code: 'already_consumed' });
+      await assert.rejects(f.prepare(), { code: 'pack_unreconciled' });
+      await assert.rejects(f.provider.issueCaptureReceipt({ requestHandle: null }), { code: 'pack_unreconciled' });
+      assert.equal(f.calls.sends.length, 1);
+      assert.equal(f.provider.read().packRequests[0].applied, false);
+      const result = await acknowledge(f.provider, packAcknowledgment(f, prepared, {
+        outcome: 'uncertain', mutation: 'uncertain', note: 'The send may have been delivered; do not replay it.',
+      }), f.session.sessionId);
+      assert.equal(result.resultType, 'success');
+      assert.equal(details(result).phase, 'uncertain');
+      assert.equal(details(result).applied, false);
+    } finally { f.cleanup(); }
+  });
+  await t.test('late matching event establishes delivery only', async () => {
+    const f = packProviderFixture();
+    try {
+      const prepared = await f.prepare();
+      f.state.send = () => 'late-message';
+      const admitted = await f.submit(prepared);
+      assert.equal(admitted.phase, 'admitted');
+      assertRefused(await acknowledge(f.provider, packAcknowledgment(f, prepared), f.session.sessionId), 'pack_unreconciled');
+      f.provider.onEvent(/** @type {any} */ ({ type: 'user.message', data: {
+        content: f.calls.sends[0].prompt, messageId: 'late-message', delivery: 'idle',
+      } }));
+      assert.equal(f.provider.read().packRequests[0].phase, 'delivered');
+      assert.equal(f.provider.read().packRequests[0].applied, false);
+      f.provider.onEvent(/** @type {any} */ ({ type: 'assistant.turn_start', data: {} }));
+      assert.equal(f.provider.read().packRequests[0].phase, 'waiting_owner');
+      assert.equal(f.calls.sends.length, 1);
+    } finally { f.cleanup(); }
+  });
+  await t.test('cancellation after calling send cannot claim no change', async () => {
+    const f = packProviderFixture(), controller = new AbortController();
+    try {
+      const prepared = await f.prepare();
+      f.state.send = () => { controller.abort(); return new Promise(() => {}); };
+      await assert.rejects(f.provider.requestPack({ op: 'submit', operation: 'install', name: 'alpha',
+        packReceipt: prepared.packReceipt }, { signal: controller.signal }), { code: 'pack_send_uncertain' });
+      assert.equal(f.provider.read().packRequests[0].phase, 'uncertain');
+      assert.equal(f.calls.sends.length, 1);
+    } finally { f.cleanup(); }
+  });
+});
+
+test('T003 outstanding pack send does not block its exact permission reply or ordinary acknowledgment', async () => {
+  const f = packProviderFixture();
+  const before = snapshotFiles(f.root);
+  try {
+    const prepared = await f.prepare();
+    await f.submit(prepared);
+    const request = sessionRequest('permission', {
+      requestRef: `pack:${prepared.packReceipt}`,
+      source: { kind: 'session', revision: prepared.receipt.providerGeneration },
+      fields: { operation: 'pack:install', targets: [{ target: 'pack:alpha', revision: 'preview-revision' }],
+        consequences: 'Install the exact previewed files. Required tools remain user-managed.',
+        eligibility: 'Profile, source and targets will be rechecked before application.',
+        confirmation: 'INSTALL PACK alpha' },
+    });
+    const invalid = invocation(f.session.sessionId);
+    assertRefused(await f.provider.tool.handler({ op: 'request', request: {
+      ...request, fields: { ...request.fields, operation: 'pack:remove' },
+    } }, invalid.invocation), 'identity_mismatch');
+    const pending = await publishRequest(f.provider, request, f.session.sessionId);
+    assert.equal(f.provider.read().packRequests[0].phase, 'waiting_permission');
+    assert.equal(f.provider.read().packRequests[0].permissionRequest, pending.record.requestHandle);
+    const response = { class: 'permission', action: 'consent', ...request.fields };
+    delete response.consequences; delete response.eligibility;
+    await assert.rejects(f.provider.respond({ requestHandle: pending.record.requestHandle, revision: request.revision,
+      response: { ...response, confirmation: 'install alpha' } }), { code: 'invalid_input' });
+    assert.equal(f.provider.read().requests[0].phase, 'pending');
+    const delivered = await f.provider.respond({
+      requestHandle: pending.record.requestHandle, revision: request.revision, response,
+    });
+    assert.equal(delivered.applied, false);
+    const ownerReply = details(await pending.result);
+    assert.deepEqual(ownerReply.response, response);
+    const recognized = await acknowledge(f.provider,
+      acknowledgment(delivered.receipt, 'accepted', request.source), f.session.sessionId);
+    assert.equal(recognized.resultType, 'success');
+    assert.equal(f.provider.read().packRequests[0].phase, 'waiting_owner');
+    assert.equal(f.provider.read().packRequests[0].applied, false);
+    assert.equal(f.calls.sends.length, 1, 'a permission reply returns the waiting tool, not another idle send');
+    assert.deepEqual(snapshotFiles(f.root), before);
+  } finally { f.cleanup(); }
+});
+
+test('T003 pack result binding is exact; wrong fields and concurrent or duplicate acknowledgments cannot win', async () => {
+  const f = packProviderFixture();
+  try {
+    const prepared = await f.prepare();
+    await f.submit(prepared);
+    const ack = packAcknowledgment(f, prepared);
+    const invalid = [
+      ['operation', 'refresh', 'acknowledgment_conflict'], ['name', 'beta', 'acknowledgment_conflict'],
+      ['owner', 'another-owner', 'invalid_input'], ['workspaceId', revision('other-root'), 'acknowledgment_conflict'],
+      ['sessionId', 'other-session', 'acknowledgment_conflict'], ['providerGeneration', randomUUID(), 'acknowledgment_conflict'],
+      ['receiptId', randomUUID(), 'unknown_receipt'], ['evidence', '.dude/made-up-result.json', 'invalid_input'],
+      ['source', { kind: 'file', path: '.dude/made-up-result.json', revision: revision('payload') }, 'invalid_input'],
+      ['recognizes', 'capture', 'invalid_input'],
+    ];
+    for (const [key, value, reason] of invalid) {
+      assertRefused(await acknowledge(f.provider, { ...ack, [key]: value }, f.session.sessionId), reason);
+      assert.equal(f.provider.read().packRequests[0].receipt.acknowledgment, null);
+    }
+    assertRefused(await acknowledge(f.provider, ack, 'wrong-invocation-session'), 'identity_mismatch');
+    const first = invocation(f.session.sessionId), second = invocation(f.session.sessionId);
+    const results = await Promise.all([
+      f.provider.tool.handler({ op: 'acknowledge', acknowledgment: ack }, first.invocation),
+      f.provider.tool.handler({ op: 'acknowledge', acknowledgment: ack }, second.invocation),
+    ]);
+    assert.equal(results.filter(result => result.resultType === 'success').length, 1);
+    assertRefused(results.find(result => result.resultType === 'failure'), 'acknowledgment_conflict');
+    assertRefused(await acknowledge(f.provider, ack, f.session.sessionId), 'acknowledgment_conflict');
+    const result = f.provider.read().packRequests[0];
+    assert.equal(result.phase, 'declined');
+    assert.equal(result.applied, false);
+    assert.equal(result.receipt.reread.entry, null);
+    assert.equal(result.receipt.reread.profileRevision, ack.profileRevision);
+    assert.equal(f.calls.sends.length, 1);
+  } finally { f.cleanup(); }
+});
+
+test('T003 stale profile or recorded-source acknowledgment is refused independently of transport and schema', async t => {
+  for (const change of ['profile', 'source']) await t.test(change, async () => {
+    const f = packProviderFixture('refresh');
+    try {
+      const prepared = await f.prepare();
+      await f.submit(prepared);
+      const ack = packAcknowledgment(f, prepared);
+      if (change === 'profile') {
+        write(f.root, '.dude/metadata/profile.md', `${bytes(f.root, '.dude/metadata/profile.md')}\nChanged after owner read.\n`);
+      } else ack.source = { type: 'local', location: 'different-source' };
+      // The source-only negative keeps the profile revision exactly correct;
+      // the profile-only negative keeps the source and every binding correct.
+      assertRefused(await acknowledge(f.provider, ack, f.session.sessionId), 'pack_state_mismatch');
+      const view = f.provider.read().packRequests[0];
+      assert.equal(view.phase, 'stale');
+      assert.equal(view.applied, false);
+      assert.equal(view.receipt.acknowledgment, null);
+      assert.equal(cmdStatus({ root: f.root }).result.enabled_packs.includes('alpha'), true);
+      assert.equal(f.calls.sends.length, 1);
+    } finally { f.cleanup(); }
+  });
+});
+
+test('T003 unavailable pack profiles preserve correlated non-success owner outcomes', async t => {
+  for (const outcome of ['unavailable', 'uncertain']) {
+    for (const failure of ['directory', 'read denied']) await t.test(`${outcome}: ${failure}`, async t => {
+      const f = packProviderFixture('refresh');
+      let readMock;
+      try {
+        const receipt = await f.prepare();
+        await f.submit(receipt);
+        const ack = packAcknowledgment(f, receipt, {
+          outcome, mutation: outcome === 'uncertain' ? 'uncertain' : 'none',
+          profileRevision: null, source: null, note: 'The owner cannot establish the current installed authority.',
+        });
+        const pending = await publishRequest(f.provider, sessionRequest('permission', {
+          requestRef: `pack:${receipt.packReceipt}`,
+          source: { kind: 'session', revision: receipt.receipt.providerGeneration },
+          fields: { operation: 'pack:refresh', targets: [{ target: 'pack:alpha', revision: 'preview-revision' }],
+            consequences: 'Refresh can overwrite installed edits.', eligibility: 'Recheck profile, source and targets.',
+            confirmation: 'REFRESH PACK alpha' },
+        }), f.session.sessionId);
+        assert.equal(f.provider.read().packRequests[0].phase, 'waiting_permission');
+        const rootStat = fs.lstatSync(f.root);
+        const rootIdentity = revision(JSON.stringify([fs.realpathSync(f.root), rootStat.dev, rootStat.ino]));
+        const profilePath = path.join(f.root, '.dude/metadata/profile.md');
+        let deniedReads = 0;
+        if (failure === 'directory') {
+          fs.rmSync(profilePath);
+          fs.mkdirSync(profilePath);
+        } else {
+          const read = fs.readFileSync;
+          readMock = t.mock.method(fs, 'readFileSync', (file, ...rest) => {
+            if (file === profilePath) {
+              deniedReads += 1;
+              throw Object.assign(new Error('Fixture profile read denied.'), { code: 'EACCES' });
+            }
+            return read(file, ...rest);
+          });
+        }
+        const response = await acknowledge(f.provider, ack, f.session.sessionId);
+        if (failure === 'read denied') assert.equal(deniedReads, 1);
+        assert.equal(response.resultType, 'success', response.textResultForLlm);
+        const view = details(response);
+        assert.equal(view.phase, outcome);
+        assert.equal(view.applied, false);
+        assert.deepEqual(view.receipt.acknowledgment, ack);
+        assert.equal(view.receipt.freshness, 'unavailable');
+        assert.equal(view.receipt.current, false);
+        assert.deepEqual(view.receipt.reread, {
+          workspaceId: receipt.receipt.workspaceId, rootIdentity,
+          profileRevision: null, readRevision: null, entry: null, state: 'unavailable', reason: 'installed_unavailable',
+        });
+        assert.equal(f.provider.read().requests.find(entry => entry.requestHandle === pending.record.requestHandle).phase, 'pending',
+          'a non-success result does not require or consume application consent');
+        assert.equal(f.provider.read().packRequests[0].phase, outcome);
+        await assert.rejects(f.submit(receipt), { code: 'already_consumed' });
+        assert.equal(f.calls.sends.length, 1);
+      } finally {
+        readMock?.mock.restore();
+        f.cleanup();
+      }
+    });
+  }
+});
+
+test('T003 unavailable pack profiles cannot mask root replacement or removal', async t => {
+  for (const change of ['replacement', 'removal']) await t.test(change, async () => {
+    const f = packProviderFixture('refresh');
+    const moved = `${f.root}-previous`;
+    try {
+      const receipt = await f.prepare();
+      await f.submit(receipt);
+      const ack = packAcknowledgment(f, receipt, {
+        outcome: 'unavailable', mutation: 'none', profileRevision: null, source: null,
+        note: 'Current installed authority is unavailable.',
+      });
+      fs.renameSync(f.root, moved);
+      if (change === 'replacement') fs.mkdirSync(path.join(f.root, '.dude/metadata/profile.md'), { recursive: true });
+      assertRefused(await acknowledge(f.provider, ack, f.session.sessionId), 'identity_mismatch');
+      const view = f.provider.read().packRequests[0];
+      assert.equal(view.applied, false);
+      assert.equal(view.receipt.acknowledgment, null);
+      assert.equal(view.receipt.ackToolCallId, null);
+      assert.equal(view.receipt.reread, null);
+      assert.equal(f.calls.sends.length, 1);
+    } finally {
+      f.cleanup();
+      fs.rmSync(moved, { recursive: true, force: true });
+    }
+  });
+});
+
+test('T003 replacement provider cannot recover pack authority from a receipt, profile, or prior delivery', async () => {
+  const f = packProviderFixture();
+  let replacement;
+  try {
+    const prepared = await f.prepare();
+    await f.submit(prepared);
+    const ack = packAcknowledgment(f, prepared);
+    f.provider.dispose();
+    replacement = createProviderFixture(f.root);
+    assertRefused(await acknowledge(f.provider, ack, f.session.sessionId), 'provider_unavailable');
+    assertRefused(await acknowledge(replacement.provider, ack, replacement.session.sessionId), 'unknown_receipt');
+    await assert.rejects(replacement.provider.requestPack({ op: 'submit', operation: 'install', name: 'alpha',
+      packReceipt: prepared.packReceipt }), { code: 'unknown_receipt' });
+    assert.equal(replacement.provider.read().packRequests.length, 0);
+    assert.equal(replacement.calls.sends.length, 0);
+    assert.equal(f.provider.read().packRequests[0].phase, 'unavailable');
+  } finally { replacement?.provider.dispose(); f.cleanup(); }
+});
+
+test('T003 a waiter racing pack preparation refuses before receipt allocation', async () => {
+  const f = packProviderFixture();
+  const entered = deferred(), release = deferred();
+  let once = true;
+  f.state.pendingItems = () => {
+    if (once) { once = false; entered.resolve(); return release.promise; }
+    return { items: [], steeringMessages: [] };
+  };
+  try {
+    const preparing = assert.rejects(f.prepare(), { code: 'idle_required' });
+    await entered.promise;
+    await publishRequest(f.provider, sessionRequest('fact'), f.session.sessionId);
+    release.resolve({ items: [], steeringMessages: [] });
+    await preparing;
+    assert.equal(f.provider.read().packRequests.length, 0);
+    assert.equal(f.calls.sends.length, 0);
+  } finally { release.resolve({ items: [], steeringMessages: [] }); f.cleanup(); }
+});
+
+test('T003 root abort during a pack result reread cannot commit a late owner result', async () => {
+  const f = packProviderFixture();
+  try {
+    const prepared = await f.prepare();
+    await f.submit(prepared);
+    const call = invocation(f.session.sessionId);
+    const result = f.provider.tool.handler({ op: 'acknowledge', acknowledgment: packAcknowledgment(f, prepared) }, call.invocation);
+    f.provider.onEvent(/** @type {any} */ ({ type: 'abort', data: {} }));
+    assert.equal(call.invocation.signal.aborted, false, 'the root abort is independent of invocation cancellation');
+    assertRefused(await result, 'operation_unavailable');
+    assert.equal(f.provider.read().packRequests[0].receipt.acknowledgment, null);
+    assert.equal(f.provider.read().packRequests[0].phase, 'uncertain');
+    const reconciled = await acknowledge(f.provider, packAcknowledgment(f, prepared, {
+      outcome: 'uncertain', mutation: 'uncertain', note: 'The owner stopped; no repeat is authorized.',
+    }), f.session.sessionId);
+    assert.equal(reconciled.resultType, 'success');
+    assert.equal(details(reconciled).applied, false);
+    assert.equal(f.calls.sends.length, 1);
+  } finally { f.cleanup(); }
+});
+
+test('T003 profile drift after the result reread and before acknowledgment cannot commit a stale verdict', async () => {
+  const f = packProviderFixture('remove');
+  try {
+    const receipt = await f.prepare();
+    await f.submit(receipt);
+    const ack = packAcknowledgment(f, receipt);
+    const result = acknowledge(f.provider, ack, f.session.sessionId);
+    // All payload fields are valid for the completed read. Change only the
+    // profile in the await continuation window, not the invocation/lifecycle.
+    write(f.root, '.dude/metadata/profile.md', `${bytes(f.root, '.dude/metadata/profile.md')}\nAfter reread.\n`);
+    assertRefused(await result, 'pack_state_mismatch');
+    assert.equal(f.provider.read().packRequests[0].receipt.acknowledgment, null);
+    assert.equal(f.provider.read().packRequests[0].phase, 'stale');
+    assert.equal(f.calls.sends.length, 1);
+  } finally { f.cleanup(); }
+});
+
+test('T003 configured local catalog metadata stays source-bound through the last queue check', async () => {
+  const f = packProviderFixture();
+  const sourceRoot = path.join(f.root, 'configured-source');
+  const entered = deferred(), release = deferred();
+  try {
+    fs.mkdirSync(path.join(sourceRoot, 'library'), { recursive: true });
+    fs.renameSync(path.join(f.root, 'library/packs'), path.join(sourceRoot, 'library/packs'));
+    write(f.root, '.dude/metadata/bundle-manifest.md',
+      `# Manifest\n\n\`\`\`json\n${JSON.stringify({ source_repo: sourceRoot, source_ref: 'main' })}\n\`\`\`\n`);
+    const receipt = await f.prepare();
+    f.state.pendingItems = () => { entered.resolve(); return release.promise; };
+    const submitting = assert.rejects(f.submit(receipt), { code: 'source_changed' });
+    await entered.promise;
+    write(sourceRoot, 'library/packs/alpha/pack.md', '---\nname: alpha\ndescription: "New configured metadata"\n---\n');
+    release.resolve({ items: [], steeringMessages: [] });
+    await submitting;
+    assert.equal(f.calls.sends.length, 0);
+    assert.equal(f.provider.read().packRequests[0].phase, 'stale');
+  } finally { release.resolve({ items: [], steeringMessages: [] }); f.cleanup(); }
+});
+
+test('T003 selected source preimage cannot follow a linked configured catalog ancestor', async () => {
+  const f = packProviderFixture();
+  const sourceRoot = path.join(f.root, 'configured-source'), outside = path.join(f.root, 'outside-source');
+  try {
+    fs.mkdirSync(sourceRoot);
+    fs.renameSync(path.join(f.root, 'library'), outside);
+    fs.symlinkSync(outside, path.join(sourceRoot, 'library'), 'junction');
+    write(f.root, '.dude/metadata/bundle-manifest.md',
+      `# Manifest\n\n\`\`\`json\n${JSON.stringify({ source_repo: sourceRoot, source_ref: 'main' })}\n\`\`\`\n`);
+    await assert.rejects(f.prepare(), { code: 'source_unavailable' });
+    assert.equal(f.provider.read().packRequests.length, 0);
+    assert.equal(f.calls.sends.length, 0);
+    // Repair only the link condition. The same profile, root, name and manifest
+    // must now admit, so an earlier invalid-input guard cannot satisfy the test.
+    fs.rmSync(path.join(sourceRoot, 'library'));
+    fs.renameSync(outside, path.join(sourceRoot, 'library'));
+    assert.equal((await f.prepare()).phase, 'prepared');
+  } finally { f.cleanup(); }
+});
+
+test('T003 pack result and idea-capture acknowledgments cannot cross-consume the other receipt kind', async () => {
+  const f = packProviderFixture();
+  try {
+    const prepared = await f.prepare();
+    await f.submit(prepared);
+    assertRefused(await acknowledge(f.provider, {
+      receiptId: prepared.packReceipt, owner: 'dude', requestRef: `pack:${prepared.packReceipt}`,
+      scope: { kind: 'session' }, previousRevision: prepared.receipt.providerGeneration,
+      recognizes: 'canvas_response', outcome: 'applied', note: 'Not pack evidence.',
+      source: { kind: 'session', revision: prepared.receipt.providerGeneration },
+    }, f.session.sessionId), 'acknowledgment_conflict');
+    assert.equal((await acknowledge(f.provider, packAcknowledgment(f, prepared), f.session.sessionId)).resultType, 'success');
+    f.idle();
+    const capture = await f.provider.issueCaptureReceipt({ requestHandle: null });
+    const wrongKind = packAcknowledgment(f, prepared, { receiptId: capture.captureReceipt });
+    assertRefused(await acknowledge(f.provider, wrongKind, f.session.sessionId), 'unknown_receipt');
+    assert.equal(f.provider.read().captures[0].phase, 'issued');
+    assert.equal(f.provider.read().captures[0].receipt.acknowledgment, null);
+  } finally { f.cleanup(); }
+});
+
+test('T003 pack receipts consume the existing record budget without eviction or a second registry', async () => {
+  const f = packProviderFixture('remove');
+  try {
+    const handles = [];
+    for (let i = 0; i < NEEDS_YOU_LIMITS.records; i++) {
+      handles.push((await f.prepare()).packReceipt);
+      f.provider.onEvent(/** @type {any} */ ({ type: 'assistant.turn_start', data: {} }));
+      f.idle();
+    }
+    await assert.rejects(f.prepare(), { code: 'capacity' });
+    assert.deepEqual(f.provider.read().packRequests.map(record => record.packReceipt), handles);
+    assert.equal(f.provider.read().packRequests.length, NEEDS_YOU_LIMITS.records);
+    assert.equal(f.calls.sends.length, 0);
+  } finally { f.cleanup(); }
+});
+
+test('T003 owner cannot upgrade a refresh failure to restoration but may downgrade it to uncertainty', async () => {
+  const f = packProviderFixture('refresh');
+  try {
+    const receipt = await f.prepare();
+    await f.submit(receipt);
+    const result = { ok: false, code: 2, mutation: 'uncertain', error: 'Fixture models an engine-reported restoration failure.' };
+    const incorrect = packAcknowledgment(f, receipt, { outcome: 'failed', mutation: 'restored', result });
+    assertRefused(await acknowledge(f.provider, incorrect, f.session.sessionId), 'invalid_input');
+    const doubtfulRestoration = { ...result, mutation: 'restored', error: 'Engine reported restoration, but owner verification was unavailable.' };
+    const uncertain = packAcknowledgment(f, receipt, { outcome: 'uncertain', mutation: 'uncertain', result: doubtfulRestoration });
+    const accepted = await acknowledge(f.provider, uncertain, f.session.sessionId);
+    assert.equal(accepted.resultType, 'success');
+    assert.equal(details(accepted).phase, 'uncertain');
+    assert.equal(details(accepted).applied, false);
+  } finally { f.cleanup(); }
+});
+
 /**
  * Run production's real `bd` process boundary against a deterministic tracked
- * board. The fixture changes command lookup only and cleans its own directory.
+ * board. Substitute only the executable with an owned Node child; retain
+ * production arguments, cancellation, deadlines, and the HTTP read barrier.
  * @template T
  * @param {unknown[]} issues
  * @param {(fixture:{
@@ -407,7 +1131,7 @@ async function withTrackedBoard(issues, action) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-needs-you-bd-'));
   const dataPath = path.join(root, 'issues.json');
   const scriptPath = path.join(root, 'bd.cjs');
-  const executable = path.join(root, process.platform === 'win32' ? 'bd.cmd' : 'bd');
+  const children = new Set();
   /** @type {any} */
   let nextReadGate = null;
   const sockets = /** @type {Set<import('node:net').Socket>} */ (new Set());
@@ -438,14 +1162,15 @@ async function withTrackedBoard(issues, action) {
     "request.once('error', (error) => { process.stderr.write(error.message); process.exitCode = 1; });",
     '',
   ].join('\n'));
-  if (process.platform === 'win32') {
-    fs.writeFileSync(executable, `@${JSON.stringify(process.execPath)} ${JSON.stringify(scriptPath)} %*\r\n`);
-  } else {
-    fs.writeFileSync(executable, `#!/usr/bin/env node\nrequire(${JSON.stringify(scriptPath)});\n`);
-    fs.chmodSync(executable, 0o755);
-  }
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${root}${path.delimiter}${originalPath ?? ''}`;
+  const originalExecFile = childProcess.execFile;
+  childProcess.execFile = (file, args, options, callback) => {
+    if (file !== 'bd') return originalExecFile(file, args, options, callback);
+    const child = originalExecFile(process.execPath, [scriptPath, ...args], options, callback);
+    children.add(child);
+    child.once('close', () => children.delete(child));
+    return child;
+  };
+  syncBuiltinESMExports();
   try {
     return await action({
       setIssues(next) {
@@ -463,11 +1188,15 @@ async function withTrackedBoard(issues, action) {
       },
     });
   } finally {
+    childProcess.execFile = originalExecFile;
+    syncBuiltinESMExports();
     nextReadGate?.release.resolve();
     for (const socket of sockets) socket.destroy();
     await new Promise((resolve) => barrierServer.close(resolve));
-    if (originalPath === undefined) delete process.env.PATH;
-    else process.env.PATH = originalPath;
+    await Promise.all([...children].map(child => new Promise(resolve => {
+      child.once('close', () => resolve(undefined));
+      child.kill('SIGKILL');
+    })));
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
