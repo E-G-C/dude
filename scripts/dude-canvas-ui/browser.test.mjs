@@ -3064,7 +3064,7 @@ test('T012 anchoring regression: nested-scroll Open comment clips then recovers 
         )));
         assert.equal(
           productAppSha256,
-          '503ee6224573b8624899de3670686ce758f7c91c4d338fd9c46e2eea4fcb84f5',
+          'aedac71b507e2000cdf79a45b60ff746529057b8497bc3db11b613666d18515d',
           'the exact-source regression executes the current published product UI',
         );
         const exactHarnessOptions = {
@@ -12823,6 +12823,1329 @@ test('T002 production shell retains the mounted Review frame, markup, and caret 
           );
         }
       });
+
+const ABOUT_REPOSITORY = 'https://github.com/E-G-C/dude';
+const ABOUT_NOTE = 'Recorded installation metadata; installed files are not verified.';
+const ABOUT_UNAVAILABLE_NOTE = 'Recorded installation metadata is unavailable, so no version is shown.';
+// Recorded provenance deliberately differs from the displayed repository, so
+// any leak of source_repo into the rendered surface is observable.
+const ABOUT_RECORDED_REPO = 'https://example.test/recorded-provenance/dude';
+const ABOUT_APPROVED = '.dude/specs/074-dude-canvas-about/design/about.html';
+const ABOUT_APPROVED_SHA256 = '46c7e0d7c96885b19c4bd5453fe7cf8b81968d7f2ceb36ae262a6addbc91df9e';
+
+/** @param {Record<string, unknown>} fields */
+function aboutManifest(fields) {
+  return `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify(fields, null, 2)}\n\`\`\`\n`;
+}
+
+/**
+ * One disposable production-provider Canvas for a 074 About case: the T002
+ * Settings workspace and local catalog plus a recorded installation. It keeps
+ * network, cancellation, new-window, navigation, and runtime-error
+ * observations; close() reaps only what this case started.
+ * @param {import('node:test').TestContext} context
+ * @param {string} slug
+ * @param {{ review?: boolean, deviceScale?: number|null }} [options]
+ */
+async function openAboutCanvas(context, slug, { review = false, deviceScale = null } = {}) {
+  const [{ createNeedsYou }, { createReview }, { openInstance, closeInstance }] = await Promise.all([
+    import('../../src/extensions/dude/lib/needs-you.mjs'),
+    import('../../src/extensions/dude/lib/review.mjs'),
+    import('../../src/extensions/dude/lib/canvas-server.mjs'),
+  ]);
+  const workspace = createReviewWorkspaceFixture();
+  const packs = addSettingsPackFixture(workspace, 'local');
+  workspace.write('.dude/metadata/bundle-manifest.md', aboutManifest({
+    source_repo: ABOUT_RECORDED_REPO, source_ref: 'main', installed_ref: 'main' }));
+  const releaseTracking = emptyTrackedBoardFixture(workspace);
+  const output = createT010Evidence(context, slug);
+  const sends = [], runtimeErrors = [], requests = [], windows = [], navigations = [];
+  const cancelled = new Set();
+  const provider = createNeedsYou({ root: workspace.root,
+    ...(review ? { reviewAdapter: createReview({ root: workspace.root }) } : {}) });
+  const session = {
+    sessionId: `${slug}-${randomUUID()}`,
+    send: async input => { sends.push(input); return `unexpected-${sends.length}`; },
+    rpc: { queue: { pendingItems: async () => ({ items: [], steeringMessages: [], inFlightSteeringCount: 0 }) } },
+  };
+  provider.bindSession(/** @type {any} */ (session));
+  provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+  const controller = new AbortController(), toolResults = [];
+  /** @param {Record<string, any>} request */
+  const ask = request => {
+    toolResults.push(provider.tool.handler({ op: 'request', request }, {
+      sessionId: session.sessionId, toolName: 'dude_needs_you', toolCallId: randomUUID(), signal: controller.signal,
+    }));
+    return until(() => provider.read().requests.find(record => record.request.requestRef === request.requestRef
+      && record.phase === 'pending'), `pending ${request.class} request`);
+  };
+  const id = `${slug}-${randomUUID()}`;
+  let instance = null, driver = null;
+  const close = async () => {
+    controller.abort();
+    await Promise.allSettled(toolResults);
+    try {
+      if (driver) await cleanupBrowserDriver(driver);
+    } finally {
+      try { if (instance) await closeInstance(id); } finally {
+        provider.dispose();
+        await releaseTracking();
+        workspace.close();
+      }
+    }
+  };
+  try {
+    instance = await openInstance(id, () => {}, null, { root: workspace.root }, provider);
+    driver = await startBrowser(deviceScale);
+  } catch (error) {
+    await close();
+    throw error;
+  }
+  const { page } = driver, origin = new URL(instance.url).origin;
+  page.on('Runtime.exceptionThrown', event => runtimeErrors.push(event.exceptionDetails));
+  page.on('Network.requestWillBeSent', event => requests.push({
+    id: event.requestId, method: event.request.method, url: event.request.url }));
+  page.on('Network.loadingFailed', event => { if (event.canceled) cancelled.add(event.requestId); });
+  page.on('Page.windowOpen', event => windows.push(event));
+  page.on('Page.frameNavigated', event => { if (!event.frame.parentId) navigations.push(event.frame.url); });
+  const reads = route => requests.filter(entry => entry.url === `${origin}${route}`);
+  return {
+    workspace, packs, provider, instance, driver, page, output, origin, sends, runtimeErrors, requests,
+    cancelled, windows, navigations, ask, close, releaseTracking,
+    aboutReads: () => reads('/api/about'),
+    packReads: () => reads('/api/packs'),
+    // Every request that left the Canvas origin, such as a repository prefetch.
+    foreign: () => requests.filter(entry => !entry.url.startsWith(origin) && !/^(?:data|about):/.test(entry.url)),
+  };
+}
+
+/**
+ * Run one About case against a fresh Canvas. Every case must also end with no
+ * runtime exception and no message sent to the joined session.
+ * @param {import('node:test').TestContext} context
+ * @param {string} slug
+ * @param {Parameters<typeof openAboutCanvas>[2]} options
+ * @param {(canvas: Awaited<ReturnType<typeof openAboutCanvas>>) => Promise<void>} body
+ */
+async function runAboutCase(context, slug, options, body) {
+  const canvas = await openAboutCanvas(context, slug, options);
+  try {
+    await body(canvas);
+    assert.deepEqual(canvas.runtimeErrors, [], 'the Canvas reports no runtime exception');
+    assert.equal(canvas.sends.length, 0, 'About and section changes send nothing to the joined session');
+  } catch (error) {
+    try {
+      const capture = await canvas.page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+      canvas.output.image('failure.png', Buffer.from(capture.data, 'base64'));
+      context.diagnostic(JSON.stringify({ runtimeErrors: canvas.runtimeErrors, requests: canvas.requests.slice(-40),
+        dom: await evaluate(canvas.page, 'document.body.innerText') }));
+    } catch (diagnosticError) {
+      context.diagnostic(`About failure evidence was incomplete: ${diagnosticError}`);
+    }
+    throw error;
+  } finally {
+    await canvas.close();
+  }
+}
+
+/** @param {Cdp} page @param {string} name @param {ReturnType<typeof createT010Evidence>} output */
+async function aboutScreenshot(page, output, name) {
+  const result = await page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+  return output.image(`${name}.png`, Buffer.from(result.data, 'base64'));
+}
+
+/** The rendered About surface, including shell adaptations. @param {Cdp} page */
+function aboutSurface(page) {
+  return evaluate(page, `(() => {
+    const panel = document.querySelector('[data-about-panel]');
+    const facts = panel?.querySelector('[data-about-facts]');
+    const link = panel?.querySelector('[data-about-repository]');
+    return {
+      shown: Boolean(panel && !panel.hidden && panel.getClientRects().length),
+      heading: panel?.querySelector('h2')?.textContent ?? null,
+      rows: facts ? [...facts.children].map(row => [row.querySelector('dt').textContent, row.querySelector('dd').textContent]) : null,
+      busy: facts?.getAttribute('aria-busy') ?? null,
+      link: link ? { text: link.textContent, href: link.getAttribute('href'), target: link.getAttribute('target'),
+        rel: link.getAttribute('rel'), label: link.getAttribute('aria-label') } : null,
+      note: panel?.querySelector('[data-about-note]')?.textContent ?? null,
+      status: panel?.querySelector('[role="status"]')?.textContent ?? null,
+      footer: document.querySelector('footer').textContent,
+      toolbar: [...document.querySelectorAll('header [role="toolbar"] button')].map(node => node.getAttribute('aria-label')),
+    };
+  })()`);
+}
+
+/** Current development record rows, exactly as approved. */
+const ABOUT_MAIN_ROWS = Object.freeze([
+  ['Dude version', 'Development (main)'], ['Author', 'Enrique Gonzalez'],
+  ['Repository', ABOUT_REPOSITORY], ['Recorded channel/ref', 'Development (main)']]);
+const ABOUT_LINK = Object.freeze({ text: ABOUT_REPOSITORY, href: ABOUT_REPOSITORY, target: '_blank',
+  rel: 'noopener noreferrer', label: `${ABOUT_REPOSITORY} (opens in a new tab)` });
+
+/** @param {Cdp} page */
+function aboutSettled(page) {
+  return until(() => evaluate(page, `document.querySelector('[data-about-facts]')?.getAttribute('aria-busy') === 'false'`),
+    'settled About entry read');
+}
+
+/** @param {Cdp} page */
+function packsSettled(page) {
+  return until(() => evaluate(page, `document.querySelector('[data-settings-section="packs"]')?.getAttribute('aria-selected') === 'true'
+    && document.querySelector('[aria-label="Reload packs"]')?.getAttribute('aria-busy') === 'false'
+    && document.querySelectorAll('[data-pack-row]').length > 0`), 'settled Packs section');
+}
+
+/** Paint frames, then every finite animation such as Fluent's tab indicator slide. @param {Cdp} page */
+async function settleAboutAnimations(page) {
+  await settleBrowserWork(page);
+  await evaluate(page, `Promise.all(document.getAnimations()
+    .filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+    .map(animation => animation.finished.catch(() => undefined)))`);
+  await settleBrowserWork(page);
+}
+
+/**
+ * Native mouse activation of an inline target at a stable, hit-tested point.
+ * Unlike clickSettingsControl, a line-height text link needs no 24px box.
+ * An activation that opens a foreground tab hides this page and pauses its
+ * frames, so such callers settle only after bringing the page back.
+ * @param {Cdp} page @param {string} expression @param {{ settle?: boolean }} [options]
+ */
+async function clickAboutTarget(page, expression, { settle = true } = {}) {
+  let previous = null;
+  const point = await until(async () => {
+    const current = await evaluate(page, `(() => {
+      const node = ${expression};
+      if (!node) return null;
+      node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      const rect = node.getClientRects()[0];
+      const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+      const hit = document.elementFromPoint(x, y);
+      return { x, y, hit: Boolean(hit && (hit === node || node.contains(hit))) };
+    })()`);
+    const stable = current?.hit && previous?.x === current.x && previous?.y === current.y;
+    previous = current;
+    return stable ? current : null;
+  }, `reachable About target ${expression}`);
+  await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button: 'left', buttons: 1, clickCount: 1 });
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button: 'left', buttons: 0, clickCount: 1 });
+  if (settle) await settleBrowserWork(page);
+}
+
+/** @param {Cdp} page @param {'packs'|'about'} value */
+async function chooseSettingsSection(page, value) {
+  await clickSettingsControl(page, `document.querySelector('[data-settings-section="${value}"]')`);
+  if (value === 'about') await aboutSettled(page);
+  else await packsSettled(page);
+  await settleAboutAnimations(page);
+}
+
+/** Accessibility-tree facts for the Settings sections. @param {Cdp} page */
+async function aboutAccessibility(page) {
+  const tree = await page.send('Accessibility.getFullAXTree');
+  const live = tree.nodes.filter(node => !node.ignored);
+  const named = role => live.filter(node => node.role?.value === role).map(node => node.name?.value ?? '');
+  const selected = node => node.properties?.find(property => property.name === 'selected')?.value.value === true;
+  const namedRoles = new Set(['button', 'tab', 'tablist', 'tabpanel', 'combobox', 'grid', 'toolbar', 'textbox', 'link']);
+  return {
+    tablists: named('tablist'),
+    sections: live.filter(node => node.role?.value === 'tab' && ['Packs', 'About'].includes(node.name?.value))
+      .map(node => [node.name.value, selected(node)]),
+    tabpanels: named('tabpanel'),
+    links: named('link'),
+    grids: named('grid'),
+    buttons: named('button'),
+    unnamed: live.filter(node => namedRoles.has(node.role?.value) && !node.name?.value)
+      .map(node => node.role.value),
+    nodes: tree.nodes.length,
+  };
+}
+
+test('074 About: Settings then About shows the recorded development install in an adapted shell', {
+  timeout: 180_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '074-about-route', {}, async canvas => {
+    const { page, output } = canvas;
+    const click = selector => clickSettingsControl(page, `document.querySelector(${JSON.stringify(selector)})`);
+    const activeSection = () => evaluate(page, `document.activeElement?.getAttribute('data-settings-section')`);
+    await navigate(page, null, 1440, 'light', canvas.origin);
+    await until(() => evaluate(page, `document.body.innerText.includes('Connected')
+      && document.querySelectorAll('[data-work-path]').length === 2`), 'ordinary Overview');
+    const rail = await evaluate(page, `({
+      selected: document.querySelector('[aria-label="Workspace views"] [aria-selected="true"]')?.id,
+      labels: [...document.querySelectorAll('[aria-label="Workspace views"] [role="tab"]')].map(node => node.getAttribute('aria-label')),
+    })`);
+    assert.equal(rail.selected, 'dude-tab-overview', 'Canvas still opens Overview');
+    assert.deepEqual(rail.labels, ['Overview', 'Now', 'Needs you', 'New idea', 'Settings'], 'five rail destinations, no sixth');
+    assert.equal(canvas.aboutReads().length, 0, 'ordinary views never read About');
+
+    // Two ordinary activations: the Settings cog, then the About section tab.
+    await click('#dude-tab-settings');
+    await packsSettled(page);
+    await settleAboutAnimations(page);
+    const packsEntry = await evaluate(page, `({
+      heading: document.querySelector('[data-settings] h1')?.textContent,
+      sections: [...document.querySelectorAll('[role="tablist"][aria-label="Settings sections"] [role="tab"]')]
+        .map(node => [node.querySelector('.fui-Tab__content').textContent, node.getAttribute('aria-selected')]),
+      context: document.querySelector('[data-pack-context][aria-selected="true"]')?.getAttribute('data-pack-context'),
+      filter: document.querySelector('[data-pack-toolbar] [role="combobox"]').textContent.trim(),
+      page: document.querySelector('[data-pack-page]').textContent,
+      details: document.querySelectorAll('[data-pack-detail]').length,
+      toolbar: [...document.querySelectorAll('header [role="toolbar"] button')].map(node => node.getAttribute('aria-label')),
+      footer: document.querySelector('footer').textContent,
+    })`);
+    assert.deepEqual(packsEntry, {
+      heading: 'Settings', sections: [['Packs', 'true'], ['About', 'false']],
+      context: 'installed', filter: 'All use cases', page: 'Page 1 of 2', details: 0,
+      toolbar: ['Reload packs'], footer: 'Installed: current · Catalog: current',
+    }, 'Settings opens on Packs with the existing initial view');
+    assert.equal(canvas.aboutReads().length, 0, 'Packs does not prefetch About');
+    const packReads = canvas.packReads().length;
+    const packsImage = await aboutScreenshot(page, output, 'packs-entry-1440x900-light');
+    await chooseSettingsSection(page, 'about');
+    assert.deepEqual(await aboutSurface(page), {
+      shown: true, heading: 'Dude', rows: ABOUT_MAIN_ROWS, busy: 'false', link: ABOUT_LINK, note: ABOUT_NOTE,
+      status: '', footer: 'About · Read only', toolbar: [],
+    }, 'About shows the recorded record with no Reload packs, no fallback Refresh, and an inert footer');
+    assert.equal(await activeSection(), 'about', 'focus stays on the activated section tab');
+    assert.equal(canvas.aboutReads().length, 1, 'one About entry is one read');
+    const aboutImage = await aboutScreenshot(page, output, 'about-entry-1440x900-light');
+    const text = await evaluate(page, `document.body.innerText`);
+    assert.equal(text.includes(ABOUT_RECORDED_REPO), false, 'recorded source_repo provenance is never displayed');
+    const structure = await evaluate(page, `(() => {
+      const tabs = [...document.querySelectorAll('[role="tablist"][aria-label="Settings sections"] [role="tab"]')];
+      const panels = tabs.map(tab => document.getElementById(tab.getAttribute('aria-controls')));
+      const packs = panels[0];
+      const focusable = [...packs.querySelectorAll('button, [href], input, select, textarea, [tabindex], dialog')];
+      return {
+        panels: panels.map((panel, index) => ({ role: panel?.getAttribute('role'),
+          labelledBy: panel?.getAttribute('aria-labelledby') === tabs[index].id, hidden: panel?.hidden })),
+        renderedPackControls: focusable.filter(node => node.getClientRects().length).length,
+        openDialogs: document.querySelectorAll('dialog[open]').length,
+        contextTabs: document.querySelectorAll('[aria-label="Pack context"]').length,
+        aboutTabIndex: document.querySelector('[data-about-panel]').getAttribute('tabindex'),
+      };
+    })()`);
+    assert.deepEqual(structure, {
+      panels: [{ role: 'tabpanel', labelledBy: true, hidden: true }, { role: 'tabpanel', labelledBy: true, hidden: false }],
+      renderedPackControls: 0, openDialogs: 0, contextTabs: 1, aboutTabIndex: null,
+    }, 'Packs stays mounted but hidden; nothing from it is rendered or open');
+    const tree = await aboutAccessibility(page);
+    assert.deepEqual(tree.tablists.filter(name => name !== 'Workspace views'), ['Settings sections'],
+      'the hidden Pack context tabs leave the accessibility tree');
+    assert.deepEqual(tree.sections, [['Packs', false], ['About', true]]);
+    assert.deepEqual(tree.tabpanels, ['Settings', 'About'], 'only the workspace Settings panel and its About section');
+    assert.deepEqual(tree.links, [ABOUT_LINK.label]);
+    assert.deepEqual(tree.grids, [], 'no hidden pack results remain exposed');
+    assert.equal(tree.buttons.some(name => /Reload packs|Refresh|Clear|pack page|Close pack/.test(name)), false,
+      JSON.stringify(tree.buttons));
+    assert.deepEqual(tree.unnamed, []);
+
+    // Standard tab keys: arrows, Home, and End move and select; Enter keeps.
+    const keyed = [];
+    for (const [pressed, expected] of [['ArrowLeft', 'packs'], ['ArrowRight', 'about'], ['Home', 'packs'],
+      ['End', 'about'], ['ArrowRight', 'packs'], ['ArrowLeft', 'about'], ['Enter', 'about']]) {
+      await key(page, pressed);
+      await until(() => evaluate(page, `document.querySelector('[data-settings-section="${expected}"]')
+        ?.getAttribute('aria-selected') === 'true'`), `${pressed} selects ${expected}`);
+      if (expected === 'about') await aboutSettled(page);
+      else await packsSettled(page);
+      keyed.push({ pressed, focused: await activeSection(), surface: await aboutSurface(page) });
+    }
+    for (const entry of keyed) {
+      const about = entry.focused === 'about';
+      assert.equal(entry.surface.shown, about, JSON.stringify(entry));
+      assert.deepEqual(entry.surface.toolbar, about ? [] : ['Reload packs'], JSON.stringify(entry));
+      assert.equal(entry.surface.footer, about ? 'About · Read only' : 'Installed: current · Catalog: current');
+      if (about) assert.deepEqual(entry.surface.rows, ABOUT_MAIN_ROWS);
+    }
+    assert.deepEqual(keyed.map(entry => entry.focused), ['packs', 'about', 'packs', 'about', 'packs', 'about', 'about']);
+    assert.equal(canvas.aboutReads().length, 4, 'each About entry reads once; Enter on the selected tab does not reread');
+    assert.equal(canvas.packReads().length, packReads, 'section changes and About never reload packs');
+
+    // Tab leaves the section tabs for the About content; Shift+Tab returns.
+    await key(page, 'Tab');
+    await settleAboutAnimations(page);
+    const linkFocus = await evaluate(page, `(() => {
+      const node = document.activeElement, style = getComputedStyle(node);
+      return { repository: node.hasAttribute('data-about-repository'), outline: style.outlineStyle,
+        width: style.outlineWidth, decoration: style.textDecorationStyle, visible: node.matches(':focus-visible') };
+    })()`);
+    assert.deepEqual(linkFocus, { repository: true, outline: 'solid', width: '2px', decoration: 'double', visible: true },
+      'Tab reaches the repository link with a visible focus indicator');
+    const linkImage = await aboutScreenshot(page, output, 'about-link-focus-1440x900-light');
+    await key(page, 'Tab', 'Tab', { shift: true });
+    assert.equal(await activeSection(), 'about', 'Shift+Tab returns to the selected section tab');
+
+    // Reselecting Settings keeps the section; leaving and returning resets it.
+    await click('#dude-tab-settings');
+    assert.equal((await aboutSurface(page)).shown, true, 'reselecting the Settings cog keeps About');
+    assert.equal(await evaluate(page, `document.activeElement?.id`), 'dude-tab-settings',
+      'reselecting a rail destination keeps the existing rail focus behavior');
+    const reads = canvas.aboutReads().length;
+    await click('#dude-tab-overview');
+    assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-settings]'))`), false);
+    await click('#dude-tab-settings');
+    await packsSettled(page);
+    assert.equal((await aboutSurface(page)).shown, false, 'ordinary re-entry starts in Packs again');
+    await chooseSettingsSection(page, 'about');
+    assert.equal(canvas.aboutReads().length, reads + 1, 'a later About entry reads again');
+    assert.deepEqual(canvas.foreign(), [], 'nothing contacts the repository or another origin');
+    output.json('route-result.json', { browser: canvas.driver.info.Browser, node: process.version, packsEntry,
+      structure, tree, keyed, linkFocus, aboutReads: canvas.aboutReads().length, packReads: canvas.packReads().length,
+      images: { packsImage, aboutImage, linkImage } });
+  });
+});
+
+test('074 About: recorded refs classify independently and unreadable reads keep credit and the repository', {
+  timeout: 180_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '074-about-records', {}, async canvas => {
+    const { page, output, workspace } = canvas;
+    const unavailableRows = [['Dude version', 'Unavailable'], ['Author', 'Enrique Gonzalez'],
+      ['Repository', ABOUT_REPOSITORY], ['Recorded channel/ref', 'Unavailable']];
+    const rows = (version, channel) => [['Dude version', version], ['Author', 'Enrique Gonzalez'],
+      ['Repository', ABOUT_REPOSITORY], ['Recorded channel/ref', channel]];
+    const longRef = `feature/${'long-recorded-segment-'.repeat(6)}end/${'x'.repeat(64)}`;
+    const hash = 'f22d9808fb2e3f6b8dde49156b46693a6e818f38';
+    await navigate(page, null, 1440, 'light', canvas.origin);
+    await until(() => evaluate(page, `document.body.innerText.includes('Connected')`), 'connected Canvas');
+    await clickSettingsControl(page, `document.querySelector('#dude-tab-settings')`);
+    await packsSettled(page);
+
+    // Real records through the real read boundary: each column reads its own
+    // field, and nothing falls back to the other ref or to a default.
+    const recorded = [
+      ['stable release on the latest channel', { installed_ref: 'v1.2.3', source_ref: 'latest' }, rows('v1.2.3', 'Stable releases (latest)')],
+      ['pinned release', { installed_ref: 'v1.2.3', source_ref: 'v1.2.3' }, rows('v1.2.3', 'Pinned release (v1.2.3)')],
+      ['development main', { installed_ref: 'main', source_ref: 'main' }, ABOUT_MAIN_ROWS],
+      ['latest is never a resolved version', { installed_ref: 'latest', source_ref: 'latest' },
+        rows('Recorded ref (latest)', 'Stable releases (latest)')],
+      ['prerelease-shaped and branch refs', { installed_ref: 'v1.3.0-rc.1', source_ref: 'release/1.3' },
+        rows('Recorded ref (v1.3.0-rc.1)', 'Recorded ref (release/1.3)')],
+      ['hash-shaped ref', { installed_ref: hash, source_ref: 'main' }, rows(`Recorded ref (${hash})`, 'Development (main)')],
+      ['long ref', { installed_ref: longRef }, rows(`Recorded ref (${longRef})`, 'Unavailable')],
+      ['absent installed ref', { source_ref: 'main' }, rows('Unavailable', 'Development (main)')],
+      ['empty and wrong-type refs', { installed_ref: '', source_ref: 42 }, unavailableRows],
+      ['URL and traversal refs', { installed_ref: 'https://evil.example/tag', source_ref: '../etc/passwd' }, unavailableRows],
+      ['lock and double-slash refs', { installed_ref: 'main.lock', source_ref: 'feature//x' }, unavailableRows],
+    ];
+    const results = [];
+    for (const [name, refs, expected] of recorded) {
+      workspace.write('.dude/metadata/bundle-manifest.md', aboutManifest({ source_repo: ABOUT_RECORDED_REPO, ...refs }));
+      await chooseSettingsSection(page, 'about');
+      const surface = await aboutSurface(page);
+      assert.deepEqual(surface.rows, expected, name);
+      assert.equal(surface.note, ABOUT_NOTE, name);
+      assert.deepEqual(surface.link, ABOUT_LINK, name);
+      const text = await evaluate(page, `document.body.innerText`);
+      for (const secret of [ABOUT_RECORDED_REPO, 'evil.example', '../etc', 'main.lock', 'feature//x']) {
+        assert.equal(text.includes(secret), false, `${name} does not display ${secret}`);
+      }
+      results.push({ name, refs, rows: surface.rows });
+      if (name === 'long ref') {
+        await page.send('Emulation.setDeviceMetricsOverride', { width: 180, height: 450, deviceScaleFactor: 1, mobile: false });
+        await settleAboutAnimations(page);
+        const wrap = await evaluate(page, `(() => {
+          const panel = document.querySelector('[data-about-panel]');
+          const value = panel.querySelector('[data-about-facts] > div:first-child dd');
+          const r = value.getBoundingClientRect(), p = panel.getBoundingClientRect();
+          return { documentWidth: document.documentElement.scrollWidth, panelScrollWidth: panel.scrollWidth,
+            panelWidth: panel.clientWidth, right: r.right, panelRight: p.right, height: r.height,
+            lineHeight: parseFloat(getComputedStyle(value).lineHeight), text: value.textContent };
+        })()`);
+        assert.equal(wrap.documentWidth, 180, 'a long ref causes no page overflow');
+        assert.ok(wrap.panelScrollWidth <= wrap.panelWidth && wrap.right <= wrap.panelRight, JSON.stringify(wrap));
+        assert.ok(wrap.height >= wrap.lineHeight * 4, 'the full long ref wraps within its row');
+        assert.equal(wrap.text, `Recorded ref (${longRef})`, 'the long ref is not truncated or abbreviated');
+        results.push({ name: 'long ref wraps at 180x450', wrap, image: await aboutScreenshot(page, output, 'long-ref-180x450-light') });
+        await page.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+      }
+      await chooseSettingsSection(page, 'packs');
+    }
+    // Unusable documents are readable unavailable records, not failed reads.
+    for (const [name, text] of [
+      ['malformed JSON', '# Bundle Manifest\n\n```json\n{"source_ref": "main",\n```\n'],
+      ['missing provenance', aboutManifest({ source_ref: 'main', installed_ref: 'main' })],
+      ['unsupported field', aboutManifest({ source_repo: ABOUT_RECORDED_REPO, source_ref: 'main', installed_ref: 'main', path: '/private' })],
+    ]) {
+      workspace.write('.dude/metadata/bundle-manifest.md', text);
+      await chooseSettingsSection(page, 'about');
+      const surface = await aboutSurface(page);
+      assert.deepEqual(surface.rows, unavailableRows, name);
+      assert.equal(surface.note, ABOUT_NOTE, name);
+      results.push({ name, rows: surface.rows });
+      await chooseSettingsSection(page, 'packs');
+    }
+    workspace.write('.dude/metadata/bundle-manifest.md', aboutManifest({
+      source_repo: ABOUT_RECORDED_REPO, source_ref: 'main', installed_ref: 'main' }));
+
+    // Test-owned interception of the About route only: a paused request is a
+    // slow read, and fulfilled bodies model transport and shape failures.
+    const paused = [];
+    page.on('Fetch.requestPaused', event => paused.push(event));
+    await page.send('Fetch.enable', { patterns: [{ urlPattern: `${canvas.origin}/api/about`, requestStage: 'Request' }] });
+    const nextPaused = () => until(() => paused.shift(), 'paused About read');
+    await clickSettingsControl(page, `document.querySelector('[data-settings-section="about"]')`);
+    const loadingRequest = await nextPaused();
+    await settleAboutAnimations(page);
+    const loading = await aboutSurface(page);
+    assert.deepEqual(loading, {
+      shown: true, heading: 'Dude', busy: 'true', link: ABOUT_LINK, note: ABOUT_NOTE,
+      rows: [['Dude version', 'Reading…'], ['Author', 'Enrique Gonzalez'], ['Repository', ABOUT_REPOSITORY],
+        ['Recorded channel/ref', 'Reading…']],
+      status: 'Reading recorded installation metadata.', footer: 'About · Read only', toolbar: [],
+    }, 'loading keeps credit, the repository, the note, and section navigation');
+    const loadingTree = await page.send('Accessibility.getFullAXTree');
+    const progress = loadingTree.nodes.filter(node => !node.ignored && node.role?.value === 'progressbar')
+      .map(node => node.name?.value);
+    assert.deepEqual(progress, ['Reading…', 'Reading…']);
+    const loadingImage = await aboutScreenshot(page, output, 'about-loading-1440x900-light');
+    await page.send('Fetch.continueRequest', { requestId: loadingRequest.requestId });
+    await aboutSettled(page);
+    assert.deepEqual((await aboutSurface(page)).rows, ABOUT_MAIN_ROWS);
+
+    const failures = [
+      ['extra response field', 200, JSON.stringify({ installedRef: 'main', sourceRef: 'main', root: 'C:\\private\\workspace' })],
+      ['wrong response type', 200, JSON.stringify({ installedRef: 1, sourceRef: 'main' })],
+      ['unsafe response ref', 200, JSON.stringify({ installedRef: '../private', sourceRef: 'main' })],
+      ['array response', 200, '[]'],
+      ['non-JSON response', 200, 'private stack trace at C:\\private\\reader.mjs'],
+      ['unbound Canvas', 503, JSON.stringify({ error: 'about_unavailable', message: 'This Canvas has no current workspace.' })],
+      ['changed workspace', 409, JSON.stringify({ error: 'identity_mismatch', message: 'The workspace changed. Open About again to read it.' })],
+      ['server error detail', 500, JSON.stringify({ error: 'EACCES', message: 'EACCES: C:\\private\\bundle-manifest.md' })],
+      ['connection refused', null, null],
+    ];
+    for (const [name, status, body] of failures) {
+      await chooseSettingsSection(page, 'packs');
+      await clickSettingsControl(page, `document.querySelector('[data-settings-section="about"]')`);
+      const request = await nextPaused();
+      if (status === null) await page.send('Fetch.failRequest', { requestId: request.requestId, errorReason: 'ConnectionRefused' });
+      else await page.send('Fetch.fulfillRequest', { requestId: request.requestId, responseCode: status,
+        responseHeaders: [{ name: 'Content-Type', value: 'application/json; charset=utf-8' }, { name: 'Cache-Control', value: 'no-store' }],
+        body: Buffer.from(body).toString('base64') });
+      await aboutSettled(page);
+      const surface = await aboutSurface(page);
+      assert.deepEqual({ rows: surface.rows, note: surface.note, status: surface.status, link: surface.link }, {
+        rows: unavailableRows, note: ABOUT_UNAVAILABLE_NOTE, status: 'Recorded installation metadata is unavailable.', link: ABOUT_LINK,
+      }, name);
+      const text = await evaluate(page, `document.body.innerText`);
+      for (const secret of ['private', 'EACCES', 'no current workspace', 'workspace changed', 'stack trace']) {
+        assert.equal(text.includes(secret), false, `${name} shows fixed copy, not ${secret}`);
+      }
+      results.push({ name, status, rows: surface.rows, note: surface.note });
+    }
+    const colors = await evaluate(page, `(() => {
+      const [label, value] = document.querySelector('[data-about-facts] > div').children;
+      return { label: getComputedStyle(label).color, value: getComputedStyle(value).color };
+    })()`);
+    assert.equal(colors.value, colors.label, 'an unavailable value uses the secondary text color');
+    const unavailableImage = await aboutScreenshot(page, output, 'about-unavailable-1440x900-light');
+    await page.send('Fetch.disable');
+    output.json('records-result.json', { browser: canvas.driver.info.Browser, node: process.version, results, loading,
+      progress, colors, images: { loadingImage, unavailableImage }, aboutReads: canvas.aboutReads().length });
+  });
+});
+
+test('074 About: leaving, re-entry, and root replacement discard earlier reads', {
+  timeout: 180_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '074-about-lifetime', {}, async canvas => {
+    const { page, output, workspace, provider, instance } = canvas;
+    // Observe real server responses. A held parsed body models a transport
+    // completion that arrives after its reader was aborted; it is never data
+    // that the server did not return.
+    await page.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+      const original = window.fetch;
+      const probe = window.aboutReadProbe = { hold: false, held: [], bodies: [], seen: [], hints: 0 };
+      window.fetch = async (...args) => {
+        const response = await original(...args);
+        if (new URL(args[0], location.href).pathname === '/api/about') {
+          const read = response.json.bind(response);
+          response.json = async () => {
+            const value = await read();
+            probe.bodies.push(value);
+            if (probe.hold) await new Promise(resolve => probe.held.push(resolve));
+            return value;
+          };
+        }
+        return response;
+      };
+      const OriginalEventSource = window.EventSource;
+      window.EventSource = class extends OriginalEventSource {
+        constructor(...args) {
+          super(...args);
+          for (const type of ['workspace', 'needs-you']) this.addEventListener(type, () => { probe.hints += 1; });
+        }
+      };
+      new MutationObserver(() => {
+        const text = [...document.querySelectorAll('[data-about-facts] dd')].map(node => node.textContent).join(' | ');
+        if (text && probe.seen.at(-1) !== text) probe.seen.push(text);
+      }).observe(document, { subtree: true, childList: true, characterData: true });
+    })()` });
+    const facts = async () => (await aboutSurface(page)).rows?.map(([, value]) => value);
+    const release = () => evaluate(page, `window.aboutReadProbe.held.splice(0).forEach(resolve => resolve())`);
+    const seenSince = start => evaluate(page, `window.aboutReadProbe.seen.slice(${start})`);
+    const seenCount = () => evaluate(page, `window.aboutReadProbe.seen.length`);
+    await navigate(page, null, 1440, 'light', canvas.origin);
+    await until(() => evaluate(page, `document.body.innerText.includes('Connected')`), 'connected Canvas');
+    await clickSettingsControl(page, `document.querySelector('#dude-tab-settings')`);
+    await packsSettled(page);
+
+    // Leaving during a read aborts it: the in-flight request is cancelled.
+    const paused = [];
+    page.on('Fetch.requestPaused', event => paused.push(event));
+    await page.send('Fetch.enable', { patterns: [{ urlPattern: `${canvas.origin}/api/about`, requestStage: 'Request' }] });
+    const cancellations = [];
+    for (const leave of ['[data-settings-section="packs"]', '#dude-tab-overview']) {
+      await clickSettingsControl(page, `document.querySelector('[data-settings-section="about"]')`);
+      const pending = await until(() => paused.shift(), 'paused About read');
+      assert.equal((await facts())[0], 'Reading…');
+      await clickSettingsControl(page, `document.querySelector(${JSON.stringify(leave)})`);
+      await until(() => canvas.cancelled.has(pending.networkId), `About read cancelled by ${leave}`);
+      cancellations.push({ leave, request: pending.networkId });
+      if (leave === '#dude-tab-overview') {
+        assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-settings]'))`), false);
+        await clickSettingsControl(page, `document.querySelector('#dude-tab-settings')`);
+      }
+      await packsSettled(page);
+    }
+    // A new entry starts from Reading, never from the previous values.
+    await clickSettingsControl(page, `document.querySelector('[data-settings-section="about"]')`);
+    const fresh = await until(() => paused.shift(), 'paused re-entry read');
+    assert.deepEqual(await facts(), ['Reading…', 'Enrique Gonzalez', ABOUT_REPOSITORY, 'Reading…']);
+    await page.send('Fetch.continueRequest', { requestId: fresh.requestId });
+    await aboutSettled(page);
+    assert.deepEqual(await facts(), ABOUT_MAIN_ROWS.map(([, value]) => value));
+    await page.send('Fetch.disable');
+
+    // Ordinary Canvas refreshes re-render About without reading it again. An
+    // idle session is the ordinary-chat hint that rereads the whole workspace.
+    const settledReads = canvas.aboutReads().length;
+    const hints = await evaluate(page, `window.aboutReadProbe.hints`);
+    const workspaceReads = canvas.requests.filter(entry => entry.url === `${canvas.origin}/api/work-index`).length;
+    provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+    await evaluate(page, `window.dispatchEvent(new Event('focus'))`);
+    await until(() => evaluate(page, `window.aboutReadProbe.hints > ${hints}`), 'refresh hint delivered');
+    await until(() => canvas.requests.filter(entry => entry.url === `${canvas.origin}/api/work-index`).length > workspaceReads,
+      'workspace reread after the hint');
+    await settleAboutAnimations(page);
+    assert.equal(canvas.aboutReads().length, settledReads, 'no polling or refresh-loop About reread');
+    assert.deepEqual(await facts(), ABOUT_MAIN_ROWS.map(([, value]) => value));
+
+    // A late parsed body from an earlier entry has nowhere to land.
+    await chooseSettingsSection(page, 'packs');
+    await evaluate(page, `window.aboutReadProbe.hold = true`);
+    await clickSettingsControl(page, `document.querySelector('[data-settings-section="about"]')`);
+    await until(() => evaluate(page, `window.aboutReadProbe.held.length === 1`), 'old entry body held');
+    await chooseSettingsSection(page, 'packs');
+    workspace.write('.dude/metadata/bundle-manifest.md', aboutManifest({
+      source_repo: ABOUT_RECORDED_REPO, source_ref: 'latest', installed_ref: 'v1.2.3' }));
+    await evaluate(page, `window.aboutReadProbe.hold = false`);
+    await chooseSettingsSection(page, 'about');
+    const releaseMark = await seenCount();
+    await release();
+    await settleAboutAnimations(page);
+    assert.deepEqual(await facts(), ['v1.2.3', 'Enrique Gonzalez', ABOUT_REPOSITORY, 'Stable releases (latest)']);
+    assert.equal((await seenSince(releaseMark)).some(text => text.includes('Development (main)')), false,
+      'the earlier entry body is never displayed after it completes');
+    assert.equal(await evaluate(page, `window.aboutReadProbe.bodies.at(-2).installedRef`), 'main',
+      'the late body really carried the earlier record');
+
+    // Root replacement: an old root's parsed body cannot reach the new root.
+    await chooseSettingsSection(page, 'packs');
+    await until(() => canvas.releaseTracking.isIdle() && !instance.packRead, 'owned readers idle before root replacement');
+    await evaluate(page, `window.aboutReadProbe.hold = true`);
+    await clickSettingsControl(page, `document.querySelector('[data-settings-section="about"]')`);
+    await until(() => evaluate(page, `window.aboutReadProbe.held.length === 1`), 'old-root body held');
+    const oldRoot = path.join(workspace.directory, 'previous-root');
+    fs.renameSync(workspace.root, oldRoot);
+    fs.cpSync(oldRoot, workspace.root, { recursive: true });
+    workspace.write('.dude/metadata/bundle-manifest.md', aboutManifest({
+      source_repo: ABOUT_RECORDED_REPO, source_ref: 'v2.0.0', installed_ref: 'v2.0.0' }));
+    const replacedHints = await evaluate(page, `window.aboutReadProbe.hints`);
+    await provider.refresh();
+    await until(() => evaluate(page, `window.aboutReadProbe.hints > ${replacedHints}`), 'root invalidation hint delivered');
+    await until(() => evaluate(page, `Boolean(document.querySelector('#dude-panel-overview h1'))
+      && !document.querySelector('[data-settings]')`), 'root replacement releases Settings and About');
+    const rootMark = await seenCount();
+    await evaluate(page, `window.aboutReadProbe.hold = false`);
+    await release();
+    await settleAboutAnimations(page);
+    assert.deepEqual(await seenSince(rootMark), [], 'the old-root body renders nothing after replacement');
+    await clickSettingsControl(page, `document.querySelector('#dude-tab-settings')`);
+    await packsSettled(page);
+    await chooseSettingsSection(page, 'about');
+    assert.deepEqual(await facts(), ['v2.0.0', 'Enrique Gonzalez', ABOUT_REPOSITORY, 'Pinned release (v2.0.0)'],
+      'the replacement root reads its own record');
+    output.json('lifetime-result.json', { browser: canvas.driver.info.Browser, node: process.version, cancellations,
+      aboutReads: canvas.aboutReads().length, seen: await evaluate(page, `window.aboutReadProbe.seen`),
+      image: await aboutScreenshot(page, output, 'replacement-root-about-1440x900-light') });
+  });
+});
+
+test('074 About: local sections keep the Packs view, dialogs, focus, and unsent work', {
+  timeout: 240_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '074-about-continuity', {}, async canvas => {
+    const { page, output, workspace, provider } = canvas;
+    const click = selector => clickSettingsControl(page, `document.querySelector(${JSON.stringify(selector)})`);
+    const request = {
+      owner: 'dude', requestRef: randomUUID(), revision: randomUUID(), class: 'fact', scope: workspace.stable.scope,
+      source: { kind: 'file', path: workspace.stable.ideaPath,
+        revision: workspace.revision(fs.readFileSync(path.join(workspace.root, workspace.stable.ideaPath))) },
+      prompt: 'Keep this unsent response while reading About.',
+      whyHuman: 'The current owner needs the user’s wording.', unblocks: 'The owner can continue.', blocking: true,
+      fields: { input: { kind: 'text' } },
+    };
+    await canvas.ask(request);
+    const packView = () => evaluate(page, `(() => {
+      const detail = document.querySelector('[data-pack-detail]');
+      return {
+        context: document.querySelector('[data-pack-context][aria-selected="true"]')?.getAttribute('data-pack-context'),
+        filter: document.querySelector('[data-pack-toolbar] [role="combobox"]')?.textContent.trim(),
+        page: document.querySelector('[data-pack-page]')?.textContent,
+        rows: [...document.querySelectorAll('[data-pack-row]')].map(node => node.getAttribute('data-pack-row')),
+        detail: detail?.getAttribute('data-pack-detail') ?? null,
+        open: Boolean(detail?.open), modal: Boolean(detail?.matches(':modal')),
+        width: detail?.open ? detail.getBoundingClientRect().width : null,
+        scroll: document.querySelector('[data-pack-scroll]').scrollTop,
+        focus: document.activeElement?.getAttribute('data-settings-section')
+          || document.activeElement?.getAttribute('aria-label') || document.activeElement?.tagName,
+      };
+    })()`);
+    const selectTag = async tag => {
+      await click('[data-pack-toolbar] [role="combobox"]');
+      await clickSettingsControl(page, `[...document.querySelectorAll('[role="option"]')]
+        .find(node => node.textContent.trim() === ${JSON.stringify(tag)})`);
+    };
+    const hiddenPacks = () => evaluate(page, `({
+      openDialogs: document.querySelectorAll('dialog[open]').length,
+      rendered: [...document.querySelector('[data-settings] [role="tabpanel"][aria-labelledby$="-section-packs"]')
+        .querySelectorAll('button, [tabindex], dialog')].filter(node => node.getClientRects().length).length,
+    })`);
+    await navigate(page, null, 1440, 'light', canvas.origin);
+    await until(() => evaluate(page, `document.body.innerText.includes('Connected')
+      && document.querySelectorAll('[data-work-path]').length === 2`), 'ordinary Overview');
+
+    // A finder query survives a Settings and About visit.
+    await focus(page, 'input[type="search"]');
+    await page.send('Input.insertText', { text: '701' });
+    await until(() => evaluate(page, `document.querySelectorAll('#dude-panel-overview [data-work-path]').length === 1`), 'finder query');
+    await click('#dude-tab-settings');
+    await packsSettled(page);
+    await chooseSettingsSection(page, 'about');
+    await click('#dude-tab-overview');
+    assert.equal(await evaluate(page, `document.querySelector('input[type="search"]').value`), '701');
+    assert.equal(await evaluate(page, `document.querySelectorAll('#dude-panel-overview [data-work-path]').length`), 1);
+
+    // Selected work, task inspection, and both kinds of unsent input.
+    await click(`#dude-panel-overview [data-work-path="${workspace.stable.ideaPath}"]`);
+    await until(() => evaluate(page, `Boolean(document.querySelector('[data-task-filter="todo"]'))`), 'source-backed task filter');
+    await click('[data-task-filter="todo"]');
+    await click('[data-task-key="T001@aaaaaaaa"]');
+    await click('#dude-tab-new');
+    await focus(page, '#dude-panel-new textarea');
+    const idea = '  An unsent new idea stays through About.  ';
+    await page.send('Input.insertText', { text: idea });
+    await click('#dude-tab-needs');
+    await clickSettingsControl(page, `[...document.querySelectorAll('#dude-panel-needs button')]
+      .find(node => node.textContent.includes(${JSON.stringify(request.prompt)}))`);
+    await until(() => evaluate(page, `Boolean(document.querySelector('#dude-panel-needs textarea:not(:disabled)'))`), 'response field');
+    await focus(page, '#dude-panel-needs textarea');
+    const answer = '  Retain this exact unsent answer through About.  ';
+    await page.send('Input.insertText', { text: answer });
+
+    // Filter, page, and selection round trip with the wide detail pane.
+    await click('#dude-tab-settings');
+    await packsSettled(page);
+    await click('[data-pack-context="available"]');
+    await selectTag('ui-tools');
+    await click('[aria-label="Next pack page"]');
+    await click('[data-pack-row="november"]');
+    const before = await packView();
+    assert.deepEqual({ ...before, focus: undefined, scroll: undefined }, {
+      context: 'available', filter: 'ui-tools', page: 'Page 2 of 2', rows: ['november'], detail: 'november',
+      open: true, modal: false, width: 320, focus: undefined, scroll: undefined });
+    const packReads = canvas.packReads().length;
+    await chooseSettingsSection(page, 'about');
+    assert.deepEqual(await hiddenPacks(), { openDialogs: 0, rendered: 0 }, 'no hidden pane covers or keeps About focus');
+    const aboutTree = await aboutAccessibility(page);
+    assert.equal(aboutTree.buttons.some(name => /Close pack details|Back to results|Install/.test(name)), false,
+      JSON.stringify(aboutTree.buttons));
+    const hiddenImage = await aboutScreenshot(page, output, 'about-over-retained-detail-1440x900-light');
+    await chooseSettingsSection(page, 'packs');
+    const restored = await packView();
+    assert.deepEqual(restored, { ...before, focus: 'packs' },
+      'filter, page, and selection return with the pane, and focus stays on the Packs tab');
+    const restoredImage = await aboutScreenshot(page, output, 'packs-detail-restored-1440x900-light');
+
+    // Results scroll survives a keyboard section round trip.
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 450, deviceScaleFactor: 1, mobile: false });
+    await click('[data-pack-context="installed"]');
+    await settleAboutAnimations(page);
+    const box = await evaluate(page, `(() => {
+      const node = document.querySelector('[data-pack-scroll]'), r = node.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2, overflow: node.scrollHeight - node.clientHeight };
+    })()`);
+    assert.ok(box.overflow > 0, 'the short viewport has scrollable pack results');
+    await page.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: box.x, y: box.y, deltaX: 0, deltaY: 400 });
+    await until(() => evaluate(page, `document.querySelector('[data-pack-scroll]').scrollTop > 0`), 'wheel-scrolled results');
+    await settleAboutAnimations(page);
+    const scrolled = await packView();
+    await focus(page, '[data-settings-section="packs"]');
+    await key(page, 'ArrowRight');
+    await aboutSettled(page);
+    await key(page, 'ArrowLeft');
+    await packsSettled(page);
+    await settleAboutAnimations(page);
+    assert.deepEqual(await packView(), { ...scrolled, focus: 'packs' }, 'results scroll and view survive the round trip');
+
+    // A pane retained on About reopens as the narrow modal after a resize.
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+    await click('[data-pack-row="zulu"]');
+    await chooseSettingsSection(page, 'about');
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 768, height: 900, deviceScaleFactor: 1, mobile: false });
+    await settleAboutAnimations(page);
+    assert.deepEqual(await hiddenPacks(), { openDialogs: 0, rendered: 0 });
+    await chooseSettingsSection(page, 'packs');
+    const narrow = await packView();
+    assert.equal(narrow.detail, 'zulu');
+    assert.equal(narrow.modal, true, 'the retained selection returns under the existing narrow modal rule');
+    assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').contains(document.activeElement)`), true);
+    const modalImage = await aboutScreenshot(page, output, 'packs-detail-modal-restored-768x900-light');
+    await key(page, 'Escape');
+    assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-pack-row')`), 'zulu',
+      'closing the restored modal returns focus to its row');
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+    assert.equal(canvas.packReads().length, packReads, 'no section change reloads packs');
+
+    // Ordinary re-entry still starts from the existing initial view.
+    await click('[data-pack-context="available"]');
+    await click('[data-pack-row="bravo"]');
+    await chooseSettingsSection(page, 'about');
+    await click('#dude-tab-context');
+    await until(() => evaluate(page, `document.querySelector('[data-task-filter="todo"]')?.getAttribute('aria-pressed') === 'true'
+      && document.querySelector('[data-task-detail]')?.getAttribute('data-task-detail') === 'T001@aaaaaaaa'`),
+    'task filter and inspection retained through About');
+    await click('#dude-tab-new');
+    assert.equal(await evaluate(page, `document.querySelector('#dude-panel-new textarea').value`), idea);
+    await click('#dude-tab-needs');
+    assert.equal(await evaluate(page, `document.querySelector('#dude-panel-needs textarea').value`), answer);
+    await click('#dude-tab-settings');
+    await packsSettled(page);
+    const reentry = await packView();
+    assert.deepEqual({ context: reentry.context, filter: reentry.filter, page: reentry.page, detail: reentry.detail }, {
+      context: 'installed', filter: 'All use cases', page: 'Page 1 of 2', detail: null }, 'Packs/Installed/All/page 1/no selection');
+    assert.equal((await aboutSurface(page)).shown, false);
+    assert.equal(await evaluate(page, `document.querySelector('[data-work-selector] [aria-label="Working on"]')?.textContent.includes('701')`), true,
+      'the selected work is unchanged');
+    assert.equal(provider.read().requests.find(record => record.request.requestRef === request.requestRef).phase, 'pending',
+      'the unsent answer was not submitted and the request keeps its authority');
+    output.json('continuity-result.json', { browser: canvas.driver.info.Browser, node: process.version, before, restored,
+      scrolled, narrow, reentry, packReads: canvas.packReads().length, aboutReads: canvas.aboutReads().length,
+      images: { hiddenImage, restoredImage, modalImage } });
+  });
+});
+
+test('074 About: Settings and About visits keep the mounted Review, its markup, and its allocation', {
+  timeout: 240_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  const profileOwnership = trackT010ReviewProfiles();
+  context.after(() => profileOwnership.finish('074 Review retention leaves no exact capture profile created by this test'));
+  await runAboutCase(context, '074-about-review', { review: true, deviceScale: 2 }, async canvas => {
+    const { page, output, workspace } = canvas;
+    const feature = workspace.stable;
+    await canvas.ask({
+      owner: 'dude-spec-lead', requestRef: `074-review-${randomUUID()}`, scope: feature.scope,
+      source: { kind: 'file', path: feature.ideaPath,
+        revision: workspace.revision(fs.readFileSync(path.join(workspace.root, ...feature.ideaPath.split('/')))) },
+      revision: `current-074-review-${randomUUID()}`, class: 'preview',
+      prompt: 'Retain this exact Review while reading About.', whyHuman: 'Visual feedback requires the user.',
+      unblocks: 'The design owner can revise the canonical mock.', blocking: true, fields: feature.preview,
+    });
+    const button = text => `[...document.querySelectorAll('button')].find(node =>
+      node.innerText.trim() === ${JSON.stringify(text)} && node.getClientRects().length)`;
+    const click = expression => clickSettingsControl(page, expression);
+    const reviewReady = label => until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
+      && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`), label, 60_000);
+    const opens = () => canvas.requests.filter(entry => entry.method === 'POST'
+      && entry.url === `${canvas.origin}/api/needs-you/review/open`).length;
+    await navigate(page, null, 1440, 'light', canvas.origin, 900, false, 2);
+    await until(() => evaluate(page, `document.body.innerText.includes('Connected')`), 'connected Canvas');
+    await click(`document.querySelector('[data-work-path="${feature.ideaPath}"]')`);
+    await until(() => evaluate(page, `document.body.innerText.includes('Defined feature')`), 'selected Review fixture');
+    await click(button('Review design'));
+    await reviewReady('Review engine ready');
+    await click(`document.querySelector('[aria-label="Box (B)"]')`);
+    await click(button('Notes and more'));
+    await until(() => evaluate(page, `Boolean(document.querySelector('.fui-PopoverSurface[aria-label="Notes and more"]')
+      ?.getClientRects().length)`), 'Review details popover');
+    await click(button('Add at center'));
+    await until(() => evaluate(page, `Boolean(${button('Comments (1)')})`), 'one real Review annotation');
+    if (await evaluate(page, `Boolean(document.querySelector('.fui-PopoverSurface[aria-label="Notes and more"]')?.getClientRects().length)`)) {
+      await key(page, 'Escape');
+    }
+    await click(button('Save markup'));
+    const working = await until(() => {
+      const reviews = path.join(workspace.root, ...feature.specDirectory.split('/'), 'reviews');
+      if (!fs.existsSync(reviews)) return null;
+      const submission = fs.readdirSync(reviews).find(name => fs.existsSync(path.join(reviews, name, 'working.json')));
+      if (!submission) return null;
+      const file = path.join(reviews, submission, 'working.json');
+      const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+      return value.state.annotations.length === 1 ? { file, bytes: fs.readFileSync(file) } : null;
+    }, 'persisted Review annotation');
+    await evaluate(page, `(() => {
+      window.__074ReviewWorkspace = document.querySelector('[data-review-workspace]');
+      window.__074ReviewFrame = document.querySelector('.dude-review-frame');
+      window.__074ReviewOverlay = document.querySelector('.dude-review-overlay');
+    })()`);
+    const reviewOpens = opens();
+    assert.equal(reviewOpens, 1);
+
+    // Settings and both sections are shell reads beside the hidden Review.
+    await click(`document.querySelector('#dude-tab-settings')`);
+    await packsSettled(page);
+    await chooseSettingsSection(page, 'about');
+    assert.deepEqual((await aboutSurface(page)).rows, ABOUT_MAIN_ROWS);
+    const aboutImage = await aboutScreenshot(page, output, 'about-beside-retained-review-1440x900-light');
+    await chooseSettingsSection(page, 'packs');
+    await chooseSettingsSection(page, 'about');
+    const beside = await evaluate(page, `({
+      sameWorkspace: document.querySelector('[data-review-workspace]') === window.__074ReviewWorkspace,
+      sameFrame: document.querySelector('.dude-review-frame') === window.__074ReviewFrame,
+      sameOverlay: document.querySelector('.dude-review-overlay') === window.__074ReviewOverlay,
+      hidden: !document.querySelector('[data-review-workspace]').getClientRects().length,
+      selection: document.querySelector('[data-work-selector] [aria-label="Working on"]')?.textContent.includes('701'),
+    })`);
+    assert.deepEqual(beside, { sameWorkspace: true, sameFrame: true, sameOverlay: true, hidden: true, selection: true },
+      'About neither rebuilds nor retargets the retained Review');
+    assert.ok(fs.readFileSync(working.file).equals(working.bytes), 'About writes no Review work');
+    await click(`document.querySelector('#dude-tab-context')`);
+    await click(button('Review design'));
+    await reviewReady('same Review after About');
+    const returned = await evaluate(page, `({
+      sameFrame: document.querySelector('.dude-review-frame') === window.__074ReviewFrame,
+      sameOverlay: document.querySelector('.dude-review-overlay') === window.__074ReviewOverlay,
+      comments: Boolean(${button('Comments (1)')}),
+    })`);
+    assert.deepEqual(returned, { sameFrame: true, sameOverlay: true, comments: true }, 'the same markup resumes');
+    assert.equal(opens(), reviewOpens, 'returning reuses the retained Review allocation');
+    assert.ok(fs.readFileSync(working.file).equals(working.bytes));
+    output.json('review-result.json', { browser: canvas.driver.info.Browser, node: process.version, beside, returned,
+      reviewOpens, aboutReads: canvas.aboutReads().length, image: aboutImage });
+  });
+  profileOwnership.assertReapedSince(0, '074 Review retention reaps every exact capture profile');
+});
+
+test('074 About: the repository link opens a separate target by native pointer and keyboard', {
+  timeout: 180_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '074-about-link', {}, async canvas => {
+    const { page, output } = canvas;
+    // A browser-level session pauses every new target before it starts, so the
+    // repository request is observed and answered locally: no GitHub contact.
+    const browser = new Cdp(canvas.driver.info.webSocketDebuggerUrl);
+    await browser.open();
+    const popups = [], errors = [];
+    let popup = null;
+    const standIn = Buffer.from('<!doctype html><title>Repository stand-in</title><p>Local stand-in.</p>').toString('base64');
+    browser.on('Target.attachedToTarget', params => {
+      if (!params.waitingForDebugger) return;
+      const { sessionId, targetInfo } = params;
+      void (async () => {
+        if (targetInfo.type === 'page') {
+          popup = { targetId: targetInfo.targetId, sessionId, openerId: targetInfo.openerId ?? null,
+            canAccessOpener: targetInfo.canAccessOpener, requests: [], closed: false };
+          popups.push(popup);
+          await browser.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }, sessionId);
+        }
+        await browser.send('Runtime.runIfWaitingForDebugger', {}, sessionId);
+      })().catch(error => errors.push(String(error)));
+    });
+    browser.on('Fetch.requestPaused', params => {
+      const owner = popup;
+      owner.requests.push({ url: params.request.url, type: params.resourceType });
+      const isDocument = params.resourceType === 'Document';
+      void browser.send('Fetch.fulfillRequest', { requestId: params.requestId, responseCode: isDocument ? 200 : 404,
+        responseHeaders: [{ name: 'Content-Type', value: 'text/html; charset=utf-8' }], body: isDocument ? standIn : '' },
+      owner.sessionId).catch(error => { if (!owner.closed) errors.push(String(error)); });
+    });
+    try {
+      await browser.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
+      await navigate(page, null, 1440, 'light', canvas.origin);
+      await until(() => evaluate(page, `document.body.innerText.includes('Connected')`), 'connected Canvas');
+      await clickSettingsControl(page, `document.querySelector('#dude-tab-new')`);
+      await focus(page, '#dude-panel-new textarea');
+      const idea = '  Unsent idea text survives opening the repository.  ';
+      await page.send('Input.insertText', { text: idea });
+      await clickSettingsControl(page, `document.querySelector('#dude-tab-settings')`);
+      await packsSettled(page);
+      await chooseSettingsSection(page, 'about');
+      const canvasUrl = await evaluate(page, `location.href`);
+      const navigations = canvas.navigations.length;
+      const activations = [];
+      for (const method of ['pointer', 'keyboard']) {
+        const windows = canvas.windows.length, opened = popups.length;
+        if (method === 'pointer') {
+          await clickAboutTarget(page, `document.querySelector('[data-about-repository]')`, { settle: false });
+        } else {
+          await focus(page, '[data-settings-section="about"]');
+          await key(page, 'Tab');
+          assert.equal(await evaluate(page, `document.activeElement.hasAttribute('data-about-repository')`), true);
+          await key(page, 'Enter');
+        }
+        const target = await until(() => popups.length > opened && popups.at(-1).requests.length && popups.at(-1),
+          `${method} activation opens a separate target`);
+        const windowOpen = await until(() => canvas.windows[windows], `${method} window-open event`);
+        // The new tab took the foreground; close it and bring Canvas back
+        // before waiting on Canvas frames again.
+        target.closed = true;
+        await browser.send('Target.closeTarget', { targetId: target.targetId });
+        await page.send('Page.bringToFront');
+        await until(() => evaluate(page, `document.visibilityState === 'visible'`), 'Canvas visible again');
+        await settleAboutAnimations(page);
+        const canvasState = await evaluate(page, `({ href: location.href, about: Boolean(document.querySelector('[data-about-facts]')),
+          rows: document.querySelectorAll('[data-about-facts] > div').length })`);
+        assert.equal(target.requests[0].url, ABOUT_REPOSITORY, `${method} requests exactly the displayed repository`);
+        assert.equal(target.requests[0].type, 'Document');
+        assert.equal(target.canAccessOpener, false, 'noopener leaves the new context without access to Canvas');
+        assert.equal(windowOpen.url, ABOUT_REPOSITORY);
+        assert.equal(windowOpen.userGesture, true, `${method} is a real user gesture, not script navigation`);
+        assert.ok(windowOpen.windowFeatures.includes('noopener'), JSON.stringify(windowOpen.windowFeatures));
+        assert.deepEqual(canvasState, { href: canvasUrl, about: true, rows: 4 }, `${method} leaves the Canvas in place`);
+        assert.equal(canvas.navigations.length, navigations, 'the Canvas frame never navigates');
+        activations.push({ method, window: { url: windowOpen.url, userGesture: windowOpen.userGesture, windowName: windowOpen.windowName,
+          windowFeatures: windowOpen.windowFeatures },
+          target: { openerId: target.openerId, canAccessOpener: target.canAccessOpener, requests: target.requests }, canvasState });
+      }
+      await clickSettingsControl(page, `document.querySelector('#dude-tab-new')`);
+      assert.equal(await evaluate(page, `document.querySelector('#dude-panel-new textarea').value`), idea,
+        'unsent Canvas work is retained after both activations');
+      assert.deepEqual(canvas.foreign(), [], 'the Canvas itself contacts no other origin');
+      assert.ok(popups.every(entry => entry.requests.every(request => new URL(request.url).origin === 'https://github.com')),
+        JSON.stringify(popups));
+      assert.deepEqual(errors, []);
+      output.json('link-result.json', { browser: canvas.driver.info.Browser, node: process.version, canvasUrl, activations,
+        limits: 'Standalone Edge over CDP. The new target was paused and answered with a local stand-in, so GitHub was not contacted. Embedded Copilot host opening is not exercised here.' });
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+// Same facts from the product and from the approved mock, by their own
+// selectors. Vertical positions are compared from the command bar's top,
+// because the mock adds a preview strip above its product frame.
+const ABOUT_GEOMETRY = {
+  product: {
+    command: 'body header', rail: '[data-navigation-pane]', cog: '#dude-tab-settings', main: 'main',
+    header: '[data-settings] > header', title: '[data-settings] h1', tabs: '[data-settings-section]',
+    panel: '[data-about-panel]', identity: '[data-about-panel] h2', rows: '[data-about-facts] > div',
+    link: '[data-about-repository]', note: '[data-about-note]', footer: 'footer', footerText: 'footer',
+    packTabs: '[data-pack-context]', toolbar: '[data-pack-toolbar]',
+  },
+  mock: {
+    command: '.command-bar', rail: '.rail', cog: '.rail [data-settings]', main: '.product',
+    header: '.settings-header', title: '#settings-title', tabs: '.section-tab',
+    panel: '#section-about', identity: '#about-title', rows: '.about-row',
+    link: '#about-repository', note: '#about-note', footer: '.status-bar', footerText: '#status-text',
+    packTabs: '.pack-tab', toolbar: '.pack-toolbar',
+  },
+};
+
+/** @param {Cdp} page @param {Record<string, string>} selectors */
+function aboutGeometry(page, selectors) {
+  return evaluate(page, `(() => {
+    const s = ${JSON.stringify(selectors)};
+    const box = node => { if (!node || !node.getClientRects().length) return null;
+      const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, right: r.right, bottom: r.bottom }; };
+    const one = key => box(document.querySelector(s[key]));
+    const panel = document.querySelector(s.panel), link = document.querySelector(s.link);
+    return {
+      viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio, documentWidth: document.documentElement.scrollWidth },
+      command: one('command'), rail: one('rail'), cog: one('cog'), main: one('main'), header: one('header'), title: one('title'),
+      tabs: [...document.querySelectorAll(s.tabs)].map(box).filter(Boolean), panel: one('panel'),
+      scroll: panel && !panel.hidden ? { height: panel.scrollHeight, client: panel.clientHeight,
+        width: panel.scrollWidth, clientWidth: panel.clientWidth } : null,
+      identity: one('identity'),
+      rows: [...document.querySelectorAll(s.rows)].map(row => ({ row: box(row),
+        label: box(row.querySelector('dt')), value: box(row.querySelector('dd')) })),
+      link: one('link'), linkLines: link?.getClientRects().length ?? 0, note: one('note'),
+      footer: one('footer'), footerText: document.querySelector(s.footerText)?.textContent ?? null,
+      packTabs: [...document.querySelectorAll(s.packTabs)].map(box).filter(Boolean), toolbar: one('toolbar'),
+    };
+  })()`);
+}
+
+/**
+ * Product-minus-mock differences in CSS px for the approved composition.
+ * @param {any} product @param {any} mock
+ */
+function aboutGeometryDelta(product, mock) {
+  const top = { product: product.command.y, mock: mock.command.y };
+  const delta = {};
+  const put = (name, left, right) => { if (left !== null && right !== null) delta[name] = Math.round((left - right) * 100) / 100; };
+  const vertical = (name, key, index) => {
+    const read = (source, origin) => { const value = index === undefined ? source[key] : source[key][index]; return value ? value.y - origin : null; };
+    put(`${name}.top`, read(product, top.product), read(mock, top.mock));
+  };
+  put('command.height', product.command.height, mock.command.height);
+  put('rail.width', product.rail.width, mock.rail.width);
+  put('main.x', product.main.x, mock.main.x);
+  put('main.width', product.main.width, mock.main.width);
+  put('cog.bottomGap', product.rail.bottom - product.cog.bottom, mock.rail.bottom - mock.cog.bottom);
+  vertical('header', 'header');
+  put('header.height', product.header.height, mock.header.height);
+  for (const key of ['x', 'width', 'height']) put(`title.${key}`, product.title[key], mock.title[key]);
+  vertical('title', 'title');
+  product.tabs.forEach((tab, index) => {
+    for (const key of ['x', 'width', 'height']) put(`tab${index}.${key}`, tab[key], mock.tabs[index][key]);
+    vertical(`tab${index}`, 'tabs', index);
+  });
+  if (product.identity && mock.identity) {
+    put('identity.x', product.identity.x, mock.identity.x);
+    put('identity.height', product.identity.height, mock.identity.height);
+    vertical('identity', 'identity');
+    product.rows.forEach((row, index) => {
+      const other = mock.rows[index];
+      put(`row${index}.height`, row.row.height, other.row.height);
+      put(`row${index}.width`, row.row.width, other.row.width);
+      put(`row${index}.label.x`, row.label.x, other.label.x);
+      put(`row${index}.value.x`, row.value.x, other.value.x);
+      put(`row${index}.value.width`, row.value.width, other.value.width);
+      put(`row${index}.value.height`, row.value.height, other.value.height);
+      put(`row${index}.top`, row.row.y - top.product, other.row.y - top.mock);
+    });
+    for (const key of ['x', 'width', 'height']) put(`link.${key}`, product.link?.[key] ?? null, mock.link?.[key] ?? null);
+    put('note.height', product.note.height, mock.note.height);
+    vertical('note', 'note');
+  }
+  put('footer.height', product.footer.height, mock.footer.height);
+  if (product.packTabs.length && mock.packTabs.length) {
+    product.packTabs.forEach((tab, index) => {
+      for (const key of ['x', 'width', 'height']) put(`packTab${index}.${key}`, tab[key], mock.packTabs[index][key]);
+      vertical(`packTab${index}`, 'packTabs', index);
+    });
+    vertical('toolbar', 'toolbar');
+  }
+  return delta;
+}
+
+test('074 About: rendered geometry, contrast, reflow, and keyboard scrolling follow the approved mock', {
+  timeout: 360_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '074-about-visual', {}, async canvas => {
+    const { page, output } = canvas;
+    assert.equal(approvedDesignSha256(fs.readFileSync(path.join(ROOT, ABOUT_APPROVED))), ABOUT_APPROVED_SHA256,
+      'the comparison uses the exact approved mock');
+    const sizes = [
+      { name: '1440x900', width: 1440, height: 900, scale: 1 },
+      { name: '768x900', width: 768, height: 900, scale: 1 },
+      { name: '360x900', width: 360, height: 900, scale: 1 },
+      { name: '180x450', width: 180, height: 450, scale: 1 },
+      // 200% reflow: the CSS viewport is halved at device scale 2, so the same
+      // device pixels hold a 200% layout. This is effective-viewport reflow,
+      // not native browser zoom; 180x450 is not reduced a second time.
+      { name: '1440x900-reflow200', width: 720, height: 450, scale: 2 },
+      { name: '768x900-reflow200', width: 384, height: 450, scale: 2 },
+      { name: '360x900-reflow200', width: 180, height: 450, scale: 2 },
+    ];
+    const setViewport = async (size, theme, product = true) => {
+      await page.send('Emulation.setDeviceMetricsOverride', { width: size.width, height: size.height,
+        deviceScaleFactor: size.scale, mobile: false });
+      await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
+      if (product) await until(() => evaluate(page, `getComputedStyle(document.querySelector('.fui-FluentProvider'))
+        .getPropertyValue('--colorNeutralForeground1').trim() === ${JSON.stringify(theme === 'dark' ? '#ffffff' : '#242424')}`),
+      `${theme} host appearance`);
+      await settleAboutAnimations(page);
+    };
+    const colorSamples = () => evaluate(page, `(() => {
+      const background = node => {
+        for (let n = node; n; n = n.parentElement) {
+          const color = getComputedStyle(n).backgroundColor;
+          if (color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') return color;
+        }
+        throw new Error('No painted background');
+      };
+      const text = [['title', '[data-settings] h1'],
+        ['selected tab', '[data-settings-section][aria-selected="true"] .fui-Tab__content'],
+        ['unselected tab', '[data-settings-section][aria-selected="false"] .fui-Tab__content'],
+        ['identity', '[data-about-panel] h2'], ['label', '[data-about-facts] dt'], ['value', '[data-about-facts] dd'],
+        ['link', '[data-about-repository]'], ['note', '[data-about-note]'], ['footer', 'footer span']]
+        .map(([name, selector]) => { const node = document.querySelector(selector);
+          return { name, color: getComputedStyle(node).color, background: background(node), size: getComputedStyle(node).fontSize }; });
+      const tab = document.querySelector('[data-settings-section][aria-selected="true"]');
+      const indicator = { name: 'selected tab indicator', color: getComputedStyle(tab, '::after').backgroundColor, background: background(tab) };
+      const icon = { name: 'selected tab icon', color: getComputedStyle(tab.querySelector('.fui-Tab__icon')).color, background: background(tab) };
+      return { text, graphics: [indicator, icon] };
+    })()`);
+
+    await navigate(page, null, 1440, 'light', canvas.origin);
+    await until(() => evaluate(page, `document.body.innerText.includes('Connected')`), 'connected Canvas');
+    await clickSettingsControl(page, `document.querySelector('#dude-tab-settings')`);
+    await packsSettled(page);
+    const product = [];
+    for (const theme of ['light', 'dark']) {
+      await chooseSettingsSection(page, 'packs');
+      for (const size of [sizes[0], sizes[3]]) {
+        await setViewport(size, theme);
+        product.push({ kind: 'packs', theme, size, geometry: await aboutGeometry(page, ABOUT_GEOMETRY.product),
+          image: await aboutScreenshot(page, output, `product-packs-${size.name}-${theme}`) });
+      }
+      await setViewport(sizes[0], theme);
+      await chooseSettingsSection(page, 'about');
+      for (const size of sizes) {
+        await setViewport(size, theme);
+        const geometry = await aboutGeometry(page, ABOUT_GEOMETRY.product);
+        assert.equal(geometry.viewport.documentWidth, size.width, `no horizontal page scroll at ${size.name} ${theme}`);
+        assert.equal(geometry.viewport.dpr, size.scale);
+        assert.ok(geometry.scroll.width <= geometry.scroll.clientWidth, `About content never scrolls sideways at ${size.name}`);
+        assert.equal(geometry.rail.x, 0);
+        assert.equal(geometry.rail.width, 48, 'the vertical rail keeps its width');
+        assert.equal(geometry.main.x, 48);
+        assert.ok(geometry.rail.bottom - geometry.cog.bottom <= 10, 'Settings stays at the visible rail bottom');
+        for (const tab of geometry.tabs) {
+          assert.ok(tab.x >= geometry.main.x && tab.right <= size.width && tab.width >= 24 && tab.height >= 24,
+            JSON.stringify({ size, theme, tab }));
+        }
+        const hits = await evaluate(page, `[...document.querySelectorAll('[data-settings-section], #dude-tab-settings')].map(node => {
+          const r = node.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          return hit === node || node.contains(hit);
+        })`);
+        assert.deepEqual(hits, [true, true, true], `section tabs and the cog are not clipped at ${size.name}`);
+        assert.equal(geometry.footerText, 'About · Read only');
+        const colors = await colorSamples();
+        for (const sample of colors.text) {
+          assert.ok(contrast(sample.color, sample.background) >= 4.5, JSON.stringify({ size, theme, sample }));
+        }
+        for (const sample of colors.graphics) {
+          assert.ok(contrast(sample.color, sample.background) >= 3, JSON.stringify({ size, theme, sample }));
+        }
+        const tree = await aboutAccessibility(page);
+        assert.deepEqual(tree.sections, [['Packs', false], ['About', true]]);
+        assert.deepEqual(tree.links, [ABOUT_LINK.label]);
+        assert.deepEqual(tree.unnamed, []);
+        const image = await aboutScreenshot(page, output, `product-about-${size.name}-${theme}`);
+        // Keyboard scrolling where the content overflows: the panel becomes a
+        // focus stop, the arrow and Space keys scroll it, and Tab reaches the
+        // link scrolled into view with its focus indicator.
+        let keyboard = null;
+        if (geometry.scroll.height > geometry.scroll.client + 1) {
+          await focus(page, '[data-settings-section="about"]');
+          await key(page, 'Tab');
+          assert.equal(await evaluate(page, `document.activeElement === document.querySelector('[data-about-panel]')`), true,
+            `a scrollable About panel is the next focus stop at ${size.name}`);
+          await key(page, 'ArrowDown');
+          await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: ' ', code: 'Space', windowsVirtualKeyCode: 32,
+            nativeVirtualKeyCode: 32, text: ' ', unmodifiedText: ' ' });
+          await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32 });
+          await until(() => evaluate(page, `document.querySelector('[data-about-panel]').scrollTop > 0`), 'keyboard-scrolled About');
+          await settleAboutAnimations(page);
+          const scrolled = await evaluate(page, `document.querySelector('[data-about-panel]').scrollTop`);
+          const panelFocusImage = await aboutScreenshot(page, output, `product-about-panel-focus-${size.name}-${theme}`);
+          await key(page, 'Tab');
+          await settleAboutAnimations(page);
+          const link = await evaluate(page, `(() => {
+            const node = document.activeElement, panel = document.querySelector('[data-about-panel]').getBoundingClientRect();
+            const r = node.getBoundingClientRect(), style = getComputedStyle(node);
+            return { repository: node.hasAttribute('data-about-repository'), visible: r.top >= panel.top && r.bottom <= panel.bottom,
+              outline: style.outlineStyle, width: style.outlineWidth, lines: node.getClientRects().length };
+          })()`);
+          assert.deepEqual({ ...link, lines: undefined }, { repository: true, visible: true, outline: 'solid', width: '2px', lines: undefined },
+            JSON.stringify({ size, theme, link }));
+          const linkFocusImage = await aboutScreenshot(page, output, `product-about-link-focus-${size.name}-${theme}`);
+          await key(page, 'Tab', 'Tab', { shift: true });
+          await key(page, 'Tab', 'Tab', { shift: true });
+          assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-settings-section')`), 'about',
+            'Shift+Tab leaves the About panel without a trap');
+          await evaluate(page, `document.querySelector('[data-about-panel]').scrollTop = 0`);
+          keyboard = { scrolled, link, panelFocusImage, linkFocusImage };
+        } else {
+          assert.equal(await evaluate(page, `document.querySelector('[data-about-panel]').hasAttribute('tabindex')`), false,
+            'a panel with nothing to scroll adds no focus stop');
+        }
+        product.push({ kind: 'about', theme, size, geometry, colors, tree: { nodes: tree.nodes, tablists: tree.tablists }, keyboard, image });
+      }
+    }
+
+    // Loading and unavailable reads, compared with the mock's illustrations.
+    const paused = [];
+    page.on('Fetch.requestPaused', event => paused.push(event));
+    await page.send('Fetch.enable', { patterns: [{ urlPattern: `${canvas.origin}/api/about`, requestStage: 'Request' }] });
+    const states = [];
+    for (const [state, theme] of [['loading', 'light'], ['unavailable', 'dark']]) {
+      await setViewport(sizes[1], theme);
+      await chooseSettingsSection(page, 'packs');
+      await clickSettingsControl(page, `document.querySelector('[data-settings-section="about"]')`);
+      const request = await until(() => paused.shift(), `paused ${state} read`);
+      if (state === 'unavailable') {
+        await page.send('Fetch.fulfillRequest', { requestId: request.requestId, responseCode: 503,
+          responseHeaders: [{ name: 'Content-Type', value: 'application/json' }],
+          body: Buffer.from(JSON.stringify({ error: 'about_unavailable', message: 'This Canvas has no current workspace.' })).toString('base64') });
+        await aboutSettled(page);
+      }
+      await settleAboutAnimations(page);
+      const colors = await colorSamples();
+      for (const sample of colors.text) assert.ok(contrast(sample.color, sample.background) >= 4.5, JSON.stringify({ state, sample }));
+      states.push({ kind: 'about', state, theme, size: sizes[1], geometry: await aboutGeometry(page, ABOUT_GEOMETRY.product), colors,
+        image: await aboutScreenshot(page, output, `product-about-${state}-768x900-${theme}`) });
+      if (state === 'loading') {
+        await page.send('Fetch.continueRequest', { requestId: request.requestId });
+        await aboutSettled(page);
+      }
+    }
+    await page.send('Fetch.disable');
+
+    // The approved mock at the same viewports, captured into this evidence
+    // directory; the approved design and its screenshots stay untouched.
+    const approvedUrl = pathToFileURL(path.join(ROOT, ABOUT_APPROVED)).href;
+    const mockCapture = async (entry, query) => {
+      await setViewport(entry.size, entry.theme, false);
+      await page.send('Page.navigate', { url: `${approvedUrl}?theme=${entry.theme}${query}` });
+      await until(() => evaluate(page, entry.kind === 'packs' ? `document.querySelectorAll('#pack-rows .pack-open').length > 0`
+        : `Boolean(document.querySelector('#about-version')?.textContent)`), `approved ${entry.kind} mock`);
+      await settleAboutAnimations(page);
+      return { geometry: await aboutGeometry(page, ABOUT_GEOMETRY.mock),
+        image: await aboutScreenshot(page, output, `approved-mock-${entry.kind}${entry.state ? `-${entry.state}` : ''}-${entry.size.name}-${entry.theme}`) };
+    };
+    const comparisons = [];
+    for (const entry of [...product, ...states]) {
+      const mock = await mockCapture(entry, entry.kind === 'packs' ? '&section=packs' : entry.state ? `&state=${entry.state}` : '');
+      const delta = aboutGeometryDelta(entry.geometry, mock.geometry);
+      comparisons.push({ kind: entry.kind ?? 'about', state: entry.state ?? 'current', theme: entry.theme, size: entry.size.name,
+        delta, productImage: entry.image, mockImage: mock.image, mockFooter: mock.geometry.footerText });
+    }
+    // The approved composition, within one CSS px of rounding and font
+    // rasterization: rail, main frame, header, tabs, facts, link, and note.
+    const tolerance = 1;
+    const offenders = comparisons.flatMap(entry => Object.entries(entry.delta)
+      .filter(([name, value]) => !name.startsWith('command.') && Math.abs(value) > tolerance)
+      .map(([name, value]) => ({ size: entry.size, theme: entry.theme, kind: entry.kind, state: entry.state, name, value })));
+    output.json('visual-result.json', { browser: canvas.driver.info.Browser, node: process.version,
+      reflow: 'Effective-viewport reflow: 200% means half the CSS viewport at device scale 2. Not native browser zoom.',
+      product, states, comparisons, offenders, tolerance });
+    assert.deepEqual(offenders, [], 'product geometry follows the approved mock');
+    for (const entry of comparisons) {
+      if (entry.kind === 'about') assert.equal(entry.mockFooter, 'About · Read only');
+    }
+  });
+});
 
 test('T010 mounts the vanilla engine under current Fluent tokens and seals real source-aligned evidence', { timeout: 120_000, concurrency: false }, async (reviewTest) => {
       const baseline = await prepareT010Baseline(reviewTest);

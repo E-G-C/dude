@@ -127,8 +127,11 @@ const PACK_SOURCE_PATH =
   `library/packs/${PACK_NAME}/instructions/dude-pack-${PACK_NAME}-owner.instructions.md`;
 const PACK_DESTINATION =
   `.github/instructions/dude-pack-${PACK_NAME}-owner.instructions.md`;
+const PACK_WORK_IDEA_PATH = '.dude/ideas/002-installed-pack-host.md';
+const PACK_WORK_SPEC_PATH = '.dude/specs/002-installed-pack-host/spec.md';
+const PACK_WORK_TASK_KEY = 'T001@c012ab01';
 const PROFILE_PATH = '.dude/metadata/profile.md';
-const SOURCE_APP_SHA256 = '503ee6224573b8624899de3670686ce758f7c91c4d338fd9c46e2eea4fcb84f5';
+const SOURCE_APP_SHA256 = 'aedac71b507e2000cdf79a45b60ff746529057b8497bc3db11b613666d18515d';
 const SOURCE_LEGAL_SHA256 = '3be2d01e3b59529e54cde5f17aee76c168bcde63245c21ec387cf70ba7a6d869';
 /**
  * The Review gesture behavior lives in these static modules, not in the bundled
@@ -156,7 +159,8 @@ const APPROVED_HASHES = Object.freeze({
     '38a227b01622013560f87b78b61c5ad917bc0408073e9c39d7443bbf5f76cc16',
 });
 
-const { buildRelease } = await import(pathToFileURL(path.join(ROOT, 'scripts/build-release.mjs')));
+const { buildRelease, parseManifestDocument } =
+  await import(pathToFileURL(path.join(ROOT, 'scripts/build-release.mjs')));
 const { CopilotClient, RuntimeConnection } = await import(pathToFileURL(path.join(SDK, 'index.js')));
 const { decodePng } = await import(pathToFileURL(path.join(
   ROOT,
@@ -731,9 +735,41 @@ function seedPackFixture(root) {
   const fixture = packFixture(root);
   write(root, PACK_MANIFEST_PATH, fixture.manifest);
   write(root, PACK_SOURCE_PATH, fixture.instruction);
+  write(root, PACK_WORK_IDEA_PATH, [
+    '---',
+    'title: Installed pack host continuity',
+    'slug: installed-pack-host',
+    'status: defined',
+    `spec_path: ${PACK_WORK_SPEC_PATH}`,
+    '---',
+    '',
+    '## Idea',
+    '',
+    'Keep one selected work record while the installed host visits About.',
+    '',
+    '## Coordinator Log',
+    '',
+    '- 2026-09-26T06:44:58Z - Synthetic installed-host current-work fixture created.',
+    '',
+  ].join('\n'));
+  write(root, PACK_WORK_SPEC_PATH, '# Installed Pack Host Continuity\n');
+  write(root, path.posix.join(path.posix.dirname(PACK_WORK_SPEC_PATH), 'tasks.md'), [
+    `<!-- audit log: ${PACK_WORK_IDEA_PATH}#coordinator-log -->`,
+    '# Tasks',
+    '',
+    `- [~] ${PACK_WORK_TASK_KEY} [P] [Shared] Installed pack host task remains selected through About.`,
+    '',
+  ].join('\n'));
   assert.equal(fs.realpathSync(fixture.library), fixture.source.location);
   assert.equal(fs.existsSync(fixture.destination), false);
-  return fixture;
+  return {
+    ...fixture,
+    work: {
+      ideaPath: PACK_WORK_IDEA_PATH,
+      specPath: PACK_WORK_SPEC_PATH,
+      taskKey: PACK_WORK_TASK_KEY,
+    },
+  };
 }
 
 /** @param {string} root */
@@ -2993,6 +3029,133 @@ async function readNeedsYou(canvasUrl) {
   return response.json();
 }
 
+/** @param {string} root */
+function installedAboutMetadata(root) {
+  const document = parseManifestDocument(
+    fs.readFileSync(path.join(root, '.dude', 'metadata', 'bundle-manifest.md')),
+    'installed-host bundle manifest',
+  );
+  return {
+    installedRef: document.data.installed_ref ?? null,
+    sourceRef: document.data.source_ref ?? null,
+    sourceRepo: document.data.source_repo,
+  };
+}
+
+/** @param {string} canvasUrl */
+async function readAbout(canvasUrl) {
+  const response = await fetch(new URL('/api/about', canvasUrl), {
+    signal: AbortSignal.timeout(10_000),
+  });
+  const body = await response.json();
+  return {
+    status: response.status,
+    cacheControl: response.headers.get('cache-control'),
+    body,
+  };
+}
+
+/** @param {string} canvasUrl */
+async function readCanvasProjection(canvasUrl) {
+  const response = await fetch(new URL('/api/projection', canvasUrl), {
+    signal: AbortSignal.timeout(10_000),
+  });
+  assert.equal(response.status, 200);
+  return response.json();
+}
+
+/**
+ * Observe one real installed-host About read and its rendered release record.
+ * Settings is already open and its request dialog, if any, has been closed.
+ * @param {Cdp} page
+ * @param {string} canvasUrl
+ * @param {string} root
+ * @param {string} name
+ * @param {string[]} cliVersions
+ */
+async function observeInstalledAbout(page, canvasUrl, root, name, cliVersions) {
+  const recorded = installedAboutMetadata(root);
+  assert.deepEqual(recorded, {
+    installedRef: 'v0.0.0-t012',
+    sourceRef: 'latest',
+    sourceRepo: 'https://github.com/E-G-C/dude',
+  }, 'the existing release fixture carries its builder-recorded tag and channel');
+  const api = await readAbout(canvasUrl);
+  assert.deepEqual(api, {
+    status: 200,
+    cacheControl: 'no-store',
+    body: {
+      installedRef: recorded.installedRef,
+      sourceRef: recorded.sourceRef,
+    },
+  }, 'the installed extension reads About from its staged release manifest');
+  await click(page, `document.querySelector('[data-settings-section="about"]')`);
+  await until(() => evaluate(page, `document.querySelector('[data-about-facts]')
+    ?.getAttribute('aria-busy') === 'false'`), `${name} installed About facts`, 10_000);
+  const ui = await evaluate(page, `(() => {
+    const link = document.querySelector('[data-about-repository]');
+    return {
+      rows: [...document.querySelectorAll('[data-about-facts] > div')].map(row =>
+        [...row.children].map(node => node.textContent.replace(/\\s+/g, ' ').trim())),
+      note: document.querySelector('[data-about-note]')?.textContent.replace(/\\s+/g, ' ').trim(),
+      link: link ? {
+        text: link.textContent.replace(/\\s+/g, '').trim(),
+        href: link.href,
+        target: link.target,
+        rel: link.rel,
+      } : null,
+      footer: document.querySelector('footer[aria-label="Workspace status"]')?.textContent.trim(),
+      reloadVisible: Boolean(document.querySelector('[aria-label="Reload packs"]')?.getClientRects().length),
+      selectedSection: document.querySelector('[data-settings-section][aria-selected="true"]')
+        ?.getAttribute('data-settings-section'),
+      panelText: document.querySelector('[data-about-panel]')?.innerText,
+    };
+  })()`);
+  assert.deepEqual({
+    rows: ui.rows,
+    note: ui.note,
+    link: ui.link,
+    footer: ui.footer,
+    reloadVisible: ui.reloadVisible,
+    selectedSection: ui.selectedSection,
+  }, {
+    rows: [
+      ['Dude version', 'Recorded ref (v0.0.0-t012)'],
+      ['Author', 'Enrique Gonzalez'],
+      ['Repository', 'https://github.com/E-G-C/dude'],
+      ['Recorded channel/ref', 'Stable releases (latest)'],
+    ],
+    note: 'Recorded installation metadata; installed files are not verified.',
+    link: {
+      text: 'https://github.com/E-G-C/dude',
+      href: 'https://github.com/E-G-C/dude',
+      target: '_blank',
+      rel: 'noopener noreferrer',
+    },
+    footer: 'About · Read only',
+    reloadVisible: false,
+    selectedSection: 'about',
+  }, 'the installed UI displays recorded release metadata, credit, and the official repository');
+  for (const version of cliVersions.filter(Boolean)) {
+    assert.equal(ui.panelText.includes(version), false,
+      `About must not substitute installed CLI version ${version} for the recorded Dude release`);
+  }
+  return {
+    recorded,
+    api,
+    ui,
+    screenshot: await screenshot(page, `installed-about-${name}`),
+    renderer: 'owned Edge/CDP URL returned by the installed copilot.exe host; desktop embedding is not observed',
+  };
+}
+
+/** @param {Cdp} page */
+async function returnInstalledPacks(page) {
+  await click(page, `document.querySelector('[data-settings-section="packs"]')`);
+  await until(() => evaluate(page, `document.querySelector('[data-settings-section="packs"]')
+    ?.getAttribute('aria-selected') === 'true'`), 'installed Packs section restored');
+}
+
 /**
  * The bytes this installed Canvas actually serves for the frontend bundle and
  * the Review engine it loads. Installed-file parity alone cannot show that the
@@ -3021,6 +3184,7 @@ async function servedIdentity(canvasUrl) {
 function installedParity(root) {
   const runtime = [
     'extension.mjs',
+    'lib/about.mjs',
     'lib/canvas-server.mjs',
     'lib/projection.mjs',
     'lib/packs.mjs',
@@ -3105,11 +3269,12 @@ async function driveBlankCapture(page, canvasUrl, intent) {
  * result acknowledgment through the installed CLI.
  * @param {Cdp} page
  * @param {string} canvasUrl
- * @param {ReturnType<typeof packFixture>} fixture
+ * @param {ReturnType<typeof seedPackFixture>} fixture
  * @param {ReturnType<typeof createPackModel>['state']} model
+ * @param {string[]} cliVersions
  */
-async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, model) {
-  const network = [];
+async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, model, cliVersions) {
+  const network = [], foreignNetwork = [];
   const runtimeErrors = [];
   page.on('Runtime.exceptionThrown', (event) => runtimeErrors.push(event));
   page.on('Network.requestWillBeSent', (event) => {
@@ -3119,11 +3284,39 @@ async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, model) {
         path: new URL(event.request.url).pathname,
         body: event.request.postData ? JSON.parse(event.request.postData) : null,
       });
+    } else if (/^https?:/.test(event.request.url)
+      && !['127.0.0.1', 'localhost'].includes(new URL(event.request.url).hostname)) {
+      foreignNetwork.push(event.request.url);
     }
   });
   const beforeProfile = fs.readFileSync(fixture.profile);
   assert.equal(fs.existsSync(fixture.destination), false);
   await navigate(page, canvasUrl, 1440);
+  await fill(page, field('Search work'), 'installed pack host');
+  await click(page, `document.querySelector('[data-work-path="${fixture.work.ideaPath}"]')`);
+  await until(() => evaluate(page, `document.querySelector('[aria-label="Working on"]')
+    ?.textContent.includes('Installed pack host continuity')`), 'installed current-work selection');
+  const selectedProjection = await readCanvasProjection(canvasUrl);
+  const currentWork = {
+    identity: await evaluate(page, `document.querySelector('[aria-label="Working on"]')
+      ?.textContent.replace(/\\s+/g, ' ').trim()`),
+    selected: selectedProjection.projection?.selected ?? null,
+  };
+  assert.equal(currentWork.identity.includes('002'), true);
+  assert.equal(currentWork.identity.includes('Installed pack host continuity'), true);
+  assert.deepEqual({
+    title: currentWork.selected?.title,
+    ideaPath: currentWork.selected?.ideaPath,
+    slug: currentWork.selected?.slug,
+    specPath: currentWork.selected?.specPath,
+  }, {
+    title: 'Installed pack host continuity',
+    ideaPath: fixture.work.ideaPath,
+    slug: 'installed-pack-host',
+    specPath: fixture.work.specPath,
+  });
+  assert.equal(typeof currentWork.selected?.explicit, 'boolean');
+
   await click(page, `document.querySelector('#dude-tab-settings')`);
   await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
     ?.getAttribute('aria-busy') === 'false'`), 'installed Settings pack read');
@@ -3136,6 +3329,44 @@ async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, model) {
   await click(page, `document.querySelector('[data-pack-row="${PACK_NAME}"]')`);
   assert.equal(await evaluate(page, `document.querySelector('[data-pack-description]')
     ?.textContent.trim()`), 'Deterministic installed-host pack round trip.');
+  const packsBeforeAbout = await evaluate(page, `({
+    context: document.querySelector('[data-pack-context][aria-selected="true"]')?.dataset.packContext,
+    detail: document.querySelector('[data-pack-detail]')?.dataset.packDetail,
+    detailOpen: Boolean(document.querySelector('[data-pack-detail]')?.open),
+  })`);
+  const aboutBeforeRequest = await observeInstalledAbout(
+    page,
+    canvasUrl,
+    fixture.root,
+    'before-request',
+    cliVersions,
+  );
+  await returnInstalledPacks(page);
+  assert.deepEqual(await evaluate(page, `({
+    context: document.querySelector('[data-pack-context][aria-selected="true"]')?.dataset.packContext,
+    detail: document.querySelector('[data-pack-detail]')?.dataset.packDetail,
+    detailOpen: Boolean(document.querySelector('[data-pack-detail]')?.open),
+  })`), packsBeforeAbout, 'installed Packs selection survives its local About visit');
+  await click(page, button('Now'));
+  await until(() => evaluate(page, `document.querySelector('[aria-label="Working on"]')
+    ?.textContent.includes('Installed pack host continuity')`), 'installed current work after About');
+  const returnedProjection = await readCanvasProjection(canvasUrl);
+  assert.deepEqual({
+    identity: await evaluate(page, `document.querySelector('[aria-label="Working on"]')
+      ?.textContent.replace(/\\s+/g, ' ').trim()`),
+    selected: returnedProjection.projection?.selected ?? null,
+  }, currentWork, 'installed current-work identity survives About');
+  await click(page, `document.querySelector('#dude-tab-settings')`);
+  await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+    ?.getAttribute('aria-busy') === 'false'`), 'installed Settings re-entry pack read');
+  assert.equal(await evaluate(page, `document.querySelector('[data-pack-context="installed"]')
+    ?.getAttribute('aria-selected')`), 'true');
+  await click(page, `document.querySelector('[data-pack-context="available"]')`);
+  await until(() => evaluate(page, `Boolean(document.querySelector(
+    '[data-pack-row="${PACK_NAME}"]'
+  ))`), 'installed-host available pack row after About');
+  await click(page, `document.querySelector('[data-pack-row="${PACK_NAME}"]')`);
+
   const action = `document.querySelector('[data-pack-operation="install"]')`;
   assert.equal(await evaluate(page, `${action}.disabled`), false);
   await evaluate(page, `(() => { const action = ${action}; action.click(); action.click(); })()`);
@@ -3166,6 +3397,32 @@ async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, model) {
   assert.equal(pending.packRequests[0].operation, 'install');
   assert.equal(pending.packRequests[0].name, PACK_NAME);
   assert.equal(pending.packRequests[0].phase, 'waiting_permission');
+  const permissionAuthority = {
+    packReceipt: pending.packRequests[0].packReceipt,
+    receiptId: pending.packRequests[0].receipt.receiptId,
+    requestHandle: pending.packRequests[0].permissionRequest,
+  };
+  await click(page, button('Return to packs'));
+  const aboutWaitingPermission = await observeInstalledAbout(
+    page,
+    canvasUrl,
+    fixture.root,
+    'waiting-permission',
+    cliVersions,
+  );
+  const pendingAfterAbout = (await readNeedsYou(canvasUrl)).packRequests[0];
+  assert.equal(pendingAfterAbout.phase, 'waiting_permission');
+  assert.deepEqual({
+    packReceipt: pendingAfterAbout.packReceipt,
+    receiptId: pendingAfterAbout.receipt.receiptId,
+    requestHandle: pendingAfterAbout.permissionRequest,
+  }, permissionAuthority, 'About does not replace installed request or permission authority');
+  await returnInstalledPacks(page);
+  await click(page, button('View pack request'));
+  await until(() => evaluate(page, `document.querySelector(
+    '[data-pack-request-dialog][open] [data-pack-request-phase]'
+  )?.getAttribute('data-pack-request-phase') === 'waiting_permission'`),
+  'installed pack request returns after About');
   await click(page, button('Open Needs you'));
   await visible(page, model.permissionRequest.prompt);
   await fill(page, field('Enter the exact confirmation'), `INSTALL PACK ${PACK_NAME}`);
@@ -3210,10 +3467,44 @@ async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, model) {
   assert.equal(network.filter(entry => entry.path === '/api/packs/request').length, 2);
   assert.deepEqual(network.filter(entry => entry.path === '/api/packs/request').map(entry => entry.body.op),
     ['prepare', 'submit']);
+  await click(page, button('Return to packs'));
+  const aboutApplied = await observeInstalledAbout(
+    page,
+    canvasUrl,
+    fixture.root,
+    'applied-result',
+    cliVersions,
+  );
+  const appliedAfterAbout = (await readNeedsYou(canvasUrl)).packRequests[0];
+  assert.equal(appliedAfterAbout.phase, 'applied');
+  assert.equal(appliedAfterAbout.packReceipt, permissionAuthority.packReceipt);
+  assert.equal(appliedAfterAbout.receipt.receiptId, permissionAuthority.receiptId);
+  await returnInstalledPacks(page);
+  await click(page, button('View pack request'));
+  await until(() => evaluate(page, `document.querySelector(
+    '[data-pack-request-dialog][open] [data-pack-request-phase]'
+  )?.getAttribute('data-pack-request-phase') === 'applied'`),
+  'installed applied result returns after About');
+  assert.equal(network.filter(entry => entry.method === 'GET' && entry.path === '/api/about').length, 3);
+  assert.deepEqual(foreignNetwork, [], 'installed About rendering makes no GitHub request');
   assert.deepEqual(runtimeErrors, []);
   return {
     network,
+    foreignNetwork,
     provider,
+    currentWork,
+    about: {
+      beforeRequest: aboutBeforeRequest,
+      waitingPermission: aboutWaitingPermission,
+      applied: aboutApplied,
+      permissionAuthority,
+      appliedAuthority: {
+        packReceipt: appliedAfterAbout.packReceipt,
+        receiptId: appliedAfterAbout.receipt.receiptId,
+      },
+      browserRequests: network.filter(entry => entry.path === '/api/about'),
+      embeddedDesktopLinkObserved: false,
+    },
     preview: model.preview,
     permission: model.permission,
     permissionAcknowledgment: model.permissionAcknowledgment,
@@ -3757,6 +4048,7 @@ try {
   }
   manifest.source = {
     app: { bytes: sourceBytes('src/extensions/dude/ui/assets/app.js').length, sha256: SOURCE_APP_SHA256 },
+    about: sha256(sourceBytes('src/extensions/dude/lib/about.mjs')),
     legal: {
       bytes: sourceBytes('src/extensions/dude/ui/assets/app.js.LEGAL.txt').length,
       sha256: SOURCE_LEGAL_SHA256,
@@ -3909,6 +4201,7 @@ try {
     packHost.canvas.url,
     installedPack,
     packModel.state,
+    Object.values(manifest.installedCliVersion),
   );
   await until(async () => !(await packHost.session.rpc.metadata.isProcessing()).processing,
     'installed pack session idle', 30_000);
@@ -3935,6 +4228,7 @@ try {
     realHostPackStallProbe,
     model: packModel.state,
     browser: packBrowser,
+    about: packBrowser.about,
     installedEntry: installedProfile(packRoot).value.installed[PACK_NAME],
     actualComposeApplication: true,
     authoritativeProviderReread: true,
@@ -3947,6 +4241,7 @@ try {
     name: PACK_NAME,
     destination: PACK_DESTINATION,
     packReceipt: packBrowser.provider.packRequests[0].packReceipt,
+    about: packBrowser.about.applied.api.body,
   });
   manifest.extensionHost = {
     // The OS process table names the extension's executable; the probe reports
@@ -4516,6 +4811,7 @@ try {
     run: RUN,
     blankCases: manifest.blankCases.length,
     packRoundTrip: manifest.packCase?.browser?.provider?.packRequests?.[0]?.phase ?? null,
+    about: manifest.packCase?.about?.applied?.api?.body ?? null,
     extensionHost: manifest.extensionHost,
     hostPackRead: manifest.packCase?.hostPackRead?.coverage?.catalog?.state ?? null,
     reviewSubmissions: manifest.reviewCase?.model?.rounds?.map((entry) => entry.submissionId) ?? [],

@@ -1057,10 +1057,14 @@ That Windows path was not exercised in the documented Darwin acceptance.
 
 #### Settings: optional packs
 
-Settings is the cog at the bottom of the left navigation rail. It manages the
-current workspace's optional packs and has no other configuration. Entering or
-leaving it keeps the selected work, task inspection, unsent answers and idea
-text, and retained Review work. Canvas still opens in Overview.
+Settings is the cog at the bottom of the left navigation rail. It has two
+sections, Packs and About, chosen with the tabs beside the Settings heading.
+Packs manages the current workspace's optional packs, and About identifies the
+installation (see [Settings: About](#settings-about)). Settings has no other
+configuration. It opens on Packs each time you enter it. Switching to About and
+back keeps the Packs tab, use case, page, selection, and open details. Entering
+or leaving Settings keeps the selected work, task inspection, unsent answers and
+idea text, and retained Review work. Canvas still opens in Overview.
 
 While Settings is open, it reads the same authorities as `compose.mjs status`
 and `list`: the installed map in `.dude/metadata/profile.md` and the catalog.
@@ -1127,6 +1131,31 @@ pack. After a caught failure, the result states whether Dude verified
 restoration or the state is uncertain; neither is recovery from process or
 machine failure. After provider replacement, a reread shows current membership
 but cannot establish whether the earlier request succeeded.
+
+#### Settings: About
+
+About shows the Dude version, the author, Enrique Gonzalez, the project
+repository `https://github.com/E-G-C/dude`, and the recorded channel/ref. The
+version comes from `installed_ref` and the channel/ref from `source_ref` in
+`.dude/metadata/bundle-manifest.md`. Each time you open About, it reads that
+file again. The labels describe only what is recorded:
+
+| Recorded value | Dude version | Recorded channel/ref |
+| --- | --- | --- |
+| Release tag such as `v1.2.3` | `v1.2.3` | `Pinned release (v1.2.3)` |
+| `main` | `Development (main)` | `Development (main)` |
+| `latest` | `Recorded ref (latest)` | `Stable releases (latest)` |
+| Any other safe ref | `Recorded ref (<ref>)` | `Recorded ref (<ref>)` |
+| Missing or unusable | `Unavailable` | `Unavailable` |
+
+A recorded ref is provenance, not proof of which files are installed. About
+does not verify installed bytes, look up tags, or check for updates. If the
+record cannot be read, both values show Unavailable while the author and
+repository remain. The repository link is an ordinary link that opens a
+separate tab or window; opening it from the embedded desktop panel has not been
+verified. About offers no other action. While it is open, the command bar has
+no Reload packs or Refresh control, and the status bar shows
+`About · Read only`.
 
 #### Reloading the development canvas
 

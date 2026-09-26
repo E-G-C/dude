@@ -799,10 +799,10 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   assert.ok(application.length > 100_000, 'the application bundle must contain the browser runtime');
   const gzip = gzipSync(applicationBytes, { level: 9 });
   const repeatedGzip = gzipSync(applicationBytes, { level: 9 });
-  assert.equal(applicationBytes.length, 955_150, 'committed app.js raw byte size');
+  assert.equal(applicationBytes.length, 969_616, 'committed app.js raw byte size');
   assert.equal(
     sha256(applicationBytes),
-    '503ee6224573b8624899de3670686ce758f7c91c4d338fd9c46e2eea4fcb84f5',
+    'aedac71b507e2000cdf79a45b60ff746529057b8497bc3db11b613666d18515d',
     'committed app.js raw SHA-256',
   );
   assertPortableGzip(gzip, repeatedGzip, applicationBytes, 'Node zlib level-9 app.js');
@@ -876,7 +876,7 @@ test('metafile-derived legal inventory contains every contributing package and c
       name: '@fluentui/react-menu',
       version: '9.25.4',
       inputCount: 36,
-      bytesInOutput: 31_649,
+      bytesInOutput: 31_651,
     },
     {
       name: '@fluentui/react-motion-components-preview',
@@ -888,7 +888,7 @@ test('metafile-derived legal inventory contains every contributing package and c
       name: '@fluentui/react-tooltip',
       version: '9.10.5',
       inputCount: 6,
-      bytesInOutput: 8_321,
+      bytesInOutput: 8_330,
     },
   ], 'the shipped menu, motion implementation, and tooltip contribute real app.js bytes');
   for (const { name, version } of menuGraphPackages) {
@@ -1118,6 +1118,7 @@ function assertT011WorkspaceContract() {
   assert.deepEqual(
     [...hook.matchAll(/json\('([^']+)'/g)].map((match) => match[1]).sort(),
     [
+      '/api/about',
       '/api/freshness',
       '/api/needs-you',
       '/api/needs-you/capture',
@@ -1416,6 +1417,26 @@ test('T003 static task inspection stays selected-only, inert, read-only, and fre
 
   // Assert
   assert.ok(sourceApp.length > 0 && publishedApp.length > 0);
+});
+
+test('074 About reads through the shared helper, bound to the hook lifetime and outside refresh', () => {
+  // Arrange: the browser cases observe caller cancellation and per-entry
+  // reads; the hook-lifetime half of the abort cannot be observed from there.
+  const { hook, bundle } = t011Sources();
+  const loop = hook.slice(hook.indexOf('const queue = useCallback'), hook.indexOf('const markAttempt'));
+  const reader = hook.slice(hook.indexOf('const readAbout = useCallback'), hook.indexOf('return { ...data'));
+
+  // Assert
+  assert.doesNotMatch(loop, /about/i, 'the coalesced refresh loop never reads About');
+  assert.match(reader, /const owners = \[lifetime\.current\.signal, signal\];/,
+    'either the hook lifetime or the caller exit aborts the read');
+  assert.match(reader, /return json\('\/api\/about', \{ signal: read\.signal \}\)/);
+  assert.match(reader, /\}, \[\]\);/, 'a stable reader cannot rerun an entry read');
+  assert.match(hook, /respond, capture, requestPack, openReview, readHistory, readAbout \};/);
+  for (const exact of ['About · Read only', 'Settings sections', 'Recorded installation metadata; installed files are not verified.',
+    'Recorded installation metadata is unavailable, so no version is shown.', 'https://github.com/E-G-C/dude']) {
+    assert.equal(bundle.includes(exact), true, `published app.js retains About copy: ${exact}`);
+  }
 });
 
 test('T012 comment drawer names local capture without claiming delivery', () => {

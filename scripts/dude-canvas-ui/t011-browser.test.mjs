@@ -40,7 +40,7 @@ const BROWSER = process.env.DUDE_CANVAS_BROWSER
   ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
 const REQUIRED = process.env.DUDE_CANVAS_BROWSER_REQUIRED === '1';
 const DEADLINE = 20_000;
-const PUBLISHED_APP_SHA256 = '503ee6224573b8624899de3670686ce758f7c91c4d338fd9c46e2eea4fcb84f5';
+const PUBLISHED_APP_SHA256 = 'aedac71b507e2000cdf79a45b60ff746529057b8497bc3db11b613666d18515d';
 
 /** @param {string|Buffer} value */
 function hash(value) {
@@ -2230,6 +2230,7 @@ function evidence(context, slug) {
   const directory = fs.mkdtempSync(path.join(parent, `dude-canvas-${slug}-`));
   const sourcePaths = [
     'scripts/dude-canvas-ui/t011-browser.test.mjs',
+    'src/extensions/dude/frontend/about.jsx',
     'src/extensions/dude/frontend/app.jsx',
     'src/extensions/dude/frontend/needs-you.jsx',
     'src/extensions/dude/frontend/review.jsx',
@@ -2238,6 +2239,7 @@ function evidence(context, slug) {
     'src/extensions/dude/frontend/styles.js',
     'src/extensions/dude/frontend/theme.js',
     'src/extensions/dude/lib/projection.mjs',
+    'src/extensions/dude/lib/about.mjs',
     'src/extensions/dude/lib/needs-you.mjs',
     'src/extensions/dude/lib/review.mjs',
     'src/extensions/dude/lib/canvas-server.mjs',
@@ -3468,6 +3470,74 @@ function browserReady(context) {
   return true;
 }
 
+/** @param {string} root @param {string} [installedRef] @param {string} [sourceRef] */
+function seedAboutManifest(root, installedRef = 'main', sourceRef = 'main') {
+  write(root, '.dude/metadata/bundle-manifest.md', [
+    '# Bundle Manifest',
+    '',
+    '```json',
+    JSON.stringify({
+      source_repo: 'https://github.com/E-G-C/dude',
+      source_ref: sourceRef,
+      installed_ref: installedRef,
+    }, null, 2),
+    '```',
+    '',
+  ].join('\n'));
+}
+
+/** @param {string} canvasUrl */
+async function readAboutApi(canvasUrl) {
+  const response = await fetch(new URL('/api/about', canvasUrl), {
+    signal: AbortSignal.timeout(DEADLINE),
+  });
+  const body = await response.json();
+  return {
+    status: response.status,
+    cacheControl: response.headers.get('cache-control'),
+    body,
+  };
+}
+
+/** @param {Cdp} page */
+async function aboutSnapshot(page) {
+  await until(() => evaluate(page, `document.querySelector('[data-about-facts]')
+    ?.getAttribute('aria-busy') === 'false'`), 'recorded About facts');
+  return evaluate(page, `(() => {
+    const link = document.querySelector('[data-about-repository]');
+    return {
+      heading: document.querySelector('[data-about-panel] h2')?.textContent.trim(),
+      rows: [...document.querySelectorAll('[data-about-facts] > div')].map(row =>
+        [...row.children].map(node => node.textContent.replace(/\\s+/g, ' ').trim())),
+      note: document.querySelector('[data-about-note]')?.textContent.replace(/\\s+/g, ' ').trim(),
+      link: link ? {
+        text: link.textContent.replace(/\\s+/g, '').trim(),
+        href: link.href,
+        target: link.target,
+        rel: link.rel,
+      } : null,
+      footer: document.querySelector('footer[aria-label="Workspace status"]')?.textContent.trim(),
+      reloadVisible: Boolean(document.querySelector('[aria-label="Reload packs"]')?.getClientRects().length),
+      selectedSection: document.querySelector('[data-settings-section][aria-selected="true"]')
+        ?.getAttribute('data-settings-section'),
+    };
+  })()`);
+}
+
+/** @param {Cdp} page */
+async function openAbout(page) {
+  await click(page, `document.querySelector('[data-settings-section="about"]')`);
+  return aboutSnapshot(page);
+}
+
+/** @param {Cdp} page */
+async function returnToPacks(page) {
+  await click(page, `document.querySelector('[data-settings-section="packs"]')`);
+  await until(() => evaluate(page, `Boolean(document.querySelector(
+    '[data-settings-section="packs"][aria-selected="true"]'
+  ))`), 'Packs section restored');
+}
+
 function packTree(absolute) {
   let stat;
   try { stat = fs.lstatSync(absolute); }
@@ -3624,7 +3694,7 @@ async function withPackJourney(context, operation, options, run) {
   const output = evidence(context, `t004-settings-${operation}-${options.name || 'journey'}`);
   const board = installEmptyBoard();
   let fixture, driver;
-  const network = [], errors = [];
+  const network = [], foreign = [], errors = [];
   try {
     write(root, '.dude/metadata/profile.md', '# Install Profile\n\n```json\n{"installed":{}}\n```\n');
     for (const file of ['agent-model-map.mjs', 'agent-projection.mjs']) {
@@ -3640,6 +3710,20 @@ async function withPackJourney(context, operation, options, run) {
     write(root, 'library/packs/alpha/skills/dude-pack-alpha-helper/SKILL.md',
       '---\nname: dude-pack-alpha-helper\ndescription: "Disposable helper"\n---\n# Helper\n');
     write(root, 'library/packs/alpha/instructions/dude-pack-alpha-old.instructions.md', '# Old instruction\n');
+    if (options.about) {
+      seedAboutManifest(root);
+      for (const name of ['bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel']) {
+        write(root, `library/packs/${name}/pack.md`, [
+          '---',
+          `name: ${name}`,
+          `description: "Quiescent ${name} catalog fixture."`,
+          'use-cases: [ui]',
+          '---',
+          `# ${name}`,
+          '',
+        ].join('\n'));
+      }
+    }
     write(root, '.github/agents/dude-local-unrelated.agent.md', 'Unrelated file; preserve it.\n');
     write(root, '.github/agents/dude-pack-alpha-residue.agent.md', 'Unrecorded residue; never removal authority.\n');
     const args = { root, library, name: 'alpha', fetch: false };
@@ -3672,16 +3756,18 @@ async function withPackJourney(context, operation, options, run) {
         method: event.request.method, path: new URL(event.request.url).pathname,
         ...(event.request.postData ? { body: JSON.parse(event.request.postData) } : {}),
       });
+      else if (/^https?:/.test(event.request.url)) foreign.push(event.request.url);
     });
     await navigate(driver.page, fixture);
-    await run({ fixture, page: driver.page, output, network, driver });
+    await run({ fixture, page: driver.page, output, network, foreign, driver });
     assert.deepEqual(errors, []);
     const approved = '.dude/specs/063-dude-canvas-settings/design/pack-management.html';
     assert.equal(approvedDesignSha256(fs.readFileSync(path.join(ROOT, ...approved.split('/')))),
       '54d4fb8eff0fe9a85a2291b12f5dfa83651418b161f6cb0b76bf280db0b7c6a0');
     output.results.push({
       case: options.name || operation, browser: driver.version.Browser, node: process.version,
-      requests: network, sends: fixture.sends, feed: fixture.provider.read(), files: packTree(root),
+      requests: network, foreignRequests: foreign, sends: fixture.sends,
+      feed: fixture.provider.read(), files: packTree(root),
       approvedDesign: approved,
       limits: 'Real product/provider/HTTP/Compose with disposable bundles and SDK-session/owner stand-ins. No actual model, embedded host, or native OS/browser-chrome zoom claim.',
     });
@@ -3690,7 +3776,7 @@ async function withPackJourney(context, operation, options, run) {
       const image = await driver.page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
       fs.writeFileSync(path.join(output.directory, 'failure.png'), Buffer.from(image.data, 'base64'));
       writeEvidenceJson(output, 'failure', {
-        message: error.message, network, errors, feed: fixture?.provider.read(),
+        message: error.message, network, foreign, errors, feed: fixture?.provider.read(),
         dom: await evaluate(driver.page, `document.body.innerText`),
         focus: await evaluate(driver.page, `({tag:document.activeElement.tagName,
           label:document.activeElement.getAttribute('aria-label'),text:document.activeElement.textContent})`),
@@ -3713,6 +3799,387 @@ async function withPackJourney(context, operation, options, run) {
     );
   }
 }
+
+test('074 About: production provider retains work, drafts, and saved and working Review markup', {
+  timeout: 240_000,
+  concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  const output = evidence(context, '074-about-provider-continuity');
+  const board = installEmptyBoard();
+  const publications = [];
+  const runtimeErrors = [], network = [];
+  let fixture, browserState;
+  try {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-074-about-provider-'));
+    seedAboutManifest(root);
+    write(root, '.dude/metadata/profile.md', '# Install Profile\n\n```json\n{"installed":{}}\n```\n');
+    write(root, 'library/packs/observer/pack.md', [
+      '---',
+      'name: observer',
+      'description: "Quiescent About continuity catalog fixture."',
+      'use-cases: [ui]',
+      '---',
+      '# Observer',
+      '',
+    ].join('\n'));
+    const feature = createIdea(root, 74, 'about-continuity-feature', 'defined', [
+      '# Tasks',
+      '',
+      '- [~] T001@074abcde Retained About task instruction.',
+      '',
+    ].join('\n'));
+    createIdea(root, 75, 'unrelated-query-record', 'defined');
+    const preview = createPreview(root, /** @type {any} */ (feature));
+    fixture = await createFixture(root);
+    const scope = { kind: 'feature', ideaPath: feature.ideaPath, specPath: feature.specPath };
+    const factRequest = requestFor(fixture, 'fact', { input: { kind: 'text' } }, scope);
+    factRequest.prompt = 'Keep this unsent answer through the production About route';
+    const fact = await publish(fixture, factRequest);
+    publications.push(fact);
+    const reviewRequest = requestFor(fixture, 'preview', preview, scope);
+    reviewRequest.prompt = 'Keep saved and working Review markup through About';
+    const review = await publish(fixture, reviewRequest);
+    publications.push(review);
+
+    browserState = await startBrowser();
+    const { page } = browserState;
+    page.on('Runtime.exceptionThrown', event => runtimeErrors.push(event.exceptionDetails));
+    page.on('Network.requestWillBeSent', event => {
+      if (/^https?:/.test(event.request.url)) {
+        network.push({ method: event.request.method, url: event.request.url });
+      }
+    });
+    await navigate(page, fixture, 1440, 'light');
+
+    await fill(page, field('Search work'), 'continuity');
+    const finderBeforeSelection = await evaluate(page, `({
+      query: ${field('Search work')}.value,
+      paths: [...document.querySelectorAll('[data-work-path]')]
+        .map(node => node.getAttribute('data-work-path')),
+    })`);
+    assert.deepEqual(finderBeforeSelection, {
+      query: 'continuity',
+      paths: [feature.ideaPath],
+    }, 'the finder query narrows discovery before a separate work selection is committed');
+    await click(page, `document.querySelector('[data-work-path="${feature.ideaPath}"]')`);
+    await visible(page, 'Retained About task instruction.');
+    await click(page, `document.querySelector('[data-task-key="T001@074abcde"]')`);
+    assert.equal(await evaluate(page, `document.querySelector('[data-task-detail]')
+      ?.getAttribute('data-task-detail')`), 'T001@074abcde');
+
+    const ideaDraft = '  Unsent New idea text survives the production About route.  ';
+    await click(page, button('New idea'));
+    await fill(page, field('Your idea'), ideaDraft);
+    await click(page, button('Needs you'));
+    await click(page, `[...document.querySelectorAll('button')].find(node =>
+      node.innerText.includes(${JSON.stringify(factRequest.prompt)}) && node.getClientRects().length)`);
+    const answerDraft = '  Unsent answer text survives the production About route.  ';
+    await fill(page, field('Your response'), answerDraft);
+    await click(page, button('Now'));
+    assert.equal(await evaluate(page, `document.querySelector('[data-task-detail]')
+      ?.getAttribute('data-task-detail')`), 'T001@074abcde');
+
+    await click(page, button('Review design'));
+    await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
+      && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
+    'production Review ready for About continuity', 60_000);
+    await click(page, `document.querySelector('[aria-label="Box (B)"]')`);
+    await openReviewDetails(page);
+    await click(page, button('Add at center'));
+    await visible(page, 'Comments (1)');
+    await closeReviewDetails(page);
+    await click(page, button('Save markup'));
+    const reviews = path.join(root, ...path.posix.dirname(feature.specPath).split('/'), 'reviews');
+    const saved = await until(() => {
+      if (!fs.existsSync(reviews)) return null;
+      const submission = fs.readdirSync(reviews)
+        .find(name => fs.existsSync(path.join(reviews, name, 'working.json')));
+      if (!submission) return null;
+      const file = path.join(reviews, submission, 'working.json');
+      const bytes = fs.readFileSync(file);
+      const value = JSON.parse(bytes.toString('utf8'));
+      return value.state.annotations.length === 1 ? { file, bytes, value } : null;
+    }, 'one explicitly saved production Review annotation');
+    const savedAnnotationId = saved.value.state.annotations[0].id;
+
+    await click(page, `document.querySelector('[aria-label="Circle (O)"]')`);
+    await openReviewDetails(page);
+    await click(page, button('Add at center'));
+    await visible(page, 'Comments (2)');
+    await closeReviewDetails(page);
+    await evaluate(page, `(() => {
+      window.__074ProviderReviewWorkspace = document.querySelector('[data-review-workspace]');
+      window.__074ProviderReviewFrame = document.querySelector('.dude-review-frame');
+      window.__074ProviderReviewOverlay = document.querySelector('.dude-review-overlay');
+    })()`);
+
+    const api = await readAboutApi(fixture.instance.url);
+    assert.deepEqual(api, {
+      status: 200,
+      cacheControl: 'no-store',
+      body: { installedRef: 'main', sourceRef: 'main' },
+    });
+    await click(page, `document.querySelector('#dude-tab-settings')`);
+    await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+      ?.getAttribute('aria-busy') === 'false'`), 'quiescent production Settings read');
+    const about = await openAbout(page);
+    assert.deepEqual(about, {
+      heading: 'Dude',
+      rows: [
+        ['Dude version', 'Development (main)'],
+        ['Author', 'Enrique Gonzalez'],
+        ['Repository', 'https://github.com/E-G-C/dude'],
+        ['Recorded channel/ref', 'Development (main)'],
+      ],
+      note: 'Recorded installation metadata; installed files are not verified.',
+      link: {
+        text: 'https://github.com/E-G-C/dude',
+        href: 'https://github.com/E-G-C/dude',
+        target: '_blank',
+        rel: 'noopener noreferrer',
+      },
+      footer: 'About · Read only',
+      reloadVisible: false,
+      selectedSection: 'about',
+    });
+    await returnToPacks(page);
+    assert.equal(await evaluate(page, `document.querySelector('[data-settings-section="packs"]')
+      ?.getAttribute('aria-selected')`), 'true');
+
+    await click(page, button('Now'));
+    assert.equal(await evaluate(page, `document.querySelector('[data-task-detail]')
+      ?.getAttribute('data-task-detail')`), 'T001@074abcde',
+    'task inspection survives the local Settings/About/Packs visit');
+    assert.equal(await evaluate(page, `document.querySelector('[aria-label="Working on"]')
+      ?.textContent.includes('074')`), true);
+    await click(page, button('New idea'));
+    assert.equal(await evaluate(page, `${field('Your idea')}.value`), ideaDraft);
+    await click(page, button('Needs you'));
+    await click(page, `[...document.querySelectorAll('button')].find(node =>
+      node.innerText.includes(${JSON.stringify(factRequest.prompt)}) && node.getClientRects().length)`);
+    assert.equal(await evaluate(page, `${field('Your response')}.value`), answerDraft);
+    assert.equal(fixture.provider.read().requests.find(item =>
+      item.request.requestRef === factRequest.requestRef).phase, 'pending');
+
+    await click(page, button('Now'));
+    await click(page, button('Review design'));
+    await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
+      && !document.querySelector('[aria-label="Circle (O)"]').matches(':disabled,[aria-disabled="true"]')`),
+    'same production Review restored after About', 60_000);
+    const restoredReview = await evaluate(page, `({
+      sameWorkspace: document.querySelector('[data-review-workspace]') === window.__074ProviderReviewWorkspace,
+      sameFrame: document.querySelector('.dude-review-frame') === window.__074ProviderReviewFrame,
+      sameOverlay: document.querySelector('.dude-review-overlay') === window.__074ProviderReviewOverlay,
+      comments: [...document.querySelectorAll('button')].some(node =>
+        node.innerText.trim() === 'Comments (2)' && node.getClientRects().length),
+    })`);
+    assert.deepEqual(restoredReview, {
+      sameWorkspace: true,
+      sameFrame: true,
+      sameOverlay: true,
+      comments: true,
+    }, 'saved and current working markup return in the same Review allocation');
+    const currentWorking = JSON.parse(fs.readFileSync(saved.file, 'utf8'));
+    assert.equal(currentWorking.state.annotations.some(item => item.id === savedAnnotationId), true,
+      'the explicitly saved annotation remains in the working record');
+
+    await click(page, `document.querySelector('[data-review-return]')`);
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
+    await click(page, button('Overview'));
+    const finderAfterClear = await evaluate(page, `({
+      query: ${field('Search work')}.value,
+      paths: [...document.querySelectorAll('[data-work-path]')]
+        .map(node => node.getAttribute('data-work-path')),
+    })`);
+    assert.deepEqual(finderAfterClear, {
+      query: '',
+      paths: [feature.ideaPath, '.dude/ideas/075-unrelated-query-record.md'],
+    }, 'Clear restores discovery defaults rather than treating the prior query as selected-work identity');
+    assert.equal(network.filter(entry => new URL(entry.url).pathname === '/api/about').length, 1);
+    assert.deepEqual(network.filter(entry =>
+      new URL(entry.url).origin !== new URL(fixture.instance.url).origin), [],
+    'rendering About and its ordinary repository anchor starts no third-party request');
+    assert.deepEqual(runtimeErrors, []);
+    output.results.push({
+      case: 'production-provider-continuity',
+      browser: browserState.version.Browser,
+      api,
+      about,
+      task: 'T001@074abcde',
+      finder: { beforeSelection: finderBeforeSelection, afterClear: finderAfterClear },
+      drafts: { idea: ideaDraft, answer: answerDraft },
+      review: {
+        savedWorkingSha256: sha256(saved.bytes),
+        currentWorkingSha256: sha256(fs.readFileSync(saved.file)),
+        savedAnnotationId,
+        annotations: currentWorking.state.annotations.length,
+        restoredReview,
+      },
+      aboutRequests: network.filter(entry => new URL(entry.url).pathname === '/api/about'),
+      embeddedHostObserved: false,
+    });
+  } finally {
+    for (const publication of publications) publication.controller.abort();
+    await Promise.allSettled(publications.map(publication => publication.result));
+    await runCleanupSteps(
+      async () => { if (browserState) await cleanupBrowserDriver(browserState); },
+      async () => { if (fixture) await fixture.close(); },
+      () => board.close(),
+    );
+  }
+});
+
+test('074 About: production Packs view and one real request receipt survive About round trips', {
+  timeout: 240_000,
+  concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  await withPackJourney(context, 'install', { name: '074-about-roundtrip', about: true },
+    async ({ fixture, page, output, network, foreign }) => {
+      await click(page, `document.querySelector('#dude-tab-settings')`);
+      await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+        ?.getAttribute('aria-busy') === 'false'`), 'quiescent About pack catalog');
+      assert.deepEqual(await evaluate(page, `({
+        context: document.querySelector('[data-pack-context][aria-selected="true"]')?.dataset.packContext,
+        installed: document.querySelector('[data-pack-total="installed"]')?.textContent,
+        available: document.querySelector('[data-pack-total="available"]')?.textContent,
+      })`), { context: 'installed', installed: '0', available: '8' });
+
+      await click(page, `document.querySelector('[data-pack-context="available"]')`);
+      await choose(page, 'Use case', 'ui');
+      assert.deepEqual(await evaluate(page, `({
+        count: document.querySelector('[data-pack-count]')?.textContent,
+        page: document.querySelector('[data-pack-page]')?.textContent,
+      })`), { count: '1–5 of 8 matches', page: 'Page 1 of 2' });
+      await click(page, `document.querySelector('[aria-label="Next pack page"]')`);
+      assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-pack-row]')]
+        .map(node => node.getAttribute('data-pack-row'))`), ['foxtrot', 'golf', 'hotel']);
+      await click(page, `document.querySelector('[data-pack-row="hotel"]')`);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-description]')
+        ?.textContent.trim()`), 'Quiescent hotel catalog fixture.');
+      const retainedView = await evaluate(page, `({
+        context: document.querySelector('[data-pack-context][aria-selected="true"]')?.dataset.packContext,
+        filter: ${field('Use case')}?.textContent.trim(),
+        page: document.querySelector('[data-pack-page]')?.textContent,
+        detail: document.querySelector('[data-pack-detail]')?.dataset.packDetail,
+      })`);
+
+      const api = await readAboutApi(fixture.instance.url);
+      assert.deepEqual(api.body, { installedRef: 'main', sourceRef: 'main' });
+      assert.equal(api.status, 200);
+      assert.equal(api.cacheControl, 'no-store');
+      const aboutBeforeRequest = await openAbout(page);
+      assert.equal(aboutBeforeRequest.rows[0][1], 'Development (main)');
+      assert.equal(aboutBeforeRequest.rows[1][1], 'Enrique Gonzalez');
+      assert.deepEqual(aboutBeforeRequest.link, {
+        text: 'https://github.com/E-G-C/dude',
+        href: 'https://github.com/E-G-C/dude',
+        target: '_blank',
+        rel: 'noopener noreferrer',
+      });
+      await returnToPacks(page);
+      assert.deepEqual(await evaluate(page, `({
+        context: document.querySelector('[data-pack-context][aria-selected="true"]')?.dataset.packContext,
+        filter: ${field('Use case')}?.textContent.trim(),
+        page: document.querySelector('[data-pack-page]')?.textContent,
+        detail: document.querySelector('[data-pack-detail]')?.dataset.packDetail,
+      })`), retainedView, 'Available/filter/page/detail survive the local About round trip');
+      await click(page, button('Back to results'));
+
+      const readsBeforeReload = network.filter(item =>
+        item.method === 'GET' && item.path === '/api/packs').length;
+      await click(page, `document.querySelector('[aria-label="Reload packs"]')`);
+      await until(async () => (await evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+        ?.getAttribute('aria-busy') === 'false'
+        && Boolean(document.querySelector('[data-pack-row="alpha"]'))`))
+        && network.filter(item => item.method === 'GET' && item.path === '/api/packs').length > readsBeforeReload,
+      'explicit pack reload completes');
+      assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-pack-row="alpha"]'))`), true);
+      await click(page, `document.querySelector('[data-pack-row="alpha"]')`);
+
+      let sent;
+      fixture.session.send = async input => {
+        fixture.sends.push(input);
+        sent = { input, messageId: randomUUID() };
+        return sent.messageId;
+      };
+      const before = packTree(fixture.root);
+      const receipt = await requestPackFromUi(page, fixture, true);
+      await packPhase(page, 'admitted');
+      await until(() => fixture.sends.length === 1, 'one admitted About pack request send');
+      fixture.provider.onEvent({
+        id: randomUUID(),
+        type: 'user.message',
+        data: { content: sent.input.prompt, messageId: sent.messageId, delivery: 'idle' },
+      });
+      await packPhase(page, 'delivered');
+      const impact = await packImpact(fixture);
+      const permission = await publishPackPermission(fixture, receipt, impact, 'About continuity: ');
+      await packPhase(page, 'waiting_permission');
+      const waitingPermission = fixture.provider.read().packRequests.at(-1);
+
+      await click(page, button('Return to packs'));
+      const aboutWaiting = await openAbout(page);
+      assert.equal(fixture.provider.read().packRequests.at(-1).phase, 'waiting_permission');
+      assert.equal(fixture.provider.read().packRequests.at(-1).packReceipt, receipt.packReceipt);
+      await returnToPacks(page);
+      await click(page, button('View pack request'));
+      await packPhase(page, 'waiting_permission');
+      await answerPackPermission(page, fixture, permission);
+      assert.deepEqual(packTree(fixture.root), before,
+        'About and accepted permission still perform no frontend pack write');
+
+      assert.deepEqual(packImpactBasis(fixture, impact), permission.basis);
+      const result = await cmdAdd(fixture.args);
+      assert.equal(result.ok, true, result.error);
+      fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+      await until(() => evaluate(page, `document.querySelector('[data-pack-total="installed"]')
+        ?.textContent === '1'`), 'authoritative About fixture membership reread');
+      const owner = await packOwnerTool(
+        fixture,
+        packOwnerAcknowledgment(
+          fixture,
+          receipt,
+          result,
+          'applied',
+          'applied',
+          'Owner verified installed files and recorded source after the About round trip.',
+        ),
+      );
+      assert.equal(owner.type, 'success');
+      await packPhase(page, 'applied');
+      const applied = fixture.provider.read().packRequests.at(-1);
+      assert.equal(applied.packReceipt, waitingPermission.packReceipt);
+      assert.equal(applied.receipt.receiptId, waitingPermission.receipt.receiptId);
+
+      await click(page, button('Return to packs'));
+      const aboutApplied = await openAbout(page);
+      assert.equal(fixture.provider.read().packRequests.at(-1).phase, 'applied');
+      await returnToPacks(page);
+      await click(page, button('View pack request'));
+      await packPhase(page, 'applied');
+      await click(page, button('Return to packs'));
+      await click(page, `document.querySelector('[data-pack-context="installed"]')`);
+      assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-pack-row="alpha"]'))`), true);
+      assert.equal(fixture.sends.length, 1, 'About visits, Reload, and result reads never replay the request');
+      assert.equal(network.filter(item => item.method === 'GET' && item.path === '/api/about').length, 3);
+      assert.deepEqual(foreign, [], 'About rendering does not contact the repository URL');
+      output.results.push({
+        case: 'about-pack-roundtrip',
+        api,
+        retainedView,
+        aboutBeforeRequest,
+        aboutWaiting,
+        aboutApplied,
+        packReceipt: receipt.packReceipt,
+        receiptId: applied.receipt.receiptId,
+        phase: applied.phase,
+        installed: cmdStatus({ root: fixture.root }).result.installed.alpha,
+        aboutRequests: network.filter(item => item.path === '/api/about'),
+      });
+    });
+});
 
 test('T004 Settings install: exact one-send request, actual impact, literal consent, owner result, and retained work', {
   timeout: 240_000, concurrency: false,
