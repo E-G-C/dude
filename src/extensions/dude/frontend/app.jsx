@@ -653,7 +653,11 @@ function App() {
   const [compactCommands, setCompactCommands] = useState(() => window.matchMedia('(max-width: 479px)').matches);
   const [taskView, setTaskView] = useState({ scope: null, taskKey: null, filter: 'all' });
   const [packReturn, setPackReturn] = useState(null);
+  // Settings' local section is tab state, separate from rail navigation: it
+  // resets to Packs whenever Settings is left, not when Settings is reselected.
+  const [settingsSection, setSettingsSection] = useState('packs');
   const settingsActive = tab === 'settings' && !reviewActive && !history;
+  const aboutActive = settingsActive && settingsSection === 'about';
   const data = useCanvasData(selection, { packsActive: settingsActive || Boolean(packReturn) });
   const root = useRef(null), scroll = useRef(0), main = useRef(null), focusNext = useRef(null), opening = useRef(null);
   const reviewReturn = useRef(null), historyRead = useRef(null), latestData = useRef(data);
@@ -700,6 +704,7 @@ function App() {
       setIdea(''); setDrafts({}); setReview(null); setReviewActive(false); setReviewed(null); setHistory(null);
       setMessage('');
       setPackReturn(null);
+      setSettingsSection('packs');
       reviewReturn.current = null;
       setFinderOpen(false); position.current = null; focusResults.current = false;
       scroll.current = 0; focusNext.current = 'heading';
@@ -772,6 +777,7 @@ function App() {
     // Navigation releases the focused child, never its retained entry object.
     focusResults.current = false;
     setPackReturn(null);
+    if (destination !== 'settings') setSettingsSection('packs');
     setHistory(null); setReviewActive(false); setFinderOpen(false); setMessage('');
     focusNext.current = focus; setTab(destination);
   }, [cancelHistory]);
@@ -952,12 +958,12 @@ function App() {
               resultsRef={results} resultsId={resultsId} />
           </div>}
         </div>
-        <Toolbar className={s.refresh} aria-label="Workspace actions"><ToolbarButton className={s.refreshButton} icon={<ArrowClockwiseRegular />}
+        {!aboutActive && <Toolbar className={s.refresh} aria-label="Workspace actions"><ToolbarButton className={s.refreshButton} icon={<ArrowClockwiseRegular />}
           aria-label={settingsActive ? 'Reload packs' : 'Refresh'} title={settingsActive ? 'Reload pack information' : 'Refresh'}
           aria-busy={settingsActive ? data.packsLoading : data.loading || data.selecting}
           onClick={settingsActive ? data.reloadPacks : data.refresh}>
           <span className={s.refreshLabel}>{settingsActive ? 'Reload packs' : 'Refresh'}</span>
-        </ToolbarButton></Toolbar>
+        </ToolbarButton></Toolbar>}
       </header>
       {message && <Notice intent="warning" title="Action unavailable">{message}</Notice>}
       {data.authorityChanged && <Notice title="The joined provider changed">
@@ -970,7 +976,7 @@ function App() {
           aria-labelledby={`dude-tab-${value}`} hidden={reviewActive || Boolean(history) || value !== tab}
           className={mergeClasses(s.detail, value === 'overview' && s.overviewPanel, value === 'settings' && s.settingsPanel)}>
           {value === 'settings' ? (settingsActive || packReturn) && <Settings key={data.rootKey} data={data}
-            active={settingsActive} onPermission={openPackPermission} />
+            active={settingsActive} section={settingsSection} onSection={setSettingsSection} onPermission={openPackPermission} />
             : reviewActive || history || value !== tab ? null : value === 'overview' ? <Overview data={data} rows={rows} selection={selection} finder={finder}
             scroll={scroll} position={position} onOpen={openWork} onNew={newIdea} resultsRef={results} resultsId={resultsId}
             finderControl={compactCommands ? finderControl : null} />
@@ -1006,7 +1012,7 @@ function App() {
       </div>
       <footer className={mergeClasses(s.footer, reviewActive && s.focusedFooter, settingsActive && s.settingsFooter)}
         aria-label="Workspace status" tabIndex={reviewActive || settingsActive ? 0 : undefined}>
-        {settingsActive ? <span>{data.packsLoading ? 'Reading packs…'
+        {settingsActive ? <span>{aboutActive ? 'About · Read only' : data.packsLoading ? 'Reading packs…'
           : `Installed: ${data.packs?.coverage.installed.state || 'unavailable'} · Catalog: ${data.packs?.coverage.catalog.state || 'unavailable'}`}</span>
           : <><span>{data.loading ? 'Reading workspace…' : data.issues.index ? 'Work coverage unavailable'
           : `Work coverage: ${data.index?.coverage.work.state || 'unavailable'}`}</span>

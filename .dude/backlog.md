@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **1** (1 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **8**
+- Ideas awaiting definition: **9**
 - Defined awaiting work: **0**
-- Completed: **62**
+- Completed: **63**
 
 ## Current
 
@@ -38,6 +38,7 @@ kanban
 - `071` · `dude-canvas-pack-authoring` — Dude Canvas Pack Authoring (`.dude/ideas/071-dude-canvas-pack-authoring.md`)
 - `072` · `dude-canvas-bundle-upgrade` — Dude Canvas Bundle Upgrade (`.dude/ideas/072-dude-canvas-bundle-upgrade.md`)
 - `073` · `dude-canvas-artifact-import` — Dude Canvas Artifact Import (`.dude/ideas/073-dude-canvas-artifact-import.md`)
+- `075` · `dude-development-base-release` — Dude Development Base Release (`.dude/ideas/075-dude-development-base-release.md`)
 
 ## Completed
 
@@ -103,6 +104,7 @@ kanban
 - `064` · `work-receipt-overflow-handling` — Work Receipt Overflow Handling (`.dude/ideas/064-work-receipt-overflow-handling.md`)
 - `065` · `work-history-event-compaction` — Work History Event Compaction (`.dude/ideas/065-work-history-event-compaction.md`)
 - `066` · `canvas-without-beads` — Canvas Without Beads (`.dude/ideas/066-canvas-without-beads.md`)
+- `074` · `dude-canvas-about` — Dude Canvas About (`.dude/ideas/074-dude-canvas-about.md`)
 
 ## Dependency and order notes
 

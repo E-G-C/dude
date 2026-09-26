@@ -31,6 +31,7 @@ import {
 import { NEEDS_YOU_LIMITS, NeedsYouError } from './needs-you.mjs';
 import { REVIEW_LIMITS, ReviewError } from './review.mjs';
 import { readPacks } from './packs.mjs';
+import { readInstallationRecord } from './about.mjs';
 
 const UI_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
 
@@ -71,6 +72,12 @@ const ASSET_MIME_TYPES = Object.freeze({
 
 /** The viewport report is a few numbers; anything larger is not ours. */
 const MAX_BODY_BYTES = 4 * 1024;
+
+/** One fixed body for an About read without a live bound workspace. */
+const ABOUT_UNAVAILABLE = Object.freeze({
+  error: 'about_unavailable',
+  message: 'This Canvas has no current workspace.',
+});
 
 /**
  * @typedef {object} CanvasInstance
@@ -365,6 +372,34 @@ async function handleRequest(instance, req, res) {
       res.off('close', release);
       release();
     }
+    return;
+  }
+
+  if (pathname === '/api/about') {
+    // Exactly one read-only record per request: no query, suffix, body, root
+    // override or alternate method. The shared Host/Origin guard has already
+    // run, and its opaque Review exception never reaches this route.
+    if (req.method !== 'GET' || req.url !== pathname) {
+      sendJson(res, 404, { error: 'Not found.' });
+      return;
+    }
+    if (Number(req.headers['content-length'] ?? 0) !== 0 || req.headers['transfer-encoding']) {
+      sendJson(res, 400, { error: 'About reads do not accept a body.' });
+      return;
+    }
+    const root = instance.readInput?.root;
+    if (!root) {
+      sendJson(res, 503, ABOUT_UNAVAILABLE);
+      return;
+    }
+    const record = await readInstallationRecord(root);
+    // Deliver only the still-current workspace's record. A lifetime end or a
+    // root replacement during the read discards it.
+    if (res.destroyed) return;
+    if (instance.signal.aborted) sendJson(res, 503, ABOUT_UNAVAILABLE);
+    else if (instance.readInput?.root !== root) {
+      sendJson(res, 409, { error: 'identity_mismatch', message: 'The workspace changed. Open About again to read it.' });
+    } else sendJson(res, 200, record);
     return;
   }
 

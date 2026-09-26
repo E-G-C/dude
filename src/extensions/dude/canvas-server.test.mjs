@@ -24,6 +24,7 @@ import {
   openInstance,
 } from './lib/canvas-server.mjs';
 import { readNowProjection } from './lib/projection.mjs';
+import { readInstallationRecord } from './lib/about.mjs';
 import { createNeedsYou, NEEDS_YOU_LIMITS } from './lib/needs-you.mjs';
 import { readPacks } from './lib/packs.mjs';
 import { cmdAdd, cmdPreviewRefresh, cmdRefresh, cmdRemove, cmdStatus } from '../../skills/dude-compose/compose.mjs';
@@ -3547,4 +3548,522 @@ test('close ends event clients and forgets the instance without stalling', async
 
 test('closing an unknown instance is a no-op', async () => {
   assert.equal(await closeInstance('never-opened'), false);
+});
+
+const ABOUT_REPOSITORY = 'https://github.com/E-G-C/dude';
+const ABOUT_NULLS = '{"installedRef":null,"sourceRef":null}';
+const ABOUT_ENDED = Object.freeze({ error: 'about_unavailable', message: 'This Canvas has no current workspace.' });
+
+/** A disposable workspace whose only About input is its fixed bundle manifest. */
+function aboutFixture() {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-about-'));
+  const root = path.join(temporary, 'workspace');
+  const manifestPath = path.join(root, '.dude', 'metadata', 'bundle-manifest.md');
+  fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+  /** The canonical shape: prose around exactly one fenced JSON payload. @param {unknown} payload */
+  const documentFor = payload => [
+    '# Bundle Manifest', '', 'Pins the upstream source for this install.', '',
+    '```json', JSON.stringify(payload, null, 2), '```', '', '## Notes', '', '- Metadata only.', '',
+  ].join('\n');
+  return {
+    temporary, root, manifestPath, documentFor,
+    /** @param {unknown} payload */
+    write(payload) { fs.writeFileSync(manifestPath, documentFor(payload)); },
+    /** @param {string | Buffer} bytes */
+    writeRaw(bytes) { fs.writeFileSync(manifestPath, bytes); },
+    cleanup() { fs.rmSync(temporary, { recursive: true, force: true }); },
+  };
+}
+
+/**
+ * A complete projection keeps opening free of Canvas acquisition, so an About
+ * fixture observes only its own read.
+ * @param {string} instanceId @param {string | null} root @param {any} [needsYou]
+ */
+function openAbout(instanceId, root, needsYou = null) {
+  return openInstance(instanceId, () => {}, Object.freeze({ complete: true }), root === null ? null : { root }, needsYou);
+}
+
+/** @param {{url: string}} instance @param {RequestInit} [init] */
+async function readAboutRoute(instance, init = {}) {
+  const response = await call(instance.url, { path: '/api/about', ...init });
+  return { status: response.status, headers: response.headers, text: await response.text() };
+}
+
+/**
+ * Count the fixture's actual manifest reads. `hold` keeps each one open after
+ * its bytes are read until `release`: a barrier, not a timed sleep.
+ * @param {import('node:test').TestContext} t @param {string} manifestPath @param {{hold?: boolean}} [options]
+ */
+function manifestReads(t, manifestPath, { hold = false } = {}) {
+  const readFile = fs.promises.readFile;
+  let started = () => {}, release = () => {};
+  const reading = new Promise(resolve => { started = () => resolve(undefined); });
+  const released = new Promise(resolve => { release = () => resolve(undefined); });
+  const counter = { count: 0, reading, release };
+  t.mock.method(fs.promises, 'readFile', /** @this {any} */ async function (file, ...rest) {
+    const bytes = await readFile.call(this, file, ...rest);
+    if (path.resolve(String(file)) === manifestPath) {
+      counter.count += 1;
+      started();
+      if (hold) await released;
+    }
+    return bytes;
+  });
+  return counter;
+}
+
+test('074 About: GET returns exactly the current recorded refs on every read with no-store', async () => {
+  const f = aboutFixture();
+  f.write({ source_repo: ABOUT_REPOSITORY, source_ref: 'main', installed_ref: 'main' });
+  const instance = await openAbout('about-current', f.root);
+  try {
+    const current = await readAboutRoute(instance);
+    assert.equal(current.status, 200);
+    assert.equal(current.headers.get('cache-control'), 'no-store');
+    assert.equal(current.headers.get('content-type'), 'application/json; charset=utf-8');
+    assert.equal(current.text, '{"installedRef":"main","sourceRef":"main"}', 'exact recorded strings, not display labels');
+
+    // Each entry reads the record again; nothing earlier is retained.
+    f.write({ source_repo: ABOUT_REPOSITORY, source_ref: 'latest', installed_ref: 'v1.2.3' });
+    assert.equal((await readAboutRoute(instance)).text, '{"installedRef":"v1.2.3","sourceRef":"latest"}');
+    fs.rmSync(f.manifestPath);
+    const missing = await readAboutRoute(instance);
+    assert.equal(missing.status, 200, 'unavailable metadata is a readable result');
+    assert.equal(missing.text, ABOUT_NULLS);
+    fs.rmSync(path.join(f.root, '.dude'), { recursive: true });
+    assert.equal((await readAboutRoute(instance)).text, ABOUT_NULLS, 'a missing metadata directory is unavailable');
+    assert.equal(fs.existsSync(path.join(f.root, '.dude')), false, 'a missing record is never created');
+  } finally {
+    await closeInstance('about-current');
+    f.cleanup();
+  }
+});
+
+test('074 About: each ref is validated alone and returned exactly, without trimming, coercion or fallback', async () => {
+  const f = aboutFixture();
+  // Provenance is required but never returned, even when it looks like a credential.
+  const repository = 'https://user:secret-token@example.invalid/private.git';
+  const instance = await openAbout('about-refs', f.root);
+  const long = `release/${'a'.repeat(300)}/${'b'.repeat(300)}`;
+  const usable = ['v1.2.3', 'main', 'latest', 'feature/about-panel', 'v1.3.0-rc.1', 'v1.2.3+build.7',
+    '0123456789abcdef0123456789abcdef01234567', 'Topic_2+x-y', long];
+  const unusable = ['', ' main', 'main ', 'main\n', 'ma\tin', 'main\u0000', 'main\u007f', 'm\u00e4in',
+    'https://github.com/E-G-C/dude', 'https://token@github.com/E-G-C/dude', 'user:secret@host',
+    'git@github.com:E-G-C/dude.git', '/etc/passwd', 'C:\\Windows\\System32', '..', 'v1..2', 'a/../b',
+    'a//b', 'a/', '.hidden', 'feature/.hidden', 'v1.', 'feature./x', 'release.lock', 'feature/x.lock',
+    '-leading', '_leading', '+leading', 'a b', 'a~1', 'a^b', 'a:b', 'a?b', 'a*b', 'a[b', 'a\\b', 'a@{1}', '@',
+    7, 0, true, false, null, [], ['main'], { ref: 'main' }];
+  /** @param {Record<string, unknown>} refs @param {string | null} installedRef @param {string | null} sourceRef */
+  const expectRefs = async (refs, installedRef, sourceRef) => {
+    f.write({ source_repo: repository, ...refs });
+    const { status, text } = await readAboutRoute(instance);
+    assert.equal(status, 200, JSON.stringify(refs));
+    assert.equal(text, JSON.stringify({ installedRef, sourceRef }), JSON.stringify(refs));
+    assert.equal(text.includes('secret-token') || text.includes('example.invalid') || text.includes(f.root), false);
+  };
+  try {
+    await expectRefs({ installed_ref: 'v1.2.3', source_ref: 'latest' }, 'v1.2.3', 'latest');
+    await expectRefs({ installed_ref: 'v1.2.3', source_ref: 'v1.2.3' }, 'v1.2.3', 'v1.2.3');
+    for (const value of usable) {
+      await expectRefs({ installed_ref: value, source_ref: 'latest' }, value, 'latest');
+      await expectRefs({ installed_ref: 'main', source_ref: value }, 'main', value);
+    }
+    for (const value of unusable) {
+      // One unusable ref never borrows the other ref, a channel default or a host version.
+      await expectRefs({ installed_ref: value, source_ref: 'latest' }, null, 'latest');
+      await expectRefs({ installed_ref: 'v1.2.3', source_ref: value }, 'v1.2.3', null);
+    }
+    await expectRefs({ source_ref: 'latest' }, null, 'latest');
+    await expectRefs({ installed_ref: 'v1.2.3' }, 'v1.2.3', null);
+    await expectRefs({}, null, null);
+  } finally {
+    await closeInstance('about-refs');
+    f.cleanup();
+  }
+});
+
+test('074 About: malformed, multi-payload, unsupported, unprovenanced, non-UTF-8 and non-file records leave both refs null', async () => {
+  const f = aboutFixture();
+  const valid = { source_repo: ABOUT_REPOSITORY, source_ref: 'latest', installed_ref: 'v1.2.3' };
+  const recorded = '{"installedRef":"v1.2.3","sourceRef":"latest"}';
+  /** @param {string} body */
+  const fenced = body => `\`\`\`json\n${body}\n\`\`\``;
+  const payload = JSON.stringify(valid, null, 2);
+  // Each record keeps usable refs and differs from a valid record by one defect.
+  const cases = [
+    ['no JSON fence', `# Bundle Manifest\n\ninstalled_ref: v1.2.3\n`],
+    ['a non-JSON fence', `# Bundle Manifest\n\n\`\`\`js\n${payload}\n\`\`\`\n`],
+    ['malformed JSON', `# Bundle Manifest\n\n${fenced(`${payload.slice(0, -2)},\n}`)}\n`],
+    ['two identical valid JSON fences', `# Bundle Manifest\n\n${fenced(payload)}\n\n${fenced(payload)}\n`],
+    ['a JSON array', f.documentFor([valid])],
+    ['a JSON string', f.documentFor('v1.2.3')],
+    ['JSON null', f.documentFor(null)],
+    ['an unsupported field', f.documentFor({ ...valid, files: [] })],
+    ['a response-shaped field', f.documentFor({ ...valid, installedRef: 'v1.2.3' })],
+    ['an own __proto__ field', `# Bundle Manifest\n\n${fenced(`{"__proto__":{},${payload.slice(1)}`)}\n`],
+    ['no source_repo', f.documentFor({ source_ref: 'latest', installed_ref: 'v1.2.3' })],
+    ['an empty source_repo', f.documentFor({ ...valid, source_repo: '' })],
+    ['a blank source_repo', f.documentFor({ ...valid, source_repo: ' \t\n' })],
+    ['a numeric source_repo', f.documentFor({ ...valid, source_repo: 42 })],
+    ['a null source_repo', f.documentFor({ ...valid, source_repo: null })],
+    ['invalid UTF-8 outside the payload', Buffer.concat([
+      Buffer.from('# Bundle Manifest '), Buffer.from([0xff]), Buffer.from(`\n\n${fenced(payload)}\n`)])],
+    ['invalid UTF-8 inside the payload', Buffer.concat([
+      Buffer.from(`# Bundle Manifest\n\n\`\`\`json\n{"source_repo":"${ABOUT_REPOSITORY}`), Buffer.from([0xc3, 0x28]),
+      Buffer.from('","source_ref":"latest","installed_ref":"v1.2.3"}\n```\n')])],
+  ];
+  const instance = await openAbout('about-invalid', f.root);
+  try {
+    f.write(valid);
+    assert.equal((await readAboutRoute(instance)).text, recorded, 'the valid control is readable');
+    for (const [label, document] of cases) {
+      f.writeRaw(document);
+      const { status, text } = await readAboutRoute(instance);
+      assert.equal(status, 200, label);
+      assert.equal(text, ABOUT_NULLS, label);
+    }
+    fs.rmSync(f.manifestPath);
+    fs.mkdirSync(f.manifestPath);
+    assert.equal((await readAboutRoute(instance)).text, ABOUT_NULLS, 'a directory is not a record');
+    fs.rmSync(f.manifestPath, { recursive: true });
+    f.write(valid);
+    assert.equal((await readAboutRoute(instance)).text, recorded, 'a corrected record reads at once');
+  } finally {
+    await closeInstance('about-invalid');
+    f.cleanup();
+  }
+});
+
+test('074 About: linked roots, components and records and unreadable records are never followed or disclosed', async t => {
+  const f = aboutFixture();
+  const outside = path.join(f.temporary, 'outside');
+  fs.mkdirSync(outside);
+  const record = { source_repo: ABOUT_REPOSITORY, source_ref: 'latest', installed_ref: 'v9.9.9' };
+  const recorded = '{"installedRef":"v9.9.9","sourceRef":"latest"}';
+  const directoryLink = process.platform === 'win32' ? 'junction' : 'dir';
+  f.write(record);
+  const linkedRootPath = path.join(f.temporary, 'linked-workspace');
+  fs.symlinkSync(f.root, linkedRootPath, directoryLink);
+  const instance = await openAbout('about-linked', f.root);
+  const linkedRoot = await openAbout('about-linked-root', linkedRootPath);
+  try {
+    assert.equal((await readAboutRoute(instance)).text, recorded, 'the real record is valid');
+    assert.equal(fs.readFileSync(path.join(linkedRootPath, '.dude/metadata/bundle-manifest.md'), 'utf8'),
+      f.documentFor(record), 'the linked root resolves to the same valid record');
+    assert.equal((await readAboutRoute(linkedRoot)).text, ABOUT_NULLS, 'a linked workspace root');
+
+    const outsideRecord = path.join(outside, 'bundle-manifest.md');
+    fs.renameSync(f.manifestPath, outsideRecord);
+    fs.symlinkSync(outsideRecord, f.manifestPath, 'file');
+    assert.equal(fs.readFileSync(f.manifestPath, 'utf8'), f.documentFor(record));
+    assert.equal((await readAboutRoute(instance)).text, ABOUT_NULLS, 'a linked record outside the workspace');
+    fs.unlinkSync(f.manifestPath);
+    fs.renameSync(outsideRecord, f.manifestPath);
+
+    const metadata = path.dirname(f.manifestPath);
+    const movedMetadata = path.join(outside, 'metadata');
+    fs.renameSync(metadata, movedMetadata);
+    fs.symlinkSync(movedMetadata, metadata, directoryLink);
+    assert.equal(fs.readFileSync(f.manifestPath, 'utf8'), f.documentFor(record));
+    assert.equal((await readAboutRoute(instance)).text, ABOUT_NULLS, 'a linked parent component');
+    fs.unlinkSync(metadata);
+    fs.renameSync(movedMetadata, metadata);
+    assert.equal((await readAboutRoute(instance)).text, recorded, 'the restored real record is valid');
+
+    const readFile = fs.promises.readFile;
+    let denied = 0;
+    const unreadable = t.mock.method(fs.promises, 'readFile', /** @this {any} */ async function (file, ...rest) {
+      if (path.resolve(String(file)) !== f.manifestPath) return readFile.call(this, file, ...rest);
+      denied += 1;
+      throw Object.assign(new Error(`EACCES: permission denied, open '${file}'`),
+        { code: 'EACCES', errno: -13, syscall: 'open', path: String(file) });
+    });
+    const refused = await readAboutRoute(instance);
+    assert.equal(denied, 1, 'the refusal came from the actual record read');
+    assert.equal(refused.status, 200);
+    assert.equal(refused.text, ABOUT_NULLS, 'no error code, message or path is returned');
+    unreadable.mock.restore();
+    assert.equal((await readAboutRoute(instance)).text, recorded);
+
+    // A FIFO, socket or device where the record belongs is refused before any
+    // open; a directory alone cannot show this because its read also fails.
+    const lstatSync = fs.lstatSync;
+    const special = t.mock.method(fs, 'lstatSync', /** @this {any} */ function (file, ...rest) {
+      const stat = lstatSync.call(this, file, ...rest);
+      if (path.resolve(String(file)) !== f.manifestPath) return stat;
+      return Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, { isFile: () => false, isFIFO: () => true });
+    });
+    const opened = manifestReads(t, f.manifestPath);
+    assert.equal((await readAboutRoute(instance)).text, ABOUT_NULLS, 'a special non-file record');
+    assert.equal(opened.count, 0, 'a non-file record is never read');
+    special.mock.restore();
+    assert.equal((await readAboutRoute(instance)).text, recorded);
+    assert.equal(opened.count, 1);
+
+    fs.rmSync(f.root, { recursive: true });
+    assert.equal((await readAboutRoute(instance)).text, ABOUT_NULLS, 'a removed workspace root');
+  } finally {
+    t.mock.restoreAll();
+    await closeInstance('about-linked');
+    await closeInstance('about-linked-root');
+    f.cleanup();
+  }
+});
+
+test('074 About: only an exact bodiless GET reaches the record read', async t => {
+  const f = aboutFixture();
+  f.write({ source_repo: ABOUT_REPOSITORY, source_ref: 'main', installed_ref: 'main' });
+  const instance = await openAbout('about-gates', f.root);
+  const { host, origin } = new URL(instance.url);
+  const reads = manifestReads(t, f.manifestPath);
+  /** @param {Parameters<typeof rawStatus>[1]} request @param {number} expected */
+  const expectStatus = async (request, expected) => {
+    const label = `${request?.method ?? 'GET'} ${request?.path} ${JSON.stringify(request?.headers ?? {})}`;
+    assert.equal(await rawStatus(instance.server, request), expected, label);
+  };
+  try {
+    for (const suffix of ['?', '?root=elsewhere', '?path=../profile.md', '?source=https://example.invalid/x.git',
+      '?ref=v1.2.3', '?installedRef=v1.2.3', '/', '/extra', '.json', '#fragment', '/../about']) {
+      await expectStatus({ path: `/api/about${suffix}`, headers: { host } }, 404);
+    }
+    for (const alias of ['/api/About', '/API/about', '/api//about', '/api/%61bout', '/api/x/../about', '/about']) {
+      await expectStatus({ path: alias, headers: { host } }, 404);
+    }
+    await expectStatus({ path: '/api/about', method: 'POST',
+      headers: { host, origin, 'content-type': 'application/json' }, body: '{}' }, 404);
+    for (const method of ['PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']) {
+      await expectStatus({ path: '/api/about', method, headers: { host } }, 404);
+    }
+    await expectStatus({ path: '/api/about', headers: { host, 'content-type': 'application/json', 'content-length': '2' },
+      body: '{}' }, 400);
+    await expectStatus({ path: '/api/about', headers: { host, 'transfer-encoding': 'chunked' }, body: '{}' }, 400);
+    assert.equal(reads.count, 0, 'refused requests never read the record');
+
+    const admitted = await readAboutRoute(instance);
+    assert.equal(admitted.status, 200, 'the exact companion request is admitted');
+    assert.equal(admitted.text, '{"installedRef":"main","sourceRef":"main"}');
+    assert.equal(reads.count, 1);
+  } finally {
+    t.mock.restoreAll();
+    await closeInstance('about-gates');
+    f.cleanup();
+  }
+});
+
+test('074 About: Host, Origin and fetch-metadata guards apply without the opaque Review-origin exception', async t => {
+  const f = aboutFixture();
+  f.write({ source_repo: ABOUT_REPOSITORY, source_ref: 'main', installed_ref: 'main' });
+  // A joined provider enables the opaque Review exception on this instance.
+  const provider = /** @type {any} */ ({
+    matchesRoot: (/** @type {string} */ candidate) => path.resolve(candidate) === path.resolve(f.root),
+    subscribe: () => () => {},
+  });
+  const instance = await openAbout('about-guards', f.root, provider);
+  const { host, origin, port } = new URL(instance.url);
+  const reads = manifestReads(t, f.manifestPath);
+  try {
+    assert.equal(await rawStatus(instance.server, { path: '/review/engine.mjs', headers: { host, origin: 'null' } }), 200,
+      'the opaque Review exception is live for its own static module');
+    for (const headers of [
+      { host, origin: 'null' },
+      { host, origin: 'https://evil.example' },
+      { host, origin: `http://127.0.0.1:${Number(port) + 1}` },
+      { host, 'sec-fetch-site': 'cross-site' },
+      { host, 'sec-fetch-site': 'same-site' },
+      { host: 'evil.example.com' },
+      { host: `localhost:${port}` },
+      { host: `[::1]:${port}` },
+    ]) {
+      assert.equal(await rawStatus(instance.server, { path: '/api/about', headers }), 403, JSON.stringify(headers));
+    }
+    assert.equal(reads.count, 0, 'refused requests never read the record');
+    assert.equal(await rawStatus(instance.server, { path: '/api/about', headers: { host, origin } }), 200,
+      "the renderer's own origin is served");
+    assert.equal(await rawStatus(instance.server, { path: '/api/about', headers: { host, 'sec-fetch-site': 'same-origin' } }),
+      200, 'a same-origin read without Origin is served');
+    assert.equal(reads.count, 2);
+  } finally {
+    t.mock.restoreAll();
+    await closeInstance('about-guards');
+    f.cleanup();
+  }
+});
+
+test('074 About: an unbound Canvas returns the fixed unavailable error', async () => {
+  const instance = await openAbout('about-unbound', null);
+  try {
+    const unbound = await readAboutRoute(instance);
+    assert.equal(unbound.status, 503);
+    assert.equal(unbound.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(JSON.parse(unbound.text), ABOUT_ENDED);
+  } finally {
+    await closeInstance('about-unbound');
+  }
+});
+
+test('074 About: a root replacement before delivery returns 409 and never the old record', async t => {
+  const f = aboutFixture(), next = aboutFixture();
+  f.write({ source_repo: ABOUT_REPOSITORY, source_ref: 'latest', installed_ref: 'v1.0.0' });
+  next.write({ source_repo: ABOUT_REPOSITORY, source_ref: 'main', installed_ref: 'main' });
+  const instance = await openAbout('about-root-race', f.root);
+  const reads = manifestReads(t, f.manifestPath, { hold: true });
+  try {
+    const pending = readAboutRoute(instance);
+    await reads.reading;
+    instance.readInput = { root: next.root };
+    reads.release();
+    const replaced = await pending;
+    assert.equal(replaced.status, 409);
+    assert.equal(replaced.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(JSON.parse(replaced.text),
+      { error: 'identity_mismatch', message: 'The workspace changed. Open About again to read it.' });
+    assert.equal((await readAboutRoute(instance)).text, '{"installedRef":"main","sourceRef":"main"}',
+      'the next read uses only the current workspace');
+  } finally {
+    t.mock.restoreAll();
+    await closeInstance('about-root-race');
+    f.cleanup();
+    next.cleanup();
+  }
+});
+
+test('074 About: a Canvas close during the read returns the fixed 503 and never the old record', async t => {
+  const f = aboutFixture();
+  f.write({ source_repo: ABOUT_REPOSITORY, source_ref: 'latest', installed_ref: 'v1.0.0' });
+  const instance = await openAbout('about-close-race', f.root);
+  const reads = manifestReads(t, f.manifestPath, { hold: true });
+  try {
+    // A non-pooled request, so close does not also wait on an idle keep-alive socket.
+    const pending = new Promise((resolve, reject) => {
+      const request = http.request(new URL('/api/about', instance.url), { agent: false }, response => {
+        const chunks = /** @type {Buffer[]} */ ([]);
+        response.on('data', chunk => chunks.push(chunk));
+        response.on('end', () => resolve({ status: response.statusCode, headers: response.headers,
+          text: Buffer.concat(chunks).toString('utf8') }));
+      });
+      request.on('error', reject);
+      request.end();
+    });
+    await reads.reading;
+    const closing = closeInstance('about-close-race');
+    reads.release();
+    const ended = /** @type {{status: number, headers: import('node:http').IncomingHttpHeaders, text: string}} */ (await pending);
+    assert.equal(ended.status, 503);
+    assert.equal(ended.headers['cache-control'], 'no-store');
+    assert.deepEqual(JSON.parse(ended.text), ABOUT_ENDED);
+    assert.equal(await closing, true);
+    assert.equal(instance.server.listening, false);
+  } finally {
+    t.mock.restoreAll();
+    await closeInstance('about-close-race');
+    f.cleanup();
+  }
+});
+
+test('074 About: a client abort during the read sends nothing and the next read is fresh', async t => {
+  const f = aboutFixture();
+  f.write({ source_repo: ABOUT_REPOSITORY, source_ref: 'latest', installed_ref: 'v1.0.0' });
+  const instance = await openAbout('about-client-abort', f.root);
+  /** @type {import('node:http').ServerResponse[]} */
+  const responses = [];
+  instance.server.on('request', (req, res) => { if (req.url === '/api/about') responses.push(res); });
+  const reads = manifestReads(t, f.manifestPath, { hold: true });
+  try {
+    const controller = new AbortController();
+    const pending = readAboutRoute(instance, { signal: controller.signal }).then(() => null, error => error);
+    await reads.reading;
+    const disconnected = new Promise(resolve => responses[0].once('close', () => resolve(undefined)));
+    controller.abort();
+    assert.equal((await pending)?.cause?.name, 'AbortError');
+    await disconnected;
+    reads.release();
+    // The held read resumes in microtasks; one macrotask later its route has finished.
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(responses[0].headersSent, false, 'the discarded read wrote no response');
+    f.write({ source_repo: ABOUT_REPOSITORY, source_ref: 'main', installed_ref: 'main' });
+    t.mock.restoreAll();
+    assert.equal((await readAboutRoute(instance)).text, '{"installedRef":"main","sourceRef":"main"}');
+  } finally {
+    t.mock.restoreAll();
+    await closeInstance('about-client-abort');
+    f.cleanup();
+  }
+});
+
+test('074 About: reading it starts no process, opens no outside connection and writes nothing', async t => {
+  const f = aboutFixture(), empty = aboutFixture();
+  // The recorded source is never contacted.
+  f.write({ source_repo: 'https://example.invalid/never-contacted.git', source_ref: 'latest', installed_ref: 'v1.2.3' });
+  fs.rmSync(path.join(empty.root, '.dude'), { recursive: true });
+  const instance = await openAbout('about-effects', f.root);
+  const unavailable = await openAbout('about-effects-empty', empty.root);
+  const before = { recorded: snapshotFiles(f.temporary), empty: snapshotFiles(empty.temporary) };
+  const spawns = t.mock.method(childProcess.ChildProcess.prototype, 'spawn');
+  const syncLaunches = ['spawnSync', 'execSync', 'execFileSync'].map(name => t.mock.method(childProcess, name));
+  syncBuiltinESMExports();
+  const connects = t.mock.method(net.Socket.prototype, 'connect');
+  const launches = () => spawns.mock.callCount() + syncLaunches.reduce((sum, spy) => sum + spy.mock.callCount(), 0);
+  try {
+    const texts = [];
+    for (let entry = 0; entry < 3; entry += 1) {
+      texts.push((await readAboutRoute(instance)).text, (await readAboutRoute(unavailable)).text);
+    }
+    assert.deepEqual(texts, Array.from({ length: 3 }, () => ['{"installedRef":"v1.2.3","sourceRef":"latest"}', ABOUT_NULLS]).flat());
+    assert.equal(launches(), 0, 'About starts no command or process');
+    const targets = connects.mock.calls.map(({ arguments: args }) => {
+      const options = Array.isArray(args[0]) ? args[0][0] : args[0];
+      return options && typeof options === 'object' ? `${options.host}:${options.port}` : `${args[1]}:${options}`;
+    });
+    assert.ok(targets.length > 0, "the socket spy observed this test's own requests");
+    assert.deepEqual([...new Set(targets)].sort(),
+      [new URL(instance.url).host, new URL(unavailable.url).host].sort(), 'only the Canvas loopback servers were contacted');
+    assert.deepEqual(snapshotFiles(f.temporary), before.recorded);
+    assert.deepEqual(snapshotFiles(empty.temporary), before.empty, 'a missing record is not created');
+
+    // Sensitivity: the same spies record real launches.
+    childProcess.execFileSync(process.execPath, ['-e', '']);
+    await new Promise((resolve, reject) => childProcess.execFile(process.execPath, ['-e', ''],
+      error => (error ? reject(error) : resolve(undefined))));
+    assert.equal(syncLaunches[2].mock.callCount(), 1);
+    assert.equal(spawns.mock.callCount(), 1);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    await closeInstance('about-effects');
+    await closeInstance('about-effects-empty');
+    f.cleanup();
+    empty.cleanup();
+  }
+});
+
+test('074 About: an invalid caller argument is surfaced, not reported as an unavailable record', async () => {
+  await assert.rejects(readInstallationRecord(/** @type {any} */ (undefined)), TypeError);
+});
+
+test('074 About: the record adapter has no process, network, timer, write, catalog, Compose or upgrade dependency', () => {
+  const entry = fileURLToPath(new URL('./lib/about.mjs', import.meta.url));
+  /** @type {Map<string, {source: string, specifiers: string[]}>} */
+  const graph = new Map();
+  /** @param {string} file */
+  const visit = file => {
+    if (graph.has(file)) return;
+    const source = fs.readFileSync(file, 'utf8');
+    const specifiers = [...source.matchAll(/^import\s(?:[^;]*?\sfrom\s)?'([^']+)';/gm)].map(match => match[1]);
+    graph.set(file, { source, specifiers });
+    for (const specifier of specifiers) {
+      if (specifier.startsWith('.')) visit(path.resolve(path.dirname(file), specifier));
+    }
+  };
+  visit(entry);
+  const modules = [...graph.keys()].map(file => path.relative(path.resolve(EXTENSION_SOURCE_ROOT, '../..'), file)
+    .replace(/\\/g, '/'));
+  for (const reused of ['skills/dude-engine/lib/profile.mjs', 'skills/dude-engine/lib/workspace-paths.mjs']) {
+    assert.ok(modules.includes(reused), `About reuses ${reused}`);
+  }
+  assert.deepEqual(modules.filter(file => /dude-compose|dude-bundle-upgrade|release-channel|packs\.mjs|catalog-reader|projection\.mjs|needs-you\.mjs|review\.mjs/.test(file)), []);
+  const specifiers = [...graph.values()].flatMap(module => module.specifiers);
+  assert.deepEqual(specifiers.filter(specifier => /^(?:node:)?(?:child_process|cluster|dgram|dns|http|http2|https|inspector|net|tls|worker_threads)(?:\/|$)/.test(specifier)), []);
+  const own = /** @type {{source: string}} */ (graph.get(entry)).source;
+  assert.deepEqual(own.match(/\b(?:import|require|fetch)\s*\(|\bprocess\.|\bset(?:Timeout|Interval|Immediate)\s*\(|\.(?:write|append|mkdir|mkdtemp|rm|rename|unlink|copy|cp|symlink|link|chmod|chown|utimes|truncate|open|watch)\w*\s*\(/g), null);
 });

@@ -415,7 +415,7 @@ test('T011 published Canvas runtime is byte-identical to source while frontend a
   }
   assert.equal(
     sha256(fs.readFileSync(path.join(repoRoot, 'src/extensions/dude/ui/assets/app.js'))),
-    '503ee6224573b8624899de3670686ce758f7c91c4d338fd9c46e2eea4fcb84f5',
+    'aedac71b507e2000cdf79a45b60ff746529057b8497bc3db11b613666d18515d',
   );
   assert.equal(has(repoRoot, '.github/extensions/dude/frontend'), false);
   assert.equal(has(repoRoot, '.github/extensions/dude/needs-you.test.mjs'), false);

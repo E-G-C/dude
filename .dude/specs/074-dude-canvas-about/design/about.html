@@ -1,0 +1,1249 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+  <title>Dude Canvas Settings, About: design preview (074, exploring)</title>
+  <link rel="icon" href="data:,">
+  <script>
+    // Preview-only appearance, matching the 052/063 convention: follow the host
+    // colour scheme, or ?theme=light|dark. The product exposes no theme control.
+    (() => {
+      const root = document.documentElement;
+      const host = window.matchMedia('(prefers-color-scheme: dark)');
+      const follow = () => root.classList.toggle('proto-host-dark', host.matches);
+      follow();
+      host.addEventListener('change', follow);
+      const theme = new URLSearchParams(location.search).get('theme');
+      if (theme === 'light' || theme === 'dark') root.dataset.protoTheme = theme;
+    })();
+  </script>
+  <!--
+    ==========================================================================
+    CANONICAL 074 PROPOSAL: Settings > About. Exploring, NOT approved.
+    Primary artifact: .dude/specs/074-dude-canvas-about/design/about.html
+    ==========================================================================
+    First proposal (Classic Settings About). No variants exist. This is a
+    self-contained design artifact, not product source or a live client: no
+    request, fetch, storage, workspace read, agent message, or pack write. CSP
+    denies connections and form submission. No CDN, webfont, build step, or logo.
+
+    FAMILIAR PATTERN
+      Title plus inline TabList on the header rule, as in a Microsoft Teams
+      channel header, holds the new Packs / About section choice. The About
+      body follows the classic desktop About convention (Windows Settings >
+      About, Edge "About"): product name, then a ruled label/value sheet, one
+      project link, and no update, copy, or support buttons.
+
+    WHAT CHANGED AGAINST THE BASELINES
+      Baselines: 052 fluent-desktop-workspace.html (workspace composition) and
+      063 pack-management.html (approved Settings). Unchanged regions follow
+      the shipped 063 implementation in src/extensions/dude/frontend/
+      {app.jsx, settings.jsx, styles.js, theme.js}, rendered for reference.
+        1. Settings heading row: "Packs · Workspace settings" becomes the
+           h1 "Settings" plus a "Settings sections" TabList (Packs, About) in
+           the same 36px row, with one rule beneath it.
+        2. Packs body starts at its unchanged Installed / Available tabs. The
+           320px detail pane now starts below the Settings header.
+        3. New About panel (below).
+        4. Command bar: Reload packs is absent on About; nothing replaces it.
+        5. Status bar: About shows only "About · Read only"; Packs keeps its
+           pack coverage text.
+      Five rail destinations, Settings at the rail bottom, the work finder,
+      and every other surface are unchanged. No sixth destination.
+
+    FIELD PROVENANCE (nothing invented)
+      Dude version ........ .dude/metadata/bundle-manifest.md installed_ref
+                            "main" -> plan display contract "Development (main)".
+      Recorded channel/ref  same manifest, source_ref "main" -> "Development (main)".
+      Author .............. accepted idea 074 / user intent: Enrique Gonzalez.
+      Repository .......... accepted idea 074: https://github.com/E-G-C/dude.
+                            Literal constant; the manifest source_repo is never
+                            displayed or linked.
+      Provenance note ..... plan.md fixed copy.
+      Footer .............. spec FR-013 / user intent: "About · Read only".
+      Packs comparison .... .dude/metadata/profile.md (9 installed) and
+                            library/packs/*/pack.md (18 records, origin local),
+                            read 2026-09-25; identical to the 063 local capture.
+      Reading and unavailable layouts are labeled illustrations chosen in the
+      preview strip; they are not observed workspace states.
+
+    COMPONENT MAPPING (what the React / Fluent UI v9.74.7 build renders)
+      root ................ <FluentProvider theme={lightTheme | darkTheme}>, the
+                            existing theme.js accessible-stroke themes. Token
+                            values below are the installed webLightTheme /
+                            webDarkTheme with that override.
+      Settings header ..... <header> + <h1> (existing `title` style) +
+                            <TabList aria-label="Settings sections"
+                            selectedValue={section} selectTabOnFocus>:
+                            <Tab value="packs" icon={bundleIcon(PuzzlePiece20Filled,
+                            PuzzlePiece20Regular)}>Packs</Tab> and <Tab value="about"
+                            icon={bundleIcon(Info20Filled, Info20Regular)}>About</Tab>.
+                            Medium Tab anatomy at the existing 36px heading
+                            height; colorNeutralStroke2 rule under the header.
+      Packs panel ......... role="tabpanel", kept mounted, `hidden` on About.
+                            Existing body unchanged: Pack context <TabList>,
+                            <Field> + <Dropdown>, Clear <Button>, <DataGrid>,
+                            pager, detail <dialog>, request dialog.
+      About panel ......... role="tabpanel" and the vertical scroll area.
+                            <h2> "Dude" (fontSizeBase600 / lineHeightBase600,
+                            semibold) is the one focal point. A <dl> of four
+                            rows ruled with colorNeutralStroke2, then a
+                            <Text size={200}> provenance caption.
+      Repository .......... <Link inline href target="_blank"
+                            rel="noopener noreferrer">, visible text exactly
+                            the URL (<wbr> break hints after "//" and ".com/"),
+                            Open16Regular adornment, and
+                            aria-label="https://github.com/E-G-C/dude (opens in
+                            a new tab)" so the hints never enter the name.
+                            Fluent Link focus indicator (double underline in
+                            colorStrokeFocus2) plus the product's 2px
+                            colorStrokeFocus2 outline, the makeStyles pattern
+                            styles.js already uses on its h1, summary, and
+                            scroll-region focus targets.
+      Reading state ....... <Spinner size="extra-tiny" label="Reading…"> in the
+                            two metadata values; aria-busy on the list.
+      Command bar ......... Toolbar / ToolbarButton "Reload packs" rendered only
+                            when section is packs.
+      Status bar .......... existing footer; About text "About · Read only".
+      icons ............... @fluentui/react-icons 2.0.339 path data, inline.
+
+    LOCAL INTERACTIONS IN THIS FILE
+      Section tabs (click, Left/Right, Home/End, automatic selection like the
+      Pack context tabs); Pack context tabs, Use case filter, Clear, pager,
+      row detail (pane at >=1100px, overlay below), Reload packs (re-applies
+      the embedded capture: keeps context, resets filter/page/selection, as a
+      product reload does), rail expand / narrow navigation overlay, and the
+      preview-only appearance and read-state selectors. Rail destinations and
+      the work finder open the approved 062 reference in a new tab. Pack
+      actions render disabled with the product's own unjoined-session reason.
+      ?section=packs|about  ?state=loading|unavailable  ?theme=light|dark
+
+    CAPABILITY LIMITS
+      Opening the repository from the embedded desktop host is not verified;
+      this file shows the proposed ordinary anchor only. Production enters
+      Settings on Packs; this file opens About for review.
+
+    ICON NOTICE
+      Icon path data: @fluentui/react-icons 2.0.339, MIT License,
+      Copyright (c) 2020 Microsoft Corporation. Permission is hereby granted,
+      free of charge, to any person obtaining a copy of this software and
+      associated documentation files (the "Software"), to deal in the Software
+      without restriction, including without limitation the rights to use,
+      copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+      of the Software, and to permit persons to whom the Software is furnished
+      to do so, subject to the following conditions: The above copyright notice
+      and this permission notice shall be included in all copies or substantial
+      portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT
+      WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+      WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+      NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+      LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+      CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH
+      THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+  -->
+  <style>
+    :root {
+      --spacingHorizontalXXS: 2px; --spacingHorizontalXS: 4px; --spacingHorizontalSNudge: 6px;
+      --spacingHorizontalS: 8px; --spacingHorizontalMNudge: 10px; --spacingHorizontalM: 12px;
+      --spacingHorizontalL: 16px; --spacingHorizontalXL: 20px; --spacingHorizontalXXL: 24px;
+      --spacingVerticalXXS: 2px; --spacingVerticalXS: 4px; --spacingVerticalSNudge: 6px;
+      --spacingVerticalS: 8px; --spacingVerticalM: 12px; --spacingVerticalL: 16px; --spacingVerticalXXL: 24px;
+      --fontFamilyBase: 'Segoe UI', 'Segoe UI Web (West European)', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', sans-serif;
+      --fontFamilyMonospace: Consolas, 'Courier New', Courier, monospace;
+      --fontSizeBase200: 12px; --fontSizeBase300: 14px; --fontSizeBase400: 16px; --fontSizeBase500: 20px; --fontSizeBase600: 24px;
+      --lineHeightBase200: 16px; --lineHeightBase300: 20px; --lineHeightBase400: 22px; --lineHeightBase500: 28px; --lineHeightBase600: 32px;
+      --fontWeightRegular: 400; --fontWeightSemibold: 600;
+      --borderRadiusSmall: 2px; --borderRadiusMedium: 4px; --borderRadiusLarge: 6px; --borderRadiusCircular: 10000px;
+      --strokeWidthThin: 1px; --strokeWidthThick: 2px; --strokeWidthThicker: 3px;
+      --shell-rail: 48px; --shell-rail-expanded: 208px; --shell-dock: 320px;
+    }
+    /* webLightTheme / webDarkTheme from the installed @fluentui/react-theme,
+       with theme.js mapping colorNeutralStroke1* to the accessible strokes. */
+    .theme-system, html[data-proto-theme="light"] .theme-system {
+      color-scheme: light;
+      --colorNeutralBackground1: #ffffff; --colorNeutralBackground1Hover: #f5f5f5;
+      --colorNeutralBackground1Pressed: #e0e0e0; --colorNeutralBackground1Selected: #ebebeb;
+      --colorNeutralBackground2: #fafafa; --colorNeutralBackground4: #f0f0f0;
+      --colorNeutralForeground1: #242424; --colorNeutralForeground2: #424242; --colorNeutralForeground2Hover: #242424;
+      --colorNeutralForeground3: #616161; --colorNeutralForegroundOnBrand: #ffffff; --colorNeutralForegroundDisabled: #bdbdbd;
+      --colorNeutralForeground2BrandHover: #0f6cbd;
+      --colorNeutralStroke1: #616161; --colorNeutralStroke1Hover: #575757; --colorNeutralStroke1Pressed: #4d4d4d;
+      --colorNeutralStroke2: #e0e0e0; --colorNeutralStrokeAccessible: #616161;
+      --colorNeutralStrokeAccessibleHover: #575757; --colorNeutralStrokeAccessiblePressed: #4d4d4d;
+      --colorNeutralStrokeDisabled: #e0e0e0; --colorNeutralBackgroundDisabled: #f0f0f0;
+      --colorBrandBackground: #0f6cbd; --colorBrandBackgroundHover: #115ea3;
+      --colorBrandForeground1: #0f6cbd; --colorBrandForeground2: #115ea3;
+      --colorBrandForegroundLink: #115ea3; --colorBrandForegroundLinkHover: #0f548c; --colorBrandForegroundLinkPressed: #0c3b5e;
+      --colorCompoundBrandStroke: #0f6cbd; --colorCompoundBrandStrokeHover: #115ea3; --colorCompoundBrandStrokePressed: #0f548c;
+      --colorCompoundBrandForeground1: #0f6cbd; --colorCompoundBrandForeground1Hover: #115ea3;
+      --colorBrandStroke1: #0f6cbd; --colorBrandStroke2: #b4d6fa;
+      --colorStrokeFocus1: #ffffff; --colorStrokeFocus2: #000000;
+      --colorSubtleBackgroundHover: #f5f5f5; --colorSubtleBackgroundPressed: #e0e0e0;
+      --colorBackgroundOverlay: rgba(0, 0, 0, 0.4);
+      --shadow4: 0 0 2px rgba(0,0,0,0.12), 0 2px 4px rgba(0,0,0,0.14);
+      --shadow16: 0 0 2px rgba(0,0,0,0.12), 0 8px 16px rgba(0,0,0,0.14);
+    }
+    .proto-host-dark .theme-system, html[data-proto-theme="dark"] .theme-system {
+      color-scheme: dark;
+      --colorNeutralBackground1: #292929; --colorNeutralBackground1Hover: #3d3d3d;
+      --colorNeutralBackground1Pressed: #1f1f1f; --colorNeutralBackground1Selected: #383838;
+      --colorNeutralBackground2: #1f1f1f; --colorNeutralBackground4: #0a0a0a;
+      --colorNeutralForeground1: #ffffff; --colorNeutralForeground2: #d6d6d6; --colorNeutralForeground2Hover: #ffffff;
+      --colorNeutralForeground3: #adadad; --colorNeutralForegroundOnBrand: #ffffff; --colorNeutralForegroundDisabled: #5c5c5c;
+      --colorNeutralForeground2BrandHover: #479ef5;
+      --colorNeutralStroke1: #adadad; --colorNeutralStroke1Hover: #bdbdbd; --colorNeutralStroke1Pressed: #b3b3b3;
+      --colorNeutralStroke2: #525252; --colorNeutralStrokeAccessible: #adadad;
+      --colorNeutralStrokeAccessibleHover: #bdbdbd; --colorNeutralStrokeAccessiblePressed: #b3b3b3;
+      --colorNeutralStrokeDisabled: #424242; --colorNeutralBackgroundDisabled: #141414;
+      --colorBrandBackground: #115ea3; --colorBrandBackgroundHover: #0f6cbd;
+      --colorBrandForeground1: #479ef5; --colorBrandForeground2: #62abf5;
+      --colorBrandForegroundLink: #479ef5; --colorBrandForegroundLinkHover: #62abf5; --colorBrandForegroundLinkPressed: #2886de;
+      --colorCompoundBrandStroke: #479ef5; --colorCompoundBrandStrokeHover: #62abf5; --colorCompoundBrandStrokePressed: #2886de;
+      --colorCompoundBrandForeground1: #479ef5; --colorCompoundBrandForeground1Hover: #62abf5;
+      --colorBrandStroke1: #479ef5; --colorBrandStroke2: #0e4775;
+      --colorStrokeFocus1: #000000; --colorStrokeFocus2: #ffffff;
+      --colorSubtleBackgroundHover: #383838; --colorSubtleBackgroundPressed: #2e2e2e;
+      --colorBackgroundOverlay: rgba(0, 0, 0, 0.5);
+      --shadow4: 0 0 2px rgba(0,0,0,0.24), 0 2px 4px rgba(0,0,0,0.28);
+      --shadow16: 0 0 2px rgba(0,0,0,0.24), 0 8px 16px rgba(0,0,0,0.28);
+    }
+    html[data-proto-theme="light"] { color-scheme: light; }
+    html[data-proto-theme="dark"] { color-scheme: dark; }
+    *, *::before, *::after { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0; height: 100vh; height: 100dvh; display: flex; flex-direction: column; min-width: 0;
+      font: var(--fontWeightRegular) var(--fontSizeBase300)/var(--lineHeightBase300) var(--fontFamilyBase);
+      color: var(--colorNeutralForeground1); background: var(--colorNeutralBackground2);
+    }
+    h1, h2, h3, p, dl, dd { margin: 0; }
+    button, select { font: inherit; color: inherit; }
+    [hidden] { display: none !important; }
+    .icon { width: 20px; height: 20px; flex: 0 0 auto; fill: currentColor; }
+    .icon16 { width: 16px; height: 16px; flex: 0 0 auto; fill: currentColor; }
+    .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+    .visually-hidden {
+      position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+      overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+    }
+    .eyebrow { color: var(--colorNeutralForeground2); font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); overflow-wrap: anywhere; }
+    .code { font-family: var(--fontFamilyMonospace); font-size: var(--fontSizeBase200); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+    /* Preview strip: outside the product tree, like the 052/063 prototype drawers. */
+    .proto {
+      flex: 0 0 auto; max-height: 20dvh; overflow-y: auto; padding: var(--spacingVerticalXS) var(--spacingHorizontalS);
+      background: var(--colorNeutralBackground4); color: var(--colorNeutralForeground2);
+      border-bottom: var(--strokeWidthThick) dashed var(--colorNeutralStrokeAccessible);
+      font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200);
+    }
+    .proto summary { cursor: pointer; min-height: 20px; font-weight: var(--fontWeightSemibold); color: var(--colorBrandForeground1); overflow-wrap: anywhere; }
+    .proto-content { display: flex; flex-direction: column; gap: var(--spacingVerticalS); padding: var(--spacingVerticalS) var(--spacingHorizontalXS); max-width: 110ch; }
+    .proto-controls { display: flex; flex-wrap: wrap; gap: var(--spacingVerticalS) var(--spacingHorizontalL); }
+    .proto-controls label { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacingHorizontalS); font-weight: var(--fontWeightSemibold); }
+    .proto-controls select {
+      min-height: 28px; max-width: 100%; padding: 2px 6px; border: 1px solid var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1);
+    }
+    .proto a { color: var(--colorBrandForegroundLink); }
+    .proto :is(a, summary, select):focus-visible, .skip-link:focus-visible {
+      outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: var(--strokeWidthThick); border-radius: var(--borderRadiusSmall);
+    }
+    .skip-link {
+      position: absolute; left: 8px; top: -80px; z-index: 30; padding: 5px 12px; border-radius: var(--borderRadiusMedium);
+      background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1); border: 1px solid var(--colorNeutralStrokeAccessible);
+      font-weight: var(--fontWeightSemibold); text-decoration: none;
+    }
+    .skip-link:focus { top: 8px; }
+
+    /* Fluent Button anatomy (medium). Secondary = outline with accessible stroke. */
+    .button {
+      position: relative; display: inline-flex; align-items: center; justify-content: center; gap: var(--spacingHorizontalSNudge);
+      min-height: 32px; min-width: 96px; margin: 0; padding: 5px var(--spacingHorizontalM); vertical-align: middle;
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke1); border-radius: var(--borderRadiusMedium);
+      background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1); text-decoration: none;
+      font-size: var(--fontSizeBase300); line-height: var(--lineHeightBase300); font-weight: var(--fontWeightSemibold);
+      cursor: pointer; outline: none; overflow: hidden;
+    }
+    .button:hover { background: var(--colorNeutralBackground1Hover); border-color: var(--colorNeutralStroke1Hover); }
+    .button:active { background: var(--colorNeutralBackground1Pressed); border-color: var(--colorNeutralStroke1Pressed); }
+    .button:focus-visible {
+      border-color: var(--colorStrokeFocus2); box-shadow: 0 0 0 var(--strokeWidthThin) var(--colorStrokeFocus2) inset;
+      outline: var(--strokeWidthThick) solid transparent; z-index: 1;
+    }
+    .button:disabled, .button:disabled:hover {
+      cursor: not-allowed; background: var(--colorNeutralBackgroundDisabled); border-color: var(--colorNeutralStrokeDisabled);
+      color: var(--colorNeutralForegroundDisabled);
+    }
+    .button.primary { background: var(--colorBrandBackground); border-color: transparent; color: var(--colorNeutralForegroundOnBrand); }
+    .button.primary:hover { background: var(--colorBrandBackgroundHover); }
+    .button.primary:disabled { background: var(--colorNeutralBackgroundDisabled); border-color: var(--colorNeutralStrokeDisabled); color: var(--colorNeutralForegroundDisabled); }
+    .button.subtle { background: transparent; border-color: transparent; color: var(--colorNeutralForeground2); }
+    .button.subtle:hover { background: var(--colorSubtleBackgroundHover); color: var(--colorNeutralForeground2Hover); }
+    .button.subtle:hover .icon { color: var(--colorNeutralForeground2BrandHover); }
+    .button.subtle:active { background: var(--colorSubtleBackgroundPressed); }
+    .button.subtle:focus-visible { border-color: var(--colorStrokeFocus2); }
+    .button.icon-button { width: 32px; min-width: 32px; height: 32px; padding: 0; }
+
+    #app { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+
+    /* Command bar: app.jsx `commands`, `titlebar`, `selector`, `refresh`. */
+    .command-bar {
+      position: relative; display: flex; align-items: center; flex-shrink: 0; min-width: 0;
+      gap: var(--spacingHorizontalM); padding: var(--spacingVerticalXXS) var(--spacingHorizontalL);
+      background: var(--colorNeutralBackground1); border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .titlebar {
+      display: flex; align-items: center; gap: var(--spacingHorizontalS); flex-shrink: 0;
+      padding-inline-end: var(--spacingHorizontalM); border-inline-end: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .brand { font-weight: var(--fontWeightSemibold); }
+    .workspace-label { color: var(--colorNeutralForeground2); font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); }
+    .selector { position: relative; flex: 1 1 440px; min-width: 0; max-width: 620px; }
+    .finder-reference {
+      display: flex; align-items: center; gap: var(--spacingHorizontalS); min-width: 0; min-height: 32px;
+      padding: 0 var(--spacingHorizontalMNudge); border: var(--strokeWidthThin) solid var(--colorNeutralStroke1);
+      border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1);
+      text-decoration: none; outline: none; position: relative;
+    }
+    .finder-reference .icon { color: var(--colorNeutralForeground3); }
+    .finder-reference:hover { border-color: var(--colorNeutralStroke1Hover); }
+    .finder-reference:focus-visible { border-color: var(--colorStrokeFocus2); box-shadow: 0 0 0 var(--strokeWidthThin) var(--colorStrokeFocus2) inset; outline: 2px solid transparent; }
+    .finder-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--fontWeightSemibold); }
+    .finder-ref { font-weight: var(--fontWeightRegular); color: var(--colorNeutralForeground2); font-size: var(--fontSizeBase200); }
+    .toolbar { display: flex; align-items: center; margin-inline-start: auto; flex-shrink: 0; padding: 0; }
+    .toolbar-button { min-width: 0; }
+
+    .shell-body { display: flex; flex: 1; min-width: 0; min-height: 0; }
+
+    /* Rail: app.jsx ActivityRail + styles.js rail*. Transparent small vertical Tabs. */
+    .rail {
+      position: relative; display: flex; flex-direction: column; align-items: center; flex-shrink: 0;
+      width: var(--shell-rail); min-height: 0; gap: var(--spacingVerticalL); padding-block: var(--spacingVerticalS);
+      background: var(--colorNeutralBackground2); border-inline-end: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .rail > .rail-toggle { flex-shrink: 0; }
+    .rail-contents { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; width: 100%; }
+    .rail-destinations {
+      display: flex; flex-direction: column; align-items: center; min-height: 0; overflow-y: auto; overflow-x: hidden;
+      scrollbar-width: none; padding: var(--spacingHorizontalXXS); gap: var(--spacingVerticalXS);
+    }
+    .rail-footer {
+      display: flex; justify-content: center; flex-shrink: 0; margin-top: auto; margin-inline: var(--spacingHorizontalXS);
+      padding-top: var(--spacingVerticalS); border-top: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .rail-tab {
+      position: relative; display: flex; align-items: center; justify-content: center; gap: var(--spacingHorizontalXS);
+      flex-shrink: 0; width: 32px; min-width: 32px; height: 32px; min-height: 32px; padding: 0;
+      border: 0; border-radius: var(--borderRadiusMedium); background: transparent; color: var(--colorNeutralForeground2);
+      text-decoration: none; cursor: pointer; outline: none;
+    }
+    .rail-tab:hover { color: var(--colorNeutralForeground2Hover); }
+    .rail-tab::before, .rail-tab::after {
+      content: ""; position: absolute; left: 0; top: var(--spacingVerticalXS); bottom: var(--spacingVerticalXS);
+      width: var(--strokeWidthThicker); border-radius: var(--borderRadiusCircular); background: transparent;
+    }
+    .rail-tab:hover::before { background: var(--colorNeutralStroke1Hover); }
+    .rail-tab[aria-current="page"] .icon { color: var(--colorCompoundBrandForeground1); }
+    .rail-tab[aria-current="page"]::after { background: var(--colorCompoundBrandStroke); }
+    .rail-tab:focus-visible { box-shadow: var(--shadow4), 0 0 0 var(--strokeWidthThick) var(--colorStrokeFocus2); outline: 2px solid transparent; z-index: 1; }
+    .rail-label { display: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); }
+    .rail-ref { color: var(--colorNeutralForeground2); }
+    #app.rail-expanded .rail { width: var(--shell-rail-expanded); align-items: stretch; padding-inline: var(--spacingHorizontalS); }
+    #app.rail-expanded .rail > .rail-toggle { align-self: flex-start; }
+    #app.rail-expanded .rail-destinations { align-items: stretch; }
+    #app.rail-expanded .rail-tab, .nav-overlay .rail-tab { width: 100%; justify-content: flex-start; padding-inline: var(--spacingHorizontalS); }
+    #app.rail-expanded .rail-label, .nav-overlay .rail-label { display: inline; }
+
+    /* Narrow navigation overlay: styles.js navOverlay / navHeading. */
+    .nav-overlay {
+      position: fixed; inset: 0 auto 0 0; margin: 0; width: 260px; max-width: calc(100vw - 16px); height: 100dvh; max-height: 100dvh;
+      padding: var(--spacingHorizontalM); border: var(--strokeWidthThin) solid var(--colorNeutralStroke2); border-radius: 0;
+      background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1); box-shadow: var(--shadow16);
+    }
+    .nav-overlay[open] { display: flex; flex-direction: column; }
+    .nav-overlay::backdrop { background: var(--colorBackgroundOverlay); }
+    .nav-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--spacingHorizontalS); padding-bottom: var(--spacingVerticalS); flex-shrink: 0; }
+    .nav-note { flex-shrink: 0; padding-bottom: var(--spacingVerticalS); }
+    .nav-overlay .rail-contents { flex: 1; min-height: 0; }
+
+    /* Fluent Tab anatomy (transparent appearance, medium horizontal). */
+    .tab {
+      position: relative; display: inline-grid; grid-auto-flow: column; align-items: center; justify-content: center;
+      column-gap: var(--spacingHorizontalSNudge); min-width: 0; margin: 0;
+      padding: var(--spacingVerticalS) var(--spacingHorizontalMNudge); border: 0; border-radius: var(--borderRadiusMedium);
+      background: transparent; color: var(--colorNeutralForeground2); line-height: var(--lineHeightBase300);
+      cursor: pointer; outline: none; text-transform: none;
+    }
+    .tab::before, .tab::after {
+      content: ""; position: absolute; left: var(--spacingHorizontalM); right: var(--spacingHorizontalM); bottom: 0;
+      height: var(--strokeWidthThicker); border-radius: var(--borderRadiusCircular); background: transparent;
+    }
+    .tab:hover::before { background: var(--colorNeutralStroke1Hover); }
+    .tab:active::before { background: var(--colorNeutralStroke1Pressed); }
+    .tab[aria-selected="true"]::after { background: var(--colorCompoundBrandStroke); }
+    .tab[aria-selected="true"]:hover::after { background: var(--colorCompoundBrandStrokeHover); }
+    .tab:focus-visible { box-shadow: var(--shadow4), 0 0 0 var(--strokeWidthThick) var(--colorStrokeFocus2); outline: 2px solid transparent; z-index: 1; }
+    .tab-icon { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; color: var(--colorNeutralForeground2); }
+    .tab:hover .tab-icon, .tab:hover .tab-text { color: var(--colorNeutralForeground2Hover); }
+    .tab[aria-selected="true"] .tab-icon { color: var(--colorCompoundBrandForeground1); }
+    .tab[aria-selected="true"]:hover .tab-icon { color: var(--colorCompoundBrandForeground1Hover); }
+    .tab .icon-filled, .tab[aria-selected="true"] .icon-regular { display: none; }
+    .tab[aria-selected="true"] .icon-filled { display: inline; }
+    .tab-content { display: inline-grid; min-width: 0; padding: 0 var(--spacingHorizontalXXS); overflow: hidden; }
+    .tab-text, .tab-reserve { grid-area: 1 / 1; min-width: 0; }
+    .tab-reserve { visibility: hidden; font-weight: var(--fontWeightSemibold); }
+    .tab[aria-selected="true"] .tab-text { color: var(--colorNeutralForeground1); font-weight: var(--fontWeightSemibold); }
+    /* Settings panel: styles.js `detail` + `settingsPanel`. */
+    .product { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; container: product / inline-size; }
+    .settings-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; background: var(--colorNeutralBackground1); }
+
+    /* NEW: one compact Settings header row. Same 36px rhythm as the shipped
+       Packs heading; the section TabList sits on the header rule. */
+    .settings-header {
+      flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: stretch; column-gap: var(--spacingHorizontalL);
+      min-width: 0; padding: 0 var(--spacingHorizontalL); border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .settings-header h1 {
+      padding-block: var(--spacingVerticalXS); font-size: var(--fontSizeBase500); line-height: var(--lineHeightBase500);
+      font-weight: var(--fontWeightSemibold); overflow-wrap: anywhere; min-width: 0;
+    }
+    .settings-header h1:focus-visible { outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: var(--strokeWidthThick); }
+    .section-tabs { display: flex; align-items: stretch; min-width: 0; }
+    .section-tab { min-height: 36px; }
+    .section-panel { flex: 1; min-height: 0; min-width: 0; }
+    .packs-panel { display: flex; flex-direction: column; }
+
+    /* Packs body: settings.jsx + styles.js pack*, unchanged. */
+    .pack-layout { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1; min-height: 0; min-width: 0; }
+    .pack-layout.has-details { grid-template-columns: minmax(0, 1fr) var(--shell-dock); }
+    .pack-browser { display: flex; flex-direction: column; min-height: 0; min-width: 0; container: packs / inline-size; }
+    .pack-tabs { flex-shrink: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 360px; min-width: 0; }
+    .pack-tab { min-height: 36px; padding: var(--spacingVerticalXS) var(--spacingHorizontalS); }
+    .pack-tab-count { font-size: var(--fontSizeBase200); font-weight: var(--fontWeightRegular); }
+    .pack-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+    .pack-toolbar {
+      position: relative; z-index: 2; display: flex; gap: var(--spacingHorizontalS); align-items: center; flex-shrink: 0; min-width: 0;
+      padding: var(--spacingVerticalS) var(--spacingHorizontalL);
+      border-top: var(--strokeWidthThin) solid var(--colorNeutralStroke2); border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .pack-filter-field {
+      display: grid; grid-template-columns: minmax(80px, 1fr) minmax(0, 280px); align-items: center;
+      column-gap: var(--spacingHorizontalS); flex: 1 1 540px; min-width: 0; max-width: 660px;
+    }
+    .pack-filter-field label { font-weight: var(--fontWeightSemibold); }
+    .dropdown { position: relative; display: flex; min-width: 0; width: 100%; border-radius: var(--borderRadiusMedium); }
+    .dropdown select {
+      appearance: none; width: 100%; min-width: 0; min-height: 32px; margin: 0; padding: 5px 34px 5px 12px;
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke1); border-bottom-color: var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1);
+      cursor: pointer; outline: none; text-overflow: ellipsis;
+    }
+    .dropdown select:hover { border-color: var(--colorNeutralStroke1Hover); border-bottom-color: var(--colorNeutralStrokeAccessibleHover); }
+    .dropdown select:focus-visible { border-color: var(--colorNeutralStroke1Pressed); border-bottom-color: var(--colorNeutralStrokeAccessiblePressed); }
+    .dropdown .icon { position: absolute; right: var(--spacingHorizontalMNudge); top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--colorNeutralStrokeAccessible); }
+    .dropdown::after {
+      content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: var(--borderRadiusMedium);
+      border-bottom: var(--strokeWidthThick) solid var(--colorCompoundBrandStroke); border-radius: 0 0 var(--borderRadiusMedium) var(--borderRadiusMedium);
+      clip-path: inset(calc(100% - 2px) 0 0 0); transform: scaleX(0); pointer-events: none;
+    }
+    .dropdown:has(select:focus-visible)::after { transform: scaleX(1); }
+    .pack-clear { flex-shrink: 0; min-width: 0; }
+    .pack-scroll { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; overscroll-behavior: contain; }
+    .pack-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .pack-table th {
+      position: sticky; top: 0; z-index: 1; height: 32px; padding: 0 var(--spacingHorizontalL); text-align: left;
+      font-weight: var(--fontWeightRegular); color: var(--colorNeutralForeground2); background: var(--colorNeutralBackground2);
+      border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .pack-table th:first-child { width: 45%; }
+    .pack-row { cursor: pointer; }
+    .pack-row td { height: 45px; padding: var(--spacingVerticalS) var(--spacingHorizontalL); border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2); overflow-wrap: anywhere; vertical-align: middle; }
+    .pack-row:hover { background: var(--colorSubtleBackgroundHover); }
+    .pack-row:has(.pack-open:focus-visible) { outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: calc(-1 * var(--strokeWidthThick)); }
+    .pack-row.selected, .pack-row.selected:hover { background: var(--colorNeutralBackground1Selected); box-shadow: inset 3px 0 var(--colorBrandStroke1); }
+    .pack-open {
+      display: block; width: 100%; margin: 0; padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer;
+      font-weight: var(--fontWeightSemibold); color: var(--colorBrandForeground2); overflow-wrap: anywhere; outline: none;
+    }
+    .pack-tags { color: var(--colorNeutralForeground2); }
+    .pack-notice { display: flex; flex-direction: column; gap: var(--spacingVerticalXS); padding: var(--spacingHorizontalS); color: var(--colorNeutralForeground2); overflow-wrap: anywhere; }
+    .empty { display: flex; flex-direction: column; gap: var(--spacingVerticalM); padding: var(--spacingHorizontalL); }
+    .pack-pager {
+      display: flex; align-items: center; flex-shrink: 0; gap: var(--spacingHorizontalS); min-width: 0;
+      padding: var(--spacingVerticalXS) var(--spacingHorizontalL);
+      border-top: var(--strokeWidthThin) solid var(--colorNeutralStroke2); background: var(--colorNeutralBackground2);
+    }
+    .pack-metrics { flex: 1; display: flex; flex-direction: column; min-width: 0; text-align: center; font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); overflow-wrap: anywhere; }
+    .pack-page-button { flex-shrink: 0; }
+
+    /* Detail: styles.js packDetail*, pane at >=1100px, overlay below. */
+    .pack-detail {
+      position: static; margin: 0; padding: 0; width: var(--shell-dock); max-width: none; height: 100%; max-height: none;
+      min-width: 0; min-height: 0; overflow: hidden; color: var(--colorNeutralForeground1); background: var(--colorNeutralBackground1);
+      border: 0; border-inline-start: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .pack-detail[open] { display: flex; flex-direction: column; }
+    .pack-detail:modal {
+      position: fixed; inset: 0 0 0 auto; width: min(420px, calc(100vw - 16px)); height: 100dvh; max-height: 100dvh;
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible); box-shadow: var(--shadow16);
+    }
+    .pack-detail::backdrop { background: var(--colorBackgroundOverlay); }
+    .pack-detail-header { display: flex; align-items: flex-start; flex-shrink: 0; gap: var(--spacingHorizontalS); padding: var(--spacingHorizontalM); border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2); }
+    .pack-detail-heading { flex: 1; min-width: 0; }
+    .pack-detail-heading h2 { font-size: var(--fontSizeBase400); line-height: var(--lineHeightBase400); font-weight: var(--fontWeightSemibold); overflow-wrap: anywhere; }
+    .pack-detail-body {
+      display: flex; flex-direction: column; gap: var(--spacingVerticalL); flex: 1; min-height: 0; min-width: 0;
+      overflow-y: auto; overscroll-behavior: contain; padding: var(--spacingHorizontalM); outline: none;
+    }
+    .pack-detail-body:focus-visible { outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: calc(-1 * var(--strokeWidthThick)); }
+    .pack-detail-body .prose { overflow-wrap: anywhere; }
+    .pack-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacingHorizontalS); padding-top: var(--spacingVerticalS); }
+    .tight { display: flex; flex-direction: column; gap: var(--spacingVerticalXS); min-width: 0; }
+    .pack-metadata { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--spacingVerticalXS); }
+    .pack-metadata dt { color: var(--colorNeutralForeground2); }
+    .pack-metadata dd { min-width: 0; overflow-wrap: anywhere; }
+    .pack-metadata dd + dt { margin-top: var(--spacingVerticalS); }
+    .pack-metadata-heading { font-size: var(--fontSizeBase300); line-height: var(--lineHeightBase300); font-weight: var(--fontWeightSemibold); }
+    .pack-files summary { cursor: pointer; min-height: 28px; color: var(--colorBrandForeground1); }
+    .pack-files summary:focus-visible { outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: var(--strokeWidthThick); }
+    .pack-files ul { padding-inline-start: var(--spacingHorizontalXL); margin-block: var(--spacingVerticalS); }
+    .pack-files li + li { margin-top: var(--spacingVerticalXS); }
+    .pack-detail-footer { flex-shrink: 0; padding: var(--spacingHorizontalS); border-top: var(--strokeWidthThin) solid var(--colorNeutralStroke2); }
+
+    /* NEW: About. The panel is the scroll area; one focal heading over a
+       ruled label/value sheet, no card, no logo, no buttons. */
+    .about-panel { overflow-y: auto; overscroll-behavior: contain; outline: none; }
+    .about-panel:focus-visible { outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: calc(-1 * var(--strokeWidthThick)); }
+    .about-body {
+      display: flex; flex-direction: column; gap: var(--spacingVerticalM); min-width: 0;
+      max-width: calc(76ch + 2 * var(--spacingHorizontalL)); padding: var(--spacingVerticalL) var(--spacingHorizontalL) var(--spacingVerticalXXL);
+    }
+    .about-identity { font-size: var(--fontSizeBase600); line-height: var(--lineHeightBase600); font-weight: var(--fontWeightSemibold); overflow-wrap: anywhere; }
+    .about-facts { border-top: var(--strokeWidthThin) solid var(--colorNeutralStroke2); }
+    .about-row {
+      display: grid; grid-template-columns: minmax(0, 11.5em) minmax(0, 1fr); column-gap: var(--spacingHorizontalL); align-items: baseline;
+      padding-block: var(--spacingVerticalS); border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .about-row dt { color: var(--colorNeutralForeground2); overflow-wrap: anywhere; }
+    .about-row dd { min-width: 0; overflow-wrap: anywhere; }
+    .about-row dd.unavailable { color: var(--colorNeutralForeground2); }
+    .about-note { font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); color: var(--colorNeutralForeground2); overflow-wrap: anywhere; }
+    .nowrap { white-space: nowrap; }
+    /* Fluent Link, inline appearance. */
+    .link {
+      color: var(--colorBrandForegroundLink); text-decoration-line: underline; text-decoration-thickness: var(--strokeWidthThin);
+      overflow-wrap: anywhere; cursor: pointer; outline: none;
+    }
+    .link:hover { color: var(--colorBrandForegroundLinkHover); }
+    .link:active { color: var(--colorBrandForegroundLinkPressed); }
+    .link:focus-visible {
+      text-decoration-line: underline; text-decoration-style: double; text-decoration-color: var(--colorStrokeFocus2);
+      /* About's only control also gets the product's custom-focus outline
+         (styles.js h1/summary/region pattern), so focus is unmistakable. */
+      outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: var(--strokeWidthThick); border-radius: var(--borderRadiusSmall);
+    }
+    .link .icon16 { margin-inline-start: var(--spacingHorizontalXS); vertical-align: -2px; }
+    /* Fluent Spinner, extra-tiny. */
+    .spinner {
+      display: inline-block; width: 16px; height: 16px; margin-inline-end: var(--spacingHorizontalSNudge); vertical-align: -3px;
+      border: var(--strokeWidthThick) solid var(--colorBrandStroke2); border-top-color: var(--colorBrandStroke1);
+      border-radius: 50%; animation: spin 1.2s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Status bar: styles.js footer + settingsFooter. */
+    .status-bar {
+      display: flex; gap: var(--spacingHorizontalM); flex-wrap: wrap; flex-shrink: 0; max-height: 20dvh; overflow-y: auto; overflow-wrap: anywhere;
+      padding: var(--spacingVerticalXS) var(--spacingHorizontalL); border-top: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+      background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground2);
+      font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); outline: none;
+    }
+    .status-bar:focus-visible { outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: calc(-1 * var(--strokeWidthThick)); }
+
+    @media (max-width: 1099px) {
+      .pack-layout.has-details { grid-template-columns: minmax(0, 1fr); }
+    }
+    @media (max-width: 960px) { .workspace-label { display: none; } }
+    @media (max-width: 719px) {
+      .command-bar { gap: var(--spacingHorizontalS); padding-inline: var(--spacingHorizontalS); }
+      .toolbar-button { width: 32px; min-width: 32px; height: 32px; padding: 0; }
+      .reload-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    }
+    @media (max-width: 479px) {
+      .selector { flex: 0 0 auto; }
+      .finder-reference { width: 32px; padding: 0; justify-content: center; border-color: transparent; background: transparent; }
+      .finder-reference .icon { color: var(--colorNeutralForeground2); }
+      .finder-reference:hover { background: var(--colorSubtleBackgroundHover); }
+      .finder-label { display: none; }
+    }
+    @container product (max-width: 479px) {
+      .settings-header { column-gap: var(--spacingHorizontalS); padding-inline: var(--spacingHorizontalS); }
+      .about-body { padding: var(--spacingVerticalM) var(--spacingHorizontalS) var(--spacingVerticalL); }
+      .about-row { grid-template-columns: minmax(0, 1fr); row-gap: var(--spacingVerticalXXS); padding-block: var(--spacingVerticalSNudge); }
+      .about-row dt { font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); }
+    }
+    @container product (max-width: 300px) {
+      /* Two short labels must never wrap apart: equal columns, no icons. */
+      .settings-header h1 { flex-basis: 100%; }
+      .section-tabs { flex-basis: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .section-tab { min-height: 32px; padding: var(--spacingVerticalSNudge) var(--spacingHorizontalXXS); column-gap: 0; }
+      .section-tab .tab-icon { display: none; }
+    }
+    @container packs (max-width: 479px) {
+      .pack-toolbar { padding: var(--spacingVerticalXS) var(--spacingHorizontalS); }
+      .pack-filter-field { grid-template-columns: minmax(0, 1fr); gap: var(--spacingVerticalXS); }
+      .pack-filter-field label { min-height: 32px; display: flex; align-items: center; font-size: var(--fontSizeBase200); padding-right: 52px; }
+      .pack-clear { position: absolute; top: var(--spacingVerticalXS); right: var(--spacingHorizontalS); padding-inline: var(--spacingHorizontalS); }
+      .pack-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+      .pack-table, .pack-table tbody, .pack-row, .pack-row td { display: block; }
+      .pack-row { padding-block: var(--spacingVerticalXS); border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2); }
+      .pack-row td { height: auto; padding: var(--spacingVerticalXXS) var(--spacingHorizontalM); border: 0; }
+      .pack-row .pack-tags { font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); }
+      .pack-pager { padding-inline: var(--spacingHorizontalS); gap: var(--spacingHorizontalXS); }
+      .pack-page-button { width: 28px; min-width: 28px; padding-inline: var(--spacingHorizontalXXS); }
+      .pack-page-label { display: none; }
+    }
+    @container packs (max-width: 300px) {
+      .pack-tab { padding-inline: var(--spacingHorizontalXXS); min-height: 32px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; scroll-behavior: auto !important; }
+      .spinner { animation: none; }
+    }
+    @media (forced-colors: active) {
+      .tab[aria-selected="true"]::after, .rail-tab[aria-current="page"]::after { background: Highlight; forced-color-adjust: none; }
+      .pack-row.selected { outline: 2px solid Highlight; outline-offset: -2px; }
+    }
+  </style>
+</head>
+<body class="theme-system">
+  <svg class="sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-puzzle" viewBox="0 0 20 20"><path d="M11 3c-.69 0-1.25.56-1.25 1.25V5H6.5a.5.5 0 0 0-.5.5v3.25h-.75a1.25 1.25 0 1 0 0 2.5H6v3.25c0 .28.22.5.5.5h3.25v.75a1.25 1.25 0 1 0 2.5 0V15h3.25a.5.5 0 0 0 .5-.5v-2.25h-.75a2.25 2.25 0 0 1 0-4.5H16V5.5a.5.5 0 0 0-.5-.5h-3.25v-.75C12.25 3.56 11.69 3 11 3M8.76 4a2.25 2.25 0 0 1 4.48 0h2.26c.83 0 1.5.67 1.5 1.5v3.25h-1.75a1.25 1.25 0 1 0 0 2.5H17v3.25c0 .83-.67 1.5-1.5 1.5h-2.26a2.25 2.25 0 0 1-4.48 0H6.5A1.5 1.5 0 0 1 5 14.5v-2.26a2.25 2.25 0 0 1 0-4.48V5.5C5 4.67 5.67 4 6.5 4z"/></symbol>
+    <symbol id="i-puzzle-filled" viewBox="0 0 20 20"><path d="M11 2a2 2 0 0 0-2 2H6.5C5.67 4 5 4.67 5 5.5V8a2 2 0 1 0 0 4v2.5c0 .83.67 1.5 1.5 1.5H9a2 2 0 1 0 4 0h2.5c.83 0 1.5-.67 1.5-1.5V12h-1a2 2 0 1 1 0-4h1V5.5c0-.83-.67-1.5-1.5-1.5H13a2 2 0 0 0-2-2"/></symbol>
+    <symbol id="i-info" viewBox="0 0 20 20"><path d="M10.5 8.91a.5.5 0 0 0-1 .09v4.6a.5.5 0 0 0 1-.1V8.91m.3-2.16a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0M18 10a8 8 0 1 0-16 0 8 8 0 0 0 16 0M3 10a7 7 0 1 1 14 0 7 7 0 0 1-14 0"/></symbol>
+    <symbol id="i-info-filled" viewBox="0 0 20 20"><path d="M18 10a8 8 0 1 0-16 0 8 8 0 0 0 16 0M9.5 8.91a.5.5 0 0 1 1 0v4.69a.5.5 0 0 1-1 0V8.9m-.25-2.16a.75.75 0 1 1 1.5 0 .75.75 0 0 1-1.5 0"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 20 20"><path d="M1.91 7.38A8.5 8.5 0 0 1 3.7 4.3a.5.5 0 0 1 .54-.13l1.92.68a1 1 0 0 0 1.32-.76l.36-2a.5.5 0 0 1 .4-.4 9 9 0 0 1 3.55 0q.32.08.38.4l.37 2a1 1 0 0 0 1.32.76l1.92-.68a.5.5 0 0 1 .54.13 8.5 8.5 0 0 1 1.78 3.08q.08.31-.15.54l-1.56 1.32a1 1 0 0 0 0 1.52l1.56 1.32a.5.5 0 0 1 .15.54 8.5 8.5 0 0 1-1.78 3.08.5.5 0 0 1-.54.13l-1.92-.68a1 1 0 0 0-1.32.76l-.37 2a.5.5 0 0 1-.38.4 8.5 8.5 0 0 1-3.56 0 .5.5 0 0 1-.39-.4l-.36-2a1 1 0 0 0-1.32-.76l-1.92.68a.5.5 0 0 1-.54-.13 8.5 8.5 0 0 1-1.78-3.08.5.5 0 0 1 .15-.54l1.56-1.32a1 1 0 0 0 0-1.52L2.06 7.92a.5.5 0 0 1-.15-.54m1.06 0 1.3 1.1a2 2 0 0 1 0 3.04l-1.3 1.1q.45 1.19 1.25 2.16l1.6-.58a2 2 0 0 1 2.63 1.53l.3 1.67a8 8 0 0 0 2.5 0l.3-1.67a2 2 0 0 1 2.64-1.53l1.6.58a8 8 0 0 0 1.24-2.16l-1.3-1.1a2 2 0 0 1 0-3.04l1.3-1.1a8 8 0 0 0-1.25-2.16l-1.6.58a2 2 0 0 1-2.63-1.53l-.3-1.67a8 8 0 0 0-2.5 0l-.3 1.67A2 2 0 0 1 5.81 5.8l-1.6-.58a8 8 0 0 0-1.24 2.16M7.5 10a2.5 2.5 0 1 1 5 0 2.5 2.5 0 0 1-5 0m1 0a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 20 20"><path d="M7.5 11c.83 0 1.5.67 1.5 1.5v4c0 .83-.67 1.5-1.5 1.5h-4A1.5 1.5 0 0 1 2 16.5v-4c0-.83.67-1.5 1.5-1.5zm9 0c.83 0 1.5.67 1.5 1.5v4c0 .83-.67 1.5-1.5 1.5h-4a1.5 1.5 0 0 1-1.5-1.5v-4c0-.83.67-1.5 1.5-1.5zm-9 1h-4a.5.5 0 0 0-.5.5v4c0 .28.22.5.5.5h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 0-.5-.5m9 0h-4a.5.5 0 0 0-.5.5v4c0 .28.22.5.5.5h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 0-.5-.5m-9-10C8.33 2 9 2.67 9 3.5v4C9 8.33 8.33 9 7.5 9h-4A1.5 1.5 0 0 1 2 7.5v-4C2 2.67 2.67 2 3.5 2zm9 0c.83 0 1.5.67 1.5 1.5v4c0 .83-.67 1.5-1.5 1.5h-4A1.5 1.5 0 0 1 11 7.5v-4c0-.83.67-1.5 1.5-1.5zm-9 1h-4a.5.5 0 0 0-.5.5v4c0 .28.22.5.5.5h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 0-.5-.5m9 0h-4a.5.5 0 0 0-.5.5v4c0 .28.22.5.5.5h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 0-.5-.5"/></symbol>
+    <symbol id="i-record" viewBox="0 0 20 20"><path d="M10 14.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9M10 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16m-7 8a7 7 0 1 1 14 0 7 7 0 0 1-14 0"/></symbol>
+    <symbol id="i-comment" viewBox="0 0 20 20"><path d="M10.48 13.84h4.92c.9 0 1.6-.71 1.6-1.56V5.57C17 4.7 16.3 4 15.4 4H4.6C3.7 4 3 4.71 3 5.57v6.7c0 .86.7 1.57 1.6 1.57h1.6V17zM6.8 17.8a1 1 0 0 1-1.4-.2 1 1 0 0 1-.2-.59v-2.17h-.6A2.6 2.6 0 0 1 2 12.28V5.57A2.6 2.6 0 0 1 4.6 3h10.8C16.84 3 18 4.15 18 5.57v6.7a2.6 2.6 0 0 1-2.6 2.57h-4.59z"/></symbol>
+    <symbol id="i-add" viewBox="0 0 20 20"><path d="M10 2.5c.28 0 .5.22.5.5v6.5H17a.5.5 0 0 1 0 1h-6.5V17a.5.5 0 0 1-1 0v-6.5H3a.5.5 0 0 1 0-1h6.5V3c0-.28.22-.5.5-.5"/></symbol>
+    <symbol id="i-navigation" viewBox="0 0 20 20"><path d="M2 4.5c0-.28.22-.5.5-.5h15a.5.5 0 0 1 0 1h-15a.5.5 0 0 1-.5-.5m0 5c0-.28.22-.5.5-.5h15a.5.5 0 0 1 0 1h-15a.5.5 0 0 1-.5-.5m.5 4.5a.5.5 0 0 0 0 1h15a.5.5 0 0 0 0-1z"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 20 20"><path d="M4 10a6 6 0 0 1 10.47-4H12.5a.5.5 0 0 0 0 1h3a.5.5 0 0 0 .5-.5v-3a.5.5 0 0 0-1 0v1.6a7 7 0 1 0 1.98 4.36.5.5 0 1 0-1 .08L16 10a6 6 0 0 1-12 0"/></symbol>
+    <symbol id="i-search" viewBox="0 0 20 20"><path d="M13.73 14.44a6.5 6.5 0 1 1 .7-.7l3.42 3.4a.5.5 0 0 1-.63.77l-.07-.06zm-.71-.71A5.5 5.5 0 0 0 15 9.5a5.5 5.5 0 1 0-1.98 4.23"/></symbol>
+    <symbol id="i-chevron-left" viewBox="0 0 20 20"><path d="M12.35 15.85a.5.5 0 0 1-.7 0L6.16 10.4a.55.55 0 0 1 0-.78l5.49-5.46a.5.5 0 1 1 .7.7L7.2 10l5.16 5.15c.2.2.2.5 0 .7"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 20 20"><path d="M7.65 4.15c.2-.2.5-.2.7 0l5.49 5.46c.21.22.21.57 0 .78l-5.49 5.47a.5.5 0 0 1-.7-.71L12.8 10 7.65 4.85a.5.5 0 0 1 0-.7"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 20 20"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"/></symbol>
+    <symbol id="i-dismiss" viewBox="0 0 20 20"><path d="m4.09 4.22.06-.07a.5.5 0 0 1 .63-.06l.07.06L10 9.29l5.15-5.14a.5.5 0 0 1 .63-.06l.07.06c.18.17.2.44.06.63l-.06.07L10.71 10l5.14 5.15c.18.17.2.44.06.63l-.06.07a.5.5 0 0 1-.63.06l-.07-.06L10 10.71l-5.15 5.14a.5.5 0 0 1-.63.06l-.07-.06a.5.5 0 0 1-.06-.63l.06-.07L9.29 10 4.15 4.85a.5.5 0 0 1-.06-.63l.06-.07z"/></symbol>
+    <symbol id="i-open" viewBox="0 0 16 16"><path d="M4.5 3C3.67 3 3 3.67 3 4.5v7c0 .83.67 1.5 1.5 1.5h7c.83 0 1.5-.67 1.5-1.5V9.27a.5.5 0 0 1 1 0v2.23a2.5 2.5 0 0 1-2.5 2.5h-7A2.5 2.5 0 0 1 2 11.5v-7A2.5 2.5 0 0 1 4.5 2h2.23a.5.5 0 0 1 0 1zm4.27-.5c0-.28.22-.5.5-.5h4.23c.28 0 .5.22.5.5v4.23a.5.5 0 0 1-1 0V3.71L9.62 7.08a.5.5 0 1 1-.7-.7L12.29 3H9.27a.5.5 0 0 1-.5-.5"/></symbol>
+  </svg>
+  <a class="skip-link" href="#settings-title">Skip to Settings</a>
+  <section class="proto" aria-label="Design preview controls, outside the product UI">
+    <details id="preview-details">
+      <summary>074 preview · exploring</summary>
+      <div class="proto-content">
+        <p>Not approved. Proposed Settings &gt; About. Frozen local data, not a live client: nothing is requested, read from the workspace, or changed. The repository URL is the only external destination. Production enters Settings on Packs; this file opens About for review (<code>?section=packs</code> starts on Packs).</p>
+        <div class="proto-controls">
+          <label>Preview appearance
+            <select id="proto-theme">
+              <option value="host">Follow host</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
+          <label>About read state
+            <select id="proto-read" aria-describedby="proto-read-note">
+              <option value="current">Recorded values</option>
+              <option value="loading">Reading (illustration)</option>
+              <option value="unavailable">Unavailable (illustration)</option>
+            </select>
+          </label>
+        </div>
+        <p id="proto-read-note">Recorded values come from <code>.dude/metadata/bundle-manifest.md</code> (<code>installed_ref: main</code>, <code>source_ref: main</code>). Author and repository come from the accepted 074 idea and never depend on that read. Packs uses <code>.dude/metadata/profile.md</code> and the local <code>library/packs</code> catalog, identical to the 063 capture.</p>
+        <p>Compare, each in a new tab:
+          <a href="../../052-dude-canvas-ui/design/fluent-desktop-workspace.html" target="_blank" rel="noopener noreferrer">052 workspace baseline</a> ·
+          <a href="../../063-dude-canvas-settings/design/pack-management.html" target="_blank" rel="noopener noreferrer">063 Settings baseline</a> ·
+          <a href="../../062-dude-canvas-workspace-integration/design/workspace-integration.html" target="_blank" rel="noopener noreferrer">062 workspace reference</a> ·
+          <a href="../spec.md" target="_blank" rel="noopener noreferrer">074 specification</a></p>
+      </div>
+    </details>
+  </section>
+  <div id="app">
+    <header class="command-bar">
+      <div class="titlebar"><span class="brand">Dude</span><span class="workspace-label">Workspace</span></div>
+      <div class="selector">
+        <a class="finder-reference" href="../../062-dude-canvas-workspace-integration/design/workspace-integration.html?view=overview" target="_blank" rel="noopener noreferrer" aria-label="Work finder in the approved 062 reference, opens a new tab" title="Work finder · 062 reference (new tab)">
+          <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+          <span class="finder-label">Work finder <span class="finder-ref">· 062 reference</span></span>
+        </a>
+      </div>
+      <div class="toolbar" id="workspace-actions" role="toolbar" aria-label="Workspace actions" hidden>
+        <button class="button subtle toolbar-button" id="reload-packs" type="button" aria-label="Reload packs" title="Reload pack information (preview: re-applies the embedded capture; nothing is read)">
+          <svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg><span class="reload-label">Reload packs</span>
+        </button>
+      </div>
+    </header>
+    <div class="shell-body">
+      <nav class="rail" aria-label="Workspace navigation">
+        <button class="button subtle icon-button rail-toggle" id="nav-toggle" type="button" aria-label="Expand navigation pane" title="Expand navigation pane" aria-expanded="false" aria-controls="rail-items">
+          <svg class="icon" aria-hidden="true"><use href="#i-navigation"/></svg>
+        </button>
+        <div class="rail-contents" id="rail-items">
+          <div class="rail-destinations">
+            <a class="rail-tab" href="../../062-dude-canvas-workspace-integration/design/workspace-integration.html?view=overview" target="_blank" rel="noopener noreferrer" aria-label="Overview, 062 reference, opens a new tab" title="Overview · 062 reference (new tab)">
+              <svg class="icon" aria-hidden="true"><use href="#i-grid"/></svg><span class="rail-label">Overview <span class="rail-ref">· ref</span></span>
+            </a>
+            <a class="rail-tab" href="../../062-dude-canvas-workspace-integration/design/workspace-integration.html?view=now&amp;select=062" target="_blank" rel="noopener noreferrer" aria-label="Now, 062 reference, opens a new tab" title="Now · 062 reference (new tab)">
+              <svg class="icon" aria-hidden="true"><use href="#i-record"/></svg><span class="rail-label">Now <span class="rail-ref">· ref</span></span>
+            </a>
+            <a class="rail-tab" href="../../062-dude-canvas-workspace-integration/design/workspace-integration.html?view=needs" target="_blank" rel="noopener noreferrer" aria-label="Needs you, 062 reference, opens a new tab" title="Needs you · 062 reference (new tab)">
+              <svg class="icon" aria-hidden="true"><use href="#i-comment"/></svg><span class="rail-label">Needs you <span class="rail-ref">· ref</span></span>
+            </a>
+            <a class="rail-tab" href="../../062-dude-canvas-workspace-integration/design/workspace-integration.html?view=new" target="_blank" rel="noopener noreferrer" aria-label="New idea, 062 reference, opens a new tab" title="New idea · 062 reference (new tab)">
+              <svg class="icon" aria-hidden="true"><use href="#i-add"/></svg><span class="rail-label">New idea <span class="rail-ref">· ref</span></span>
+            </a>
+          </div>
+          <div class="rail-footer">
+            <button class="rail-tab" type="button" data-settings aria-current="page" aria-label="Settings, current page" title="Settings">
+              <svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span class="rail-label">Settings</span>
+            </button>
+          </div>
+        </div>
+      </nav>
+      <main class="product" aria-label="Workspace">
+        <div class="settings-panel" id="settings" data-section="about">
+          <header class="settings-header">
+            <h1 id="settings-title" tabindex="-1">Settings</h1>
+            <div class="section-tabs" role="tablist" aria-label="Settings sections">
+              <button class="tab section-tab" id="section-tab-packs" type="button" role="tab" data-section="packs" aria-selected="false" aria-controls="section-packs" tabindex="-1">
+                <span class="tab-icon" aria-hidden="true"><svg class="icon icon-regular"><use href="#i-puzzle"/></svg><svg class="icon icon-filled"><use href="#i-puzzle-filled"/></svg></span>
+                <span class="tab-content"><span class="tab-text">Packs</span><span class="tab-reserve" aria-hidden="true">Packs</span></span>
+              </button>
+              <button class="tab section-tab" id="section-tab-about" type="button" role="tab" data-section="about" aria-selected="true" aria-controls="section-about" tabindex="0">
+                <span class="tab-icon" aria-hidden="true"><svg class="icon icon-regular"><use href="#i-info"/></svg><svg class="icon icon-filled"><use href="#i-info-filled"/></svg></span>
+                <span class="tab-content"><span class="tab-text">About</span><span class="tab-reserve" aria-hidden="true">About</span></span>
+              </button>
+            </div>
+          </header>
+          <div class="section-panel packs-panel" id="section-packs" role="tabpanel" aria-labelledby="section-tab-packs" hidden>
+            <div class="pack-layout" id="pack-layout">
+              <section class="pack-browser" aria-labelledby="packs-results-heading">
+                <div class="pack-tabs" role="tablist" aria-label="Pack context">
+                  <button class="tab pack-tab" id="pack-tab-installed" type="button" role="tab" data-context="installed" aria-selected="true" aria-controls="pack-panel" tabindex="0">
+                    <span class="tab-content"><span class="tab-text">Installed <span class="pack-tab-count" data-count="installed"></span></span><span class="tab-reserve" aria-hidden="true">Installed <span class="pack-tab-count" data-count="installed"></span></span></span>
+                  </button>
+                  <button class="tab pack-tab" id="pack-tab-available" type="button" role="tab" data-context="available" aria-selected="false" aria-controls="pack-panel" tabindex="-1">
+                    <span class="tab-content"><span class="tab-text">Available <span class="pack-tab-count" data-count="available"></span></span><span class="tab-reserve" aria-hidden="true">Available <span class="pack-tab-count" data-count="available"></span></span></span>
+                  </button>
+                </div>
+                <div class="pack-panel" id="pack-panel" role="tabpanel" aria-labelledby="pack-tab-installed">
+                  <div class="pack-toolbar">
+                    <div class="pack-filter-field">
+                      <label for="use-case-filter">Use case</label>
+                      <span class="dropdown"><select id="use-case-filter" aria-controls="pack-rows"></select><svg class="icon" aria-hidden="true"><use href="#i-chevron-down"/></svg></span>
+                    </div>
+                    <button class="button pack-clear" id="clear-filter" type="button">Clear</button>
+                  </div>
+                  <h2 class="visually-hidden" id="packs-results-heading" tabindex="-1">Installed packs</h2>
+                  <p class="visually-hidden" id="packs-status" role="status" aria-live="polite"></p>
+                  <div class="pack-scroll" id="pack-scroll">
+                    <table class="pack-table" id="pack-table" aria-label="Installed packs">
+                      <thead><tr><th scope="col">Pack</th><th scope="col">Use cases</th></tr></thead>
+                      <tbody id="pack-rows"></tbody>
+                    </table>
+                    <div class="empty" id="pack-empty" hidden></div>
+                  </div>
+                  <div class="pack-pager">
+                    <button class="button pack-page-button" id="previous-page" type="button" aria-label="Previous pack page" aria-controls="pack-rows">
+                      <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"/></svg><span class="pack-page-label">Previous</span>
+                    </button>
+                    <div class="pack-metrics" role="status" aria-live="polite" aria-atomic="true"><span id="pack-count"></span><span id="pack-page"></span></div>
+                    <button class="button pack-page-button" id="next-page" type="button" aria-label="Next pack page" aria-controls="pack-rows">
+                      <span class="pack-page-label">Next</span><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg>
+                    </button>
+                  </div>
+                </div>
+              </section>
+              <dialog class="pack-detail" id="pack-detail" aria-labelledby="pack-detail-title">
+                <header class="pack-detail-header">
+                  <div class="pack-detail-heading"><p class="eyebrow" id="pack-detail-scope"></p><h2 id="pack-detail-title"></h2></div>
+                  <button class="button subtle icon-button" id="pack-detail-close" type="button" aria-label="Close pack details">
+                    <svg class="icon" aria-hidden="true"><use href="#i-dismiss"/></svg>
+                  </button>
+                </header>
+                <div class="pack-detail-body" id="pack-detail-body" tabindex="0" role="region" aria-label="Pack metadata, source, and files"></div>
+                <footer class="pack-detail-footer"><button class="button" id="pack-detail-back" type="button">Back to results</button></footer>
+              </dialog>
+            </div>
+          </div>
+          <div class="section-panel about-panel" id="section-about" role="tabpanel" aria-labelledby="section-tab-about">
+            <div class="about-body">
+              <h2 class="about-identity" id="about-title">Dude</h2>
+              <dl class="about-facts" id="about-facts" aria-busy="false">
+                <div class="about-row"><dt>Dude version</dt><dd id="about-version">Development (main)</dd></div>
+                <div class="about-row"><dt>Author</dt><dd>Enrique Gonzalez</dd></div>
+                <div class="about-row"><dt>Repository</dt><dd><a class="link" id="about-repository" href="https://github.com/E-G-C/dude" target="_blank" rel="noopener noreferrer" aria-label="https://github.com/E-G-C/dude (opens in a new tab)">https://<wbr>github.com/<wbr><span class="nowrap">E-G-C/dude<svg class="icon16" aria-hidden="true"><use href="#i-open"/></svg></span></a></dd></div>
+                <div class="about-row"><dt>Recorded channel/ref</dt><dd id="about-channel">Development (main)</dd></div>
+              </dl>
+              <p class="about-note" id="about-note">Recorded installation metadata; installed files are not verified.</p>
+              <p class="visually-hidden" id="about-status" role="status" aria-live="polite"></p>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+    <footer class="status-bar" id="status-bar" aria-label="Workspace status" tabindex="0"><span id="status-text">About · Read only</span></footer>
+  </div>
+  <dialog class="nav-overlay" id="nav-dialog" aria-labelledby="nav-dialog-title">
+    <div class="nav-heading">
+      <span id="nav-dialog-title" class="brand">Navigation</span>
+      <button class="button subtle icon-button" id="nav-close" type="button" aria-label="Close navigation pane">
+        <svg class="icon" aria-hidden="true"><use href="#i-dismiss"/></svg>
+      </button>
+    </div>
+    <p class="eyebrow nav-note">Other views open the 062 reference in a new tab.</p>
+  </dialog>
+  <noscript><p class="eyebrow">Section switching and Packs need local JavaScript in this preview. No live data is loaded.</p></noscript>
+  <!-- Frozen captures, read 2026-09-25. Never fetched or refreshed by this file. -->
+  <script type="application/json" id="about-capture">{"installedRef":"main","sourceRef":"main"}</script>
+  <script type="application/json" id="profile-capture">
+    {"installed":{
+      "authoring":{"files":[".github/agents/dude-pack-authoring-agent-smith.agent.md",".github/agents/dude-pack-authoring-instruction-smith.agent.md",".github/agents/dude-pack-authoring-pack-smith.agent.md",".github/agents/dude-pack-authoring-prompt-smith.agent.md",".github/agents/dude-pack-authoring-skill-smith.agent.md",".github/skills/dude-pack-authoring-instruction-conventions",".github/skills/dude-pack-authoring-pack-conventions",".github/skills/dude-pack-authoring-prompt-conventions"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}},
+      "clearline":{"files":[".github/agents/dude-pack-clearline-stylist.agent.md",".github/prompts/dude-pack-clearline-apply-visual-system.prompt.md",".github/skills/dude-pack-clearline-visual"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}},
+      "coding":{"files":[".github/agents/dude-pack-coding-architect.agent.md",".github/agents/dude-pack-coding-coder.agent.md",".github/agents/dude-pack-coding-reviewer.agent.md",".github/agents/dude-pack-coding-tester.agent.md",".github/instructions/dude-pack-coding-engineering-standards.instructions.md",".github/instructions/dude-pack-coding-host-controls.instructions.md",".github/skills/dude-pack-coding-spec-artifacts"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}},
+      "design":{"files":[".github/skills/dude-pack-design-frontend-aesthetics",".github/skills/dude-pack-design-workflow"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}},
+      "fluent-ui":{"files":[".github/agents/dude-pack-fluent-ui-specialist.agent.md"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}},
+      "release":{"files":[".github/agents/dude-pack-release-manager.agent.md",".github/skills/dude-pack-release-pipeline-parity",".github/skills/dude-pack-release-tag-driven-versioning",".github/skills/dude-pack-release-writeback-via-pr"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}},
+      "rubber-duck":{"files":[".github/agents/dude-pack-rubber-duck-retrospective.agent.md"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}},
+      "strata":{"files":[".github/agents/dude-pack-strata-stylist.agent.md",".github/prompts/dude-pack-strata-apply-visual-system.prompt.md",".github/skills/dude-pack-strata-visual"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}},
+      "writing":{"files":[".github/skills/dude-pack-writing-avoid-ai-tropes",".github/skills/dude-pack-writing-style"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}}
+    }}
+  </script>
+  <script type="application/json" id="catalog-capture">
+    {"origin":"local","packs":[
+      {"name":"authoring","description":"Bundle-authoring specialists — expert smiths for creating agents, skills, instructions, prompts, and packs. Dev tooling for building and maintaining Dude bundles.","use_cases":["bundle-authoring"]},
+      {"name":"beads","description":"Current-only tracked execution via Beads for canonical .dude/specs features, with exact-owner import, Beads-authoritative work, and a one-way tasks.md mirror.","use_cases":["work-tracking"]},
+      {"name":"clearline","description":"Framework-agnostic visual system for interfaces, graphics, documents, and slides: calm neutrals, four accents, Inter typography, an 8-point grid with 4-point half steps, a shared left edge, and an optional project-supplied mark.","use_cases":["ui","visual-design"]},
+      {"name":"coding","description":"Software-development specialists for implementation, architecture, testing, and independent code review, with shared engineering standards.","use_cases":["software-development"]},
+      {"name":"copilot-sdk","description":"GitHub Copilot SDK specialist for SDK app architecture, hooks, custom agents, MCP, skills, authentication, deployment, and Rust integration.","use_cases":["software-development"]},
+      {"name":"design","description":"A visual design-proposal lane: mood, layout, look-and-feel, mockups, surface design, brand direction, preview approval, and applying an approved visual spec — overlaid on the task/verification lifecycle.","use_cases":["ui","visual-design"]},
+      {"name":"docsy","description":"Docsy Hugo theme specialist: install paths, content authoring, theme customization, shortcodes, search/i18n/versioning, deployment, and AI-agent support.","use_cases":["documentation","web-development"]},
+      {"name":"fluent-ui","description":"Fluent UI React v9 specialist for design system compliance, component selection, theming, layout patterns, and accessible UI composition.","use_cases":["ui"]},
+      {"name":"hugo","description":"Hugo site architecture, templates, asset pipeline, migration, and troubleshooting specialists for Hugo static sites.","use_cases":["web-development"]},
+      {"name":"newsroom","description":"Turn transcripts, notes, and calendar invites into Hugo news articles and events: a newsroom writer + event deep-fetcher, with article, calendar-event, and static-safe-time skills.","use_cases":["web-development","writing"]},
+      {"name":"practices","description":"Engineering-practice workflows. Currently: tests-first (TDD) implementation discipline.","use_cases":["software-development"]},
+      {"name":"release","description":"Release engineering specialist + skills for tag-driven versioning, GitHub Actions / Azure Pipelines parity, and protected-branch version write-back.","use_cases":["release-management"]},
+      {"name":"rubber-duck","description":"Read-only, non-authoritative retrospective for successful feature and Ship completion.","use_cases":["retrospective"]},
+      {"name":"rust","description":"Rust specialist for Cargo workspaces, async/concurrency, ownership-heavy code, performance work, and Tauri desktop/mobile backends.","use_cases":["software-development"]},
+      {"name":"strata","description":"Layered visual system for interfaces, graphics, data visualization, and documents: one structural language with two colour palettes, plane-and-rule elevation with no drop shadows, working UI type scale, 4/8 spacing, motion, and measured accessibility — in CSS, SCSS, JSON, and Tailwind, with a folder-local token validator.","use_cases":["ui","visual-design"]},
+      {"name":"technical-docs","description":"Create or update traceable technical documents from software repositories, source code, configuration, tests, transcripts, notes, drafts, and existing Markdown. Scales beyond the context window with an evidence ledger, incremental drafting, and coverage and lint gates.","use_cases":["documentation","writing"]},
+      {"name":"web","description":"Backend and frontend specialist agents for web application work (APIs, services, persistence + UI, components, accessibility).","use_cases":["api","ui","web-development"]},
+      {"name":"writing","description":"Write plain, concise, actionable documents, feature definitions, and user replies, and remove common AI writing tells.","use_cases":["writing"]}
+    ]}
+  </script>
+  <script>
+    'use strict';
+    const $ = id => document.getElementById(id);
+    const ABOUT = JSON.parse($('about-capture').textContent);
+    const INSTALLED = JSON.parse($('profile-capture').textContent).installed;
+    const CATALOG = JSON.parse($('catalog-capture').textContent);
+    const params = new URLSearchParams(location.search);
+
+    // plan.md display contract. It classifies only the recorded value: no tag
+    // lookup, no remote release, and no installed-byte claim.
+    const RELEASE = /^v\d+\.\d+\.\d+$/;
+    const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9._/+-]*$/;
+    function usableRef(value) {
+      if (typeof value !== 'string' || !SAFE_REF.test(value) || value.includes('..') || value.includes('//')) return null;
+      return value.split('/').some(part => !part || part.startsWith('.') || part.endsWith('.') || part.endsWith('.lock')) ? null : value;
+    }
+    function versionText(ref) {
+      if (!ref) return null;
+      if (RELEASE.test(ref)) return ref;
+      return ref === 'main' ? 'Development (main)' : `Recorded ref (${ref})`;
+    }
+    function channelText(ref) {
+      if (!ref) return null;
+      if (RELEASE.test(ref)) return `Pinned release (${ref})`;
+      if (ref === 'main') return 'Development (main)';
+      return ref === 'latest' ? 'Stable releases (latest)' : `Recorded ref (${ref})`;
+    }
+    const NOTE = 'Recorded installation metadata; installed files are not verified.';
+    const UNAVAILABLE_NOTE = 'Recorded installation metadata is unavailable, so no version is shown.';
+
+    const INITIAL_VIEW = { context: 'installed', tag: '', page: 1, selected: null };
+    const state = {
+      section: params.get('section') === 'packs' ? 'packs' : 'about',
+      read: ['loading', 'unavailable'].includes(params.get('state')) ? params.get('state') : 'current',
+      view: { ...INITIAL_VIEW },
+      scroll: 0,
+    };
+
+    function textNode(tag, text, className = '') {
+      const node = document.createElement(tag);
+      node.textContent = text;
+      if (className) node.className = className;
+      return node;
+    }
+    function fact(list, label, content) {
+      const value = document.createElement('dd');
+      value.append(typeof content === 'string' ? document.createTextNode(content) : content);
+      list.append(textNode('dt', label), value);
+    }
+    function loopTab(event, container) {
+      const stops = [...container.querySelectorAll('a[href], button:not(:disabled), summary, select, [tabindex="0"]')]
+        .filter(node => node.getClientRects().length);
+      if (!stops.length) return;
+      const first = stops[0], last = stops.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+    function roveTabs(event, tabs, index, activate) {
+      const moves = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: tabs.length - 1 };
+      if (!(event.key in moves) || event.altKey || event.ctrlKey || event.metaKey) return;
+      event.preventDefault();
+      activate(tabs[(moves[event.key] + tabs.length) % tabs.length]);
+    }
+    function onBackdrop(dialog, dismiss) {
+      dialog.addEventListener('click', event => {
+        if (event.target !== dialog || !dialog.matches(':modal')) return;
+        const box = dialog.getBoundingClientRect();
+        if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dismiss();
+      });
+    }
+
+    /* ---------------- About ---------------- */
+    const aboutPanel = $('section-about');
+    function fillValue(node, text, reading) {
+      node.replaceChildren();
+      node.classList.toggle('unavailable', !reading && text === null);
+      if (!reading) { node.textContent = text ?? 'Unavailable'; return; }
+      const spinner = document.createElement('span');
+      spinner.className = 'spinner';
+      spinner.setAttribute('aria-hidden', 'true');
+      node.append(spinner, 'Reading…');
+    }
+    function syncAboutScroll() {
+      // The panel takes focus only when it has something to scroll.
+      const scrollable = !aboutPanel.hidden && aboutPanel.scrollHeight > aboutPanel.clientHeight + 1;
+      if (scrollable) aboutPanel.tabIndex = 0;
+      else aboutPanel.removeAttribute('tabindex');
+    }
+    function renderAbout() {
+      // Every About entry reads again. Here the read is the embedded capture,
+      // or one of the labeled illustrations chosen in the preview strip.
+      const reading = state.read === 'loading';
+      const record = state.read === 'current' ? ABOUT : { installedRef: null, sourceRef: null };
+      fillValue($('about-version'), versionText(usableRef(record.installedRef)), reading);
+      fillValue($('about-channel'), channelText(usableRef(record.sourceRef)), reading);
+      $('about-facts').setAttribute('aria-busy', String(reading));
+      $('about-note').textContent = state.read === 'unavailable' ? UNAVAILABLE_NOTE : NOTE;
+      $('about-status').textContent = reading ? 'Reading recorded installation metadata.'
+        : state.read === 'unavailable' ? 'Recorded installation metadata is unavailable.' : '';
+      syncAboutScroll();
+    }
+    new ResizeObserver(syncAboutScroll).observe(aboutPanel);
+    new ResizeObserver(syncAboutScroll).observe(aboutPanel.firstElementChild);
+
+    /* ---------------- Settings sections ---------------- */
+    const sectionTabs = [...document.querySelectorAll('.section-tab')];
+    const packsPanel = $('section-packs');
+    const packScroll = $('pack-scroll');
+    const tabFor = section => sectionTabs.find(tab => tab.dataset.section === section);
+    function selectSection(section, { focus = false, initial = false } = {}) {
+      const leaving = state.section;
+      if (section === leaving && !initial) { if (focus) tabFor(section).focus(); return; }
+      if (leaving === 'packs' && !packsPanel.hidden) { state.scroll = packScroll.scrollTop; releaseDetail(); }
+      state.section = section;
+      sectionTabs.forEach(tab => {
+        const selected = tab.dataset.section === section;
+        tab.setAttribute('aria-selected', String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+      });
+      packsPanel.hidden = section !== 'packs';
+      aboutPanel.hidden = section !== 'about';
+      $('settings').dataset.section = section;
+      // Reload packs is a Packs action only. Nothing takes its place on About.
+      $('workspace-actions').hidden = section !== 'packs';
+      $('status-text').textContent = section === 'about' ? 'About · Read only' : 'Installed: current · Catalog: current';
+      if (focus) tabFor(section).focus();
+      if (section === 'about') renderAbout();
+      else {
+        renderPacks();
+        packScroll.scrollTop = state.scroll;
+        restoreDetail();
+      }
+    }
+    sectionTabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => selectSection(tab.dataset.section, { focus: true }));
+      tab.addEventListener('keydown', event => roveTabs(event, sectionTabs, index, next => selectSection(next.dataset.section, { focus: true })));
+    });
+    /* ---------------- Packs (settings.jsx behavior, unchanged) ---------------- */
+    const PAGE_SIZE = 5;
+    const ITEMS = CATALOG.packs.map(pack => ({ ...pack, installed: Object.hasOwn(INSTALLED, pack.name), entry: INSTALLED[pack.name] || null }));
+    const TAGS = [...new Set(CATALOG.packs.flatMap(pack => pack.use_cases))];
+    const TOTALS = { installed: ITEMS.filter(item => item.installed).length, available: ITEMS.filter(item => !item.installed).length };
+    const tagsText = pack => pack.use_cases.length ? pack.use_cases.join(', ') : 'No use cases declared';
+    const contextLabel = () => state.view.context === 'installed' ? 'Installed' : 'Available';
+    const packTabs = [...document.querySelectorAll('.pack-tab')];
+    const filter = $('use-case-filter');
+    const detail = $('pack-detail');
+    const layout = $('pack-layout');
+    const narrowDetail = window.matchMedia('(max-width: 1099px)');
+    const rowButton = name => name ? document.querySelector(`[data-open-pack="${CSS.escape(name)}"]`) : null;
+
+    filter.append(new Option('All use cases', ''), ...TAGS.map(tag => new Option(tag, tag)));
+    document.querySelectorAll('[data-count]').forEach(node => { node.textContent = String(TOTALS[node.dataset.count]); });
+    packTabs.forEach(tab => tab.setAttribute('aria-label', `${tab.dataset.context === 'installed' ? 'Installed' : 'Available'} (${TOTALS[tab.dataset.context]})`));
+
+    function model() {
+      const context = ITEMS.filter(item => item.installed === (state.view.context === 'installed'));
+      const matches = context.filter(item => !state.view.tag || item.use_cases.includes(state.view.tag));
+      const pages = Math.ceil(matches.length / PAGE_SIZE);
+      const page = Math.min(state.view.page, Math.max(1, pages));
+      const offset = (page - 1) * PAGE_SIZE;
+      const visible = matches.slice(offset, offset + PAGE_SIZE);
+      return { matches, pages, page, offset, visible, selected: visible.find(item => item.name === state.view.selected) || null };
+    }
+    function packRow(item) {
+      const row = document.createElement('tr');
+      row.className = 'pack-row';
+      row.classList.toggle('selected', item.name === state.view.selected);
+      const name = document.createElement('td');
+      const open = textNode('button', item.name, 'pack-open');
+      open.type = 'button';
+      open.dataset.openPack = item.name;
+      open.setAttribute('aria-label', `${item.name}. ${tagsText(item)}`);
+      open.setAttribute('aria-controls', 'pack-detail');
+      open.setAttribute('aria-expanded', String(item.name === state.view.selected));
+      open.addEventListener('keydown', event => {
+        if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+        const buttons = [...document.querySelectorAll('#pack-rows .pack-open')];
+        const index = buttons.indexOf(open);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+          : Math.max(0, Math.min(buttons.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
+        event.preventDefault();
+        buttons[next].focus();
+      });
+      name.append(open);
+      row.append(name, textNode('td', tagsText(item), 'pack-tags'));
+      row.addEventListener('click', () => selectPack(item.name));
+      return row;
+    }
+    function renderPacks() {
+      const m = model();
+      state.view.page = m.page;
+      if (!m.selected) state.view.selected = null;
+      packTabs.forEach(tab => {
+        const selected = tab.dataset.context === state.view.context;
+        tab.setAttribute('aria-selected', String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+      });
+      $('pack-panel').setAttribute('aria-labelledby', `pack-tab-${state.view.context}`);
+      $('packs-results-heading').textContent = `${contextLabel()} packs`;
+      $('pack-table').setAttribute('aria-label', `${contextLabel()} packs`);
+      filter.value = state.view.tag;
+      $('pack-rows').replaceChildren(...m.visible.map(packRow));
+      $('pack-table').hidden = !m.visible.length;
+      const empty = $('pack-empty');
+      empty.hidden = Boolean(m.visible.length);
+      if (!m.visible.length) {
+        const installed = state.view.context === 'installed';
+        empty.replaceChildren(
+          textNode('p', state.view.tag ? 'No matching packs' : installed ? 'No installed packs' : 'No available packs', 'pack-metadata-heading'),
+          textNode('p', state.view.tag ? 'Clear the use case to see all packs in this context.'
+            : installed ? 'The installed profile contains no packs.' : 'No catalog packs are outside installed membership.'),
+          textNode('p', `Catalog origin: ${CATALOG.origin}`, 'code'));
+      }
+      $('pack-count').textContent = !m.matches.length ? '0 matches'
+        : `${m.offset + 1}–${m.offset + m.visible.length} of ${m.matches.length}${state.view.tag ? ' matches' : ''}`;
+      $('pack-page').textContent = m.pages ? `Page ${m.page} of ${m.pages}` : 'No pages';
+      $('previous-page').disabled = m.page <= 1;
+      $('next-page').disabled = m.page >= m.pages;
+      syncDetail(m.selected);
+    }
+    function fillDetail(item) {
+      $('pack-detail-scope').textContent = `${contextLabel()} · Workspace scope`;
+      $('pack-detail-title').textContent = item.name;
+      const body = $('pack-detail-body');
+      body.replaceChildren(textNode('p', item.description || 'No description declared.', 'prose'));
+      // The product's own reason when no joined provider exists, which is
+      // exactly this preview's situation. Nothing here can request a change.
+      const actions = document.createElement('div');
+      actions.className = 'pack-actions';
+      (item.installed ? [['refresh', 'Refresh pack'], ['remove', 'Remove']] : [['install', 'Install']]).forEach(([operation, label]) => {
+        const button = textNode('button', label, operation === 'install' ? 'button primary' : 'button');
+        button.type = 'button';
+        button.disabled = true;
+        button.setAttribute('aria-describedby', 'pack-action-reason');
+        actions.append(button);
+      });
+      const reason = textNode('p', 'The current workspace and joined provider must be available before requesting a change.', 'eyebrow');
+      reason.id = 'pack-action-reason';
+      const group = document.createElement('div');
+      group.className = 'tight';
+      group.append(actions, reason);
+      const facts = document.createElement('dl');
+      facts.className = 'pack-metadata';
+      fact(facts, 'Use cases', tagsText(item));
+      fact(facts, 'Current catalog origin', textNode('span', CATALOG.origin, 'code'));
+      fact(facts, 'Declared tools', 'Not acquired in this snapshot.');
+      body.append(group, facts);
+      if (item.installed) {
+        const source = document.createElement('dl');
+        source.className = 'pack-metadata';
+        fact(source, 'Type', textNode('span', item.entry.source.type, 'code'));
+        fact(source, 'Location', textNode('span', item.entry.source.location, 'code'));
+        const files = document.createElement('details');
+        files.className = 'pack-files';
+        files.open = true;
+        const list = document.createElement('ul');
+        item.entry.files.forEach(file => { const entry = document.createElement('li'); entry.append(textNode('code', file, 'code')); list.append(entry); });
+        files.append(textNode('summary', `Recorded files (${item.entry.files.length})`), list);
+        body.append(textNode('h3', 'Recorded installed source', 'pack-metadata-heading'), source, files,
+          textNode('p', 'Membership and files: .dude/metadata/profile.md. Recorded source does not verify installed bytes.', 'eyebrow'));
+      } else {
+        const projected = document.createElement('div');
+        projected.className = 'tight';
+        projected.append(textNode('h3', 'Projected files', 'pack-metadata-heading'), textNode('p', 'Not acquired in this snapshot.'));
+        body.append(projected);
+      }
+    }
+    function releaseDetail() {
+      // A hidden section keeps its selection but never keeps a dialog on top.
+      if (detail.open) detail.close();
+      layout.classList.remove('has-details');
+    }
+    function syncDetail(selected) {
+      if (!selected || state.section !== 'packs') { releaseDetail(); return; }
+      fillDetail(selected);
+      const modal = narrowDetail.matches;
+      if (detail.open && detail.matches(':modal') !== modal) detail.close();
+      layout.classList.toggle('has-details', !modal);
+      // The wide pane opens without moving focus; the narrow overlay is modal.
+      if (!detail.open) { if (modal) detail.showModal(); else detail.setAttribute('open', ''); }
+    }
+    function restoreDetail() { syncDetail(model().selected); }
+    function selectPack(name) {
+      state.view.selected = name;
+      renderPacks();
+      $('pack-detail-close').focus();
+    }
+    function closePack() {
+      const name = state.view.selected;
+      state.view.selected = null;
+      renderPacks();
+      (rowButton(name) || $('packs-results-heading')).focus();
+    }
+    $('pack-detail-close').addEventListener('click', closePack);
+    $('pack-detail-back').addEventListener('click', closePack);
+    detail.addEventListener('cancel', event => { event.preventDefault(); closePack(); });
+    detail.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !detail.matches(':modal')) { event.preventDefault(); closePack(); }
+      else if (event.key === 'Tab' && detail.matches(':modal')) loopTab(event, detail);
+    });
+    onBackdrop(detail, closePack);
+    narrowDetail.addEventListener('change', () => {
+      if (state.section !== 'packs' || !model().selected) return;
+      restoreDetail();
+      if (detail.matches(':modal')) $('pack-detail-close').focus();
+    });
+    function switchContext(context) {
+      if (context === state.view.context) return;
+      state.view = { ...INITIAL_VIEW, context };
+      packScroll.scrollTop = 0;
+      renderPacks();
+    }
+    packTabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => { switchContext(tab.dataset.context); tab.focus(); });
+      tab.addEventListener('keydown', event => roveTabs(event, packTabs, index, next => { switchContext(next.dataset.context); next.focus(); }));
+    });
+    function changeFilter(tag) {
+      const firstPage = ITEMS.filter(item => item.installed === (state.view.context === 'installed')
+        && (!tag || item.use_cases.includes(tag))).slice(0, PAGE_SIZE);
+      state.view = { ...state.view, tag, page: 1, selected: firstPage.some(item => item.name === state.view.selected) ? state.view.selected : null };
+      packScroll.scrollTop = 0;
+      renderPacks();
+    }
+    filter.addEventListener('change', () => changeFilter(filter.value));
+    $('clear-filter').addEventListener('click', () => { changeFilter(''); filter.focus(); });
+    function changePage(delta) {
+      state.view = { ...state.view, page: state.view.page + delta, selected: null };
+      packScroll.scrollTop = 0;
+      renderPacks();
+      $('settings-title').focus();
+    }
+    $('previous-page').addEventListener('click', () => changePage(-1));
+    $('next-page').addEventListener('click', () => changePage(1));
+    $('reload-packs').addEventListener('click', () => {
+      // A product reload replaces the snapshot: context stays, the rest resets.
+      if (detail.contains(document.activeElement)) $('reload-packs').focus();
+      state.view = { ...INITIAL_VIEW, context: state.view.context };
+      packScroll.scrollTop = 0;
+      renderPacks();
+      $('packs-status').textContent = 'Pack view reset from the embedded capture. Nothing was read.';
+    });
+
+    /* ---------------- Rail and narrow navigation ---------------- */
+    const app = $('app'), navToggle = $('nav-toggle'), navDialog = $('nav-dialog');
+    const narrowNav = window.matchMedia('(max-width: 719px)');
+    const dialogNav = $('rail-items').cloneNode(true);
+    dialogNav.removeAttribute('id');
+    navDialog.append(dialogNav);
+    let expanded = false, navReturn = null;
+    function syncNavigation() {
+      app.classList.toggle('rail-expanded', !narrowNav.matches && expanded);
+      const open = narrowNav.matches ? navDialog.open : expanded;
+      const label = open ? 'Collapse navigation pane' : 'Expand navigation pane';
+      navToggle.setAttribute('aria-expanded', String(open));
+      navToggle.setAttribute('aria-controls', narrowNav.matches ? 'nav-dialog' : 'rail-items');
+      navToggle.setAttribute('aria-label', label);
+      navToggle.title = label;
+    }
+    navToggle.addEventListener('click', () => {
+      if (narrowNav.matches) {
+        navDialog.showModal();
+        dialogNav.querySelector('[aria-current="page"]').focus();
+      } else expanded = !expanded;
+      syncNavigation();
+    });
+    $('nav-close').addEventListener('click', () => navDialog.close());
+    navDialog.addEventListener('close', () => {
+      syncNavigation();
+      (navReturn || navToggle).focus();
+      navReturn = null;
+    });
+    navDialog.addEventListener('keydown', event => { if (event.key === 'Tab') loopTab(event, navDialog); });
+    onBackdrop(navDialog, () => navDialog.close());
+    narrowNav.addEventListener('change', () => {
+      expanded = false;
+      if (navDialog.open) navDialog.close();
+      syncNavigation();
+    });
+    document.querySelectorAll('[data-settings]').forEach(button => button.addEventListener('click', () => {
+      // Re-selecting Settings keeps the current section and focuses its heading.
+      if (navDialog.open) { navReturn = $('settings-title'); navDialog.close(); }
+      else $('settings-title').focus();
+    }));
+    dialogNav.querySelectorAll('a').forEach(link => link.addEventListener('click', () => navDialog.close()));
+
+    /* ---------------- Preview-only controls ---------------- */
+    const protoTheme = $('proto-theme'), protoRead = $('proto-read');
+    protoTheme.value = document.documentElement.dataset.protoTheme || 'host';
+    protoTheme.addEventListener('change', () => {
+      if (protoTheme.value === 'host') delete document.documentElement.dataset.protoTheme;
+      else document.documentElement.dataset.protoTheme = protoTheme.value;
+    });
+    protoRead.value = state.read;
+    protoRead.addEventListener('change', () => {
+      state.read = protoRead.value;
+      if (state.section === 'about') renderAbout();
+    });
+
+    selectSection(state.section, { initial: true });
+    syncNavigation();
+  </script>
+</body>
+</html>
