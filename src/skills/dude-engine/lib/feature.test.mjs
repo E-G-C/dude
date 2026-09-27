@@ -308,10 +308,9 @@ test('inventory flags draft ledgers with a resolvable spec_path and leaves dangl
       .sort();
 
     // New FR-029 diagnostic: a draft must not carry a resolvable spec_path.
-    assert.deepEqual(codesFor('.dude/ideas/001-dr.md'), [
-      'FEATURE_DRAFT_SPEC_PATH',
-      'FEATURE_NUMBER_COLLISION',
-    ]);
+    assert.deepEqual(codesFor('.dude/ideas/001-dr.md'), ['FEATURE_DRAFT_SPEC_PATH']);
+    // The draft is not an owner, so the package it names stays unowned.
+    assert.deepEqual(codesFor('.dude/specs/001-dr/spec.md'), ['FEATURE_OWNER_NOT_FOUND']);
     // Unchanged: a dangling draft spec_path stays a single dangling diagnostic.
     assert.deepEqual(codesFor('.dude/ideas/002-draft-dangling.md'), ['FEATURE_SPEC_PATH_DANGLING']);
     assert.deepEqual(result.features, []);
@@ -917,24 +916,6 @@ test('T003 duplicate identities taint every affected summary context without sup
       paths: ['.dude/ideas/001-shared.md', '.dude/ideas/002-shared.md'],
       code: 'FEATURE_IDEA_SLUG_DUPLICATE',
     },
-    {
-      name: 'duplicate idea lifecycle number',
-      arrange(root) {
-        write(root, '.dude/ideas/001-first.md', ledger('draft', '', 'first'));
-        write(root, '.dude/ideas/001-second.md', ledger('draft', '', 'second'));
-      },
-      paths: ['.dude/ideas/001-first.md', '.dude/ideas/001-second.md'],
-      code: 'FEATURE_IDEA_NUMBER_DUPLICATE',
-    },
-    {
-      name: 'duplicate package lifecycle number',
-      arrange(root) {
-        define(root, '001', 'first');
-        write(root, '.dude/specs/001-second/spec.md', '# Colliding package\n');
-      },
-      paths: ['.dude/ideas/001-first.md'],
-      code: 'FEATURE_PACKAGE_NUMBER_DUPLICATE',
-    },
   ];
   // Synchronous fixtures use no shared process mocks.
   for (const fixture of fixtures) {
@@ -967,6 +948,151 @@ test('T003 duplicate identities taint every affected summary context without sup
         assert.deepEqual(refused.choices.map((choice) => choice.ideaPath), [healthyPath], fixture.name);
       }
       assert.equal(strict.owner, null, `${fixture.name}: workflow owner gates remain globally strict`);
+      assert.deepEqual(snapshot(root), before);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('same-prefix peers with distinct slugs keep exact owners, summary contexts, and choices', () => {
+  const root = temporaryRoot();
+  try {
+    // Arrange
+    define(root, '004', 'beta');
+    define(root, '004', 'alpha');
+    write(root, '.dude/ideas/004-gamma.md', ledger('draft', '', 'gamma'));
+    write(root, '.dude/ideas/004-delta.md', ledger('resolved', '', 'delta'));
+    const alpha = { ideaPath: '.dude/ideas/004-alpha.md', specPath: '.dude/specs/004-alpha/spec.md' };
+    const beta = { ideaPath: '.dude/ideas/004-beta.md', specPath: '.dude/specs/004-beta/spec.md' };
+    const before = snapshot(root);
+
+    // Act
+    const inventory = inventoryLifecycleIdentities({ root });
+    const defined = inventoryDefinedFeatures({ root });
+    const summary = selectLifecycleIdeaSummary({ root });
+    const explicitBeta = selectLifecycleIdeaSummary({ root, target: '.dude/ideas/004-beta.md' });
+    const bareNumber = resolveIdeaSelector({ root, slug: '004' });
+
+    // Assert
+    assert.deepEqual(inventory.diagnostics, []);
+    assert.equal(inventory.nextNumber, '005');
+    assert.deepEqual(inventory.ideas.map((idea) => idea.ideaPath), [
+      '.dude/ideas/004-alpha.md',
+      '.dude/ideas/004-beta.md',
+      '.dude/ideas/004-delta.md',
+      '.dude/ideas/004-gamma.md',
+    ]);
+    assert.deepEqual(defined, { features: [alpha, beta], diagnostics: [] });
+    assert.deepEqual(resolveFeatureOwner({ root, specPath: alpha.specPath }), { owner: alpha, diagnostics: [] });
+    assert.deepEqual(resolveFeatureOwner({ root, specPath: beta.specPath }), { owner: beta, diagnostics: [] });
+    assert.deepEqual(summary.contexts.map((context) => [context.idea.ideaPath, context.owner, context.diagnostics]), [
+      [alpha.ideaPath, alpha, []],
+      [beta.ideaPath, beta, []],
+      ['.dude/ideas/004-delta.md', null, []],
+      ['.dude/ideas/004-gamma.md', null, []],
+    ]);
+    assert.deepEqual(summary.choices.map((idea) => idea.ideaPath), [
+      alpha.ideaPath,
+      beta.ideaPath,
+      '.dude/ideas/004-gamma.md',
+    ]);
+    assert.equal(summary.idea, null, 'several same-prefix choices never imply a sole selection');
+    assert.equal(explicitBeta.idea?.ideaPath, beta.ideaPath);
+    assert.deepEqual(explicitBeta.owner, beta);
+    assert.equal(resolveIdeaSelector({ root, slug: 'gamma' }).idea?.ideaPath, '.dude/ideas/004-gamma.md');
+    assert.equal(bareNumber.idea, null);
+    assert.deepEqual(bareNumber.diagnostics.map((diagnostic) => diagnostic.code), ['FEATURE_IDEA_NOT_FOUND']);
+    assert.deepEqual(snapshot(root), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a healthy same-prefix peer stays selectable beside retained slug, pair, orphan, and draft-claim errors', () => {
+  const fixtures = [
+    {
+      name: 'duplicate slug across prefixes',
+      arrange(root) {
+        write(root, '.dude/ideas/009-shared.md', ledger('draft', '', 'shared'));
+        write(root, '.dude/ideas/010-shared.md', ledger('draft', '', 'shared'));
+      },
+      path: '.dude/ideas/009-shared.md',
+      paths: ['.dude/ideas/009-shared.md', '.dude/ideas/010-shared.md'],
+      code: 'FEATURE_IDEA_SLUG_DUPLICATE',
+    },
+    {
+      name: 'owner number differs from its package',
+      arrange(root) {
+        write(root, '.dude/specs/009-beta/spec.md', '# 009-beta\n');
+        write(root, '.dude/ideas/010-beta.md', ledger('defined', '.dude/specs/009-beta/spec.md', 'beta'));
+      },
+      path: '.dude/ideas/010-beta.md',
+      paths: ['.dude/ideas/010-beta.md'],
+      code: 'FEATURE_OWNER_IDENTITY_MISMATCH',
+    },
+    {
+      name: 'owner slug differs from its same-prefix package',
+      arrange(root) {
+        write(root, '.dude/specs/009-gamma/spec.md', '# 009-gamma\n');
+        write(root, '.dude/ideas/009-other.md', ledger('defined', '.dude/specs/009-gamma/spec.md', 'other'));
+      },
+      path: '.dude/ideas/009-other.md',
+      paths: ['.dude/ideas/009-other.md'],
+      code: 'FEATURE_OWNER_IDENTITY_MISMATCH',
+    },
+    {
+      name: 'orphan same-prefix package',
+      arrange(root) {
+        write(root, '.dude/specs/009-orphan/spec.md', '# 009-orphan\n');
+      },
+      path: '.dude/specs/009-orphan/spec.md',
+      paths: [],
+      code: 'FEATURE_OWNER_NOT_FOUND',
+    },
+    {
+      name: 'draft claims the same-prefix peer package',
+      arrange(root) {
+        write(root, '.dude/ideas/009-draftish.md', ledger('draft', '.dude/specs/009-healthy/spec.md', 'draftish'));
+      },
+      path: '.dude/ideas/009-draftish.md',
+      paths: ['.dude/ideas/009-draftish.md'],
+      code: 'FEATURE_DRAFT_SPEC_PATH',
+    },
+  ];
+  // Synchronous fixtures use no shared process mocks.
+  for (const fixture of fixtures) {
+    // Arrange
+    const root = temporaryRoot();
+    try {
+      define(root, '009', 'healthy');
+      fixture.arrange(root);
+      const healthyPath = '.dude/ideas/009-healthy.md';
+      const before = snapshot(root);
+
+      // Act
+      const inventory = inventoryLifecycleIdentities({ root });
+      const result = selectLifecycleIdeaSummary({ root, target: 'healthy' });
+      const affected = fixture.paths.map((target) => selectLifecycleIdeaSummary({ root, target }));
+      const strict = resolveFeatureOwner({ root, specPath: '.dude/specs/009-healthy/spec.md' });
+
+      // Assert
+      assert.deepEqual(
+        inventory.diagnostics.map((diagnostic) => [diagnostic.path, diagnostic.code]),
+        [[fixture.path, fixture.code]],
+        `${fixture.name}: only the genuine identity error is reported`,
+      );
+      assert.equal(inventory.nextNumber, null, fixture.name);
+      assert.equal(result.idea?.ideaPath, healthyPath, fixture.name);
+      assert.deepEqual(result.owner, { ideaPath: healthyPath, specPath: '.dude/specs/009-healthy/spec.md' }, fixture.name);
+      assert.deepEqual(result.choices.map((choice) => choice.ideaPath), [healthyPath], fixture.name);
+      assert.deepEqual(result.contexts.find((context) => context.idea.ideaPath === healthyPath).diagnostics, [], fixture.name);
+      for (const refused of affected) {
+        assert.equal(refused.idea, null, fixture.name);
+        assert.equal(refused.owner, null, fixture.name);
+      }
+      assert.equal(strict.owner, null, `${fixture.name}: workflow owner gates remain globally strict`);
+      assert.ok(strict.diagnostics.some((diagnostic) => diagnostic.code === fixture.code), fixture.name);
       assert.deepEqual(snapshot(root), before);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

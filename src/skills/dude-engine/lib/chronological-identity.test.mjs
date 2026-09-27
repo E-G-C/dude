@@ -11,6 +11,7 @@ import {
   inventoryLifecycleIdentities,
   resolveFeatureOwner,
   resolveIdeaSelector,
+  selectLifecycleIdeaSummary,
 } from './feature.mjs';
 import { parseIdeaIdentity, parseSpecIdentity } from './feature-identity.mjs';
 import { deriveLifecycleModel } from '../../dude-lightweight-execution/backlog.mjs';
@@ -22,7 +23,28 @@ const CAPTURE = path.join(ROOT, 'src/skills/dude-feature-definition/publish-firs
 const DEFINE = path.join(ROOT, 'src/skills/dude-feature-definition/publish-first-definition.mjs');
 const LINT = path.join(ROOT, 'src/skills/dude-lint/lint.mjs');
 const FEATURE_DEFINITION_SKILL = path.join(ROOT, 'src/skills/dude-feature-definition/SKILL.md');
+const SHARED_RULES = path.join(ROOT, 'src/instructions/dude.instructions.md');
+const LINT_SKILL = path.join(ROOT, 'src/skills/dude-lint/SKILL.md');
 const CONFIG = fs.readFileSync(path.join(ROOT, 'src/config/agent-models.json'));
+const DUPLICATE_PREFIX_SOURCE_PAIRS = [
+  ['src/skills/dude-engine/lib/feature.mjs', '.github/skills/dude-engine/lib/feature.mjs'],
+  [
+    'src/skills/dude-feature-definition/publish-first-definition.mjs',
+    '.github/skills/dude-feature-definition/publish-first-definition.mjs',
+  ],
+  ['src/skills/dude-lightweight-execution/backlog.mjs', '.github/skills/dude-lightweight-execution/backlog.mjs'],
+  ['src/skills/dude-feature-definition/SKILL.md', '.github/skills/dude-feature-definition/SKILL.md'],
+  ['src/instructions/dude.instructions.md', '.github/instructions/dude.instructions.md'],
+  ['src/skills/dude-lint/SKILL.md', '.github/skills/dude-lint/SKILL.md'],
+];
+// Reported collision examples reproduced only in disposable fixtures.
+const REPORTED_PREFIX_PEERS = [
+  { number: '074', slug: 'work-readable-evidence-handoff', status: 'defined' },
+  { number: '074', slug: 'dude-canvas-about', status: 'defined' },
+  { number: '075', slug: 'terminal-work-manual-resolution', status: 'defined' },
+  { number: '075', slug: 'dude-development-base-release', status: 'draft' },
+  { number: '075', slug: 'resolved-bystander', status: 'resolved' },
+];
 
 function temporaryRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'dude-045-'));
@@ -103,6 +125,35 @@ function run(script, args) {
   return spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' });
 }
 
+function writeLifecycleRecord(root, { number, slug, status }) {
+  if (status !== 'defined') return { ideaPath: idea(root, number, slug, status), specPath: null };
+  const specPath = packageAt(root, number, slug);
+  return { ideaPath: idea(root, number, slug, status, specPath), specPath };
+}
+
+function lifecycleShape(inventory) {
+  return {
+    ideas: inventory.ideas.map(({ ideaPath, number, slug, status, specPath }) => ({ ideaPath, number, slug, status, specPath })),
+    packages: inventory.packages.map(({ specPath, number, slug }) => ({ specPath, number, slug })),
+    features: inventory.features,
+    nextNumber: inventory.nextNumber,
+    exhausted: inventory.exhausted,
+    diagnostics: inventory.diagnostics,
+  };
+}
+
+function markdownSection(markdown, heading) {
+  const lines = markdown.split('\n');
+  const start = lines.indexOf(heading);
+  assert.notEqual(start, -1, `missing section ${heading}`);
+  const level = heading.indexOf(' ');
+  const end = lines.findIndex((line, index) => {
+    const match = /^(#+) /.exec(line);
+    return index > start && match !== null && match[1].length <= level;
+  });
+  return lines.slice(start, end === -1 ? lines.length : end).join('\n');
+}
+
 test('T001 authoritative brainstorm procedure publishes first capture through its dedicated helper', () => {
   // Arrange
   const procedure = fs.readFileSync(FEATURE_DEFINITION_SKILL, 'utf8');
@@ -112,6 +163,53 @@ test('T001 authoritative brainstorm procedure publishes first capture through it
     procedure,
     /## Brainstorm[\s\S]*node \.github\/skills\/dude-feature-definition\/publish-first-capture\.mjs --root \. --slug <slug> --stage <absolute-staged-ledger-file>/,
   );
+});
+
+test('T001 active guidance lets distinct slugs share a prefix while keeping exact identity errors', () => {
+  // Arrange
+  const definition = fs.readFileSync(FEATURE_DEFINITION_SKILL, 'utf8');
+  const brainstorm = markdownSection(definition, '## Brainstorm');
+  const firstDefinition = markdownSection(definition, '## First Definition Transaction');
+  const rules = fs.readFileSync(SHARED_RULES, 'utf8').split('\n');
+  const captureRule = rules.find((line) => line.startsWith('4. ')) ?? '';
+  const ownerRule = rules.find((line) => line.startsWith('5. ')) ?? '';
+  const lintChecks = markdownSection(fs.readFileSync(LINT_SKILL, 'utf8'), '## Checks');
+  const numericConflict = /duplicate[- ]number|number collision|never reused/i;
+
+  // Act / Assert
+  assert.match(brainstorm, /`max\(valid direct idea and package lifecycle numbers\) \+ 1` allocation/);
+  assert.match(brainstorm, /never fills a gap and stops at `999`/);
+  assert.match(brainstorm, /Different slugs may share a lifecycle number; the inventory rejects a duplicate slug, not a shared number\./);
+  assert.doesNotMatch(brainstorm, numericConflict);
+  assert.match(firstDefinition, /Do not allocate a package number\./);
+  assert.match(firstDefinition, /A valid package with the same `<NNN>` and a different slug does not block definition\./);
+  assert.match(
+    firstDefinition,
+    /A duplicate slug, existing target path, conflicting owner claim, inconsistent number or suffix, or ambiguous prospective selection stops before writes\./,
+  );
+  assert.doesNotMatch(firstDefinition, numericConflict);
+  assert.match(captureRule, /Different slugs may share `<NNN>`; only a duplicate slug, a mismatched idea\/package pair, or competing claims to one exact path conflict\./);
+  assert.match(ownerRule, /never fall back to slug, directory, name, or matching lifecycle number/);
+  assert.match(ownerRule, /The lifecycle number records capture chronology only/);
+  assert.doesNotMatch(lintChecks, /duplicate-number/);
+  assert.match(lintChecks, /Unnumbered, malformed, out-of-range, duplicate-slug, and filename\/slug-mismatch identities fail\./);
+  assert.match(lintChecks, /Ideas and packages with different slugs may share a number\./);
+  assert.match(lintChecks, /has the matching lifecycle number and slug/);
+  assert.match(lintChecks, /Duplicate owners fail and report every conflicting idea path/);
+  assert.match(lintChecks, /matching numbers, slugs, titles, or directories never establish ownership/);
+});
+
+test('T001 duplicate-prefix sources and generated counterparts stay byte-identical', () => {
+  for (const [source, generated] of DUPLICATE_PREFIX_SOURCE_PAIRS) {
+    // Arrange
+    const sourceBytes = fs.readFileSync(path.join(ROOT, source));
+
+    // Act
+    const generatedBytes = fs.readFileSync(path.join(ROOT, generated));
+
+    // Assert
+    assert.ok(generatedBytes.equals(sourceBytes), `${generated} must match ${source}; run node scripts/build-dev.mjs`);
+  }
 });
 
 test('T001 strict identity parsers accept only ASCII 001-999 paths', () => {
@@ -189,18 +287,165 @@ test('T001 inventory fails closed for malformed, duplicate, drift, and unsafe id
     assert.equal(result.exhausted, false);
     assert.deepEqual(result.diagnostics.map((entry) => entry.code), [
       'FEATURE_IDEA_IDENTITY_INVALID',
-      'FEATURE_IDEA_NUMBER_DUPLICATE',
       'FEATURE_IDEA_SLUG_DUPLICATE',
-      'FEATURE_NUMBER_COLLISION',
       'FEATURE_IDEA_SLUG_MISMATCH',
       'FEATURE_IDEA_ENTRY_UNSUPPORTED',
-      'FEATURE_PACKAGE_NUMBER_DUPLICATE',
       'FEATURE_OWNER_NOT_FOUND',
       'FEATURE_OWNER_NOT_FOUND',
     ]);
+    // Sharing prefix 003 is not itself evidence of a conflict.
+    assert.equal(result.diagnostics.some((entry) => entry.path === '.dude/ideas/003-two.md'), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
     fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('T001 same-prefix draft, defined, resolved, and mixed inventories stay clean and exactly selectable', () => {
+  const cases = [
+    {
+      name: 'draft-only',
+      records: [
+        { number: '012', slug: 'second-draft', status: 'draft' },
+        { number: '012', slug: 'first-draft', status: 'draft' },
+      ],
+      nextNumber: '013',
+    },
+    {
+      name: 'defined-only',
+      records: [
+        { number: '013', slug: 'beta', status: 'defined' },
+        { number: '013', slug: 'alpha', status: 'defined' },
+      ],
+      nextNumber: '014',
+    },
+    {
+      name: 'resolved-only',
+      records: [
+        { number: '014', slug: 'closed-two', status: 'resolved' },
+        { number: '014', slug: 'closed-one', status: 'resolved' },
+      ],
+      nextNumber: '015',
+    },
+    {
+      name: 'mixed',
+      records: [
+        { number: '015', slug: 'resolved-peer', status: 'resolved' },
+        { number: '015', slug: 'draft-peer', status: 'draft' },
+        { number: '015', slug: 'defined-peer', status: 'defined' },
+        { number: '011', slug: 'earlier', status: 'draft' },
+      ],
+      nextNumber: '016',
+    },
+  ];
+  for (const fixture of cases) {
+    const root = temporaryRoot();
+    try {
+      // Arrange
+      const written = fixture.records.map((record) => ({ ...record, ...writeLifecycleRecord(root, record) }));
+      const ordered = [...written].sort((left, right) => (
+        Number(left.number) - Number(right.number) || (left.ideaPath < right.ideaPath ? -1 : 1)
+      ));
+
+      // Act
+      const full = inventoryLifecycleIdentities({ root });
+      const summary = selectLifecycleIdeaSummary({ root });
+
+      // Assert
+      assert.deepEqual(full.diagnostics, [], fixture.name);
+      assert.equal(full.nextNumber, fixture.nextNumber, fixture.name);
+      assert.equal(full.exhausted, false, fixture.name);
+      assert.deepEqual(full.ideas.map((entry) => entry.ideaPath), ordered.map((entry) => entry.ideaPath), fixture.name);
+      assert.deepEqual(
+        full.features,
+        ordered.filter((entry) => entry.specPath).map(({ ideaPath, specPath }) => ({ ideaPath, specPath })),
+        fixture.name,
+      );
+      assert.deepEqual(lifecycleShape(summary.inventory), lifecycleShape(full), fixture.name);
+      assert.deepEqual(summary.diagnostics, [], fixture.name);
+      assert.deepEqual(summary.contexts.flatMap((context) => context.diagnostics), [], fixture.name);
+      assert.equal(summary.idea, null, `${fixture.name}: several peers never imply a sole selection`);
+      assert.deepEqual(
+        summary.choices.map((entry) => entry.ideaPath),
+        ordered.filter((entry) => entry.status !== 'resolved').map((entry) => entry.ideaPath),
+        `${fixture.name}: resolved peers are not choices`,
+      );
+      for (const record of written) {
+        const label = `${fixture.name}: ${record.ideaPath}`;
+        assert.equal(resolveIdeaSelector({ root, slug: record.slug }).idea?.ideaPath, record.ideaPath, label);
+        assert.equal(resolveIdeaSelector({ root, ideaPath: record.ideaPath }).idea?.slug, record.slug, label);
+        const explicit = selectLifecycleIdeaSummary({ root, target: record.slug });
+        assert.equal(explicit.idea?.ideaPath, record.ideaPath, label);
+        assert.deepEqual(
+          explicit.owner,
+          record.specPath ? { ideaPath: record.ideaPath, specPath: record.specPath } : null,
+          label,
+        );
+        if (record.specPath) {
+          assert.deepEqual(resolveFeatureOwner({ root, specPath: record.specPath }), {
+            owner: { ideaPath: record.ideaPath, specPath: record.specPath },
+            diagnostics: [],
+          }, label);
+        }
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('T001 reported 074 and 075 prefix peers keep exact identities and creation-order-independent ties', () => {
+  const forward = temporaryRoot();
+  const reverse = temporaryRoot();
+  try {
+    // Arrange the same records in opposite creation orders.
+    const written = REPORTED_PREFIX_PEERS.map((record) => ({ ...record, ...writeLifecycleRecord(forward, record) }));
+    for (const record of [...REPORTED_PREFIX_PEERS].reverse()) writeLifecycleRecord(reverse, record);
+
+    // Act
+    const inventory = inventoryLifecycleIdentities({ root: forward });
+    const reversed = inventoryLifecycleIdentities({ root: reverse });
+
+    // Assert
+    assert.deepEqual(inventory.diagnostics, []);
+    assert.equal(inventory.nextNumber, '076');
+    assert.deepEqual(inventory.ideas.map((entry) => entry.ideaPath), [
+      '.dude/ideas/074-dude-canvas-about.md',
+      '.dude/ideas/074-work-readable-evidence-handoff.md',
+      '.dude/ideas/075-dude-development-base-release.md',
+      '.dude/ideas/075-resolved-bystander.md',
+      '.dude/ideas/075-terminal-work-manual-resolution.md',
+    ]);
+    assert.deepEqual(inventory.packages.map((entry) => entry.specPath), [
+      '.dude/specs/074-dude-canvas-about/spec.md',
+      '.dude/specs/074-work-readable-evidence-handoff/spec.md',
+      '.dude/specs/075-terminal-work-manual-resolution/spec.md',
+    ]);
+    assert.deepEqual(lifecycleShape(reversed), lifecycleShape(inventory));
+    for (const record of written) {
+      assert.equal(resolveIdeaSelector({ root: forward, slug: record.slug }).idea?.ideaPath, record.ideaPath, record.slug);
+      assert.equal(resolveIdeaSelector({ root: forward, ideaPath: record.ideaPath }).idea?.slug, record.slug, record.slug);
+      if (record.specPath) {
+        assert.deepEqual(resolveFeatureOwner({ root: forward, specPath: record.specPath }), {
+          owner: { ideaPath: record.ideaPath, specPath: record.specPath },
+          diagnostics: [],
+        }, record.slug);
+      }
+    }
+    for (const number of ['074', '075']) {
+      const bare = resolveIdeaSelector({ root: forward, slug: number });
+      assert.equal(bare.idea, null, number);
+      assert.deepEqual(bare.diagnostics.map((item) => item.code), ['FEATURE_IDEA_NOT_FOUND'], number);
+      const summary = selectLifecycleIdeaSummary({ root: forward, target: number });
+      assert.equal(summary.idea, null, number);
+      assert.deepEqual(summary.diagnostics.map((item) => item.code), ['FEATURE_IDEA_NOT_FOUND'], number);
+    }
+    const unownedPeer = resolveFeatureOwner({ root: forward, specPath: '.dude/specs/074-other/spec.md' });
+    assert.equal(unownedPeer.owner, null);
+    assert.deepEqual(unownedPeer.diagnostics.map((item) => item.code), ['FEATURE_OWNER_NOT_FOUND']);
+  } finally {
+    fs.rmSync(forward, { recursive: true, force: true });
+    fs.rmSync(reverse, { recursive: true, force: true });
   }
 });
 
@@ -312,7 +557,104 @@ test('T001 first capture allocates max-plus-one and leaves the workspace unchang
   }
 });
 
-test('T001 first definition reuses the selected idea number and rolls back target-number collisions', () => {
+test('T001 first capture allocates local max-plus-one after same-prefix peers without gap reuse and stops at 999', () => {
+  const cases = [
+    { name: 'empty inventory', records: [], expected: '.dude/ideas/001-next-idea.md' },
+    { name: 'reported prefix peers', records: REPORTED_PREFIX_PEERS, expected: '.dude/ideas/076-next-idea.md' },
+    {
+      name: 'gap below a shared prefix',
+      records: [
+        { number: '001', slug: 'first', status: 'draft' },
+        { number: '005', slug: 'peer-one', status: 'draft' },
+        { number: '005', slug: 'peer-two', status: 'defined' },
+      ],
+      expected: '.dude/ideas/006-next-idea.md',
+    },
+    {
+      name: 'shared 998',
+      records: [
+        { number: '998', slug: 'peer-one', status: 'resolved' },
+        { number: '998', slug: 'peer-two', status: 'draft' },
+      ],
+      expected: '.dude/ideas/999-next-idea.md',
+    },
+  ];
+  for (const fixture of cases) {
+    const root = temporaryRoot();
+    try {
+      // Arrange
+      lintLayout(root);
+      for (const record of fixture.records) writeLifecycleRecord(root, record);
+      const stage = path.join(root, 'stage.md');
+      fs.writeFileSync(stage, ledger('next-idea'));
+      const before = snapshot(root);
+
+      // Act
+      const captured = run(CAPTURE, ['--root', root, '--slug', 'next-idea', '--stage', stage]);
+
+      // Assert
+      assert.equal(captured.status, 0, `${fixture.name}: ${captured.stderr}`);
+      assert.equal(captured.stdout, `${fixture.expected}\n`, fixture.name);
+      const after = snapshot(root);
+      assert.deepEqual(before.filter((entry) => !after.includes(entry)), [], `${fixture.name}: no existing byte changed`);
+      assert.deepEqual(after.filter((entry) => !before.includes(entry)), [
+        ...(fixture.records.length === 0 ? ['d .dude/ideas'] : []),
+        `f ${fixture.expected} ${fs.readFileSync(stage).toString('hex')}`,
+      ], fixture.name);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  const refusals = [
+    {
+      name: 'shared 999 is exhausted',
+      records: [
+        { number: '999', slug: 'last-one', status: 'draft' },
+        { number: '999', slug: 'last-two', status: 'defined' },
+      ],
+      exhausted: true,
+      stderr: /001-999 is exhausted/,
+    },
+    {
+      name: 'duplicate slug across prefixes is still unsafe',
+      records: [
+        { number: '004', slug: 'same', status: 'draft' },
+        { number: '005', slug: 'same', status: 'draft' },
+      ],
+      exhausted: false,
+      stderr: /lifecycle inventory is unsafe \(\.dude\/ideas\/004-same\.md: duplicate idea slug 'same'/,
+    },
+  ];
+  for (const fixture of refusals) {
+    const root = temporaryRoot();
+    try {
+      // Arrange
+      lintLayout(root);
+      for (const record of fixture.records) writeLifecycleRecord(root, record);
+      const stage = path.join(root, 'stage.md');
+      fs.writeFileSync(stage, ledger('never'));
+      const inventory = inventoryLifecycleIdentities({ root });
+      const before = snapshot(root);
+
+      // Act
+      const refused = run(CAPTURE, ['--root', root, '--slug', 'never', '--stage', stage]);
+
+      // Assert
+      assert.equal(inventory.exhausted, fixture.exhausted, fixture.name);
+      assert.equal(inventory.nextNumber, null, fixture.name);
+      assert.equal(inventory.diagnostics.length === 0, fixture.exhausted, fixture.name);
+      assert.notEqual(refused.status, 0, fixture.name);
+      assert.equal(refused.stdout, '', fixture.name);
+      assert.match(refused.stderr, fixture.stderr, fixture.name);
+      assert.deepEqual(snapshot(root), before, `${fixture.name}: zero writes`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('T001 first definition reuses the selected idea number beside a valid same-prefix package and refuses an orphan package', () => {
   const root = temporaryRoot();
   const stage = path.join(root, 'stage');
   const selected = '.dude/ideas/021-draft.md';
@@ -339,24 +681,49 @@ test('T001 first definition reuses the selected idea number and rolls back targe
     assert.ok(fs.existsSync(path.join(root, spec)));
     assert.equal(resolveFeatureOwner({ root, specPath: spec }).owner?.ideaPath, selected);
 
-    // Arrange a distinct target that collides numerically.
-    const collisionRoot = temporaryRoot();
+    // Arrange a valid package that shares prefix 021 under its own exact owner.
+    const peerRoot = temporaryRoot();
     try {
-      lintLayout(collisionRoot);
-      write(collisionRoot, selected, current);
-      packageAt(collisionRoot, '021', 'other');
-      fs.cpSync(stage, path.join(collisionRoot, 'stage'), { recursive: true });
-      const before = snapshot(collisionRoot);
+      lintLayout(peerRoot);
+      write(peerRoot, selected, current);
+      const peerSpec = packageAt(peerRoot, '021', 'peer');
+      const peerIdea = idea(peerRoot, '021', 'peer', 'defined', peerSpec);
+      fs.cpSync(stage, path.join(peerRoot, 'stage'), { recursive: true });
+      const peerBefore = snapshot(peerRoot).filter((entry) => entry.includes('021-peer'));
 
       // Act
-      const collision = run(DEFINE, ['--root', collisionRoot, '--idea', selected, '--spec', spec, '--stage', path.join(collisionRoot, 'stage')]);
+      const beside = run(DEFINE, ['--root', peerRoot, '--idea', selected, '--spec', spec, '--stage', path.join(peerRoot, 'stage')]);
 
       // Assert
-      assert.notEqual(collision.status, 0);
-      assert.match(collision.stderr, /lifecycle inventory is unsafe|already has a feature package claim/);
-      assert.deepEqual(snapshot(collisionRoot), before);
+      assert.equal(beside.status, 0, beside.stderr);
+      assert.equal(beside.stdout, `${spec}\n`);
+      assert.deepEqual(resolveFeatureOwner({ root: peerRoot, specPath: spec }).owner, { ideaPath: selected, specPath: spec });
+      assert.deepEqual(resolveFeatureOwner({ root: peerRoot, specPath: peerSpec }).owner, { ideaPath: peerIdea, specPath: peerSpec });
+      assert.deepEqual(snapshot(peerRoot).filter((entry) => entry.includes('021-peer')), peerBefore);
     } finally {
-      fs.rmSync(collisionRoot, { recursive: true, force: true });
+      fs.rmSync(peerRoot, { recursive: true, force: true });
+    }
+
+    // Arrange an orphan same-prefix package; it is an owner error, not a peer.
+    const orphanRoot = temporaryRoot();
+    try {
+      lintLayout(orphanRoot);
+      write(orphanRoot, selected, current);
+      packageAt(orphanRoot, '021', 'other');
+      fs.cpSync(stage, path.join(orphanRoot, 'stage'), { recursive: true });
+      const before = snapshot(orphanRoot);
+
+      // Act
+      const orphan = run(DEFINE, ['--root', orphanRoot, '--idea', selected, '--spec', spec, '--stage', path.join(orphanRoot, 'stage')]);
+
+      // Assert
+      assert.notEqual(orphan.status, 0);
+      assert.equal(orphan.stdout, '');
+      assert.match(orphan.stderr, /lifecycle inventory is unsafe/);
+      assert.match(orphan.stderr, /feature package has no defined idea owner for '\.dude\/specs\/021-other\/spec\.md'/);
+      assert.deepEqual(snapshot(orphanRoot), before);
+    } finally {
+      fs.rmSync(orphanRoot, { recursive: true, force: true });
     }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

@@ -7,10 +7,16 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { resolveFeatureOwner } from "../dude-engine/lib/feature.mjs";
+
 const SCRIPT = fileURLToPath(new URL("./publish-first-definition.mjs", import.meta.url));
 const IDEA_PATH = ".dude/ideas/023-direct-draft.md";
 const SPEC_PATH = ".dude/specs/023-direct-draft/spec.md";
 const PACKAGE_DIRECTORY = path.posix.dirname(SPEC_PATH);
+// A distinct valid feature that shares the selected draft's 023 prefix.
+const PEER_IDEA_PATH = ".dude/ideas/023-peer-feature.md";
+const PEER_SPEC_PATH = ".dude/specs/023-peer-feature/spec.md";
+const PEER_DIRECTORY = path.posix.dirname(PEER_SPEC_PATH);
 const SENTINEL_PATH = "unrelated-sentinel.bin";
 const STAGE_NAMES = Object.freeze([
   "current-idea.md",
@@ -100,6 +106,51 @@ function validStageBytes() {
 /** @param {string} root @param {string} relativePath */
 function absolutePath(root, relativePath) {
   return path.join(root, ...relativePath.split("/"));
+}
+
+/** @param {string} [specPath] */
+function peerOwnerBytes(specPath = PEER_SPEC_PATH) {
+  return Buffer.from([
+    "---",
+    "title: Peer Feature",
+    "slug: peer-feature",
+    "status: defined",
+    `spec_path: ${specPath}`,
+    "---",
+    "",
+    "## Idea",
+    "",
+    "A distinct feature that shares the lifecycle prefix.",
+    "",
+    "## Coordinator Log",
+    "",
+    "- 2026-08-06 Peer defined.",
+    "",
+  ].join("\n"));
+}
+
+/**
+ * Write one valid defined peer whose task uses the selected stage's durable key.
+ * @param {string} root
+ * @returns {Array<[string, Buffer]>}
+ */
+function writeSamePrefixPeer(root) {
+  /** @type {Array<[string, Buffer]>} */
+  const files = [
+    [PEER_IDEA_PATH, peerOwnerBytes()],
+    [PEER_SPEC_PATH, Buffer.from("# Feature Specification: Peer\n")],
+    [`${PEER_DIRECTORY}/plan.md`, Buffer.from("# Implementation Plan: Peer\n")],
+    [`${PEER_DIRECTORY}/tasks.md`, Buffer.from([
+      `<!-- audit log: ${PEER_IDEA_PATH}#coordinator-log -->`,
+      "",
+      "# Tasks: Peer",
+      "",
+      "- [ ] T001@a1b2c3d4 [Shared] Keep the peer task independent.",
+      "",
+    ].join("\n"))],
+  ];
+  for (const [relativePath, bytes] of files) write(root, relativePath, bytes);
+  return files;
 }
 
 /** @param {string} root @param {string} relativePath @param {string | Buffer} bytes */
@@ -209,8 +260,10 @@ function expectedSuccessTree(before, stageBytes) {
   const expected = before.map((entry) => entry.path === IDEA_PATH
     ? { ...entry, bytes: stageBytes["staged-idea.md"].toString("hex") }
     : { ...entry });
+  if (!expected.some((entry) => entry.path === ".dude/specs")) {
+    expected.push({ path: ".dude/specs", type: "directory" });
+  }
   expected.push(
-    { path: ".dude/specs", type: "directory" },
     { path: PACKAGE_DIRECTORY, type: "directory" },
     { path: `${PACKAGE_DIRECTORY}/plan.md`, type: "file", bytes: stageBytes["plan.md"].toString("hex") },
     { path: `${PACKAGE_DIRECTORY}/spec.md`, type: "file", bytes: stageBytes["spec.md"].toString("hex") },
@@ -299,6 +352,67 @@ test("canonical lint failure rolls back the owner and helper-created package tre
     assert.equal(fs.existsSync(absolutePath(root, PACKAGE_DIRECTORY)), false);
     assert.deepEqual(fs.readFileSync(absolutePath(root, SENTINEL_PATH)), SENTINEL_BYTES);
     assert.deepEqual(snapshotTree(root), before);
+    assertNoAtomicTempResidue(root);
+  });
+});
+
+test("real CLI publishes beside a valid same-prefix peer and leaves the peer untouched", () => {
+  withFixture(({ root, stage, stageBytes }) => {
+    // Arrange
+    const peerFiles = writeSamePrefixPeer(root);
+    const before = snapshotTree(root);
+
+    // Act
+    const result = publish(root, stage);
+
+    // Assert
+    assert.ifError(result.error);
+    assert.equal(result.signal, null);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, "");
+    assert.equal(result.stdout, `${SPEC_PATH}\n`);
+    assert.deepEqual(snapshotTree(root), expectedSuccessTree(before, stageBytes));
+    for (const [relativePath, bytes] of peerFiles) {
+      assert.deepEqual(fs.readFileSync(absolutePath(root, relativePath)), bytes, relativePath);
+    }
+    assert.deepEqual(resolveFeatureOwner({ root, specPath: SPEC_PATH }), {
+      owner: { ideaPath: IDEA_PATH, specPath: SPEC_PATH },
+      diagnostics: [],
+    });
+    assert.deepEqual(resolveFeatureOwner({ root, specPath: PEER_SPEC_PATH }), {
+      owner: { ideaPath: PEER_IDEA_PATH, specPath: PEER_SPEC_PATH },
+      diagnostics: [],
+    });
+    assertNoAtomicTempResidue(root);
+  });
+});
+
+test("canonical lint failure beside a same-prefix peer restores every byte", () => {
+  withFixture(({ root, stage, stageBytes }) => {
+    // Arrange: the breadcrumb names the valid peer owner instead of the selected owner.
+    writeSamePrefixPeer(root);
+    fs.writeFileSync(path.join(stage, "tasks.md"), replaceBytes(
+      stageBytes["tasks.md"],
+      `<!-- audit log: ${IDEA_PATH}#coordinator-log -->`,
+      `<!-- audit log: ${PEER_IDEA_PATH}#coordinator-log -->`,
+    ));
+    const before = snapshotTree(root);
+
+    // Act
+    const result = publish(root, stage);
+
+    // Assert
+    assert.ifError(result.error);
+    assert.equal(result.signal, null);
+    assert.notEqual(result.status, 0);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "[FAIL] dude-lint failed\n");
+    assert.deepEqual(snapshotTree(root), before);
+    assert.deepEqual(packageFileState(root), {
+      "spec.md": null,
+      "plan.md": null,
+      "tasks.md": null,
+    });
     assertNoAtomicTempResidue(root);
   });
 });
@@ -435,6 +549,40 @@ const PREFLIGHT_CASES = [
     arrange({ root }) {
       write(root, SPEC_PATH, "# Existing package target\n");
     },
+  },
+  {
+    name: "same slug under a different prefix",
+    arrange({ root, stageBytes }) {
+      write(root, ".dude/ideas/024-direct-draft.md", stageBytes["current-idea.md"]);
+    },
+    refusal: /\.dude\/ideas\/023-direct-draft\.md: duplicate idea slug 'direct-draft'/,
+  },
+  {
+    name: "same-prefix peer claims the exact target",
+    arrange({ root }) {
+      write(root, PEER_IDEA_PATH, peerOwnerBytes(SPEC_PATH));
+      write(root, SPEC_PATH, "# Claimed target\n");
+    },
+    refusal: /\.dude\/ideas\/023-peer-feature\.md: defined owner \.dude\/ideas\/023-peer-feature\.md identity 023-peer-feature does not match package \.dude\/specs\/023-direct-draft\/spec\.md/,
+  },
+  {
+    name: "orphan same-prefix package",
+    arrange({ root }) {
+      write(root, ".dude/specs/023-orphan/spec.md", "# Orphan package\n");
+    },
+    refusal: /\.dude\/specs\/023-orphan\/spec\.md: feature package has no defined idea owner/,
+  },
+  {
+    name: "stale preimage beside a valid same-prefix peer",
+    arrange({ root, stageBytes }) {
+      writeSamePrefixPeer(root);
+      write(root, IDEA_PATH, replaceBytes(
+        stageBytes["current-idea.md"],
+        "- 2026-08-06 Draft selected.\n",
+        "- 2026-08-06 Draft selected.\n- 2026-08-06 Concurrent draft edit.\n",
+      ));
+    },
+    refusal: /atomic file target does not match expected bytes: \.dude\/ideas\/023-direct-draft\.md/,
   },
   {
     name: "invalid current status",
@@ -592,6 +740,8 @@ test("preflight table refuses invalid transitions without writes or success outp
         assert.notEqual(result.status, 0, fixture.name);
         assert.equal(result.stdout, "", `${fixture.name}: success output must be absent`);
         assert.doesNotMatch(result.stderr, /dude-lint failed/, `${fixture.name}: must fail before lint`);
+        assert.doesNotMatch(result.stderr, /lifecycle number/, `${fixture.name}: a shared number is never the refusal`);
+        if (fixture.refusal) assert.match(result.stderr, fixture.refusal, fixture.name);
         assert.deepEqual(fs.readFileSync(absolutePath(root, IDEA_PATH)), ideaBefore, fixture.name);
         assert.deepEqual(
           fs.readFileSync(absolutePath(root, SENTINEL_PATH)),

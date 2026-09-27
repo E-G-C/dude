@@ -265,12 +265,6 @@ function main() {
     || selected[0].specPath !== '') {
     throw new Error('selected idea is not one exact numbered draft in the current inventory');
   }
-  if (inventory.packages.some((featurePackage) => (
-    featurePackage.number === options.ideaIdentity.number
-    || featurePackage.specPath === options.spec
-  ))) {
-    throw new Error(`selected lifecycle number ${options.ideaIdentity.number} already has a feature package claim`);
-  }
 
   const packageDirectory = path.posix.dirname(options.spec);
   try {

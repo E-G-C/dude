@@ -722,6 +722,67 @@ test("T001 duplicate exact spec-path claimants suppress authority before diagnos
   }
 });
 
+test("T001 same-prefix peers keep distinct authority, anchors, counts, dependencies, and path tie order", () => {
+  // Arrange
+  const root = makeRoot();
+  const tasks = (feature, row) => [`# Tasks: ${feature}`, "", "## Phase 1: Delivery", "", row, ""].join("\n");
+  try {
+    // Create in reverse path order so numeric ties cannot follow creation order.
+    writeIdea(root, "zeta-draft", { number: "074" });
+    writeIdea(root, "gamma", { feature: "074-gamma", dependsOn: "beta" });
+    writePackage(root, "074-gamma", { tasks: tasks("074-gamma", "- [ ] T001@aaaaaaaa Wait for beta") });
+    writeIdea(root, "eta-draft", { number: "074" });
+    writeIdea(root, "beta", { feature: "074-beta", dependsOn: "alpha" });
+    writePackage(root, "074-beta", { tasks: tasks("074-beta", "- [ ] T001@aaaaaaaa Build beta") });
+    writeIdea(root, "alpha", { feature: "074-alpha" });
+    writePackage(root, "074-alpha", { tasks: tasks("074-alpha", "- [x] T001@aaaaaaaa Ship alpha") });
+    writeIdea(root, "earlier", { number: "073" });
+
+    // Act
+    const model = collectLifecycleModel({ root });
+    const html = renderReport(fs.readFileSync(TEMPLATE_PATH, "utf8"), model);
+    const bySlug = new Map(model.items.map((item) => [item.slug, item]));
+    const slugs = (items) => items.map((item) => item.slug);
+    const renderedAnchors = [...html.matchAll(/ id="(feature-[^"]+)"/g)].map((match) => match[1]);
+
+    // Assert
+    assert.deepEqual(model.items.map((item) => item.ideaPath), [
+      ".dude/ideas/073-earlier.md",
+      ".dude/ideas/074-alpha.md",
+      ".dude/ideas/074-beta.md",
+      ".dude/ideas/074-eta-draft.md",
+      ".dude/ideas/074-gamma.md",
+      ".dude/ideas/074-zeta-draft.md",
+    ]);
+    for (const item of model.items) {
+      assert.equal(item.authoritySlug, item.slug, item.ideaPath);
+      assert.deepEqual(item.authorityIssues, [], item.ideaPath);
+      assert.equal(item.anchor, `feature-${item.slug}`, item.ideaPath);
+    }
+    for (const slug of ["alpha", "beta", "gamma"]) {
+      assert.equal(bySlug.get(slug).ownerSpecPath, `.dude/specs/074-${slug}/spec.md`, slug);
+      assert.equal(bySlug.get(slug).tasksPath, `.dude/specs/074-${slug}/tasks.md`, slug);
+    }
+    assert.deepEqual(bySlug.get("alpha").taskCounts, { open: 0, active: 0, blocked: 0, done: 1, total: 1 });
+    assert.deepEqual(bySlug.get("beta").taskCounts, { open: 1, active: 0, blocked: 0, done: 0, total: 1 });
+    assert.deepEqual(bySlug.get("gamma").taskCounts, { open: 1, active: 0, blocked: 0, done: 0, total: 1 });
+    assert.deepEqual(slugs(model.completed), ["alpha"]);
+    assert.deepEqual(slugs(model.current.next), ["beta"]);
+    assert.deepEqual(slugs(model.current.blocked), ["gamma"]);
+    assert.deepEqual(slugs(model.planned.awaitingDefinition), ["earlier", "eta-draft", "zeta-draft"]);
+    assert.deepEqual(slugs(model.planned.definedAwaitingWork), []);
+    // Only declared depends-on edges exist; a shared number adds none.
+    assert.deepEqual(model.relationships.declared.map((relation) => [relation.from, relation.to, relation.type]), [
+      [bySlug.get("alpha"), bySlug.get("beta"), "dependency"],
+      [bySlug.get("beta"), bySlug.get("gamma"), "dependency"],
+    ]);
+    assert.deepEqual(model.relationships.provisional, []);
+    assert.deepEqual([...new Set(renderedAnchors)].sort(), model.items.map((item) => item.anchor).sort());
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("T002 malformed and duplicate task rows cannot produce package completion or Done", () => {
   // Arrange
   const root = makeRoot();

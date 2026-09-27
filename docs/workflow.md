@@ -11,9 +11,12 @@ task list drives verified execution. Brainstorm and define are distinct:
 `@dude brainstorm <idea>` creates or refreshes one flat
 `.dude/ideas/<NNN>-<slug>.md` file and does not create a spec package.
 
-When brainstorm first captures an idea, it gives the ledger the next permanent
-three-digit lifecycle number. The package later keeps that number. Inventory
-lists ideas in capture order and never recycles a gap. Scheduling still follows
+When brainstorm first captures an idea, it gives the ledger a three-digit
+lifecycle number, one higher than the highest number already in the workspace.
+The package later keeps that number. Inventory lists ideas in capture order and
+never recycles a gap. Numbers are local to the workspace, so ideas with
+different slugs can share one after branches merge; see
+[Definition Rules](reference.md#definition-rules). Scheduling still follows
 priority, dependencies, and execution state. Commands use the exact unnumbered
 frontmatter slug.
 

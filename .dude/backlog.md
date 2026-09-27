@@ -8,7 +8,7 @@ A read-only view built from idea files, linked feature files, task records, and 
 - Ready / Next: **0**
 - Ideas awaiting definition: **8**
 - Defined awaiting work: **0**
-- Completed: **64**
+- Completed: **65**
 
 ## Current
 
@@ -105,6 +105,7 @@ kanban
 - `066` · `canvas-without-beads` — Canvas Without Beads (`.dude/ideas/066-canvas-without-beads.md`)
 - `074` · `dude-canvas-about` — Dude Canvas About (`.dude/ideas/074-dude-canvas-about.md`)
 - `075` · `dude-development-base-release` — Dude Development Base Release (`.dude/ideas/075-dude-development-base-release.md`)
+- `076` · `duplicate-feature-number-prefixes` — Duplicate Feature Number Prefixes (`.dude/ideas/076-duplicate-feature-number-prefixes.md`)
 
 ## Dependency and order notes
 

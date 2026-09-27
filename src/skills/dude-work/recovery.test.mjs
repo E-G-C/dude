@@ -4011,6 +4011,153 @@ test('T008: public inspect APIs acquire the exact owner beside an unrelated vali
   });
 });
 
+const PEER_PREFIX_SPEC_PATH = '.dude/specs/004-peer-feature/spec.md';
+const PEER_PREFIX_IDEA_PATH = '.dude/ideas/004-peer-feature.md';
+const PEER_PREFIX_TARGET = Object.freeze({ specPath: PEER_PREFIX_SPEC_PATH, lane: 'lightweight', taskKey: TASK_KEY });
+
+test('duplicate-prefix: same-prefix Work targets keep distinct identities and acquire only the exact owner log and task history', () => {
+  const runCommand = runtimeFunction('runCommand');
+  withWorkspace((root) => {
+    // Arrange: one shared lifecycle number and one shared durable task key.
+    const selectedTasksPath = `${path.posix.dirname(SPEC_PATH)}/tasks.md`;
+    const peerTasksPath = `${path.posix.dirname(PEER_PREFIX_SPEC_PATH)}/tasks.md`;
+    const files = [
+      [IDEA_PATH, ideaBytes()],
+      [selectedTasksPath, tasksBytes()],
+      [PEER_PREFIX_IDEA_PATH, ideaBytes(PEER_PREFIX_SPEC_PATH, '- 2026-08-10 peer event\n')],
+      [PEER_PREFIX_SPEC_PATH, Buffer.from('# Peer Spec\n')],
+      [peerTasksPath, transitionTasksBytes([{ id: TASK_KEY, glyph: 'x' }])],
+    ];
+    fs.mkdirSync(path.join(root, path.dirname(PEER_PREFIX_SPEC_PATH)), { recursive: true });
+    for (const [relativePath, bytes] of files) fs.writeFileSync(path.join(root, relativePath), bytes);
+    const selectedKey = '{"lane":"lightweight","specPath":".dude/specs/004-pre-work-log-learning/spec.md","taskKey":"T001@8f31c2a7"}';
+
+    // Act
+    const owners = [SPEC_PATH, PEER_PREFIX_SPEC_PATH].map((specPath) => resolveFeatureOwner({ root, specPath }));
+    const inspections = [TARGET, PEER_PREFIX_TARGET].map((target) => {
+      const input = publicInspectionInput(root, target);
+      return [
+        inspect(input),
+        runCommand('inspect', { trigger: 'explicit-inspection', input: cliInput(input) }).inspection,
+      ];
+    });
+
+    // Assert
+    assert.equal(targetKey(TARGET), selectedKey, 'an unchanged exact target keeps its identity');
+    assert.equal(targetHash(TARGET), sha256(selectedKey));
+    assert.notEqual(targetKey(PEER_PREFIX_TARGET), targetKey(TARGET));
+    assert.notEqual(targetHash(PEER_PREFIX_TARGET), targetHash(TARGET));
+    assert.deepEqual(owners, [
+      { owner: { ideaPath: IDEA_PATH, specPath: SPEC_PATH }, diagnostics: [] },
+      { owner: { ideaPath: PEER_PREFIX_IDEA_PATH, specPath: PEER_PREFIX_SPEC_PATH }, diagnostics: [] },
+    ], 'the exact-owner resolver used by Work receipts accepts the shared prefix');
+    const expected = [
+      [TARGET, IDEA_PATH, 'exact event', /Canonical task/, /Transition task/],
+      [PEER_PREFIX_TARGET, PEER_PREFIX_IDEA_PATH, 'peer event', /Transition task/, /Canonical task/],
+    ];
+    for (const [position, [target, ideaPath, event, ownHistory, peerHistory]] of expected.entries()) {
+      for (const inspection of inspections[position]) {
+        const owner = inspection.items.find((item) => item.source === 'owner-log');
+        const history = inspection.items.find((item) => item.source === 'task-history');
+        const ownerBody = JSON.parse(owner?.text || '{}');
+        assert.deepEqual(inspection.target, canonicalTarget(target));
+        assert.equal(owner?.status, 'present', ideaPath);
+        assert.equal(ownerBody.ideaPath, ideaPath);
+        assert.equal(ownerBody.specPath, target.specPath);
+        assert.deepEqual(ownerBody.events.map((line) => line.trim()), [`- 2026-08-10 ${event}`]);
+        assert.equal(history?.status, 'present', ideaPath);
+        assert.match(history?.text || '', ownHistory);
+        assert.doesNotMatch(history?.text || '', peerHistory, `${ideaPath}: no peer task history`);
+        assert.equal(inspection.blockers.some((blocker) => (
+          blocker.subject === 'owner-log' || blocker.subject === 'task-history'
+        )), false, ideaPath);
+      }
+    }
+    assert.notEqual(inspections[0][0].evidenceHash, inspections[1][0].evidenceHash);
+    for (const [relativePath, bytes] of files) {
+      assert.deepEqual(fs.readFileSync(path.join(root, relativePath)), bytes, `${relativePath} is unchanged`);
+    }
+  });
+});
+
+test('duplicate-prefix: peer-path and peer-target Work evidence stays stale or conflicting and cannot authorize or complete', () => {
+  // Arrange: both owners are captured and every non-target binding stays
+  // valid, so only the exact target guard can refuse a peer's evidence.
+  const directIdeas = [
+    { path: IDEA_PATH, bytes: ideaBytes() },
+    { path: PEER_PREFIX_IDEA_PATH, bytes: ideaBytes(PEER_PREFIX_SPEC_PATH, '- 2026-08-10 peer event\n') },
+  ];
+  const records = [{ event: 'same-prefix failure' }];
+  const selectedCapture = capture(TARGET, 'failed', records);
+  const peerCapture = capture(PEER_PREFIX_TARGET, 'failed', records);
+  const peerBodyCapture = { ...capture(PEER_PREFIX_TARGET, 'failed', records), target: TARGET };
+  const retained = [selectedCapture, peerCapture, peerBodyCapture]
+    .map((entry) => ({ entry, bytes: Buffer.from(entry.bytes), outcomeHash: entry.outcomeHash }));
+  const peerTasks = {
+    path: `${PEER_PREFIX_SPEC_PATH.slice(0, -'spec.md'.length)}tasks.md`,
+    bytes: transitionTasksBytes([{ id: TASK_KEY }]),
+  };
+  const controls = {
+    'execute-task': transitionRaw(TARGET, { directIdeas }),
+    'retry-task': transitionRaw(TARGET, { directIdeas, currentRun: [selectedCapture] }),
+  };
+  const cases = [
+    ['peer sibling task history', transitionRaw(TARGET, { directIdeas, tasks: peerTasks }), 'execute-task', 'ordinary', 'task-history', 'conflict'],
+    ['peer-target capture envelope', transitionRaw(TARGET, { directIdeas, currentRun: [peerCapture] }), 'retry-task', 'recovery', 'current-run', 'stale'],
+    ['peer-target capture body', transitionRaw(TARGET, { directIdeas, currentRun: [peerBodyCapture] }), 'retry-task', 'recovery', 'current-run', 'conflict'],
+  ];
+  const freshState = () => emptyState({ overall: 'unlimited', recovery: 'unlimited', recover: true });
+
+  // Act and Assert: the exact controls authorize with the same peer inventory.
+  for (const [action, raw] of Object.entries(controls)) {
+    const control = authorizeAttempt(freshState(), TARGET, raw, transitionAssessment(action),
+      action === 'retry-task' ? 'recovery' : 'ordinary');
+    assert.equal(control.authorized, true, `${action} exact control`);
+  }
+  const controlInspection = buildInspection(TARGET, collectEvidence(TARGET, controls['retry-task']));
+  for (const [label, raw, action, mode, source, status] of cases) {
+    const state = freshState();
+    const inspection = buildInspection(TARGET, collectEvidence(TARGET, raw));
+    const refused = authorizeAttempt(state, TARGET, raw, transitionAssessment(action), mode);
+    assert.equal(inspection.items.find((item) => item.source === source)?.status, status, label);
+    assert.ok(inspection.blockers.some((blocker) => (
+      blocker.code === 'evidence-incomplete' && blocker.subject === source
+    )), label);
+    assert.equal(refused.authorized, false, label);
+    assert.equal(refused.reason, 'evidence-incomplete', label);
+    assert.strictEqual(refused.state, state, label);
+    assert.equal(mayContinueAutonomously(refused), false, label);
+    if (source === 'current-run') {
+      for (const retainedSource of ['owner-log', 'task-history']) {
+        assert.deepEqual(
+          inspection.items.find((item) => item.source === retainedSource),
+          controlInspection.items.find((item) => item.source === retainedSource),
+          `${label}: ${retainedSource} descriptor is not rewritten`,
+        );
+      }
+    }
+  }
+
+  const authorized = authorizeAttempt(freshState(), TARGET, controls['execute-task'],
+    transitionAssessment('execute-task'), 'ordinary');
+  const pending = authorized.state.pending[0];
+  const peerCompletion = completeAttempt(authorized.state, completionInput({
+    ...pending,
+    target: clone(PEER_PREFIX_TARGET),
+  }));
+  assert.equal(peerCompletion.completed, false);
+  assert.equal(peerCompletion.reason, 'pending-not-found');
+  assert.strictEqual(peerCompletion.state, authorized.state);
+  assert.equal(mayContinueAutonomously(peerCompletion), false);
+  const exactCompletion = completeAttempt(authorized.state, completionInput(pending));
+  assert.equal(exactCompletion.completed, true, 'the same pending attempt completes only for its exact target');
+  assert.equal(exactCompletion.reason, 'completed');
+  for (const { entry, bytes, outcomeHash } of retained) {
+    assert.deepEqual(entry.bytes, bytes, 'retained capture bytes are not rewritten');
+    assert.equal(entry.outcomeHash, outcomeHash);
+  }
+});
+
 test('Coordinator Log extraction matches lint fence semantics across logical line endings', () => {
   for (const separator of ['\n', '\r\n', '\r']) {
     const ownerBytes = Buffer.from([
@@ -8547,6 +8694,177 @@ test('Feature 060 T002: completion preflight binds the entire trusted pair and p
     );
     assert.equal(canonicalJson(fixture), before);
   }
+});
+
+/**
+ * Sorted 43-byte repository paths. 135 of them total 5,805 path bytes, the
+ * scale of a real 135-path authorization rather than a one-segment proxy.
+ * @param {number} count
+ */
+function handoffCapacityTargets(count) {
+  return Array.from({ length: count }, (_, index) => (
+    `src/skills/dude-capacity/lib/target-${String(index).padStart(3, '0')}.mjs`
+  ));
+}
+
+/** Sorted 400-byte paths that satisfy every per-path rule. @param {number} count */
+function handoffCapacityLongTargets(count) {
+  return Array.from({ length: count }, (_, index) => `src/${String(index).padStart(2, '0')}/${'x'.repeat(393)}`);
+}
+
+/** @param {string[]} targets */
+function handoffCapacityFixture(targets) {
+  return t002PendingFixture({
+    action: 'execute-task',
+    mode: 'ordinary',
+    checkOutcome: 'passed',
+    verdict: 'accepted',
+    materialInputs: { targets: [...targets], operations: ['execute-task'], checks: ['verification'] },
+  });
+}
+
+test('work handoff capacity: MaterialInputsV1 keeps complete path sets past 16 rows and every other list rule', () => {
+  const targets = handoffCapacityTargets(135);
+  for (const count of [1, 16, 17, 135]) {
+    const materialInputs = { targets: targets.slice(0, count), operations: ['execute-task'], checks: ['verification'] };
+    const basis = {
+      version: 1,
+      target: clone(TARGET),
+      action: 'execute-task',
+      materialInputs,
+      mechanismIdentities: [],
+      assumptionIdentities: [],
+      evidenceAcquisitionIdentities: [],
+      validationPlanIdentities: [],
+    };
+    const before = canonicalJson(basis);
+    assert.equal(recoveryRuntime.validateMaterialInputsV1(materialInputs), materialInputs, `${count} targets`);
+    assert.equal(recoveryRuntime.validateApproachBasisV1(basis), basis, `${count} targets`);
+    assert.equal(canonicalJson(basis), before, `${count} targets stay exact`);
+  }
+
+  const sequence = (/** @type {string} */ prefix) => Array.from(
+    { length: 17 },
+    (_, index) => `${prefix}-${String(index).padStart(2, '0')}`,
+  );
+  const cases = [
+    ['empty targets', { targets: [] }, /targets must contain at least 1 row$/],
+    ['unsorted targets', { targets: [targets[1], targets[0], ...targets.slice(2)] }, /targets must be UTF-8 sorted and duplicate-free/],
+    ['duplicate target', { targets: [targets[0], ...targets] }, /targets must be UTF-8 sorted and duplicate-free/],
+    ['oversized target', { targets: [...targets, `src/${'x'.repeat(509)}`] }, /targets\[135\] must contain 1 through 512 UTF-8 bytes/],
+    ['backslash target', { targets: [...targets, 'src\\skills\\dude-work\\recovery.mjs'] }, /targets\[135\] .*forward slashes/],
+    ['17 operations', { operations: sequence('operation') }, /operations must contain 1 through 16 rows/],
+    ['17 checks', { checks: sequence('check') }, /checks must contain 1 through 16 rows/],
+  ];
+  for (const [label, override, pattern] of cases) {
+    const materialInputs = { targets, operations: ['execute-task'], checks: ['verification'], ...override };
+    const before = canonicalJson(materialInputs);
+    assert.throws(() => recoveryRuntime.validateMaterialInputsV1(materialInputs), pattern, label);
+    assert.equal(canonicalJson(materialInputs), before, label);
+  }
+});
+
+test('work handoff capacity: preflight and capture keep 16, 17, 25, and 135 changed paths of a 135-path authorization', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const authorized = handoffCapacityTargets(135);
+    const fixture = handoffCapacityFixture(authorized);
+    const stateBytes = canonicalJson(fixture.state);
+    const input = autonomousInspectInput(root, t002TrustedStreams([fixture]));
+    for (const changedTargets of [
+      authorized.slice(0, 16),
+      authorized.slice(0, 17),
+      authorized.filter((_, index) => index % 5 === 0).slice(0, 25),
+      authorized,
+    ]) {
+      const label = `${changedTargets.length} changed paths`;
+      const completion = { ...fixture.completion, changedTargets: [...changedTargets] };
+      const completionBytes = canonicalJson(completion);
+      const checked = recoveryRuntime.validateCompletionV2(
+        fixture.state, completion, fixture.verification, fixture.review,
+      );
+      assert.equal(checked.disposition, 'accepted', label);
+      assert.deepEqual(checked.binding.changedTargets, changedTargets, label);
+      assert.deepEqual(checked.context.basis, fixture.approachBasis, label);
+      assert.equal(checked.context.attemptIdentity, fixture.attemptIdentity, label);
+
+      const captured = recoveryRuntime.captureCompletionV2(fixture.state, input, completion);
+      assert.equal(captured.captured, true, label);
+      const approach = captured.occurrenceEvents[0];
+      recoveryRuntime.validateApproachOccurrenceEventV1(approach);
+      assert.deepEqual(approach.basis, fixture.approachBasis, `${label}: every authorized path is retained`);
+      assert.equal(approach.occurrence.attemptIdentity, fixture.attemptIdentity, label);
+      assert.deepEqual(captured.projectionBatch.events[0], approach, label);
+      assert.deepEqual(captured.state.pending, fixture.state.pending, `${label}: pending authorization is not rewritten`);
+      assert.equal(captured.state.pendingCompletion.resultIdentity, completion.resultIdentity, label);
+      assert.equal(canonicalJson(completion), completionBytes, label);
+      assert.equal(canonicalJson(fixture.state), stateBytes, label);
+    }
+  });
+});
+
+test('work handoff capacity: a complete path set still refuses wrong, unauthorized, malformed, and contradictory changed paths', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const authorized = handoffCapacityTargets(135);
+    const fixture = handoffCapacityFixture(authorized);
+    const stateBytes = canonicalJson(fixture.state);
+    const input = autonomousInspectInput(root, t002TrustedStreams([fixture]));
+    const changed = authorized.filter((_, index) => index % 5 === 0).slice(0, 25);
+    const cases = [
+      ['wrong target', { target: SECOND_TARGET, changedTargets: changed }, /pending attempt target/],
+      ['unauthorized extra path', {
+        changedTargets: [...changed, 'src/skills/dude-work/unauthorized.mjs'],
+      }, /does not match the exact pending action and result route/],
+      ['unsorted changed paths', {
+        changedTargets: [changed[1], changed[0], ...changed.slice(2)],
+      }, /changedTargets must be UTF-8 sorted and duplicate-free/],
+      ['duplicate changed path', { changedTargets: [changed[0], ...changed] }, /changedTargets must be UTF-8 sorted and duplicate-free/],
+      ['oversized changed path', {
+        changedTargets: [...changed, `src/${'x'.repeat(509)}`],
+      }, /changedTargets\[25\] must contain 1 through 512 UTF-8 bytes/],
+      ['no-change with changed paths', { outcome: 'no-change', changedTargets: changed }, /does not match the exact pending action and result route/],
+    ];
+    for (const [label, override, pattern] of cases) {
+      const completion = { ...fixture.completion, ...override };
+      const before = canonicalJson(completion);
+      assert.throws(
+        () => recoveryRuntime.validateCompletionV2(fixture.state, completion, fixture.verification, fixture.review),
+        pattern,
+        label,
+      );
+      assert.throws(() => recoveryRuntime.captureCompletionV2(fixture.state, input, completion), pattern, label);
+      assert.equal(canonicalJson(completion), before, label);
+      assert.equal(canonicalJson(fixture.state), stateBytes, label);
+    }
+  });
+});
+
+test('work handoff capacity: the approach-event byte budget, not a row count, bounds a complete path set', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // 30 and 40 rows are both past the former row ceiling; only 40 exceeds the event budget.
+    for (const [count, fits] of [[30, true], [40, false]]) {
+      const authorized = handoffCapacityLongTargets(count);
+      const fixture = handoffCapacityFixture(authorized);
+      const stateBytes = canonicalJson(fixture.state);
+      const completion = { ...fixture.completion, changedTargets: authorized.slice(0, 1) };
+      const checked = recoveryRuntime.validateCompletionV2(
+        fixture.state, completion, fixture.verification, fixture.review,
+      );
+      assert.deepEqual(checked.context.basis.materialInputs.targets, authorized, `${count} rows`);
+      const input = autonomousInspectInput(root, t002TrustedStreams([fixture]));
+      if (fits) {
+        const captured = recoveryRuntime.captureCompletionV2(fixture.state, input, completion);
+        assert.equal(captured.captured, true);
+        assert.deepEqual(captured.occurrenceEvents[0].basis.materialInputs.targets, authorized);
+        assert.ok(Buffer.byteLength(canonicalJson(captured.occurrenceEvents[0])) <= 16_384);
+      } else {
+        assert.throws(
+          () => recoveryRuntime.captureCompletionV2(fixture.state, input, completion),
+          /^TypeError: ApproachOccurrenceEventV1 must serialize to at most 16384 UTF-8 bytes$/,
+        );
+      }
+      assert.equal(canonicalJson(fixture.state), stateBytes, `${count} rows leave state unchanged`);
+    }
+  });
 });
 
 /** @param {ReturnType<typeof t002PendingFixture>} fixture */

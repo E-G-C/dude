@@ -42,6 +42,7 @@ import {
   sha256,
   targetHash,
   targetKey,
+  validateApproachOccurrenceEventV1,
   validateAssessment,
   validateRecoveryRuntimeResultV1,
   validateRunState,
@@ -6538,12 +6539,14 @@ function focusedCancelResponse(challenge) {
  * @param {string} root
  * @param {string} label
  * @param {(assessment:Record<string, unknown>)=>Record<string, unknown>} makeSpecialistResult
+ * @param {Record<string, unknown>} [materialInputs]
  * @returns {Promise<FocusedTrustedCompletionRun>}
  */
-async function runFocusedTrustedCompletion(root, label, makeSpecialistResult) {
+async function runFocusedTrustedCompletion(root, label, makeSpecialistResult, materialInputs = MATERIAL_INPUTS) {
   writeSealedTaskState(root);
   const preimages = feature060Preimages(root);
   const request = focusedRunnerRequest(root);
+  request.assessment.materialInputs = clone(materialInputs);
   const assessment = clone(request.assessment);
   const specialistResult = makeSpecialistResult(request.assessment);
   const specialistResultBytes = canonicalJson(specialistResult);
@@ -7427,6 +7430,330 @@ for (const {
     });
   });
 }
+
+// The exact path shape of one observed autonomous attempt: 135 sorted authorized
+// writer paths of 9 through 68 bytes and the 25 it changed. Only the path
+// strings are reused; no historical identity, hash, or state is.
+const CAPTURED_AUTHORIZED_TARGETS = Object.freeze([
+  '.github/agents/dude-reviewer.agent.md',
+  '.github/agents/dude-spec-lead.agent.md',
+  '.github/agents/dude.agent.md',
+  '.github/extensions/dude',
+  '.github/extensions/dude/extension.mjs',
+  '.github/extensions/dude/lib',
+  '.github/extensions/dude/lib/about.mjs',
+  '.github/extensions/dude/lib/canvas-server.mjs',
+  '.github/extensions/dude/lib/catalog-reader.mjs',
+  '.github/extensions/dude/lib/needs-you.mjs',
+  '.github/extensions/dude/lib/packs.mjs',
+  '.github/extensions/dude/lib/projection.mjs',
+  '.github/extensions/dude/lib/review',
+  '.github/extensions/dude/lib/review.mjs',
+  '.github/extensions/dude/lib/review/browser.mjs',
+  '.github/extensions/dude/lib/review/data.mjs',
+  '.github/extensions/dude/lib/review/png.mjs',
+  '.github/extensions/dude/ui',
+  '.github/extensions/dude/ui/assets',
+  '.github/extensions/dude/ui/assets/app.js',
+  '.github/extensions/dude/ui/assets/app.js.LEGAL.txt',
+  '.github/extensions/dude/ui/index.html',
+  '.github/extensions/dude/ui/review',
+  '.github/extensions/dude/ui/review/NOTICE.txt',
+  '.github/extensions/dude/ui/review/bridge.mjs',
+  '.github/extensions/dude/ui/review/capture.mjs',
+  '.github/extensions/dude/ui/review/engine.mjs',
+  '.github/extensions/dude/ui/review/geometry.mjs',
+  '.github/extensions/dude/ui/review/inspector.mjs',
+  '.github/extensions/dude/ui/review/panel.mjs',
+  '.github/extensions/dude/ui/review/shapes.mjs',
+  '.github/extensions/dude/ui/review/styles.css',
+  '.github/instructions/dude.instructions.md',
+  '.github/skills/dude-bundle-import',
+  '.github/skills/dude-bundle-import/SKILL.md',
+  '.github/skills/dude-bundle-import/import.mjs',
+  '.github/skills/dude-bundle-import/lib',
+  '.github/skills/dude-bundle-import/lib/directory-import.mjs',
+  '.github/skills/dude-bundle-import/lib/directory-risk.mjs',
+  '.github/skills/dude-bundle-import/lib/directory-source.mjs',
+  '.github/skills/dude-bundle-import/lib/import-frontmatter.mjs',
+  '.github/skills/dude-bundle-upgrade',
+  '.github/skills/dude-bundle-upgrade/SKILL.md',
+  '.github/skills/dude-bundle-upgrade/upgrade.mjs',
+  '.github/skills/dude-compose',
+  '.github/skills/dude-compose/SKILL.md',
+  '.github/skills/dude-compose/compose.mjs',
+  '.github/skills/dude-engine',
+  '.github/skills/dude-engine/SKILL.md',
+  '.github/skills/dude-engine/config',
+  '.github/skills/dude-engine/config/agent-models.json',
+  '.github/skills/dude-engine/feature.mjs',
+  '.github/skills/dude-engine/lib',
+  '.github/skills/dude-engine/lib/agent-model-map.mjs',
+  '.github/skills/dude-engine/lib/agent-projection.mjs',
+  '.github/skills/dude-engine/lib/beads-issue.mjs',
+  '.github/skills/dude-engine/lib/feature-identity.mjs',
+  '.github/skills/dude-engine/lib/feature.mjs',
+  '.github/skills/dude-engine/lib/lightweight-work-postimage.mjs',
+  '.github/skills/dude-engine/lib/ownership.mjs',
+  '.github/skills/dude-engine/lib/pack-manifest.mjs',
+  '.github/skills/dude-engine/lib/profile.mjs',
+  '.github/skills/dude-engine/lib/release-channel.mjs',
+  '.github/skills/dude-engine/lib/task-state.mjs',
+  '.github/skills/dude-engine/lib/tasks.mjs',
+  '.github/skills/dude-engine/lib/text-analysis.mjs',
+  '.github/skills/dude-engine/lib/text.mjs',
+  '.github/skills/dude-engine/lib/workspace-paths.mjs',
+  '.github/skills/dude-feature-definition',
+  '.github/skills/dude-feature-definition/SKILL.md',
+  '.github/skills/dude-feature-definition/atomic-file-batch.mjs',
+  '.github/skills/dude-feature-definition/publish-first-capture.mjs',
+  '.github/skills/dude-feature-definition/publish-first-definition.mjs',
+  '.github/skills/dude-generic-routing',
+  '.github/skills/dude-generic-routing/SKILL.md',
+  '.github/skills/dude-learning-promotion',
+  '.github/skills/dude-learning-promotion/SKILL.md',
+  '.github/skills/dude-lightweight-execution',
+  '.github/skills/dude-lightweight-execution/SKILL.md',
+  '.github/skills/dude-lightweight-execution/backlog-template.html',
+  '.github/skills/dude-lightweight-execution/backlog.mjs',
+  '.github/skills/dude-lightweight-execution/board.mjs',
+  '.github/skills/dude-lint',
+  '.github/skills/dude-lint/SKILL.md',
+  '.github/skills/dude-lint/lint.mjs',
+  '.github/skills/dude-memory-ledger',
+  '.github/skills/dude-memory-ledger/SKILL.md',
+  '.github/skills/dude-memory-ledger/memory.mjs',
+  '.github/skills/dude-parallel-dispatch',
+  '.github/skills/dude-parallel-dispatch/SKILL.md',
+  '.github/skills/dude-portability',
+  '.github/skills/dude-portability/SKILL.md',
+  '.github/skills/dude-receiving-code-review',
+  '.github/skills/dude-receiving-code-review/SKILL.md',
+  '.github/skills/dude-reviewer-protocol',
+  '.github/skills/dude-reviewer-protocol/SKILL.md',
+  '.github/skills/dude-skill-authoring',
+  '.github/skills/dude-skill-authoring/SKILL.md',
+  '.github/skills/dude-skill-authoring/scaffold-skill.mjs',
+  '.github/skills/dude-systematic-debugging',
+  '.github/skills/dude-systematic-debugging/SKILL.md',
+  '.github/skills/dude-team-expansion',
+  '.github/skills/dude-team-expansion/SKILL.md',
+  '.github/skills/dude-team-expansion/scaffold-agent.mjs',
+  '.github/skills/dude-using-git-worktrees',
+  '.github/skills/dude-using-git-worktrees/SKILL.md',
+  '.github/skills/dude-verification-before-completion',
+  '.github/skills/dude-verification-before-completion/SKILL.md',
+  '.github/skills/dude-work',
+  '.github/skills/dude-work-intake',
+  '.github/skills/dude-work-intake/SKILL.md',
+  '.github/skills/dude-work/SKILL.md',
+  '.github/skills/dude-work/host-adapter-runner.mjs',
+  '.github/skills/dude-work/host-adapter.mjs',
+  '.github/skills/dude-work/recovery.mjs',
+  '.github/skills/dude-work/specialist-attestation.mjs',
+  'README.md',
+  'docs/commands.md',
+  'docs/reference.md',
+  'docs/workflow.md',
+  'library/packs/beads/skills/dude-pack-beads-workflow/beads.test.mjs',
+  'src/extensions/dude/work-index.test.mjs',
+  'src/instructions/dude.instructions.md',
+  'src/skills/dude-engine/lib/chronological-identity.test.mjs',
+  'src/skills/dude-engine/lib/feature.mjs',
+  'src/skills/dude-engine/lib/feature.test.mjs',
+  'src/skills/dude-feature-definition/SKILL.md',
+  'src/skills/dude-feature-definition/publish-first-definition.mjs',
+  'src/skills/dude-feature-definition/publish-first-definition.test.mjs',
+  'src/skills/dude-lightweight-execution/backlog.mjs',
+  'src/skills/dude-lightweight-execution/backlog.test.mjs',
+  'src/skills/dude-lightweight-execution/board.test.mjs',
+  'src/skills/dude-lint/SKILL.md',
+  'src/skills/dude-lint/lint.test.mjs',
+  'src/skills/dude-work/recovery.test.mjs',
+]);
+const CAPTURED_CHANGED_TARGETS = Object.freeze([
+  '.github/instructions/dude.instructions.md',
+  '.github/skills/dude-engine/lib/feature.mjs',
+  '.github/skills/dude-feature-definition/SKILL.md',
+  '.github/skills/dude-feature-definition/publish-first-definition.mjs',
+  '.github/skills/dude-lightweight-execution/backlog.mjs',
+  '.github/skills/dude-lint/SKILL.md',
+  'README.md',
+  'docs/commands.md',
+  'docs/reference.md',
+  'docs/workflow.md',
+  'library/packs/beads/skills/dude-pack-beads-workflow/beads.test.mjs',
+  'src/extensions/dude/work-index.test.mjs',
+  'src/instructions/dude.instructions.md',
+  'src/skills/dude-engine/lib/chronological-identity.test.mjs',
+  'src/skills/dude-engine/lib/feature.mjs',
+  'src/skills/dude-engine/lib/feature.test.mjs',
+  'src/skills/dude-feature-definition/SKILL.md',
+  'src/skills/dude-feature-definition/publish-first-definition.mjs',
+  'src/skills/dude-feature-definition/publish-first-definition.test.mjs',
+  'src/skills/dude-lightweight-execution/backlog.mjs',
+  'src/skills/dude-lightweight-execution/backlog.test.mjs',
+  'src/skills/dude-lightweight-execution/board.test.mjs',
+  'src/skills/dude-lint/SKILL.md',
+  'src/skills/dude-lint/lint.test.mjs',
+  'src/skills/dude-work/recovery.test.mjs',
+]);
+
+/** @param {readonly string[]} targets */
+function capacityPendingState(targets) {
+  const state = pendingState('autonomous');
+  const materialInputs = focusedMaterialInputs(targets);
+  state.pending[0].materialInputs = materialInputs;
+  state.pending[0].approachHash = approachHash({ action: 'execute-task', materialInputs });
+  validateRunState(state);
+  return state;
+}
+
+/** The plain approach basis attestation derives from one pending authorization. @param {Record<string, unknown>} pending */
+function capacityApproachBasis(pending) {
+  return {
+    version: 1,
+    target: canonicalTarget(pending.target),
+    action: pending.action,
+    materialInputs: clone(pending.materialInputs),
+    mechanismIdentities: [],
+    assumptionIdentities: [],
+    evidenceAcquisitionIdentities: [],
+    validationPlanIdentities: [],
+  };
+}
+
+/**
+ * Independently recompute the attempt identity, which binds every authorized
+ * path, and the result identity, which binds every changed path.
+ * @param {Record<string, unknown>} state @param {Record<string, unknown>} result
+ */
+function capacityTrustedIdentities(state, result) {
+  const pending = /** @type {Record<string, unknown>[]} */ (state.pending)[0];
+  const target = canonicalTarget(pending.target);
+  const resultMaterial = canonicalJson({
+    version: 1,
+    target,
+    attemptOrdinal: state.overallUsed,
+    authorizationEvidenceHash: pending.evidenceHash,
+    outcome: result.outcome,
+    operations: result.operations,
+    changedTargets: result.changedTargets,
+  });
+  return {
+    attemptIdentity: sha256(canonicalJson({
+      version: 2,
+      target,
+      attemptOrdinal: state.overallUsed,
+      authorizationEvidenceHash: pending.evidenceHash,
+      approachBasisIdentity: sha256(canonicalJson(capacityApproachBasis(pending))),
+    })),
+    resultIdentity: sha256(canonicalJson({
+      type: 'specialist-attestation:result',
+      version: 1,
+      material: resultMaterial,
+    })),
+  };
+}
+
+nodeTest('work handoff capacity: state-bound preflight prepares 16, 17, and the captured 135-path authorization exactly', () => {
+  for (const [authorized, changed] of [
+    [CAPTURED_AUTHORIZED_TARGETS.slice(0, 16), CAPTURED_AUTHORIZED_TARGETS.slice(0, 16)],
+    [CAPTURED_AUTHORIZED_TARGETS.slice(0, 17), CAPTURED_AUTHORIZED_TARGETS.slice(0, 17)],
+    [CAPTURED_AUTHORIZED_TARGETS, CAPTURED_CHANGED_TARGETS],
+  ]) {
+    const label = `${authorized.length} authorized, ${changed.length} changed`;
+    const state = capacityPendingState(authorized);
+    const stateBytes = canonicalJson(state);
+    const result = { ...specialistResult(label, 'accepted'), changedTargets: [...changed] };
+    const resultBytes = canonicalJson(result);
+    const prepared = prepareSpecialistResult(state, result);
+    const expected = capacityTrustedIdentities(state, result);
+    assert.deepEqual(prepared.result, result, label);
+    assert.deepEqual(prepared.completion.changedTargets, changed, label);
+    assert.equal(prepared.completion.attemptIdentity, expected.attemptIdentity, `${label}: attempt binds every authorized path`);
+    assert.equal(prepared.completion.resultIdentity, expected.resultIdentity, `${label}: result binds every changed path`);
+    assert.equal(canonicalJson(state), stateBytes, label);
+    assert.equal(canonicalJson(result), resultBytes, label);
+  }
+
+  const state = capacityPendingState(CAPTURED_AUTHORIZED_TARGETS);
+  const captured = {
+    ...specialistResult('captured-negative', 'accepted'),
+    changedTargets: [...CAPTURED_CHANGED_TARGETS],
+  };
+  const longTargets = Array.from({ length: 45 }, (_, index) => (
+    `src/${String(index).padStart(2, '0')}/${'x'.repeat(393)}`
+  ));
+  for (const [label, pendingValue, result, pattern] of [
+    ['17 checks', state, {
+      ...clone(captured),
+      verification: { checks: feature060Checks(17) },
+    }, /verification\.result\.checks must contain 1 through 16 rows/],
+    ['unauthorized changed path', state, {
+      ...clone(captured),
+      changedTargets: [...CAPTURED_CHANGED_TARGETS, 'src/skills/dude-work/unauthorized.mjs'],
+    }, /^TypeError: completion v2 does not match the exact pending action and result route$/],
+    ['result material past its byte budget', capacityPendingState(longTargets), {
+      ...clone(captured),
+      changedTargets: [...longTargets],
+    }, /verification\.context\.resultMaterial must contain 1 through 16384 UTF-8 bytes/],
+  ]) {
+    const stateBytes = canonicalJson(pendingValue);
+    const resultBytes = canonicalJson(result);
+    assert.throws(() => prepareSpecialistResult(pendingValue, result), pattern, label);
+    assert.equal(canonicalJson(pendingValue), stateBytes, label);
+    assert.equal(canonicalJson(result), resultBytes, label);
+  }
+});
+
+nodeTest('work handoff capacity: the runner settles the captured 135-path authorization and its 25 changed paths without truncation', async () => {
+  await withSealedWorkspace(async (root) => {
+    const label = 'captured-135-authorized-25-changed';
+    const materialInputs = focusedMaterialInputs(CAPTURED_AUTHORIZED_TARGETS);
+    // Four check rows with the observed definition and evidence lengths.
+    const checks = [[183, 579], [153, 402], [116, 378], [102, 259]].map(([definition, evidence], index) => ({
+      definition: `capacity check ${index + 1} `.padEnd(definition, 'd'),
+      outcome: 'passed',
+      evidence: `capacity evidence ${index + 1} `.padEnd(evidence, 'e'),
+    }));
+    const observed = await runFocusedTrustedCompletion(root, label, (assessment) => ({
+      ...focusedSpecialistPair(assessment, label),
+      changedTargets: [...CAPTURED_CHANGED_TARGETS],
+      verification: { checks },
+    }), materialInputs);
+    assertFocusedTrustedCompletionSettled(root, label, observed, 'succeeded');
+    assert.equal(canonicalJson(observed.specialistResult), observed.specialistResultBytes, `${label}: raw result stays exact`);
+
+    const authorization = observed.result.steps.find((step) => step.reason === 'authorized');
+    assert.ok(authorization, `${label}: one authorization`);
+    const authorizedState = focusedRunnerAcceptedState(authorization);
+    const [pending] = authorizedState.pending;
+    assert.deepEqual(pending.materialInputs, materialInputs, `${label}: accepted authorization keeps all 135 paths`);
+    assert.equal(pending.approachHash, approachHash({ action: 'execute-task', materialInputs }), label);
+
+    const [capture] = observed.captures;
+    const expected = capacityTrustedIdentities(authorizedState, observed.specialistResult);
+    assert.deepEqual(capture.completion.changedTargets, CAPTURED_CHANGED_TARGETS, `${label}: all 25 changed paths reach capture`);
+    assert.equal(capture.completion.attemptIdentity, expected.attemptIdentity, `${label}: capture binds every authorized path`);
+    assert.equal(capture.completion.resultIdentity, expected.resultIdentity, `${label}: capture binds every changed path`);
+
+    const history = fs.readFileSync(path.join(root, TASKS_PATH), 'utf8').split('\n')
+      .filter((line) => line.startsWith('- dude-run-event: '))
+      .map((line) => JSON.parse(line.slice('- dude-run-event: '.length)));
+    const approaches = history.filter((event) => event.type === 'approach-occurrence');
+    assert.equal(approaches.length, 1, `${label}: one retained approach occurrence`);
+    validateApproachOccurrenceEventV1(approaches[0]);
+    assert.deepEqual(approaches[0].basis, capacityApproachBasis(pending), `${label}: lane history keeps all 135 paths`);
+    assert.equal(approaches[0].occurrence.attemptIdentity, expected.attemptIdentity, label);
+    assert.equal(approaches[0].occurrence.resultIdentity, expected.resultIdentity, label);
+    assert.equal(approaches[0].occurrence.disposition, 'accepted', label);
+
+    const [completed] = focusedRunnerAcceptedState(observed.result).completed;
+    assert.equal(completed.evidenceHash, pending.evidenceHash, label);
+    assert.equal(completed.approachHash, pending.approachHash, `${label}: completion binds the unchanged authorization`);
+  });
+});
 
 nodeTest('issue #21: an unsafe snapshot halts autonomously with an actionable existing evidence reason', async () => {
   await withSealedWorkspace(async (root) => {

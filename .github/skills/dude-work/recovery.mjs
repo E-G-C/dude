@@ -4384,11 +4384,13 @@ function assertV2SubjectIdentity(value, label) {
   }
 }
 
-/** @param {unknown} value @param {(value:unknown,label:string)=>void} validate @param {number} min @param {number} max @param {string} label */
+/** @param {unknown} value @param {(value:unknown,label:string)=>void} validate @param {number} min @param {number} max Infinity when no row ceiling applies. @param {string} label */
 function validateV2SortedSet(value, validate, min, max, label) {
   const rows = assertDenseDataArray(value, label);
   if (rows.length < min || rows.length > max) {
-    invalid(label, `must contain ${min} through ${max} rows`);
+    invalid(label, max === Infinity
+      ? `must contain at least ${min} ${min === 1 ? 'row' : 'rows'}`
+      : `must contain ${min} through ${max} rows`);
   }
   rows.forEach((row, index) => {
     validate(row, `${label}[${index}]`);
@@ -4397,6 +4399,16 @@ function validateV2SortedSet(value, validate, min, max, label) {
     }
   });
   return /** @type {string[]} */ (rows);
+}
+
+/**
+ * A complete authorized or changed path set keeps every path. As at admission
+ * and in RunState, it has no row ceiling of its own; the enclosing event,
+ * result-material, and checkpoint byte budgets bound it instead.
+ * @param {unknown} value @param {number} min @param {string} label
+ */
+function validateV2PathSet(value, min, label) {
+  return validateV2SortedSet(value, assertV2SubjectIdentity, min, Infinity, label);
 }
 
 /** @param {unknown} value @param {string} label */
@@ -4418,7 +4430,7 @@ function validateAffectedTargetV2(value, label) {
 /** @param {unknown} value @param {string} [label] */
 export function validateMaterialInputsV1(value, label = 'MaterialInputsV1') {
   const record = assertExactRecord(value, ['targets', 'operations', 'checks'], [], label);
-  validateV2SortedSet(record.targets, assertV2SubjectIdentity, 1, 16, `${label}.targets`);
+  validateV2PathSet(record.targets, 1, `${label}.targets`);
   validateV2SortedSet(record.operations, assertV2Identifier, 1, 16, `${label}.operations`);
   validateV2SortedSet(record.checks, assertV2Identifier, 1, 16, `${label}.checks`);
   return value;
@@ -7995,7 +8007,7 @@ function validateCompletionV2Binding(pending, completion, label) {
   assertUnicodeScalarString(completion.route, `${label}.route`);
   assertEnum(completion.outcome, OUTCOMES, `${label}.outcome`);
   const operations = validateV2SortedSet(completion.operations, assertV2Identifier, 1, 16, `${label}.operations`);
-  const changedTargets = validateV2SortedSet(completion.changedTargets, assertV2SubjectIdentity, 0, 16, `${label}.changedTargets`);
+  const changedTargets = validateV2PathSet(completion.changedTargets, 0, `${label}.changedTargets`);
   const findingIdentities = validateV2HashSet(completion.findingIdentities, `${label}.findingIdentities`, 0, 16);
   const materialInputs = /** @type {Record<string, unknown>} */ (pending.materialInputs);
   if (completion.route !== expectedResultRoute(/** @type {string} */ (pending.action), /** @type {Record<string, unknown>} */ (pending.target))

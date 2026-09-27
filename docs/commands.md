@@ -264,11 +264,14 @@ Next:
 - Run @dude define authentication when the idea is ready
 ```
 
-The first brainstorm assigns the next permanent three-digit lifecycle number.
-It orders idea inventory by capture time, is reused for the feature package, and
-is never reused. It does not set priority, dependency, or execution order. The
-exact unnumbered frontmatter slug remains the normal selector, so commands still
-use `authentication`; an explicit path must name the exact numbered ledger.
+The first brainstorm assigns a three-digit lifecycle number, one higher than the
+highest number already used by the workspace's ideas and packages. It orders
+idea inventory by capture time and carries over to the feature package. Numbers
+are not reserved across branches, so ideas with different slugs may share one;
+see [Definition Rules](reference.md#definition-rules). It does not set priority,
+dependency, or execution order. The exact unnumbered frontmatter slug remains
+the normal selector, so commands still use `authentication`; an explicit path
+must name the exact numbered ledger.
 
 The lifecycle status vocabulary is `draft|defined|resolved`. A new file starts
 with `# Idea: <title>` and frontmatter containing the exact unnumbered `slug:`,
@@ -347,10 +350,11 @@ Blockers:
 On success, define updates the same idea to `status: defined`, records the exact
 workspace-relative `spec_path:` to `spec.md` (for example,
 `.dude/specs/001-authentication/spec.md`), and appends to its Coordinator Log.
-That exact path is the feature's canonical identity. If intent changes later,
-edit the user-controlled `## Idea` and any relevant answers or assumptions,
-then rerun `@dude define <slug>`; do not treat generated `spec.md` or `plan.md`
-as the intent source.
+That exact path is the feature's canonical identity. Another package with the
+same number and a different slug does not block definition. If intent changes
+later, edit the user-controlled `## Idea` and any relevant answers or
+assumptions, then rerun `@dude define <slug>`; do not treat generated `spec.md`
+or `plan.md` as the intent source.
 
 ### `@dude work`
 

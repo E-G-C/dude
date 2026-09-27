@@ -70,7 +70,7 @@ node --test .github/skills/dude-engine/lib/ownership.test.mjs
 
 1. **Idea files** (`.dude/ideas/*.md`)
    - Only direct regular `.md` children are supported. A nested directory, non-Markdown file, symbolic link, non-regular entry, or unsafe canonical root/ancestor fails with its path.
-   - Canonical current-format identity is exactly `.dude/ideas/<NNN>-<slug>.md`, with ASCII `001` through `999` and a suffix exactly matching frontmatter `slug:`. Unnumbered, malformed, out-of-range, duplicate-number, duplicate-slug, and filename/slug-mismatch identities fail.
+   - Canonical current-format identity is exactly `.dude/ideas/<NNN>-<slug>.md`, with ASCII `001` through `999` and a suffix exactly matching frontmatter `slug:`. Unnumbered, malformed, out-of-range, duplicate-slug, and filename/slug-mismatch identities fail. Ideas and packages with different slugs may share a number.
    - Strict YAML frontmatter is present, including unique scalar keys and balanced quoted scalars.
    - `status:` is exactly `draft`, `defined`, or `resolved`. An exact
      `resolved` ledger has an exactly empty unnormalized `spec_path:` and no

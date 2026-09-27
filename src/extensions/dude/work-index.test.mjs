@@ -1547,6 +1547,157 @@ test('T003 work index and selected detail reduce canonical visibility from the s
   }
 });
 
+test('duplicate-prefix: work index keeps exact same-prefix contexts with independent counts, groups, and sources', async () => {
+  // Arrange: reported 074/075 collisions with one shared durable task key.
+  const root = temporaryRoot();
+  const calls = [];
+  try {
+    const completed = feature(root, '074', 'work-readable-evidence-handoff', '- [x] T001@aaaaaaaa Done.\n');
+    const active = feature(root, '074', 'dude-canvas-about', '- [~] T001@aaaaaaaa In progress.\n');
+    const waiting = feature(root, '075', 'terminal-work-manual-resolution', '- [ ] T001@aaaaaaaa Open work.\n');
+    const draft = idea(root, '075', 'dude-development-base-release');
+    const resolved = idea(root, '075', 'resolved-bystander', 'resolved');
+    const before = fileInventory(root);
+    const runBd = (args) => {
+      calls.push(args);
+      return emptyBoard();
+    };
+
+    // Act
+    const index = await readWorkIndex({ root }, { runBd });
+    const row = (record) => index.items.find(({ ideaPath }) => ideaPath === record.ideaPath);
+
+    // Assert
+    assert.equal(index.coverage.inventory.state, 'current');
+    assert.equal(index.coverage.work.state, 'current');
+    assert.deepEqual(index.contexts.map(({ ideaPath, specPath }) => [ideaPath, specPath]), [
+      [active.ideaPath, active.specPath],
+      [completed.ideaPath, completed.specPath],
+      [draft.ideaPath, null],
+      [resolved.ideaPath, null],
+      [waiting.ideaPath, waiting.specPath],
+    ]);
+    assert.deepEqual(index.items.map(({ ideaPath, specPath }) => [ideaPath, specPath]),
+      index.contexts.map(({ ideaPath, specPath }) => [ideaPath, specPath]));
+    for (const [record, expected] of [
+      [completed, { lane: 'lightweight', group: 'completed', taskCounts: { total: 1, open: 0, inProgress: 0, blocked: 0, done: 1 } }],
+      [active, { lane: 'lightweight', group: 'active', taskCounts: { total: 1, open: 0, inProgress: 1, blocked: 0, done: 0 } }],
+      [waiting, { lane: 'definition', group: 'defined-awaiting-work', taskCounts: { total: 1, open: 1, inProgress: 0, blocked: 0, done: 0 } }],
+    ]) {
+      const item = row(record);
+      assert.equal(item.basis, 'canonical-lifecycle', record.ideaPath);
+      assert.equal(item.lane, expected.lane, record.ideaPath);
+      assert.equal(item.group, expected.group, record.ideaPath);
+      assert.deepEqual(item.taskCounts, expected.taskCounts, record.ideaPath);
+      assert.deepEqual(item.availability, { state: 'current', reason: null }, record.ideaPath);
+      assert.deepEqual(item.sources.map(({ path: sourcePath }) => sourcePath), [record.specPath, record.tasksPath], record.ideaPath);
+    }
+    assert.deepEqual([row(draft).basis, row(draft).group, row(draft).taskCounts], ['idea-ledger', 'awaiting-definition', null]);
+    assert.deepEqual([row(resolved).basis, row(resolved).group, row(resolved).taskCounts], ['idea-ledger', 'completed', null]);
+    const taskIdentities = [completed, active, waiting].map((record) => row(record).sources
+      .find(({ path: sourcePath }) => sourcePath === record.tasksPath).contentIdentity);
+    assert.equal(new Set(taskIdentities).size, 3, 'each peer is counted from its own task bytes');
+    assert.deepEqual(calls, [BD_LIST, BD_LIST]);
+    assert.deepEqual(fileInventory(root), before, 'the reader remains read-only');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('duplicate-prefix: selected detail binds the exact same-prefix peer and refuses a bare shared number', async () => {
+  // Arrange
+  const root = temporaryRoot();
+  try {
+    const first = feature(root, '074', 'work-readable-evidence-handoff', '- [x] T001@aaaaaaaa Done.\n');
+    const second = feature(root, '074', 'dude-canvas-about', '- [~] T001@aaaaaaaa In progress.\n');
+    const draft = idea(root, '074', 'dude-development-base-release');
+    const before = fileInventory(root);
+    const runBd = () => emptyBoard();
+
+    // Act
+    const index = await readWorkIndex({ root }, { runBd });
+    const byPath = await readNowProjection({ root, target: second.ideaPath }, { runBd });
+    const bySlug = await readNowProjection({ root, target: 'work-readable-evidence-handoff' }, { runBd });
+    const draftSelection = await readNowProjection({ root, target: draft.ideaPath }, { runBd });
+    const bareNumber = await readNowProjection({ root, target: '074' }, { runBd });
+
+    // Assert
+    for (const [projection, record] of [[byPath, second], [bySlug, first]]) {
+      const row = index.items.find(({ ideaPath }) => ideaPath === record.ideaPath);
+      assert.equal(projection.selected?.ideaPath, record.ideaPath);
+      assert.equal(projection.selected?.specPath, record.specPath);
+      assert.deepEqual(projection.tasks, row.taskCounts, record.ideaPath);
+      assert.deepEqual(projection.taskDetails.items.map(({ taskKey }) => taskKey), ['T001@aaaaaaaa']);
+      assert.equal(
+        projection.taskDetails.items[0].source.contentIdentity,
+        row.sources.find(({ path: sourcePath }) => sourcePath === record.tasksPath).contentIdentity,
+        `${record.ideaPath}: detail reads the selected peer's task bytes`,
+      );
+    }
+    assert.notEqual(
+      byPath.taskDetails.items[0].source.contentIdentity,
+      bySlug.taskDetails.items[0].source.contentIdentity,
+    );
+    assert.equal(draftSelection.selected?.ideaPath, draft.ideaPath);
+    assert.equal(draftSelection.selected?.specPath, null);
+    assert.equal(bareNumber.selected, null, 'a bare shared number never selects a peer');
+    assert.equal(bareNumber.status, 'unavailable');
+    assert.deepEqual(fileInventory(root), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('duplicate-prefix: slug and exact-path conflicts stay unavailable instead of substituting a same-prefix peer', async () => {
+  const fixtures = [
+    {
+      name: 'duplicate slug under another prefix',
+      arrange(root) {
+        idea(root, '075', 'alpha');
+      },
+      targets: ['alpha', '.dude/ideas/074-alpha.md', '.dude/ideas/075-alpha.md'],
+    },
+    {
+      name: 'same-prefix peer claims the exact package',
+      arrange(root, alpha) {
+        write(root, '.dude/ideas/074-beta.md', fs.readFileSync(path.join(root, ...alpha.ideaPath.split('/')), 'utf8')
+          .replace('title: alpha\nslug: alpha\n', 'title: beta\nslug: beta\n'));
+      },
+      targets: ['alpha', 'beta', '.dude/ideas/074-alpha.md'],
+    },
+  ];
+  for (const fixture of fixtures) {
+    // Arrange
+    const root = temporaryRoot();
+    try {
+      const alpha = feature(root, '074', 'alpha', '- [~] T001@aaaaaaaa In progress.\n');
+      feature(root, '074', 'gamma', '- [ ] T001@aaaaaaaa Open work.\n');
+      fixture.arrange(root, alpha);
+      const before = fileInventory(root);
+      const runBd = () => emptyBoard();
+
+      // Act
+      const index = await readWorkIndex({ root }, { runBd });
+      const selections = [];
+      for (const target of fixture.targets) selections.push(await readNowProjection({ root, target }, { runBd }));
+
+      // Assert
+      const alphaRow = index.items.find(({ ideaPath }) => ideaPath === alpha.ideaPath);
+      assert.equal(alphaRow.availability.state, 'unavailable', fixture.name);
+      assert.equal(alphaRow.taskCounts, null, fixture.name);
+      assert.equal(index.items.some(({ basis }) => basis === 'canonical-lifecycle'), false,
+        `${fixture.name}: unsafe inventory withholds work metadata`);
+      for (const [position, selection] of selections.entries()) {
+        assert.equal(selection.selected, null, `${fixture.name}: ${fixture.targets[position]}`);
+        assert.equal(selection.status, 'unavailable', `${fixture.name}: ${fixture.targets[position]}`);
+      }
+      assert.deepEqual(fileInventory(root), before, fixture.name);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
 test('T011 populated Beads authority wins globally while failed or malformed authority never falls back to Markdown counts', async (t) => {
   // Arrange
   const root = temporaryRoot();

@@ -789,6 +789,61 @@ test('Feature 060 T002: full 16-row attestation preserves every check while 17 a
   }
 });
 
+test('work handoff capacity: attestation binds complete path sets past 16 rows while check and byte ceilings stay', () => {
+  const targets = Array.from({ length: 135 }, (_, index) => (
+    `src/skills/dude-capacity/lib/target-${String(index).padStart(3, '0')}.mjs`
+  ));
+  /** @param {string[]} authorized */
+  const inputFor = (authorized) => {
+    const input = verificationInput();
+    input.context.attempt.approachBasis.materialInputs.targets = [...authorized];
+    return input;
+  };
+  for (const count of [16, 17, 135]) {
+    const input = inputFor(targets.slice(0, count));
+    const before = canonicalJson(input);
+    const verification = buildVerification(input);
+    const attempt = input.context.attempt;
+    assert.equal(verification.envelope.attemptIdentity, sha256(canonicalJson({
+      version: 2,
+      target: TARGET,
+      attemptOrdinal: attempt.ordinal,
+      authorizationEvidenceHash: attempt.authorizationEvidenceHash,
+      approachBasisIdentity: sha256(canonicalJson(attempt.approachBasis)),
+    })), `${count} targets bind the attempt`);
+    const review = reviewInput(verification.capture, 'accepted', []);
+    review.context.attempt = clone(attempt);
+    assert.equal(
+      buildReview(review).envelope.attemptIdentity,
+      verification.envelope.attemptIdentity,
+      `${count} targets bind the review`,
+    );
+    assert.equal(canonicalJson(input), before, `${count} targets stay exact`);
+  }
+
+  const seventeenChecks = inputFor(targets);
+  seventeenChecks.result.checks = Array.from({ length: 17 }, (_, index) => ({
+    definition: `capacity check ${index + 1}`,
+    outcome: 'passed',
+    evidence: `capacity evidence ${index + 1}`,
+  }));
+  assert.throws(
+    () => buildSpecialistAttestation(seventeenChecks),
+    /verification\.result\.checks must contain 1 through 16 rows/,
+  );
+
+  const oversizedMaterial = inputFor(targets);
+  const changedTargets = Array.from({ length: 45 }, (_, index) => (
+    `src/${String(index).padStart(2, '0')}/${'x'.repeat(393)}`
+  ));
+  oversizedMaterial.context.resultMaterial = canonicalJson({ changedTargets });
+  oversizedMaterial.result.resultMaterial = oversizedMaterial.context.resultMaterial;
+  assert.throws(
+    () => buildSpecialistAttestation(oversizedMaterial),
+    /verification\.context\.resultMaterial must contain 1 through 16384 UTF-8 bytes/,
+  );
+});
+
 test('Feature 060 T002: a changed verification requires a newly bound independent review', () => {
   const original = buildVerification(verificationInput());
   const originalReview = buildReview(reviewInput(original.capture, 'accepted', []));

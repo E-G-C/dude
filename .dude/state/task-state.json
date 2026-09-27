@@ -590,5 +590,11 @@
       "T002@72f6b104": "x"
     },
     "updated_at": "2026-09-27T02:54:37.404Z"
+  },
+  ".dude/specs/076-duplicate-feature-number-prefixes/tasks.md": {
+    "glyphs": {
+      "T001@9c4e71b2": "x"
+    },
+    "updated_at": "2026-09-27T15:54:06.000Z"
   }
 }
