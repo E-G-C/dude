@@ -28,6 +28,7 @@ import { readInstallationRecord } from './lib/about.mjs';
 import { createNeedsYou, NEEDS_YOU_LIMITS } from './lib/needs-you.mjs';
 import { readPacks } from './lib/packs.mjs';
 import { cmdAdd, cmdPreviewRefresh, cmdRefresh, cmdRemove, cmdStatus } from '../../skills/dude-compose/compose.mjs';
+import { renderDevelopmentBaseRelease } from '../../skills/dude-engine/lib/development-base-release.mjs';
 import { serializeProfileDocument } from '../../skills/dude-engine/lib/profile.mjs';
 
 const REMOVED_PROOF_ROUTES = Object.freeze([
@@ -3551,26 +3552,42 @@ test('closing an unknown instance is a no-op', async () => {
 });
 
 const ABOUT_REPOSITORY = 'https://github.com/E-G-C/dude';
-const ABOUT_NULLS = '{"installedRef":null,"sourceRef":null}';
+/**
+ * The exact serialized About body. The development base is null unless a case
+ * records one, so every 074 case also proves the added field stays null.
+ * @param {string | null} installedRef @param {string | null} sourceRef @param {string | null} [baseRelease]
+ */
+const aboutBody = (installedRef, sourceRef, baseRelease = null) => JSON.stringify({ installedRef, sourceRef, baseRelease });
+const ABOUT_NULLS = '{"installedRef":null,"sourceRef":null,"baseRelease":null}';
 const ABOUT_ENDED = Object.freeze({ error: 'about_unavailable', message: 'This Canvas has no current workspace.' });
 
-/** A disposable workspace whose only About input is its fixed bundle manifest. */
+/** A disposable workspace whose About inputs are its two fixed metadata files. */
 function aboutFixture() {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-about-'));
   const root = path.join(temporary, 'workspace');
   const manifestPath = path.join(root, '.dude', 'metadata', 'bundle-manifest.md');
+  const recordPath = path.join(root, '.dude', 'metadata', 'development-base-release.md');
   fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
   /** The canonical shape: prose around exactly one fenced JSON payload. @param {unknown} payload */
   const documentFor = payload => [
     '# Bundle Manifest', '', 'Pins the upstream source for this install.', '',
     '```json', JSON.stringify(payload, null, 2), '```', '', '## Notes', '', '- Metadata only.', '',
   ].join('\n');
+  /** Any payload in the base record's prose-plus-fence shape. @param {unknown} payload */
+  const recordDocumentFor = payload => [
+    '# Development Base Release', '', 'Recorded provenance for this development install.', '',
+    '```json', JSON.stringify(payload, null, 2), '```', '',
+  ].join('\n');
   return {
-    temporary, root, manifestPath, documentFor,
+    temporary, root, manifestPath, recordPath, documentFor, recordDocumentFor,
     /** @param {unknown} payload */
     write(payload) { fs.writeFileSync(manifestPath, documentFor(payload)); },
     /** @param {string | Buffer} bytes */
     writeRaw(bytes) { fs.writeFileSync(manifestPath, bytes); },
+    /** The producers' own canonical record. @param {{ source_repo: string, base_release: string }} record */
+    writeRecord(record) { fs.writeFileSync(recordPath, renderDevelopmentBaseRelease(record)); },
+    /** @param {string | Buffer} bytes */
+    writeRecordRaw(bytes) { fs.writeFileSync(recordPath, bytes); },
     cleanup() { fs.rmSync(temporary, { recursive: true, force: true }); },
   };
 }
@@ -3622,11 +3639,11 @@ test('074 About: GET returns exactly the current recorded refs on every read wit
     assert.equal(current.status, 200);
     assert.equal(current.headers.get('cache-control'), 'no-store');
     assert.equal(current.headers.get('content-type'), 'application/json; charset=utf-8');
-    assert.equal(current.text, '{"installedRef":"main","sourceRef":"main"}', 'exact recorded strings, not display labels');
+    assert.equal(current.text, aboutBody('main', 'main'), 'exact recorded strings, not display labels');
 
     // Each entry reads the record again; nothing earlier is retained.
     f.write({ source_repo: ABOUT_REPOSITORY, source_ref: 'latest', installed_ref: 'v1.2.3' });
-    assert.equal((await readAboutRoute(instance)).text, '{"installedRef":"v1.2.3","sourceRef":"latest"}');
+    assert.equal((await readAboutRoute(instance)).text, aboutBody('v1.2.3', 'latest'));
     fs.rmSync(f.manifestPath);
     const missing = await readAboutRoute(instance);
     assert.equal(missing.status, 200, 'unavailable metadata is a readable result');
@@ -3659,7 +3676,7 @@ test('074 About: each ref is validated alone and returned exactly, without trimm
     f.write({ source_repo: repository, ...refs });
     const { status, text } = await readAboutRoute(instance);
     assert.equal(status, 200, JSON.stringify(refs));
-    assert.equal(text, JSON.stringify({ installedRef, sourceRef }), JSON.stringify(refs));
+    assert.equal(text, aboutBody(installedRef, sourceRef), JSON.stringify(refs));
     assert.equal(text.includes('secret-token') || text.includes('example.invalid') || text.includes(f.root), false);
   };
   try {
@@ -3686,7 +3703,7 @@ test('074 About: each ref is validated alone and returned exactly, without trimm
 test('074 About: malformed, multi-payload, unsupported, unprovenanced, non-UTF-8 and non-file records leave both refs null', async () => {
   const f = aboutFixture();
   const valid = { source_repo: ABOUT_REPOSITORY, source_ref: 'latest', installed_ref: 'v1.2.3' };
-  const recorded = '{"installedRef":"v1.2.3","sourceRef":"latest"}';
+  const recorded = aboutBody('v1.2.3', 'latest');
   /** @param {string} body */
   const fenced = body => `\`\`\`json\n${body}\n\`\`\``;
   const payload = JSON.stringify(valid, null, 2);
@@ -3740,7 +3757,7 @@ test('074 About: linked roots, components and records and unreadable records are
   const outside = path.join(f.temporary, 'outside');
   fs.mkdirSync(outside);
   const record = { source_repo: ABOUT_REPOSITORY, source_ref: 'latest', installed_ref: 'v9.9.9' };
-  const recorded = '{"installedRef":"v9.9.9","sourceRef":"latest"}';
+  const recorded = aboutBody('v9.9.9', 'latest');
   const directoryLink = process.platform === 'win32' ? 'junction' : 'dir';
   f.write(record);
   const linkedRootPath = path.join(f.temporary, 'linked-workspace');
@@ -3842,7 +3859,7 @@ test('074 About: only an exact bodiless GET reaches the record read', async t =>
 
     const admitted = await readAboutRoute(instance);
     assert.equal(admitted.status, 200, 'the exact companion request is admitted');
-    assert.equal(admitted.text, '{"installedRef":"main","sourceRef":"main"}');
+    assert.equal(admitted.text, aboutBody('main', 'main'));
     assert.equal(reads.count, 1);
   } finally {
     t.mock.restoreAll();
@@ -3918,7 +3935,7 @@ test('074 About: a root replacement before delivery returns 409 and never the ol
     assert.equal(replaced.headers.get('cache-control'), 'no-store');
     assert.deepEqual(JSON.parse(replaced.text),
       { error: 'identity_mismatch', message: 'The workspace changed. Open About again to read it.' });
-    assert.equal((await readAboutRoute(instance)).text, '{"installedRef":"main","sourceRef":"main"}',
+    assert.equal((await readAboutRoute(instance)).text, aboutBody('main', 'main'),
       'the next read uses only the current workspace');
   } finally {
     t.mock.restoreAll();
@@ -3983,7 +4000,7 @@ test('074 About: a client abort during the read sends nothing and the next read 
     assert.equal(responses[0].headersSent, false, 'the discarded read wrote no response');
     f.write({ source_repo: ABOUT_REPOSITORY, source_ref: 'main', installed_ref: 'main' });
     t.mock.restoreAll();
-    assert.equal((await readAboutRoute(instance)).text, '{"installedRef":"main","sourceRef":"main"}');
+    assert.equal((await readAboutRoute(instance)).text, aboutBody('main', 'main'));
   } finally {
     t.mock.restoreAll();
     await closeInstance('about-client-abort');
@@ -4009,7 +4026,7 @@ test('074 About: reading it starts no process, opens no outside connection and w
     for (let entry = 0; entry < 3; entry += 1) {
       texts.push((await readAboutRoute(instance)).text, (await readAboutRoute(unavailable)).text);
     }
-    assert.deepEqual(texts, Array.from({ length: 3 }, () => ['{"installedRef":"v1.2.3","sourceRef":"latest"}', ABOUT_NULLS]).flat());
+    assert.deepEqual(texts, Array.from({ length: 3 }, () => [aboutBody('v1.2.3', 'latest'), ABOUT_NULLS]).flat());
     assert.equal(launches(), 0, 'About starts no command or process');
     const targets = connects.mock.calls.map(({ arguments: args }) => {
       const options = Array.isArray(args[0]) ? args[0][0] : args[0];
@@ -4058,7 +4075,8 @@ test('074 About: the record adapter has no process, network, timer, write, catal
   visit(entry);
   const modules = [...graph.keys()].map(file => path.relative(path.resolve(EXTENSION_SOURCE_ROOT, '../..'), file)
     .replace(/\\/g, '/'));
-  for (const reused of ['skills/dude-engine/lib/profile.mjs', 'skills/dude-engine/lib/workspace-paths.mjs']) {
+  for (const reused of ['skills/dude-engine/lib/profile.mjs', 'skills/dude-engine/lib/workspace-paths.mjs',
+    'skills/dude-engine/lib/development-base-release.mjs']) {
     assert.ok(modules.includes(reused), `About reuses ${reused}`);
   }
   assert.deepEqual(modules.filter(file => /dude-compose|dude-bundle-upgrade|release-channel|packs\.mjs|catalog-reader|projection\.mjs|needs-you\.mjs|review\.mjs/.test(file)), []);
@@ -4066,4 +4084,318 @@ test('074 About: the record adapter has no process, network, timer, write, catal
   assert.deepEqual(specifiers.filter(specifier => /^(?:node:)?(?:child_process|cluster|dgram|dns|http|http2|https|inspector|net|tls|worker_threads)(?:\/|$)/.test(specifier)), []);
   const own = /** @type {{source: string}} */ (graph.get(entry)).source;
   assert.deepEqual(own.match(/\b(?:import|require|fetch)\s*\(|\bprocess\.|\bset(?:Timeout|Interval|Immediate)\s*\(|\.(?:write|append|mkdir|mkdtemp|rm|rename|unlink|copy|cp|symlink|link|chmod|chown|utimes|truncate|open|watch)\w*\s*\(/g), null);
+});
+
+const BASE_RECORD = Object.freeze({ source_repo: ABOUT_REPOSITORY, base_release: 'v1.3.0' });
+const DEVELOPMENT_MANIFEST = Object.freeze({ source_repo: ABOUT_REPOSITORY, source_ref: 'main', installed_ref: 'main' });
+
+/**
+ * Count the actual reads of the two fixed About files, and of anything else,
+ * through the one promise read the adapter uses.
+ * @param {import('node:test').TestContext} t @param {{manifestPath: string, recordPath: string}} f
+ */
+function aboutFileReads(t, f) {
+  const readFile = fs.promises.readFile;
+  const counts = { manifest: 0, record: 0, other: /** @type {string[]} */ ([]) };
+  t.mock.method(fs.promises, 'readFile', /** @this {any} */ async function (file, ...rest) {
+    const resolved = path.resolve(String(file));
+    if (resolved === f.manifestPath) counts.manifest += 1;
+    else if (resolved === f.recordPath) counts.record += 1;
+    else counts.other.push(resolved);
+    return readFile.call(this, file, ...rest);
+  });
+  return counts;
+}
+
+test('075 About: a development install returns its recorded base only for the exact manifest source', async () => {
+  const f = aboutFixture();
+  const instance = await openAbout('about-base-source', f.root);
+  try {
+    f.write(DEVELOPMENT_MANIFEST);
+    f.writeRecord(BASE_RECORD);
+    const known = await readAboutRoute(instance);
+    assert.equal(known.status, 200);
+    assert.equal(known.headers.get('cache-control'), 'no-store');
+    assert.equal(known.text, aboutBody('main', 'main', 'v1.3.0'), 'exactly three values, the base as recorded');
+
+    // Every read is fresh: a replaced or removed record is reflected at once.
+    f.writeRecord({ ...BASE_RECORD, base_release: 'v1.4.12' });
+    assert.equal((await readAboutRoute(instance)).text, aboutBody('main', 'main', 'v1.4.12'));
+    fs.rmSync(f.recordPath);
+    assert.equal((await readAboutRoute(instance)).text, aboutBody('main', 'main'),
+      'no record is an unknown base, not an unavailable installation');
+    assert.equal(fs.existsSync(f.recordPath), false, 'a missing record is never created');
+
+    // Association is the exact recorded string: no normalization or aliasing.
+    for (const source of [`${ABOUT_REPOSITORY}/`, ABOUT_REPOSITORY.toLowerCase(), `${ABOUT_REPOSITORY}.git`,
+      ` ${ABOUT_REPOSITORY}`, `${ABOUT_REPOSITORY} `, 'https://github.com/E-G-C/other', 'git@github.com:E-G-C/dude.git']) {
+      f.writeRecord({ ...BASE_RECORD, source_repo: source });
+      const { status, text } = await readAboutRoute(instance);
+      assert.equal(status, 200, source);
+      assert.equal(text, aboutBody('main', 'main'), `a record for ${JSON.stringify(source)} is not this install's base`);
+    }
+
+    // A local-source override associates by the same exact string, and the
+    // source itself never leaves the adapter, even when it looks like a secret.
+    const privateSource = 'https://secret-token@example.invalid/private.git';
+    f.write({ ...DEVELOPMENT_MANIFEST, source_repo: privateSource });
+    f.writeRecord({ source_repo: privateSource, base_release: 'v1.3.0' });
+    const associated = await readAboutRoute(instance);
+    assert.equal(associated.text, aboutBody('main', 'main', 'v1.3.0'));
+    assert.equal(/secret-token|example\.invalid|private\.git/.test(associated.text), false);
+    assert.equal(associated.text.includes(f.root), false);
+    f.write({ ...DEVELOPMENT_MANIFEST, source_repo: '../dude-source' });
+    f.writeRecord({ source_repo: '../dude-source', base_release: 'v2.0.1' });
+    assert.equal((await readAboutRoute(instance)).text, aboutBody('main', 'main', 'v2.0.1'));
+    f.writeRecord(BASE_RECORD);
+    assert.equal((await readAboutRoute(instance)).text, aboutBody('main', 'main'),
+      'the default repository record does not belong to an overridden source');
+
+    // The supplement depends only on the installed development ref; the
+    // channel stays its own independently validated value.
+    f.write({ source_repo: ABOUT_REPOSITORY, installed_ref: 'main' });
+    assert.equal((await readAboutRoute(instance)).text, aboutBody('main', null, 'v1.3.0'));
+    f.write({ ...DEVELOPMENT_MANIFEST, source_ref: 'latest' });
+    assert.equal((await readAboutRoute(instance)).text, aboutBody('main', 'latest', 'v1.3.0'));
+    f.write({ ...DEVELOPMENT_MANIFEST, source_ref: 'https://evil.example/ref' });
+    assert.equal((await readAboutRoute(instance)).text, aboutBody('main', null, 'v1.3.0'));
+  } finally {
+    await closeInstance('about-base-source');
+    f.cleanup();
+  }
+});
+
+test('075 About: only an installed development ref reads the record, and at most two fixed files are read', async t => {
+  const f = aboutFixture();
+  f.writeRecord(BASE_RECORD);
+  const instance = await openAbout('about-base-scope', f.root);
+  const reads = aboutFileReads(t, f);
+  /** @param {string | Buffer | null} manifest @param {string} expected @param {number} records @param {string} label */
+  const expectRead = async (manifest, expected, records, label) => {
+    if (manifest === null) fs.rmSync(f.manifestPath, { force: true });
+    else f.writeRaw(manifest);
+    const before = { manifest: reads.manifest, record: reads.record };
+    const { status, text } = await readAboutRoute(instance);
+    assert.equal(status, 200, label);
+    assert.equal(text, expected, label);
+    assert.equal(reads.manifest - before.manifest, manifest === null ? 0 : 1, `${label}: one manifest read`);
+    assert.equal(reads.record - before.record, records, `${label}: record reads`);
+  };
+  try {
+    await expectRead(f.documentFor(DEVELOPMENT_MANIFEST), aboutBody('main', 'main', 'v1.3.0'), 1, 'development');
+    // A release, another ref, or no usable installed ref never reads or shows a base.
+    for (const [installed, source, shown] of [
+      ['v1.3.0', 'latest', 'v1.3.0'], ['v1.3.0', 'v1.3.0', 'v1.3.0'], ['latest', 'latest', 'latest'],
+      ['feature/about', 'main', 'feature/about'], ['main.lock', 'main', null], ['Main', 'main', 'Main'],
+    ]) {
+      await expectRead(f.documentFor({ source_repo: ABOUT_REPOSITORY, source_ref: source, installed_ref: installed }),
+        aboutBody(shown, source), 0, `installed ${installed}`);
+    }
+    await expectRead(f.documentFor({ source_repo: ABOUT_REPOSITORY, source_ref: 'main' }), aboutBody(null, 'main'), 0,
+      'no installed ref');
+    // An unavailable manifest is unavailable as a whole; the record cannot rescue it.
+    await expectRead(null, ABOUT_NULLS, 0, 'missing manifest');
+    await expectRead('# Bundle Manifest\n\n```json\n{"installed_ref": "main",\n```\n', ABOUT_NULLS, 0, 'malformed manifest');
+    await expectRead(f.documentFor({ source_ref: 'main', installed_ref: 'main' }), ABOUT_NULLS, 0, 'unprovenanced manifest');
+    await expectRead(f.documentFor({ ...DEVELOPMENT_MANIFEST, base_release: 'v1.3.0' }), ABOUT_NULLS, 0,
+      'a manifest cannot carry the base itself');
+    await expectRead(f.documentFor(DEVELOPMENT_MANIFEST), aboutBody('main', 'main', 'v1.3.0'), 1, 'restored development');
+    assert.deepEqual(reads.other, [], 'About reads no file other than its two fixed records');
+  } finally {
+    t.mock.restoreAll();
+    await closeInstance('about-base-scope');
+    f.cleanup();
+  }
+});
+
+test('075 About: malformed, extra, non-stable, multi-payload, non-UTF-8 and non-file records null only the base', async () => {
+  const f = aboutFixture();
+  const payload = JSON.stringify(BASE_RECORD, null, 2);
+  /** @param {string} body */
+  const fenced = body => `# Development Base Release\n\n\`\`\`json\n${body}\n\`\`\`\n`;
+  const cases = [
+    ['an empty file', ''],
+    ['no JSON fence', '# Development Base Release\n\nbase_release: v1.3.0\n'],
+    ['a non-JSON fence', `# Development Base Release\n\n\`\`\`js\n${payload}\n\`\`\`\n`],
+    ['malformed JSON', fenced(`${payload.slice(0, -2)},\n}`)],
+    ['two identical valid JSON fences', `${fenced(payload)}\n${fenced(payload)}`],
+    ['a JSON array', f.recordDocumentFor([BASE_RECORD])],
+    ['a JSON string', f.recordDocumentFor('v1.3.0')],
+    ['JSON null', f.recordDocumentFor(null)],
+    ['an extra field', f.recordDocumentFor({ ...BASE_RECORD, recorded_at: '2026-09-26' })],
+    ['a response-shaped field', f.recordDocumentFor({ ...BASE_RECORD, baseRelease: 'v1.3.0' })],
+    ['an own __proto__ field', fenced(`{"__proto__":{},${payload.slice(1)}`)],
+    ['no base_release', f.recordDocumentFor({ source_repo: ABOUT_REPOSITORY })],
+    ['no source_repo', f.recordDocumentFor({ base_release: 'v1.3.0' })],
+    ['an empty source_repo', f.recordDocumentFor({ ...BASE_RECORD, source_repo: '' })],
+    ['a blank source_repo', f.recordDocumentFor({ ...BASE_RECORD, source_repo: ' \t\n' })],
+    ['a numeric source_repo', f.recordDocumentFor({ ...BASE_RECORD, source_repo: 42 })],
+    ...['v1.3.0-rc.1', 'v1.3.0+build.7', 'latest', 'main', '1.3.0', 'v1.3', 'V1.3.0', ' v1.3.0', 'v1.3.0\n', '',
+      'https://github.com/E-G-C/dude/releases/tag/v1.3.0']
+      .map(base => [`a non-stable base ${JSON.stringify(base)}`, f.recordDocumentFor({ ...BASE_RECORD, base_release: base })]),
+    ['a numeric base', f.recordDocumentFor({ ...BASE_RECORD, base_release: 130 })],
+    ['a null base', f.recordDocumentFor({ ...BASE_RECORD, base_release: null })],
+    ['invalid UTF-8 outside the payload', Buffer.concat([
+      Buffer.from('# Development Base Release '), Buffer.from([0xff]), Buffer.from(`\n\n\`\`\`json\n${payload}\n\`\`\`\n`)])],
+    ['invalid UTF-8 inside the payload', Buffer.concat([
+      Buffer.from(`# Development Base Release\n\n\`\`\`json\n{"source_repo":"${ABOUT_REPOSITORY}`), Buffer.from([0xc3, 0x28]),
+      Buffer.from('","base_release":"v1.3.0"}\n```\n')])],
+  ];
+  const instance = await openAbout('about-base-invalid', f.root);
+  try {
+    f.write(DEVELOPMENT_MANIFEST);
+    f.writeRecordRaw(fenced(payload));
+    assert.equal((await readAboutRoute(instance)).text, aboutBody('main', 'main', 'v1.3.0'), 'the valid control is usable');
+    for (const [label, document] of cases) {
+      f.writeRecordRaw(document);
+      const { status, text } = await readAboutRoute(instance);
+      assert.equal(status, 200, label);
+      assert.equal(text, aboutBody('main', 'main'), `${label} keeps both usable refs and shows no base`);
+    }
+    fs.rmSync(f.recordPath);
+    fs.mkdirSync(f.recordPath);
+    assert.equal((await readAboutRoute(instance)).text, aboutBody('main', 'main'), 'a directory is not a record');
+    fs.rmSync(f.recordPath, { recursive: true });
+    f.writeRecord(BASE_RECORD);
+    assert.equal((await readAboutRoute(instance)).text, aboutBody('main', 'main', 'v1.3.0'), 'a corrected record reads at once');
+  } finally {
+    await closeInstance('about-base-invalid');
+    f.cleanup();
+  }
+});
+
+test('075 About: linked, special and unreadable records are never followed or disclosed and keep usable refs', async t => {
+  const f = aboutFixture();
+  const outside = path.join(f.temporary, 'outside');
+  fs.mkdirSync(outside);
+  f.write(DEVELOPMENT_MANIFEST);
+  f.writeRecord(BASE_RECORD);
+  const instance = await openAbout('about-base-linked', f.root);
+  const known = aboutBody('main', 'main', 'v1.3.0'), unknown = aboutBody('main', 'main');
+  try {
+    assert.equal((await readAboutRoute(instance)).text, known, 'the real record is valid');
+
+    const outsideRecord = path.join(outside, 'development-base-release.md');
+    fs.renameSync(f.recordPath, outsideRecord);
+    fs.symlinkSync(outsideRecord, f.recordPath, 'file');
+    assert.equal(fs.readFileSync(f.recordPath, 'utf8'), renderDevelopmentBaseRelease(BASE_RECORD));
+    assert.equal((await readAboutRoute(instance)).text, unknown, 'a linked record outside the workspace');
+    fs.unlinkSync(f.recordPath);
+    fs.renameSync(outsideRecord, f.recordPath);
+    assert.equal((await readAboutRoute(instance)).text, known, 'the restored real record is valid');
+
+    const readFile = fs.promises.readFile;
+    let denied = 0;
+    const unreadable = t.mock.method(fs.promises, 'readFile', /** @this {any} */ async function (file, ...rest) {
+      if (path.resolve(String(file)) !== f.recordPath) return readFile.call(this, file, ...rest);
+      denied += 1;
+      throw Object.assign(new Error(`EACCES: permission denied, open '${file}'`),
+        { code: 'EACCES', errno: -13, syscall: 'open', path: String(file) });
+    });
+    const refused = await readAboutRoute(instance);
+    assert.equal(denied, 1, 'the refusal came from the actual record read');
+    assert.equal(refused.status, 200);
+    assert.equal(refused.text, unknown, 'no error code, message or path is returned, and the refs remain');
+    unreadable.mock.restore();
+    assert.equal((await readAboutRoute(instance)).text, known);
+
+    // A FIFO, socket or device where the record belongs is refused before any open.
+    const lstatSync = fs.lstatSync;
+    const special = t.mock.method(fs, 'lstatSync', /** @this {any} */ function (file, ...rest) {
+      const stat = lstatSync.call(this, file, ...rest);
+      if (path.resolve(String(file)) !== f.recordPath) return stat;
+      return Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, { isFile: () => false, isFIFO: () => true });
+    });
+    const opened = manifestReads(t, f.recordPath);
+    assert.equal((await readAboutRoute(instance)).text, unknown, 'a special non-file record');
+    assert.equal(opened.count, 0, 'a non-file record is never read');
+    special.mock.restore();
+    assert.equal((await readAboutRoute(instance)).text, known);
+    assert.equal(opened.count, 1);
+  } finally {
+    t.mock.restoreAll();
+    await closeInstance('about-base-linked');
+    f.cleanup();
+  }
+});
+
+test('075 About: a root replacement or Canvas close during the record read never delivers the old base', async t => {
+  const f = aboutFixture(), next = aboutFixture();
+  f.write(DEVELOPMENT_MANIFEST);
+  f.writeRecord(BASE_RECORD);
+  next.write({ source_repo: ABOUT_REPOSITORY, source_ref: 'latest', installed_ref: 'v1.4.0' });
+  const instance = await openAbout('about-base-race', f.root);
+  const closing = await openAbout('about-base-close-race', f.root);
+  try {
+    const replacement = manifestReads(t, f.recordPath, { hold: true });
+    const pending = readAboutRoute(instance);
+    await replacement.reading;
+    instance.readInput = { root: next.root };
+    replacement.release();
+    const replaced = await pending;
+    assert.equal(replaced.status, 409);
+    assert.equal(replaced.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(JSON.parse(replaced.text),
+      { error: 'identity_mismatch', message: 'The workspace changed. Open About again to read it.' });
+    t.mock.restoreAll();
+    assert.equal((await readAboutRoute(instance)).text, aboutBody('v1.4.0', 'latest'),
+      'the next read uses only the current workspace');
+
+    const held = manifestReads(t, f.recordPath, { hold: true });
+    // A non-pooled request, so close does not also wait on an idle keep-alive socket.
+    const ending = new Promise((resolve, reject) => {
+      const request = http.request(new URL('/api/about', closing.url), { agent: false }, response => {
+        const chunks = /** @type {Buffer[]} */ ([]);
+        response.on('data', chunk => chunks.push(chunk));
+        response.on('end', () => resolve({ status: response.statusCode, text: Buffer.concat(chunks).toString('utf8') }));
+      });
+      request.on('error', reject);
+      request.end();
+    });
+    await held.reading;
+    const closed = closeInstance('about-base-close-race');
+    held.release();
+    const ended = /** @type {{status: number, text: string}} */ (await ending);
+    assert.equal(ended.status, 503);
+    assert.deepEqual(JSON.parse(ended.text), ABOUT_ENDED);
+    assert.equal(await closed, true);
+  } finally {
+    t.mock.restoreAll();
+    await closeInstance('about-base-race');
+    await closeInstance('about-base-close-race');
+    f.cleanup();
+    next.cleanup();
+  }
+});
+
+test('075 About: reading a recorded base starts no process, opens no outside connection and writes nothing', async t => {
+  const f = aboutFixture();
+  // Neither recorded source is ever contacted.
+  f.write({ ...DEVELOPMENT_MANIFEST, source_repo: 'https://example.invalid/never-contacted.git' });
+  f.writeRecord({ source_repo: 'https://example.invalid/never-contacted.git', base_release: 'v1.3.0' });
+  const instance = await openAbout('about-base-effects', f.root);
+  const before = snapshotFiles(f.temporary);
+  const spawns = t.mock.method(childProcess.ChildProcess.prototype, 'spawn');
+  const syncLaunches = ['spawnSync', 'execSync', 'execFileSync'].map(name => t.mock.method(childProcess, name));
+  syncBuiltinESMExports();
+  const connects = t.mock.method(net.Socket.prototype, 'connect');
+  try {
+    const texts = [];
+    for (let entry = 0; entry < 3; entry += 1) texts.push((await readAboutRoute(instance)).text);
+    assert.deepEqual(texts, Array.from({ length: 3 }, () => aboutBody('main', 'main', 'v1.3.0')));
+    assert.equal(spawns.mock.callCount() + syncLaunches.reduce((sum, spy) => sum + spy.mock.callCount(), 0), 0,
+      'About starts no command, Git lookup or process');
+    const targets = connects.mock.calls.map(({ arguments: args }) => {
+      const options = Array.isArray(args[0]) ? args[0][0] : args[0];
+      return options && typeof options === 'object' ? `${options.host}:${options.port}` : `${args[1]}:${options}`;
+    });
+    assert.ok(targets.length > 0, "the socket spy observed this test's own requests");
+    assert.deepEqual([...new Set(targets)], [new URL(instance.url).host], 'only the Canvas loopback server was contacted');
+    assert.deepEqual(snapshotFiles(f.temporary), before, 'no record, manifest or other file is written');
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    await closeInstance('about-base-effects');
+    f.cleanup();
+  }
 });

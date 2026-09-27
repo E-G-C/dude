@@ -78,7 +78,7 @@ The manifest `source_ref` is an upgrade channel. For remote sources, released bu
 
 ## Script Contract
 
-The `upgrade.mjs` engine handles fetch, classification, validation, and reporting. The LLM never re-derives this work. It runs on Node (>= 20 LTS) and shares the namespace/ownership classifier in `.github/skills/dude-engine/lib/ownership.mjs` with `dude-lint`. `plan` emits a canonical schema-v1 authorization envelope; `apply` validates that exact envelope and executes its persisted buckets without reclassification.
+The `upgrade.mjs` engine handles fetch, classification, validation, and reporting. The LLM never re-derives this work. It runs on Node (>= 20 LTS) and shares the namespace/ownership classifier in `.github/skills/dude-engine/lib/ownership.mjs` with `dude-lint`. `plan` emits a canonical schema-v2 authorization envelope; `apply` validates that exact envelope and executes its persisted buckets and reviewed metadata transitions without reclassification.
 
 Here, `status` means the upgrade workflow's internal `upgrade.mjs status`
 phase. It is distinct from global `@dude status`, the read-only workflow
@@ -90,7 +90,7 @@ lane-orientation command; global status does not check upgrade availability.
 |---|---|---|
 | `status`   | Compare local and candidate refs for orientation; do not inspect file bytes. | No |
 | `plan`     | Fetch the full upstream tree, compare the complete core inventory and bytes, and persist a plan JSON for apply. | No (cache only) |
-| `apply`    | Apply a persisted plan: safety tag + branch, file ops, manifest rewrite, log append, lint, commit. | Yes |
+| `apply`    | Apply a persisted plan: safety tag + branch, file ops, manifest rewrite, base release record, log append, lint, commit. | Yes |
 | `packs-preview` | Preview installed-pack refreshes after the matching core commit. | No |
 | `packs-apply` | Refresh previewed installed packs after separate confirmation. | Yes |
 | `rollback` | `git reset --hard` to the most recent (or named) `dude-pre-upgrade-*` safety tag, append rollback log entry, lint. | Yes |
@@ -149,7 +149,7 @@ Remove operations.
 ```json
 {
   "kind": "dude-upgrade-plan",
-  "schema_version": 1,
+  "schema_version": 2,
   "plan_id": "<ts>-<from>-<to>-<random-suffix>",
   "created_at": "<iso-8601>",
   "ttl_warn_at": "<created+1h>",
@@ -174,11 +174,18 @@ Remove operations.
     "root_realpath": "<absolute-realpath>",
     "root_identity": { "device": "<decimal>", "inode": "<decimal>" },
     "manifest": { "path": ".dude/metadata/bundle-manifest.md", "type": "file", "sha256": "<sha256>" },
+    "base_release": { "path": ".dude/metadata/development-base-release.md", "state": "<expected-state>" },
     "inventory": [{ "path": "<core-path>", "type": "file", "sha256": "<sha256>" }]
   },
   "local": {
     "manifest": { "path": ".dude/metadata/bundle-manifest.md", "state": "<expected-state>", "data": "<exact-values>" },
     "upgrade_log": { "path": ".dude/metadata/upgrade-log.md", "state": "<expected-state>" },
+    "base_release": {
+      "path": ".dude/metadata/development-base-release.md",
+      "state": "<expected-state>",
+      "record": "<usable-local-record-or-null>",
+      "desired": "<record-to-leave-or-null>"
+    },
     "core_inventory": [{ "path": "<core-path>", "state": "<expected-state>" }]
   },
   "summary": {
@@ -196,9 +203,37 @@ Remove operations.
 }
 ```
 
-An expected mutation state is either `{ "type": "missing" }` or a regular-file record containing its SHA-256. All operation and inventory arrays use canonical code-unit path ordering.
+An expected mutation state is either `{ "type": "missing" }` or a regular-file record containing its SHA-256. All operation and inventory arrays use canonical code-unit path ordering. `cache.base_release` freezes the selected upstream tree's base release record state. `local.base_release` freezes the local record's state, its usable `record` (`null` when missing or unusable), and the `desired` record the apply leaves (`null` for none); see [Base release record](#base-release-record).
 
 Plans are persisted to `$TMPDIR/dude-upgrade-cache/plans/<plan_id>.json` so a later `apply` can validate the exact reviewed state. Plan IDs include a cryptographically random suffix, and persistence uses exclusive creation with bounded collision retries; existing plan bytes are never overwritten. `--out` is also exclusive and refuses an existing destination. Plans carry a TTL (`ttl_warn_at` at +1h, `ttl_expire_at` at +24h); `apply` refuses an expired plan and requires a fresh `plan` invocation. Older plan schemas are unsupported and must be recreated with the current engine.
+
+### Base release record
+
+`.dude/metadata/development-base-release.md` is an optional, upgrade-owned
+installation record. It holds exactly one fenced JSON object with a nonblank
+`source_repo` and a stable `vX.Y.Z` `base_release`: the highest stable Dude
+release evidenced as included in the development source when the record was
+made. It is provenance only. It does not verify installed files or name the
+newest available release, and an absent file means the base is unknown. In
+the Dude source repository, `node scripts/build-dev.mjs` produces it from that
+checkout's own merged release tags. Never hand-edit it.
+
+`plan` derives the record to leave from the already-selected upstream tree
+only. A `main` target keeps a base when the cached manifest records
+`installed_ref: main` and the cached record's `source_repo` exactly matches
+that manifest's `source_repo`. The local record then pairs that release with
+the outgoing manifest's selected source, so a `--source` override stays
+associated with the resulting manifest. Any other target ref, a release
+bundle, or a missing, malformed, or differently sourced upstream record
+leaves no local record and clears any earlier base. Deriving the record never
+reads the consumer project's history, lists releases, or fetches again.
+
+A record difference is a metadata transition. The report shows the recorded
+and target base, `plan` exits 10, and apply follows the ordinary confirmation,
+evidence, branch, commit, and rollback path even when Add, Replace, and Remove
+are empty. Records compare by value, so an equal record with other line
+endings needs no write. `--skip-removals` defers only Remove-bucket files and
+never retains an obsolete record.
 
 ## Workflow
 
@@ -217,17 +252,20 @@ provided overrides). This full byte comparison is authoritative even when
 the internal status phase reported `up_to_date`. Read the persisted plan from
 `plans/<plan_id>.json` so subsequent steps reference the same plan_id.
 
-Summarize the plan for the user using the `summary` counts plus a short bulleted list per non-empty bucket. Show file paths. For `replace` entries, include `[+a / -b]` line stats from `added_lines` / `removed_lines`.
+Summarize the plan for the user using the `summary` counts plus a short bulleted list per non-empty bucket. Show file paths. For `replace` entries, include `[+a / -b]` line stats from `added_lines` / `removed_lines`. When the base release record changes, also show its recorded and target base release.
 
 An empty file-operation summary is a true no-op only when the planned
 `source_repo`, `source_ref`, and `installed_ref` values already equal the
-current manifest values. When those values differ, `plan` exits 10 and `apply`
-performs the reviewed metadata manifest, log, branch, and commit transition
-even though Add/Replace/Remove are empty. When both operations and metadata are
-unchanged, report that the exact current core is installed and stop without an
+current manifest values and the local base release record already matches its
+reviewed target. When either differs, `plan` exits 10 and `apply` performs the
+reviewed metadata manifest, log, branch, and commit transition, including the
+base release record, even though Add/Replace/Remove are
+empty. When both operations and
+metadata are unchanged,
+report that the exact current core is installed and stop without an
 apply. If a true no-op apply is invoked directly, it still requires confirmation
 and validates all reviewed evidence; it returns without creating a safety tag,
-branch, log entry, manifest write, or target write.
+branch, log entry, manifest or record write, or target write.
 
 A same-ref plan may legitimately find Add, Replace, or Remove operations. This
 is the supported repair and forward-bootstrap path. In particular, a consumer
@@ -238,6 +276,11 @@ refs but incomplete bytes. The safe historical workflow is an explicit second
 status, creates and displays a fresh exact plan, and requires a fresh `confirm
 upgrade` before applying it. Never call an internal planner as a hidden
 follow-up, reuse the first persisted plan, or auto-apply the second plan.
+
+An existing install without the base release record stays valid. An older
+engine that predates the record does not copy it, even while installing the
+current engine. The same explicit second `@dude upgrade` then previews the
+record as a metadata-only change and needs its own fresh `confirm upgrade`.
 
 If `--dry-run`, stop here. With `--all`, explain that no authoritative pack
 preview exists yet because it must be prepared by the upgraded engine after the
@@ -282,14 +325,15 @@ Mapping from user-facing phrase to flags:
 In one pass the script:
 
 1. Requires the literal confirmation token, then validates canonical serialization, schema version, digest, timestamps, and expiry.
-2. Requires a clean Git working tree. It validates workspace identity, every path, the exact local manifest bytes and values, the reviewed upgrade-log state, each local core path's expected SHA-256 or missing state, source identity, requested/resolved ref and concrete commit, cache identity, upstream manifest bytes, and every cached core path/type/SHA-256 before the first tag, branch, checkout, log, manifest, or content mutation. Literal refs must resolve exactly; remote `latest` must resolve to the recorded stable tag; local-path `latest` is unsupported.
+2. Requires a clean Git working tree. It validates workspace identity, every path, the exact local manifest bytes and values, the reviewed upgrade-log state, the local and upstream base release record states, each local core path's expected SHA-256 or missing state, source identity, requested/resolved ref and concrete commit, cache identity, upstream manifest bytes, and every cached core path/type/SHA-256 before the first tag, branch, checkout, log, manifest, record, or content mutation. Literal refs must resolve exactly; remote `latest` must resolve to the recorded stable tag; local-path `latest` is unsupported.
 3. Retains the validated cached Add/Replace bytes and consumes the persisted Add, Replace, and Remove buckets directly. It never calls classification during apply. `--skip-removals` defers only the persisted Remove bucket, which is still fully validated.
 4. Creates safety tag `dude-pre-upgrade-<YYYYMMDD-HHMMSS>` at current HEAD and switches to branch `chore/dude-upgrade-<to-ref>` (timestamp suffix on collision). Git hooks are disabled only for this upgrade-owned branch checkout and the final upgrade commit.
 5. Applies file ops: Add (copy in), Replace (overwrite), Remove (delete unless `--skip-removals`).
 6. Rewrites the fenced JSON block in `.dude/metadata/bundle-manifest.md`, preserving the surrounding markdown. Updates `source_repo`, `source_ref`, and `installed_ref`. The manifest is metadata only — there is no `files` array to refresh.
-7. Appends a structured entry to `.dude/metadata/upgrade-log.md` matching its Entry shape.
-8. Runs `node .github/skills/dude-lint/lint.mjs` and patches the lint result into the just-written log entry.
-9. Stages the persisted operation paths actually written plus manifest/log, excludes skipped removals, and commits with message `chore: upgrade Dude bundle to <to-ref>`. It does not push, merge, or modify remote state.
+7. Writes the reviewed `desired` base release record, or removes `.dude/metadata/development-base-release.md` when the reviewed target has none. It uses the persisted values without another lookup, and only when the record differs.
+8. Appends a structured entry to `.dude/metadata/upgrade-log.md` matching its Entry shape.
+9. Runs `node .github/skills/dude-lint/lint.mjs` and patches the lint result into the just-written log entry.
+10. Stages the persisted operation paths actually written plus manifest/log and any reviewed record write or removal, excludes skipped removals, and commits with message `chore: upgrade Dude bundle to <to-ref>`. It does not push, merge, or modify remote state.
 
 If an ordinary operation fails after mutation begins, report the failure and the created safety tag and upgrade branch. Recovery relies on those Git boundaries; the workflow does not promise byte-perfect restoration of arbitrary working-tree state.
 
@@ -301,6 +345,7 @@ Relay the apply output to the user:
 
 - `from <ref> → to <ref>`
 - per-bucket counts (replaced, added, removed, removals deferred)
+- the reviewed base release record change from the plan, when it had one
 - safety tag and upgrade branch names
 - lint result
 - the suggested review command (`git diff <target-branch>...<upgrade-branch>`) plus a reminder that merge is a manual user step
@@ -318,7 +363,8 @@ node .github/skills/dude-bundle-upgrade/upgrade.mjs packs-preview \
   --plan <plan_id-or-path> --format json
 ```
 
-This command requires the matching committed core result, upgrade branch, and a
+This command requires the matching committed core result, including the
+reviewed base release record or its absence, the upgrade branch, and a
 clean tree before it dynamically loads Compose from the upgraded installation.
 It reads only the canonical installed-pack map, in sorted order. It never
 scans the catalog to add membership and never installs or enables a pack.
@@ -378,7 +424,7 @@ The script:
 
 1. Refuses a dirty working tree.
 2. Selects the most recent `dude-pre-upgrade-*` tag (or the one passed via `--tag`).
-3. Runs `git reset --hard <tag>` on the current branch.
+3. Runs `git reset --hard <tag>` on the current branch, restoring the prior core, manifest, and base release record or its absence.
 4. Appends a rollback entry to `upgrade-log.md` (left uncommitted; the user decides whether to commit or discard it).
 5. Runs `dude-lint` and reports the restored sha plus the lint result.
 
@@ -470,8 +516,9 @@ Classification is done by **byte comparison** of local disk content vs the fetch
   never install or enable a pack, and keep core and pack work as separate
   transaction boundaries.
 - A core-only upgrade never deletes or modifies `.dude/` project state except
-  the upgrade-owned `.dude/metadata/bundle-manifest.md` and
-  `.dude/metadata/upgrade-log.md`. The explicit `--all` phase may update the
+  the upgrade-owned `.dude/metadata/bundle-manifest.md`,
+  `.dude/metadata/upgrade-log.md`, and optional
+  `.dude/metadata/development-base-release.md`. The explicit `--all` phase may update the
   profile and artifacts of packs already recorded as installed through Compose.
   That profile remains the only pack authority; the phase never installs or
   enables a pack. All project-specific ideas under `.dude/ideas/` are
@@ -505,7 +552,7 @@ external or manual recovery; there is no in-bundle migration workflow.
 
 ## Manifest Shape
 
-`.dude/metadata/bundle-manifest.md` contains a single fenced JSON block. The manifest is **metadata only**: it carries the upstream source pin and the installed version, and nothing else.
+`.dude/metadata/bundle-manifest.md` contains a single fenced JSON block. The manifest is **metadata only**: it carries the upstream source pin and the installed version, and nothing else. Base release provenance lives in the separate optional [base release record](#base-release-record), so the manifest's closed shape stays readable by older engines.
 
 ```json
 {

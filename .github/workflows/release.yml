@@ -5,11 +5,15 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: write # required to create a GitHub Release
+  contents: read
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # required to create a GitHub Release
+    outputs:
+      stable: ${{ steps.release-channel.outputs.stable }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -19,6 +23,20 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
+
+      - name: Classify release tag
+        id: release-channel
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/release-base-sync.mjs classify --tag "$RELEASE_TAG" --github-output "$GITHUB_OUTPUT"
+
+      # A new stable tag changes development provenance at this commit. Refresh
+      # only that generated record before checks; any other drift is fatal.
+      - name: Refresh development base release for validation
+        if: steps.release-channel.outputs.stable == 'true'
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/release-base-sync.mjs prepare --repo . --event-tag "$RELEASE_TAG"
 
       # Gate: a release must pass the same checks as CI.
       - name: Unit tests
@@ -49,3 +67,37 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" "dude-bundle-${GITHUB_REF_NAME}.zip" --generate-notes
+
+  sync-development-base-release:
+    name: Sync development base release
+    needs: release
+    if: ${{ needs.release.result == 'success' && needs.release.outputs.stable == 'true' }}
+    runs-on: ubuntu-latest
+    # Serialize only this shared default-branch write-back, never publication.
+    # A newer sync may replace one still waiting; each run recomputes the
+    # record from the latest default branch and tags. A running sync is never
+    # canceled.
+    concurrency:
+      group: development-base-release-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: write # required for the one-file default-branch push
+    steps:
+      # This write-back checkout alone retains the job token. The validation
+      # checkout above never saves credentials.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: true
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Regenerate and persist development base release
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/release-base-sync.mjs sync --repo . --event-tag "$RELEASE_TAG" --branch "$DEFAULT_BRANCH" --remote origin

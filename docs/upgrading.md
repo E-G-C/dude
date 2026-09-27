@@ -44,7 +44,7 @@ The upgrader treats every file in your project as one of the following ownership
 |---|---|---|
 | **Core-owned** | canonical `.github/agents/dude.agent.md` and `.github/agents/dude-<slug>.agent.md`; canonical `.github/skills/dude-<slug>/**`; `.github/instructions/dude.instructions.md`; exact `.github/extensions/dude/**` runtime | Added, replaced, or removed to match upstream. Local edits are discarded. Agent and skill `dude-local-*` / `dude-pack-*` tiers and the `project` skill are excluded. |
 | **Pack-owned** | installed `dude-pack-*` agents, skills, instructions, and prompts under `.github/`, plus `.dude/metadata/profile.md` | Never overwritten or deleted by a core upgrade. Added and removed only by `dude-compose`. |
-| **Upgrade-owned** | `.dude/metadata/bundle-manifest.md`, `.dude/metadata/upgrade-log.md` | Maintained only by the upgrade skill. |
+| **Upgrade-owned metadata** | `.dude/metadata/bundle-manifest.md`, `.dude/metadata/upgrade-log.md`, optional `.dude/metadata/development-base-release.md` | In an installed bundle, the upgrade skill plans and applies the manifest and optional source-associated base record, and maintains the log. In the Dude source repository, `build-dev` owns the generated base-record copy. Stable release bundles omit that record. |
 | **Project-owned engine customization** | `.github/skills/project/`, custom agents and skills under `dude-local-*` or unreserved names, `.github/copilot-instructions.md`, every extension tree except exact `.github/extensions/dude/**` | Preserved by core upgrade. |
 | **Dude project state** | `.dude/ideas/`, `.dude/specs/`, `.dude/memory/`, `.dude/state/` | Never overwritten. |
 | **Repo-local files and external work state** | `README.md`, `docs/`, `.gitattributes`, Beads, your product source | Never touched or brought in by upgrade. |
@@ -74,15 +74,28 @@ error, an offline result, or `no releases published yet`, the workflow always
 continues to the authoritative full-core `plan` phase. Matching refs may still
 yield Add, Replace, or Remove operations that require review and
 `confirm upgrade`. A true no-op requires matching `source_repo`, `source_ref`,
-and `installed_ref` metadata plus an empty file-operation plan. On the `latest`
-channel, `upgrade.mjs status` resolves the highest stable `vX.Y.Z` tag.
+and `installed_ref` metadata, a matching development-base record or matching
+absence, and an empty file-operation plan. On the `latest` channel,
+`upgrade.mjs status` resolves the highest stable `vX.Y.Z` tag.
+
+For a reviewed `main` refresh, the normal plan includes the optional
+development-base record only when the selected upstream tree has a valid
+record for the same source. Missing, invalid, or differently sourced
+provenance plans removal or omission rather than retaining an unrelated base.
+The record follows the same preview and `confirm upgrade` gate as other
+upgrade-owned metadata, and rollback restores its earlier bytes or absence.
+The upgrader does not infer a base from the installed project's Git history.
+Stable release bundles intentionally contain only the seeded manifest and
+profile metadata, so they omit this development-only record.
 
 A historical install may need two explicit `@dude upgrade` invocations when its
 old ownership engine cannot see a newly introduced core category. Complete the
 first invocation with its fresh plan and confirmation to install the current
 engine. Then invoke `@dude upgrade` again, review its fresh same-ref plan, and
 provide a fresh `confirm upgrade`. The workflow never hides the follow-up,
-reuses the first plan, or auto-applies the second plan.
+reuses the first plan, or auto-applies the second plan. This also applies when
+an old engine cannot plan the optional development-base record: its later
+record-only refresh remains a separate, explicit upgrade.
 
 Upstream documentation is intentionally not part of the upgrade payload. A project using Dude does not need to track Dude's own docs; read them in the Dude repository when needed.
 
@@ -196,7 +209,7 @@ aggregate pack commit. Dude does not push or merge either commit.
 After a core-only `@dude upgrade`, the following files and directories are
 byte-identical to what they were before the upgrade:
 
-- everything under `.dude/` except `.dude/metadata/bundle-manifest.md` (rewritten with the new `installed_ref`) and `.dude/metadata/upgrade-log.md` (one new entry appended)
+- everything under `.dude/` except `.dude/metadata/bundle-manifest.md` (rewritten with the new `installed_ref`), optional `.dude/metadata/development-base-release.md` (written or removed only as shown in the reviewed plan), and `.dude/metadata/upgrade-log.md` (one new entry appended)
 - everything under `.github/skills/project/`
 - any agent file outside the canonical core names (including `dude-local-*` and `dude-pack-*`)
 - any skill directory outside the canonical core names (including `dude-local-*`, `dude-pack-*`, and `project`)
@@ -224,7 +237,7 @@ core upgrade preserves but does not treat as a core-runtime override.
 `@dude upgrade --rollback`:
 
 1. Resets to the most recent `dude-pre-upgrade-*` tag.
-2. Restores the prior `bundle-manifest.md` from the tagged commit.
+2. Restores the prior `bundle-manifest.md` and development-base record, including the record's prior absence, from the tagged commit.
 3. Appends a rollback entry to `upgrade-log.md`.
 4. Re-runs `dude-lint`.
 

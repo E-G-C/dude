@@ -1137,25 +1137,34 @@ but cannot establish whether the earlier request succeeded.
 About shows the Dude version, the author, Enrique Gonzalez, the project
 repository `https://github.com/E-G-C/dude`, and the recorded channel/ref. The
 version comes from `installed_ref` and the channel/ref from `source_ref` in
-`.dude/metadata/bundle-manifest.md`. Each time you open About, it reads that
-file again. The labels describe only what is recorded:
+`.dude/metadata/bundle-manifest.md`. For a development install
+(`installed_ref: main`), the version also names the base release recorded in
+`.dude/metadata/development-base-release.md`. Each time you open About, it
+reads the manifest again and, for `main` only, that record. The labels
+describe only what is recorded:
 
 | Recorded value | Dude version | Recorded channel/ref |
 | --- | --- | --- |
 | Release tag such as `v1.2.3` | `v1.2.3` | `Pinned release (v1.2.3)` |
-| `main` | `Development (main)` | `Development (main)` |
+| `main` with a recorded base such as `v1.3.0` | `Development (main), based on v1.3.0` | `Development (main)` |
+| `main` without a usable base | `Development (main)` | `Development (main)` |
 | `latest` | `Recorded ref (latest)` | `Stable releases (latest)` |
 | Any other safe ref | `Recorded ref (<ref>)` | `Recorded ref (<ref>)` |
 | Missing or unusable | `Unavailable` | `Unavailable` |
 
-A recorded ref is provenance, not proof of which files are installed. About
-does not verify installed bytes, look up tags, or check for updates. If the
-record cannot be read, both values show Unavailable while the author and
-repository remain. The repository link is an ordinary link that opens a
-separate tab or window; opening it from the embedded desktop panel has not been
-verified. About offers no other action. While it is open, the command bar has
-no Reload packs or Refresh control, and the status bar shows
-`About · Read only`.
+A recorded ref is provenance, not proof of which files are installed. A base
+release is the highest stable release evidenced as included in the development
+source when the record was made; it is not the newest release available.
+About uses it only when the record names exactly the manifest's
+`source_repo`. A missing, unreadable, malformed, or differently sourced record
+leaves exactly `Development (main)`, with no warning, and never makes a usable
+version or channel Unavailable. About does not verify installed bytes, look up
+tags, or check for updates. If the manifest cannot be read, both values show
+Unavailable while the author and repository remain. The repository link is an
+ordinary link that opens a separate tab or window; opening it from the embedded
+desktop panel has not been verified. About offers no other action. While it is
+open, the command bar has no Reload packs or Refresh control, and the status
+bar shows `About · Read only`.
 
 #### Reloading the development canvas
 
@@ -1523,7 +1532,14 @@ Consumers never see `src/`.
   metadata. It renders one `.github/agents/<stem>.agent.md` profile per core
   source and packages the canonical model configuration under the engine skill.
 - `scripts/build-dev.mjs` syncs `src/` core into `.github/` (minus tests), while
-  preserving `project`, `.dude/`, workflows, and installed packs.
+  preserving `project`, `.dude/`, workflows, and installed packs. Its one
+  metadata write is `.dude/metadata/development-base-release.md`: for the
+  `main` development manifest it records the highest stable release tag merged
+  into this checkout's current commit, from local Git history only. Missing
+  Git, shallow history, or no reachable stable tag removes the record instead
+  of guessing. The stable-tag release workflow refreshes this record
+  automatically before release checks and again from the current default
+  branch after publication.
 - Both builds validate configuration and the complete core agent set before
   cleanup, staging, or writes.
 - Run `scripts/build-dev.mjs` after editing `src/`; CI fails if `.github/` drifts
@@ -1966,9 +1982,49 @@ the tag workflow below does not enforce base-branch ancestry.
 `.github/workflows/release.yml` runs on a `v*` tag: it gates on the
 bundle checks, builds the core bundle with `scripts/build-release.mjs`, and
 publishes a `dude-bundle-<tag>.zip` to a GitHub Release. Unzip it at a repo root
-to drop `.github/` engine files and seeded `.dude/metadata/` into place.
-CI reports drift only. It does not create a branch, commit, push, or pull
-request.
+to drop `.github/` engine files and seeded `.dude/metadata/` into place. An
+exact stable `vX.Y.Z` event first runs `scripts/release-base-sync.mjs prepare`
+in the full-history tag checkout. That command uses `build-dev` to refresh the
+generated development-base record for validation and refuses any other input
+or output drift. It does not stamp the record from the event text.
+
+After successful publication of a stable release, the serialized **Sync
+development base release** job checks out the latest repository-default branch
+with full history and tags. The same tested helper fetches that branch again,
+fast-forwards to the fetched head, and runs the existing builder. The builder
+selects the highest stable tag reachable from that default-branch commit.
+The helper starts that builder in a new Node process, so the builder and every
+module it loads come from the fetched commit.
+Prerelease and other nonstable `v*` events do not run write-back. A backfilled
+older tag cannot lower the record, and a tag outside default-branch ancestry
+cannot label that branch. If the generated bytes changed, the job commits only
+`.dude/metadata/development-base-release.md` and makes a normal, non-force
+push. Current bytes produce no commit or push. Maintainers do not need a
+post-tag rebuild or metadata commit.
+
+Only the sync job is serialized; each tag's release job still publishes on its
+own. A waiting sync can be replaced by a later-queued sync, regardless of tag
+version or publication order. Each replacement recomputes the record from the
+latest default branch and tags. A sync that has started is never canceled.
+
+This one-file generated-metadata write-back is part of stable release
+automation. It does not replace Release Manager's PR-first delivery of source
+changes. Ordinary CI remains read-only and retains its dev-bundle drift gate;
+it does not create a branch, commit, push, or pull request.
+
+Verify a stable release by requiring its release job to succeed. Its sync job
+must succeed too, unless GitHub canceled that sync while it was still waiting;
+in that case, verify a successful replacement sync and the resulting
+default-branch record against that branch's highest reachable stable tag.
+If the sync created an automation commit, inspect it with
+`git show --name-only --format=fuller <commit>`. Its file list must contain
+only `.dude/metadata/development-base-release.md`. If repository permissions
+or later branch protection reject the push, the sync job fails visibly after
+publication. It does not force-push, retry onto a stale base, weaken branch
+rules, or hide the error. Resolve the policy or move the write-back to a
+reviewed path before a later authorized release. Repository tests exercise
+this path against local bare remotes; they do not publish a live GitHub Release
+or perform a live GitHub push.
 
 ### Upgrading the bundle
 
@@ -2048,6 +2104,20 @@ first invocation with its fresh plan and confirmation, then invoke
 `confirm upgrade`. There is no hidden follow-up, reused plan, or automatic
 second apply.
 
+A `main` refresh also records the selected bundle's base release when that
+upstream tree records `installed_ref: main` and a base release record for the
+same `source_repo`; the local record names your manifest's selected source,
+so a `--source` override stays associated with it. Any other target ref, or an
+upstream bundle without a usable record, removes an earlier local record
+rather than keeping a base that no longer applies. A record change appears in
+the normal preview, even with no file operations, and applies only after
+`confirm upgrade`; rollback restores the earlier record or its absence. The
+upgrade never reads your project's history or looks up releases to find a
+base. An installed engine older than this record does not copy it, even while
+it installs the current engine, and About keeps showing `Development (main)`.
+Run `@dude upgrade` again through the updated engine to preview and confirm
+the record-only change in the same explicit way.
+
 > Core-owned files in the exact categories above are upstream-owned and are
 > overwritten on apply. To customize a default agent or skill,
 > copy it under `dude-local-<slug>` first and edit there — direct edits to
@@ -2059,10 +2129,11 @@ files are missing or different; that result is not byte-completeness proof. The
 authoritative `plan` phase compares the complete core inventory and bytes, so
 matching refs can still produce Add, Replace, or Remove operations. A true
 no-op requires matching `source_repo`, `source_ref`, and `installed_ref`
-metadata plus no file operations. On the `latest` channel, the internal phase
-discovers the newest stable `vX.Y.Z` tag with `git ls-remote --tags` (remote) or
-`git tag` (local-path), so an upstream contributor never has to bump the
-upstream manifest manually for downstream installs to find new releases.
+metadata, a matching base release record or absence, and no file operations.
+On the `latest` channel, the internal phase discovers the newest stable
+`vX.Y.Z` tag with `git ls-remote --tags` (remote) or `git tag` (local-path), so
+an upstream contributor never has to bump the upstream manifest manually for
+downstream installs to find new releases.
 
 Use reserved `dude-local-` paths for project-owned artifacts:
 `.github/agents/dude-local-<slug>.agent.md` and `.github/skills/dude-local-<slug>/`.

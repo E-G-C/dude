@@ -799,10 +799,10 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   assert.ok(application.length > 100_000, 'the application bundle must contain the browser runtime');
   const gzip = gzipSync(applicationBytes, { level: 9 });
   const repeatedGzip = gzipSync(applicationBytes, { level: 9 });
-  assert.equal(applicationBytes.length, 969_616, 'committed app.js raw byte size');
+  assert.equal(applicationBytes.length, 969_815, 'committed app.js raw byte size');
   assert.equal(
     sha256(applicationBytes),
-    'aedac71b507e2000cdf79a45b60ff746529057b8497bc3db11b613666d18515d',
+    '46360200ec0d5ee2864e7ee6162e23e2e3839e90b238d3b059c3a1b560b39531',
     'committed app.js raw SHA-256',
   );
   assertPortableGzip(gzip, repeatedGzip, applicationBytes, 'Node zlib level-9 app.js');
@@ -1434,7 +1434,8 @@ test('074 About reads through the shared helper, bound to the hook lifetime and 
   assert.match(reader, /\}, \[\]\);/, 'a stable reader cannot rerun an entry read');
   assert.match(hook, /respond, capture, requestPack, openReview, readHistory, readAbout \};/);
   for (const exact of ['About · Read only', 'Settings sections', 'Recorded installation metadata; installed files are not verified.',
-    'Recorded installation metadata is unavailable, so no version is shown.', 'https://github.com/E-G-C/dude']) {
+    'Recorded installation metadata is unavailable, so no version is shown.', 'https://github.com/E-G-C/dude',
+    'Development (main), based on ', '["installedRef","sourceRef","baseRelease"]']) {
     assert.equal(bundle.includes(exact), true, `published app.js retains About copy: ${exact}`);
   }
 });

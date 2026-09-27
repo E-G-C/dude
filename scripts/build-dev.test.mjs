@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,6 +24,7 @@ import {
   parseAgentSource,
   renderCopilotAgent,
 } from '../src/skills/dude-engine/lib/agent-projection.mjs';
+import { renderDevelopmentBaseRelease } from '../src/skills/dude-engine/lib/development-base-release.mjs';
 
 /** @param {string} root @param {string} rel @param {string | Uint8Array} content */
 function w(root, rel, content) {
@@ -156,6 +158,86 @@ function writeCanonicalConfig(root, bytes = MODEL_CONFIG) {
 /** @param {string} root */
 function writeBuildMetadata(root) {
   w(root, '.dude/metadata/bundle-manifest.md', MANIFEST);
+}
+
+const BASE_RELEASE_PATH = '.dude/metadata/development-base-release.md';
+const FIXTURE_SOURCE = 'https://example.invalid/dude';
+
+/** @param {string} baseRelease */
+function baseReleaseBytes(baseRelease) {
+  return Buffer.from(renderDevelopmentBaseRelease({ source_repo: FIXTURE_SOURCE, base_release: baseRelease }));
+}
+
+/**
+ * Git with checkout conversion pinned off, so fixture bytes stay LF even on a
+ * host whose Git configuration sets `core.autocrlf=true`.
+ * @param {string} cwd @param {string[]} args @returns {string}
+ */
+function git(cwd, args) {
+  const result = spawnSync('git', ['-c', 'core.autocrlf=false', ...args], { cwd, encoding: 'utf8' });
+  assert.equal(result.status, 0, `git ${args.join(' ')}\n${result.stdout || ''}${result.stderr || ''}`);
+  return result.stdout.trim();
+}
+
+/** @param {string} root @param {string} message */
+function commitAll(root, message) {
+  git(root, ['add', '--all']);
+  git(root, ['commit', '--quiet', '--allow-empty', '-m', message]);
+}
+
+/** Make `root` a source checkout with one commit. @param {string} root */
+function initSourceRepository(root) {
+  git(root, ['init', '--quiet', '-b', 'main']);
+  git(root, ['config', 'user.name', 'Build Fixture']);
+  git(root, ['config', 'user.email', 'build-fixture@example.invalid']);
+  git(root, ['config', 'commit.gpgsign', 'false']);
+  commitAll(root, 'source');
+}
+
+/**
+ * A minimal development source plus project metadata the build must keep.
+ * @param {string} root
+ * @param {string} [manifestText]
+ * @returns {Map<string, Buffer>}
+ */
+function writeProvenanceFixture(root, manifestText = MANIFEST) {
+  writeCanonicalConfig(root);
+  w(root, 'src/skills/dude-lint/lint.mjs', 'export const lint = true;\n');
+  const preserved = new Map([
+    ['.dude/metadata/bundle-manifest.md', Buffer.from(manifestText)],
+    ['.dude/metadata/profile.md', Buffer.from('# Install Profile\n\n```json\n{\n  "installed": {}\n}\n```\n')],
+    ['.dude/metadata/upgrade-log.md', Buffer.from('# Upgrade Log\n')],
+    ['.dude/memory/context.md', Buffer.from('project memory\n')],
+  ]);
+  for (const [rel, bytes] of preserved) w(root, rel, bytes);
+  return preserved;
+}
+
+/** @param {string} root @param {Map<string, Buffer>} preserved */
+function assertPreserved(root, preserved) {
+  for (const [rel, bytes] of preserved) {
+    assertExactBytes(fs.readFileSync(path.join(root, ...rel.split('/'))), bytes, rel);
+  }
+}
+
+/**
+ * Run a synchronous build with temporary process environment overrides.
+ * @template T
+ * @param {Record<string, string>} overrides
+ * @param {() => T} action
+ * @returns {T}
+ */
+function withEnvironment(overrides, action) {
+  const previous = new Map(Object.keys(overrides).map((key) => [key, process.env[key]]));
+  try {
+    Object.assign(process.env, overrides);
+    return action();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 }
 
 /** @param {string} root @param {{ includeExcluded?: boolean }} [options] */
@@ -415,7 +497,7 @@ test('T011 published Canvas runtime is byte-identical to source while frontend a
   }
   assert.equal(
     sha256(fs.readFileSync(path.join(repoRoot, 'src/extensions/dude/ui/assets/app.js'))),
-    'aedac71b507e2000cdf79a45b60ff746529057b8497bc3db11b613666d18515d',
+    '46360200ec0d5ee2864e7ee6162e23e2e3839e90b238d3b059c3a1b560b39531',
   );
   assert.equal(has(repoRoot, '.github/extensions/dude/frontend'), false);
   assert.equal(has(repoRoot, '.github/extensions/dude/needs-you.test.mjs'), false);
@@ -711,5 +793,239 @@ test('buildDev produces byte-stable outputs on repeated valid runs', () => {
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('buildDev records the highest stable release tag merged into the exact source root', () => {
+  // Arrange: v1.10.0 is the numerically highest merged stable tag, on an older
+  // commit than the nearest tag. A prerelease, a non-release tag, and a higher
+  // tag on an unmerged branch must not qualify.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-base-release-'));
+  const recordPath = path.join(root, ...BASE_RELEASE_PATH.split('/'));
+  const originalWriteFileSync = fs.writeFileSync;
+  try {
+    const preserved = writeProvenanceFixture(root);
+    initSourceRepository(root);
+    git(root, ['tag', 'v1.10.0']);
+    commitAll(root, 'second');
+    git(root, ['tag', '-a', '-m', 'annotated release', 'v1.2.0', 'HEAD~1']);
+    git(root, ['tag', 'v1.9.0']);
+    git(root, ['tag', 'v2.0.0-rc1']);
+    git(root, ['tag', 'nightly']);
+    git(root, ['checkout', '--quiet', '-b', 'unmerged']);
+    commitAll(root, 'unmerged release');
+    git(root, ['tag', 'v9.0.0']);
+    git(root, ['checkout', '--quiet', 'main']);
+
+    // Act: first build, an unchanged rebuild, then a newly merged release.
+    const first = buildDev({ repoRoot: root });
+    const firstRecord = fs.readFileSync(recordPath);
+    /** @type {string[]} */
+    const recordWrites = [];
+    fs.writeFileSync = /** @type {typeof fs.writeFileSync} */ ((file, ...rest) => {
+      if (path.resolve(String(file)) === recordPath) recordWrites.push(String(file));
+      return originalWriteFileSync(file, ...rest);
+    });
+    const second = buildDev({ repoRoot: root });
+    fs.writeFileSync = originalWriteFileSync;
+    commitAll(root, 'third');
+    git(root, ['tag', 'v1.11.0']);
+    const third = buildDev({ repoRoot: root });
+
+    // Assert
+    assert.deepEqual(first.baseRelease, { release: 'v1.10.0', reason: null });
+    assert.ok(first.written.includes(BASE_RELEASE_PATH), 'a new record is reported as written');
+    assertExactBytes(firstRecord, baseReleaseBytes('v1.10.0'), BASE_RELEASE_PATH);
+    assert.deepEqual(second.baseRelease, first.baseRelease);
+    assert.equal(second.written.includes(BASE_RELEASE_PATH), false, 'unchanged record reported as written');
+    assert.deepEqual(recordWrites, [], 'identical record bytes were rewritten');
+    assert.deepEqual(third.baseRelease, { release: 'v1.11.0', reason: null });
+    assert.ok(third.written.includes(BASE_RELEASE_PATH), 'a changed record is reported as written');
+    assertExactBytes(fs.readFileSync(recordPath), baseReleaseBytes('v1.11.0'), BASE_RELEASE_PATH);
+    for (const result of [first, second, third]) {
+      assert.equal(result.removed.includes(BASE_RELEASE_PATH), false);
+    }
+    assertPreserved(root, preserved);
+  } finally {
+    fs.writeFileSync = originalWriteFileSync;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('buildDev removes an earlier record when base release evidence is unknown', async (context) => {
+  const releaseManifest = MANIFEST.replace(
+    '"source_ref":"main","installed_ref":"main"',
+    '"source_ref":"latest","installed_ref":"v1.3.0"',
+  );
+  /**
+   * Each case leaves a taggable fixture whose evidence stays incomplete. The
+   * stale record is present before the build.
+   * @type {Array<{
+   *   label: string,
+   *   reason: RegExp,
+   *   prepare: (sandbox: string) => { root: string, preserved: Map<string, Buffer>, env?: Record<string, string> },
+   * }>}
+   */
+  const cases = [
+    {
+      label: 'no Git repository',
+      reason: /not a readable Git repository/,
+      prepare: (sandbox) => {
+        const root = path.join(sandbox, 'root');
+        const preserved = writeProvenanceFixture(root);
+        w(root, BASE_RELEASE_PATH, baseReleaseBytes('v0.9.0'));
+        return { root, preserved, env: { GIT_CEILING_DIRECTORIES: sandbox } };
+      },
+    },
+    {
+      label: 'Git unavailable',
+      reason: /Git is unavailable/,
+      prepare: (sandbox) => {
+        const root = path.join(sandbox, 'root');
+        const preserved = writeProvenanceFixture(root);
+        w(root, BASE_RELEASE_PATH, baseReleaseBytes('v0.9.0'));
+        initSourceRepository(root);
+        git(root, ['tag', 'v1.3.0']);
+        return { root, preserved, env: { PATH: '' } };
+      },
+    },
+    {
+      label: 'a parent repository root',
+      reason: /Git root is not the build root/,
+      prepare: (sandbox) => {
+        const parent = path.join(sandbox, 'parent');
+        const root = path.join(parent, 'child');
+        const preserved = writeProvenanceFixture(root);
+        w(root, BASE_RELEASE_PATH, baseReleaseBytes('v0.9.0'));
+        initSourceRepository(parent);
+        git(parent, ['tag', 'v5.0.0']);
+        return { root, preserved };
+      },
+    },
+    {
+      label: 'shallow history',
+      reason: /Git history is shallow/,
+      prepare: (sandbox) => {
+        const source = path.join(sandbox, 'source');
+        const root = path.join(sandbox, 'root');
+        const preserved = writeProvenanceFixture(source);
+        w(source, BASE_RELEASE_PATH, baseReleaseBytes('v0.9.0'));
+        initSourceRepository(source);
+        git(source, ['tag', 'v1.3.0']);
+        git(sandbox, ['clone', '--quiet', '--depth=1', '--branch', 'main', pathToFileURL(source).href, root]);
+        assert.match(git(root, ['tag', '--list']), /v1\.3\.0/, 'the shallow clone still carries the tip tag');
+        return { root, preserved };
+      },
+    },
+    {
+      label: 'no reachable stable tag',
+      reason: /no stable release tag is merged into the current commit/,
+      prepare: (sandbox) => {
+        const root = path.join(sandbox, 'root');
+        const preserved = writeProvenanceFixture(root);
+        w(root, BASE_RELEASE_PATH, baseReleaseBytes('v0.9.0'));
+        initSourceRepository(root);
+        git(root, ['tag', 'v2.0.0-rc1']);
+        git(root, ['tag', 'nightly']);
+        git(root, ['checkout', '--quiet', '-b', 'unmerged']);
+        commitAll(root, 'unmerged release');
+        git(root, ['tag', 'v3.0.0']);
+        git(root, ['checkout', '--quiet', 'main']);
+        return { root, preserved };
+      },
+    },
+    {
+      label: 'no current commit',
+      reason: /no current commit/,
+      prepare: (sandbox) => {
+        const root = path.join(sandbox, 'root');
+        const preserved = writeProvenanceFixture(root);
+        w(root, BASE_RELEASE_PATH, baseReleaseBytes('v0.9.0'));
+        git(root, ['init', '--quiet', '-b', 'main']);
+        return { root, preserved };
+      },
+    },
+    {
+      label: 'a release manifest',
+      reason: /installed_ref is not main/,
+      prepare: (sandbox) => {
+        const root = path.join(sandbox, 'root');
+        const preserved = writeProvenanceFixture(root, releaseManifest);
+        w(root, BASE_RELEASE_PATH, baseReleaseBytes('v0.9.0'));
+        initSourceRepository(root);
+        git(root, ['tag', 'v1.3.0']);
+        return { root, preserved };
+      },
+    },
+  ];
+
+  for (const { label, reason, prepare } of cases) {
+    await context.test(label, () => {
+      // Arrange
+      const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-unknown-base-'));
+      try {
+        const { root, preserved, env = {} } = prepare(sandbox);
+        const recordPath = path.join(root, ...BASE_RELEASE_PATH.split('/'));
+        assert.equal(fs.existsSync(recordPath), true, 'the fixture starts with an earlier record');
+
+        // Act
+        const first = withEnvironment(env, () => buildDev({ repoRoot: root }));
+        const second = withEnvironment(env, () => buildDev({ repoRoot: root }));
+
+        // Assert
+        assert.equal(first.baseRelease.release, null);
+        assert.match(String(first.baseRelease.reason), reason);
+        assert.equal(fs.existsSync(recordPath), false, 'the earlier base was not cleared');
+        assert.ok(first.removed.includes(BASE_RELEASE_PATH), 'the removal is reported');
+        assert.equal(first.written.includes(BASE_RELEASE_PATH), false);
+        assert.deepEqual(second.baseRelease, first.baseRelease);
+        assert.equal(second.removed.includes(BASE_RELEASE_PATH), false, 'an absent record is not removed again');
+        assert.equal(second.written.includes(BASE_RELEASE_PATH), false);
+        assertPreserved(root, preserved);
+      } finally {
+        fs.rmSync(sandbox, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('buildDev rejects an unsafe base release destination before cleanup', async (context) => {
+  for (const label of ['directory', 'symbolic link']) {
+    await context.test(label, (subtest) => {
+      // Arrange
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-record-preflight-'));
+      const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-record-outside-'));
+      try {
+        writeProvenanceFixture(root);
+        w(root, '.github/agents/dude-stale.agent.md', 'must survive preflight\n');
+        w(outside, 'record.md', 'outside bytes\n');
+        if (label === 'directory') {
+          w(root, `${BASE_RELEASE_PATH}/nested.md`, 'occupied\n');
+        } else {
+          try {
+            fs.symlinkSync(path.join(outside, 'record.md'), path.join(root, ...BASE_RELEASE_PATH.split('/')), 'file');
+          } catch (error) {
+            if (error && typeof error === 'object' && 'code' in error && ['EPERM', 'EACCES'].includes(String(error.code))) {
+              subtest.skip(`symbolic links unavailable: ${error.code}`);
+              return;
+            }
+            throw error;
+          }
+        }
+        const beforeRoot = snapshotTree(root);
+        const beforeOutside = snapshotTree(outside);
+
+        // Act + Assert
+        assert.throws(
+          () => buildDev({ repoRoot: root }),
+          /unsafe build-dev destination '\.dude\/metadata\/development-base-release\.md'/,
+        );
+        assert.deepEqual(snapshotTree(root), beforeRoot, 'the build changed the repository before refusing');
+        assert.deepEqual(snapshotTree(outside), beforeOutside);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    });
   }
 });

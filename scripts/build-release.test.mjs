@@ -28,10 +28,16 @@ import {
   parseAgentSource,
   renderCopilotAgent,
 } from '../src/skills/dude-engine/lib/agent-projection.mjs';
+import { renderDevelopmentBaseRelease } from '../src/skills/dude-engine/lib/development-base-release.mjs';
+import { buildDev } from './build-dev.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..');
 const PRE_FEATURE_UPGRADE_REVISION = '4cd37d635fb6d446cfd1c52dedda47b775607dea';
+// The last upgrade engine on the default branch before the optional
+// development base release record existed.
+const PRE_BASE_RELEASE_UPGRADE_REVISION = 'fea6efd4f187b44976a9634b8b9538928dcd03bb';
+const BASE_RELEASE_PATH = '.dude/metadata/development-base-release.md';
 const MANIFEST_DOCUMENT = '# Bundle Manifest\n\n```json\n{\n  "source_repo": "owner/repo",\n  "source_ref": "main",\n  "installed_ref": "main"\n}\n```\n';
 const MODEL_CONFIG = Buffer.from([
   '{',
@@ -159,20 +165,21 @@ function initializeRepository(root, branch) {
  * Read exact repository-local historical bytes. The fixture executes these
  * bytes; it does not recreate the historic ownership outcome in test code.
  * @param {string} sourcePath
+ * @param {string} [revision]
  * @returns {Buffer}
  */
-function historicalSource(sourcePath) {
+function historicalSource(sourcePath, revision = PRE_FEATURE_UPGRADE_REVISION) {
   const result = spawnSync(
     'git',
-    ['show', `${PRE_FEATURE_UPGRADE_REVISION}:${sourcePath}`],
+    ['show', `${revision}:${sourcePath}`],
     { cwd: repoRoot, encoding: null },
   );
   assert.equal(result.status, 0, `cannot read historical ${sourcePath}: ${String(result.stderr)}`);
   return /** @type {Buffer} */ (result.stdout);
 }
 
-/** @param {string} root */
-function writeHistoricalUpgradeInstall(root) {
+/** @param {string} root @param {string} [revision] */
+function writeHistoricalUpgradeInstall(root, revision = PRE_FEATURE_UPGRADE_REVISION) {
   const historicalFiles = [
     'src/skills/dude-bundle-upgrade/upgrade.mjs',
     'src/skills/dude-bundle-upgrade/SKILL.md',
@@ -180,10 +187,10 @@ function writeHistoricalUpgradeInstall(root) {
     'src/skills/dude-engine/lib/release-channel.mjs',
     'src/skills/dude-engine/lib/workspace-paths.mjs',
   ];
-  const upgrade = historicalSource(historicalFiles[0]);
+  const upgrade = historicalSource(historicalFiles[0], revision);
   assert.match(upgrade.toString('utf8'), /enumerateCorePaths/);
   for (const sourcePath of historicalFiles) {
-    w(root, sourcePath.replace(/^src\/skills\//, '.github/skills/'), historicalSource(sourcePath));
+    w(root, sourcePath.replace(/^src\/skills\//, '.github/skills/'), historicalSource(sourcePath, revision));
   }
 }
 
@@ -567,6 +574,38 @@ test('buildRelease requires canonical manifest metadata before altering output',
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
     fs.rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test('buildRelease stages only release metadata from a source that carries a development base release record', () => {
+  // Arrange
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-rel-base-release-'));
+  const root = path.join(sandbox, 'repo');
+  const output = path.join(sandbox, 'release');
+  try {
+    fs.mkdirSync(root);
+    writeReleaseFixture(root);
+    const record = renderDevelopmentBaseRelease({ source_repo: 'owner/repo', base_release: 'v1.3.0' });
+    w(root, BASE_RELEASE_PATH, record);
+
+    // Act
+    const result = buildRelease({ repoRoot: root, outDir: output, ref: 'v1.4.0' });
+
+    // Assert
+    assert.deepEqual(
+      listRelativeFiles(path.join(output, '.dude')),
+      ['metadata/bundle-manifest.md', 'metadata/profile.md'],
+      'a release seeds only its manifest and profile',
+    );
+    assert.equal(result.files.includes(BASE_RELEASE_PATH), false);
+    assert.deepEqual(
+      parseManifestDocument(fs.readFileSync(path.join(output, '.dude/metadata/bundle-manifest.md')), 'staged manifest').data,
+      { source_repo: 'owner/repo', source_ref: 'latest', installed_ref: 'v1.4.0' },
+    );
+    assert.equal(fs.readFileSync(path.join(output, '.dude/metadata/profile.md'), 'utf8'), PROFILE_STUB);
+    assert.equal(fs.readFileSync(path.join(root, BASE_RELEASE_PATH), 'utf8'), record, 'the source record is untouched');
+  } finally {
+    fs.rmSync(sandbox, { recursive: true, force: true });
   }
 });
 
@@ -1135,6 +1174,123 @@ test('the supported historical upgrade flow bootstraps every current extension b
     );
     assert.deepEqual(fs.readFileSync(packProfile), expectedProfile);
     assert.equal(fs.readFileSync(packProfile, 'utf8').includes('model-class'), false);
+  } finally {
+    fs.rmSync(sandbox, { recursive: true, force: true });
+  }
+});
+
+test('an existing development install records its base release through a later explicit metadata-only upgrade', () => {
+  // Arrange: a development candidate built by the real source builder from the
+  // current source, with its own release history, and an existing development
+  // install still running the engine from before the base release record.
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-base-release-bootstrap-'));
+  const candidate = path.join(sandbox, 'candidate');
+  const workspace = path.join(sandbox, 'workspace');
+  const cache = path.join(sandbox, 'cache');
+  const olderPlanPath = path.join(sandbox, 'older-engine-plan.json');
+  const recordPlanPath = path.join(sandbox, 'record-plan.json');
+  const noOpPlanPath = path.join(sandbox, 'no-op-plan.json');
+  const recordPath = path.join(workspace, ...BASE_RELEASE_PATH.split('/'));
+  try {
+    fs.cpSync(path.join(repoRoot, 'src'), path.join(candidate, 'src'), { recursive: true });
+    w(
+      candidate,
+      '.dude/metadata/bundle-manifest.md',
+      fs.readFileSync(path.join(repoRoot, '.dude/metadata/bundle-manifest.md')),
+    );
+    initializeRepository(candidate, 'main');
+    git(candidate, ['tag', 'v1.2.0']);
+    git(candidate, ['commit', '--quiet', '--allow-empty', '-m', 'release candidate']);
+    git(candidate, ['tag', 'v1.3.0']);
+    git(candidate, ['tag', 'v1.4.0-rc1']);
+    const built = buildDev({ repoRoot: candidate });
+    assert.deepEqual(built.baseRelease, { release: 'v1.3.0', reason: null });
+    git(candidate, ['add', '--all']);
+    git(candidate, ['commit', '--quiet', '-m', 'development build']);
+
+    fs.mkdirSync(workspace);
+    writeHistoricalUpgradeInstall(workspace, PRE_BASE_RELEASE_UPGRADE_REVISION);
+    w(workspace, '.github/skills/project/SKILL.md', PROJECT_STUB);
+    w(workspace, '.dude/metadata/profile.md', PROFILE_STUB);
+    w(
+      workspace,
+      '.dude/metadata/bundle-manifest.md',
+      '# Bundle Manifest\n\n```json\n{\n  "source_repo": "fixture/earlier-source",\n  "source_ref": "main",\n  "installed_ref": "main"\n}\n```\n',
+    );
+    initializeRepository(workspace, 'main');
+    fs.mkdirSync(cache);
+    const upgradeScript = path.join(workspace, '.github/skills/dude-bundle-upgrade/upgrade.mjs');
+    const selection = ['--source', candidate, '--ref', 'main'];
+    const env = {
+      ...process.env,
+      TMPDIR: cache,
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'core.autocrlf',
+      GIT_CONFIG_VALUE_0: 'false',
+    };
+    /** @param {string[]} args */
+    const upgrade = (args) => spawnSync(process.execPath, [upgradeScript, ...args], { cwd: workspace, encoding: 'utf8', env });
+
+    // Act + Assert: the first explicit upgrade runs the older engine, which
+    // installs the current engine but has no record transition to perform.
+    const olderPlan = upgrade(['plan', ...selection, '--format', 'json', '--out', olderPlanPath]);
+    assert.equal(olderPlan.status, 10, `${olderPlan.stdout}${olderPlan.stderr}`);
+    assert.equal(JSON.parse(fs.readFileSync(olderPlanPath, 'utf8')).schema_version, 1, 'the older engine reviews its own schema');
+    const olderApply = upgrade(['apply', '--plan', olderPlanPath, '--confirm', 'confirm-upgrade', '--format', 'json']);
+    assert.equal(olderApply.status, 0, `${olderApply.stdout}${olderApply.stderr}`);
+    assert.equal(fs.existsSync(recordPath), false, 'the older engine does not copy the record');
+    assert.deepEqual(
+      fs.readFileSync(upgradeScript),
+      fs.readFileSync(path.join(candidate, '.github/skills/dude-bundle-upgrade/upgrade.mjs')),
+      'the older engine installed the current upgrade engine',
+    );
+
+    // The second explicit upgrade, through the updated engine, previews only
+    // the metadata change and writes nothing before its fresh confirmation.
+    const headBefore = git(workspace, ['rev-parse', 'HEAD']).stdout.trim();
+    const preview = upgrade(['plan', ...selection]);
+    assert.equal(preview.status, 10, `${preview.stdout}${preview.stderr}`);
+    assert.ok(preview.stdout.includes('Base release record: (none) -> v1.3.0\n'), preview.stdout);
+    const planned = upgrade(['plan', ...selection, '--format', 'json', '--out', recordPlanPath]);
+    assert.equal(planned.status, 10, `${planned.stdout}${planned.stderr}`);
+    const recordPlan = JSON.parse(fs.readFileSync(recordPlanPath, 'utf8'));
+    assert.equal(recordPlan.schema_version, 2);
+    assert.deepEqual(
+      [recordPlan.summary.add, recordPlan.summary.replace, recordPlan.summary.remove],
+      [0, 0, 0],
+      'the remaining difference is metadata only',
+    );
+    assert.deepEqual(recordPlan.local.base_release, {
+      path: BASE_RELEASE_PATH,
+      state: { type: 'missing' },
+      record: null,
+      desired: { source_repo: candidate, base_release: 'v1.3.0' },
+    });
+    const unconfirmed = upgrade(['apply', '--plan', recordPlanPath, '--format', 'json']);
+    assert.equal(unconfirmed.status, 40, `${unconfirmed.stdout}${unconfirmed.stderr}`);
+    assert.equal(fs.existsSync(recordPath), false, 'the record was written before confirmation');
+    assert.equal(git(workspace, ['rev-parse', 'HEAD']).stdout.trim(), headBefore);
+    assert.equal(git(workspace, ['status', '--porcelain']).stdout, '');
+
+    const applied = upgrade(['apply', '--plan', recordPlanPath, '--confirm', 'confirm-upgrade', '--format', 'json']);
+    assert.equal(applied.status, 0, `${applied.stdout}${applied.stderr}`);
+    assert.equal(
+      fs.readFileSync(recordPath, 'utf8'),
+      renderDevelopmentBaseRelease({ source_repo: candidate, base_release: 'v1.3.0' }),
+    );
+    const committed = git(workspace, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD']).stdout
+      .trim()
+      .split('\n')
+      .sort();
+    assert.ok(committed.includes(BASE_RELEASE_PATH), committed.join(', '));
+    assert.deepEqual(committed.filter((relPath) => relPath.startsWith('.github/')), []);
+
+    // A later normal upgrade is a true no-op.
+    const finalPlan = upgrade(['plan', ...selection, '--format', 'json', '--out', noOpPlanPath]);
+    assert.equal(finalPlan.status, 0, `${finalPlan.stdout}${finalPlan.stderr}`);
+    const noOpPlan = JSON.parse(fs.readFileSync(noOpPlanPath, 'utf8'));
+    assert.deepEqual(noOpPlan.local.base_release.record, noOpPlan.local.base_release.desired);
+    assert.equal(git(workspace, ['status', '--porcelain']).stdout, '');
   } finally {
     fs.rmSync(sandbox, { recursive: true, force: true });
   }

@@ -17,9 +17,12 @@
  * shipped handoff. A separate disposable pack fixture drives Settings through
  * owner preview, exact permission, Compose application, pack-result
  * acknowledgment, and the provider's authoritative reread. The model fixture
- * itself performs no post-seed canonical write. This proves installed owner
- * execution and waiter correlation, not unscripted model reasoning or
- * desktop-app rendering.
+ * itself performs no post-seed canonical write. The Git blank install is
+ * pre-seeded, before its host starts, as a development install with a recorded
+ * base release; its unsent first idea waits through one Settings > About visit
+ * that the installed extension serves. The pack fixture keeps the builder's
+ * release metadata. This proves installed owner execution and waiter
+ * correlation, not unscripted model reasoning or desktop-app rendering.
  */
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -131,7 +134,39 @@ const PACK_WORK_IDEA_PATH = '.dude/ideas/002-installed-pack-host.md';
 const PACK_WORK_SPEC_PATH = '.dude/specs/002-installed-pack-host/spec.md';
 const PACK_WORK_TASK_KEY = 'T001@c012ab01';
 const PROFILE_PATH = '.dude/metadata/profile.md';
-const SOURCE_APP_SHA256 = 'aedac71b507e2000cdf79a45b60ff746529057b8497bc3db11b613666d18515d';
+const BASE_RELEASE_PATH = '.dude/metadata/development-base-release.md';
+const INSTALLED_SOURCE_REPO = 'https://github.com/E-G-C/dude';
+/** @param {string} version @param {string} channel */
+const installedAboutRows = (version, channel) => [
+  ['Dude version', version],
+  ['Author', 'Enrique Gonzalez'],
+  ['Repository', 'https://github.com/E-G-C/dude'],
+  ['Recorded channel/ref', channel],
+];
+/**
+ * The two installed records About is observed with. The release case is the
+ * builder's own release metadata, which carries no base record; the
+ * development case is pre-seeded before its host starts, as a confirmed
+ * `main` upgrade leaves it.
+ */
+const RELEASE_ABOUT = Object.freeze({
+  label: 'release',
+  recorded: { installedRef: 'v0.0.0-t012', sourceRef: 'latest', sourceRepo: INSTALLED_SOURCE_REPO, baseRecord: null },
+  baseRelease: null,
+  rows: installedAboutRows('Recorded ref (v0.0.0-t012)', 'Stable releases (latest)'),
+});
+const DEVELOPMENT_ABOUT = Object.freeze({
+  label: 'development',
+  recorded: {
+    installedRef: 'main',
+    sourceRef: 'main',
+    sourceRepo: INSTALLED_SOURCE_REPO,
+    baseRecord: { source_repo: INSTALLED_SOURCE_REPO, base_release: 'v1.3.0' },
+  },
+  baseRelease: 'v1.3.0',
+  rows: installedAboutRows('Development (main), based on v1.3.0', 'Development (main)'),
+});
+const SOURCE_APP_SHA256 = '46360200ec0d5ee2864e7ee6162e23e2e3839e90b238d3b059c3a1b560b39531';
 const SOURCE_LEGAL_SHA256 = '3be2d01e3b59529e54cde5f17aee76c168bcde63245c21ec387cf70ba7a6d869';
 /**
  * The Review gesture behavior lives in these static modules, not in the bundled
@@ -161,6 +196,10 @@ const APPROVED_HASHES = Object.freeze({
 
 const { buildRelease, parseManifestDocument } =
   await import(pathToFileURL(path.join(ROOT, 'scripts/build-release.mjs')));
+const { parseDevelopmentBaseRelease, renderDevelopmentBaseRelease } = await import(pathToFileURL(path.join(
+  ROOT,
+  'src/skills/dude-engine/lib/development-base-release.mjs',
+)));
 const { CopilotClient, RuntimeConnection } = await import(pathToFileURL(path.join(SDK, 'index.js')));
 const { decodePng } = await import(pathToFileURL(path.join(
   ROOT,
@@ -769,6 +808,39 @@ function seedPackFixture(root) {
       specPath: PACK_WORK_SPEC_PATH,
       taskKey: PACK_WORK_TASK_KEY,
     },
+  };
+}
+
+/**
+ * Pre-seed a disposable release fixture, before its host starts, as the
+ * development install a confirmed `main` upgrade leaves: the manifest's fenced
+ * refs become `main` with its prose and source unchanged, and the base record
+ * is the producers' own rendering for that exact source. One local catalog
+ * record keeps the Settings entry read local, so opening About contacts no
+ * remote catalog. Nothing writes these files after the host starts.
+ * @param {string} root
+ */
+function seedDevelopmentInstall(root) {
+  const manifestPath = path.join(root, '.dude', 'metadata', 'bundle-manifest.md');
+  const release = fs.readFileSync(manifestPath, 'utf8');
+  assert.deepEqual(parseManifestDocument(Buffer.from(release), 'release fixture bundle manifest').data, {
+    source_repo: INSTALLED_SOURCE_REPO, source_ref: 'latest', installed_ref: 'v0.0.0-t012',
+  });
+  assert.equal(fs.existsSync(path.join(root, ...BASE_RELEASE_PATH.split('/'))), false,
+    'release metadata carries no development base record');
+  const development = release.replace(/```json\r?\n[\s\S]*?\r?\n```/, `\`\`\`json\n${JSON.stringify({
+    source_repo: INSTALLED_SOURCE_REPO, source_ref: 'main', installed_ref: 'main',
+  }, null, 2)}\n\`\`\``);
+  assert.notEqual(development, release);
+  write(root, '.dude/metadata/bundle-manifest.md', development);
+  const record = renderDevelopmentBaseRelease(DEVELOPMENT_ABOUT.recorded.baseRecord);
+  write(root, BASE_RELEASE_PATH, record);
+  write(root, PACK_MANIFEST_PATH, packFixture(root).manifest);
+  return {
+    manifest: parseManifestDocument(fs.readFileSync(manifestPath), 'development fixture bundle manifest').data,
+    baseRecord: { path: BASE_RELEASE_PATH, sha256: sha256(record) },
+    catalog: PACK_MANIFEST_PATH,
+    seededBeforeHost: true,
   };
 }
 
@@ -3035,10 +3107,13 @@ function installedAboutMetadata(root) {
     fs.readFileSync(path.join(root, '.dude', 'metadata', 'bundle-manifest.md')),
     'installed-host bundle manifest',
   );
+  const recordPath = path.join(root, ...BASE_RELEASE_PATH.split('/'));
+  const record = fs.existsSync(recordPath) ? parseDevelopmentBaseRelease(fs.readFileSync(recordPath)) : null;
   return {
     installedRef: document.data.installed_ref ?? null,
     sourceRef: document.data.source_ref ?? null,
     sourceRepo: document.data.source_repo,
+    baseRecord: record && { source_repo: record.source_repo, base_release: record.base_release },
   };
 }
 
@@ -3065,21 +3140,20 @@ async function readCanvasProjection(canvasUrl) {
 }
 
 /**
- * Observe one real installed-host About read and its rendered release record.
+ * Observe one real installed-host About read and its rendered installation
+ * record: the release case by default, or a pre-seeded development base.
  * Settings is already open and its request dialog, if any, has been closed.
  * @param {Cdp} page
  * @param {string} canvasUrl
  * @param {string} root
  * @param {string} name
  * @param {string[]} cliVersions
+ * @param {typeof RELEASE_ABOUT | typeof DEVELOPMENT_ABOUT} [expected]
  */
-async function observeInstalledAbout(page, canvasUrl, root, name, cliVersions) {
+async function observeInstalledAbout(page, canvasUrl, root, name, cliVersions, expected = RELEASE_ABOUT) {
   const recorded = installedAboutMetadata(root);
-  assert.deepEqual(recorded, {
-    installedRef: 'v0.0.0-t012',
-    sourceRef: 'latest',
-    sourceRepo: 'https://github.com/E-G-C/dude',
-  }, 'the existing release fixture carries its builder-recorded tag and channel');
+  assert.deepEqual(recorded, expected.recorded,
+    `the ${expected.label} fixture carries its pre-seeded installation record`);
   const api = await readAbout(canvasUrl);
   assert.deepEqual(api, {
     status: 200,
@@ -3087,8 +3161,9 @@ async function observeInstalledAbout(page, canvasUrl, root, name, cliVersions) {
     body: {
       installedRef: recorded.installedRef,
       sourceRef: recorded.sourceRef,
+      baseRelease: expected.baseRelease,
     },
-  }, 'the installed extension reads About from its staged release manifest');
+  }, `the installed extension reads About from its ${expected.label} metadata`);
   await click(page, `document.querySelector('[data-settings-section="about"]')`);
   await until(() => evaluate(page, `document.querySelector('[data-about-facts]')
     ?.getAttribute('aria-busy') === 'false'`), `${name} installed About facts`, 10_000);
@@ -3119,12 +3194,7 @@ async function observeInstalledAbout(page, canvasUrl, root, name, cliVersions) {
     reloadVisible: ui.reloadVisible,
     selectedSection: ui.selectedSection,
   }, {
-    rows: [
-      ['Dude version', 'Recorded ref (v0.0.0-t012)'],
-      ['Author', 'Enrique Gonzalez'],
-      ['Repository', 'https://github.com/E-G-C/dude'],
-      ['Recorded channel/ref', 'Stable releases (latest)'],
-    ],
+    rows: expected.rows,
     note: 'Recorded installation metadata; installed files are not verified.',
     link: {
       text: 'https://github.com/E-G-C/dude',
@@ -3135,7 +3205,7 @@ async function observeInstalledAbout(page, canvasUrl, root, name, cliVersions) {
     footer: 'About · Read only',
     reloadVisible: false,
     selectedSection: 'about',
-  }, 'the installed UI displays recorded release metadata, credit, and the official repository');
+  }, `the installed UI displays the recorded ${expected.label} metadata, credit, and the official repository`);
   for (const version of cliVersions.filter(Boolean)) {
     assert.equal(ui.panelText.includes(version), false,
       `About must not substitute installed CLI version ${version} for the recorded Dude release`);
@@ -3240,27 +3310,50 @@ function assertBlankInstall(root, kind) {
   return { gitExitCode: git.exitCode, topLevel: git.stdout.trim() || null };
 }
 
-/** @param {Cdp} page @param {string} canvasUrl @param {string} intent */
-async function driveBlankCapture(page, canvasUrl, intent) {
+/**
+ * Capture the first idea from a blank install. With `development`, the
+ * unsent idea first waits through one installed Settings > About visit that
+ * reads the pre-seeded development base, and must return unchanged.
+ * @param {Cdp} page @param {string} canvasUrl @param {string} intent
+ * @param {{root:string,name:string,cliVersions:string[]}|null} [development]
+ */
+async function driveBlankCapture(page, canvasUrl, intent, development = null) {
   const runtimeErrors = [];
-  const network = [];
+  const network = [], foreignNetwork = [];
   page.on('Runtime.exceptionThrown', (event) => runtimeErrors.push(event));
   page.on('Network.requestWillBeSent', (event) => {
     if (event.request.url.startsWith(canvasUrl)) {
       network.push({ method: event.request.method, path: new URL(event.request.url).pathname });
+    } else if (/^https?:/.test(event.request.url)
+      && !['127.0.0.1', 'localhost'].includes(new URL(event.request.url).hostname)) {
+      foreignNetwork.push(event.request.url);
     }
   });
   await navigate(page, canvasUrl, 360);
   await visible(page, 'Welcome to Dude');
   await click(page, button('New idea'));
   await fill(page, field('Your idea'), intent);
+  let about = null;
+  if (development) {
+    await click(page, `document.querySelector('#dude-tab-settings')`);
+    await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+      ?.getAttribute('aria-busy') === 'false'`), `${development.name} installed Settings pack read`);
+    about = await observeInstalledAbout(page, canvasUrl, development.root, `${development.name}-development`,
+      development.cliVersions, DEVELOPMENT_ABOUT);
+    await click(page, `document.querySelector('#dude-tab-new')`);
+    assert.equal(await evaluate(page, `${field('Your idea')}.value`), intent,
+      'the unsent idea returns unchanged after the installed About visit');
+    about.returnedDraftSha256 = sha256(intent);
+  }
   await click(page, button('Save'));
   await visible(page, 'Awaiting acknowledgment');
   await visible(page, 'Idea saved');
   await click(page, button('Overview'));
   assert.deepEqual(runtimeErrors, []);
   assert.equal(network.filter((entry) => entry.path === '/api/needs-you/capture').length, 1);
-  return { network, screenshot: await screenshot(page, `blank-${sha256(intent).slice(0, 8)}`) };
+  assert.equal(network.filter((entry) => entry.path === '/api/about').length, development ? 1 : 0);
+  if (development) assert.deepEqual(foreignNetwork, [], 'installed About rendering contacts no other origin');
+  return { network, foreignNetwork, about, screenshot: await screenshot(page, `blank-${sha256(intent).slice(0, 8)}`) };
 }
 
 /**
@@ -4077,6 +4170,9 @@ try {
       assert.equal(init.exitCode, 0, init.stderr);
     }
     const blank = assertBlankInstall(root, kind);
+    // The Git install is pre-seeded as a development install with a known
+    // base; the non-Git install keeps the builder's release metadata.
+    const development = kind === 'blank-git' ? seedDevelopmentInstall(root) : null;
     const parity = installedParity(root);
     const intent = blankIntent(kind);
     const slug = blankSlug(kind);
@@ -4090,7 +4186,11 @@ try {
     }, 30_000);
     assert.equal(idle?.data.content, 'T012_BLANK_HOST_IDLE');
     assert.equal(model.state.phase, 'idle');
-    const browser = await driveBlankCapture(browserState.page, host.canvas.url, intent);
+    const browser = await driveBlankCapture(browserState.page, host.canvas.url, intent, development && {
+      root,
+      name: kind,
+      cliVersions: Object.values(manifest.installedCliVersion),
+    });
     await until(() => model.state.phase === 'complete' || model.state.modelError,
       `${kind} owner acknowledgment`);
     if (model.state.modelError) throw new Error(model.state.modelError);
@@ -4129,6 +4229,7 @@ try {
       data,
       releaseFiles: release.files.length,
       blank,
+      development,
       parity,
       intentSha256: sha256(intent),
       capture,
@@ -4812,6 +4913,7 @@ try {
     blankCases: manifest.blankCases.length,
     packRoundTrip: manifest.packCase?.browser?.provider?.packRequests?.[0]?.phase ?? null,
     about: manifest.packCase?.about?.applied?.api?.body ?? null,
+    developmentAbout: manifest.blankCases.find((entry) => entry.development)?.browser?.about?.api?.body ?? null,
     extensionHost: manifest.extensionHost,
     hostPackRead: manifest.packCase?.hostPackRead?.coverage?.catalog?.state ?? null,
     reviewSubmissions: manifest.reviewCase?.model?.rounds?.map((entry) => entry.submissionId) ?? [],
