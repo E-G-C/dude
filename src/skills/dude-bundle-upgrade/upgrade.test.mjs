@@ -7,6 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,6 +24,11 @@ import {
 } from './upgrade.mjs';
 import { cmdAdd } from '../dude-compose/compose.mjs';
 import { enumerateCorePaths } from '../dude-engine/lib/ownership.mjs';
+import {
+  parseDevelopmentBaseRelease,
+  renderDevelopmentBaseRelease,
+  validateDevelopmentBaseRelease,
+} from '../dude-engine/lib/development-base-release.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./upgrade.mjs', import.meta.url));
 const REPLACE_PATH = '.github/agents/dude.agent.md';
@@ -31,6 +37,15 @@ const REMOVE_PATH = '.github/skills/dude-old/SKILL.md';
 const UP_TO_DATE_PATH = '.github/instructions/dude.instructions.md';
 const MANIFEST_PATH = '.dude/metadata/bundle-manifest.md';
 const UPGRADE_LOG_PATH = '.dude/metadata/upgrade-log.md';
+const BASE_RELEASE_PATH = '.dude/metadata/development-base-release.md';
+// Fixture bytes are LF. A host `core.autocrlf=true` (such as a Windows system
+// Git configuration) would rewrite them in engine-made clones and resets, so
+// the base release record cases pin checkout conversion off for engine runs.
+const LF_GIT_ENV = Object.freeze({
+  GIT_CONFIG_COUNT: '1',
+  GIT_CONFIG_KEY_0: 'core.autocrlf',
+  GIT_CONFIG_VALUE_0: 'false',
+});
 const COMPOSE_SOURCE = fileURLToPath(new URL('../dude-compose/compose.mjs', import.meta.url));
 const ENGINE_SOURCE = fileURLToPath(new URL('../dude-engine/', import.meta.url));
 const MODEL_CONFIG_SOURCE = fileURLToPath(new URL('../../config/agent-models.json', import.meta.url));
@@ -70,12 +85,35 @@ function manifestFromData(data) {
   return `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\`\n`;
 }
 
+/** @param {string} sourceRepo @param {string} baseRelease */
+function baseReleaseRecord(sourceRepo, baseRelease) {
+  return renderDevelopmentBaseRelease({ source_repo: sourceRepo, base_release: baseRelease });
+}
+
+/**
+ * Mirror the engine's reviewed record transition rule for fixture assertions.
+ * @param {Record<string, any>} plan
+ */
+function baseReleaseChange(plan) {
+  const { state, record, desired } = plan.local.base_release;
+  return desired === null
+    ? state.type !== 'missing'
+    : JSON.stringify(record) !== JSON.stringify(desired);
+}
+
 /**
  * @param {{
  *   noOp?: boolean,
  *   sourceRef?: string,
  *   installedRef?: string,
  *   releaseTags?: string[],
+ *   upstreamInstalledRef?: string,
+ *   upstreamRecord?: (source: string) => string | Buffer,
+ *   localRecord?: (source: string) => string | Buffer,
+ *   localFiles?: Record<string, string>,
+ *   localTags?: string[],
+ *   env?: Record<string, string>,
+ *   skipPlan?: boolean,
  * }} [options]
  */
 function makeUpgradeFixture(options = {}) {
@@ -84,6 +122,13 @@ function makeUpgradeFixture(options = {}) {
     sourceRef = 'main',
     installedRef = noOp ? sourceRef : 'v0.0.0',
     releaseTags = [],
+    upstreamInstalledRef = sourceRef,
+    upstreamRecord,
+    localRecord,
+    localFiles = {},
+    localTags = [],
+    env = {},
+    skipPlan = false,
   } = options;
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-up-plan-v1-'));
   const localRoot = path.join(base, 'local');
@@ -104,12 +149,15 @@ function makeUpgradeFixture(options = {}) {
   write(localRoot, '.github/instructions/dude.instructions.md', 'unchanged\n');
   write(localRoot, '.github/agents/custom.agent.md', 'advisory\n');
   write(localRoot, 'project-sentinel.txt', 'preserve\n');
+  if (localRecord) write(localRoot, BASE_RELEASE_PATH, localRecord(source));
+  for (const [relativePath, content] of Object.entries(localFiles)) write(localRoot, relativePath, content);
 
-  write(upstreamRoot, '.dude/metadata/bundle-manifest.md', manifest(source, sourceRef, sourceRef));
+  write(upstreamRoot, '.dude/metadata/bundle-manifest.md', manifest(source, upstreamInstalledRef, sourceRef));
   write(upstreamRoot, '.github/agents/dude.agent.md', 'upstream replace\n');
   write(upstreamRoot, '.github/skills/dude-new/SKILL.md', 'upstream add\n');
   write(upstreamRoot, '.github/skills/dude-lint/lint.mjs', 'process.exit(0);\n');
   write(upstreamRoot, '.github/instructions/dude.instructions.md', 'unchanged\n');
+  if (upstreamRecord) write(upstreamRoot, BASE_RELEASE_PATH, upstreamRecord(source));
 
   for (const root of [localRoot, upstreamRoot]) {
     git(root, ['init', '-q', '-b', 'main']);
@@ -119,6 +167,20 @@ function makeUpgradeFixture(options = {}) {
     git(root, ['commit', '-q', '-m', 'fixture']);
   }
   for (const tag of releaseTags) git(upstreamRoot, ['tag', tag]);
+  for (const tag of localTags) git(localRoot, ['tag', tag]);
+  const fixture = {
+    base,
+    localRoot,
+    upstreamRoot,
+    tmpRoot,
+    planPath,
+    cacheRoot: '',
+    source,
+    env,
+    /** @type {Record<string, any>} */
+    plan: {},
+  };
+  if (skipPlan) return fixture;
 
   const planResult = spawnSync(process.execPath, [
     SCRIPT,
@@ -134,28 +196,20 @@ function makeUpgradeFixture(options = {}) {
   ], {
     cwd: localRoot,
     encoding: 'utf8',
-    env: { ...process.env, TMPDIR: tmpRoot },
+    env: { ...process.env, TMPDIR: tmpRoot, ...env },
   });
   const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
   const metadataChange = plan.local.manifest.data.source_repo !== plan.source.location
     || plan.local.manifest.data.source_ref !== plan.source.requested_ref
-    || plan.local.manifest.data.installed_ref !== plan.to_ref;
+    || plan.local.manifest.data.installed_ref !== plan.to_ref
+    || baseReleaseChange(plan);
   assert.equal(
     planResult.status,
     plan.summary.add + plan.summary.replace + plan.summary.remove === 0 && !metadataChange ? 0 : 10,
     `${planResult.stdout}${planResult.stderr}`,
   );
 
-  return {
-    base,
-    localRoot,
-    upstreamRoot,
-    tmpRoot,
-    planPath,
-    cacheRoot: plan.cache.root_path,
-    source,
-    plan,
-  };
+  return { ...fixture, cacheRoot: plan.cache.root_path, plan };
 }
 
 /** @param {string} root */
@@ -279,7 +333,20 @@ function applyFixture(fixture, args = [], confirm = 'confirm-upgrade', extraEnv 
   return spawnSync(process.execPath, command, {
     cwd: fixture.localRoot,
     encoding: 'utf8',
-    env: { ...process.env, TMPDIR: fixture.tmpRoot, ...extraEnv },
+    env: { ...process.env, TMPDIR: fixture.tmpRoot, ...(fixture.env || {}), ...extraEnv },
+  });
+}
+
+/**
+ * Run one other engine subcommand in a fixture workspace with its environment.
+ * @param {ReturnType<typeof makeUpgradeFixture>} fixture
+ * @param {string[]} args
+ */
+function runFixture(fixture, args) {
+  return spawnSync(process.execPath, [SCRIPT, ...args], {
+    cwd: fixture.localRoot,
+    encoding: 'utf8',
+    env: { ...process.env, TMPDIR: fixture.tmpRoot, ...(fixture.env || {}) },
   });
 }
 
@@ -318,7 +385,13 @@ function writeBulkPack(root, name, version, { extra = false } = {}) {
  * repository that publishes the core plus newer pack source. The local root
  * intentionally starts without library/ unless a local-target case requests it.
  * @param {string[]} names
- * @param {{ failing?: string, localTarget?: string }} [options]
+ * @param {{
+ *   failing?: string,
+ *   localTarget?: string,
+ *   upstreamInstalledRef?: string,
+ *   upstreamRecord?: (source: string) => string,
+ *   env?: Record<string, string>,
+ * }} [options]
  */
 async function makeBulkFixture(names, options = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-up-bulk-'));
@@ -334,13 +407,15 @@ async function makeBulkFixture(names, options = {}) {
   const source = pathToFileURL(upstreamRoot).href;
 
   for (const root of [localRoot, upstreamRoot]) {
-    write(root, MANIFEST_PATH, manifest(source, 'v0.0.0', 'main'));
+    const installedRef = root === upstreamRoot ? options.upstreamInstalledRef || 'v0.0.0' : 'v0.0.0';
+    write(root, MANIFEST_PATH, manifest(source, installedRef, 'main'));
     write(root, UPGRADE_LOG_PATH, '# Upgrade Log\n');
     write(root, '.github/agents/dude.agent.md', root === localRoot ? 'old core\n' : 'new core\n');
     write(root, '.github/instructions/dude.instructions.md', 'fixture instructions\n');
     write(root, '.github/skills/dude-lint/lint.mjs', 'process.exit(0);\n');
     packageComposeRuntime(root);
   }
+  if (options.upstreamRecord) write(upstreamRoot, BASE_RELEASE_PATH, options.upstreamRecord(source));
   write(localRoot, 'project-sentinel.txt', 'preserve\n');
   for (const name of names) {
     writeBulkPack(initialCatalog, name, 'old');
@@ -369,7 +444,7 @@ async function makeBulkFixture(names, options = {}) {
   git(localRoot, ['config', 'user.email', 'bulk-local@example.invalid']);
   git(localRoot, ['add', '-A']);
   git(localRoot, ['commit', '-q', '-m', 'installed old core and packs']);
-  return { base, localRoot, upstreamRoot, tmpRoot, planPath, source };
+  return { base, localRoot, upstreamRoot, tmpRoot, planPath, source, env: options.env || {} };
 }
 
 /**
@@ -381,7 +456,7 @@ function runBulk(fixture, args, extraEnv = {}) {
   return spawnSync(process.execPath, [SCRIPT, ...args, '--format', 'json'], {
     cwd: fixture.localRoot,
     encoding: 'utf8',
-    env: { ...process.env, TMPDIR: fixture.tmpRoot, ...extraEnv },
+    env: { ...process.env, TMPDIR: fixture.tmpRoot, ...fixture.env, ...extraEnv },
   });
 }
 
@@ -875,12 +950,19 @@ test('upgrade plan emits a strict versioned authorization envelope', () => {
   const fixture = makeUpgradeFixture();
   try {
     assert.equal(fixture.plan.kind, 'dude-upgrade-plan');
-    assert.equal(fixture.plan.schema_version, 1);
+    assert.equal(fixture.plan.schema_version, 2);
     assert.match(fixture.plan.plan_id, /-[a-f0-9]{24}$/);
     assert.match(fixture.plan.digest, /^[a-f0-9]{64}$/);
     assert.equal(fixture.plan.source.resolved_commit, git(fixture.upstreamRoot, ['rev-parse', 'HEAD']));
     assert.ok(Array.isArray(fixture.plan.cache.inventory));
     assert.ok(Array.isArray(fixture.plan.local.core_inventory));
+    assert.deepEqual(fixture.plan.cache.base_release, { path: BASE_RELEASE_PATH, state: { type: 'missing' } });
+    assert.deepEqual(fixture.plan.local.base_release, {
+      path: BASE_RELEASE_PATH,
+      state: { type: 'missing' },
+      record: null,
+      desired: null,
+    });
   } finally {
     fs.rmSync(fixture.base, { recursive: true, force: true });
   }
@@ -1741,6 +1823,411 @@ rejectedApplyCase(
   /--confirm is required/i,
   { fixture: { noOp: true }, confirm: null },
 );
+
+test('development base release records accept only one exact stable payload', () => {
+  // Arrange
+  const valid = baseReleaseRecord('https://github.com/E-G-C/dude', 'v1.3.0');
+  /** @param {string} json */
+  const fenced = (json) => `# Development Base Release\n\n\`\`\`json\n${json}\n\`\`\`\n`;
+  const invalid = [
+    ['no fenced payload', '# Development Base Release\n'],
+    ['two fenced payloads', `${valid}\n${valid}`],
+    ['malformed JSON', fenced('{"source_repo": "x",')],
+    ['an extra JSON payload', fenced('{"source_repo":"x","base_release":"v1.0.0"} {}')],
+    ['an array payload', fenced('[]')],
+    ['a null payload', fenced('null')],
+    ['an extra field', fenced('{"source_repo":"x","base_release":"v1.0.0","installed_ref":"main"}')],
+    ['a missing field', fenced('{"source_repo":"x"}')],
+    ['a blank source', fenced('{"source_repo":"  ","base_release":"v1.0.0"}')],
+    ['a non-string source', fenced('{"source_repo":["x"],"base_release":"v1.0.0"}')],
+    ['a numeric release', fenced('{"source_repo":"x","base_release":1.3}')],
+    ['a prerelease', fenced('{"source_repo":"x","base_release":"v1.4.0-rc1"}')],
+    ['an uppercase prefix', fenced('{"source_repo":"x","base_release":"V1.3.0"}')],
+    ['a two-part version', fenced('{"source_repo":"x","base_release":"v1.3"}')],
+    ['a padded release', fenced('{"source_repo":"x","base_release":" v1.3.0"}')],
+    ['a trailing newline in the release', fenced('{"source_repo":"x","base_release":"v1.3.0\\n"}')],
+  ];
+
+  // Act + Assert
+  assert.deepEqual(parseDevelopmentBaseRelease(Buffer.from(valid)), {
+    source_repo: 'https://github.com/E-G-C/dude',
+    base_release: 'v1.3.0',
+  });
+  assert.deepEqual(
+    parseDevelopmentBaseRelease(Buffer.from(valid.replace(/\n/g, '\r\n'))),
+    parseDevelopmentBaseRelease(Buffer.from(valid)),
+    'line endings do not change the recorded value',
+  );
+  for (const sourceRepo of ['C:\\Users\\dev\\dude', 'file:///tmp/a ```json b', 'ssh://git@example.invalid/dude.git', 'ünïcode']) {
+    assert.deepEqual(
+      parseDevelopmentBaseRelease(Buffer.from(baseReleaseRecord(sourceRepo, 'v10.20.30'))),
+      { source_repo: sourceRepo, base_release: 'v10.20.30' },
+      `rendering round-trips ${sourceRepo}`,
+    );
+  }
+  for (const [label, text] of invalid) {
+    assert.throws(() => parseDevelopmentBaseRelease(Buffer.from(text)), /development base release/, label);
+  }
+  const invalidUtf8 = Buffer.concat([Buffer.from(valid.slice(0, 20)), Buffer.from([0xc3, 0x28]), Buffer.from(valid.slice(20))]);
+  assert.throws(() => parseDevelopmentBaseRelease(invalidUtf8), /not valid UTF-8/);
+  assert.throws(() => parseDevelopmentBaseRelease(/** @type {any} */ (valid)), TypeError);
+  assert.throws(
+    () => renderDevelopmentBaseRelease({ source_repo: 'x', base_release: 'v1.3.0-rc1' }),
+    /stable vX\.Y\.Z/,
+  );
+  assert.throws(
+    () => validateDevelopmentBaseRelease({ source_repo: 'x', base_release: 'v1.3.0', installed_ref: 'main' }),
+    /exactly source_repo and base_release/,
+  );
+});
+
+test('main refresh previews, applies, and rolls back the selected bundle base release', async (context) => {
+  for (const [label, localBase] of [['from no record', null], ['from an earlier base', 'v1.2.0']]) {
+    await context.test(label, () => {
+      // Arrange: both repositories carry unrelated higher tags; only the
+      // selected tree's recorded provenance may reach the local record.
+      const fixture = makeUpgradeFixture({
+        noOp: true,
+        upstreamRecord: (source) => baseReleaseRecord(source, 'v1.3.0'),
+        ...(localBase ? { localRecord: (/** @type {string} */ source) => baseReleaseRecord(source, localBase) } : {}),
+        releaseTags: ['v8.8.8'],
+        localTags: ['v7.7.7'],
+        env: LF_GIT_ENV,
+      });
+      try {
+        const recordPath = path.join(fixture.localRoot, BASE_RELEASE_PATH);
+        const priorRecord = localBase ? fs.readFileSync(recordPath) : null;
+        assert.deepEqual(
+          [fixture.plan.summary.add, fixture.plan.summary.replace, fixture.plan.summary.remove],
+          [0, 0, 0],
+          'the fixture isolates a metadata-only record change',
+        );
+        assert.equal(fixture.plan.cache.base_release.state.type, 'file');
+        assert.deepEqual(fixture.plan.local.base_release, {
+          path: BASE_RELEASE_PATH,
+          state: priorRecord
+            ? { type: 'file', sha256: createHash('sha256').update(priorRecord).digest('hex') }
+            : { type: 'missing' },
+          record: localBase ? { source_repo: fixture.source, base_release: localBase } : null,
+          desired: { source_repo: fixture.source, base_release: 'v1.3.0' },
+        });
+        const before = snapshotFixtureBoundary(fixture);
+
+        // Act: the ordinary text preview, then a confirmed apply and rollback.
+        const preview = runFixture(fixture, ['plan', '--source', fixture.source, '--ref', 'main']);
+        const previewBoundary = snapshotFixtureBoundary(fixture);
+        const applied = applyFixture(fixture);
+        const payload = JSON.parse(applied.stdout);
+        const appliedRecord = fs.readFileSync(recordPath, 'utf8');
+        const committed = git(fixture.localRoot, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'])
+          .split('\n')
+          .sort();
+        const rollback = runFixture(fixture, ['rollback', '--tag', payload.safety_tag, '--format', 'json']);
+
+        // Assert
+        assert.equal(preview.status, 10, `${preview.stdout}${preview.stderr}`);
+        assert.ok(
+          preview.stdout.includes(`Base release record: ${localBase || '(none)'} -> v1.3.0\n`),
+          preview.stdout,
+        );
+        assert.match(preview.stdout, /Ready to apply/);
+        assert.deepEqual(previewBoundary, before, 'the preview wrote to the reviewed boundary');
+        assert.equal(applied.status, 0, `${applied.stdout}${applied.stderr}`);
+        assert.deepEqual(payload.counts, { replaced: 0, added: 0, removed: 0, removals_deferred: 0 });
+        assert.equal(appliedRecord, baseReleaseRecord(fixture.source, 'v1.3.0'));
+        assert.ok(committed.includes(BASE_RELEASE_PATH) && committed.includes(UPGRADE_LOG_PATH), committed.join(', '));
+        assert.deepEqual(committed.filter((relativePath) => relativePath.startsWith('.github/')), []);
+        assert.equal(rollback.status, 0, `${rollback.stdout}${rollback.stderr}`);
+        if (priorRecord) assert.deepEqual(fs.readFileSync(recordPath), priorRecord, 'rollback restores the prior record');
+        else assert.equal(fs.existsSync(recordPath), false, 'rollback restores the prior absence');
+      } finally {
+        fs.rmSync(fixture.base, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('main refresh clears an earlier base when the selected tree has no usable provenance', async (context) => {
+  /** @type {Array<[string, Parameters<typeof makeUpgradeFixture>[0]]>} */
+  const cases = [
+    ['no upstream record', {}],
+    ['a malformed upstream record', {
+      upstreamRecord: () => '# Development Base Release\n\n```json\n{"source_repo":\n```\n',
+    }],
+    ['a prerelease upstream record', {
+      upstreamRecord: (source) => `# Development Base Release\n\n\`\`\`json\n${JSON.stringify({ source_repo: source, base_release: 'v1.4.0-rc1' })}\n\`\`\`\n`,
+    }],
+    ['an upstream record for another source', {
+      upstreamRecord: () => baseReleaseRecord('https://example.invalid/other-dude', 'v1.3.0'),
+    }],
+    ['a release upstream bundle', {
+      upstreamInstalledRef: 'v1.3.0',
+      upstreamRecord: (source) => baseReleaseRecord(source, 'v1.3.0'),
+    }],
+    ['a non-main target ref', {
+      sourceRef: 'v1.2.3',
+      releaseTags: ['v1.2.3'],
+      upstreamRecord: (source) => baseReleaseRecord(source, 'v1.2.3'),
+    }],
+  ];
+  for (const [label, options] of cases) {
+    await context.test(label, () => {
+      // Arrange
+      const fixture = makeUpgradeFixture({
+        ...options,
+        localRecord: (source) => baseReleaseRecord(source, 'v1.2.0'),
+        env: LF_GIT_ENV,
+      });
+      try {
+        assert.equal(fixture.plan.local.base_release.desired, null);
+        assert.deepEqual(fixture.plan.local.base_release.record, { source_repo: fixture.source, base_release: 'v1.2.0' });
+
+        // Act
+        const applied = applyFixture(fixture, ['--skip-removals']);
+
+        // Assert
+        assert.equal(applied.status, 0, `${applied.stdout}${applied.stderr}`);
+        assert.equal(fs.existsSync(path.join(fixture.localRoot, BASE_RELEASE_PATH)), false, 'obsolete provenance survived');
+        assert.equal(fs.readFileSync(path.join(fixture.localRoot, REMOVE_PATH), 'utf8'), 'local remove\n');
+        assert.deepEqual(JSON.parse(applied.stdout).counts, { replaced: 1, added: 1, removed: 0, removals_deferred: 1 });
+        assert.match(
+          git(fixture.localRoot, ['diff-tree', '--no-commit-id', '--name-status', '-r', 'HEAD']),
+          /^D\t\.dude\/metadata\/development-base-release\.md$/m,
+        );
+        assert.equal(git(fixture.localRoot, ['status', '--porcelain']), '');
+      } finally {
+        fs.rmSync(fixture.base, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('a matching base release record keeps an otherwise unchanged refresh a true no-op', async (context) => {
+  for (const [label, transform] of [
+    ['canonical bytes', (/** @type {string} */ text) => text],
+    ['CRLF bytes', (/** @type {string} */ text) => text.replace(/\n/g, '\r\n')],
+  ]) {
+    await context.test(label, () => {
+      // Arrange: the fixture itself asserts that plan exits 0.
+      const fixture = makeUpgradeFixture({
+        noOp: true,
+        upstreamRecord: (source) => baseReleaseRecord(source, 'v1.3.0'),
+        localRecord: (source) => transform(baseReleaseRecord(source, 'v1.3.0')),
+        env: LF_GIT_ENV,
+      });
+      try {
+        assert.deepEqual(fixture.plan.local.base_release.record, fixture.plan.local.base_release.desired);
+        const before = snapshotFixtureBoundary(fixture);
+
+        // Act
+        const result = applyFixture(fixture);
+
+        // Assert
+        assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+        assert.match(`${result.stdout}${result.stderr}`, /nothing to apply/i);
+        assert.deepEqual(snapshotFixtureBoundary(fixture), before);
+      } finally {
+        fs.rmSync(fixture.base, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+const RECORD_REFRESH_FIXTURE = Object.freeze({
+  noOp: true,
+  upstreamRecord: (/** @type {string} */ source) => baseReleaseRecord(source, 'v1.3.0'),
+  env: LF_GIT_ENV,
+});
+
+rejectedApplyCase(
+  'upgrade apply rejects reviewed upstream base release record drift without mutation',
+  (fixture) => write(fixture.cacheRoot, BASE_RELEASE_PATH, baseReleaseRecord(fixture.source, 'v1.9.9')),
+  /reviewed upstream base release record changed/i,
+  { fixture: RECORD_REFRESH_FIXTURE },
+);
+
+rejectedApplyCase(
+  'upgrade apply rejects an upstream base release record replaced by a directory without mutation',
+  (fixture) => {
+    fs.rmSync(path.join(fixture.cacheRoot, BASE_RELEASE_PATH));
+    write(fixture.cacheRoot, `${BASE_RELEASE_PATH}/nested.md`, 'not a record\n');
+  },
+  /reviewed upstream base release record type changed/i,
+  { fixture: RECORD_REFRESH_FIXTURE },
+);
+
+rejectedApplyCase(
+  'upgrade apply rejects cleanly committed local base release record drift',
+  (fixture) => {
+    write(fixture.localRoot, BASE_RELEASE_PATH, baseReleaseRecord(fixture.source, 'v1.1.0'));
+    commitLocalDrift(fixture, 'local record drift');
+  },
+  /reviewed base release record changed/i,
+  { fixture: { ...RECORD_REFRESH_FIXTURE, localRecord: (source) => baseReleaseRecord(source, 'v1.2.0') } },
+);
+
+rejectedApplyCase(
+  'upgrade apply rejects a cleanly committed local base release record directory',
+  (fixture) => {
+    write(fixture.localRoot, `${BASE_RELEASE_PATH}/nested.md`, 'not a record\n');
+    commitLocalDrift(fixture, 'occupy the record path');
+  },
+  /reviewed base release record type changed/i,
+  { fixture: RECORD_REFRESH_FIXTURE },
+);
+
+rejectedApplyCase(
+  'upgrade apply rejects reviewed source drift for a record-only refresh',
+  (fixture) => {
+    git(fixture.cacheRoot, ['config', 'user.name', 'Upgrade Test']);
+    git(fixture.cacheRoot, ['config', 'user.email', 'upgrade-test@example.invalid']);
+    git(fixture.cacheRoot, ['commit', '--allow-empty', '-q', '-m', 'unreviewed commit']);
+  },
+  /reviewed resolved commit changed/i,
+  { fixture: RECORD_REFRESH_FIXTURE },
+);
+
+rejectedApplyCase(
+  'upgrade apply rejects a record-only refresh without confirmation',
+  () => {},
+  /--confirm is required/i,
+  { fixture: RECORD_REFRESH_FIXTURE, confirm: null },
+);
+
+rejectedApplyCase(
+  'upgrade apply rejects an expired record-only plan',
+  (fixture) => rewritePlan(fixture, expirePlan, { rehash: true }),
+  /plan expired/i,
+  { fixture: RECORD_REFRESH_FIXTURE },
+);
+
+rejectedApplyCase(
+  'upgrade apply rejects a rehashed base release target its upstream evidence does not support',
+  (fixture) => rewritePlan(fixture, (plan) => {
+    plan.local.base_release.desired.base_release = 'v9.9.9';
+  }, { rehash: true }),
+  /reviewed base release target does not match its upstream evidence/i,
+  { fixture: RECORD_REFRESH_FIXTURE },
+);
+
+rejectedApplyCase(
+  'upgrade apply rejects a rehashed base release target for a non-main install',
+  (fixture) => rewritePlan(fixture, (plan) => {
+    plan.local.base_release.desired = { source_repo: plan.source.location, base_release: 'v1.2.3' };
+  }, { rehash: true }),
+  /plan base release target is invalid/i,
+  {
+    fixture: {
+      sourceRef: 'v1.2.3',
+      releaseTags: ['v1.2.3'],
+      upstreamRecord: (source) => baseReleaseRecord(source, 'v1.2.3'),
+      env: LF_GIT_ENV,
+    },
+  },
+);
+
+rejectedApplyCase(
+  'upgrade apply rejects old schema-v1 plans with re-plan guidance',
+  (fixture) => rewritePlan(fixture, (plan) => {
+    plan.schema_version = 1;
+    delete plan.cache.base_release;
+    delete plan.local.base_release;
+  }),
+  /unsupported upgrade plan schema; re-run 'plan' with the current engine/i,
+);
+
+rejectedApplyCase(
+  'upgrade apply refuses an ignored untracked base release record before writes',
+  () => {},
+  /destination \.dude\/metadata\/development-base-release\.md is git-ignored and untracked/i,
+  { fixture: { ...RECORD_REFRESH_FIXTURE, localFiles: { '.gitignore': `${BASE_RELEASE_PATH}\n` } } },
+);
+
+test('upgrade plan refuses a base release record path that is not a regular file', async (context) => {
+  for (const side of ['local', 'upstream']) {
+    await context.test(side, () => {
+      // Arrange
+      const fixture = makeUpgradeFixture({ noOp: true, env: LF_GIT_ENV, skipPlan: true });
+      try {
+        const root = side === 'local' ? fixture.localRoot : fixture.upstreamRoot;
+        write(root, `${BASE_RELEASE_PATH}/nested.md`, 'not a record\n');
+        git(root, ['add', '-A']);
+        git(root, ['commit', '-q', '-m', 'occupy the record path']);
+        const before = snapshotMutationBoundary(fixture.localRoot);
+
+        // Act
+        const result = runFixture(fixture, [
+          'plan', '--source', fixture.source, '--ref', 'main', '--out', fixture.planPath, '--format', 'json',
+        ]);
+
+        // Assert
+        assert.equal(result.status, 40, `${result.stdout}${result.stderr}`);
+        assert.match(`${result.stdout}${result.stderr}`, new RegExp(`${side} base release record must be absent or a regular file`));
+        assert.equal(fs.existsSync(fixture.planPath), false);
+        assert.deepEqual(snapshotMutationBoundary(fixture.localRoot), before);
+      } finally {
+        fs.rmSync(fixture.base, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('a local-path main refresh binds the base release record to the selected source', () => {
+  // Arrange: the upstream record belongs to its manifest's file URL source,
+  // while this run selects the same tree through a bare local-path override.
+  const fixture = makeUpgradeFixture(RECORD_REFRESH_FIXTURE);
+  const localPlanPath = path.join(fixture.base, 'local-path-record.json');
+  try {
+    // Act
+    const planned = runFixture(fixture, [
+      'plan', '--source', fixture.upstreamRoot, '--ref', 'main', '--out', localPlanPath, '--format', 'json',
+    ]);
+    const plan = JSON.parse(fs.readFileSync(localPlanPath, 'utf8'));
+    const applied = applyFixture({ ...fixture, planPath: localPlanPath });
+    const installedManifest = fs.readFileSync(path.join(fixture.localRoot, MANIFEST_PATH), 'utf8');
+
+    // Assert
+    assert.equal(planned.status, 10, `${planned.stdout}${planned.stderr}`);
+    assert.equal(plan.source.type, 'local-path');
+    assert.deepEqual(plan.local.base_release.desired, { source_repo: fixture.upstreamRoot, base_release: 'v1.3.0' });
+    assert.equal(applied.status, 0, `${applied.stdout}${applied.stderr}`);
+    assert.ok(installedManifest.includes(`"source_repo": ${JSON.stringify(fixture.upstreamRoot)}`), installedManifest);
+    assert.deepEqual(
+      parseDevelopmentBaseRelease(fs.readFileSync(path.join(fixture.localRoot, BASE_RELEASE_PATH))),
+      { source_repo: fixture.upstreamRoot, base_release: 'v1.3.0' },
+    );
+  } finally {
+    fs.rmSync(fixture.base, { recursive: true, force: true });
+  }
+});
+
+test('bulk pack preview requires the reviewed base release record in the committed core result', async () => {
+  // Arrange
+  const fixture = await makeBulkFixture([], {
+    upstreamInstalledRef: 'main',
+    upstreamRecord: (source) => baseReleaseRecord(source, 'v1.3.0'),
+    env: LF_GIT_ENV,
+  });
+  try {
+    const { plan } = planAndApplyBulkCore(fixture);
+
+    // Act
+    const accepted = runBulk(fixture, ['packs-preview', '--plan', fixture.planPath]);
+    write(fixture.localRoot, BASE_RELEASE_PATH, baseReleaseRecord(fixture.source, 'v1.2.0'));
+    git(fixture.localRoot, ['add', '-A']);
+    git(fixture.localRoot, ['commit', '-q', '--amend', '--no-edit']);
+    const refused = runBulk(fixture, ['packs-preview', '--plan', fixture.planPath]);
+
+    // Assert
+    assert.deepEqual(plan.local.base_release.desired, { source_repo: fixture.source, base_release: 'v1.3.0' });
+    assert.equal(accepted.status, 0, `${accepted.stdout}${accepted.stderr}`);
+    assert.equal(JSON.parse(accepted.stdout).status, 'previewed');
+    assert.equal(refused.status, 40, `${refused.stdout}${refused.stderr}`);
+    assert.match(`${refused.stdout}${refused.stderr}`, /committed base release record does not match the reviewed core plan/);
+  } finally {
+    fs.rmSync(fixture.base, { recursive: true, force: true });
+  }
+});
 
 test('upgrade plan serialization and evidence are canonical and internally derived', () => {
   const fixture = makeUpgradeFixture();

@@ -1489,6 +1489,46 @@ test('lint reports the package, target, and candidates when an audit targets ano
   }
 });
 
+test('lint accepts same-prefix records with distinct slugs and rejects a breadcrumb naming the same-prefix peer owner', () => {
+  const valid = rootWithManifest();
+  const crossed = rootWithManifest();
+  try {
+    // Arrange: equal task keys in two valid 001 packages beside a 001 draft and resolved idea.
+    for (const root of [valid, crossed]) {
+      writeDefinedIdea(root, '001', 'owner');
+      writeDefinedIdea(root, '001', 'other');
+      write(root, '.dude/ideas/001-draft.md', ledger({ slug: 'draft' }));
+      write(root, '.dude/ideas/001-closed.md', ledger({ slug: 'closed', status: 'resolved' }));
+      write(root, '.dude/specs/001-other/tasks.md', taskDocument(ideaAudit('001-other'), {
+        body: '- [ ] T001@a1b2c3d4 [Shared] Peer task',
+      }));
+    }
+    write(valid, '.dude/specs/001-owner/tasks.md', taskDocument(ideaAudit('001-owner'), {
+      body: '- [ ] T001@a1b2c3d4 [Shared] Owner task',
+    }));
+    write(crossed, '.dude/specs/001-owner/tasks.md', taskDocument(ideaAudit('001-other'), {
+      body: '- [ ] T001@a1b2c3d4 [Shared] Owner task',
+    }));
+
+    // Act
+    const accepted = lint(valid);
+    const rejected = lint(crossed);
+
+    // Assert
+    assert.equal(accepted.code, 0, accepted.output);
+    assert.doesNotMatch(accepted.output, /\[FAIL\]/);
+    assert.equal(rejected.code, 1, rejected.output);
+    assert.match(rejected.output, /audit breadcrumb target mismatch for package \.dude\/specs\/001-owner\/spec\.md/);
+    assert.match(rejected.output, /\.dude\/ideas\/001-other\.md points to \.dude\/specs\/001-other\/spec\.md/);
+    assert.match(rejected.output, /unique owner is \.dude\/ideas\/001-owner\.md/);
+    assert.doesNotMatch(rejected.output, /\.dude\/specs\/001-other\/tasks\.md.*audit breadcrumb/);
+    assert.doesNotMatch(rejected.output, /lifecycle number/);
+  } finally {
+    fs.rmSync(valid, { recursive: true, force: true });
+    fs.rmSync(crossed, { recursive: true, force: true });
+  }
+});
+
 test('lint reports an existing but wrong audit target and the unique package owner', () => {
   const root = rootWithManifest();
   try {

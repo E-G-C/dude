@@ -892,6 +892,136 @@ test('plan-import compares the first spec line exactly and ignores prefix collis
   }
 });
 
+const PEER_PREFIX_SPEC_PATH = '.dude/specs/001-peer/spec.md';
+const PEER_PREFIX_IDEA_PATH = '.dude/ideas/001-peer.md';
+
+/**
+ * Stage a valid same-prefix owner whose tasks reuse every selected durable key.
+ * @param {ReturnType<typeof stage>} fixture
+ */
+function stageSamePrefixPeer(fixture) {
+  const tasks = writeFixture(fixture.root, PEER_PREFIX_SPEC_PATH.replace(/spec\.md$/, 'tasks.md'), FIXTURE);
+  writeFixture(fixture.root, PEER_PREFIX_SPEC_PATH, '# Spec Peer\n');
+  const idea = writeFixture(fixture.root, PEER_PREFIX_IDEA_PATH, ideaLedger(PEER_PREFIX_SPEC_PATH));
+  return { tasks, idea };
+}
+
+/** @param {string} specPath @param {string} id @param {string} taskKey @param {string} status */
+function exactTaskIssue(specPath, id, taskKey, status) {
+  return { id, type: 'task', status, description: `spec: ${specPath}\nTask: ${taskKey}` };
+}
+
+/** @param {string} specPath @param {string} id */
+function exactEpicIssue(specPath, id) {
+  return { id, type: 'epic', status: 'deferred', description: `spec: ${specPath}\nEpic: ${id}` };
+}
+
+/** @param {...string} paths @returns {Buffer[]} */
+function readAll(...paths) {
+  return paths.map((filePath) => fs.readFileSync(filePath));
+}
+
+test('duplicate-prefix: import discovery binds only the exact selected owner beside a same-prefix peer', async () => {
+  // Arrange
+  const fixture = stage();
+  try {
+    const peer = stageSamePrefixPeer(fixture);
+    const { inspectImportInventory } = await importStagedBeads(fixture);
+    const peerOnly = [
+      exactEpicIssue(PEER_PREFIX_SPEC_PATH, 'dude-peer-epic'),
+      exactTaskIssue(PEER_PREFIX_SPEC_PATH, 'dude-peer-2', 'T002@bbbbbbbb', 'closed'),
+      exactTaskIssue(PEER_PREFIX_SPEC_PATH, 'dude-peer-3', 'T003@cccccccc', 'open'),
+    ];
+    const peerOnlyFile = writeFixture(fixture.root, 'peer-only.json', JSON.stringify(peerOnly));
+    const before = readAll(fixture.file, peer.tasks, fixture.idea, peer.idea);
+
+    // Act
+    const selectedDiscovery = inspectImportInventory(peerOnly, { specPath: SPEC_PATH });
+    const peerDiscovery = inspectImportInventory(peerOnly, { specPath: PEER_PREFIX_SPEC_PATH });
+    const result = runNode(fixture.script, [
+      'plan-import', fixture.file, '--spec', SPEC_PATH, '--root', fixture.root, '--from', peerOnlyFile, '--json',
+    ]);
+
+    // Assert
+    assert.deepEqual(selectedDiscovery, { represented: false, matching_issue_ids: [] });
+    assert.deepEqual(peerDiscovery, {
+      represented: true,
+      matching_issue_ids: ['dude-peer-epic', 'dude-peer-2', 'dude-peer-3'],
+    });
+    assert.equal(result.code, 0, result.out);
+    const plan = JSON.parse(result.out);
+    assert.equal(plan.spec_path, SPEC_PATH);
+    assert.equal(plan.idea_path, IDEA_PATH);
+    assert.deepEqual(plan.discovery, { represented: false, matching_issue_ids: [] });
+    assert.deepEqual(plan.skipped_done, ['T001@aaaaaaaa']);
+    assert.deepEqual(plan.issues.map((issue) => issue.key), ['T002@bbbbbbbb', 'T003@cccccccc', 'T004@dddddddd']);
+    assert.ok([plan.epic, ...plan.issues].every((issue) => issue.description.startsWith(`spec: ${SPEC_PATH}\n`)));
+    assert.doesNotMatch(result.out, /001-peer/);
+    assert.deepEqual(readAll(fixture.file, peer.tasks, fixture.idea, peer.idea), before);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('duplicate-prefix: exact selected Beads identity still refuses import beside a same-prefix peer', async () => {
+  const scenarios = [
+    {
+      name: 'already represented',
+      issues: [
+        exactEpicIssue(PEER_PREFIX_SPEC_PATH, 'dude-peer-epic'),
+        exactTaskIssue(PEER_PREFIX_SPEC_PATH, 'dude-peer-2', 'T002@bbbbbbbb', 'open'),
+        exactTaskIssue(SPEC_PATH, 'dude-selected-2', 'T002@bbbbbbbb', 'open'),
+      ],
+      refusal: /feature '\.dude\/specs\/001-x\/spec\.md' is already represented in Beads by: dude-selected-2$/m,
+    },
+    {
+      name: 'duplicate selected epics',
+      issues: [
+        exactEpicIssue(PEER_PREFIX_SPEC_PATH, 'dude-peer-epic'),
+        exactEpicIssue(SPEC_PATH, 'dude-epic-a'),
+        exactEpicIssue(SPEC_PATH, 'dude-epic-b'),
+      ],
+      refusal: /duplicate feature identity '\.dude\/specs\/001-x\/spec\.md' is claimed by epics: dude-epic-a, dude-epic-b$/m,
+    },
+    {
+      name: 'duplicate selected durable-key mappings',
+      issues: [
+        exactTaskIssue(PEER_PREFIX_SPEC_PATH, 'dude-peer-2', 'T002@bbbbbbbb', 'open'),
+        exactTaskIssue(SPEC_PATH, 'dude-a', 'T002@bbbbbbbb', 'open'),
+        exactTaskIssue(SPEC_PATH, 'dude-b', 'T002@bbbbbbbb', 'closed'),
+      ],
+      refusal: /duplicate durable task key T002@bbbbbbbb for '\.dude\/specs\/001-x\/spec\.md' is claimed by issues: dude-a, dude-b$/m,
+    },
+  ];
+  for (const scenario of scenarios) {
+    // Arrange
+    const fixture = stage();
+    try {
+      const peer = stageSamePrefixPeer(fixture);
+      const { inspectImportInventory } = await importStagedBeads(fixture);
+      const bdFile = writeFixture(fixture.root, 'bd.json', JSON.stringify(scenario.issues));
+      const before = readAll(fixture.file, peer.tasks, fixture.idea, peer.idea);
+
+      // Act
+      const result = runNode(fixture.script, [
+        'plan-import', fixture.file, '--spec', SPEC_PATH, '--root', fixture.root, '--from', bdFile, '--json',
+      ]);
+
+      // Assert
+      assert.equal(result.code, 2, `${scenario.name}: ${result.out}`);
+      assert.match(result.out, scenario.refusal, scenario.name);
+      assert.doesNotMatch(result.out, /dude-peer|bd create|lifecycle number/, scenario.name);
+      assert.deepEqual(readAll(fixture.file, peer.tasks, fixture.idea, peer.idea), before, scenario.name);
+      if (scenario.name !== 'already represented') {
+        assert.throws(() => inspectImportInventory(scenario.issues, { specPath: SPEC_PATH }), scenario.refusal, scenario.name);
+        assert.doesNotThrow(() => inspectImportInventory(scenario.issues, { specPath: PEER_PREFIX_SPEC_PATH }), scenario.name);
+      }
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  }
+});
+
 test('plan-import rejects duplicate durable task keys in existing Beads issues', () => {
   const { root, script, file } = stage();
   try {
@@ -1527,6 +1657,96 @@ test('beads.mjs mirror rejects duplicate conflicting mappings without writing', 
     assert.deepEqual(fs.readFileSync(file), before);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('duplicate-prefix: mirror applies only the exact selected first-line identity beside a same-prefix peer', async () => {
+  const scenarios = [
+    {
+      name: 'peer-only inventory',
+      issues: [
+        exactTaskIssue(PEER_PREFIX_SPEC_PATH, 'dude-peer-2', 'T002@bbbbbbbb', 'closed'),
+        exactTaskIssue(PEER_PREFIX_SPEC_PATH, 'dude-peer-3', 'T003@cccccccc', 'closed'),
+      ],
+      selectedMap: {},
+      peerMap: { 'T002@bbbbbbbb': 'x', 'T003@cccccccc': 'x' },
+      applied: 0,
+      tasks: FIXTURE,
+    },
+    {
+      name: 'both peers with equal keys and different statuses',
+      issues: [
+        exactTaskIssue(PEER_PREFIX_SPEC_PATH, 'dude-peer-2', 'T002@bbbbbbbb', 'closed'),
+        exactTaskIssue(SPEC_PATH, 'dude-selected-2', 'T002@bbbbbbbb', 'in_progress'),
+        exactTaskIssue(PEER_PREFIX_SPEC_PATH, 'dude-peer-3', 'T003@cccccccc', 'closed'),
+      ],
+      selectedMap: { 'T002@bbbbbbbb': '~' },
+      peerMap: { 'T002@bbbbbbbb': 'x', 'T003@cccccccc': 'x' },
+      applied: 1,
+      tasks: FIXTURE.replace('- [ ] T002@bbbbbbbb [US1] Schema', '- [~] T002@bbbbbbbb [US1] Schema'),
+    },
+  ];
+  for (const scenario of scenarios) {
+    // Arrange
+    const fixture = stage();
+    try {
+      const peer = stageSamePrefixPeer(fixture);
+      const { mirrorMap } = await importStagedBeads(fixture);
+      const bdFile = writeFixture(fixture.root, 'bd.json', JSON.stringify(scenario.issues));
+      const before = readAll(peer.tasks, fixture.idea, peer.idea);
+
+      // Act
+      const selectedMap = mirrorMap(scenario.issues, SPEC_PATH);
+      const peerMap = mirrorMap(scenario.issues, PEER_PREFIX_SPEC_PATH);
+      const result = runNode(fixture.script, [
+        'mirror', fixture.file, '--from', bdFile, '--spec', SPEC_PATH, '--root', fixture.root, '--write',
+      ]);
+
+      // Assert
+      assert.deepEqual(selectedMap, scenario.selectedMap, scenario.name);
+      assert.deepEqual(peerMap, scenario.peerMap, scenario.name);
+      assert.equal(result.code, 0, `${scenario.name}: ${result.out}`);
+      assert.match(result.out, new RegExp(`\\[OK\\] mirrored ${scenario.applied} state\\(s\\)`), scenario.name);
+      assert.match(result.out, /\[INFO\] idea_path: \.dude\/ideas\/001-x\.md\n/, scenario.name);
+      assert.equal(fs.readFileSync(fixture.file, 'utf8'), scenario.tasks, scenario.name);
+      assert.deepEqual(readAll(peer.tasks, fixture.idea, peer.idea), before, `${scenario.name}: peer tasks and owner logs`);
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('duplicate-prefix: duplicate or conflicting selected mappings still reject before a same-prefix mirror write', async () => {
+  for (const [kind, firstStatus, secondStatus] of [['duplicate', 'open', 'open'], ['conflicting', 'open', 'closed']]) {
+    // Arrange
+    const fixture = stage();
+    try {
+      const peer = stageSamePrefixPeer(fixture);
+      const { mirrorMap } = await importStagedBeads(fixture);
+      const issues = [
+        exactTaskIssue(PEER_PREFIX_SPEC_PATH, 'dude-peer-2', 'T002@bbbbbbbb', 'closed'),
+        exactTaskIssue(SPEC_PATH, 'dude-a', 'T002@bbbbbbbb', firstStatus),
+        exactTaskIssue(SPEC_PATH, 'dude-b', 'T002@bbbbbbbb', secondStatus),
+      ];
+      const bdFile = writeFixture(fixture.root, 'bd.json', JSON.stringify(issues));
+      const before = readAll(fixture.file, peer.tasks, fixture.idea, peer.idea);
+      const refusal = new RegExp(`${kind} Beads mappings for task key T002@bbbbbbbb`);
+
+      // Act
+      const result = runNode(fixture.script, [
+        'mirror', fixture.file, '--from', bdFile, '--spec', SPEC_PATH, '--root', fixture.root, '--write',
+      ]);
+
+      // Assert
+      assert.throws(() => mirrorMap(issues, SPEC_PATH), refusal, kind);
+      assert.deepEqual(mirrorMap(issues, PEER_PREFIX_SPEC_PATH), { 'T002@bbbbbbbb': 'x' }, kind);
+      assert.equal(result.code, 2, `${kind}: ${result.out}`);
+      assert.match(result.out, new RegExp(`\\[FAIL\\] ${refusal.source}\\n`), kind);
+      assert.doesNotMatch(result.out, /\[OK\]|lifecycle number/, kind);
+      assert.deepEqual(readAll(fixture.file, peer.tasks, fixture.idea, peer.idea), before, kind);
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
   }
 });
 

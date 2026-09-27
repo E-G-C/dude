@@ -1956,6 +1956,51 @@ test('T006 lightweight boundary rejects owner, snapshot, and root failures befor
   }
 });
 
+test('duplicate-prefix: a same-prefix peer with equal task keys keeps separate lane state, tasks, and owner bytes', () => {
+  const root = scaffoldLane();
+  const peerSpec = '.dude/specs/009-peer-lane/spec.md';
+  const peerTasks = '.dude/specs/009-peer-lane/tasks.md';
+  const peerIdea = '.dude/ideas/009-peer-lane.md';
+  try {
+    // Arrange: a valid peer shares prefix 009 and both durable task keys, with a different state.
+    writeLaneFile(root, peerSpec, '# Spec Peer Lane\n');
+    writeLaneFile(root, peerTasks, LANE_TASKS_FIXTURE
+      .replace('# Tasks: Lane', '# Tasks: Peer Lane')
+      .replace(`- [ ] ${LANE_TASK_KEY}`, `- [x] ${LANE_TASK_KEY}`));
+    writeLaneFile(root, peerIdea, laneIdeaLedger(peerSpec).replace('title: Lane\nslug: lane\n', 'title: Peer Lane\nslug: peer-lane\n'));
+    const snapshot = JSON.parse(laneBytes(root, LANE_SNAPSHOT).toString('utf8'));
+    snapshot[peerTasks] = { glyphs: { [LANE_TASK_KEY]: 'x', [LANE_OTHER_KEY]: ' ' }, updated_at: '2026-07-23T00:00:00.000Z' };
+    writeLaneFile(root, LANE_SNAPSHOT, `${JSON.stringify(snapshot, null, 2)}\n`);
+    const peerBefore = [peerSpec, peerTasks, peerIdea].map((rel) => [rel, laneBytes(root, rel)]);
+
+    // Act
+    const result = applyLightweightWorkRequest(laneRequest(root));
+
+    // Assert
+    assertAutonomousCommittedResult(result, root, 'same-prefix peer');
+    assert.match(laneBytes(root, LANE_TASKS).toString('utf8'), new RegExp(`- \\[~\\] ${LANE_TASK_KEY}`));
+    const after = JSON.parse(laneBytes(root, LANE_SNAPSHOT).toString('utf8'));
+    assert.deepEqual(after[LANE_TASKS].glyphs, { [LANE_TASK_KEY]: '~', [LANE_OTHER_KEY]: ' ' });
+    assert.deepEqual(after[peerTasks], snapshot[peerTasks], 'peer snapshot entry is not shared or rewritten');
+    for (const [rel, bytes] of peerBefore) assert.ok(laneBytes(root, rel).equals(bytes), `${rel} must stay byte-identical`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('duplicate-prefix: a same-prefix peer claiming the lane package still refuses as ambiguous ownership', () => {
+  const root = scaffoldLane();
+  try {
+    // Arrange: the peer has its own slug but claims the exact lane spec path.
+    writeLaneFile(root, '.dude/ideas/009-peer-lane.md', laneIdeaLedger().replace('title: Lane\nslug: lane\n', 'title: Peer Lane\nslug: peer-lane\n'));
+
+    // Act / Assert
+    assertLaneRefusal(root, laneRequest(root), 'owner-resolution-failed', 'same-prefix peer claims the exact lane package');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('issue #21: an absent optional snapshot uses the canonical empty baseline and is created by the first mutation', () => {
   // Arrange: the semantic capture is canonical `{}` while the physical preimage
   // is absent. This is the only valid missing-snapshot representation.

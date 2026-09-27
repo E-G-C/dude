@@ -8,7 +8,7 @@ A read-only view built from idea files, linked feature files, task records, and 
 - Ready / Next: **0**
 - Ideas awaiting definition: **7**
 - Defined awaiting work: **1**
-- Completed: **63**
+- Completed: **66**
 
 ## Current
 
@@ -107,6 +107,9 @@ kanban
 - `065` · `work-history-event-compaction` — Work History Event Compaction (`.dude/ideas/065-work-history-event-compaction.md`)
 - `066` · `canvas-without-beads` — Canvas Without Beads (`.dude/ideas/066-canvas-without-beads.md`)
 - `069` · `a2a-library-foundation` — A2A library foundation (`.dude/ideas/069-a2a-library-foundation.md`)
+- `074` · `dude-canvas-about` — Dude Canvas About (`.dude/ideas/074-dude-canvas-about.md`)
+- `075` · `dude-development-base-release` — Dude Development Base Release (`.dude/ideas/075-dude-development-base-release.md`)
+- `076` · `duplicate-feature-number-prefixes` — Duplicate Feature Number Prefixes (`.dude/ideas/076-duplicate-feature-number-prefixes.md`)
 
 ## Dependency and order notes
 

@@ -537,8 +537,22 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
     if (submissionId) query.set('submissionId', submissionId);
     return json(`/api/needs-you/review/history?${query}`, { signal });
   }, []);
+  // One fixed read per About entry, outside the refresh loop and pack reads:
+  // never polled, retried, or cached. The hook lifetime and the caller's exit
+  // each abort it. They are linked by hand because the embedded host's engine
+  // is not established to support AbortSignal.any.
+  const readAbout = useCallback(({ signal }) => {
+    const read = new AbortController(), abort = () => read.abort();
+    const owners = [lifetime.current.signal, signal];
+    for (const owner of owners) {
+      if (owner.aborted) abort();
+      else owner.addEventListener('abort', abort, { once: true });
+    }
+    return json('/api/about', { signal: read.signal })
+      .finally(() => owners.forEach(owner => owner.removeEventListener('abort', abort)));
+  }, []);
 
   return { ...data, refresh: () => queue(true), reconcile: () => queue(),
     reloadPacks: () => { if (packsWanted.current) queue(true); },
-    respond, capture, requestPack, openReview, readHistory };
+    respond, capture, requestPack, openReview, readHistory, readAbout };
 }

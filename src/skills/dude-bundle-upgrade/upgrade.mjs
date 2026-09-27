@@ -28,6 +28,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { enumerateCorePaths, classifyPath, TIER } from '../dude-engine/lib/ownership.mjs';
 import { resolveReleaseRef, pickLatestReleaseTag } from '../dude-engine/lib/release-channel.mjs';
 import {
+  DEVELOPMENT_INSTALLED_REF,
+  parseDevelopmentBaseRelease,
+  renderDevelopmentBaseRelease,
+  validateDevelopmentBaseRelease,
+} from '../dude-engine/lib/development-base-release.mjs';
+import {
   WORKSPACE_PATHS,
   resolveMutationPath,
 } from '../dude-engine/lib/workspace-paths.mjs';
@@ -43,9 +49,10 @@ const LINT_PATH = path.join(ROOT, '.github/skills/dude-lint/lint.mjs');
 const DEFAULT_SOURCE = 'https://github.com/E-G-C/dude';
 const DEFAULT_REF = 'main';
 const PLAN_KIND = 'dude-upgrade-plan';
-const PLAN_SCHEMA_VERSION = 1;
+const PLAN_SCHEMA_VERSION = 2;
 const PLAN_IDENTITY_SCOPE = 'same-host-filesystem';
 const COMMIT_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+const BASE_RELEASE_PATH = WORKSPACE_PATHS.DEVELOPMENT_BASE_RELEASE;
 
 // ----- logging (stderr) ------------------------------------------------------
 const color = Boolean(process.stderr.isTTY);
@@ -147,18 +154,76 @@ function directoryIdentity(absolutePath) {
     inode: String(stat.ino),
   };
 }
-/** @param {string} root @param {string} relativePath */
-function snapshotExpectedState(root, relativePath) {
+/**
+ * Read one expected mutation state and the exact bytes it was hashed from.
+ * @param {string} root @param {string} relativePath
+ * @returns {{ state: { type: 'missing' } | { type: 'file', sha256: string }, bytes: Buffer | null }}
+ */
+function readExpectedState(root, relativePath) {
   const absolutePath = resolveMutationPath(root, relativePath);
   const stat = lstatOrNull(absolutePath, true);
-  if (!stat) return { type: 'missing' };
+  if (!stat) return { state: { type: 'missing' }, bytes: null };
   if (!stat.isFile() || stat.isSymbolicLink()) {
     throw new Error(`expected regular file at ${relativePath}`);
   }
-  return {
-    type: 'file',
-    sha256: sha256(fs.readFileSync(absolutePath)),
-  };
+  const bytes = fs.readFileSync(absolutePath);
+  return { state: { type: 'file', sha256: sha256(bytes) }, bytes };
+}
+/** @param {string} root @param {string} relativePath */
+function snapshotExpectedState(root, relativePath) {
+  return readExpectedState(root, relativePath).state;
+}
+
+/**
+ * Parse a base release record from regular-file bytes. A malformed payload is
+ * unknown provenance (null), never an error; unsafe file types fail earlier.
+ * @param {Buffer | null} bytes
+ * @returns {{ source_repo: string, base_release: string } | null}
+ */
+function usableBaseRelease(bytes) {
+  if (!bytes) return null;
+  try {
+    const { source_repo: sourceRepo, base_release: baseRelease } = parseDevelopmentBaseRelease(bytes);
+    return { source_repo: sourceRepo, base_release: baseRelease };
+  } catch (error) {
+    logDebug(`base release record is unusable: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+/**
+ * The record a reviewed refresh leaves locally. Only a `main` target from an
+ * upstream development bundle carries provenance: the upstream record must
+ * belong to that bundle's manifest source, and the local copy is bound to the
+ * outgoing manifest's selected source. Everything else leaves no record.
+ * @param {{
+ *   toRef: string,
+ *   sourceLocation: string,
+ *   upstreamManifest: Record<string, unknown> | null,
+ *   upstreamRecord: { source_repo: string, base_release: string } | null,
+ * }} evidence
+ * @returns {{ source_repo: string, base_release: string } | null}
+ */
+function desiredBaseRelease({ toRef, sourceLocation, upstreamManifest, upstreamRecord }) {
+  if (toRef !== DEVELOPMENT_INSTALLED_REF || !upstreamRecord || !upstreamManifest
+      || upstreamManifest.installed_ref !== DEVELOPMENT_INSTALLED_REF
+      || upstreamManifest.source_repo !== upstreamRecord.source_repo) {
+    return null;
+  }
+  return { source_repo: sourceLocation, base_release: upstreamRecord.base_release };
+}
+
+/**
+ * Read the fixed record's expected state and bytes for planning. The record
+ * may be absent or a regular file; any other type is refused before a plan.
+ * @param {string} root @param {'upstream' | 'local'} label
+ */
+function readBaseReleaseEvidence(root, label) {
+  try {
+    return readExpectedState(root, BASE_RELEASE_PATH);
+  } catch (error) {
+    throw new Error(`${label} base release record must be absent or a regular file: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 /**
@@ -265,8 +330,15 @@ function projectArray(value, mapEntry) {
     : value;
 }
 
+/** @param {unknown} value */
+function projectBaseReleaseRecord(value) {
+  return isRecord(value)
+    ? { source_repo: value.source_repo, base_release: value.base_release }
+    : value;
+}
+
 /**
- * Reconstruct the exact schema-v1 digest projection in canonical key order.
+ * Reconstruct the exact schema-v2 digest projection in canonical key order.
  * Unknown fields are excluded here and rejected by strict apply validation.
  * @param {Record<string, any>} plan
  */
@@ -309,6 +381,10 @@ export function canonicalPlanProjection(plan) {
         type: plan.cache.manifest.type,
         sha256: plan.cache.manifest.sha256,
       } : plan.cache.manifest,
+      base_release: isRecord(plan.cache.base_release) ? {
+        path: plan.cache.base_release.path,
+        state: projectExpectedState(plan.cache.base_release.state),
+      } : plan.cache.base_release,
       inventory: projectArray(plan.cache.inventory, (entry) => ({
         path: entry.path,
         type: entry.type,
@@ -329,6 +405,12 @@ export function canonicalPlanProjection(plan) {
         path: plan.local.upgrade_log.path,
         state: projectExpectedState(plan.local.upgrade_log.state),
       } : plan.local.upgrade_log,
+      base_release: isRecord(plan.local.base_release) ? {
+        path: plan.local.base_release.path,
+        state: projectExpectedState(plan.local.base_release.state),
+        record: projectBaseReleaseRecord(plan.local.base_release.record),
+        desired: projectBaseReleaseRecord(plan.local.base_release.desired),
+      } : plan.local.base_release,
       core_inventory: projectArray(plan.local.core_inventory, (entry) => ({
         path: entry.path,
         state: projectExpectedState(entry.state),
@@ -783,8 +865,9 @@ function emitStatusJson(kind, upstreamRef, detail) {
 /**
  * @param {Plan} plan @param {string} planId @param {string} fromRef
  * @param {string} toRef @param {string} cacheDir @param {boolean} metadataChange
+ * @param {Record<string, any>} baseRelease the persisted `local.base_release`
  */
-function emitPlanText(plan, planId, fromRef, toRef, cacheDir, metadataChange) {
+function emitPlanText(plan, planId, fromRef, toRef, cacheDir, metadataChange, baseRelease) {
   out(`Upgrade report: ${fromRef || '(none)'} -> ${toRef}\n`);
   out(`Source: ${upstream.source} @ ${refDisplay()}\n`);
   out(`Plan ID: ${planId}\n`);
@@ -806,6 +889,12 @@ function emitPlanText(plan, planId, fromRef, toRef, cacheDir, metadataChange) {
   list('Will remove', plan.remove.map((r) => r.path), plan.remove.length);
   list('Advisories', plan.advisory.map((r) => `${r.path}  (${r.kind})`), plan.advisory.length);
   out(`Up to date: ${plan.upToDate}\n`);
+  const recordedBase = baseRelease.record?.base_release
+    || (baseRelease.state.type === 'file' ? '(unusable)' : '(none)');
+  const targetBase = baseRelease.desired?.base_release || '(none)';
+  out(baseReleaseTransitionNeeded(baseRelease)
+    ? `Base release record: ${recordedBase} -> ${targetBase}\n`
+    : `Base release record: ${targetBase}, unchanged\n`);
 
   const total = plan.replace.length + plan.add.length + plan.remove.length;
   if (total === 0 && !metadataChange) {
@@ -874,6 +963,9 @@ function buildUpgradePlan(classified, meta) {
   const cacheManifestBytes = fs.readFileSync(cacheManifestPath);
   const localManifestState = snapshotExpectedState(ROOT, WORKSPACE_PATHS.BUNDLE_MANIFEST);
   const upgradeLogState = snapshotExpectedState(ROOT, WORKSPACE_PATHS.UPGRADE_LOG);
+  const upstreamBaseRelease = readBaseReleaseEvidence(cacheRoot, 'upstream');
+  const localBaseRelease = readBaseReleaseEvidence(ROOT, 'local');
+  const source = snapshotSource(cacheRoot);
   const localPaths = [
     ...classified.replace.map((entry) => entry.path),
     ...classified.add.map((entry) => entry.path),
@@ -900,7 +992,7 @@ function buildUpgradePlan(classified, meta) {
       workspace_realpath: fs.realpathSync(workspacePath),
       workspace_identity: directoryIdentity(workspacePath),
     },
-    source: snapshotSource(cacheRoot),
+    source,
     from_ref: meta.from_ref,
     to_ref: meta.to_ref,
     cache: {
@@ -911,6 +1003,10 @@ function buildUpgradePlan(classified, meta) {
         path: WORKSPACE_PATHS.BUNDLE_MANIFEST,
         type: 'file',
         sha256: sha256(cacheManifestBytes),
+      },
+      base_release: {
+        path: BASE_RELEASE_PATH,
+        state: upstreamBaseRelease.state,
       },
       inventory: cacheInventory,
     },
@@ -927,6 +1023,17 @@ function buildUpgradePlan(classified, meta) {
       upgrade_log: {
         path: WORKSPACE_PATHS.UPGRADE_LOG,
         state: upgradeLogState,
+      },
+      base_release: {
+        path: BASE_RELEASE_PATH,
+        state: localBaseRelease.state,
+        record: usableBaseRelease(localBaseRelease.bytes),
+        desired: desiredBaseRelease({
+          toRef: meta.to_ref,
+          sourceLocation: source.location,
+          upstreamManifest: parseManifest(extractManifestJson(cacheManifestBytes.toString('utf8')) || ''),
+          upstreamRecord: usableBaseRelease(upstreamBaseRelease.bytes),
+        }),
       },
       core_inventory: localCoreInventory,
     },
@@ -1056,6 +1163,19 @@ function validateExpectedStateShape(state, label, allowMissing = true) {
 }
 
 /** @param {unknown} value @param {string} label */
+function validateBaseReleaseShape(value, label) {
+  if (value === null) return;
+  requireExactKeys(/** @type {Record<string, any>} */ (value), ['source_repo', 'base_release'], label);
+  let usable = true;
+  try {
+    validateDevelopmentBaseRelease(value);
+  } catch {
+    usable = false;
+  }
+  requirePlanSchema(usable, `${label} must be null or a usable base release record`);
+}
+
+/** @param {unknown} value @param {string} label */
 function requireAbsolutePath(value, label) {
   requireString(value, label);
   requirePlanSchema(path.isAbsolute(value) && path.resolve(value) === value, `${label} must be an absolute canonical path`);
@@ -1100,7 +1220,7 @@ function validatePlanShape(plan) {
     requireString(plan.source[key], `plan.source.${key}`);
   }
 
-  requireExactKeys(plan.cache, ['root_path', 'root_realpath', 'root_identity', 'manifest', 'inventory'], 'plan.cache');
+  requireExactKeys(plan.cache, ['root_path', 'root_realpath', 'root_identity', 'manifest', 'base_release', 'inventory'], 'plan.cache');
   requireAbsolutePath(plan.cache.root_path, 'plan.cache.root_path');
   requireAbsolutePath(plan.cache.root_realpath, 'plan.cache.root_realpath');
   validateIdentityShape(plan.cache.root_identity, 'plan.cache.root_identity');
@@ -1108,6 +1228,9 @@ function validatePlanShape(plan) {
   requireString(plan.cache.manifest.path, 'plan.cache.manifest.path');
   requireString(plan.cache.manifest.type, 'plan.cache.manifest.type');
   requirePlanSchema(typeof plan.cache.manifest.sha256 === 'string' && /^[a-f0-9]{64}$/.test(plan.cache.manifest.sha256), 'plan.cache.manifest.sha256 must be lowercase SHA-256');
+  requireExactKeys(plan.cache.base_release, ['path', 'state'], 'plan.cache.base_release');
+  requireString(plan.cache.base_release.path, 'plan.cache.base_release.path');
+  validateExpectedStateShape(plan.cache.base_release.state, 'plan.cache.base_release.state');
   requirePlanSchema(Array.isArray(plan.cache.inventory), 'plan.cache.inventory must be an array');
   for (const [index, entry] of plan.cache.inventory.entries()) {
     requireExactKeys(entry, ['path', 'type', 'sha256'], `plan.cache.inventory[${index}]`);
@@ -1116,7 +1239,7 @@ function validatePlanShape(plan) {
     requirePlanSchema(typeof entry.sha256 === 'string' && /^[a-f0-9]{64}$/.test(entry.sha256), `plan.cache.inventory[${index}].sha256 must be lowercase SHA-256`);
   }
 
-  requireExactKeys(plan.local, ['manifest', 'upgrade_log', 'core_inventory'], 'plan.local');
+  requireExactKeys(plan.local, ['manifest', 'upgrade_log', 'base_release', 'core_inventory'], 'plan.local');
   requireExactKeys(plan.local.manifest, ['path', 'state', 'data'], 'plan.local.manifest');
   requireString(plan.local.manifest.path, 'plan.local.manifest.path');
   validateExpectedStateShape(plan.local.manifest.state, 'plan.local.manifest.state', false);
@@ -1127,6 +1250,11 @@ function validatePlanShape(plan) {
   requireExactKeys(plan.local.upgrade_log, ['path', 'state'], 'plan.local.upgrade_log');
   requireString(plan.local.upgrade_log.path, 'plan.local.upgrade_log.path');
   validateExpectedStateShape(plan.local.upgrade_log.state, 'plan.local.upgrade_log.state');
+  requireExactKeys(plan.local.base_release, ['path', 'state', 'record', 'desired'], 'plan.local.base_release');
+  requireString(plan.local.base_release.path, 'plan.local.base_release.path');
+  validateExpectedStateShape(plan.local.base_release.state, 'plan.local.base_release.state');
+  validateBaseReleaseShape(plan.local.base_release.record, 'plan.local.base_release.record');
+  validateBaseReleaseShape(plan.local.base_release.desired, 'plan.local.base_release.desired');
   requirePlanSchema(Array.isArray(plan.local.core_inventory), 'plan.local.core_inventory must be an array');
   for (const [index, entry] of plan.local.core_inventory.entries()) {
     requireExactKeys(entry, ['path', 'state'], `plan.local.core_inventory[${index}]`);
@@ -1169,10 +1297,27 @@ function validateSortedUniquePaths(entries, label) {
 }
 
 /** @param {Record<string, any>} plan */
-function metadataTransitionNeeded(plan) {
+function manifestTransitionNeeded(plan) {
   return plan.local.manifest.data.source_repo !== plan.source.location
     || plan.local.manifest.data.source_ref !== plan.source.requested_ref
     || plan.local.manifest.data.installed_ref !== plan.to_ref;
+}
+
+/**
+ * Whether the reviewed record must be written or removed. Comparison is by
+ * value, so an equal record in other bytes (such as CRLF) stays untouched;
+ * any file present when no record should remain is removed.
+ * @param {Record<string, any>} baseRelease the plan's `local.base_release`
+ */
+function baseReleaseTransitionNeeded(baseRelease) {
+  return baseRelease.desired === null
+    ? baseRelease.state.type !== 'missing'
+    : !evidenceEqual(baseRelease.record, baseRelease.desired);
+}
+
+/** @param {Record<string, any>} plan */
+function metadataTransitionNeeded(plan) {
+  return manifestTransitionNeeded(plan) || baseReleaseTransitionNeeded(plan.local.base_release);
 }
 
 /** @param {Record<string, any>} plan */
@@ -1205,6 +1350,21 @@ function validatePlanInvariants(plan) {
   requirePlanSchema(plan.cache.manifest.path === WORKSPACE_PATHS.BUNDLE_MANIFEST && plan.cache.manifest.type === 'file', 'plan.cache.manifest must identify the canonical manifest');
   requirePlanSchema(plan.local.manifest.path === WORKSPACE_PATHS.BUNDLE_MANIFEST, 'plan.local.manifest must identify the canonical manifest');
   requirePlanSchema(plan.local.upgrade_log.path === WORKSPACE_PATHS.UPGRADE_LOG, 'plan.local.upgrade_log must identify the canonical upgrade log');
+  requirePlanSchema(
+    plan.cache.base_release.path === BASE_RELEASE_PATH && plan.local.base_release.path === BASE_RELEASE_PATH,
+    'plan base release evidence must identify the base release record',
+  );
+  requirePlanSchema(
+    plan.local.base_release.record === null || plan.local.base_release.state.type === 'file',
+    'plan base release preimage evidence is invalid',
+  );
+  const desiredRecord = plan.local.base_release.desired;
+  requirePlanSchema(
+    desiredRecord === null || (plan.to_ref === DEVELOPMENT_INSTALLED_REF
+      && plan.cache.base_release.state.type === 'file'
+      && desiredRecord.source_repo === plan.source.location),
+    'plan base release target is invalid',
+  );
 
   const timestamps = [plan.created_at, plan.ttl_warn_at, plan.ttl_expire_at];
   const epochs = timestamps.map((value) => isoToEpoch(value));
@@ -1333,6 +1493,9 @@ function plannedWritePaths(plan, skipRemovals) {
   if (hasReviewedTransition) {
     operationPaths.push(WORKSPACE_PATHS.BUNDLE_MANIFEST, WORKSPACE_PATHS.UPGRADE_LOG);
   }
+  // Clearing obsolete provenance is a metadata transition, never a deferrable
+  // Remove-bucket entry, so --skip-removals does not retain the record.
+  if (baseReleaseTransitionNeeded(plan.local.base_release)) operationPaths.push(BASE_RELEASE_PATH);
   return [...new Set(operationPaths)].sort(codeUnitCompare);
 }
 
@@ -1467,6 +1630,27 @@ function verifyCacheEvidence(plan) {
   const manifestErrors = validateMetadataManifest(manifestObject, 'upstream manifest');
   if (manifestErrors.length) throw new Error(`reviewed upstream manifest is invalid: ${manifestErrors[0]}`);
 
+  let upstreamBaseRelease;
+  try {
+    upstreamBaseRelease = readExpectedState(cacheRoot, BASE_RELEASE_PATH);
+  } catch {
+    throw new Error('reviewed upstream base release record type changed; re-run plan');
+  }
+  if (!evidenceEqual(upstreamBaseRelease.state, plan.cache.base_release.state)) {
+    throw new Error('reviewed upstream base release record changed; re-run plan');
+  }
+  // Apply writes the reviewed values; this only refuses a plan whose frozen
+  // target no longer follows from its own verified evidence.
+  const expectedBaseRelease = desiredBaseRelease({
+    toRef: plan.to_ref,
+    sourceLocation: plan.source.location,
+    upstreamManifest: manifestObject,
+    upstreamRecord: usableBaseRelease(upstreamBaseRelease.bytes),
+  });
+  if (!evidenceEqual(expectedBaseRelease, plan.local.base_release.desired)) {
+    throw new Error('reviewed base release target does not match its upstream evidence; re-run plan');
+  }
+
   const sourceStatus = git(['status', '--porcelain=v1', '--untracked-files=all'], cacheRoot);
   if (sourceStatus.status !== 0) throw new Error('could not inspect the reviewed source working tree; re-run plan');
   if (sourceStatus.stdout.trim()) {
@@ -1500,6 +1684,17 @@ function verifyLocalEvidence(plan) {
   if (!evidenceEqual(actualLogState, plan.local.upgrade_log.state)) {
     throw new Error('reviewed upgrade log state changed; re-run plan');
   }
+  let localBaseRelease;
+  try {
+    localBaseRelease = readExpectedState(ROOT, BASE_RELEASE_PATH);
+  } catch {
+    throw new Error('reviewed base release record type changed; re-run plan');
+  }
+  if (!evidenceEqual(localBaseRelease.state, plan.local.base_release.state)
+      || !evidenceEqual(usableBaseRelease(localBaseRelease.bytes), plan.local.base_release.record)) {
+    throw new Error('reviewed base release record changed; re-run plan');
+  }
+  const baseReleasePath = resolveMutationPath(ROOT, BASE_RELEASE_PATH);
 
   const bucketByPath = new Map();
   for (const key of ['replace', 'add', 'remove', 'up_to_date']) {
@@ -1538,7 +1733,7 @@ function verifyLocalEvidence(plan) {
   const manifestBytes = fs.readFileSync(manifestPath);
   mutationTargets.delete(WORKSPACE_PATHS.BUNDLE_MANIFEST);
   mutationTargets.delete(WORKSPACE_PATHS.UPGRADE_LOG);
-  return { manifestPath, upgradeLogPath, manifestBytes, mutationTargets };
+  return { manifestPath, upgradeLogPath, baseReleasePath, manifestBytes, mutationTargets };
 }
 
 /**
@@ -1575,6 +1770,18 @@ function verifyRestorableDestinations(plan) {
       `destination root ${root} is git-ignored and holds no tracked file, so rollback could not restore it; `
       + `un-ignore ${root} or track a file in it, then re-run 'apply'`,
     );
+  }
+  // A reviewed record write or removal is staged by exact path. An ignored,
+  // untracked record could be neither committed nor restored by rollback.
+  if (baseReleaseTransitionNeeded(plan.local.base_release)
+      && git(['check-ignore', '--quiet', '--', BASE_RELEASE_PATH]).status === 0) {
+    const tracked = git(['ls-files', '--', BASE_RELEASE_PATH]);
+    if (!(tracked.status === 0 && tracked.stdout.trim())) {
+      throw new Error(
+        `destination ${BASE_RELEASE_PATH} is git-ignored and untracked, so the upgrade commit and rollback could not include it; `
+        + `un-ignore ${BASE_RELEASE_PATH}, then re-run 'apply'`,
+      );
+    }
   }
 }
 
@@ -1674,6 +1881,20 @@ function readHeadFile(relativePath) {
 }
 
 /**
+ * Exact committed bytes of one path, or null when HEAD does not contain it.
+ * @param {string} relativePath
+ * @returns {Buffer | null}
+ */
+function readHeadBytesOrNull(relativePath) {
+  const listed = git(['ls-tree', '--name-only', 'HEAD', '--', relativePath]);
+  if (listed.status !== 0) throw new Error(`could not inspect committed ${relativePath}`);
+  if (listed.stdout.trim() !== relativePath) return null;
+  const result = spawnSync('git', ['show', `HEAD:${relativePath}`], { cwd: ROOT });
+  if (result.status !== 0 || !Buffer.isBuffer(result.stdout)) throw new Error(`could not read committed ${relativePath}`);
+  return result.stdout;
+}
+
+/**
  * Validate that the reviewed plan already produced the current committed core
  * result. This deliberately reads only committed evidence; pack preview must
  * not create another plan or state record.
@@ -1694,6 +1915,13 @@ function verifyCommittedCoreBoundary(plan) {
       || manifest.source_ref !== plan.source.requested_ref
       || manifest.installed_ref !== plan.to_ref) {
     throw new Error('committed bundle manifest does not match the reviewed core plan');
+  }
+  const committedBaseRelease = readHeadBytesOrNull(BASE_RELEASE_PATH);
+  const reviewedBaseRelease = plan.local.base_release.desired;
+  if (reviewedBaseRelease === null
+    ? committedBaseRelease !== null
+    : !evidenceEqual(usableBaseRelease(committedBaseRelease), reviewedBaseRelease)) {
+    throw new Error('committed base release record does not match the reviewed core plan');
   }
 
   const log = readHeadFile(WORKSPACE_PATHS.UPGRADE_LOG);
@@ -2132,7 +2360,15 @@ function cmdPlan(argv) {
 
   if (format === 'json') out(planJson);
   else {
-    emitPlanText(plan, planId, fromRef, toRef, utree, metadataTransitionNeeded(persistedPlan));
+    emitPlanText(
+      plan,
+      planId,
+      fromRef,
+      toRef,
+      utree,
+      metadataTransitionNeeded(persistedPlan),
+      persistedPlan.local.base_release,
+    );
     out(`\nPlan saved: ${planPath}\n`);
   }
 
@@ -2304,6 +2540,16 @@ function cmdApply(argv) {
 
   // ---- Rewrite manifest ----
   fs.writeFileSync(preflight.manifestPath, manifestOutput);
+
+  // ---- Reconcile the reviewed base release record ----
+  if (baseReleaseTransitionNeeded(planObj.local.base_release)) {
+    const reviewedBaseRelease = planObj.local.base_release.desired;
+    if (reviewedBaseRelease) {
+      fs.writeFileSync(preflight.baseReleasePath, renderDevelopmentBaseRelease(reviewedBaseRelease));
+    } else {
+      fs.rmSync(preflight.baseReleasePath, { force: true });
+    }
+  }
 
   // ---- Append upgrade-log entry (placeholder patched after lint) ----
   const logPath = preflight.upgradeLogPath;

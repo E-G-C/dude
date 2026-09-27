@@ -88,11 +88,16 @@ the feature:
 - `.dude/ideas/<NNN>-<slug>.md` is the only pre-spec collaboration ledger. Idea
   files are direct `.md` children; nested idea directories are not part of the
   model.
-- A direct ledger gets its permanent three-digit lifecycle number when brainstorm
-  first captures it. Define carries the same number into
+- A direct ledger gets its three-digit lifecycle number, `001` through `999`,
+  when brainstorm first captures it: one higher than the highest valid idea or
+  package number in the workspace. Define carries the same number into
   `.dude/specs/<NNN>-<slug>/`. Idea inventory follows this capture chronology,
-  and gaps are never recycled. Priority, dependencies, and execution use their
-  own authorities.
+  and gaps are never recycled. The number is not a global reservation: ideas
+  and packages with different slugs may share it, while a duplicate slug, a
+  mismatched idea/package pair, or competing claims to one exact path still
+  fail. Priority, dependencies, and execution use their own authorities. The
+  [Feature Definition skill](../.github/skills/dude-feature-definition/SKILL.md)
+  owns the allocation and first-definition rules.
 - Commands normally select the exact unnumbered frontmatter `slug:`. An explicit
   path selects only that exact numbered ledger.
 - An idea begins with `# Idea: <title>`. Its frontmatter uses only

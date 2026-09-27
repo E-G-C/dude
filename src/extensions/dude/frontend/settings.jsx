@@ -3,12 +3,16 @@ import {
   Button, createTableColumn, DataGrid, DataGridBody, DataGridCell, DataGridHeader,
   DataGridHeaderCell, DataGridRow, Dropdown, Field, Option, Tab, TabList, Text,
 } from '@fluentui/react-components';
-import { ChevronLeftRegular, ChevronRightRegular, DismissRegular } from '@fluentui/react-icons';
+import { ChevronLeftRegular, ChevronRightRegular, DismissRegular, bundleIcon, Info20Filled, Info20Regular,
+  PuzzlePiece20Filled, PuzzlePiece20Regular } from '@fluentui/react-icons';
+import { AboutPanel } from './about.jsx';
 import { mergeClasses, useCanvasStyles } from './styles.js';
 import { packActionReason, packPermission, packRequestStatus } from './use-canvas-data.js';
 
 const PAGE_SIZE = 5;
 const INITIAL_VIEW = { context: 'installed', tag: '', page: 1, selected: null };
+const SECTIONS = [['packs', 'Packs', bundleIcon(PuzzlePiece20Filled, PuzzlePiece20Regular)],
+  ['about', 'About', bundleIcon(Info20Filled, Info20Regular)]];
 const CONTEXTS = [['installed', 'Installed'], ['available', 'Available']];
 const OPERATIONS = { install: 'Install', remove: 'Remove', refresh: 'Refresh pack' };
 const PHASES = {
@@ -64,9 +68,15 @@ function trapTab(event, dialog) {
   else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
 }
 
-export function Settings({ data, active, onPermission }) {
+/**
+ * Settings holds two local sections. Packs stays mounted while About is shown,
+ * so its view, selection, and request survive a section switch; only its
+ * dialogs close, and they reopen on return under the existing focus rules.
+ */
+export function Settings({ data, active, section, onSection, onPermission }) {
   const { packs, packsLoading: loading, issues: { packs: issue } } = data;
   const s = useCanvasStyles(), id = useId();
+  const packsShown = active && section === 'packs';
   const [view, setView] = useState(() => ({ ...INITIAL_VIEW, snapshot: packs }));
   const [requestView, setRequestView] = useState(null);
   const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 1099px)').matches);
@@ -131,7 +141,7 @@ export function Settings({ data, active, onPermission }) {
   useLayoutEffect(() => {
     const dialog = detail.current, request = requestDialog.current;
     const focused = document.activeElement;
-    if (!active) {
+    if (!packsShown) {
       if (request.open) request.close();
       if (dialog.open) dialog.close();
       return;
@@ -168,8 +178,11 @@ export function Settings({ data, active, onPermission }) {
     if (closingRequest && trigger?.isConnected && trigger.getClientRects().length && !trigger.disabled
       && (!narrow || dialog.contains(trigger))) trigger.focus({ preventScroll: true });
     else if (closingRequest || lastSelection.current !== selected.name || changedMode) closeButton.current?.focus({ preventScroll: true });
+    // A retained wide pane reopens beside the results without taking focus
+    // from the section tab that revealed it; show() alone would move focus in.
+    else if (!narrow && focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
     lastSelection.current = selected.name;
-  }, [active, selected?.name, narrow, current.snapshot, requestView]);
+  }, [packsShown, selected?.name, narrow, current.snapshot, requestView]);
 
   const changeFilter = tag => {
     setView(previous => {
@@ -185,12 +198,20 @@ export function Settings({ data, active, onPermission }) {
     heading.current.focus({ preventScroll: true });
   };
 
-  return <div className={mergeClasses(s.packLayout, selected && !narrow && s.packLayoutSelected)} data-settings>
-    <section className={s.packBrowser} aria-labelledby={`${id}-heading`}>
-      <header className={s.packHeading}>
-        <h1 ref={heading} id={`${id}-heading`} className={s.title} tabIndex={-1}>Packs</h1>
-        <Text className={mergeClasses(s.eyebrow, s.packScope)}>Workspace settings</Text>
-      </header>
+  return <div className={s.settings} data-settings>
+    <header className={s.settingsHeader}>
+      <h1 ref={heading} id={`${id}-heading`} className={s.title} tabIndex={-1}>Settings</h1>
+      <TabList className={s.settingsSections} aria-label="Settings sections" selectedValue={section} selectTabOnFocus
+        onTabSelect={(_, input) => { if (input.value !== section) onSection(input.value); }}>
+        {SECTIONS.map(([value, label, Icon]) => <Tab key={value} value={value} id={`${id}-section-${value}`}
+          icon={<Icon />} className={s.sectionTab} data-settings-section={value} aria-controls={`${id}-${value}`}>
+          {label}
+        </Tab>)}
+      </TabList>
+    </header>
+    <div role="tabpanel" id={`${id}-packs`} aria-labelledby={`${id}-section-packs`} hidden={section !== 'packs'}
+      className={mergeClasses(s.packLayout, selected && !narrow && s.packLayoutSelected)}>
+    <section className={s.packBrowser} aria-labelledby={`${id}-section-packs`}>
       <TabList className={s.packTabs} aria-label="Pack context" selectedValue={current.context} selectTabOnFocus
         onTabSelect={(_, input) => {
           if (input.value === current.context) return;
@@ -373,5 +394,8 @@ export function Settings({ data, active, onPermission }) {
         <footer className={s.packDetailFooter}><Button onClick={() => setRequestView(null)}>Return to packs</Button></footer>
       </>}
     </dialog>
+    </div>
+    <AboutPanel id={`${id}-about`} labelledBy={`${id}-section-about`} shown={active && section === 'about'}
+      readAbout={data.readAbout} />
   </div>;
 }

@@ -588,15 +588,10 @@ export function collectLifecycleItems({ root }) {
   }
 
   const slugCounts = new Map();
-  const numberCounts = new Map();
   for (const item of items) slugCounts.set(item.slug, (slugCounts.get(item.slug) ?? 0) + 1);
   for (const item of items) {
-    if (item.number) numberCounts.set(item.number, (numberCounts.get(item.number) ?? 0) + 1);
-  }
-  for (const item of items) {
     const duplicateSlug = (slugCounts.get(item.slug) ?? 0) > 1;
-    const duplicateNumber = item.number !== null && (numberCounts.get(item.number) ?? 0) > 1;
-    if (duplicateSlug || duplicateNumber) item.authoritySlug = null;
+    if (duplicateSlug) item.authoritySlug = null;
     item.anchor = anchorFor(item, duplicateSlug);
   }
   return items;

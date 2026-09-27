@@ -1,4 +1,4 @@
-import { makeStyles, tokens } from '@fluentui/react-components';
+import { makeStyles, tabClassNames, tokens } from '@fluentui/react-components';
 export { mergeClasses } from '@fluentui/react-components';
 
 // The shortest vertical palette that still works: one complete 36px tool slot
@@ -109,19 +109,43 @@ export const useCanvasStyles = makeStyles({
   measure: { maxWidth: '76ch', display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL },
   overviewPanel: { padding: 0, scrollbarGutter: 'auto', '@container (max-width: 700px)': { padding: 0 } },
   settingsPanel: { padding: 0, overflow: 'hidden', scrollbarGutter: 'auto', '@container (max-width: 700px)': { padding: 0 } },
-  packLayout: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', height: '100%', minHeight: 0, minWidth: 0 },
+  settings: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0 },
+  // One compact header row: the page title and the Settings section tabs share
+  // the former Packs heading's 36px rhythm above one rule. At the narrowest
+  // width the two short labels take equal columns instead of wrapping apart.
+  settingsHeader: {
+    display: 'flex', flexWrap: 'wrap', alignItems: 'stretch', flexShrink: 0, minWidth: 0,
+    columnGap: tokens.spacingHorizontalL, paddingInline: tokens.spacingHorizontalL,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '& h1': { paddingBlock: tokens.spacingVerticalXS, minWidth: 0 },
+    '& h1:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
+    '@container (max-width: 479px)': { columnGap: tokens.spacingHorizontalS, paddingInline: tokens.spacingHorizontalS },
+    '@container (max-width: 300px)': { '& h1': { flexBasis: '100%' } },
+  },
+  settingsSections: {
+    minWidth: 0,
+    '@container (max-width: 300px)': { flexBasis: '100%', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' },
+  },
+  // Fluent's medium tab, trimmed to the approved 36px heading rhythm. Longhands
+  // replace Fluent's own padding longhands instead of competing with them.
+  sectionTab: {
+    minHeight: '36px', paddingTop: tokens.spacingVerticalS, paddingBottom: tokens.spacingVerticalS,
+    '@container (max-width: 300px)': {
+      minWidth: 0, minHeight: '32px', columnGap: 0,
+      paddingTop: tokens.spacingVerticalSNudge, paddingBottom: tokens.spacingVerticalSNudge,
+      paddingLeft: tokens.spacingHorizontalXXS, paddingRight: tokens.spacingHorizontalXXS,
+      [`& .${tabClassNames.icon}`]: { display: 'none' },
+    },
+  },
+  packLayout: {
+    display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', flex: 1, minHeight: 0, minWidth: 0,
+    '&[hidden]': { display: 'none' },
+  },
   packLayoutSelected: {
     gridTemplateColumns: 'minmax(0, 1fr) 320px',
     '@media (max-width: 1099px)': { gridTemplateColumns: 'minmax(0, 1fr)' },
   },
   packBrowser: { display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, containerType: 'inline-size' },
-  packHeading: {
-    display: 'flex', alignItems: 'center', flexShrink: 0, gap: tokens.spacingHorizontalS,
-    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalL}`,
-    '& h1:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
-    '@media (max-width: 479px)': { padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}` },
-  },
-  packScope: { '@media (max-width: 479px)': { position: 'absolute', clipPath: 'inset(50%)', width: '1px', height: '1px', overflow: 'hidden' } },
   packTabs: { flexShrink: 0, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', maxWidth: '360px', minWidth: 0 },
   packTab: {
     minWidth: 0, minHeight: '36px', padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`, justifyContent: 'center',
@@ -246,6 +270,49 @@ export const useCanvasStyles = makeStyles({
     '& li + li': { marginTop: tokens.spacingVerticalXS },
   },
   settingsFooter: { maxHeight: '20dvh', overflowY: 'auto', overflowWrap: 'anywhere' },
+  // About is the classic desktop sheet: one focal product name over a ruled
+  // label/value list, in a panel that owns the vertical scroll. The row label
+  // column and the 76ch measure are geometry; Fluent owns color and type.
+  aboutPanel: {
+    flex: 1, minHeight: 0, minWidth: 0, overflowY: 'auto', overscrollBehavior: 'contain',
+    '&:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '-2px' },
+  },
+  aboutBody: {
+    boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0,
+    maxWidth: `calc(76ch + 2 * ${tokens.spacingHorizontalL})`,
+    padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalL} ${tokens.spacingVerticalXXL}`,
+    '@container (max-width: 479px)': { padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalS} ${tokens.spacingVerticalL}` },
+  },
+  aboutIdentity: {
+    margin: 0, fontSize: tokens.fontSizeBase600, lineHeight: tokens.lineHeightBase600,
+    fontWeight: tokens.fontWeightSemibold, overflowWrap: 'anywhere',
+  },
+  aboutFacts: { margin: 0, borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}` },
+  aboutRow: {
+    display: 'grid', gridTemplateColumns: 'minmax(0, 11.5em) minmax(0, 1fr)', alignItems: 'baseline',
+    columnGap: tokens.spacingHorizontalL, paddingBlock: tokens.spacingVerticalS,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '& dt': { color: tokens.colorNeutralForeground2, overflowWrap: 'anywhere' },
+    '& dd': { margin: 0, minWidth: 0, overflowWrap: 'anywhere' },
+    '@container (max-width: 479px)': {
+      gridTemplateColumns: 'minmax(0, 1fr)', rowGap: tokens.spacingVerticalXXS, paddingBlock: tokens.spacingVerticalSNudge,
+      '& dt': { fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200 },
+    },
+  },
+  aboutUnavailable: { color: tokens.colorNeutralForeground2 },
+  aboutReading: { justifyContent: 'flex-start', gap: tokens.spacingHorizontalSNudge },
+  aboutReadingLabel: { alignSelf: 'baseline' },
+  // Fluent's double-underline link focus, plus the product's focus outline.
+  // The same selector key lets mergeClasses replace Fluent's outline removal.
+  aboutLink: {
+    ':focus-visible': {
+      outlineWidth: tokens.strokeWidthThick, outlineStyle: 'solid', outlineColor: tokens.colorStrokeFocus2,
+      outlineOffset: tokens.strokeWidthThick, borderRadius: tokens.borderRadiusSmall,
+    },
+  },
+  aboutLinkIcon: { marginInlineStart: tokens.spacingHorizontalXS, verticalAlign: '-2px' },
+  aboutNote: { margin: 0 },
+  nowrap: { whiteSpace: 'nowrap' },
   overview: { width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' },
   overviewHeader: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS, padding: tokens.spacingHorizontalL, flexShrink: 0 },
   overviewIntro: { margin: 0, maxWidth: '85ch', color: tokens.colorNeutralForeground2, overflowWrap: 'anywhere' },

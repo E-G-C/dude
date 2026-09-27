@@ -52,9 +52,13 @@ one file, and every later stage reads from what you wrote:
 
 Dude writes `.dude/ideas/001-expense-entry.md`, restates the idea under
 `## Idea`, and lists the questions it still needs answered. At first brainstorm,
-it assigns the next permanent three-digit lifecycle number. That number orders
-the idea inventory by capture time, is reused for the feature package, and is
-never reused. It does not indicate priority, dependency, or execution order.
+it assigns a three-digit lifecycle number, one higher than the highest number
+already used by this workspace's ideas and packages. That number orders the idea
+inventory by capture time and carries over to the feature package. It is not
+reserved across branches, so ideas with different slugs can share a number
+after a merge. It does not indicate priority, dependency, or execution order.
+The [Definition Rules](docs/reference.md#definition-rules) cover the identity
+checks.
 
 The exact unnumbered slug, `expense-entry`, remains the command selector. Read
 the restatement, correct it if it drifted, and answer what you can in the

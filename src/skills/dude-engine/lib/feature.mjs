@@ -570,27 +570,11 @@ function inventoryLifecycle({ root, validateSpecFiles }) {
 
   diagnoseDuplicates(
     ideas,
-    (idea) => idea.number,
-    (idea) => idea.ideaPath,
-    diagnostics,
-    'FEATURE_IDEA_NUMBER_DUPLICATE',
-    (number, paths) => `duplicate idea lifecycle number ${number}: ${paths.join(', ')}`,
-  );
-  diagnoseDuplicates(
-    ideas,
     (idea) => idea.slug,
     (idea) => idea.ideaPath,
     diagnostics,
     'FEATURE_IDEA_SLUG_DUPLICATE',
     (slug, paths) => `duplicate idea slug '${slug}': ${paths.join(', ')}`,
-  );
-  diagnoseDuplicates(
-    packages,
-    (featurePackage) => featurePackage.number,
-    (featurePackage) => featurePackage.directoryPath,
-    diagnostics,
-    'FEATURE_PACKAGE_NUMBER_DUPLICATE',
-    (number, paths) => `duplicate feature package lifecycle number ${number}: ${paths.join(', ')}`,
   );
 
   /** @type {Map<string, IdeaRecord[]>} */
@@ -662,39 +646,6 @@ function inventoryLifecycle({ root, validateSpecFiles }) {
     }
   }
 
-  /** @type {Map<string, { ideas: IdeaRecord[], packages: PackageRecord[] }>} */
-  const claims = new Map();
-  for (const idea of ideas) {
-    const claim = claims.get(idea.number) ?? { ideas: [], packages: [] };
-    claim.ideas.push(idea);
-    claims.set(idea.number, claim);
-  }
-  for (const featurePackage of packages) {
-    const claim = claims.get(featurePackage.number) ?? { ideas: [], packages: [] };
-    claim.packages.push(featurePackage);
-    claims.set(featurePackage.number, claim);
-  }
-  for (const [number, claim] of claims) {
-    if (claim.ideas.length === 0 || claim.packages.length === 0) continue;
-    const validPair = claim.ideas.length === 1
-      && claim.packages.length === 1
-      && claim.ideas[0].status === 'defined'
-      && claim.ideas[0].specPath === claim.packages[0].specPath
-      && claim.ideas[0].slug === claim.packages[0].slug;
-    if (validPair) continue;
-    const paths = [
-      ...claim.ideas.map((idea) => idea.ideaPath),
-      ...claim.packages.map((featurePackage) => featurePackage.directoryPath),
-    ].sort(compareCodeUnit);
-    diagnose(
-      diagnostics,
-      'FEATURE_NUMBER_COLLISION',
-      'error',
-      paths[0],
-      `conflicting lifecycle number ${number}: ${paths.join(', ')}`,
-    );
-  }
-
   features.sort((left, right) => (
     compareCodeUnit(left.specPath, right.specPath)
     || compareCodeUnit(left.ideaPath, right.ideaPath)
@@ -737,21 +688,13 @@ export function inventoryLifecycleIdentities({ root }) {
  * @param {IdeaRecord} idea
  */
 function summaryIdeaDiagnostics(inventory, idea) {
-  const spec = parseSpecIdentity(idea.specPath);
   return inventory.diagnostics.filter((diagnostic) => {
     if (diagnostic.path === '.'
       || [idea.ideaPath, idea.specPath].some((inputPath) => (
         inputPath === diagnostic.path || inputPath.startsWith(`${diagnostic.path}/`)
       ))) return true;
     const firstIdea = inventory.ideas.find((candidate) => candidate.ideaPath === diagnostic.path);
-    const firstPackage = inventory.packages.find((candidate) => candidate.directoryPath === diagnostic.path);
     if (diagnostic.code === 'FEATURE_IDEA_SLUG_DUPLICATE') return firstIdea?.slug === idea.slug;
-    if (diagnostic.code === 'FEATURE_IDEA_NUMBER_DUPLICATE') return firstIdea?.number === idea.number;
-    if (diagnostic.code === 'FEATURE_PACKAGE_NUMBER_DUPLICATE') return firstPackage?.number === spec?.number;
-    if (diagnostic.code === 'FEATURE_NUMBER_COLLISION') {
-      const number = firstIdea?.number ?? firstPackage?.number;
-      return number === idea.number || number === spec?.number;
-    }
     return false;
   });
 }
