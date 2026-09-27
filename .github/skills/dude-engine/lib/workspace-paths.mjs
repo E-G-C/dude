@@ -20,6 +20,7 @@ export const WORKSPACE_PATHS = Object.freeze({
   METADATA_DIR: '.dude/metadata',
   TASK_STATE: '.dude/state/task-state.json',
   BUNDLE_MANIFEST: '.dude/metadata/bundle-manifest.md',
+  DEVELOPMENT_BASE_RELEASE: '.dude/metadata/development-base-release.md',
   PROFILE: '.dude/metadata/profile.md',
   UPGRADE_LOG: '.dude/metadata/upgrade-log.md',
 });

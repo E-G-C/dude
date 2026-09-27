@@ -19,18 +19,25 @@ function usableRef(value) {
     && value.split('/').every(part => part && !part.startsWith('.') && !part.endsWith('.') && !part.endsWith('.lock'));
 }
 
-// Exactly { installedRef, sourceRef }, each a usable ref or null. Any other
-// shape is an unreadable result, never a partial record.
+// Exactly { installedRef, sourceRef, baseRelease }: each ref a usable ref or
+// null, and a base only as a stable release recorded beside the development
+// ref. Any other shape is an unreadable result, never a partial record.
+const FIELDS = ['installedRef', 'sourceRef', 'baseRelease'];
 function installationRecord(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const keys = Object.keys(value);
-  if (keys.length !== 2 || !keys.includes('installedRef') || !keys.includes('sourceRef')) return null;
-  return keys.every(key => value[key] === null || usableRef(value[key])) ? value : null;
+  if (keys.length !== FIELDS.length || !FIELDS.every(key => keys.includes(key))) return null;
+  const { installedRef, sourceRef, baseRelease } = value;
+  if (![installedRef, sourceRef].every(ref => ref === null || usableRef(ref))) return null;
+  return baseRelease === null || (typeof baseRelease === 'string' && RELEASE.test(baseRelease)
+    && installedRef === 'main') ? value : null;
 }
 
-// Classify only the recorded value: no tag lookup, remote release, or claim
-// about installed bytes. The version reads installedRef; the channel sourceRef.
-const versionText = ref => RELEASE.test(ref) ? ref : ref === 'main' ? 'Development (main)' : `Recorded ref (${ref})`;
+// Classify only the recorded values: no tag lookup, remote release, or claim
+// about installed bytes. The version reads installedRef, supplemented only for
+// development by its recorded base; the channel reads sourceRef.
+const versionText = (ref, base) => RELEASE.test(ref) ? ref
+  : ref === 'main' ? (base ? `Development (main), based on ${base}` : 'Development (main)') : `Recorded ref (${ref})`;
 const channelText = ref => RELEASE.test(ref) ? `Pinned release (${ref})` : ref === 'main' ? 'Development (main)'
   : ref === 'latest' ? 'Stable releases (latest)' : `Recorded ref (${ref})`;
 
@@ -71,7 +78,7 @@ function AboutFacts({ readAbout }) {
     <h2 className={s.aboutIdentity}>Dude</h2>
     <dl className={s.aboutFacts} aria-busy={reading} data-about-facts>
       <RecordedValue label="Dude version" reading={reading}
-        text={record?.installedRef ? versionText(record.installedRef) : null} />
+        text={record?.installedRef ? versionText(record.installedRef, record.baseRelease) : null} />
       <div className={s.aboutRow}><dt>Author</dt><dd>Enrique Gonzalez</dd></div>
       <div className={s.aboutRow}><dt>Repository</dt><dd>
         <Link inline href={REPOSITORY} target="_blank" rel="noopener noreferrer" className={s.aboutLink}

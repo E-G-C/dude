@@ -3064,7 +3064,7 @@ test('T012 anchoring regression: nested-scroll Open comment clips then recovers 
         )));
         assert.equal(
           productAppSha256,
-          'aedac71b507e2000cdf79a45b60ff746529057b8497bc3db11b613666d18515d',
+          '46360200ec0d5ee2864e7ee6162e23e2e3839e90b238d3b059c3a1b560b39531',
           'the exact-source regression executes the current published product UI',
         );
         const exactHarnessOptions = {
@@ -12832,6 +12832,10 @@ const ABOUT_UNAVAILABLE_NOTE = 'Recorded installation metadata is unavailable, s
 const ABOUT_RECORDED_REPO = 'https://example.test/recorded-provenance/dude';
 const ABOUT_APPROVED = '.dude/specs/074-dude-canvas-about/design/about.html';
 const ABOUT_APPROVED_SHA256 = '46c7e0d7c96885b19c4bd5453fe7cf8b81968d7f2ceb36ae262a6addbc91df9e';
+const ABOUT_075_APPROVED = '.dude/specs/075-dude-development-base-release/design/about.html';
+const ABOUT_075_APPROVED_SHA256 = '61a1f0dcf31195ef3094cb3c08181125a8c1466cb6efb91370bc402fdcda284d';
+const ABOUT_BASE_RECORD = '.dude/metadata/development-base-release.md';
+const ABOUT_KNOWN_BASE = 'Development (main), based on v1.3.0';
 
 /** @param {Record<string, unknown>} fields */
 function aboutManifest(fields) {
@@ -12839,15 +12843,27 @@ function aboutManifest(fields) {
 }
 
 /**
+ * Record a development base with the producers' own renderer, so the browser
+ * reads exactly what a development build or a `main` upgrade leaves.
+ * @param {{ write: (relative: string, value: string) => void }} workspace
+ * @param {string} baseRelease @param {string} [sourceRepo]
+ */
+async function writeAboutBase(workspace, baseRelease, sourceRepo = ABOUT_RECORDED_REPO) {
+  const { renderDevelopmentBaseRelease } = await import('../../src/skills/dude-engine/lib/development-base-release.mjs');
+  workspace.write(ABOUT_BASE_RECORD, renderDevelopmentBaseRelease({ source_repo: sourceRepo, base_release: baseRelease }));
+}
+
+/**
  * One disposable production-provider Canvas for a 074 About case: the T002
  * Settings workspace and local catalog plus a recorded installation. It keeps
  * network, cancellation, new-window, navigation, and runtime-error
- * observations; close() reaps only what this case started.
+ * observations; close() reaps only what this case started. A 075 case may
+ * also record the development base release for that installation.
  * @param {import('node:test').TestContext} context
  * @param {string} slug
- * @param {{ review?: boolean, deviceScale?: number|null }} [options]
+ * @param {{ review?: boolean, deviceScale?: number|null, baseRelease?: string|null }} [options]
  */
-async function openAboutCanvas(context, slug, { review = false, deviceScale = null } = {}) {
+async function openAboutCanvas(context, slug, { review = false, deviceScale = null, baseRelease = null } = {}) {
   const [{ createNeedsYou }, { createReview }, { openInstance, closeInstance }] = await Promise.all([
     import('../../src/extensions/dude/lib/needs-you.mjs'),
     import('../../src/extensions/dude/lib/review.mjs'),
@@ -12857,6 +12873,7 @@ async function openAboutCanvas(context, slug, { review = false, deviceScale = nu
   const packs = addSettingsPackFixture(workspace, 'local');
   workspace.write('.dude/metadata/bundle-manifest.md', aboutManifest({
     source_repo: ABOUT_RECORDED_REPO, source_ref: 'main', installed_ref: 'main' }));
+  if (baseRelease !== null) await writeAboutBase(workspace, baseRelease);
   const releaseTracking = emptyTrackedBoardFixture(workspace);
   const output = createT010Evidence(context, slug);
   const sends = [], runtimeErrors = [], requests = [], windows = [], navigations = [];
@@ -13945,6 +13962,60 @@ function aboutGeometryDelta(product, mock) {
   return delta;
 }
 
+/**
+ * The approved About verification sizes. 200% reflow halves the CSS viewport
+ * at device scale 2, so the same device pixels hold a 200% layout. This is
+ * effective-viewport reflow, not native browser zoom; 180x450 is not reduced a
+ * second time.
+ */
+const ABOUT_VISUAL_SIZES = Object.freeze([
+  { name: '1440x900', width: 1440, height: 900, scale: 1 },
+  { name: '768x900', width: 768, height: 900, scale: 1 },
+  { name: '360x900', width: 360, height: 900, scale: 1 },
+  { name: '180x450', width: 180, height: 450, scale: 1 },
+  { name: '1440x900-reflow200', width: 720, height: 450, scale: 2 },
+  { name: '768x900-reflow200', width: 384, height: 450, scale: 2 },
+  { name: '360x900-reflow200', width: 180, height: 450, scale: 2 },
+]);
+
+/**
+ * Resize and theme the page; the product also waits for its host appearance.
+ * @param {Cdp} page @param {{width:number,height:number,scale:number}} size @param {'light'|'dark'} theme @param {boolean} [product]
+ */
+async function aboutViewport(page, size, theme, product = true) {
+  await page.send('Emulation.setDeviceMetricsOverride', { width: size.width, height: size.height,
+    deviceScaleFactor: size.scale, mobile: false });
+  await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
+  if (product) await until(() => evaluate(page, `getComputedStyle(document.querySelector('.fui-FluentProvider'))
+    .getPropertyValue('--colorNeutralForeground1').trim() === ${JSON.stringify(theme === 'dark' ? '#ffffff' : '#242424')}`),
+  `${theme} host appearance`);
+  await settleAboutAnimations(page);
+}
+
+/** Computed text and graphic color pairs across the About surface. @param {Cdp} page */
+function aboutColorSamples(page) {
+  return evaluate(page, `(() => {
+    const background = node => {
+      for (let n = node; n; n = n.parentElement) {
+        const color = getComputedStyle(n).backgroundColor;
+        if (color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') return color;
+      }
+      throw new Error('No painted background');
+    };
+    const text = [['title', '[data-settings] h1'],
+      ['selected tab', '[data-settings-section][aria-selected="true"] .fui-Tab__content'],
+      ['unselected tab', '[data-settings-section][aria-selected="false"] .fui-Tab__content'],
+      ['identity', '[data-about-panel] h2'], ['label', '[data-about-facts] dt'], ['value', '[data-about-facts] dd'],
+      ['link', '[data-about-repository]'], ['note', '[data-about-note]'], ['footer', 'footer span']]
+      .map(([name, selector]) => { const node = document.querySelector(selector);
+        return { name, color: getComputedStyle(node).color, background: background(node), size: getComputedStyle(node).fontSize }; });
+    const tab = document.querySelector('[data-settings-section][aria-selected="true"]');
+    const indicator = { name: 'selected tab indicator', color: getComputedStyle(tab, '::after').backgroundColor, background: background(tab) };
+    const icon = { name: 'selected tab icon', color: getComputedStyle(tab.querySelector('.fui-Tab__icon')).color, background: background(tab) };
+    return { text, graphics: [indicator, icon] };
+  })()`);
+}
+
 test('074 About: rendered geometry, contrast, reflow, and keyboard scrolling follow the approved mock', {
   timeout: 360_000,
   concurrency: false,
@@ -13954,47 +14025,9 @@ test('074 About: rendered geometry, contrast, reflow, and keyboard scrolling fol
     const { page, output } = canvas;
     assert.equal(approvedDesignSha256(fs.readFileSync(path.join(ROOT, ABOUT_APPROVED))), ABOUT_APPROVED_SHA256,
       'the comparison uses the exact approved mock');
-    const sizes = [
-      { name: '1440x900', width: 1440, height: 900, scale: 1 },
-      { name: '768x900', width: 768, height: 900, scale: 1 },
-      { name: '360x900', width: 360, height: 900, scale: 1 },
-      { name: '180x450', width: 180, height: 450, scale: 1 },
-      // 200% reflow: the CSS viewport is halved at device scale 2, so the same
-      // device pixels hold a 200% layout. This is effective-viewport reflow,
-      // not native browser zoom; 180x450 is not reduced a second time.
-      { name: '1440x900-reflow200', width: 720, height: 450, scale: 2 },
-      { name: '768x900-reflow200', width: 384, height: 450, scale: 2 },
-      { name: '360x900-reflow200', width: 180, height: 450, scale: 2 },
-    ];
-    const setViewport = async (size, theme, product = true) => {
-      await page.send('Emulation.setDeviceMetricsOverride', { width: size.width, height: size.height,
-        deviceScaleFactor: size.scale, mobile: false });
-      await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
-      if (product) await until(() => evaluate(page, `getComputedStyle(document.querySelector('.fui-FluentProvider'))
-        .getPropertyValue('--colorNeutralForeground1').trim() === ${JSON.stringify(theme === 'dark' ? '#ffffff' : '#242424')}`),
-      `${theme} host appearance`);
-      await settleAboutAnimations(page);
-    };
-    const colorSamples = () => evaluate(page, `(() => {
-      const background = node => {
-        for (let n = node; n; n = n.parentElement) {
-          const color = getComputedStyle(n).backgroundColor;
-          if (color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') return color;
-        }
-        throw new Error('No painted background');
-      };
-      const text = [['title', '[data-settings] h1'],
-        ['selected tab', '[data-settings-section][aria-selected="true"] .fui-Tab__content'],
-        ['unselected tab', '[data-settings-section][aria-selected="false"] .fui-Tab__content'],
-        ['identity', '[data-about-panel] h2'], ['label', '[data-about-facts] dt'], ['value', '[data-about-facts] dd'],
-        ['link', '[data-about-repository]'], ['note', '[data-about-note]'], ['footer', 'footer span']]
-        .map(([name, selector]) => { const node = document.querySelector(selector);
-          return { name, color: getComputedStyle(node).color, background: background(node), size: getComputedStyle(node).fontSize }; });
-      const tab = document.querySelector('[data-settings-section][aria-selected="true"]');
-      const indicator = { name: 'selected tab indicator', color: getComputedStyle(tab, '::after').backgroundColor, background: background(tab) };
-      const icon = { name: 'selected tab icon', color: getComputedStyle(tab.querySelector('.fui-Tab__icon')).color, background: background(tab) };
-      return { text, graphics: [indicator, icon] };
-    })()`);
+    const sizes = ABOUT_VISUAL_SIZES;
+    const setViewport = (size, theme, product = true) => aboutViewport(page, size, theme, product);
+    const colorSamples = () => aboutColorSamples(page);
 
     await navigate(page, null, 1440, 'light', canvas.origin);
     await until(() => evaluate(page, `document.body.innerText.includes('Connected')`), 'connected Canvas');
@@ -14144,6 +14177,489 @@ test('074 About: rendered geometry, contrast, reflow, and keyboard scrolling fol
     for (const entry of comparisons) {
       if (entry.kind === 'about') assert.equal(entry.mockFooter, 'About · Read only');
     }
+  });
+});
+
+/** @param {string} version @param {string} channel */
+const aboutRows = (version, channel) => [['Dude version', version], ['Author', 'Enrique Gonzalez'],
+  ['Repository', ABOUT_REPOSITORY], ['Recorded channel/ref', channel]];
+
+/** Product and approved-mock selectors for the Dude version value and its scroll panel. */
+const ABOUT_VALUE = Object.freeze({
+  product: { panel: '[data-about-panel]', value: '[data-about-facts] > div:first-child dd' },
+  mock: { panel: '#section-about', value: '#about-version' },
+});
+
+/**
+ * How the Dude version value lays out: its text, its line boxes, any word a
+ * line break split, whether it stays inside the panel's content box, and the
+ * panel's scrollbar gutter.
+ * @param {Cdp} page @param {{panel: string, value: string}} selectors
+ */
+function aboutValueLayout(page, selectors) {
+  return evaluate(page, `(() => {
+    const panel = document.querySelector(${JSON.stringify(selectors.panel)});
+    const value = document.querySelector(${JSON.stringify(selectors.value)});
+    const text = value.textContent, node = value.firstChild, range = document.createRange();
+    const tops = new Set(), broken = [];
+    let offset = 0;
+    for (const word of text.split(' ')) {
+      range.setStart(node, offset);
+      range.setEnd(node, offset + word.length);
+      const rects = [...range.getClientRects()].filter(rect => rect.width > 0);
+      if (rects.length !== 1) broken.push(word);
+      for (const rect of rects) tops.add(Math.round(rect.top));
+      offset += word.length + 1;
+    }
+    const r = value.getBoundingClientRect(), p = panel.getBoundingClientRect();
+    return { text, lines: tops.size, brokenWords: broken, height: r.height,
+      contained: r.left >= p.left - 0.5 && r.right <= p.left + panel.clientLeft + panel.clientWidth + 0.5,
+      gutter: panel.offsetWidth - panel.clientWidth };
+  })()`);
+}
+
+/**
+ * The accessibility-tree exposure of one exact text: each matching static
+ * text's nearest exposed ancestor role, and whether any ancestor is a link.
+ * @param {Cdp} page @param {string} text
+ */
+async function aboutTextAccessibility(page, text) {
+  const tree = await page.send('Accessibility.getFullAXTree');
+  const nodes = new Map(tree.nodes.map(node => [node.nodeId, node]));
+  return tree.nodes.filter(node => !node.ignored && node.role?.value === 'StaticText' && node.name?.value === text)
+    .map(node => {
+      const roles = [];
+      for (let parent = nodes.get(node.parentId); parent; parent = nodes.get(parent.parentId)) {
+        if (!parent.ignored) roles.push(parent.role?.value);
+      }
+      return { nearest: roles[0] ?? null, link: roles.includes('link') };
+    });
+}
+
+/** Wait until keyboard scrolling of the About panel stops moving. @param {Cdp} page */
+async function settleAboutScroll(page) {
+  let previous = null;
+  await until(async () => {
+    await settleBrowserWork(page);
+    const top = await evaluate(page, `document.querySelector('[data-about-panel]').scrollTop`);
+    const settled = previous === top;
+    previous = top;
+    return settled;
+  }, 'settled About keyboard scroll');
+}
+
+/**
+ * Keyboard-only reach where About scrolls: Tab from the selected section onto
+ * the panel, arrow down until the channel row is fully in view, Tab to the
+ * repository link and its focus indicator, then Shift+Tab back out.
+ * @param {Cdp} page @param {(moment: 'channel'|'link') => Promise<unknown>} capture
+ */
+async function aboutKeyboardReach(page, capture) {
+  const channel = () => evaluate(page, `(() => {
+    const panel = document.querySelector('[data-about-panel]'), p = panel.getBoundingClientRect();
+    const row = panel.querySelectorAll('[data-about-facts] > div')[3], r = row.getBoundingClientRect();
+    const top = p.top + panel.clientTop, bottom = top + panel.clientHeight;
+    return { inView: r.top >= top - 0.5 && r.bottom <= bottom + 0.5, rowTop: r.top, rowBottom: r.bottom, top, bottom,
+      scrollTop: panel.scrollTop, text: row.textContent };
+  })()`);
+  await focus(page, '[data-settings-section="about"]');
+  await key(page, 'Tab');
+  assert.equal(await evaluate(page, `document.activeElement === document.querySelector('[data-about-panel]')`), true,
+    'a scrollable About panel is the next focus stop');
+  const initial = await channel();
+  let reached = initial, presses = 0;
+  while (!reached.inView && presses < 30) {
+    await key(page, 'ArrowDown');
+    presses += 1;
+    await settleAboutScroll(page);
+    reached = await channel();
+  }
+  assert.equal(reached.inView, true, `arrow keys scroll the channel row fully into view: ${JSON.stringify({ initial, reached, presses })}`);
+  assert.equal(await evaluate(page, `document.activeElement === document.querySelector('[data-about-panel]')`), true,
+    'keyboard scrolling keeps focus on the panel');
+  const channelImage = await capture('channel');
+  await key(page, 'Tab');
+  await settleAboutAnimations(page);
+  const link = await evaluate(page, `(() => {
+    const node = document.activeElement, panel = document.querySelector('[data-about-panel]').getBoundingClientRect();
+    const r = node.getBoundingClientRect(), style = getComputedStyle(node);
+    return { repository: node.hasAttribute('data-about-repository'), visible: r.top >= panel.top && r.bottom <= panel.bottom,
+      outline: style.outlineStyle, width: style.outlineWidth, focusVisible: node.matches(':focus-visible') };
+  })()`);
+  assert.deepEqual(link, { repository: true, visible: true, outline: 'solid', width: '2px', focusVisible: true },
+    'Tab reaches the repository link in view with a visible focus indicator');
+  const linkImage = await capture('link');
+  await key(page, 'Tab', 'Tab', { shift: true });
+  await key(page, 'Tab', 'Tab', { shift: true });
+  assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-settings-section')`), 'about',
+    'Shift+Tab leaves the About panel without a trap');
+  await evaluate(page, `document.querySelector('[data-about-panel]').scrollTop = 0`);
+  await settleAboutAnimations(page);
+  return { initial, reached, presses, link, channelImage, linkImage };
+}
+
+test('075 About: a recorded development base supplements only the version value and keeps every other classification', {
+  timeout: 240_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '075-about-records', { baseRelease: 'v1.3.0' }, async canvas => {
+    const { page, output, workspace } = canvas;
+    const unavailableRows = aboutRows('Unavailable', 'Unavailable');
+    const manifestPath = path.join(workspace.root, '.dude', 'metadata', 'bundle-manifest.md');
+    const recordPath = path.join(workspace.root, ...ABOUT_BASE_RECORD.split('/'));
+    const development = { source_repo: ABOUT_RECORDED_REPO, source_ref: 'main', installed_ref: 'main' };
+    /** @param {unknown} fields */
+    const recordText = fields => `# Development Base Release\n\n\`\`\`json\n${JSON.stringify(fields, null, 2)}\n\`\`\`\n`;
+    await navigate(page, null, 1440, 'light', canvas.origin);
+    await until(() => evaluate(page, `document.body.innerText.includes('Connected')`), 'connected Canvas');
+    await clickSettingsControl(page, `document.querySelector('#dude-tab-settings')`);
+    await packsSettled(page);
+
+    // The recorded base through the real read boundary and production provider.
+    await chooseSettingsSection(page, 'about');
+    assert.deepEqual(await aboutSurface(page), {
+      shown: true, heading: 'Dude', rows: aboutRows(ABOUT_KNOWN_BASE, 'Development (main)'), busy: 'false', link: ABOUT_LINK,
+      note: ABOUT_NOTE, status: '', footer: 'About · Read only', toolbar: [],
+    }, 'the known base extends only the version value; the channel keeps its own recorded value');
+    const knownTree = await aboutAccessibility(page);
+    assert.deepEqual(knownTree.links, [ABOUT_LINK.label], 'the base release is inert text, never a link');
+    assert.deepEqual(knownTree.unnamed, []);
+    const exposure = await aboutTextAccessibility(page, ABOUT_KNOWN_BASE);
+    assert.deepEqual(exposure, [{ nearest: 'definition', link: false }], 'the value is one plain definition text');
+    const colors = await evaluate(page, `(() => {
+      const [label, value] = document.querySelector('[data-about-facts] > div').children;
+      return { label: getComputedStyle(label).color, value: getComputedStyle(value).color, markup: value.children.length };
+    })()`);
+    assert.notEqual(colors.value, colors.label, 'a recorded value keeps the primary text color');
+    assert.equal(colors.markup, 0, 'no badge, icon, or other markup accompanies the value');
+    const knownImage = await aboutScreenshot(page, output, 'known-base-1440x900-light');
+    await chooseSettingsSection(page, 'packs');
+
+    // Real records: the base supplements only a usable development ref, and
+    // every other record keeps its 074 classification and ordinary note.
+    const cases = [
+      ['known base beside another channel', { ...development, source_ref: 'latest' }, 'valid',
+        aboutRows(ABOUT_KNOWN_BASE, 'Stable releases (latest)')],
+      ['known base beside no usable channel', { source_repo: ABOUT_RECORDED_REPO, installed_ref: 'main' }, 'valid',
+        aboutRows(ABOUT_KNOWN_BASE, 'Unavailable')],
+      ['no base record', development, null, ABOUT_MAIN_ROWS],
+      ['malformed base record', development, '# Development Base Release\n\n```json\n{"base_release": "v1.3.0",\n```\n',
+        ABOUT_MAIN_ROWS],
+      ['differently sourced base record', development, recordText({ source_repo: ABOUT_REPOSITORY, base_release: 'v1.3.0' }),
+        ABOUT_MAIN_ROWS],
+      ['prerelease base record', development, recordText({ source_repo: ABOUT_RECORDED_REPO, base_release: 'v1.4.0-rc.1' }),
+        ABOUT_MAIN_ROWS],
+      ['base record with an extra field', development,
+        recordText({ source_repo: ABOUT_RECORDED_REPO, base_release: 'v1.3.0', revision: 'f22d9808' }), ABOUT_MAIN_ROWS],
+      ['release with a stray base record', { ...development, installed_ref: 'v1.3.0', source_ref: 'latest' }, 'valid',
+        aboutRows('v1.3.0', 'Stable releases (latest)')],
+      ['pinned release with a stray base record', { ...development, installed_ref: 'v1.3.0', source_ref: 'v1.3.0' }, 'valid',
+        aboutRows('v1.3.0', 'Pinned release (v1.3.0)')],
+      ['other recorded ref with a stray base record', { ...development, installed_ref: 'feature/base-release' }, 'valid',
+        aboutRows('Recorded ref (feature/base-release)', 'Development (main)')],
+      ['missing installation record', null, 'valid', unavailableRows],
+      ['unprovenanced installation record', { source_ref: 'main', installed_ref: 'main' }, 'valid', unavailableRows],
+    ];
+    const results = [];
+    for (const [name, manifest, record, expected] of cases) {
+      if (manifest === null) fs.rmSync(manifestPath, { force: true });
+      else workspace.write('.dude/metadata/bundle-manifest.md', aboutManifest(manifest));
+      if (record === null) fs.rmSync(recordPath, { force: true });
+      else if (record === 'valid') await writeAboutBase(workspace, 'v1.3.0');
+      else workspace.write(ABOUT_BASE_RECORD, record);
+      await chooseSettingsSection(page, 'about');
+      const surface = await aboutSurface(page);
+      assert.deepEqual({ rows: surface.rows, note: surface.note, status: surface.status, link: surface.link },
+        { rows: expected, note: ABOUT_NOTE, status: '', link: ABOUT_LINK }, name);
+      const text = await evaluate(page, `document.body.innerText`);
+      for (const secret of [ABOUT_RECORDED_REPO, 'development-base-release', 'v1.4.0-rc.1', 'f22d9808', 'base_release']) {
+        assert.equal(text.includes(secret), false, `${name} does not display ${secret}`);
+      }
+      results.push({ name, manifest, record: record === 'valid' ? 'producer-rendered v1.3.0' : record, rows: surface.rows });
+      await chooseSettingsSection(page, 'packs');
+    }
+    workspace.write('.dude/metadata/bundle-manifest.md', aboutManifest(development));
+    await writeAboutBase(workspace, 'v1.3.0');
+
+    // Test-owned interception of the About route only: a paused request is a
+    // slow read, and fulfilled bodies model the closed response contract and
+    // transport failures.
+    const paused = [];
+    page.on('Fetch.requestPaused', event => paused.push(event));
+    await page.send('Fetch.enable', { patterns: [{ urlPattern: `${canvas.origin}/api/about`, requestStage: 'Request' }] });
+    const nextPaused = () => until(() => paused.shift(), 'paused About read');
+    /** @param {any} request @param {number} status @param {string} body */
+    const fulfill = (request, status, body) => page.send('Fetch.fulfillRequest', { requestId: request.requestId,
+      responseCode: status, body: Buffer.from(body).toString('base64'),
+      responseHeaders: [{ name: 'Content-Type', value: 'application/json; charset=utf-8' }, { name: 'Cache-Control', value: 'no-store' }] });
+    await clickSettingsControl(page, `document.querySelector('[data-settings-section="about"]')`);
+    const loadingRequest = await nextPaused();
+    await settleAboutAnimations(page);
+    const loading = await aboutSurface(page);
+    assert.deepEqual({ rows: loading.rows, busy: loading.busy, note: loading.note, status: loading.status, link: loading.link }, {
+      rows: aboutRows('Reading…', 'Reading…'), busy: 'true', note: ABOUT_NOTE,
+      status: 'Reading recorded installation metadata.', link: ABOUT_LINK,
+    }, 'loading keeps credit, the repository, and the ordinary note');
+    await page.send('Fetch.continueRequest', { requestId: loadingRequest.requestId });
+    await aboutSettled(page);
+    assert.deepEqual((await aboutSurface(page)).rows, aboutRows(ABOUT_KNOWN_BASE, 'Development (main)'),
+      'the loading entry settles to the recorded base');
+
+    // Valid responses: the value is the response's own inert text, and a
+    // missing installation or base keeps the ordinary note.
+    for (const [name, body, expected] of [
+      ['another stable base', { installedRef: 'main', sourceRef: 'main', baseRelease: 'v10.20.30' },
+        aboutRows('Development (main), based on v10.20.30', 'Development (main)')],
+      ['no usable base', { installedRef: 'main', sourceRef: 'main', baseRelease: null }, ABOUT_MAIN_ROWS],
+      ['missing installation record', { installedRef: null, sourceRef: null, baseRelease: null }, unavailableRows],
+    ]) {
+      await chooseSettingsSection(page, 'packs');
+      await clickSettingsControl(page, `document.querySelector('[data-settings-section="about"]')`);
+      await fulfill(await nextPaused(), 200, JSON.stringify(body));
+      await aboutSettled(page);
+      const surface = await aboutSurface(page);
+      assert.deepEqual({ rows: surface.rows, note: surface.note, status: surface.status },
+        { rows: expected, note: ABOUT_NOTE, status: '' }, name);
+      results.push({ name, body, rows: surface.rows, note: surface.note });
+    }
+
+    // Shape and transport failures: the whole read is unavailable, never a
+    // partial record, and no detail or markup is displayed.
+    for (const [name, status, body] of [
+      ['the 074 two-field shape', 200, JSON.stringify({ installedRef: 'main', sourceRef: 'main' })],
+      ['an extra source field', 200,
+        JSON.stringify({ installedRef: 'main', sourceRef: 'main', baseRelease: 'v1.3.0', sourceRepo: ABOUT_RECORDED_REPO })],
+      ['a prerelease base', 200, JSON.stringify({ installedRef: 'main', sourceRef: 'main', baseRelease: 'v1.3.0-rc.1' })],
+      ['a numeric base', 200, JSON.stringify({ installedRef: 'main', sourceRef: 'main', baseRelease: 130 })],
+      ['an empty base', 200, JSON.stringify({ installedRef: 'main', sourceRef: 'main', baseRelease: '' })],
+      ['a markup base', 200, JSON.stringify({ installedRef: 'main', sourceRef: 'main', baseRelease: '<img src=x onerror=alert(1)>' })],
+      ['a base beside a release', 200, JSON.stringify({ installedRef: 'v1.2.3', sourceRef: 'latest', baseRelease: 'v1.3.0' })],
+      ['a base beside another ref', 200, JSON.stringify({ installedRef: 'feature/x', sourceRef: 'main', baseRelease: 'v1.3.0' })],
+      ['a base without an installation', 200, JSON.stringify({ installedRef: null, sourceRef: null, baseRelease: 'v1.3.0' })],
+      ['unbound Canvas', 503, JSON.stringify({ error: 'about_unavailable', message: 'This Canvas has no current workspace.' })],
+      ['server error detail', 500, JSON.stringify({ error: 'EACCES', message: `EACCES: ${ABOUT_BASE_RECORD}` })],
+      ['connection refused', null, null],
+    ]) {
+      await chooseSettingsSection(page, 'packs');
+      await clickSettingsControl(page, `document.querySelector('[data-settings-section="about"]')`);
+      const request = await nextPaused();
+      await settleAboutAnimations(page);
+      assert.equal((await aboutSurface(page)).busy, 'true', `${name} starts as a Reading entry`);
+      if (status === null) await page.send('Fetch.failRequest', { requestId: request.requestId, errorReason: 'ConnectionRefused' });
+      else await fulfill(request, status, body);
+      await aboutSettled(page);
+      const surface = await aboutSurface(page);
+      assert.deepEqual({ rows: surface.rows, note: surface.note, status: surface.status, link: surface.link }, {
+        rows: unavailableRows, note: ABOUT_UNAVAILABLE_NOTE, status: 'Recorded installation metadata is unavailable.', link: ABOUT_LINK,
+      }, name);
+      const text = await evaluate(page, `document.body.innerText`);
+      for (const secret of ['based on', 'v1.3.0', 'rc.1', 'onerror', '<img', ABOUT_RECORDED_REPO, 'EACCES',
+        'development-base-release', 'no current workspace']) {
+        assert.equal(text.includes(secret), false, `${name} shows fixed copy, not ${secret}`);
+      }
+      assert.equal(await evaluate(page, `document.querySelectorAll('[data-about-panel] img').length`), 0, `${name} renders no markup`);
+      results.push({ name, status, rows: surface.rows, note: surface.note });
+    }
+    await page.send('Fetch.disable');
+    output.json('records-075-result.json', { browser: canvas.driver.info.Browser, node: process.version, results, loading,
+      exposure, colors, images: { knownImage }, aboutReads: canvas.aboutReads().length });
+  });
+});
+
+test('075 About: the recorded base follows the approved 075 mock across sizes, reflow, the scrollbar gutter, and every state', {
+  timeout: 480_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '075-about-visual', { baseRelease: 'v1.3.0' }, async canvas => {
+    const { page, output, workspace } = canvas;
+    assert.equal(approvedDesignSha256(fs.readFileSync(path.join(ROOT, ABOUT_075_APPROVED))), ABOUT_075_APPROVED_SHA256,
+      'the comparison uses the exact approved 075 mock');
+    const sizes = ABOUT_VISUAL_SIZES;
+    const known = aboutRows(ABOUT_KNOWN_BASE, 'Development (main)');
+    const keyboardReached = [];
+    /**
+     * Checks for one recorded-base capture: overflow, clipping, wrapping,
+     * contrast, accessibility, and keyboard reach where the panel scrolls.
+     * @param {typeof sizes[number]} size @param {'light'|'dark'} theme @param {boolean} scrollbar
+     */
+    const inspect = async (size, theme, scrollbar) => {
+      const label = `${size.name}${scrollbar ? ' with the default scrollbar' : ''} ${theme}`;
+      const name = `${size.name}${scrollbar ? '-scrollbar' : ''}-${theme}`;
+      const geometry = await aboutGeometry(page, ABOUT_GEOMETRY.product);
+      assert.equal(geometry.viewport.documentWidth, size.width, `no horizontal page scroll at ${label}`);
+      assert.equal(geometry.viewport.dpr, size.scale);
+      assert.ok(geometry.scroll.width <= geometry.scroll.clientWidth, `About never scrolls sideways at ${label}`);
+      assert.equal(geometry.rail.width, 48, 'the vertical rail keeps its width');
+      for (const tab of geometry.tabs) {
+        assert.ok(tab.x >= geometry.main.x && tab.right <= size.width && tab.width >= 24 && tab.height >= 24,
+          JSON.stringify({ label, tab }));
+      }
+      const hits = await evaluate(page, `[...document.querySelectorAll('[data-settings-section], #dude-tab-settings')].map(node => {
+        const r = node.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+        return hit === node || node.contains(hit);
+      })`);
+      assert.deepEqual(hits, [true, true, true], `section tabs and the cog are not clipped at ${label}`);
+      const surface = await aboutSurface(page);
+      assert.deepEqual({ rows: surface.rows, note: surface.note }, { rows: known, note: ABOUT_NOTE }, label);
+      const value = await aboutValueLayout(page, ABOUT_VALUE.product);
+      assert.equal(value.text, ABOUT_KNOWN_BASE);
+      assert.deepEqual(value.brokenWords, [], `the value wraps only between words at ${label}`);
+      assert.equal(value.contained, true, `the value stays inside the panel at ${label}`);
+      if (size.width <= 180) assert.ok(value.lines >= 2, `the value wraps at ${label}: ${JSON.stringify(value)}`);
+      if (scrollbar) {
+        assert.ok(geometry.scroll.height > geometry.scroll.client + 1, `the narrow panel scrolls at ${label}`);
+        assert.ok(value.gutter > 0, `the default scrollbar keeps its gutter at ${label}`);
+      } else {
+        assert.equal(value.gutter, 0, `the approved comparison is scrollbar-free at ${label}`);
+      }
+      const colors = await aboutColorSamples(page);
+      for (const sample of colors.text) {
+        assert.ok(contrast(sample.color, sample.background) >= 4.5, JSON.stringify({ label, sample }));
+      }
+      for (const sample of colors.graphics) {
+        assert.ok(contrast(sample.color, sample.background) >= 3, JSON.stringify({ label, sample }));
+      }
+      const tree = await aboutAccessibility(page);
+      assert.deepEqual(tree.sections, [['Packs', false], ['About', true]]);
+      assert.deepEqual(tree.links, [ABOUT_LINK.label], 'the base release is never a link');
+      assert.deepEqual(tree.unnamed, []);
+      const exposure = await aboutTextAccessibility(page, ABOUT_KNOWN_BASE);
+      assert.deepEqual(exposure, [{ nearest: 'definition', link: false }], `one plain definition text at ${label}`);
+      const image = await aboutScreenshot(page, output, `product-about-known-base-${name}`);
+      let keyboard = null;
+      if (geometry.scroll.height > geometry.scroll.client + 1) {
+        keyboard = await aboutKeyboardReach(page, moment => aboutScreenshot(page, output, `product-about-keyboard-${moment}-${name}`));
+        if (!keyboard.initial.inView) keyboardReached.push(name);
+      } else {
+        assert.equal(await evaluate(page, `document.querySelector('[data-about-panel]').hasAttribute('tabindex')`), false,
+          'a panel with nothing to scroll adds no focus stop');
+      }
+      return { geometry, value, colors, tree: { nodes: tree.nodes }, exposure, keyboard, image };
+    };
+
+    // The approved captures are scrollbar-free except the one default-scrollbar
+    // case below, so this comparison hides both surfaces' scrollbars. The
+    // emulation applies to scrollers laid out after it is set.
+    await page.send('Emulation.setScrollbarsHidden', { hidden: true });
+    await navigate(page, null, 1440, 'light', canvas.origin);
+    await until(() => evaluate(page, `document.body.innerText.includes('Connected')`), 'connected Canvas');
+    await clickSettingsControl(page, `document.querySelector('#dude-tab-settings')`);
+    await packsSettled(page);
+    await chooseSettingsSection(page, 'about');
+    const product = [];
+    for (const theme of ['light', 'dark']) {
+      for (const size of sizes) {
+        await aboutViewport(page, size, theme);
+        product.push({ state: 'known-base', theme, size, scrollbar: false, ...(await inspect(size, theme, false)) });
+      }
+    }
+    assert.ok(keyboardReached.length > 0, 'a size with the channel row below the fold reaches it by keyboard scrolling');
+
+    // The other five approved states, each at its approved capture's size and theme.
+    const manifestPath = path.join(workspace.root, '.dude', 'metadata', 'bundle-manifest.md');
+    const recordPath = path.join(workspace.root, ...ABOUT_BASE_RECORD.split('/'));
+    const expectedStates = {
+      'no-base': { rows: ABOUT_MAIN_ROWS, note: ABOUT_NOTE },
+      release: { rows: aboutRows('v1.3.0', 'Stable releases (latest)'), note: ABOUT_NOTE },
+      loading: { rows: aboutRows('Reading…', 'Reading…'), note: ABOUT_NOTE },
+      'missing-record': { rows: aboutRows('Unavailable', 'Unavailable'), note: ABOUT_NOTE },
+      'read-failure': { rows: aboutRows('Unavailable', 'Unavailable'), note: ABOUT_UNAVAILABLE_NOTE },
+    };
+    const paused = [];
+    page.on('Fetch.requestPaused', event => paused.push(event));
+    await page.send('Fetch.enable', { patterns: [{ urlPattern: `${canvas.origin}/api/about`, requestStage: 'Request' }] });
+    const states = [];
+    for (const [state, theme] of [['no-base', 'light'], ['release', 'dark'], ['loading', 'light'], ['missing-record', 'dark'],
+      ['read-failure', 'light']]) {
+      if (state === 'no-base') fs.rmSync(recordPath);
+      if (state === 'release') {
+        workspace.write('.dude/metadata/bundle-manifest.md', aboutManifest({
+          source_repo: ABOUT_RECORDED_REPO, source_ref: 'latest', installed_ref: 'v1.3.0' }));
+      }
+      if (state === 'missing-record') fs.rmSync(manifestPath);
+      await aboutViewport(page, sizes[1], theme);
+      await chooseSettingsSection(page, 'packs');
+      await clickSettingsControl(page, `document.querySelector('[data-settings-section="about"]')`);
+      const request = await until(() => paused.shift(), `paused ${state} read`);
+      if (state === 'read-failure') {
+        await page.send('Fetch.fulfillRequest', { requestId: request.requestId, responseCode: 503,
+          responseHeaders: [{ name: 'Content-Type', value: 'application/json' }],
+          body: Buffer.from(JSON.stringify({ error: 'about_unavailable', message: 'This Canvas has no current workspace.' })).toString('base64') });
+        await aboutSettled(page);
+      } else if (state !== 'loading') {
+        await page.send('Fetch.continueRequest', { requestId: request.requestId });
+        await aboutSettled(page);
+      }
+      await settleAboutAnimations(page);
+      const surface = await aboutSurface(page);
+      assert.deepEqual({ rows: surface.rows, note: surface.note }, expectedStates[state], state);
+      assert.deepEqual(surface.link, ABOUT_LINK, `${state} keeps the repository link`);
+      const colors = await aboutColorSamples(page);
+      for (const sample of colors.text) assert.ok(contrast(sample.color, sample.background) >= 4.5, JSON.stringify({ state, sample }));
+      states.push({ state, theme, size: sizes[1], scrollbar: false, geometry: await aboutGeometry(page, ABOUT_GEOMETRY.product), colors,
+        image: await aboutScreenshot(page, output, `product-about-${state}-768x900-${theme}`) });
+      if (state === 'loading') {
+        await page.send('Fetch.continueRequest', { requestId: request.requestId });
+        await aboutSettled(page);
+      }
+    }
+    await page.send('Fetch.disable');
+
+    // The narrow default-scrollbar case: the classic gutter narrows the panel
+    // and changes wrapping. Re-entering About at the wide size lays its
+    // scroller out again, so the narrow overflow creates a default scrollbar.
+    workspace.write('.dude/metadata/bundle-manifest.md', aboutManifest({
+      source_repo: ABOUT_RECORDED_REPO, source_ref: 'main', installed_ref: 'main' }));
+    await writeAboutBase(workspace, 'v1.3.0');
+    await page.send('Emulation.setScrollbarsHidden', { hidden: false });
+    const scrollbarCases = [];
+    for (const theme of ['light', 'dark']) {
+      await aboutViewport(page, sizes[0], theme);
+      await chooseSettingsSection(page, 'packs');
+      await chooseSettingsSection(page, 'about');
+      await aboutViewport(page, sizes[3], theme);
+      scrollbarCases.push({ state: 'known-base', theme, size: { ...sizes[3], name: '180x450-scrollbar' }, scrollbar: true,
+        ...(await inspect(sizes[3], theme, true)) });
+    }
+
+    // The approved mock at the same viewports and scrollbar setting, captured
+    // into this evidence directory; the approved design and its screenshots
+    // stay untouched.
+    const approvedUrl = pathToFileURL(path.join(ROOT, ABOUT_075_APPROVED)).href;
+    const comparisons = [];
+    for (const entry of [...product, ...states, ...scrollbarCases]) {
+      await page.send('Emulation.setScrollbarsHidden', { hidden: !entry.scrollbar });
+      await aboutViewport(page, entry.size, entry.theme, false);
+      await page.send('Page.navigate', { url: `${approvedUrl}?theme=${entry.theme}&state=${entry.state}` });
+      await until(() => evaluate(page, `Boolean(document.querySelector('#about-version')?.textContent)`), `approved ${entry.state} mock`);
+      await settleAboutAnimations(page);
+      const geometry = await aboutGeometry(page, ABOUT_GEOMETRY.mock);
+      const value = entry.state === 'known-base' ? await aboutValueLayout(page, ABOUT_VALUE.mock) : null;
+      const image = await aboutScreenshot(page, output, `approved-mock-075-${entry.state}-${entry.size.name}-${entry.theme}`);
+      if (value) {
+        assert.equal(value.text, ABOUT_KNOWN_BASE);
+        assert.equal(value.lines, entry.value.lines, `the value wraps like the approved mock at ${entry.size.name} ${entry.theme}`);
+        assert.equal(value.gutter, entry.value.gutter, `the scrollbar gutter matches the approved mock at ${entry.size.name} ${entry.theme}`);
+      }
+      comparisons.push({ state: entry.state, theme: entry.theme, size: entry.size.name, scrollbar: entry.scrollbar,
+        delta: aboutGeometryDelta(entry.geometry, geometry), productValue: entry.value ?? null, mockValue: value,
+        productImage: entry.image, mockImage: image, mockFooter: geometry.footerText });
+    }
+    // The approved composition, within one CSS px of rounding and font
+    // rasterization: rail, main frame, header, tabs, facts, link, and note.
+    const tolerance = 1;
+    const offenders = comparisons.flatMap(entry => Object.entries(entry.delta)
+      .filter(([name, value]) => !name.startsWith('command.') && Math.abs(value) > tolerance)
+      .map(([name, value]) => ({ size: entry.size, theme: entry.theme, state: entry.state, scrollbar: entry.scrollbar, name, value })));
+    output.json('visual-075-result.json', { browser: canvas.driver.info.Browser, node: process.version,
+      approved: ABOUT_075_APPROVED, approvedSha256: ABOUT_075_APPROVED_SHA256,
+      reflow: 'Effective-viewport reflow: 200% means half the CSS viewport at device scale 2. Not native browser zoom.',
+      scrollbars: 'Emulation.setScrollbarsHidden hides both surfaces\' scrollbars for the approved scrollbar-free captures; the 180x450 scrollbar cases restore the default classic scrollbar.',
+      product, states, scrollbarCases, keyboardReached, comparisons, offenders, tolerance });
+    assert.deepEqual(offenders, [], 'product geometry follows the approved 075 mock');
+    for (const entry of comparisons) assert.equal(entry.mockFooter, 'About · Read only');
   });
 });
 

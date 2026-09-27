@@ -28,6 +28,7 @@ import { closeInstance, openInstance } from '../../src/extensions/dude/lib/canva
 import {
   cmdAdd, cmdRemove, cmdRefresh, cmdPreviewRefresh, cmdStatus, packArtifacts, resolvePackDir,
 } from '../../src/skills/dude-compose/compose.mjs';
+import { renderDevelopmentBaseRelease } from '../../src/skills/dude-engine/lib/development-base-release.mjs';
 import {
   createInspector,
   imageIsStatic,
@@ -40,7 +41,7 @@ const BROWSER = process.env.DUDE_CANVAS_BROWSER
   ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
 const REQUIRED = process.env.DUDE_CANVAS_BROWSER_REQUIRED === '1';
 const DEADLINE = 20_000;
-const PUBLISHED_APP_SHA256 = 'aedac71b507e2000cdf79a45b60ff746529057b8497bc3db11b613666d18515d';
+const PUBLISHED_APP_SHA256 = '46360200ec0d5ee2864e7ee6162e23e2e3839e90b238d3b059c3a1b560b39531';
 
 /** @param {string|Buffer} value */
 function hash(value) {
@@ -2113,6 +2114,104 @@ async function clickAtCurrentPosition(page, expression) {
   });
 }
 
+/**
+ * Save the working Review markup once, whether Save markup or Review's own
+ * autosave performs that save.
+ *
+ * Each annotation edit or caret change re-arms Review's 700 ms autosave, so a
+ * slow run can reach Save markup after the markup is already saved, when the
+ * control is rightly inactive. Wait until two consecutive reads, with no save
+ * recorded between them, agree that the control is either pressable as click()
+ * requires or inactive only because the markup is saved. A pressable control
+ * gets one native press and must yield exactly one working save. An autosave
+ * landing before that press replaces the explicit save and does not add to
+ * it, because save() awaits the in-flight save and posts only a dirty
+ * revision. Any other inactive state still fails at the deadline.
+ * @param {Cdp} page
+ * @param {{url:string}[]} network the test's recorded Network.requestWillBeSent entries
+ * @param {ReturnType<typeof evidence>} output
+ */
+async function saveWorkingMarkup(page, network, output) {
+  const saveCount = () => network.filter(({ url }) => url.endsWith('/api/needs-you/review/save')).length;
+  const alreadySaved = 'Markup is already saved. Your work is kept as you go, so there is nothing waiting to save.';
+  const savedState = `${button('Save markup')}.matches('[aria-disabled="true"]')
+    && ${describedText(button('Save markup'))} === ${JSON.stringify(alreadySaved)}`;
+  let lastObservation;
+  const activation = await until(async () => {
+    const saves = saveCount();
+    const next = { saves, ...await evaluate(page, `(() => {
+      const node = ${button('Save markup')};
+      const rect = node.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const hit = document.elementFromPoint(x, y);
+      return {
+        x, y, width: rect.width, height: rect.height,
+        enabled: !node.disabled && node.getAttribute('aria-disabled') !== 'true',
+        hit: Boolean(hit && (node === hit || node.contains(hit))),
+        saved: ${savedState},
+        disabled: node.disabled,
+        ariaDisabled: node.getAttribute('aria-disabled'),
+        description: ${describedText(button('Save markup'))},
+      };
+    })()`) };
+    const prior = lastObservation;
+    lastObservation = next;
+    if (!prior || prior.saves !== next.saves || prior.x !== next.x || prior.y !== next.y) return null;
+    const pressable = [prior, next].every((read) => read.enabled && read.hit
+      && read.width >= 24 && read.height >= 24);
+    return pressable || (prior.saved && next.saved) ? next : null;
+  }, 'Save markup pressable or already saved').catch((error) => {
+    error.message += `; last Save markup observation: ${JSON.stringify(lastObservation)}`;
+    throw error;
+  });
+  if (activation.enabled) {
+    await evaluate(page, `(() => {
+      const node = ${button('Save markup')};
+      const events = [];
+      const receive = (event) => events.push({ type: event.type, isTrusted: event.isTrusted,
+        intended: node.contains(event.target) });
+      document.addEventListener('pointerdown', receive, true);
+      window.__t011ReadSaveActivation = () => {
+        document.removeEventListener('pointerdown', receive, true);
+        delete window.__t011ReadSaveActivation;
+        return events;
+      };
+    })()`);
+    await page.send('Input.dispatchMouseEvent', {
+      type: 'mousePressed', x: activation.x, y: activation.y, button: 'left', buttons: 1, clickCount: 1,
+    });
+    await page.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased', x: activation.x, y: activation.y, button: 'left', buttons: 0, clickCount: 1,
+    });
+    const delivered = await observeRuntime(page, 'window.__t011ReadSaveActivation()');
+    assert.ok(delivered.some((event) => event.type === 'pointerdown' && event.isTrusted && event.intended),
+      `native press must reach the pressable Save markup control: ${JSON.stringify({ activation, delivered })}`);
+  }
+  await until(
+    async () => saveCount() >= activation.saves + (activation.enabled ? 1 : 0)
+      && await evaluate(page, savedState),
+    'one working-markup save',
+  );
+  if (activation.enabled) {
+    assert.equal(saveCount(), activation.saves + 1,
+      'one pressable Save markup activation performs exactly one working save');
+  } else {
+    assert.deepEqual(
+      { disabled: activation.disabled, ariaDisabled: activation.ariaDisabled, description: activation.description },
+      { disabled: false, ariaDisabled: 'true', description: alreadySaved },
+      'an autosaved Save markup stays focusable and is inactive only because the markup is saved',
+    );
+  }
+  const workingSave = {
+    path: activation.enabled ? 'explicit' : 'autosaved',
+    savesBefore: activation.saves,
+    savesAfter: saveCount(),
+  };
+  writeEvidenceJson(output, 'working-markup-save', { ...workingSave, observation: activation });
+  return workingSave;
+}
+
 /** @param {Cdp} page @param {string} expression @param {string} value */
 async function fill(page, expression, value) {
   await until(
@@ -3470,20 +3569,32 @@ function browserReady(context) {
   return true;
 }
 
-/** @param {string} root @param {string} [installedRef] @param {string} [sourceRef] */
-function seedAboutManifest(root, installedRef = 'main', sourceRef = 'main') {
+const ABOUT_SOURCE_REPO = 'https://github.com/E-G-C/dude';
+const ABOUT_KNOWN_BASE = 'Development (main), based on v1.3.0';
+
+/**
+ * Seed the recorded installation. A base release is written with the
+ * producers' own renderer, exactly as a development build or `main` upgrade
+ * leaves it, and associated with the manifest's source.
+ * @param {string} root @param {string} [installedRef] @param {string} [sourceRef] @param {string|null} [baseRelease]
+ */
+function seedAboutManifest(root, installedRef = 'main', sourceRef = 'main', baseRelease = null) {
   write(root, '.dude/metadata/bundle-manifest.md', [
     '# Bundle Manifest',
     '',
     '```json',
     JSON.stringify({
-      source_repo: 'https://github.com/E-G-C/dude',
+      source_repo: ABOUT_SOURCE_REPO,
       source_ref: sourceRef,
       installed_ref: installedRef,
     }, null, 2),
     '```',
     '',
   ].join('\n'));
+  if (baseRelease !== null) {
+    write(root, '.dude/metadata/development-base-release.md',
+      renderDevelopmentBaseRelease({ source_repo: ABOUT_SOURCE_REPO, base_release: baseRelease }));
+  }
 }
 
 /** @param {string} canvasUrl */
@@ -3711,7 +3822,7 @@ async function withPackJourney(context, operation, options, run) {
       '---\nname: dude-pack-alpha-helper\ndescription: "Disposable helper"\n---\n# Helper\n');
     write(root, 'library/packs/alpha/instructions/dude-pack-alpha-old.instructions.md', '# Old instruction\n');
     if (options.about) {
-      seedAboutManifest(root);
+      seedAboutManifest(root, 'main', 'main', 'v1.3.0');
       for (const name of ['bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel']) {
         write(root, `library/packs/${name}/pack.md`, [
           '---',
@@ -3800,19 +3911,19 @@ async function withPackJourney(context, operation, options, run) {
   }
 }
 
-test('074 About: production provider retains work, drafts, and saved and working Review markup', {
+test('075 About: production provider shows the recorded base and retains work, drafts, and saved and working Review markup', {
   timeout: 240_000,
   concurrency: false,
 }, async context => {
   if (!browserReady(context)) return;
-  const output = evidence(context, '074-about-provider-continuity');
+  const output = evidence(context, '075-about-provider-continuity');
   const board = installEmptyBoard();
   const publications = [];
   const runtimeErrors = [], network = [];
   let fixture, browserState;
   try {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-074-about-provider-'));
-    seedAboutManifest(root);
+    seedAboutManifest(root, 'main', 'main', 'v1.3.0');
     write(root, '.dude/metadata/profile.md', '# Install Profile\n\n```json\n{"installed":{}}\n```\n');
     write(root, 'library/packs/observer/pack.md', [
       '---',
@@ -3889,7 +4000,7 @@ test('074 About: production provider retains work, drafts, and saved and working
     await click(page, button('Add at center'));
     await visible(page, 'Comments (1)');
     await closeReviewDetails(page);
-    await click(page, button('Save markup'));
+    await saveWorkingMarkup(page, network, output);
     const reviews = path.join(root, ...path.posix.dirname(feature.specPath).split('/'), 'reviews');
     const saved = await until(() => {
       if (!fs.existsSync(reviews)) return null;
@@ -3918,8 +4029,8 @@ test('074 About: production provider retains work, drafts, and saved and working
     assert.deepEqual(api, {
       status: 200,
       cacheControl: 'no-store',
-      body: { installedRef: 'main', sourceRef: 'main' },
-    });
+      body: { installedRef: 'main', sourceRef: 'main', baseRelease: 'v1.3.0' },
+    }, 'the production provider serves the recorded development base beside the unchanged refs');
     await click(page, `document.querySelector('#dude-tab-settings')`);
     await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
       ?.getAttribute('aria-busy') === 'false'`), 'quiescent production Settings read');
@@ -3927,7 +4038,7 @@ test('074 About: production provider retains work, drafts, and saved and working
     assert.deepEqual(about, {
       heading: 'Dude',
       rows: [
-        ['Dude version', 'Development (main)'],
+        ['Dude version', ABOUT_KNOWN_BASE],
         ['Author', 'Enrique Gonzalez'],
         ['Repository', 'https://github.com/E-G-C/dude'],
         ['Recorded channel/ref', 'Development (main)'],
@@ -4030,12 +4141,12 @@ test('074 About: production provider retains work, drafts, and saved and working
   }
 });
 
-test('074 About: production Packs view and one real request receipt survive About round trips', {
+test('075 About: production Packs view and one real request receipt survive recorded-base About round trips', {
   timeout: 240_000,
   concurrency: false,
 }, async context => {
   if (!browserReady(context)) return;
-  await withPackJourney(context, 'install', { name: '074-about-roundtrip', about: true },
+  await withPackJourney(context, 'install', { name: '075-about-roundtrip', about: true },
     async ({ fixture, page, output, network, foreign }) => {
       await click(page, `document.querySelector('#dude-tab-settings')`);
       await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
@@ -4066,12 +4177,13 @@ test('074 About: production Packs view and one real request receipt survive Abou
       })`);
 
       const api = await readAboutApi(fixture.instance.url);
-      assert.deepEqual(api.body, { installedRef: 'main', sourceRef: 'main' });
+      assert.deepEqual(api.body, { installedRef: 'main', sourceRef: 'main', baseRelease: 'v1.3.0' });
       assert.equal(api.status, 200);
       assert.equal(api.cacheControl, 'no-store');
       const aboutBeforeRequest = await openAbout(page);
-      assert.equal(aboutBeforeRequest.rows[0][1], 'Development (main)');
+      assert.equal(aboutBeforeRequest.rows[0][1], ABOUT_KNOWN_BASE);
       assert.equal(aboutBeforeRequest.rows[1][1], 'Enrique Gonzalez');
+      assert.equal(aboutBeforeRequest.rows[3][1], 'Development (main)', 'the channel never becomes the base');
       assert.deepEqual(aboutBeforeRequest.link, {
         text: 'https://github.com/E-G-C/dude',
         href: 'https://github.com/E-G-C/dude',
@@ -4121,6 +4233,7 @@ test('074 About: production Packs view and one real request receipt survive Abou
 
       await click(page, button('Return to packs'));
       const aboutWaiting = await openAbout(page);
+      assert.equal(aboutWaiting.rows[0][1], ABOUT_KNOWN_BASE, 'a waiting pack request leaves the recorded base in place');
       assert.equal(fixture.provider.read().packRequests.at(-1).phase, 'waiting_permission');
       assert.equal(fixture.provider.read().packRequests.at(-1).packReceipt, receipt.packReceipt);
       await returnToPacks(page);
@@ -4155,6 +4268,7 @@ test('074 About: production Packs view and one real request receipt survive Abou
 
       await click(page, button('Return to packs'));
       const aboutApplied = await openAbout(page);
+      assert.equal(aboutApplied.rows[0][1], ABOUT_KNOWN_BASE, 'an applied pack result leaves the recorded base in place');
       assert.equal(fixture.provider.read().packRequests.at(-1).phase, 'applied');
       await returnToPacks(page);
       await click(page, button('View pack request'));
@@ -7552,12 +7666,7 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
       'overlay drawer does not resize the reviewed source frame');
 
     const workIndexBeforeSave = network.filter(({ url }) => url.endsWith('/api/work-index')).length;
-    const savePostsBefore = network.filter(({ url }) => url.endsWith('/api/needs-you/review/save')).length;
-    await click(page, button('Save markup'));
-    await until(
-      () => network.filter(({ url }) => url.endsWith('/api/needs-you/review/save')).length === savePostsBefore + 1,
-      'one working-markup save',
-    );
+    const workingSave = await saveWorkingMarkup(page, network, output);
     await openReviewDetails(page);
     await visible(page, 'Working markup matches the saved revision');
     await until(() => fixture.provider.read().requests.find((item) => (
@@ -7583,7 +7692,7 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
     if (!savedCaret || savedCaret.start !== caretBefore.start || savedCaret.end !== caretBefore.end
       || savedCaret.direction !== caretBefore.direction) {
       stateFindings.push({
-        case: 'comment caret in explicit working save',
+        case: `comment caret in ${workingSave.path} working save`,
         expected: caretBefore,
         actual: savedCaret,
       });

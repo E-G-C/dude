@@ -10,21 +10,40 @@
  * `src/` is edited; `.github/` is the built, committed dev bundle.
  *
  * It manages core-tier files and never changes canonical project data:
- * `.github/skills/project/`, `.github/workflows/`, all `.dude/` data, installed
- * packs (`dude-pack-*`), or local customizations (`dude-local-*`) persist. Packs
- * are installed separately via `compose add`.
+ * `.github/skills/project/`, `.github/workflows/`, all other `.dude/` data,
+ * installed packs (`dude-pack-*`), or local customizations (`dude-local-*`)
+ * persist. Packs are installed separately via `compose add`.
  *
- * Run it after editing `src/`; CI runs it and fails if `.github/` would change
- * (the dev-bundle drift check).
+ * The one generated metadata file is `.dude/metadata/development-base-release.md`.
+ * For a development manifest (`installed_ref: main`) it records the highest
+ * stable release tag merged into the build root's current commit, using only
+ * that exact Git checkout's local history. Missing Git, another repository's
+ * root, shallow history, or no reachable stable tag leave the base unknown,
+ * so the build removes any earlier record instead of guessing. It never
+ * fetches, deepens history, or consults a parent or remote repository.
+ *
+ * Run it after editing `src/` or after the source's reachable release tags
+ * change; CI runs it and fails if the output would change (the dev-bundle
+ * drift check).
  *
  * Dependency-free ESM. Targets Node >= 20. Exit codes: 0 ok, 1 usage, 2 error.
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isCorePath } from '../src/skills/dude-engine/lib/ownership.mjs';
 import { listCoreOutputs, readCanonicalManifest, writeCoreOutput } from './build-release.mjs';
-import { resolveMutationPath } from '../src/skills/dude-engine/lib/workspace-paths.mjs';
+import { pickLatestReleaseTag } from '../src/skills/dude-engine/lib/release-channel.mjs';
+import {
+  DEVELOPMENT_INSTALLED_REF,
+  renderDevelopmentBaseRelease,
+  validateDevelopmentBaseRelease,
+} from '../src/skills/dude-engine/lib/development-base-release.mjs';
+import { WORKSPACE_PATHS, resolveMutationPath } from '../src/skills/dude-engine/lib/workspace-paths.mjs';
+
+const BASE_RELEASE_RECORD = WORKSPACE_PATHS.DEVELOPMENT_BASE_RELEASE;
+const COMMIT_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 
 const BUILD_DESTINATION_DIRS = [
   '.github',
@@ -132,9 +151,117 @@ function applyCoreCleanup(repoRoot, removals) {
 }
 
 /**
- * Sync the core from `src/` into `.github/`.
+ * Resolve the fixed record destination through the mutation boundary. It may
+ * be absent or a regular file; linked, escaping, and other types are refused.
+ * @param {string} repoRoot
+ * @returns {string}
+ */
+function resolveBaseReleaseDestination(repoRoot) {
+  let absolutePath;
+  try {
+    absolutePath = resolveMutationPath(repoRoot, BASE_RELEASE_RECORD);
+  } catch (error) {
+    throw new Error(`unsafe build-dev destination '${BASE_RELEASE_RECORD}': ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const stat = lstatOrNull(absolutePath);
+  if (stat && !stat.isFile()) {
+    throw new Error(`unsafe build-dev destination '${BASE_RELEASE_RECORD}' must be a regular file`);
+  }
+  return absolutePath;
+}
+
+/** @param {string} first @param {string} second @returns {boolean} */
+function sameDirectory(first, second) {
+  try {
+    return fs.realpathSync.native(path.resolve(first)) === fs.realpathSync.native(path.resolve(second));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read the source checkout's own release evidence: the highest stable tag
+ * merged into the exact build root's current commit, by numeric version.
+ * Anything short of complete local evidence is unknown provenance.
+ * @param {string} repoRoot
+ * @returns {{ release: string | null, reason: string | null }}
+ */
+function readSourceBaseRelease(repoRoot) {
+  /** @param {string} reason */
+  const unknown = (reason) => ({ release: null, reason });
+  /** @param {string[]} args */
+  const git = (args) => spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8' });
+
+  const topLevel = git(['rev-parse', '--show-toplevel']);
+  if (topLevel.error) return unknown('Git is unavailable');
+  if (topLevel.status !== 0) return unknown('the build root is not a readable Git repository');
+  if (!sameDirectory(topLevel.stdout.trim(), repoRoot)) return unknown('the Git root is not the build root');
+  const shallow = git(['rev-parse', '--is-shallow-repository']);
+  const shallowState = shallow.status === 0 ? shallow.stdout.trim() : '';
+  if (shallowState !== 'true' && shallowState !== 'false') {
+    return unknown('Git history completeness could not be confirmed');
+  }
+  if (shallowState === 'true') return unknown('Git history is shallow');
+  const head = git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+  const commit = head.status === 0 ? head.stdout.trim().toLowerCase() : '';
+  if (!COMMIT_PATTERN.test(commit)) return unknown('the build root has no current commit');
+  const tags = git(['tag', '--merged', commit, '--list', 'v*']);
+  if (tags.status !== 0) return unknown('release tags could not be listed');
+  const release = pickLatestReleaseTag(tags.stdout.split('\n'));
+  return release ? { release, reason: null } : unknown('no stable release tag is merged into the current commit');
+}
+
+/**
+ * Decide the record this build leaves, before any cleanup. Only a development
+ * manifest carries a base, associated with that manifest's exact source.
+ * @param {string} repoRoot
+ * @param {Record<string, unknown>} manifest
+ * @returns {{ record: Readonly<{ source_repo: string, base_release: string }> | null, release: string | null, reason: string | null }}
+ */
+function planBaseReleaseRecord(repoRoot, manifest) {
+  if (manifest.installed_ref !== DEVELOPMENT_INSTALLED_REF) {
+    return { record: null, release: null, reason: `installed_ref is not ${DEVELOPMENT_INSTALLED_REF}` };
+  }
+  const evidence = readSourceBaseRelease(repoRoot);
+  if (!evidence.release) return { record: null, ...evidence };
+  try {
+    const record = validateDevelopmentBaseRelease({
+      source_repo: manifest.source_repo,
+      base_release: evidence.release,
+    });
+    return { record, ...evidence };
+  } catch {
+    return { record: null, release: null, reason: 'the manifest source_repo cannot identify a base release record' };
+  }
+}
+
+/**
+ * Leave the fixed record matching the computed provenance: write a known base
+ * only when its bytes differ, and remove any record when the base is unknown.
+ * @param {string} repoRoot
+ * @param {Readonly<{ source_repo: string, base_release: string }> | null} record
+ * @returns {'written' | 'removed' | null}
+ */
+function reconcileBaseReleaseRecord(repoRoot, record) {
+  const destination = resolveBaseReleaseDestination(repoRoot);
+  const current = lstatOrNull(destination);
+  if (!record) {
+    if (!current) return null;
+    fs.rmSync(destination);
+    return 'removed';
+  }
+  const bytes = Buffer.from(renderDevelopmentBaseRelease(record), 'utf8');
+  if (current && fs.readFileSync(destination).equals(bytes)) return null;
+  fs.writeFileSync(destination, bytes);
+  return 'written';
+}
+
+/**
+ * Sync the core from `src/` into `.github/` and reconcile the development
+ * base-release record. `written` and `removed` include that record only when
+ * it actually changed; `baseRelease` reports the recorded tag or why none is.
  * @param {{ repoRoot: string }} opts
- * @returns {{ written: string[], removed: string[] }}
+ * @returns {{ written: string[], removed: string[], baseRelease: { release: string | null, reason: string | null } }}
  */
 export function buildDev({ repoRoot }) {
   const srcDir = path.join(repoRoot, 'src');
@@ -147,7 +274,9 @@ export function buildDev({ repoRoot }) {
   const generatedDestinations = outputs.map(({ relPath }) => relPath);
   preflightBuildDestinations(repoRoot, [...removals, ...generatedDestinations]);
 
-  readCanonicalManifest(repoRoot);
+  const manifest = readCanonicalManifest(repoRoot);
+  resolveBaseReleaseDestination(repoRoot);
+  const baseRelease = planBaseReleaseRecord(repoRoot, manifest.data);
   const removed = applyCoreCleanup(repoRoot, removals);
 
   /** @type {string[]} */
@@ -157,7 +286,15 @@ export function buildDev({ repoRoot }) {
     written.push(output.relPath);
   }
 
-  return { written: written.sort(), removed };
+  const recordChange = reconcileBaseReleaseRecord(repoRoot, baseRelease.record);
+  if (recordChange === 'written') written.push(BASE_RELEASE_RECORD);
+  if (recordChange === 'removed') removed.push(BASE_RELEASE_RECORD);
+
+  return {
+    written: written.sort(),
+    removed: removed.sort(),
+    baseRelease: { release: baseRelease.release, reason: baseRelease.reason },
+  };
 }
 
 /** @param {string} metaUrl @param {string|undefined} argv1 @returns {boolean} */
@@ -180,8 +317,14 @@ function main() {
   const repoRoot = path.resolve(i >= 0 ? String(args[i + 1] ?? '.') : '.');
   try {
     const r = buildDev({ repoRoot });
+    const recordWritten = r.written.includes(BASE_RELEASE_RECORD);
+    const recordRemoved = r.removed.includes(BASE_RELEASE_RECORD);
+    const baseRelease = r.baseRelease.release
+      ? `development base release ${r.baseRelease.release} ${recordWritten ? 'recorded' : 'unchanged'}`
+      : `development base release unknown (${r.baseRelease.reason})${recordRemoved ? '; earlier record removed' : ''}`;
     process.stdout.write(
-      `[OK] dev bundle: ${r.written.length} core file(s) synced, ${r.removed.length} removed\n`
+      `[OK] dev bundle: ${r.written.length - (recordWritten ? 1 : 0)} core file(s) synced, `
+      + `${r.removed.length - (recordRemoved ? 1 : 0)} removed; ${baseRelease}\n`,
     );
   } catch (e) {
     process.stderr.write(`[ERROR] ${e instanceof Error ? e.message : String(e)}\n`);
