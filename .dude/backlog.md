@@ -4,27 +4,17 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 ## Where are we?
 
-- Current work: **1** (1 active, 0 blocked)
+- Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
 - Ideas awaiting definition: **8**
 - Defined awaiting work: **0**
-- Completed: **65**
+- Completed: **67**
 
 ## Current
 
-Blocked 0 · Active 1 · Next 0
+Blocked 0 · Active 0 · Next 0
 
-### Active
-
-- `062` · `dude-canvas-workspace-integration` — Dude Canvas Workspace Integration (`.dude/ideas/062-dude-canvas-workspace-integration.md`)
-
-### Current work map
-
-```mermaid
-kanban
-  active[Active]
-    work_1[062 dude-canvas-workspace-integration]
-```
+No current work to diagram.
 
 ## Planned
 
@@ -99,6 +89,7 @@ kanban
 - `059` · `annotation-direct-manipulation` — Annotation Direct Manipulation (`.dude/ideas/059-annotation-direct-manipulation.md`)
 - `060` · `recoverable-work-handoffs` — Recoverable Work Handoffs (`.dude/ideas/060-recoverable-work-handoffs.md`)
 - `061` · `work-inspection-source-capacity` — Work Inspection Source Capacity (`.dude/ideas/061-work-inspection-source-capacity.md`)
+- `062` · `dude-canvas-workspace-integration` — Dude Canvas Workspace Integration (`.dude/ideas/062-dude-canvas-workspace-integration.md`)
 - `063` · `dude-canvas-settings` — Dude Canvas Settings (`.dude/ideas/063-dude-canvas-settings.md`)
 - `064` · `work-receipt-overflow-handling` — Work Receipt Overflow Handling (`.dude/ideas/064-work-receipt-overflow-handling.md`)
 - `065` · `work-history-event-compaction` — Work History Event Compaction (`.dude/ideas/065-work-history-event-compaction.md`)
@@ -106,6 +97,7 @@ kanban
 - `074` · `dude-canvas-about` — Dude Canvas About (`.dude/ideas/074-dude-canvas-about.md`)
 - `075` · `dude-development-base-release` — Dude Development Base Release (`.dude/ideas/075-dude-development-base-release.md`)
 - `076` · `duplicate-feature-number-prefixes` — Duplicate Feature Number Prefixes (`.dude/ideas/076-duplicate-feature-number-prefixes.md`)
+- `077` · `work-model-packet-capacity` — Work Model Packet Capacity (`.dude/ideas/077-work-model-packet-capacity.md`)
 
 ## Dependency and order notes
 

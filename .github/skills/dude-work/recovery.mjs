@@ -113,7 +113,7 @@ const MAX_SOURCE_ENTRIES = 64;
 const MAX_IDEA_INVENTORY_ENTRIES = 999;
 const MAX_RETAINED_DESCRIPTORS = 64;
 const MAX_ERROR_JSON_BYTES = 8_192;
-const MAX_PACKET_BYTES = 131_072;
+const MAX_PACKET_BYTES = 262_144;
 const MAX_REGISTRY_ENTRIES = 64;
 const MAX_RUNTIME_RESULT_DEPTH = 32;
 const MAX_RUNTIME_RESULT_ENTRIES = 4096;
@@ -11826,6 +11826,22 @@ function remainingProjectionItemsV2(inspection, items) {
       !== canonicalJson(expected)) return { reason: 'projection-conflict' };
   }
   return { items: items.slice(prefix) };
+}
+
+/**
+ * Count the leading events of one exact batch that a fresh Inspection already
+ * retains once, byte-equivalent, on both current-run and lane history. A lane
+ * write for that prefix would change no bytes, and settlement still reverifies
+ * both surfaces. A one-sided or conflicting prefix returns its closed reason.
+ * @param {Record<string, unknown>} inspection @param {unknown} batchValue
+ * @returns {{reason:string}|{count:number}}
+ */
+export function retainedProjectionPrefixV2(inspection, batchValue) {
+  const batch = /** @type {Record<string, unknown>} */ (validateProjectionBatchV1(batchValue));
+  const items = /** @type {Record<string, unknown>[]} */ (batch.events)
+    .map((event, index) => v2ProjectionPlanItem(event, `ProjectionBatchV1.events[${index}]`));
+  const remaining = remainingProjectionItemsV2(inspection, items);
+  return 'reason' in remaining ? remaining : { count: items.length - remaining.items.length };
 }
 
 /**

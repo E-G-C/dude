@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * Feature 057 T012 installed-host acceptance.
+ * Features 057 and 062 T012 installed-host acceptance.
  *
  * This is an explicitly invoked acceptance driver, not a recursively discovered
  * unit test. It installs the current release into owned fixtures, starts the
@@ -124,6 +124,41 @@ const SPEC_PATH = `.dude/specs/${REVIEW_ID}-${REVIEW_SLUG}/spec.md`;
 const DESIGN_ROOT = `.dude/specs/${REVIEW_ID}-${REVIEW_SLUG}/design`;
 const MOCK_PATH = `${DESIGN_ROOT}/mock.html`;
 const CSS_PATH = `${DESIGN_ROOT}/mock.css`;
+/**
+ * Fixed date written into the synthetic control fixture's log. It is fixture
+ * content, not the time any source was read; `seedWorkspaceTaskFixtures`
+ * records the actual source acquisition window separately.
+ */
+const SYNTHETIC_FIXTURE_DATE = '2026-09-28T16:17:39Z';
+const WORKSPACE_052 = Object.freeze({
+  ideaPath: '.dude/ideas/052-dude-canvas-ui.md',
+  specPath: '.dude/specs/052-dude-canvas-ui/spec.md',
+  tasksPath: '.dude/specs/052-dude-canvas-ui/tasks.md',
+  selectedTaskKey: 'T013@052rel13',
+  archivedTaskKey: 'T004@052send4',
+});
+const WORKSPACE_062 = Object.freeze({
+  ideaPath: '.dude/ideas/062-dude-canvas-workspace-integration.md',
+  specPath: '.dude/specs/062-dude-canvas-workspace-integration/spec.md',
+  tasksPath: '.dude/specs/062-dude-canvas-workspace-integration/tasks.md',
+  designPath: '.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html',
+  taskKeys: Object.freeze([
+    'T001@a062c1d4',
+    'T002@b062d2e5',
+    'T003@c062e3f6',
+    'T004@d062f4a7',
+    'T005@e062a5b8',
+  ]),
+  selectedTaskKey: 'T005@e062a5b8',
+});
+const TASK_CONTROL = Object.freeze({
+  ideaPath: '.dude/ideas/063-installed-task-controls.md',
+  specPath: '.dude/specs/063-installed-task-controls/spec.md',
+  tasksPath: '.dude/specs/063-installed-task-controls/tasks.md',
+  readyTaskKey: 'T001@c012c001',
+  waitingTaskKey: 'T002@c012c002',
+  blockedTaskKey: 'T003@c012c003',
+});
 const PACK_NAME = 'installed-roundtrip';
 const PACK_MANIFEST_PATH = `library/packs/${PACK_NAME}/pack.md`;
 const PACK_SOURCE_PATH =
@@ -180,6 +215,8 @@ const SOURCE_REVIEW_MODULES = Object.freeze({
   'ui/review/styles.css': '20e3430b0e0111584f2c4d06352f69182cdeb3eff522db1a088d858fc23871af',
 });
 const APPROVED_HASHES = Object.freeze({
+  [WORKSPACE_062.designPath]:
+    '1508fe1efaf6a5228784dee8c140a569927bf27eb1dfc9244679b6ae80ec2962',
   '.dude/specs/057-dude-canvas-needs-you/design/needs-you-workspace.html':
     '6cd15f3e695e9129356f70f6b55e0ad7b7e12023b6a2926da4dec29dced5d5ee',
   '.dude/specs/057-dude-canvas-needs-you/design/needs-you-workspace.jsx':
@@ -196,6 +233,10 @@ const APPROVED_HASHES = Object.freeze({
 
 const { buildRelease, parseManifestDocument } =
   await import(pathToFileURL(path.join(ROOT, 'scripts/build-release.mjs')));
+const { parseTasks } = await import(pathToFileURL(path.join(
+  ROOT,
+  'src/skills/dude-engine/lib/tasks.mjs',
+)));
 const { parseDevelopmentBaseRelease, renderDevelopmentBaseRelease } = await import(pathToFileURL(path.join(
   ROOT,
   'src/skills/dude-engine/lib/development-base-release.mjs',
@@ -231,6 +272,248 @@ function write(root, relative, value) {
   const absolute = path.join(root, ...relative.split('/'));
   fs.mkdirSync(path.dirname(absolute), { recursive: true });
   fs.writeFileSync(absolute, value);
+}
+
+const WORKSPACE_SOURCE_PATHS = Object.freeze([
+  WORKSPACE_052.ideaPath,
+  WORKSPACE_052.specPath,
+  WORKSPACE_052.tasksPath,
+  WORKSPACE_062.ideaPath,
+  WORKSPACE_062.specPath,
+  WORKSPACE_062.tasksPath,
+  WORKSPACE_062.designPath,
+]);
+
+function workspaceSourceHashes() {
+  return Object.fromEntries(WORKSPACE_SOURCE_PATHS.map((relative) => [
+    relative,
+    { bytes: sourceBytes(relative).length, sha256: sha256(sourceBytes(relative)) },
+  ]));
+}
+
+/**
+ * Change only canonical task glyphs in a frozen disposable copy. Parser line
+ * offsets identify the exact headers; the board and execution history stay
+ * byte-identical and remain non-authoritative input.
+ * @param {Buffer} sourceBytesValue
+ * @param {string} sourcePath
+ */
+function plannedTaskSnapshot(sourceBytesValue, sourcePath) {
+  const sourceText = sourceBytesValue.toString('utf8');
+  const parsed = parseTasks(sourceText, { path: sourcePath });
+  assert.equal(parsed.boardIssue, null, `${sourcePath} has a valid generated board`);
+  assert.deepEqual(parsed.warnings, [], `${sourcePath} has canonical task syntax`);
+  const replacements = parsed.tasks.map((task) => {
+    const line = parsed.lineMeta[task.headerLine];
+    const text = sourceText.slice(line.startOffset, line.contentEndOffset);
+    const token = `[${task.glyph}]`;
+    const tokenOffset = text.indexOf(token);
+    assert.ok(tokenOffset >= 2, `canonical glyph found for ${task.id}`);
+    assert.equal(text.startsWith(`- [${task.glyph}] ${task.id} `), true,
+      `canonical header found for ${task.id}`);
+    return {
+      taskKey: task.id,
+      sourceState: task.state,
+      offset: line.startOffset + tokenOffset + 1,
+    };
+  }).sort((a, b) => a.offset - b.offset);
+  let cursor = 0;
+  const parts = [];
+  for (const replacement of replacements) {
+    parts.push(sourceText.slice(cursor, replacement.offset), ' ');
+    cursor = replacement.offset + 1;
+  }
+  parts.push(sourceText.slice(cursor));
+  const snapshot = Buffer.from(parts.join(''));
+  assert.equal(snapshot.length, sourceBytesValue.length,
+    'planned-state projection changes one ASCII glyph byte per canonical task');
+  const planned = parseTasks(snapshot.toString('utf8'), { path: sourcePath });
+  assert.deepEqual(planned.warnings, []);
+  assert.deepEqual(planned.tasks.map((task) => task.id), parsed.tasks.map((task) => task.id));
+  assert.ok(planned.tasks.every((task) => task.state === 'todo'));
+  return {
+    snapshot,
+    source: parsed,
+    planned,
+    replacements,
+  };
+}
+
+/**
+ * Return the same full-unit boundary used by the file-backed projection for
+ * these canonical fixtures: the task header through the next phase/task or
+ * execution history.
+ * @param {ReturnType<typeof parseTasks>} parsed
+ * @param {string} taskKey
+ */
+function taskUnit(parsed, taskKey) {
+  const task = parsed.byId.get(taskKey);
+  assert.ok(task, `fixture contains ${taskKey}`);
+  const start = parsed.lineMeta[task.headerLine].startOffset;
+  const activeEnd = parsed.history?.startOffset ?? parsed.source.length;
+  let end = activeEnd;
+  const nextTaskLine = parsed.tasks
+    .filter((candidate) => candidate.headerLine > task.headerLine)
+    .map((candidate) => candidate.headerLine)
+    .sort((a, b) => a - b)[0] ?? Number.POSITIVE_INFINITY;
+  for (let line = task.headerLine + 1; line < parsed.lineMeta.length; line += 1) {
+    if (line === nextTaskLine || /^#{2,3}\s+/.test(parsed.lines[line])) {
+      end = parsed.lineMeta[line].startOffset;
+      break;
+    }
+  }
+  return parsed.source.slice(start, end);
+}
+
+/**
+ * Source-backed snapshots live only in this owned release fixture. 062 keeps
+ * its five canonical bodies but projects every canonical glyph to planned;
+ * 052 is copied byte-for-byte so its current Done cases and archived exclusion
+ * remain real source behavior. The snapshot is read from the current source on
+ * every run, so it records when that read started and finished.
+ * @param {string} root
+ */
+function seedWorkspaceTaskFixtures(root) {
+  const acquisitionStartedAt = new Date().toISOString();
+  const source062Tasks = sourceBytes(WORKSPACE_062.tasksPath);
+  const frozen062 = plannedTaskSnapshot(source062Tasks, WORKSPACE_062.tasksPath);
+  assert.deepEqual(frozen062.planned.tasks.map((task) => task.id), WORKSPACE_062.taskKeys);
+  assert.deepEqual(frozen062.planned.tasks.map((task) => task.state), Array(5).fill('todo'));
+
+  const source052Tasks = sourceBytes(WORKSPACE_052.tasksPath);
+  const parsed052 = parseTasks(source052Tasks.toString('utf8'), { path: WORKSPACE_052.tasksPath });
+  assert.equal(parsed052.boardIssue, null);
+  assert.deepEqual(parsed052.warnings, []);
+  assert.equal(parsed052.tasks.length, 13);
+  assert.ok(parsed052.tasks.every((task) => task.state === 'done'));
+  assert.ok(source052Tasks.includes(Buffer.from(WORKSPACE_052.archivedTaskKey)),
+    'the source retains the archived 052 task record');
+  assert.equal(parsed052.byId.has(WORKSPACE_052.archivedTaskKey), false,
+    'the archived 052 task is not a canonical visible unit');
+
+  for (const relative of [
+    WORKSPACE_052.ideaPath,
+    WORKSPACE_052.specPath,
+    WORKSPACE_052.tasksPath,
+    WORKSPACE_062.ideaPath,
+    WORKSPACE_062.specPath,
+    WORKSPACE_062.designPath,
+  ]) {
+    write(root, relative, sourceBytes(relative));
+  }
+  write(root, WORKSPACE_062.tasksPath, frozen062.snapshot);
+
+  const controlTasks = [
+    '# Tasks',
+    '',
+    '## Phase 1: Controlled installed distinctions',
+    `- [ ] ${TASK_CONTROL.readyTaskKey} Controlled ready task`,
+    '',
+    'Source-backed control: recorded dependencies are satisfied.',
+    '',
+    'Acceptance: readiness remains recorded data and grants no execution authority.',
+    '',
+    `- [ ] ${TASK_CONTROL.waitingTaskKey} Controlled dependency-waiting task`,
+    `    deps: ${TASK_CONTROL.readyTaskKey}`,
+    '',
+    'Source-backed control: this task waits on its recorded dependency.',
+    '',
+    'Acceptance: dependency waiting stays distinct from an explicit blocker.',
+    '',
+    `- [!] ${TASK_CONTROL.blockedTaskKey} Controlled explicitly blocked task`,
+    `    blocked-by: external-dependency: controlled installed blocker`,
+    '',
+    'Source-backed control: the explicit blocker is literal fixture data.',
+    '',
+    'Acceptance: the blocker reason is shown without a live-agent claim.',
+    '',
+  ].join('\n');
+  write(root, TASK_CONTROL.ideaPath, [
+    '---',
+    'title: Installed task coverage controls',
+    'slug: installed-task-controls',
+    'status: defined',
+    `spec_path: ${TASK_CONTROL.specPath}`,
+    '---',
+    '',
+    '## Idea',
+    '',
+    'Controlled source-backed distinctions for installed read-only acceptance.',
+    '',
+    '## Coordinator Log',
+    '',
+    `- ${SYNTHETIC_FIXTURE_DATE} - Synthetic installed task-coverage fixture created.`,
+    '',
+  ].join('\n'));
+  write(root, TASK_CONTROL.specPath, [
+    '---',
+    'title: Installed task coverage controls',
+    '---',
+    '',
+    '# Installed Task Coverage Controls',
+    '',
+    'This frozen fixture is controlled test data, not live project work.',
+    '',
+  ].join('\n'));
+  write(root, TASK_CONTROL.tasksPath, controlTasks);
+  const parsedControl = parseTasks(controlTasks, { path: TASK_CONTROL.tasksPath });
+  assert.deepEqual(parsedControl.warnings, []);
+  const approvedDesignRevision = revision(sourceBytes(WORKSPACE_062.designPath));
+  const sourceAcquisition = {
+    startedAt: acquisitionStartedAt,
+    completedAt: new Date().toISOString(),
+  };
+
+  return {
+    kind: 'frozen-disposable-source-snapshot',
+    sourceAcquisition,
+    syntheticFixtureDate: SYNTHETIC_FIXTURE_DATE,
+    sourceRoot: ROOT,
+    fixtureRoot: root,
+    records: {
+      '062': {
+        ideaPath: WORKSPACE_062.ideaPath,
+        specPath: WORKSPACE_062.specPath,
+        tasksPath: WORKSPACE_062.tasksPath,
+        designPath: WORKSPACE_062.designPath,
+        sourceTasksRevision: revision(source062Tasks),
+        fixtureTasksRevision: revision(frozen062.snapshot),
+        approvedDesignRevision,
+        canonicalTaskKeys: frozen062.planned.tasks.map((task) => task.id),
+        sourceStates: frozen062.replacements.map(({ taskKey, sourceState }) => ({ taskKey, sourceState })),
+        fixtureStates: frozen062.planned.tasks.map((task) => ({ taskKey: task.id, state: task.state })),
+        changedOffsets: frozen062.replacements.map(({ taskKey, offset }) => ({ taskKey, offset })),
+        selectedTaskInstruction: taskUnit(frozen062.planned, WORKSPACE_062.selectedTaskKey),
+      },
+      '052': {
+        ideaPath: WORKSPACE_052.ideaPath,
+        specPath: WORKSPACE_052.specPath,
+        tasksPath: WORKSPACE_052.tasksPath,
+        sourceTasksRevision: revision(source052Tasks),
+        fixtureTasksRevision: revision(source052Tasks),
+        canonicalTaskKeys: parsed052.tasks.map((task) => task.id),
+        fixtureStates: parsed052.tasks.map((task) => ({ taskKey: task.id, state: task.state })),
+        archivedTask: {
+          taskKey: WORKSPACE_052.archivedTaskKey,
+          retainedInSource: true,
+          canonical: false,
+        },
+        selectedTaskInstruction: taskUnit(parsed052, WORKSPACE_052.selectedTaskKey),
+      },
+      controlled: {
+        ideaPath: TASK_CONTROL.ideaPath,
+        specPath: TASK_CONTROL.specPath,
+        tasksPath: TASK_CONTROL.tasksPath,
+        fixtureTasksRevision: revision(controlTasks),
+        canonicalTaskKeys: parsedControl.tasks.map((task) => task.id),
+        fixtureStates: parsedControl.tasks.map((task) => ({ taskKey: task.id, state: task.state })),
+        instructions: Object.fromEntries(parsedControl.tasks.map((task) => [
+          task.id,
+          taskUnit(parsedControl, task.id),
+        ])),
+      },
+    },
+  };
 }
 
 /**
@@ -2418,6 +2701,504 @@ function settle(page) {
     'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
 }
 
+/** @param {Cdp} page @param {string} key @param {string} [code] @param {number} [modifiers] */
+async function pressKey(page, key, code = key, modifiers = 0) {
+  const virtual = {
+    Enter: 13, Tab: 9, Escape: 27, Home: 36, PageDown: 34,
+    ArrowDown: 40, ArrowUp: 38, ArrowLeft: 37, ArrowRight: 39,
+  }[key] ?? 0;
+  await page.send('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key,
+    code,
+    modifiers,
+    windowsVirtualKeyCode: virtual,
+    nativeVirtualKeyCode: virtual,
+    ...(key === 'Enter' ? { text: '\r', unmodifiedText: '\r' } : {}),
+  });
+  await page.send('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key,
+    code,
+    modifiers,
+    windowsVirtualKeyCode: virtual,
+    nativeVirtualKeyCode: virtual,
+  });
+}
+
+/**
+ * @param {Cdp} page
+ * @param {number} width
+ * @param {'light'|'dark'} theme
+ * @param {number} [height]
+ * @param {number} [deviceScaleFactor]
+ */
+async function installedViewport(page, width, theme, height = 900, deviceScaleFactor = 1) {
+  await page.send('Emulation.setDeviceMetricsOverride', {
+    width,
+    height,
+    deviceScaleFactor,
+    mobile: false,
+  });
+  await page.send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-color-scheme', value: theme }],
+  });
+  await until(() => evaluate(page, `innerWidth === ${width}
+    && devicePixelRatio === ${deviceScaleFactor}
+    && matchMedia('(prefers-color-scheme: dark)').matches === ${theme === 'dark'}`),
+  `installed ${width}px ${theme} viewport`);
+  await until(() => evaluate(page, `document.getAnimations()
+    .filter((animation) => animation.playState === 'running').length === 0`),
+  `installed ${width}px ${theme} settled paint`);
+  await settle(page);
+}
+
+/**
+ * Persist and assert the installed renderer's screenshot, AX tree, geometry,
+ * target sizes, and computed text contrast.
+ * @param {Cdp} page
+ * @param {string} name
+ * @param {string[]} [expectedAxNames]
+ */
+async function auditInstalledWorkspace(page, name, expectedAxNames = []) {
+  await until(() => evaluate(page, `document.getAnimations()
+    .filter((animation) => animation.playState === 'running').length === 0`),
+  `${name} settled paint`);
+  await settle(page);
+  const image = await screenshot(page, name);
+  const tree = await page.send('Accessibility.getFullAXTree');
+  const axPath = path.join(RUN, `${name}.ax.json`);
+  fs.writeFileSync(axPath, `${JSON.stringify(tree, null, 2)}\n`);
+  const namedRoles = new Set([
+    'button', 'checkbox', 'combobox', 'listbox', 'option', 'radio',
+    'radiogroup', 'tab', 'tabpanel', 'textbox', 'toolbar',
+  ]);
+  const unnamed = tree.nodes.filter((node) => (
+    !node.ignored && namedRoles.has(node.role?.value) && !node.name?.value
+  )).map((node) => ({ nodeId: node.nodeId, role: node.role?.value }));
+  assert.deepEqual(unnamed, [], `${name}: every interactive AX widget has a name`);
+  for (const expected of expectedAxNames) {
+    assert.equal(tree.nodes.some((node) => (
+      !node.ignored && String(node.name?.value ?? '').includes(expected)
+    )), true, `${name}: AX tree contains ${expected}`);
+  }
+
+  const geometry = await evaluate(page, `(() => {
+    const clientWidth = document.documentElement.clientWidth;
+    const controls = [...document.querySelectorAll(
+      'button:not(:disabled):not([aria-disabled="true"]),'
+      + 'input:not(:disabled),textarea:not(:disabled),'
+      + '[role=tab],[data-work-path],[data-task-key],[data-task-filter]'
+    )].filter((node) => node.getClientRects().length).map((node) => {
+      const rect = node.getBoundingClientRect();
+      return {
+        name: node.getAttribute('aria-label') || node.textContent.trim().slice(0, 120)
+          || node.getAttribute('name') || node.tagName,
+        x: rect.x,
+        right: rect.right,
+        width: rect.width,
+        height: rect.height,
+      };
+    });
+    const frame = document.querySelector('.fui-FluentProvider > div')?.getBoundingClientRect();
+    return {
+      innerWidth,
+      clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      bodyScrollWidth: document.body.scrollWidth,
+      frame: frame?.toJSON(),
+      controls,
+      activeElement: {
+        tag: document.activeElement?.tagName ?? null,
+        name: document.activeElement?.getAttribute('aria-label')
+          || document.activeElement?.textContent?.trim().slice(0, 120) || null,
+      },
+    };
+  })()`);
+  const geometryPath = path.join(RUN, `${name}.geometry.json`);
+  fs.writeFileSync(geometryPath, `${JSON.stringify(geometry, null, 2)}\n`);
+  assert.ok(geometry.scrollWidth <= geometry.clientWidth + 1, `${name}: no page horizontal overflow`);
+  assert.ok(geometry.bodyScrollWidth <= geometry.clientWidth + 1, `${name}: body fits viewport`);
+  assert.ok(Math.abs(geometry.frame.x) <= 1 && geometry.frame.right <= geometry.clientWidth + 1,
+    `${name}: application frame fits viewport`);
+  assert.deepEqual(
+    geometry.controls.filter((control) => control.width < 24 || control.height < 24),
+    [],
+    `${name}: active interaction targets are at least 24 by 24 CSS pixels`,
+  );
+  assert.deepEqual(
+    geometry.controls.filter((control) => control.x < -1 || control.right > geometry.clientWidth + 1),
+    [],
+    `${name}: active interaction targets are not horizontally clipped`,
+  );
+
+  const contrast = await evaluate(page, `(() => {
+    const channels = (value) => (value.match(/[\\d.]+/g) || []).slice(0, 4).map(Number);
+    const composite = (top, bottom) => {
+      const alpha = top[3] === undefined ? 1 : top[3];
+      return top.slice(0, 3).map((value, index) => value * alpha + bottom[index] * (1 - alpha));
+    };
+    const background = (element) => {
+      let result = [255, 255, 255];
+      const layers = [];
+      for (let node = element; node; node = node.parentElement) {
+        const value = channels(getComputedStyle(node).backgroundColor);
+        if (value.length >= 3 && (value[3] ?? 1) > 0) layers.push(value);
+      }
+      for (const layer of layers.reverse()) result = composite(layer, result);
+      return result;
+    };
+    const luminance = (rgb) => rgb.map((value) => value / 255)
+      .map((value) => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4)
+      .reduce((sum, value, index) => sum + value * [.2126, .7152, .0722][index], 0);
+    return [...document.querySelectorAll(
+      'h1,h2,h3,p,label,button:not(:disabled):not([aria-disabled="true"]),'
+      + '[role=tab],[data-work-number],[data-task-key],[data-task-detail]'
+    )].filter((node) => node.getClientRects().length && node.textContent.trim()).map((node) => {
+      const style = getComputedStyle(node);
+      const foreground = channels(style.color);
+      const bg = background(node);
+      const light = Math.max(luminance(foreground), luminance(bg));
+      const dark = Math.min(luminance(foreground), luminance(bg));
+      const size = Number.parseFloat(style.fontSize);
+      const weight = Number.parseInt(style.fontWeight, 10) || 400;
+      const threshold = size >= 24 || (size >= 18.66 && weight >= 700) ? 3 : 4.5;
+      return {
+        text: node.textContent.trim().slice(0, 120),
+        foreground: style.color,
+        background: 'rgb(' + bg.join(', ') + ')',
+        ratio: (light + .05) / (dark + .05),
+        threshold,
+      };
+    });
+  })()`);
+  const contrastPath = path.join(RUN, `${name}.contrast.json`);
+  fs.writeFileSync(contrastPath, `${JSON.stringify(contrast, null, 2)}\n`);
+  assert.ok(contrast.length > 0, `${name}: contrast audit found rendered text`);
+  assert.deepEqual(
+    contrast.filter((sample) => sample.ratio + 0.001 < sample.threshold),
+    [],
+    `${name}: rendered active text meets WCAG contrast`,
+  );
+  return {
+    name,
+    screenshot: image,
+    ax: { path: axPath, sha256: sha256(fs.readFileSync(axPath)), nodes: tree.nodes.length },
+    geometry: {
+      path: geometryPath,
+      sha256: sha256(fs.readFileSync(geometryPath)),
+      controls: geometry.controls.length,
+      usableViewport: geometry.clientWidth,
+      activeElement: geometry.activeElement,
+    },
+    contrast: {
+      path: contrastPath,
+      sha256: sha256(fs.readFileSync(contrastPath)),
+      samples: contrast.length,
+      minimum: Math.min(...contrast.map((sample) => sample.ratio)),
+    },
+  };
+}
+
+/** Text within this many CSS pixels of a clipping edge counts as inside, as in the audits above. */
+const READING_EDGE_TOLERANCE = 1;
+
+/**
+ * The selected instruction as a reader sees it. One DOM Range over the unit's
+ * single text node yields every rendered line. Each line is clipped by every
+ * ancestor whose overflow is not visible, the layout viewport, and the visual
+ * viewport, which is narrower than the layout viewport at page scale. The
+ * middle of its unclipped part is hit-tested in layout-viewport coordinates, as
+ * Edge's elementFromPoint expects, so covered text does not count. The
+ * expression first waits until scroll positions hold still for two frames.
+ * @param {string} taskKey
+ * @param {Record<string,[number,number]>} passages named [start, end) offsets
+ */
+function instructionView(taskKey, passages) {
+  return `(async () => {
+    const host = document.querySelector('[data-task-instruction="${taskKey}"]');
+    const text = host?.firstChild;
+    if (!host || host.childNodes.length !== 1 || text.nodeType !== Node.TEXT_NODE) return null;
+    const clippers = [];
+    for (let node = host; node; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (node === document.documentElement || style.overflowX !== 'visible'
+        || style.overflowY !== 'visible') clippers.push(node);
+    }
+    const positions = () => JSON.stringify([visualViewport.offsetLeft, visualViewport.offsetTop,
+      visualViewport.scale, clippers.map((node) => [node.scrollLeft, node.scrollTop])]);
+    let last = positions();
+    let still = 0;
+    for (let frame = 0; frame < 120 && still < 2; frame += 1) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const next = positions();
+      still = next === last ? still + 1 : 0;
+      last = next;
+    }
+    if (still < 2) throw new Error('instruction scroll positions did not settle within 120 frames');
+    const viewport = visualViewport;
+    let clip = { left: viewport.offsetLeft, top: viewport.offsetTop,
+      right: viewport.offsetLeft + viewport.width, bottom: viewport.offsetTop + viewport.height };
+    const scrollers = clippers.map((node) => {
+      const box = node.getBoundingClientRect();
+      const left = box.left + node.clientLeft;
+      const top = box.top + node.clientTop;
+      const edges = [left, top, left + node.clientWidth, top + node.clientHeight];
+      clip = { left: Math.max(clip.left, edges[0]), top: Math.max(clip.top, edges[1]),
+        right: Math.min(clip.right, edges[2]), bottom: Math.min(clip.bottom, edges[3]) };
+      return { element: node === host ? 'instruction' : node.tagName.toLowerCase(), edges,
+        scrollLeft: node.scrollLeft, scrollTop: node.scrollTop,
+        clientHeight: node.clientHeight, scrollHeight: node.scrollHeight };
+    });
+    const lines = (start, end) => {
+      const range = document.createRange();
+      range.setStart(text, start);
+      range.setEnd(text, end);
+      const merged = [];
+      for (const rect of range.getClientRects()) {
+        if (rect.width < 0.5 || rect.height < 0.5) continue;
+        const line = merged.find((entry) => Math.abs(entry[1] - rect.top) < 0.5
+          && Math.abs(entry[3] - rect.bottom) < 0.5);
+        if (line) {
+          line[0] = Math.min(line[0], rect.left);
+          line[2] = Math.max(line[2], rect.right);
+        } else merged.push([rect.left, rect.top, rect.right, rect.bottom]);
+      }
+      return merged.map(([left, top, right, bottom]) => {
+        const inside = top >= clip.top - ${READING_EDGE_TOLERANCE}
+          && bottom <= clip.bottom + ${READING_EDGE_TOLERANCE};
+        const from = Math.max(left, clip.left);
+        const to = Math.min(right, clip.right);
+        let hit = null;
+        if (inside && to - from >= 1) {
+          const target = document.elementFromPoint((from + to) / 2, (top + bottom) / 2);
+          hit = Boolean(target && host.contains(target));
+        }
+        return { left, top, right, bottom, inside, hit, visible: inside && hit ? [from, to] : null };
+      });
+    };
+    const active = document.activeElement;
+    return {
+      visualViewport: { scale: viewport.scale, offsetLeft: viewport.offsetLeft,
+        offsetTop: viewport.offsetTop, width: viewport.width, height: viewport.height },
+      clip,
+      scrollers,
+      focus: active === host ? 'instruction'
+        : active?.matches('[data-task-detail]') ? 'detail'
+          : active?.getAttribute('aria-label') || active?.tagName || null,
+      unit: lines(0, text.length),
+      passages: Object.fromEntries(Object.entries(${JSON.stringify(passages)})
+        .map(([name, [start, end]]) => [name, lines(start, end)])),
+    };
+  })()`;
+}
+
+/** @param {{top:number,bottom:number}} line @param {{clip:{top:number,bottom:number}}} view */
+function lineScrollKey(line, view) {
+  if (line.top < view.clip.top - READING_EDGE_TOLERANCE) return 'ArrowUp';
+  if (line.bottom > view.clip.bottom + READING_EDGE_TOLERANCE) return 'ArrowDown';
+  return null;
+}
+
+/** @param {{visualViewport:Record<string,number>,scrollers:Record<string,number>[]}} view */
+function readingPosition(view) {
+  return JSON.stringify([view.visualViewport.offsetLeft, view.visualViewport.offsetTop,
+    view.scrollers.map((scroller) => [scroller.scrollLeft, scroller.scrollTop])]);
+}
+
+/**
+ * Merge the unclipped spans recorded for one line across reading positions.
+ * @param {{left:number,right:number}} line @param {[number,number][]} spans
+ */
+function lineCoverage(line, spans) {
+  const merged = [];
+  for (const [from, to] of [...spans].sort((a, b) => a[0] - b[0])) {
+    const previous = merged.at(-1);
+    if (previous && from <= previous[1] + READING_EDGE_TOLERANCE) previous[1] = Math.max(previous[1], to);
+    else merged.push([from, to]);
+  }
+  return {
+    covered: merged.some(([from, to]) => from <= line.left + READING_EDGE_TOLERANCE
+      && to >= line.right - READING_EDGE_TOLERANCE),
+    spans: merged,
+  };
+}
+
+/**
+ * Read the selected instruction with the keyboard at the current viewport.
+ * Tab/Shift+Tab reach its row and Enter re-opens it; the product focuses and
+ * scrolls the detail. In the dock the instruction is its own focusable scroll
+ * region, so Tab moves into it. Arrow keys then move from the unit's first line
+ * to its last. When lines are wider than the visible band (page scale), that
+ * downward pass is followed by ArrowRight panning and an upward pass. Every
+ * rendered line must be unclipped and unobscured at some recorded position; the
+ * named passages are captured where they are in view, the start through the
+ * existing audit. A passage that fits the band must be readable at once.
+ * @param {Cdp} page
+ * @param {string} name
+ * @param {string} taskKey
+ * @param {Record<string,[number,number]>} passages
+ * @param {string[]} expectedAxNames
+ */
+async function readSelectedInstruction(page, name, taskKey, passages, expectedAxNames) {
+  const view = () => evaluate(page, instructionView(taskKey, passages));
+  const keys = [];
+  const press = async (key, shift = false) => {
+    assert.ok(keys.length < 400, `${name}: keyboard reading stays bounded`);
+    await pressKey(page, key, key, shift ? 8 : 0);
+    keys.push(shift ? `Shift+${key}` : key);
+  };
+  const beforeReveal = await view();
+  assert.ok(beforeReveal, `${name}: the selected instruction is one rendered text node`);
+  for (;;) {
+    const where = await evaluate(page, `(() => {
+      const row = document.querySelector('[data-task-key="${taskKey}"]');
+      if (row === document.activeElement) return 'row';
+      return row.compareDocumentPosition(document.activeElement) & Node.DOCUMENT_POSITION_FOLLOWING
+        ? 'after' : 'before';
+    })()`);
+    if (where === 'row') break;
+    await press('Tab', where === 'after');
+  }
+  await press('Enter');
+  await until(() => evaluate(page, `document.activeElement === document.querySelector(
+    '[data-task-detail="${taskKey}"]')`), `${name}: Enter focuses the selected task detail`);
+  while (await evaluate(page, `(() => {
+    const node = document.querySelector('[data-task-instruction="${taskKey}"]');
+    return node.tabIndex === 0 && node !== document.activeElement;
+  })()`)) await press('Tab');
+
+  let current = await view();
+  const reference = current;
+  const groups = () => [['unit', current.unit], ...Object.entries(current.passages)];
+  const seen = Object.fromEntries(groups().map(([group, lines]) => [group, lines.map(() => [])]));
+  const steps = [];
+  const observe = (key) => {
+    for (const [group, lines] of groups()) {
+      const expected = group === 'unit' ? reference.unit : reference.passages[group];
+      assert.equal(lines.length, expected.length, `${name}: ${group} line layout stays stable`);
+      lines.forEach((line, index) => {
+        assert.ok(Math.abs(line.left - expected[index].left) < 0.5
+          && Math.abs(line.right - expected[index].right) < 0.5,
+        `${name}: ${group} line ${index} keeps its horizontal extent`);
+        if (line.visible) seen[group][index].push(line.visible);
+      });
+    }
+    assert.ok(['detail', 'instruction'].includes(current.focus),
+      `${name}: keyboard focus stays in the selected task detail (${current.focus})`);
+    steps.push({ key, position: JSON.parse(readingPosition(current)),
+      readableLines: current.unit.filter((line) => line.visible).length });
+  };
+  const move = async (key) => {
+    const before = readingPosition(current);
+    await press(key);
+    current = await view();
+    assert.notEqual(readingPosition(current), before, `${name}: ${key} moves the reading position`);
+    observe(key);
+  };
+  const captures = {};
+  let audit = null;
+  const capture = async (suffix) => {
+    for (const [passage, lines] of Object.entries(current.passages)) {
+      const label = `${passage}${suffix}`;
+      if (captures[label] || !lines.every((line) => line.inside && line.hit !== false)
+        || !lines.some((line) => line.visible)) continue;
+      if (label === 'start') audit = await auditInstalledWorkspace(page, name, expectedAxNames);
+      captures[label] = {
+        keysBefore: keys.length,
+        screenshot: label === 'start' ? audit.screenshot : await screenshot(page, `${name}-${label}`),
+        view: current,
+      };
+    }
+  };
+  observe('reveal');
+  for (let key; (key = lineScrollKey(current.unit[0], current));) await move(key);
+  for (;;) {
+    await capture('');
+    if (lineScrollKey(current.unit.at(-1), current) !== 'ArrowDown') break;
+    await move('ArrowDown');
+  }
+  const panned = reference.unit.some((line, index) => !lineCoverage(line, seen.unit[index]).covered);
+  if (panned) {
+    const rightmost = Math.max(...reference.unit.map((line) => line.right));
+    while (current.clip.right < rightmost - READING_EDGE_TOLERANCE) await move('ArrowRight');
+    for (;;) {
+      await capture('-panned');
+      if (lineScrollKey(current.unit[0], current) !== 'ArrowUp') break;
+      await move('ArrowUp');
+    }
+  }
+  const coverage = (group, lines) => lines.map((line, index) => ({
+    index, extent: [line.left, line.right], ...lineCoverage(line, seen[group][index]),
+  }));
+  const unit = coverage('unit', reference.unit);
+  assert.deepEqual(unit.filter((line) => !line.covered), [],
+    `${name}: every rendered line of the selected instruction was readable at a recorded position`);
+  const passageResults = {};
+  for (const passage of Object.keys(passages)) {
+    assert.ok(captures[passage], `${name}: the ${passage} passage was brought into view and captured`);
+    const lines = coverage(passage, reference.passages[passage]);
+    assert.deepEqual(lines.filter((line) => !line.covered), [],
+      `${name}: every line of the ${passage} passage was readable`);
+    const at = captures[passage].view;
+    const band = at.clip.right - at.clip.left;
+    const fitsVisibleBand = reference.passages[passage].every((line) => (
+      line.right - line.left <= band + READING_EDGE_TOLERANCE));
+    const readableAtOnce = at.passages[passage].every((line) => line.visible
+      && line.visible[0] <= line.left + READING_EDGE_TOLERANCE
+      && line.visible[1] >= line.right - READING_EDGE_TOLERANCE);
+    if (fitsVisibleBand) {
+      assert.ok(readableAtOnce, `${name}: the ${passage} passage fits the visible band and is readable at once`);
+    }
+    passageResults[passage] = { fitsVisibleBand, readableAtOnce, lines,
+      captures: Object.keys(captures).filter((label) => label === passage || label === `${passage}-panned`) };
+  }
+  const keySummary = Object.entries(keys.reduce((counts, key) => ({ ...counts, [key]: (counts[key] ?? 0) + 1 }), {}))
+    .map(([key, count]) => `${key}x${count}`).join(', ');
+  const record = {
+    name,
+    taskKey,
+    edgeTolerance: READING_EDGE_TOLERANCE,
+    passages: Object.fromEntries(Object.entries(passages).map(([passage, [start, end]]) => [passage, { start, end }])),
+    beforeReveal: {
+      focus: beforeReveal.focus,
+      startReadable: beforeReveal.passages.start.every((line) => line.visible),
+      visualViewport: beforeReveal.visualViewport,
+      clip: beforeReveal.clip,
+      scrollers: beforeReveal.scrollers,
+      start: beforeReveal.passages.start.map(({ visible, ...line }) => line),
+    },
+    keys,
+    keySummary,
+    panned,
+    steps,
+    unitLines: unit.length,
+    unit,
+    passageResults,
+    captures,
+  };
+  const recordPath = path.join(RUN, `${name}.visibility.json`);
+  fs.writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`);
+  return {
+    keySummary,
+    audit: {
+      ...audit,
+      visibility: {
+        path: recordPath,
+        sha256: sha256(fs.readFileSync(recordPath)),
+        unitLines: unit.length,
+        panned,
+        keys: keys.length,
+        passages: Object.fromEntries(Object.entries(passageResults).map(([passage, result]) => [passage, {
+          fitsVisibleBand: result.fitsVisibleBand,
+          readableAtOnce: result.readableAtOnce,
+          captures: result.captures.map((label) => captures[label].screenshot),
+        }])),
+      },
+    },
+  };
+}
+
 /** @param {Cdp} page @param {{x:number,y:number}} point */
 async function movePointer(page, point) {
   await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y });
@@ -3140,6 +3921,32 @@ async function readCanvasProjection(canvasUrl) {
 }
 
 /**
+ * The UI commits selection before its asynchronous repository read settles.
+ * Wait for the installed server projection, not only the local heading.
+ * @param {string} canvasUrl
+ * @param {string} ideaPath
+ * @param {string} label
+ */
+function awaitSelectedProjection(canvasUrl, ideaPath, label) {
+  return until(async () => {
+    const current = await readCanvasProjection(canvasUrl);
+    return current.projection?.selected?.ideaPath === ideaPath
+      && current.projection.selected.explicit === true
+      ? current
+      : null;
+  }, label);
+}
+
+/** @param {string} canvasUrl */
+async function readWorkIndex(canvasUrl) {
+  const response = await fetch(new URL('/api/work-index', canvasUrl), {
+    signal: AbortSignal.timeout(10_000),
+  });
+  assert.equal(response.status, 200);
+  return response.json();
+}
+
+/**
  * Observe one real installed-host About read and its rendered installation
  * record: the release case by default, or a pre-seeded development base.
  * Settings is already open and its request dialog, if any, has been closed.
@@ -3389,7 +4196,11 @@ async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, model, cliV
   await click(page, `document.querySelector('[data-work-path="${fixture.work.ideaPath}"]')`);
   await until(() => evaluate(page, `document.querySelector('[aria-label="Working on"]')
     ?.textContent.includes('Installed pack host continuity')`), 'installed current-work selection');
-  const selectedProjection = await readCanvasProjection(canvasUrl);
+  const selectedProjection = await awaitSelectedProjection(
+    canvasUrl,
+    fixture.work.ideaPath,
+    'installed current-work server projection',
+  );
   const currentWork = {
     identity: await evaluate(page, `document.querySelector('[aria-label="Working on"]')
       ?.textContent.replace(/\\s+/g, ' ').trim()`),
@@ -3605,6 +4416,489 @@ async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, model, cliV
     verification: model.verification,
     result: model.result,
     screenshot: await screenshot(page, 'installed-pack-applied'),
+  };
+}
+
+/**
+ * Exercise the installed 062 task walkthrough against frozen source-backed
+ * 062/052 fixture copies before entering the independently scoped Review.
+ * @param {Cdp} page
+ * @param {string} canvasUrl
+ * @param {ReturnType<typeof seedWorkspaceTaskFixtures>} fixture
+ */
+async function driveInstalledTaskWalkthrough(page, canvasUrl, fixture) {
+  const inputSequence = [];
+  const audits = [];
+  const bodyMarker = 'Build frontend assets and project generated core using the plan\'s existing commands.';
+  const acceptanceMarker = 'Acceptance: SC-001–007 and VSC-001–003 have fresh evidence';
+  const draft = '  Installed task walkthrough draft\n\nRemains independent and unfiled.  ';
+  const expected062 = fixture.records['062'].selectedTaskInstruction;
+  const expected052 = fixture.records['052'].selectedTaskInstruction;
+  assert.ok(expected062.includes(bodyMarker));
+  assert.ok(expected062.includes(acceptanceMarker));
+
+  const selectWork = async (query, heading, ideaPath) => {
+    if (await evaluate(page, `Boolean(document.querySelector('[aria-label="Clear work selection"]'))`)) {
+      await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
+      inputSequence.push('pointer: Clear work selection');
+      assert.equal(await evaluate(page, `document.activeElement === ${field('Search work')}`), true);
+      assert.equal(await evaluate(page, `${field('Search work')}.value`), '');
+      assert.equal(await evaluate(page, `${field('Show')}.innerText.trim()`), 'All');
+    }
+    await fill(page, field('Search work'), query);
+    await evaluate(page, `${field('Search work')}.focus()`);
+    await pressKey(page, 'ArrowDown');
+    await pressKey(page, 'Enter');
+    inputSequence.push(`keyboard: Search work ${query}, ArrowDown, Enter`);
+    await until(() => evaluate(page, `document.querySelector('h1')?.textContent
+      .replace(/\\s+/g, ' ').trim() === ${JSON.stringify(heading)}`), `${heading} selected`);
+    const selected = (await awaitSelectedProjection(
+      canvasUrl,
+      ideaPath,
+      `${heading} installed projection`,
+    )).projection;
+    const expectedTaskKeys = selected.taskDetails?.items?.map((task) => task.taskKey) ?? [];
+    await until(() => evaluate(page, `!document.body.innerText.includes('Reading repository state')
+      && JSON.stringify([...document.querySelectorAll('[data-task-key]')]
+        .map((node) => node.dataset.taskKey)) === ${JSON.stringify(JSON.stringify(expectedTaskKeys))}`),
+    `${heading} rendered projection`);
+    return selected;
+  };
+
+  const initialIndex = await readWorkIndex(canvasUrl);
+  const indexText = JSON.stringify(initialIndex);
+  assert.equal(indexText.includes(bodyMarker), false,
+    'unselected work-index inventory carries no 062 full task body');
+  assert.equal(indexText.includes(acceptanceMarker), false,
+    'unselected work-index inventory carries no 062 acceptance body');
+  assert.ok(initialIndex.items.some((item) => item.ideaPath === WORKSPACE_052.ideaPath));
+  assert.ok(initialIndex.items.some((item) => item.ideaPath === WORKSPACE_062.ideaPath));
+  assert.ok(initialIndex.items.some((item) => item.ideaPath === TASK_CONTROL.ideaPath));
+  assert.equal(await evaluate(page, `Boolean(${field('Search work')})`), true);
+  assert.equal(await evaluate(page, `document.querySelectorAll('[aria-label="Working on"]').length`), 0);
+
+  let projection062 = await selectWork(
+    '062',
+    '062 Dude Canvas Workspace Integration',
+    WORKSPACE_062.ideaPath,
+  );
+  assert.equal(await evaluate(page, `Boolean(${field('Search work')})`), false);
+  assert.equal(await evaluate(page, `document.querySelectorAll('[aria-label="Working on"]').length`), 1);
+  assert.deepEqual(projection062.tasks, {
+    total: 5,
+    open: 5,
+    inProgress: 0,
+    blocked: 0,
+    done: 0,
+  });
+  assert.equal(projection062.taskDetails.coverage.state, 'available');
+  assert.equal(projection062.taskDetails.resultCoverage, 'not-exposed');
+  assert.deepEqual(
+    projection062.taskDetails.items.map((task) => task.taskKey),
+    WORKSPACE_062.taskKeys,
+  );
+  assert.ok(projection062.taskDetails.items.every((task) => task.state === 'todo'));
+  assert.ok(projection062.taskDetails.items.every((task) => (
+    task.source.path === WORKSPACE_062.tasksPath
+      && task.source.contentIdentity === fixture.records['062'].fixtureTasksRevision
+  )));
+  assert.equal(
+    projection062.taskDetails.items.find((task) => task.taskKey === WORKSPACE_062.selectedTaskKey)
+      ?.instruction.text,
+    expected062,
+  );
+  assert.equal(JSON.stringify(projection062).includes(expected052), false,
+    'selected 062 projection carries no 052 full body');
+  assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-task-key]')]
+    .map((node) => node.dataset.taskKey)`), WORKSPACE_062.taskKeys);
+  assert.equal(await evaluate(page, `document.querySelector('[data-task-filter="all"]')
+    ?.getAttribute('aria-pressed')`), 'true');
+  assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-task-phase]')]
+    .map((section) => [...section.querySelectorAll('*')].find((node) =>
+      /^\\d+ of \\d+ tasks complete$/.test(node.textContent.trim()))?.textContent.trim() || null)`),
+  Array(5).fill('0 of 1 tasks complete'));
+  const plannedRows = await evaluate(page, `Object.fromEntries(
+    [...document.querySelectorAll('[data-task-key]')].map((node) => [node.dataset.taskKey, node.innerText])
+  )`);
+  assert.match(plannedRows['T001@a062c1d4'], /Ready by recorded task dependencies/);
+  for (const taskKey of WORKSPACE_062.taskKeys.slice(1)) {
+    assert.match(plannedRows[taskKey], /Waiting on dependencies/);
+  }
+  assert.equal(Object.values(plannedRows).some((text) => /\b(?:Done|In progress|Blocked)\b/.test(text)), false);
+
+  await evaluate(page, `document.querySelector('[data-task-key="${WORKSPACE_062.selectedTaskKey}"]').focus()`);
+  await pressKey(page, 'Enter');
+  inputSequence.push(`keyboard: ${WORKSPACE_062.selectedTaskKey}, Enter`);
+  await until(() => evaluate(page, `document.querySelector(
+    '[data-task-detail="${WORKSPACE_062.selectedTaskKey}"]'
+  ) === document.activeElement`), 'installed 062 task inspector focus');
+  assert.equal(await evaluate(page, `document.querySelector(
+    '[data-task-instruction="${WORKSPACE_062.selectedTaskKey}"]'
+  ).textContent`), expected062);
+  const detail062 = await evaluate(page, `document.querySelector(
+    '[data-task-detail="${WORKSPACE_062.selectedTaskKey}"]'
+  ).innerText`);
+  assert.ok(detail062.includes('T004@d062f4a7'));
+  assert.ok(detail062.includes('Not exposed by this source.'));
+  assert.ok(detail062.includes('Pending'));
+  assert.equal(await evaluate(page, `[...document.querySelectorAll('button')].some((node) =>
+    ['Run','Retry','Mark done','Edit task'].includes(node.innerText.trim()))`), false);
+  await evaluate(page, `document.querySelector(
+    '[data-task-instruction="${WORKSPACE_062.selectedTaskKey}"]'
+  ).focus()`);
+  await pressKey(page, 'PageDown');
+  await until(() => evaluate(page, `document.querySelector(
+    '[data-task-instruction="${WORKSPACE_062.selectedTaskKey}"]'
+  ).scrollTop > 0`), 'installed full task body keyboard scroll');
+  inputSequence.push('keyboard: full task instruction PageDown');
+
+  await click(page, `document.querySelector('[data-task-filter="done"]')`);
+  inputSequence.push('pointer: Tasks Done filter');
+  assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-task-key]')]
+    .map((node) => node.dataset.taskKey)`), []);
+  assert.equal(await evaluate(page, `document.body.innerText.includes('No done tasks in this phase.')`), true);
+  assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-task-phase]')]
+    .map((section) => [...section.querySelectorAll('*')].find((node) =>
+      /^\\d+ of \\d+ tasks complete$/.test(node.textContent.trim()))?.textContent.trim() || null)`),
+  Array(5).fill('0 of 1 tasks complete'), 'phase totals remain unfiltered');
+  await click(page, `document.querySelector('[data-task-filter="all"]')`);
+  assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-task-detail]'))`), false,
+    'restoring All does not reopen filtered task detail');
+
+  await click(page, button('New idea'));
+  await fill(page, field('Your idea'), draft);
+  inputSequence.push('pointer/text: New idea draft, then Now');
+  await click(page, button('Now'));
+  assert.equal(await evaluate(page, `document.querySelector('h1')?.textContent
+    .replace(/\\s+/g, ' ').trim()`), '062 Dude Canvas Workspace Integration');
+
+  const controlProjection = await selectWork(
+    '063',
+    '063 Installed task coverage controls',
+    TASK_CONTROL.ideaPath,
+  );
+  assert.deepEqual(controlProjection.tasks, {
+    total: 3,
+    open: 2,
+    inProgress: 0,
+    blocked: 1,
+    done: 0,
+  });
+  const controlRows = await evaluate(page, `Object.fromEntries(
+    [...document.querySelectorAll('[data-task-key]')].map((node) => [node.dataset.taskKey, node.innerText])
+  )`);
+  assert.match(controlRows[TASK_CONTROL.readyTaskKey], /Ready by recorded task dependencies/);
+  assert.match(controlRows[TASK_CONTROL.waitingTaskKey], /Waiting on dependencies/);
+  assert.match(controlRows[TASK_CONTROL.blockedTaskKey], /Blocked/);
+  await click(page, `document.querySelector('[data-task-key="${TASK_CONTROL.blockedTaskKey}"]')`);
+  inputSequence.push(`pointer: ${TASK_CONTROL.blockedTaskKey}`);
+  const blockedDetail = await evaluate(page, `document.querySelector(
+    '[data-task-detail="${TASK_CONTROL.blockedTaskKey}"]'
+  ).innerText`);
+  assert.ok(blockedDetail.includes('external-dependency: controlled installed blocker'));
+  assert.equal(await evaluate(page, `document.querySelector(
+    '[data-task-instruction="${TASK_CONTROL.blockedTaskKey}"]'
+  ).textContent`), fixture.records.controlled.instructions[TASK_CONTROL.blockedTaskKey]);
+  assert.equal(blockedDetail.includes('agent is working now'), false);
+
+  const projection052 = await selectWork('052', '052 Dude Canvas UI', WORKSPACE_052.ideaPath);
+  assert.deepEqual(projection052.tasks, {
+    total: 13,
+    open: 0,
+    inProgress: 0,
+    blocked: 0,
+    done: 13,
+  });
+  assert.equal(projection052.taskDetails.resultCoverage, 'not-exposed');
+  assert.equal(projection052.taskDetails.items.length, 13);
+  assert.ok(projection052.taskDetails.items.every((task) => task.state === 'done'));
+  assert.equal(projection052.taskDetails.items.some((task) => (
+    task.taskKey === WORKSPACE_052.archivedTaskKey
+  )), false);
+  assert.equal(JSON.stringify(projection052).includes(bodyMarker), false,
+    'selected 052 projection carries no 062 full body');
+  await click(page, `document.querySelector('[data-task-filter="done"]')`);
+  assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-task-key]')]
+    .map((node) => node.dataset.taskKey)`), fixture.records['052'].canonicalTaskKeys);
+  await click(page, `document.querySelector('[data-task-key="${WORKSPACE_052.selectedTaskKey}"]')`);
+  inputSequence.push(`pointer: 052 Done filter and ${WORKSPACE_052.selectedTaskKey}`);
+  assert.equal(await evaluate(page, `document.querySelector(
+    '[data-task-instruction="${WORKSPACE_052.selectedTaskKey}"]'
+  ).textContent`), expected052);
+  assert.equal(await evaluate(page, `document.querySelector(
+    '[data-task-detail="${WORKSPACE_052.selectedTaskKey}"]'
+  ).innerText.includes('Not exposed by this source.')`), true);
+
+  projection062 = await selectWork(
+    '062',
+    '062 Dude Canvas Workspace Integration',
+    WORKSPACE_062.ideaPath,
+  );
+  assert.equal(await evaluate(page, `document.querySelector('[data-task-filter="all"]')
+    ?.getAttribute('aria-pressed')`), 'true', 'Clear reset the prior 052 Done filter');
+  await click(page, `document.querySelector('[data-task-key="${WORKSPACE_062.selectedTaskKey}"]')`);
+
+  let pausedIndex = null;
+  page.on('Fetch.requestPaused', (event) => {
+    if (new URL(event.request.url).pathname === '/api/work-index') pausedIndex = event;
+  });
+  await page.send('Fetch.enable', {
+    patterns: [{ urlPattern: '*/api/work-index', requestStage: 'Response' }],
+  });
+  await click(page, button('Refresh'));
+  inputSequence.push('pointer: Refresh with mismatched task source identity');
+  const paused = await until(() => pausedIndex, 'installed mismatched work-index response');
+  try {
+    const responseBody = await page.send('Fetch.getResponseBody', { requestId: paused.requestId });
+    const value = JSON.parse(responseBody.base64Encoded
+      ? Buffer.from(responseBody.body, 'base64').toString('utf8')
+      : responseBody.body);
+    const row = value.items.find((item) => item.ideaPath === WORKSPACE_062.ideaPath);
+    const taskSource = row.sources.find((source) => source.path === WORKSPACE_062.tasksPath);
+    assert.equal(taskSource.contentIdentity, fixture.records['062'].fixtureTasksRevision);
+    taskSource.contentIdentity = `sha256:${'f'.repeat(64)}`;
+    await page.send('Fetch.fulfillRequest', {
+      requestId: paused.requestId,
+      responseCode: paused.responseStatusCode,
+      responseHeaders: (paused.responseHeaders ?? []).filter((header) => (
+        !['content-length', 'transfer-encoding'].includes(header.name.toLowerCase())
+      )),
+      body: Buffer.from(JSON.stringify(value)).toString('base64'),
+    });
+  } finally {
+    await page.send('Fetch.disable');
+  }
+  await visible(page, 'Current instruction unavailable');
+  assert.equal(await evaluate(page, `document.querySelectorAll('[data-task-key]').length`), 0);
+  assert.equal(await evaluate(page, `document.body.innerText.includes(${JSON.stringify(bodyMarker)})`), false);
+  await click(page, button('Refresh'));
+  inputSequence.push('pointer: Refresh restored agreeing source');
+  await visible(page, bodyMarker);
+  await click(page, `document.querySelector('[data-task-key="${WORKSPACE_062.selectedTaskKey}"]')`);
+
+  assert.equal(await evaluate(page, `document.querySelector('[data-navigation-pane]')
+    .getBoundingClientRect().width`), 48);
+  await click(page, `document.querySelector('[aria-label="Expand navigation pane"]')`);
+  inputSequence.push('pointer: expand 48px desktop rail');
+  await until(() => evaluate(page, `document.querySelector('[data-navigation-pane]')
+    .getBoundingClientRect().width === 208`), 'installed 208px desktop rail');
+  await click(page, `document.querySelector('[aria-label="Collapse navigation pane"]')`);
+  assert.equal(await evaluate(page, `document.activeElement?.getAttribute('aria-label')`),
+    'Expand navigation pane');
+
+  await installedViewport(page, 719, 'light');
+  await click(page, `document.querySelector('[aria-label="Expand navigation pane"]')`);
+  inputSequence.push('pointer/keyboard: open 719px overlay, Tab, Shift+Tab, Escape');
+  await until(() => evaluate(page, `Boolean(document.querySelector('[data-navigation-dialog]'))`),
+    'installed narrow navigation overlay');
+  await until(() => evaluate(page, `Math.round(document.querySelector(
+    '[data-navigation-dialog]'
+  ).getBoundingClientRect().width) === 260`), 'installed narrow navigation painted width');
+  assert.deepEqual(await evaluate(page, `(() => {
+    const dialog = document.querySelector('[data-navigation-dialog]');
+    const rect = dialog.getBoundingClientRect();
+    return {
+      width: Math.round(rect.width),
+      headerInert: document.querySelector('header').inert,
+      mainInert: document.querySelector('main').inert,
+      footerInert: document.querySelector('footer').inert,
+      focusInside: dialog.contains(document.activeElement),
+    };
+  })()`), {
+    width: 260,
+    headerInert: true,
+    mainInert: true,
+    footerInert: true,
+    focusInside: true,
+  });
+  await pressKey(page, 'Tab');
+  assert.equal(await evaluate(page, `document.querySelector('[data-navigation-dialog]')
+    .contains(document.activeElement)`), true);
+  await pressKey(page, 'Tab', 'Tab', 8);
+  assert.equal(await evaluate(page, `document.querySelector('[data-navigation-dialog]')
+    .contains(document.activeElement)`), true);
+  audits.push(await auditInstalledWorkspace(
+    page,
+    'installed-workspace-navigation-overlay-719-light',
+    ['Close navigation pane'],
+  ));
+  await pressKey(page, 'Escape');
+  await until(() => evaluate(page, `!document.querySelector('[data-navigation-dialog]')`),
+    'installed narrow navigation Escape dismissal');
+  assert.equal(await evaluate(page, `document.activeElement?.getAttribute('aria-label')`),
+    'Expand navigation pane');
+  await installedViewport(page, 720, 'light');
+  assert.equal(await evaluate(page, `document.querySelector('[data-navigation-pane]')
+    .getBoundingClientRect().width`), 48);
+
+  // Named passages read at every width: the unit's first line, its first
+  // Acceptance sentence, and its final sentence, which ends the unit.
+  const acceptanceStart = expected062.indexOf(acceptanceMarker);
+  const unitEnd = expected062.trimEnd().length;
+  const instructionPassages = {
+    start: [0, expected062.indexOf('\n')],
+    acceptance: [acceptanceStart, expected062.indexOf('. ', acceptanceStart) + 1],
+    end: [expected062.lastIndexOf('. ', unitEnd - 2) + 2, unitEnd],
+  };
+  for (const [passage, [start, end]] of Object.entries(instructionPassages)) {
+    assert.ok(start >= 0 && end > start, `the selected instruction has a ${passage} passage`);
+  }
+  const readInstruction = async (name, expectedAxNames) => {
+    const reading = await readSelectedInstruction(
+      page,
+      name,
+      WORKSPACE_062.selectedTaskKey,
+      instructionPassages,
+      expectedAxNames,
+    );
+    audits.push(reading.audit);
+    inputSequence.push(`keyboard: ${name} ${reading.keySummary}`);
+  };
+
+  for (const theme of /** @type {const} */ (['light', 'dark'])) {
+    for (const width of [360, 768, 1440, 1920]) {
+      await installedViewport(page, width, theme);
+      const detail = await until(() => evaluate(page, `(() => {
+        const node = document.querySelector('[data-task-detail="${WORKSPACE_062.selectedTaskKey}"]');
+        if (!node) return null;
+        return {
+          inRow: Boolean(node.closest('li')),
+          inDock: Boolean(node.closest('aside')),
+          instruction: node.querySelector('[data-task-instruction]')?.textContent,
+          title: document.querySelector('h1')?.textContent.replace(/\\s+/g, ' ').trim(),
+        };
+      })()`), `installed ${width}px ${theme} task detail`);
+      assert.equal(detail.instruction, expected062);
+      assert.equal(detail.title, '062 Dude Canvas Workspace Integration');
+      assert.equal(detail.inRow, width < 1080);
+      assert.equal(detail.inDock, width >= 1080);
+      await readInstruction(
+        `installed-workspace-task-${width}-${theme}`,
+        ['Verify the integrated built and installed walkthrough', 'Close task detail'],
+      );
+    }
+  }
+  await installedViewport(page, 768, 'light');
+  await page.send('Emulation.setPageScaleFactor', { pageScaleFactor: 2 });
+  assert.equal(await until(() => evaluate(page, `visualViewport?.scale === 2
+    ? visualViewport.scale : null`), 'installed 200 percent page scale'), 2);
+  await readInstruction(
+    'installed-workspace-task-768-light-page-scale-200',
+    ['Verify the integrated built and installed walkthrough'],
+  );
+  await page.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
+  await installedViewport(page, 1440, 'light');
+
+  await click(page, button('New idea'));
+  assert.equal(await evaluate(page, `${field('Your idea')}.value`), draft);
+  await click(page, button('Now'));
+  assert.equal(await evaluate(page, `Boolean(document.querySelector(
+    '[data-task-detail="${WORKSPACE_062.selectedTaskKey}"]'
+  ))`), true, 'task detail survives ordinary New idea return');
+  assert.equal(await evaluate(page, `document.querySelector('[data-task-filter="all"]')
+    ?.getAttribute('aria-pressed')`), 'true');
+
+  const finalProjection = await readCanvasProjection(canvasUrl);
+  assert.equal(finalProjection.projection?.selected?.ideaPath, WORKSPACE_062.ideaPath);
+  assert.equal(
+    finalProjection.projection?.taskDetails?.items?.find((task) => (
+      task.taskKey === WORKSPACE_062.selectedTaskKey
+    ))?.instruction?.text,
+    expected062,
+  );
+  return {
+    status: 'installed-task-walkthrough-ready-for-review',
+    sourceBacked: true,
+    sourceAcquisition: fixture.sourceAcquisition,
+    selectedIdeaPath: WORKSPACE_062.ideaPath,
+    selectedTaskKey: WORKSPACE_062.selectedTaskKey,
+    fixtureRevisions: {
+      '062': fixture.records['062'].fixtureTasksRevision,
+      '052': fixture.records['052'].fixtureTasksRevision,
+      controlled: fixture.records.controlled.fixtureTasksRevision,
+    },
+    planned062: {
+      taskKeys: WORKSPACE_062.taskKeys,
+      phaseTotals: Array(5).fill('0 of 1 tasks complete'),
+      resultCoverage: projection062.taskDetails.resultCoverage,
+      fullBodySha256: sha256(expected062),
+      bodyMarker,
+      acceptanceMarker,
+    },
+    done052: {
+      taskKeys: fixture.records['052'].canonicalTaskKeys,
+      selectedTaskKey: WORKSPACE_052.selectedTaskKey,
+      selectedBodySha256: sha256(expected052),
+      archivedTaskExcluded: WORKSPACE_052.archivedTaskKey,
+    },
+    distinctions: {
+      ready: TASK_CONTROL.readyTaskKey,
+      dependencyWaiting: TASK_CONTROL.waitingTaskKey,
+      explicitlyBlocked: TASK_CONTROL.blockedTaskKey,
+      blocker: 'external-dependency: controlled installed blocker',
+    },
+    inventory: {
+      records: initialIndex.items.length,
+      unselectedFullBodies: false,
+      selectedMixedSourceBodies: false,
+    },
+    errorTransition: {
+      mismatchedSourceWithheld: true,
+      agreeingSourceRestored: true,
+    },
+    navigation: {
+      desktopRail: [48, 208],
+      narrowOverlay: 260,
+      breakpoint: 720,
+      pageScale: 2,
+      nativeZoomClaimed: false,
+    },
+    independentDraft: { sha256: sha256(draft), retained: true, submitted: false },
+    inputSequence,
+    audits,
+  };
+}
+
+/**
+ * Re-enter installed Now after the complete Review sequence and prove task
+ * context and the independent draft were not retargeted or discarded.
+ * @param {Cdp} page
+ * @param {string} canvasUrl
+ * @param {Awaited<ReturnType<typeof driveInstalledTaskWalkthrough>>} walkthrough
+ * @param {ReturnType<typeof seedWorkspaceTaskFixtures>} fixture
+ */
+async function verifyInstalledTaskReturn(page, canvasUrl, walkthrough, fixture) {
+  await click(page, button('Now'));
+  await visible(page, walkthrough.planned062.bodyMarker);
+  assert.equal(await evaluate(page, `Boolean(document.querySelector(
+    '[data-task-detail="${WORKSPACE_062.selectedTaskKey}"]'
+  ))`), true);
+  assert.equal(await evaluate(page, `document.querySelector('[data-task-filter="all"]')
+    ?.getAttribute('aria-pressed')`), 'true');
+  const projection = await readCanvasProjection(canvasUrl);
+  assert.equal(projection.projection?.selected?.ideaPath, WORKSPACE_062.ideaPath);
+  assert.equal(
+    projection.projection?.taskDetails?.items?.find((task) => (
+      task.taskKey === WORKSPACE_062.selectedTaskKey
+    ))?.instruction?.text,
+    fixture.records['062'].selectedTaskInstruction,
+  );
+  await click(page, button('New idea'));
+  const draft = await evaluate(page, `${field('Your idea')}.value`);
+  assert.equal(sha256(draft), walkthrough.independentDraft.sha256);
+  await click(page, button('Now'));
+  const audit = await auditInstalledWorkspace(
+    page,
+    'installed-workspace-return-after-review',
+    ['Verify the integrated built and installed walkthrough', 'Close task detail'],
+  );
+  return {
+    selectedIdeaPath: projection.projection.selected.ideaPath,
+    selectedTaskKey: WORKSPACE_062.selectedTaskKey,
+    detailRetained: true,
+    filterRetained: 'all',
+    draftRetained: true,
+    audit,
   };
 }
 
@@ -3893,11 +5187,31 @@ async function driveArmedManipulation(page, root, version) {
   };
 }
 
-/** @param {Cdp} page @param {string} version @param {string} prompt @param {string|null} [gestureRoot] */
-async function driveReviewRound(page, version, prompt, gestureRoot = null) {
+/**
+ * @param {Cdp} page
+ * @param {string} version
+ * @param {string} prompt
+ * @param {string|null} [gestureRoot]
+ * @param {string|null} [expectedBrowsingNumber]
+ */
+async function driveReviewRound(
+  page,
+  version,
+  prompt,
+  gestureRoot = null,
+  expectedBrowsingNumber = null,
+) {
   await visible(page, prompt);
   await click(page, `[...document.querySelectorAll('button')].find((node) =>
     node.innerText.includes(${JSON.stringify(prompt)}) && node.getClientRects().length)`);
+  if (expectedBrowsingNumber) {
+    assert.equal(await evaluate(page, `document.querySelector('[aria-label="Browsing"]')
+      ?.innerText.includes(${JSON.stringify(expectedBrowsingNumber)})`), true,
+    `installed Review ${version} keeps the independent browsing selection`);
+    assert.equal(await evaluate(page, `document.querySelector('[aria-label="Request scope"]')
+      ?.innerText.includes(${JSON.stringify(SPEC_PATH)})`), true,
+    `installed Review ${version} names its actual request scope`);
+  }
   await click(page, button('Open Review'));
   await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
     && !document.querySelector('[aria-label="Box (B)"]').disabled`),
@@ -3993,6 +5307,19 @@ async function driveReviewRound(page, version, prompt, gestureRoot = null) {
   assert.ok(['Open Review', 'Needs you'].includes(returnFocus));
   await click(page, button('Open Review'));
   await visible(page, 'Comments (2)');
+  const afterReturn = {
+    frame: await evaluate(page, `({
+      width:document.querySelector('.dude-review-frame')?.clientWidth,
+      height:document.querySelector('.dude-review-frame')?.clientHeight
+    })`),
+    browsing: expectedBrowsingNumber
+      ? await evaluate(page, `document.querySelector('[aria-label="Browsing"]')
+        ?.innerText.includes(${JSON.stringify(expectedBrowsingNumber)})`)
+      : null,
+  };
+  assert.deepEqual(afterReturn.frame, beforeReturn.frame,
+    `installed Review ${version} keeps its pinned frame across return`);
+  if (expectedBrowsingNumber) assert.equal(afterReturn.browsing, true);
   const workingScreenshot = await screenshot(page, `installed-review-${version.toLowerCase()}-working`);
   const respondBefore = await evaluate(page, `performance.getEntriesByType('resource')
     .filter((entry) => entry.name.endsWith('/api/needs-you/respond')).length`);
@@ -4010,6 +5337,7 @@ async function driveReviewRound(page, version, prompt, gestureRoot = null) {
     comment,
     armedManipulation,
     beforeReturn,
+    afterReturn,
     returnFocus,
     workingScreenshot,
     respondBefore,
@@ -4017,12 +5345,20 @@ async function driveReviewRound(page, version, prompt, gestureRoot = null) {
   };
 }
 
-/** @param {Cdp} page */
-async function driveApproval(page) {
+/** @param {Cdp} page @param {string|null} [expectedBrowsingNumber] */
+async function driveApproval(page, expectedBrowsingNumber = null) {
   const prompt = 'Approve exact installed revision C';
   await visible(page, prompt);
   await click(page, `[...document.querySelectorAll('button')].find((node) =>
     node.innerText.includes(${JSON.stringify(prompt)}) && node.getClientRects().length)`);
+  if (expectedBrowsingNumber) {
+    assert.equal(await evaluate(page, `document.querySelector('[aria-label="Browsing"]')
+      ?.innerText.includes(${JSON.stringify(expectedBrowsingNumber)})`), true,
+    'installed approval keeps the independent browsing selection');
+    assert.equal(await evaluate(page, `document.querySelector('[aria-label="Request scope"]')
+      ?.innerText.includes(${JSON.stringify(SPEC_PATH)})`), true,
+    'installed approval names its actual request scope');
+  }
   assert.equal(await evaluate(page, `${field('I approve the exact revision I reviewed.')}.checked`), false);
   assert.equal(await evaluate(page, `${button('Approve this revision')}.disabled`), true);
   await click(page, button('Open Review'));
@@ -4037,6 +5373,7 @@ async function driveApproval(page) {
   return { screenshot: await screenshot(page, 'installed-review-c-approved') };
 }
 
+const workspaceSourcePreimages = workspaceSourceHashes();
 const manifest = {
   task: 'T012@a57c1212',
   startedAt: new Date().toISOString(),
@@ -4055,10 +5392,12 @@ const manifest = {
   installedCliVersion: null,
   browserVersionCommand: null,
   approvedMockHashes: {},
+  workspaceSourcePreimages,
   source: {},
   blankCases: [],
   packCase: null,
   reviewCase: null,
+  taskWalkthrough: null,
   installedControls: null,
   desktopPanelCapability: null,
   cleanup: {},
@@ -4367,6 +5706,14 @@ try {
   assert.equal(init.exitCode, 0, init.stderr);
   const parity = installedParity(root);
   createReviewOwner(root);
+  const workspaceFixture = seedWorkspaceTaskFixtures(root);
+  const { sourceAcquisition } = workspaceFixture;
+  assert.ok(manifest.startedAt <= sourceAcquisition.startedAt
+    && sourceAcquisition.startedAt <= sourceAcquisition.completedAt,
+  `task snapshot source was read during this run: ${JSON.stringify({
+    runStartedAt: manifest.startedAt,
+    sourceAcquisition,
+  })}`);
   const ownerModule = await import(pathToFileURL(path.join(
     root,
     '.github/skills/dude-engine/lib/feature.mjs',
@@ -4399,12 +5746,18 @@ try {
   await until(() => model.state.phase === 'waiting-a' || model.state.modelError,
     'revision A installed waiter');
   if (model.state.modelError) throw new Error(model.state.modelError);
+  const taskWalkthrough = await driveInstalledTaskWalkthrough(
+    browserState.page,
+    host.canvas.url,
+    workspaceFixture,
+  );
   await click(browserState.page, button('Needs you'));
   const roundA = await driveReviewRound(
     browserState.page,
     'A',
     'Annotate exact installed revision A',
     root,
+    '062',
   );
   await until(() => model.state.phase === 'waiting-b' || model.state.modelError,
     'same owner revision B request', 45_000);
@@ -4415,18 +5768,26 @@ try {
     browserState.page,
     'B',
     'Annotate exact installed revision B',
+    null,
+    '062',
   );
   await until(() => model.state.phase === 'waiting-c' || model.state.modelError,
     'same owner revision C request', 45_000);
   if (model.state.modelError) throw new Error(model.state.modelError);
   await click(browserState.page, button('Back'));
   await click(browserState.page, button('All requests'));
-  const approval = await driveApproval(browserState.page);
+  const approval = await driveApproval(browserState.page, '062');
   await until(() => model.state.phase === 'complete' || model.state.modelError,
     'current revision C owner approval acknowledgment', 45_000);
   if (model.state.modelError) throw new Error(model.state.modelError);
   await until(async () => !(await host.session.rpc.metadata.isProcessing()).processing,
     'installed Review session idle', 30_000);
+  const taskReturn = await verifyInstalledTaskReturn(
+    browserState.page,
+    host.canvas.url,
+    taskWalkthrough,
+    workspaceFixture,
+  );
   const provider = await (await fetch(new URL('/api/needs-you', host.canvas.url))).json();
   assert.deepEqual(
     provider.requests.map((entry) => ({
@@ -4493,7 +5854,39 @@ try {
   assert.equal(network.filter((entry) => entry.path === '/api/needs-you/respond').length, 3);
   assert.deepEqual(runtimeErrors, []);
   assert.equal(host.record.permissions.filter((entry) => entry.decision === 'reject').length, 0);
+  const fixtureRecheck = {
+    '062': revision(fs.readFileSync(path.join(root, ...WORKSPACE_062.tasksPath.split('/')))),
+    '052': revision(fs.readFileSync(path.join(root, ...WORKSPACE_052.tasksPath.split('/')))),
+    controlled: revision(fs.readFileSync(path.join(root, ...TASK_CONTROL.tasksPath.split('/')))),
+    ideas: fs.readdirSync(path.join(root, '.dude', 'ideas')).sort(),
+  };
+  assert.deepEqual(fixtureRecheck, {
+    '062': workspaceFixture.records['062'].fixtureTasksRevision,
+    '052': workspaceFixture.records['052'].fixtureTasksRevision,
+    controlled: workspaceFixture.records.controlled.fixtureTasksRevision,
+    ideas: [
+      path.posix.basename(IDEA_PATH),
+      path.posix.basename(WORKSPACE_052.ideaPath),
+      path.posix.basename(WORKSPACE_062.ideaPath),
+      path.posix.basename(TASK_CONTROL.ideaPath),
+    ].sort(),
+  }, 'installed task walkthrough changed no fixture task state or captured a draft');
   const finalScreenshot = await screenshot(browserState.page, 'installed-review-final');
+  manifest.taskWalkthrough = {
+    fixture: workspaceFixture,
+    browser: taskWalkthrough,
+    returnAfterReview: taskReturn,
+    fixtureRecheck,
+    installedOwnerAcknowledgments: model.state.acknowledgments.map((entry) => ({
+      version: entry.version,
+      receiptId: entry.receiptId,
+      currentRevision: entry.currentRevision,
+    })),
+    sourceMutation: false,
+    fixtureTaskMutation: false,
+    draftSubmission: false,
+    installedBoundary: 'real SDK/CLI/extension host with owned Edge/CDP URL renderer',
+  };
   manifest.reviewCase = {
     root,
     data,
@@ -4508,6 +5901,7 @@ try {
     model: model.state,
     rounds: [roundA, roundB],
     approval,
+    taskWalkthrough: manifest.taskWalkthrough,
     finalScreenshot,
     network,
     runtimeErrors,
@@ -4525,6 +5919,8 @@ try {
     owner: IDEA_PATH,
     submissions: model.state.rounds.map((entry) => entry.submissionId),
     currentRevision: model.state.revisions.C.artifact.revision,
+    taskWalkthrough: manifest.taskWalkthrough.browser.status,
+    selectedTaskKey: manifest.taskWalkthrough.browser.selectedTaskKey,
   });
   await browserState.page.send('Page.navigate', { url: 'about:blank' });
   await closeInstalledHost(host);
@@ -4882,6 +6278,12 @@ try {
   } catch (error) {
     manifest.cleanup.approvedMockRecheckError = safeError(error);
   }
+  try {
+    manifest.cleanup.workspaceSourcesRechecked =
+      JSON.stringify(workspaceSourceHashes()) === JSON.stringify(workspaceSourcePreimages);
+  } catch (error) {
+    manifest.cleanup.workspaceSourceRecheckError = safeError(error);
+  }
   // PASS was set before this cleanup ran; an unconfirmed cleanup or post-run
   // check is an evidence gap, so it fails the run while keeping its diagnostics.
   const cleanupFailures = [];
@@ -4894,6 +6296,9 @@ try {
   }
   if (manifest.cleanup.approvedMockRechecked !== true) {
     cleanupFailures.push('approved mocks changed or could not be rechecked after the run');
+  }
+  if (manifest.cleanup.workspaceSourcesRechecked !== true) {
+    cleanupFailures.push('workspace task fixture sources changed or could not be rechecked after the run');
   }
   if (cleanupFailures.length) {
     manifest.cleanup.failures = cleanupFailures;
@@ -4916,6 +6321,7 @@ try {
     developmentAbout: manifest.blankCases.find((entry) => entry.development)?.browser?.about?.api?.body ?? null,
     extensionHost: manifest.extensionHost,
     hostPackRead: manifest.packCase?.hostPackRead?.coverage?.catalog?.state ?? null,
+    taskWalkthrough: manifest.taskWalkthrough?.browser?.status ?? null,
     reviewSubmissions: manifest.reviewCase?.model?.rounds?.map((entry) => entry.submissionId) ?? [],
     error: manifest.error ?? null,
   })}\n`);

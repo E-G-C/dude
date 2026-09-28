@@ -577,12 +577,12 @@ it is refused before further work:
 - `64` total retained evidence descriptors per inspection
 - `8,192` UTF-8 bytes for a deterministic error response
 
-The model-facing limit remains exactly `{items:64,bytes:131072}`. Its item
+The model-facing limit is exactly `{items:64,bytes:262144}`. Its item
 maximum is derived from original descriptors:
 `physical items <= available original occurrences <= original retained descriptors <= 64`.
 There is no independent 16-item quota. The entire canonical packet, including
 its format, payloads, frames, descriptors, bindings, and other metadata, must
-fit within `131,072` bytes. The separate limit of `16` checks per attestation and
+fit within `262,144` bytes. The separate limit of `16` checks per attestation and
 all other ceilings remain unchanged. Repeated payloads can share space, but
 occurrence metadata and distinct evidence still grow to finite limits.
 
@@ -644,7 +644,7 @@ complete original acquisitions and accumulated captures, using the same exact
 postimages as the lane writer. It freshly rederives the binding before
 application; changed sources or prestate invalidate the earlier fit. Capacity
 diagnostics distinguish `source-entries`, `retained-descriptors`, and exact-known
-`model-packet-bytes` at `131,072` bytes. Unknown tracked postimages are not
+`model-packet-bytes` at `262,144` bytes. Unknown tracked postimages are not
 predicted.
 
 The runner stages the next current-run record privately, applies the checked
@@ -910,6 +910,13 @@ work finder. Select a task to read its full available instruction, dependencies,
 and explicit blocker in the properties dock, or below the row on narrow screens.
 Task text is inert, including markup and fenced examples. Clear or changing
 work dismisses task inspection; Refresh resolves it from the new agreeing read.
+For file-backed work, the recorded instruction is the complete canonical unit
+through the next task, phase, or execution-history boundary, including body and
+acceptance text after blank lines. Generated board rows, execution history,
+archived tasks, and discovered mirrors do not become canonical task rows.
+Inventory reads carry counts and source identities, not every unselected task
+body. If the selected read and inventory source identity disagree, Canvas
+withholds task rows and detail instead of mixing snapshots.
 
 All-open definitions show planned tasks without starting execution. In progress
 is recorded state, not proof that an agent is working now. Dependency readiness
@@ -1841,6 +1848,7 @@ $env:DUDE_COPILOT_CLI = "$env:LOCALAPPDATA\github-copilot-sdk\cli\<version>\copi
 $env:COPILOT_CLI_RESOLVED_DIST_DIR = "$env:LOCALAPPDATA\copilot\pkg\win32-x64\<version>"
 $env:DUDE_COPILOT_RUNTIME = Join-Path $env:COPILOT_CLI_RESOLVED_DIST_DIR 'index.js'
 $env:DUDE_CANVAS_BROWSER = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+$env:DUDE_CANVAS_ARTIFACTS_DIR = Join-Path $env:TEMP "dude-t012-$PID"
 node scripts/dude-canvas-ui/t012-installed-host.mjs
 ```
 
@@ -1863,12 +1871,57 @@ or a browser. Its evidence parent, the optional
 `DUDE_CANVAS_ARTIFACTS_DIR` or the OS temporary directory, receives a unique
 `installed-host-*` directory with a manifest.
 
+Use a short, uniquely owned temporary root. Its ancestors must not contain an
+unrelated `.beads` database: task projection respects that authority boundary
+and refuses to infer Lightweight status through it. If the normal Windows
+`TEMP` is below such a directory, set `TEMP`, `TMP`, and
+`DUDE_CANVAS_ARTIFACTS_DIR` to one other short owned temporary root for this
+command. After reading the manifest, confirm that every owned host and browser
+process stopped before removing that exact root.
+
 The driver builds the current release into owned blank Git/non-Git fixtures,
 uses installed CLI/SDK stdio and discovered Dude extension code, and drives the
 returned Canvas URL in Edge over CDP. It keeps the raw file-discovered project
 Dude and Spec Lead profiles, with Dude selected and no `customAgents`, runtime
 profile projection/augmentation, or deselection. Dude's shipped tools explicitly
 include one `dude_needs_you` grant; Spec Lead's remain `read`/`edit`/`search`.
+
+The Review fixture also carries a revision-pinned task snapshot in its
+disposable release root, read from the current source on each run. It projects
+only the five canonical 062 task glyphs to planned while preserving their
+complete bodies, copies current 052 task bytes unchanged for real Done cases
+and archived-task exclusion, and labels separate dependency/blocker rows as
+controlled test data. The driver records source and fixture revisions and the
+time it read the source (`sourceAcquisition`), which must fall after the run
+started. The fixed date in the controlled fixture's log is fixture content, not
+a capture time. The driver verifies that work-index inventory contains no
+unselected full bodies, and rechecks both fixture task bytes and live source
+bytes after the run. It does not change repository task state.
+
+That installed walkthrough uses the single finder to open 062, inspect and
+keyboard-scroll full task detail, filter rows without changing phase totals,
+exercise dependency waiting versus an explicit blocker, inspect 052 Done work,
+and withhold detail on a mismatched source identity before a clean refresh. It
+then enters the independently scoped A/B/C response and Review sequence while
+062 remains the browsing selection, and returns to the same task detail and
+unfiled draft. Evidence includes pointer and keyboard input, 48/208 navigation
+rail and 719/720 overlay behavior, 360/768/1440/1920 light/dark screenshots,
+accessibility trees, geometry, target size, computed contrast, 200% page scale,
+installed owner acknowledgments, and the existing report/PNG and failure
+controls. These checks still render the host-returned URL in owned Edge; they
+do not establish desktop-panel embedding.
+
+At each of those widths and themes, and at 200% page scale, the driver reads
+the selected task with the keyboard: Tab to its row, Enter, Tab into the dock's
+scrollable instruction where there is one, then arrow keys from the unit's
+first line to its last. At page scale a line is wider than the visible area, so
+ArrowRight pans and a second pass reads the rest of each line. Every rendered
+line of the unit is measured against each clipping container and the visual
+viewport, and its visible text is hit-tested; the run fails unless every line
+was readable at some recorded position. The unit does not have to fit on screen
+at once. Captures show its first line, first Acceptance sentence, and final
+sentence, and a `*.visibility.json` record beside each audit keeps the key
+sequence, scroll and pan positions, focus, and clipping measurements.
 
 A credential-free local deterministic model chooses actual offered `task`,
 `skill`, `create`, `view`, `edit`, `bash` (`powershell` on Windows), and
@@ -1940,6 +1993,27 @@ cases passed. The pack case reached Applied after the provider's authoritative
 reread. Scripting dictionary evidence is Darwin-only: `/usr/bin/sdef` and
 app-bundle probing run only there. On other platforms, the manifest records an
 explicit not-applicable diagnostic in place of that evidence.
+
+The recorded 2026-09-28 T005 run used the same driver and extension Node
+versions, CLI 1.0.87-0 hosted by `copilot.exe`, and Edge 155.0.4283.18. It
+passed both blank captures, the Pack/Settings/About round trip, the full
+installed task walkthrough, two report/PNG Review rounds, current-revision
+approval, and the existing negative controls. The task walkthrough exercised
+five planned 062 units, 13 source-current 052 Done units with archived T004
+excluded, controlled dependency and blocker distinctions, mismatched-source
+withholding and recovery, the 48/208 rail, 260px narrow overlay, and context
+return after cross-scoped Review. Eleven screenshot/AX/geometry/contrast audits
+covered 360, 719/720, 768, 1440, and 1920 CSS pixels, both themes, and 200%
+page scale; the lowest sampled applicable text contrast was 5.384:1. Those task
+audits measured size and contrast, not whether the selected instruction could
+be read: at 360 and 768 CSS pixels and at 200% page scale the selected task
+detail stayed below the visible area, and no capture showed its Acceptance
+text. That run's manifest also labeled the task snapshot with the fixed fixture
+date `2026-09-28T16:17:39Z` rather than the time the source was read. The
+manifest rechecked approved-design and live task-source hashes, every fixture
+task revision, and owned process cleanup. As in earlier runs, SDK
+`ui.canvases: false` means this is installed-host URL evidence, not embedded
+desktop-panel evidence.
 
 These runs establish normal installed tool execution and Spec Lead delegation
 with scripted model choices, not unscripted remote-model reasoning. In each, the

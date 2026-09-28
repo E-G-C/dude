@@ -773,7 +773,7 @@ test('beads composition loads shared recovery and postimage dependencies from th
     assert.deepEqual(plan.issues.map(issue => issue.key).sort(), ['T002@bbbbbbbb', 'T003@cccccccc', 'T004@dddddddd']);
     assert.ok(plan.deps.some(edge => edge.from === 'T003@cccccccc' && edge.to === 'T002@bbbbbbbb'));
     const recovery = await import(pathToFileURL(path.join(root, '.github/skills/dude-work/recovery.mjs')).href);
-    assert.deepEqual(recovery.limits, { items: 64, bytes: 131_072 });
+    assert.deepEqual(recovery.limits, { items: 64, bytes: 262_144 });
     const leaf = fs.readFileSync(path.join(root, '.github/skills/dude-engine/lib/lightweight-work-postimage.mjs'), 'utf8');
     assert.doesNotMatch(leaf, /from ['"][^'"]*(?:dude-work|recovery\.mjs|board\.mjs)/);
   } finally {
