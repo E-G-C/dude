@@ -3216,7 +3216,7 @@ test('Work capacity guidance keeps inventory, raw admission, and model-view budg
       /independent 64-retained-descriptor budget includes unavailable descriptors/i,
       /physical items <= available original occurrences <= original retained descriptors <= 64/,
       /no separate 16-item veto/i,
-      /\{items:64,bytes:131072\}/,
+      /\{items:64,bytes:262144\}/,
       /16 checks per attestation/i,
     ]],
     ['mandatory headroom before authorization changes state', [
@@ -3267,7 +3267,7 @@ test('Work capacity guidance keeps inventory, raw admission, and model-view budg
     '`64` total source entries per inspection',
     '`64` total retained evidence descriptors per inspection',
     '`8,192` UTF-8 bytes for a deterministic error response',
-    '`{items:64,bytes:131072}`',
+    '`{items:64,bytes:262144}`',
     '`physical items <= available original occurrences <= original retained descriptors <= 64`',
   ]) {
     assert.ok(commands.includes(exact), `commands retain exact capacity text: ${exact}`);
@@ -3283,7 +3283,7 @@ test('Work capacity guidance keeps inventory, raw admission, and model-view budg
     ]],
     ['whole canonical packet charged independently of attestation checks', [
       /entire canonical packet/i, /format, payloads, frames, descriptors, bindings, and other metadata/i,
-      /`131,072` bytes/, /`16` checks per attestation/i, /finite limits/i,
+      /`262,144` bytes/, /`16` checks per attestation/i, /finite limits/i,
     ]],
     ['raw source and original-descriptor completion demand', [
       /Before authorization changes an attempt counter/i,
@@ -3313,7 +3313,7 @@ test('Work capacity guidance keeps inventory, raw admission, and model-view budg
       /released on consumption, supersession, or end/i,
       /Predicted bytes are never observed authority/i,
       /Unknown tracked postimages gain no prediction/i,
-      /`model-packet-bytes`/, /131,072/,
+      /`model-packet-bytes`/, /262,144/,
     ]],
     ['lane-first publication and observed receipt input', [
       /stages the exact next current-run record privately/i,
@@ -3356,7 +3356,7 @@ function workLiteral(text) {
 }
 
 test('Work delivery exports the derived 64-item bound and counts unavailable original descriptors', () => {
-  assert.deepEqual(workRuntime.limits, { items: 64, bytes: 131_072 });
+  assert.deepEqual(workRuntime.limits, { items: 64, bytes: 262_144 });
   for (const count of [15, 16, 17, 63, 64]) {
     const inspection = workRuntime.buildInspection(WORK_CAPACITY_TARGET, Array.from(
       { length: count }, (_, index) => workLiteral(`complete literal ${index}`),
@@ -3454,8 +3454,8 @@ test('Work delivery charges complete canonical packet bytes and preserves descri
     assert.equal(inspection.overflow, delta > 0);
     if (delta <= 0) {
       assert.ok(packet);
-      assert.equal(Buffer.byteLength(workRuntime.canonicalJson(packet)), 131_072 + delta);
-      assert.ok(Buffer.byteLength(text) < 131_072, 'packet metadata consumes byte capacity too');
+      assert.equal(Buffer.byteLength(workRuntime.canonicalJson(packet)), workRuntime.limits.bytes + delta);
+      assert.ok(Buffer.byteLength(text) < workRuntime.limits.bytes, 'packet metadata consumes byte capacity too');
     } else {
       assert.equal(packet, null);
       assert.ok(inspection.items.every(item => !Object.hasOwn(item, 'text')));
@@ -3474,7 +3474,7 @@ test('Work delivery capacity diagnostics retain their closed shape and exact fix
     ['inspection-body-bytes', 4_194_304, 'owner-log'],
     ['cli-request-bytes', 6_291_456, 'cli-request'],
     ['retained-descriptors', 64, 'model-packet'],
-    ['model-packet-bytes', 131_072, 'model-packet'],
+    ['model-packet-bytes', 262_144, 'model-packet'],
   ]) {
     const diagnostic = {
       budget, limit, required: Number(limit) + 1, source,
@@ -3484,6 +3484,9 @@ test('Work delivery capacity diagnostics retain their closed shape and exact fix
     assert.equal(workRuntime.validateCapacityDiagnostic({ ...diagnostic, limit: Number(limit) + 1 }), null);
     assert.equal(workRuntime.validateCapacityDiagnostic({ ...diagnostic, extra: true }), null);
   }
+  assert.equal(workRuntime.validateCapacityDiagnostic({
+    budget: 'model-packet-bytes', limit: 131_072, required: 131_073, source: 'model-packet', target: null,
+  }), null, 'the former model-packet ceiling is not a current fixed limit');
   for (const limit of [16, 64]) {
     assert.equal(workRuntime.validateCapacityDiagnostic({
       budget: 'model-packet-items', limit, required: limit + 1, source: 'model-packet', target: null,
