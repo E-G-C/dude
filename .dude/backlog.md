@@ -7,8 +7,8 @@ A read-only view built from idea files, linked feature files, task records, and 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
 - Ideas awaiting definition: **8**
-- Defined awaiting work: **0**
-- Completed: **67**
+- Defined awaiting work: **1**
+- Completed: **69**
 
 ## Current
 
@@ -27,6 +27,10 @@ No current work to diagram.
 - `070` · `dude-canvas-skill-customization` — Dude Canvas Skill Customization (`.dude/ideas/070-dude-canvas-skill-customization.md`)
 - `071` · `dude-canvas-pack-authoring` — Dude Canvas Pack Authoring (`.dude/ideas/071-dude-canvas-pack-authoring.md`)
 - `072` · `dude-canvas-bundle-upgrade` — Dude Canvas Bundle Upgrade (`.dude/ideas/072-dude-canvas-bundle-upgrade.md`)
+- `080` · `dude-canvas-pack-documentation` — Dude Canvas Pack Documentation (`.dude/ideas/080-dude-canvas-pack-documentation.md`)
+
+### Defined awaiting work
+
 - `073` · `dude-canvas-artifact-import` — Dude Canvas Artifact Import (`.dude/ideas/073-dude-canvas-artifact-import.md`)
 
 ## Completed
@@ -98,6 +102,8 @@ No current work to diagram.
 - `075` · `dude-development-base-release` — Dude Development Base Release (`.dude/ideas/075-dude-development-base-release.md`)
 - `076` · `duplicate-feature-number-prefixes` — Duplicate Feature Number Prefixes (`.dude/ideas/076-duplicate-feature-number-prefixes.md`)
 - `077` · `work-model-packet-capacity` — Work Model Packet Capacity (`.dude/ideas/077-work-model-packet-capacity.md`)
+- `078` · `dude-canvas-pack-sources` — Dude Canvas Pack Sources (`.dude/ideas/078-dude-canvas-pack-sources.md`)
+- `079` · `dude-canvas-local-artifacts` — Dude Canvas Local Artifacts (`.dude/ideas/079-dude-canvas-local-artifacts.md`)
 
 ## Dependency and order notes
 
