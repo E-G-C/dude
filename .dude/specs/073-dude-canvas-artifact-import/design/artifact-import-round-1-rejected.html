@@ -1,0 +1,2308 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+  <title>Dude Canvas Settings, Local artifacts: design preview (073, exploring)</title>
+  <link rel="icon" href="data:,">
+  <script>
+    // Preview-only appearance, matching the 052/063/074 convention: follow the
+    // host colour scheme, or ?theme=light|dark. The product has no theme control.
+    (() => {
+      const root = document.documentElement;
+      const host = window.matchMedia('(prefers-color-scheme: dark)');
+      const follow = () => root.classList.toggle('proto-host-dark', host.matches);
+      follow();
+      host.addEventListener('change', follow);
+      const theme = new URLSearchParams(location.search).get('theme');
+      if (theme === 'light' || theme === 'dark') root.dataset.protoTheme = theme;
+    })();
+  </script>
+  <!--
+    ==========================================================================
+    CANONICAL 073 PROPOSAL: Settings > Local artifacts. Exploring, NOT approved.
+    Primary artifact: .dude/specs/073-dude-canvas-artifact-import/design/artifact-import.html
+    ==========================================================================
+    First proposal (Classic Settings Local Artifacts). No variants exist. This
+    is a self-contained design artifact, not product source or a live client:
+    no request, fetch, storage, workspace read, agent message, import, or file
+    write. CSP denies connections and form submission. No CDN, webfont, build
+    step, or logo. Every source, name, hash, receipt, note, and path is an
+    illustrative sample (example-org, C:\Users\you), not an observed import.
+
+    FAMILIAR PATTERNS (named so each choice can be judged)
+      1. Noun-organized Settings, as in VS Code Extensions and JetBrains
+         Settings > Plugins: installation sits beside the kind of thing it
+         installs. Imports are not pack members, so Local artifacts is its own
+         section instead of a Packs tab.
+      2. Install from a source you name: VS Code "Install from VSIX...",
+         JetBrains "Install Plugin from Disk...", Chrome "Load unpacked".
+         Deliberately NOT followed: their OS file picker. A browser page cannot
+         hand Dude a local path, so Canvas uses one typed Source field, like the
+         URL box in GitHub Desktop "Clone a repository" and VS Code "Git: Clone".
+      3. Fluent Field with inline validation under the input that keeps the
+         typed text (WCAG 3.3.1), and a disabled primary button with its reason
+         printed below it (the existing Packs detail action-reason pattern).
+      4. Status headline plus details, as on the Windows Update settings page:
+         one Fluent MessageBar says where the request is (indeterminate Spinner,
+         never a percentage) and About's ruled label/value sheet holds the
+         requested source, receipt, Dude's note, file changes, and paths.
+         Green and the checkmark appear only for Applied.
+      5. Type-to-confirm consent (GitHub's "type the repository name"), which the
+         existing Needs you permission form already implements.
+      6. WAI-ARIA Tabs with automatic activation. Left/Right/Home/End keep
+         working when the three section tabs wrap onto separate rows.
+
+    WHAT CHANGED AGAINST THE BASELINES
+      Baselines: 052 fluent-desktop-workspace.html (workspace composition), 063
+      pack-management.html (Packs), 074 about.html (Settings sections, About).
+      Unchanged regions follow the shipped src/extensions/dude/frontend
+      {app.jsx, settings.jsx, about.jsx, needs-you.jsx, styles.js}.
+        1. Settings sections: Packs, Local artifacts (new), About, in that
+           order, in the same TabList and 36px header row. The five rail
+           destinations are unchanged; there is no sixth destination.
+        2. Narrow wrap rule (material; needs approval). At <=479px product
+           width the section tabs drop their icons and use 6px side padding, so
+           the title and all three labels share one row at 360px. At <=300px the
+           title takes its own row and the tabs wrap in reading order, one label
+           per row at 180x450, replacing 074's two-column grid, which cannot
+           hold "Local artifacts". Arrow keys are unchanged.
+        3. New Local artifacts panel, reusing About's panel scrolling, 76ch
+           measure, and ruled label/value sheet.
+        4. Command bar: Reload packs is absent on Local artifacts, as on About.
+           Nothing replaces it.
+        5. Status bar: "Local artifacts · Connected" (or the product's existing
+           reconnecting / coverage-unavailable wording), never pack coverage.
+        6. Needs you: the existing permission form, recognized for Dude-owned
+           import:file and import:directory permissions. "Back to Local
+           artifacts" replaces "Back to pack request". Defer and Save as idea
+           are hidden for import permissions. The acknowledged copy points to
+           the import request, not a pack request. Narrow reflow (material;
+           needs approval): scope text wraps, and at <=300px product width
+           the panel and its buttons use 8px sides, buttons capped at the
+           column. The shipped Needs you scrolls sideways at 180x450.
+        7. Packs: pack actions give the import exclusion reason while an import
+           is unresolved (FR-005). The rest is the 074 Packs body.
+
+    FIELD PROVENANCE (each displayed field maps to plan.md or shipped product text)
+      Section order/labels ... spec FR-001; plan "Settings, Focus, And
+                               Continuity" (packs, local-artifacts, about).
+      Explanation ............ FR-002. Destinations: dude-bundle-import
+                               Detection Rules and plan isLocalImportPath.
+      Source hint and forms .. FR-003/FR-004; plan "HTTP And Source Bounds"
+                               (blob/<ref>/<file>, tree/<ref>/<subtree>, raw).
+      Validation messages .... plan source bounds; proposed wording.
+      Disabled reasons ....... implementation envelope list; wording adapted
+                               from use-canvas-data.js PACK_MESSAGES.
+      Status labels .......... settings.jsx PHASES labels, reused exactly.
+                               Sentences are proposed import-specific copy.
+      File-change sentence ... settings.jsx MUTATIONS, adapted: no change,
+                               applied, partial change, restored, uncertain.
+      Requested source ....... read() importRequests.importSource (literal).
+      Receipt ................ importRequests.importReceipt.
+      Dude's note ............ import_result acknowledgment.note.
+      Written / Uncertain .... acknowledgment.written / acknowledgment.uncertain.
+      Needs you record ....... request prompt, whyHuman, unblocks, blocking,
+                               scope {kind: session}, owner dude, requestRef
+                               import:<receiptId>, revision, source revision
+                               <providerGeneration>; permission fields
+                               operation, targets[{target, revision}],
+                               consequences, eligibility, confirmation, filled
+                               per plan "Permission field" table and literals.
+      Footer ................. plan "honest Local artifacts label/status";
+                               connection strings reused from app.jsx.
+      Workspace label ........ app.jsx: "Joined workspace" with a feed.
+
+    COMPONENT MAPPING (React / Fluent UI v9.74.7, existing theme.js themes)
+      Section tab ............ <Tab value="local-artifacts" icon={bundleIcon(
+                               Folder20Filled, Folder20Regular)}>Local
+                               artifacts</Tab> in the existing TabList.
+      Panel .................. role="tabpanel"; About's aboutPanel scroll area,
+                               focusable only while it scrolls; aboutBody
+                               measure. <h2> uses the existing `subheading`.
+      Source ................. <Field label="Source" hint validationState
+                               validationMessage> + <Input autoComplete="off">
+                               in a <form> (Enter submits once).
+      Request import ......... <Button appearance="primary"> + <Text
+                               className={s.eyebrow} id> reason/help.
+      Status ................. <MessageBar intent layout="multiline"> with
+                               <MessageBarTitle>, <Spinner size="extra-tiny">
+                               as icon while in flight, and <MessageBarActions>
+                               <Button appearance="primary">Open Needs you
+                               </Button> only while its permission waits.
+                               tabIndex={-1} return-focus target.
+      Details ................ <dl> with aboutFacts/aboutRow; paths are <code>
+                               React text children, never links or HTML.
+      Needs you .............. existing NeedsYou/RequestForm; isPackPermission
+                               generalized to Dude-owned pack: and import:.
+      icons .................. @fluentui/react-icons 2.0.339 path data, inline.
+
+    LOCAL INTERACTIONS IN THIS FILE
+      Section tabs (click, Left/Right, Home/End); Source typing, Enter, and
+      Request import validation; a scripted request illustration; Open Needs
+      you; the permission form (typed literal, consent checkbox, Send
+      permission, Decline with required reason, All requests list); Back to
+      Local artifacts; rail Needs you and Settings (ordinary navigation);
+      Packs context, filter, pager, detail, Reload packs (074 behavior); rail
+      expand and narrow navigation overlay. Overview, Now, New idea, and the
+      work finder open the approved 062 reference in a new tab.
+      ?section=packs|local|about ?scenario=<id> ?session=<id> ?view=needs
+      ?theme=light|dark ?drawer=open
+
+    CAPABILITY LIMITS AND DESIGN GAPS
+      - This file sends no pack requests. Where the product would enable pack
+        actions (joined, idle, nothing unresolved) they render disabled with a
+        dashed "Preview only" note; elsewhere the product reason is shown.
+      - New idea is not drawn here (062 reference). Proposed disabled copy
+        during an import: "An artifact import is in progress or needs owner
+        reconciliation. Your idea draft stays here."
+      - Queued input is visible only to the provider, so it appears after the
+        click as Unavailable, not sent.
+      - The typed Source survives section switches and the Open Needs you /
+        Back round trip only. Ordinary rail departure re-enters Settings on
+        Packs with an empty Source; the request status survives.
+      - Not drawn by design: Browse, drag and drop, file/directory toggle,
+        adaptation or license choices, retry, undo, cancel, percentages,
+        source history, credentials, artifact list, README preview, open or
+        reveal, copy buttons, live refresh, host-availability claims.
+      - Immediate host availability of imported agents or skills is unverified;
+        Applied says a new session may be needed.
+
+    ICON NOTICE
+      Icon path data: @fluentui/react-icons 2.0.339, MIT License,
+      Copyright (c) 2020 Microsoft Corporation. Permission is hereby granted,
+      free of charge, to any person obtaining a copy of this software and
+      associated documentation files (the "Software"), to deal in the Software
+      without restriction, including without limitation the rights to use,
+      copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+      of the Software, and to permit persons to whom the Software is furnished
+      to do so, subject to the following conditions: The above copyright notice
+      and this permission notice shall be included in all copies or substantial
+      portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT
+      WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+      WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+      NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+      LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+      CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH
+      THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+  -->
+  <style>
+    :root {
+      --spacingHorizontalXXS: 2px; --spacingHorizontalXS: 4px; --spacingHorizontalSNudge: 6px;
+      --spacingHorizontalS: 8px; --spacingHorizontalMNudge: 10px; --spacingHorizontalM: 12px;
+      --spacingHorizontalL: 16px; --spacingHorizontalXL: 20px; --spacingHorizontalXXL: 24px;
+      --spacingVerticalXXS: 2px; --spacingVerticalXS: 4px; --spacingVerticalSNudge: 6px;
+      --spacingVerticalS: 8px; --spacingVerticalMNudge: 10px; --spacingVerticalM: 12px; --spacingVerticalL: 16px; --spacingVerticalXXL: 24px;
+      --fontFamilyBase: 'Segoe UI', 'Segoe UI Web (West European)', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', sans-serif;
+      --fontFamilyMonospace: Consolas, 'Courier New', Courier, monospace;
+      --fontSizeBase200: 12px; --fontSizeBase300: 14px; --fontSizeBase400: 16px; --fontSizeBase500: 20px; --fontSizeBase600: 24px;
+      --lineHeightBase200: 16px; --lineHeightBase300: 20px; --lineHeightBase400: 22px; --lineHeightBase500: 28px; --lineHeightBase600: 32px;
+      --fontWeightRegular: 400; --fontWeightSemibold: 600;
+      --borderRadiusSmall: 2px; --borderRadiusMedium: 4px; --borderRadiusLarge: 6px; --borderRadiusCircular: 10000px;
+      --strokeWidthThin: 1px; --strokeWidthThick: 2px; --strokeWidthThicker: 3px;
+      --shell-rail: 48px; --shell-rail-expanded: 208px; --shell-dock: 320px;
+    }
+    /* webLightTheme / webDarkTheme from the installed @fluentui/react-theme,
+       with theme.js mapping colorNeutralStroke1* to the accessible strokes.
+       Status and form tokens below are the same themes' values. */
+    .theme-system, html[data-proto-theme="light"] .theme-system {
+      color-scheme: light;
+      --colorNeutralBackground1: #ffffff; --colorNeutralBackground1Hover: #f5f5f5;
+      --colorNeutralBackground1Pressed: #e0e0e0; --colorNeutralBackground1Selected: #ebebeb;
+      --colorNeutralBackground2: #fafafa; --colorNeutralBackground3: #f5f5f5; --colorNeutralBackground4: #f0f0f0;
+      --colorNeutralForeground1: #242424; --colorNeutralForeground2: #424242; --colorNeutralForeground2Hover: #242424;
+      --colorNeutralForeground3: #616161; --colorNeutralForeground4: #707070; --colorNeutralForegroundOnBrand: #ffffff;
+      --colorNeutralForegroundDisabled: #bdbdbd; --colorNeutralForegroundInverted: #ffffff;
+      --colorNeutralForeground2BrandHover: #0f6cbd;
+      --colorNeutralStroke1: #616161; --colorNeutralStroke1Hover: #575757; --colorNeutralStroke1Pressed: #4d4d4d;
+      --colorNeutralStroke2: #e0e0e0; --colorNeutralStrokeAccessible: #616161;
+      --colorNeutralStrokeAccessibleHover: #575757; --colorNeutralStrokeAccessiblePressed: #4d4d4d;
+      --colorNeutralStrokeDisabled: #e0e0e0; --colorNeutralBackgroundDisabled: #f0f0f0;
+      --colorBrandBackground: #0f6cbd; --colorBrandBackgroundHover: #115ea3; --colorBrandBackground2: #ebf3fc;
+      --colorBrandForeground1: #0f6cbd; --colorBrandForeground2: #115ea3;
+      --colorBrandForegroundLink: #115ea3; --colorBrandForegroundLinkHover: #0f548c; --colorBrandForegroundLinkPressed: #0c3b5e;
+      --colorCompoundBrandStroke: #0f6cbd; --colorCompoundBrandStrokeHover: #115ea3; --colorCompoundBrandStrokePressed: #0f548c;
+      --colorCompoundBrandForeground1: #0f6cbd; --colorCompoundBrandForeground1Hover: #115ea3;
+      --colorCompoundBrandBackground: #0f6cbd; --colorCompoundBrandBackgroundHover: #115ea3;
+      --colorBrandStroke1: #0f6cbd; --colorBrandStroke2: #b4d6fa;
+      --colorStrokeFocus1: #ffffff; --colorStrokeFocus2: #000000;
+      --colorSubtleBackgroundHover: #f5f5f5; --colorSubtleBackgroundPressed: #e0e0e0;
+      --colorBackgroundOverlay: rgba(0, 0, 0, 0.4);
+      --colorPaletteRedForeground1: #bc2f32; --colorPaletteRedBorder2: #d13438;
+      --colorStatusSuccessBackground1: #f1faf1; --colorStatusSuccessBorder1: #9fd89f; --colorStatusSuccessForeground1: #0e700e;
+      --colorStatusWarningBackground1: #fff9f5; --colorStatusWarningBorder1: #fdcfb4; --colorStatusWarningForeground3: #bc4b09;
+      --colorStatusDangerBackground1: #fdf3f4; --colorStatusDangerBorder1: #eeacb2; --colorStatusDangerForeground1: #b10e1c;
+      --shadow4: 0 0 2px rgba(0,0,0,0.12), 0 2px 4px rgba(0,0,0,0.14);
+      --shadow16: 0 0 2px rgba(0,0,0,0.12), 0 8px 16px rgba(0,0,0,0.14);
+    }
+    .proto-host-dark .theme-system, html[data-proto-theme="dark"] .theme-system {
+      color-scheme: dark;
+      --colorNeutralBackground1: #292929; --colorNeutralBackground1Hover: #3d3d3d;
+      --colorNeutralBackground1Pressed: #1f1f1f; --colorNeutralBackground1Selected: #383838;
+      --colorNeutralBackground2: #1f1f1f; --colorNeutralBackground3: #141414; --colorNeutralBackground4: #0a0a0a;
+      --colorNeutralForeground1: #ffffff; --colorNeutralForeground2: #d6d6d6; --colorNeutralForeground2Hover: #ffffff;
+      --colorNeutralForeground3: #adadad; --colorNeutralForeground4: #999999; --colorNeutralForegroundOnBrand: #ffffff;
+      --colorNeutralForegroundDisabled: #5c5c5c; --colorNeutralForegroundInverted: #242424;
+      --colorNeutralForeground2BrandHover: #479ef5;
+      --colorNeutralStroke1: #adadad; --colorNeutralStroke1Hover: #bdbdbd; --colorNeutralStroke1Pressed: #b3b3b3;
+      --colorNeutralStroke2: #525252; --colorNeutralStrokeAccessible: #adadad;
+      --colorNeutralStrokeAccessibleHover: #bdbdbd; --colorNeutralStrokeAccessiblePressed: #b3b3b3;
+      --colorNeutralStrokeDisabled: #424242; --colorNeutralBackgroundDisabled: #141414;
+      --colorBrandBackground: #115ea3; --colorBrandBackgroundHover: #0f6cbd; --colorBrandBackground2: #082338;
+      --colorBrandForeground1: #479ef5; --colorBrandForeground2: #62abf5;
+      --colorBrandForegroundLink: #479ef5; --colorBrandForegroundLinkHover: #62abf5; --colorBrandForegroundLinkPressed: #2886de;
+      --colorCompoundBrandStroke: #479ef5; --colorCompoundBrandStrokeHover: #62abf5; --colorCompoundBrandStrokePressed: #2886de;
+      --colorCompoundBrandForeground1: #479ef5; --colorCompoundBrandForeground1Hover: #62abf5;
+      --colorCompoundBrandBackground: #479ef5; --colorCompoundBrandBackgroundHover: #62abf5;
+      --colorBrandStroke1: #479ef5; --colorBrandStroke2: #0e4775;
+      --colorStrokeFocus1: #000000; --colorStrokeFocus2: #ffffff;
+      --colorSubtleBackgroundHover: #383838; --colorSubtleBackgroundPressed: #2e2e2e;
+      --colorBackgroundOverlay: rgba(0, 0, 0, 0.5);
+      --colorPaletteRedForeground1: #e37d80; --colorPaletteRedBorder2: #e37d80;
+      --colorStatusSuccessBackground1: #052505; --colorStatusSuccessBorder1: #107c10; --colorStatusSuccessForeground1: #54b054;
+      --colorStatusWarningBackground1: #4a1e04; --colorStatusWarningBorder1: #f7630c; --colorStatusWarningForeground3: #f98845;
+      --colorStatusDangerBackground1: #3b0509; --colorStatusDangerBorder1: #c50f1f; --colorStatusDangerForeground1: #dc626d;
+      --shadow4: 0 0 2px rgba(0,0,0,0.24), 0 2px 4px rgba(0,0,0,0.28);
+      --shadow16: 0 0 2px rgba(0,0,0,0.24), 0 8px 16px rgba(0,0,0,0.28);
+    }
+    html[data-proto-theme="light"] { color-scheme: light; }
+    html[data-proto-theme="dark"] { color-scheme: dark; }
+    *, *::before, *::after { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0; height: 100vh; height: 100dvh; display: flex; flex-direction: column; min-width: 0;
+      font: var(--fontWeightRegular) var(--fontSizeBase300)/var(--lineHeightBase300) var(--fontFamilyBase);
+      color: var(--colorNeutralForeground1); background: var(--colorNeutralBackground2);
+    }
+    h1, h2, h3, p, dl, dd { margin: 0; }
+    button, select, input, textarea { font: inherit; color: inherit; }
+    [hidden] { display: none !important; }
+    .icon { width: 20px; height: 20px; flex: 0 0 auto; fill: currentColor; }
+    .icon16 { width: 16px; height: 16px; flex: 0 0 auto; fill: currentColor; }
+    .icon12 { width: 12px; height: 12px; flex: 0 0 auto; fill: currentColor; }
+    .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+    .visually-hidden {
+      position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+      overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+    }
+    .eyebrow { color: var(--colorNeutralForeground2); font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); overflow-wrap: anywhere; }
+    .code { font-family: var(--fontFamilyMonospace); font-size: var(--fontSizeBase200); white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+    .code-inline { font-family: var(--fontFamilyMonospace); font-size: var(--fontSizeBase200); overflow-wrap: anywhere; }
+    .prose { overflow-wrap: anywhere; white-space: pre-wrap; }
+    .semibold { font-weight: var(--fontWeightSemibold); }
+    .subheading { font-size: var(--fontSizeBase400); line-height: var(--lineHeightBase400); font-weight: var(--fontWeightSemibold); overflow-wrap: anywhere; }
+    .title { font-size: var(--fontSizeBase500); line-height: var(--lineHeightBase500); font-weight: var(--fontWeightSemibold); overflow-wrap: anywhere; }
+    .title:focus-visible { outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: var(--strokeWidthThick); }
+    .tight { display: flex; flex-direction: column; gap: var(--spacingVerticalXS); min-width: 0; }
+    .stack { display: flex; flex-direction: column; gap: var(--spacingVerticalM); min-width: 0; }
+
+    /* Preview strip: outside the product tree, like the 052/063/074 drawers. */
+    .proto {
+      flex: 0 0 auto; max-height: 45dvh; overflow-y: auto; padding: var(--spacingVerticalXS) var(--spacingHorizontalS);
+      background: var(--colorNeutralBackground4); color: var(--colorNeutralForeground2);
+      border-bottom: var(--strokeWidthThick) dashed var(--colorNeutralStrokeAccessible);
+      font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200);
+    }
+    .proto summary { cursor: pointer; min-height: 20px; font-weight: var(--fontWeightSemibold); color: var(--colorBrandForeground1); overflow-wrap: anywhere; }
+    .proto-content { display: flex; flex-direction: column; gap: var(--spacingVerticalS); padding: var(--spacingVerticalS) var(--spacingHorizontalXS); max-width: 110ch; }
+    .proto-controls { display: flex; flex-wrap: wrap; gap: var(--spacingVerticalS) var(--spacingHorizontalL); }
+    .proto-controls label { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacingHorizontalS); font-weight: var(--fontWeightSemibold); min-width: 0; }
+    .proto-controls select {
+      min-height: 28px; max-width: 100%; padding: 2px 6px; border: 1px solid var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1);
+    }
+    .proto a { color: var(--colorBrandForegroundLink); }
+    .proto code { font-family: var(--fontFamilyMonospace); }
+    .proto :is(a, summary, select):focus-visible, .skip-link:focus-visible {
+      outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: var(--strokeWidthThick); border-radius: var(--borderRadiusSmall);
+    }
+    /* Mock-only note inside the product frame: same dashed treatment as the strip. */
+    .proto-inline {
+      padding: var(--spacingVerticalXS) var(--spacingHorizontalS); border: var(--strokeWidthThin) dashed var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground4); color: var(--colorNeutralForeground2);
+      font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); overflow-wrap: anywhere;
+    }
+    .skip-link {
+      position: absolute; left: 8px; top: -80px; z-index: 30; padding: 5px 12px; border-radius: var(--borderRadiusMedium);
+      background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1); border: 1px solid var(--colorNeutralStrokeAccessible);
+      font-weight: var(--fontWeightSemibold); text-decoration: none;
+    }
+    .skip-link:focus { top: 8px; }
+
+    /* Fluent Button anatomy (medium). Secondary = outline with accessible stroke. */
+    .button {
+      position: relative; display: inline-flex; align-items: center; justify-content: center; gap: var(--spacingHorizontalSNudge);
+      min-height: 32px; min-width: 96px; margin: 0; padding: 5px var(--spacingHorizontalM); vertical-align: middle;
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke1); border-radius: var(--borderRadiusMedium);
+      background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1); text-decoration: none;
+      font-size: var(--fontSizeBase300); line-height: var(--lineHeightBase300); font-weight: var(--fontWeightSemibold);
+      cursor: pointer; outline: none; overflow: hidden;
+    }
+    .button:hover { background: var(--colorNeutralBackground1Hover); border-color: var(--colorNeutralStroke1Hover); }
+    .button:active { background: var(--colorNeutralBackground1Pressed); border-color: var(--colorNeutralStroke1Pressed); }
+    .button:focus-visible {
+      border-color: var(--colorStrokeFocus2); box-shadow: 0 0 0 var(--strokeWidthThin) var(--colorStrokeFocus2) inset;
+      outline: var(--strokeWidthThick) solid transparent; z-index: 1;
+    }
+    .button:disabled, .button:disabled:hover {
+      cursor: not-allowed; background: var(--colorNeutralBackgroundDisabled); border-color: var(--colorNeutralStrokeDisabled);
+      color: var(--colorNeutralForegroundDisabled);
+    }
+    .button.primary { background: var(--colorBrandBackground); border-color: transparent; color: var(--colorNeutralForegroundOnBrand); }
+    .button.primary:hover { background: var(--colorBrandBackgroundHover); }
+    .button.primary:focus-visible { border-color: var(--colorStrokeFocus2); box-shadow: 0 0 0 var(--strokeWidthThin) var(--colorStrokeFocus2) inset, 0 0 0 var(--strokeWidthThick) var(--colorStrokeFocus1) inset; }
+    .button.primary:disabled { background: var(--colorNeutralBackgroundDisabled); border-color: var(--colorNeutralStrokeDisabled); color: var(--colorNeutralForegroundDisabled); }
+    .button.subtle { background: transparent; border-color: transparent; color: var(--colorNeutralForeground2); }
+    .button.subtle:hover { background: var(--colorSubtleBackgroundHover); color: var(--colorNeutralForeground2Hover); }
+    .button.subtle:hover .icon { color: var(--colorNeutralForeground2BrandHover); }
+    .button.subtle:active { background: var(--colorSubtleBackgroundPressed); }
+    .button.subtle:focus-visible { border-color: var(--colorStrokeFocus2); }
+    .button.icon-button { width: 32px; min-width: 32px; height: 32px; padding: 0; }
+    .back { align-self: flex-start; flex-shrink: 0; }
+
+    #app { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+
+    /* Command bar: app.jsx `commands`, `titlebar`, `selector`, `refresh`. */
+    .command-bar {
+      position: relative; display: flex; align-items: center; flex-shrink: 0; min-width: 0;
+      gap: var(--spacingHorizontalM); padding: var(--spacingVerticalXXS) var(--spacingHorizontalL);
+      background: var(--colorNeutralBackground1); border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .titlebar {
+      display: flex; align-items: center; gap: var(--spacingHorizontalS); flex-shrink: 0;
+      padding-inline-end: var(--spacingHorizontalM); border-inline-end: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .brand { font-weight: var(--fontWeightSemibold); }
+    .workspace-label { color: var(--colorNeutralForeground2); font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); }
+    .selector { position: relative; flex: 1 1 440px; min-width: 0; max-width: 620px; }
+    .finder-reference {
+      display: flex; align-items: center; gap: var(--spacingHorizontalS); min-width: 0; min-height: 32px;
+      padding: 0 var(--spacingHorizontalMNudge); border: var(--strokeWidthThin) solid var(--colorNeutralStroke1);
+      border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1);
+      text-decoration: none; outline: none; position: relative;
+    }
+    .finder-reference .icon { color: var(--colorNeutralForeground3); }
+    .finder-reference:hover { border-color: var(--colorNeutralStroke1Hover); }
+    .finder-reference:focus-visible { border-color: var(--colorStrokeFocus2); box-shadow: 0 0 0 var(--strokeWidthThin) var(--colorStrokeFocus2) inset; outline: 2px solid transparent; }
+    .finder-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--fontWeightSemibold); }
+    .finder-ref { font-weight: var(--fontWeightRegular); color: var(--colorNeutralForeground2); font-size: var(--fontSizeBase200); }
+    .toolbar { display: flex; align-items: center; margin-inline-start: auto; flex-shrink: 0; padding: 0; }
+    .toolbar-button { min-width: 0; }
+
+    .shell-body { display: flex; flex: 1; min-width: 0; min-height: 0; }
+
+    /* Rail: app.jsx ActivityRail + styles.js rail*. Transparent small vertical Tabs. */
+    .rail {
+      position: relative; display: flex; flex-direction: column; align-items: center; flex-shrink: 0;
+      width: var(--shell-rail); min-height: 0; gap: var(--spacingVerticalL); padding-block: var(--spacingVerticalS);
+      background: var(--colorNeutralBackground2); border-inline-end: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .rail > .rail-toggle { flex-shrink: 0; }
+    .rail-contents { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; width: 100%; }
+    .rail-destinations {
+      display: flex; flex-direction: column; align-items: center; min-height: 0; overflow-y: auto; overflow-x: hidden;
+      scrollbar-width: none; padding: var(--spacingHorizontalXXS); gap: var(--spacingVerticalXS);
+    }
+    .rail-footer {
+      display: flex; justify-content: center; flex-shrink: 0; margin-top: auto; margin-inline: var(--spacingHorizontalXS);
+      padding-top: var(--spacingVerticalS); border-top: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .rail-tab {
+      position: relative; display: flex; align-items: center; justify-content: center; gap: var(--spacingHorizontalXS);
+      flex-shrink: 0; width: 32px; min-width: 32px; height: 32px; min-height: 32px; padding: 0;
+      border: 0; border-radius: var(--borderRadiusMedium); background: transparent; color: var(--colorNeutralForeground2);
+      text-decoration: none; cursor: pointer; outline: none;
+    }
+    .rail-tab:hover { color: var(--colorNeutralForeground2Hover); }
+    .rail-tab::before, .rail-tab::after {
+      content: ""; position: absolute; left: 0; top: var(--spacingVerticalXS); bottom: var(--spacingVerticalXS);
+      width: var(--strokeWidthThicker); border-radius: var(--borderRadiusCircular); background: transparent;
+    }
+    .rail-tab:hover::before { background: var(--colorNeutralStroke1Hover); }
+    .rail-tab[aria-current="page"] .icon { color: var(--colorCompoundBrandForeground1); }
+    .rail-tab[aria-current="page"]::after { background: var(--colorCompoundBrandStroke); }
+    .rail-tab:focus-visible { box-shadow: var(--shadow4), 0 0 0 var(--strokeWidthThick) var(--colorStrokeFocus2); outline: 2px solid transparent; z-index: 1; }
+    .rail-label { display: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); }
+    .rail-ref { color: var(--colorNeutralForeground2); }
+    #app.rail-expanded .rail { width: var(--shell-rail-expanded); align-items: stretch; padding-inline: var(--spacingHorizontalS); }
+    #app.rail-expanded .rail > .rail-toggle { align-self: flex-start; }
+    #app.rail-expanded .rail-destinations { align-items: stretch; }
+    #app.rail-expanded .rail-tab, .nav-overlay .rail-tab { width: 100%; justify-content: flex-start; padding-inline: var(--spacingHorizontalS); }
+    #app.rail-expanded .rail-label, .nav-overlay .rail-label { display: inline; }
+
+    /* Narrow navigation overlay: styles.js navOverlay / navHeading. */
+    .nav-overlay {
+      position: fixed; inset: 0 auto 0 0; margin: 0; width: 260px; max-width: calc(100vw - 16px); height: 100dvh; max-height: 100dvh;
+      padding: var(--spacingHorizontalM); border: var(--strokeWidthThin) solid var(--colorNeutralStroke2); border-radius: 0;
+      background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1); box-shadow: var(--shadow16);
+    }
+    .nav-overlay[open] { display: flex; flex-direction: column; }
+    .nav-overlay::backdrop { background: var(--colorBackgroundOverlay); }
+    .nav-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--spacingHorizontalS); padding-bottom: var(--spacingVerticalS); flex-shrink: 0; }
+    .nav-note { flex-shrink: 0; padding-bottom: var(--spacingVerticalS); }
+    .nav-overlay .rail-contents { flex: 1; min-height: 0; }
+
+    /* Fluent Tab anatomy (transparent appearance, medium horizontal). */
+    .tab {
+      position: relative; display: inline-grid; grid-auto-flow: column; align-items: center; justify-content: center;
+      column-gap: var(--spacingHorizontalSNudge); min-width: 0; margin: 0;
+      padding: var(--spacingVerticalS) var(--spacingHorizontalMNudge); border: 0; border-radius: var(--borderRadiusMedium);
+      background: transparent; color: var(--colorNeutralForeground2); line-height: var(--lineHeightBase300);
+      cursor: pointer; outline: none; text-transform: none;
+    }
+    .tab::before, .tab::after {
+      content: ""; position: absolute; left: var(--spacingHorizontalM); right: var(--spacingHorizontalM); bottom: 0;
+      height: var(--strokeWidthThicker); border-radius: var(--borderRadiusCircular); background: transparent;
+    }
+    .tab:hover::before { background: var(--colorNeutralStroke1Hover); }
+    .tab:active::before { background: var(--colorNeutralStroke1Pressed); }
+    .tab[aria-selected="true"]::after { background: var(--colorCompoundBrandStroke); }
+    .tab[aria-selected="true"]:hover::after { background: var(--colorCompoundBrandStrokeHover); }
+    .tab:focus-visible { box-shadow: var(--shadow4), 0 0 0 var(--strokeWidthThick) var(--colorStrokeFocus2); outline: 2px solid transparent; z-index: 1; }
+    .tab-icon { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; color: var(--colorNeutralForeground2); }
+    .tab:hover .tab-icon, .tab:hover .tab-text { color: var(--colorNeutralForeground2Hover); }
+    .tab[aria-selected="true"] .tab-icon { color: var(--colorCompoundBrandForeground1); }
+    .tab[aria-selected="true"]:hover .tab-icon { color: var(--colorCompoundBrandForeground1Hover); }
+    .tab .icon-filled, .tab[aria-selected="true"] .icon-regular { display: none; }
+    .tab[aria-selected="true"] .icon-filled { display: inline; }
+    .tab-content { display: inline-grid; min-width: 0; padding: 0 var(--spacingHorizontalXXS); overflow: hidden; }
+    .tab-text, .tab-reserve { grid-area: 1 / 1; min-width: 0; }
+    .section-tab .tab-text, .section-tab .tab-reserve { white-space: nowrap; }
+    .tab-reserve { visibility: hidden; font-weight: var(--fontWeightSemibold); }
+    .tab[aria-selected="true"] .tab-text { color: var(--colorNeutralForeground1); font-weight: var(--fontWeightSemibold); }
+
+    /* Main area: the Settings panel (styles.js `detail` + `settingsPanel`) and,
+       for the permission round trip, the Needs you view (styles.js `detail`). */
+    .product { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; container: product / inline-size; }
+    .settings-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; background: var(--colorNeutralBackground1); }
+
+    /* Settings header (074): title plus section TabList on one 36px rule.
+       CHANGED: the tabs wrap in reading order when the row cannot hold them. */
+    .settings-header {
+      flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: stretch; column-gap: var(--spacingHorizontalL);
+      min-width: 0; padding: 0 var(--spacingHorizontalL); border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .settings-header h1 {
+      padding-block: var(--spacingVerticalXS); font-size: var(--fontSizeBase500); line-height: var(--lineHeightBase500);
+      font-weight: var(--fontWeightSemibold); overflow-wrap: anywhere; min-width: 0;
+    }
+    .settings-header h1:focus-visible { outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: var(--strokeWidthThick); }
+    .section-tabs { display: flex; flex-wrap: wrap; align-items: stretch; min-width: 0; }
+    .section-tab { min-height: 36px; }
+    .section-panel { flex: 1; min-height: 0; min-width: 0; }
+    .packs-panel { display: flex; flex-direction: column; }
+    /* Packs body: settings.jsx + styles.js pack*, unchanged from 074. */
+    .pack-layout { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1; min-height: 0; min-width: 0; }
+    .pack-layout.has-details { grid-template-columns: minmax(0, 1fr) var(--shell-dock); }
+    .pack-browser { display: flex; flex-direction: column; min-height: 0; min-width: 0; container: packs / inline-size; }
+    .pack-tabs { flex-shrink: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 360px; min-width: 0; }
+    .pack-tab { min-height: 36px; padding: var(--spacingVerticalXS) var(--spacingHorizontalS); }
+    .pack-tab-count { font-size: var(--fontSizeBase200); font-weight: var(--fontWeightRegular); }
+    .pack-panel { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+    .pack-toolbar {
+      position: relative; z-index: 2; display: flex; gap: var(--spacingHorizontalS); align-items: center; flex-shrink: 0; min-width: 0;
+      padding: var(--spacingVerticalS) var(--spacingHorizontalL);
+      border-top: var(--strokeWidthThin) solid var(--colorNeutralStroke2); border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .pack-filter-field {
+      display: grid; grid-template-columns: minmax(80px, 1fr) minmax(0, 280px); align-items: center;
+      column-gap: var(--spacingHorizontalS); flex: 1 1 540px; min-width: 0; max-width: 660px;
+    }
+    .pack-filter-field label { font-weight: var(--fontWeightSemibold); }
+    .dropdown { position: relative; display: flex; min-width: 0; width: 100%; border-radius: var(--borderRadiusMedium); }
+    .dropdown select {
+      appearance: none; width: 100%; min-width: 0; min-height: 32px; margin: 0; padding: 5px 34px 5px 12px;
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke1); border-bottom-color: var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1);
+      cursor: pointer; outline: none; text-overflow: ellipsis;
+    }
+    .dropdown select:hover { border-color: var(--colorNeutralStroke1Hover); border-bottom-color: var(--colorNeutralStrokeAccessibleHover); }
+    .dropdown select:focus-visible { border-color: var(--colorNeutralStroke1Pressed); border-bottom-color: var(--colorNeutralStrokeAccessiblePressed); }
+    .dropdown .icon { position: absolute; right: var(--spacingHorizontalMNudge); top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--colorNeutralStrokeAccessible); }
+    .dropdown::after, .input::after, .textarea::after {
+      content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: var(--borderRadiusMedium);
+      border-bottom: var(--strokeWidthThick) solid var(--colorCompoundBrandStroke); border-radius: 0 0 var(--borderRadiusMedium) var(--borderRadiusMedium);
+      clip-path: inset(calc(100% - 2px) 0 0 0); transform: scaleX(0); pointer-events: none;
+    }
+    .dropdown:has(select:focus-visible)::after, .input:focus-within::after, .textarea:focus-within::after { transform: scaleX(1); }
+    .pack-clear { flex-shrink: 0; min-width: 0; }
+    .pack-scroll { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; overscroll-behavior: contain; }
+    .pack-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .pack-table th {
+      position: sticky; top: 0; z-index: 1; height: 32px; padding: 0 var(--spacingHorizontalL); text-align: left;
+      font-weight: var(--fontWeightRegular); color: var(--colorNeutralForeground2); background: var(--colorNeutralBackground2);
+      border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .pack-table th:first-child { width: 45%; }
+    .pack-row { cursor: pointer; }
+    .pack-row td { height: 45px; padding: var(--spacingVerticalS) var(--spacingHorizontalL); border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2); overflow-wrap: anywhere; vertical-align: middle; }
+    .pack-row:hover { background: var(--colorSubtleBackgroundHover); }
+    .pack-row:has(.pack-open:focus-visible) { outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: calc(-1 * var(--strokeWidthThick)); }
+    .pack-row.selected, .pack-row.selected:hover { background: var(--colorNeutralBackground1Selected); box-shadow: inset 3px 0 var(--colorBrandStroke1); }
+    .pack-open {
+      display: block; width: 100%; margin: 0; padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer;
+      font-weight: var(--fontWeightSemibold); color: var(--colorBrandForeground2); overflow-wrap: anywhere; outline: none;
+    }
+    .pack-tags { color: var(--colorNeutralForeground2); }
+    .empty { display: flex; flex-direction: column; gap: var(--spacingVerticalM); padding: var(--spacingHorizontalL); }
+    .pack-pager {
+      display: flex; align-items: center; flex-shrink: 0; gap: var(--spacingHorizontalS); min-width: 0;
+      padding: var(--spacingVerticalXS) var(--spacingHorizontalL);
+      border-top: var(--strokeWidthThin) solid var(--colorNeutralStroke2); background: var(--colorNeutralBackground2);
+    }
+    .pack-metrics { flex: 1; display: flex; flex-direction: column; min-width: 0; text-align: center; font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); overflow-wrap: anywhere; }
+    .pack-page-button { flex-shrink: 0; }
+    .pack-detail {
+      position: static; margin: 0; padding: 0; width: var(--shell-dock); max-width: none; height: 100%; max-height: none;
+      min-width: 0; min-height: 0; overflow: hidden; color: var(--colorNeutralForeground1); background: var(--colorNeutralBackground1);
+      border: 0; border-inline-start: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .pack-detail[open] { display: flex; flex-direction: column; }
+    .pack-detail:modal {
+      position: fixed; inset: 0 0 0 auto; width: min(420px, calc(100vw - 16px)); height: 100dvh; max-height: 100dvh;
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible); box-shadow: var(--shadow16);
+    }
+    .pack-detail::backdrop { background: var(--colorBackgroundOverlay); }
+    .pack-detail-header { display: flex; align-items: flex-start; flex-shrink: 0; gap: var(--spacingHorizontalS); padding: var(--spacingHorizontalM); border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2); }
+    .pack-detail-heading { flex: 1; min-width: 0; }
+    .pack-detail-heading h2 { font-size: var(--fontSizeBase400); line-height: var(--lineHeightBase400); font-weight: var(--fontWeightSemibold); overflow-wrap: anywhere; }
+    .pack-detail-body {
+      display: flex; flex-direction: column; gap: var(--spacingVerticalL); flex: 1; min-height: 0; min-width: 0;
+      overflow-y: auto; overscroll-behavior: contain; padding: var(--spacingHorizontalM); outline: none;
+    }
+    .pack-detail-body:focus-visible { outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: calc(-1 * var(--strokeWidthThick)); }
+    .pack-actions, .actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacingHorizontalS); padding-top: var(--spacingVerticalS); }
+    .pack-metadata { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--spacingVerticalXS); }
+    .pack-metadata dt { color: var(--colorNeutralForeground2); }
+    .pack-metadata dd { min-width: 0; overflow-wrap: anywhere; }
+    .pack-metadata dd + dt { margin-top: var(--spacingVerticalS); }
+    .pack-metadata-heading { font-size: var(--fontSizeBase300); line-height: var(--lineHeightBase300); font-weight: var(--fontWeightSemibold); }
+    .pack-files summary { cursor: pointer; min-height: 28px; color: var(--colorBrandForeground1); }
+    .pack-files summary:focus-visible { outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: var(--strokeWidthThick); }
+    .pack-files ul { padding-inline-start: var(--spacingHorizontalXL); margin-block: var(--spacingVerticalS); }
+    .pack-files li + li { margin-top: var(--spacingVerticalXS); }
+    .pack-detail-footer { flex-shrink: 0; padding: var(--spacingHorizontalS); border-top: var(--strokeWidthThin) solid var(--colorNeutralStroke2); }
+
+    /* About (074, unchanged) and Local artifacts (NEW) share one panel
+       treatment: the panel is the vertical scroll area, focusable only while
+       it has something to scroll, with the 76ch measure. */
+    .about-panel, .local-panel { position: relative; overflow-y: auto; overscroll-behavior: contain; outline: none; }
+    .about-panel:focus-visible, .local-panel:focus-visible { outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: calc(-1 * var(--strokeWidthThick)); }
+    .about-body, .local-body {
+      display: flex; flex-direction: column; gap: var(--spacingVerticalM); min-width: 0;
+      max-width: calc(76ch + 2 * var(--spacingHorizontalL)); padding: var(--spacingVerticalL) var(--spacingHorizontalL) var(--spacingVerticalXXL);
+    }
+    .local-body { gap: var(--spacingVerticalL); }
+    .about-identity { font-size: var(--fontSizeBase600); line-height: var(--lineHeightBase600); font-weight: var(--fontWeightSemibold); overflow-wrap: anywhere; }
+    .about-facts { border-top: var(--strokeWidthThin) solid var(--colorNeutralStroke2); }
+    .about-row {
+      display: grid; grid-template-columns: minmax(0, 11.5em) minmax(0, 1fr); column-gap: var(--spacingHorizontalL); align-items: baseline;
+      padding-block: var(--spacingVerticalS); border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+    .about-row dt { color: var(--colorNeutralForeground2); overflow-wrap: anywhere; }
+    .about-row dd { min-width: 0; overflow-wrap: anywhere; }
+    .about-row dd.unavailable { color: var(--colorNeutralForeground2); }
+    .about-note { font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); color: var(--colorNeutralForeground2); overflow-wrap: anywhere; }
+    .nowrap { white-space: nowrap; }
+    .link {
+      color: var(--colorBrandForegroundLink); text-decoration-line: underline; text-decoration-thickness: var(--strokeWidthThin);
+      overflow-wrap: anywhere; cursor: pointer; outline: none;
+    }
+    .link:hover { color: var(--colorBrandForegroundLinkHover); }
+    .link:active { color: var(--colorBrandForegroundLinkPressed); }
+    .link:focus-visible {
+      text-decoration-line: underline; text-decoration-style: double; text-decoration-color: var(--colorStrokeFocus2);
+      outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: var(--strokeWidthThick); border-radius: var(--borderRadiusSmall);
+    }
+    .link .icon16 { margin-inline-start: var(--spacingHorizontalXS); vertical-align: -2px; }
+    /* Fluent Spinner, extra-tiny: an indeterminate ring, never a percentage. */
+    .spinner {
+      display: inline-block; flex: 0 0 auto; width: 16px; height: 16px; margin-inline-end: var(--spacingHorizontalSNudge); vertical-align: -3px;
+      border: var(--strokeWidthThick) solid var(--colorBrandStroke2); border-top-color: var(--colorBrandStroke1);
+      border-radius: 50%; animation: spin 1.2s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* NEW: Local artifacts. One explanation, one Source field, one action,
+       then the request's status headline and its ruled detail sheet. */
+    .local-intro { display: flex; flex-direction: column; gap: var(--spacingVerticalS); min-width: 0; }
+    .import-form { display: flex; flex-direction: column; gap: var(--spacingVerticalM); min-width: 0; }
+    .request-actions { display: flex; flex-direction: column; align-items: flex-start; gap: var(--spacingVerticalXS); min-width: 0; }
+    /* Fluent Field (vertical): label, control, validation message, hint. */
+    .field { display: flex; flex-direction: column; min-width: 0; }
+    .field-label { align-self: flex-start; padding-block: var(--spacingVerticalXXS); margin-bottom: var(--spacingVerticalXXS); color: var(--colorNeutralForeground1); overflow-wrap: anywhere; }
+    .field-label.strong { font-weight: var(--fontWeightSemibold); }
+    .field-message {
+      margin-top: var(--spacingVerticalXXS); padding-inline-start: calc(12px + var(--spacingHorizontalXS));
+      color: var(--colorPaletteRedForeground1); font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); overflow-wrap: anywhere;
+    }
+    .field-message .icon12 { margin-inline: calc(-12px - var(--spacingHorizontalXS)) var(--spacingHorizontalXS); vertical-align: -1px; }
+    .field-hint { margin-top: var(--spacingVerticalXXS); color: var(--colorNeutralForeground3); font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); overflow-wrap: anywhere; }
+    /* Fluent Input (medium, outline). A long value scrolls inside the input. */
+    .input {
+      position: relative; display: flex; align-items: center; min-height: 32px; min-width: 0; width: 100%;
+      padding: 0 var(--spacingHorizontalMNudge); border: var(--strokeWidthThin) solid var(--colorNeutralStroke1);
+      border-bottom-color: var(--colorNeutralStrokeAccessible); border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground1);
+    }
+    .input:hover { border-color: var(--colorNeutralStroke1Hover); border-bottom-color: var(--colorNeutralStrokeAccessibleHover); }
+    .input:focus-within { border-color: var(--colorNeutralStroke1Pressed); border-bottom-color: var(--colorNeutralStrokeAccessiblePressed); }
+    .input.invalid:not(:focus-within) { border-color: var(--colorPaletteRedBorder2); }
+    .input input {
+      flex: 1 1 auto; align-self: stretch; min-width: 0; margin: 0; padding: 0 var(--spacingHorizontalXXS);
+      border: 0; background: transparent; color: var(--colorNeutralForeground1); outline: none;
+    }
+    .input input::placeholder { color: var(--colorNeutralForeground4); opacity: 1; }
+    .source-forms {
+      display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--spacingVerticalXXS) var(--spacingHorizontalM);
+      margin-top: var(--spacingVerticalS); font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); min-width: 0;
+    }
+    .source-forms dt { color: var(--colorNeutralForeground3); }
+    .source-forms dd { min-width: 0; font-family: var(--fontFamilyMonospace); color: var(--colorNeutralForeground2); overflow-wrap: anywhere; }
+    .import-request { display: flex; flex-direction: column; gap: var(--spacingVerticalM); min-width: 0; padding-top: var(--spacingVerticalL); border-top: var(--strokeWidthThin) solid var(--colorNeutralStroke2); }
+    .import-request-heading { font-size: var(--fontSizeBase300); line-height: var(--lineHeightBase300); font-weight: var(--fontWeightSemibold); }
+    .path-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--spacingVerticalXS); min-width: 0; }
+    /* Path lists take the sheet's full width so a path usually stays on one line. */
+    .about-row.paths { grid-template-columns: minmax(0, 1fr); row-gap: var(--spacingVerticalXS); }
+    .request-sheet .code { user-select: text; }
+    /* Fluent MessageBar, multiline layout, with its intents. Status is never
+       color alone: the title, icon shape, and sentence differ per phase. */
+    .message-bar {
+      display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+      grid-template-areas: "icon body actions" "secondary secondary secondary";
+      align-items: start; min-width: 0; min-height: 36px; padding: var(--spacingVerticalMNudge) 0 0 var(--spacingHorizontalM);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke1); border-radius: var(--borderRadiusMedium);
+      background: var(--colorNeutralBackground3); white-space: normal; outline: none;
+    }
+    .message-bar:focus { outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: var(--strokeWidthThick); }
+    .mb-icon { grid-area: icon; display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-inline-end: var(--spacingHorizontalS); color: var(--colorNeutralForeground3); }
+    .mb-icon .spinner { margin: 0; }
+    .mb-body { grid-area: body; min-width: 0; padding: 0 var(--spacingHorizontalM) var(--spacingVerticalS) 0; overflow-wrap: anywhere; }
+    .mb-title { font-weight: var(--fontWeightSemibold); }
+    .mb-text { display: flex; flex-direction: column; gap: var(--spacingVerticalXS); }
+    .mb-actions { grid-area: secondary; display: flex; justify-content: flex-end; gap: var(--spacingHorizontalM); margin: var(--spacingVerticalXXS) 0 var(--spacingVerticalS); padding-inline-end: var(--spacingHorizontalM); }
+    .message-bar.intent-success { background: var(--colorStatusSuccessBackground1); border-color: var(--colorStatusSuccessBorder1); }
+    .message-bar.intent-success .mb-icon { color: var(--colorStatusSuccessForeground1); }
+    .message-bar.intent-warning { background: var(--colorStatusWarningBackground1); border-color: var(--colorStatusWarningBorder1); }
+    .message-bar.intent-warning .mb-icon { color: var(--colorStatusWarningForeground3); }
+    .message-bar.intent-error { background: var(--colorStatusDangerBackground1); border-color: var(--colorStatusDangerBorder1); }
+    .message-bar.intent-error .mb-icon { color: var(--colorStatusDangerForeground1); }
+    /* Needs you (needs-you.jsx, unchanged anatomy): styles.js `detail`,
+       `measure`, `detailHeader`, `scope`, `notice`, `requestOption`. */
+    .needs-view {
+      position: relative; flex: 1; min-width: 0; min-height: 0; overflow-y: auto; scrollbar-gutter: stable;
+      padding: var(--spacingHorizontalXXL); background: var(--colorNeutralBackground1);
+    }
+    .measure { max-width: 76ch; display: flex; flex-direction: column; gap: var(--spacingVerticalL); min-width: 0; }
+    .detail-header { display: flex; flex-direction: column; gap: var(--spacingVerticalS); min-width: 0; }
+    .row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacingHorizontalS); min-width: 0; }
+    .badge {
+      display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px;
+      padding: 0 calc(var(--spacingHorizontalXS) + var(--spacingHorizontalXXS)); border: var(--strokeWidthThin) solid var(--colorBrandStroke2);
+      border-radius: var(--borderRadiusCircular); background: var(--colorBrandBackground2); color: var(--colorBrandForeground2);
+      font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); font-weight: var(--fontWeightSemibold); white-space: nowrap;
+    }
+    /* CHANGED: scope text, such as the import:directory operation, wraps
+       instead of widening the panel. */
+    .scope {
+      display: flex; flex-direction: column; gap: var(--spacingVerticalS); min-width: 0; padding: var(--spacingHorizontalM);
+      border-left: var(--strokeWidthThick) solid var(--colorBrandStroke1); background: var(--colorNeutralBackground2);
+      overflow-wrap: anywhere;
+    }
+    .scope ol { margin-block: var(--spacingVerticalS); padding-inline-start: 36px; }
+    .scope li + li { margin-top: var(--spacingVerticalS); }
+    .request-option { width: 100%; min-height: 48px; justify-content: flex-start; text-align: left; white-space: normal; overflow-wrap: anywhere; font-weight: var(--fontWeightRegular); }
+    /* Fluent Textarea (medium, outline). */
+    .textarea {
+      position: relative; display: flex; width: 100%; min-width: 0; padding: 0 0 var(--strokeWidthThick);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke1); border-bottom-color: var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground1);
+    }
+    .textarea:hover { border-color: var(--colorNeutralStroke1Hover); border-bottom-color: var(--colorNeutralStrokeAccessibleHover); }
+    .textarea textarea {
+      flex: 1; min-width: 0; height: 52px; min-height: 52px; margin: 0;
+      padding: var(--spacingVerticalSNudge) calc(var(--spacingHorizontalMNudge) + var(--spacingHorizontalXXS));
+      border: 0; background: transparent; color: var(--colorNeutralForeground1); line-height: var(--lineHeightBase300); outline: none; resize: none;
+    }
+    .textarea.tall textarea { height: 112px; resize: vertical; }
+    .textarea textarea:disabled { color: var(--colorNeutralForegroundDisabled); cursor: not-allowed; }
+    /* Fluent Checkbox (medium). The whole row is the 32px-high target. */
+    .checkbox { position: relative; display: inline-flex; align-items: flex-start; align-self: flex-start; max-width: 100%; color: var(--colorNeutralForeground1); cursor: pointer; border-radius: var(--borderRadiusMedium); }
+    .checkbox input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+    .checkbox-indicator {
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 16px; height: 16px;
+      margin: var(--spacingVerticalS) var(--spacingHorizontalS); border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusSmall); color: transparent;
+    }
+    .checkbox:hover .checkbox-indicator { border-color: var(--colorNeutralStrokeAccessibleHover); }
+    .checkbox input:checked + .checkbox-indicator { background: var(--colorCompoundBrandBackground); border-color: var(--colorCompoundBrandBackground); color: var(--colorNeutralForegroundInverted); }
+    .checkbox-label { padding: var(--spacingVerticalS) var(--spacingHorizontalS) var(--spacingVerticalS) var(--spacingHorizontalXS); overflow-wrap: anywhere; }
+    .checkbox:has(input:focus-visible) { outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); }
+
+    /* Status bar: styles.js footer + settingsFooter. */
+    .status-bar {
+      display: flex; gap: var(--spacingHorizontalM); flex-wrap: wrap; flex-shrink: 0; max-height: 20dvh; overflow-y: auto; overflow-wrap: anywhere;
+      padding: var(--spacingVerticalXS) var(--spacingHorizontalL); border-top: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+      background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground2);
+      font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); outline: none;
+    }
+    .status-bar:focus-visible { outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2); outline-offset: calc(-1 * var(--strokeWidthThick)); }
+    .read-time { margin-inline-start: auto; }
+
+    @media (max-width: 1099px) {
+      .pack-layout.has-details { grid-template-columns: minmax(0, 1fr); }
+    }
+    @media (max-width: 960px) { .workspace-label { display: none; } }
+    @media (max-width: 719px) {
+      .command-bar { gap: var(--spacingHorizontalS); padding-inline: var(--spacingHorizontalS); }
+      .toolbar-button { width: 32px; min-width: 32px; height: 32px; padding: 0; }
+      .reload-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    }
+    @media (max-width: 479px) {
+      .selector { flex: 0 0 auto; }
+      .finder-reference { width: 32px; padding: 0; justify-content: center; border-color: transparent; background: transparent; }
+      .finder-reference .icon { color: var(--colorNeutralForeground2); }
+      .finder-reference:hover { background: var(--colorSubtleBackgroundHover); }
+      .finder-label { display: none; }
+    }
+    @container product (max-width: 700px) {
+      .needs-view { padding: var(--spacingHorizontalL); }
+    }
+    @container product (max-width: 479px) {
+      .settings-header { column-gap: var(--spacingHorizontalS); padding-inline: var(--spacingHorizontalS); }
+      /* CHANGED: three compact text tabs; Fluent's small-tab indicator inset. */
+      .section-tab { padding-inline: var(--spacingHorizontalSNudge); column-gap: 0; }
+      .section-tab::before, .section-tab::after { left: var(--spacingHorizontalSNudge); right: var(--spacingHorizontalSNudge); }
+      .section-tab .tab-icon { display: none; }
+      .about-body, .local-body { padding: var(--spacingVerticalM) var(--spacingHorizontalS) var(--spacingVerticalL); }
+      .about-row { grid-template-columns: minmax(0, 1fr); row-gap: var(--spacingVerticalXXS); padding-block: var(--spacingVerticalSNudge); }
+      .about-row dt { font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); }
+      .source-forms { grid-template-columns: minmax(0, 1fr); row-gap: 0; }
+      .source-forms dd + dt { margin-top: var(--spacingVerticalXS); }
+      .mb-actions { justify-content: flex-start; }
+    }
+    @container product (max-width: 300px) {
+      /* CHANGED: the title takes its own row and the three labels wrap in
+         reading order, each on one line: no clipped or split label. */
+      .settings-header h1 { flex-basis: 100%; }
+      .section-tabs { flex-basis: 100%; }
+      .section-tab { min-height: 32px; padding-block: var(--spacingVerticalSNudge); }
+      /* The status icon moves above its title so words keep their width. */
+      .message-bar { grid-template-columns: minmax(0, 1fr); grid-template-areas: "icon" "body" "secondary"; padding-inline-start: var(--spacingHorizontalS); }
+      .mb-icon { justify-content: flex-start; margin: 0 0 var(--spacingVerticalXS); }
+      .mb-body { padding-inline-end: var(--spacingHorizontalS); }
+      .mb-actions { padding-inline-end: var(--spacingHorizontalS); }
+      .mb-actions .button { width: 100%; min-width: 0; white-space: normal; }
+      /* CHANGED: Needs you keeps every control inside its column at 180x450:
+         8px panel sides, as About's narrow body, and 8px button sides; a
+         label that still does not fit wraps inside its button. */
+      .needs-view { padding-inline: var(--spacingHorizontalS); }
+      .needs-view .button { max-width: 100%; padding-inline: var(--spacingHorizontalS); overflow-wrap: anywhere; }
+    }
+    @container packs (max-width: 479px) {
+      .pack-toolbar { padding: var(--spacingVerticalXS) var(--spacingHorizontalS); }
+      .pack-filter-field { grid-template-columns: minmax(0, 1fr); gap: var(--spacingVerticalXS); }
+      .pack-filter-field label { min-height: 32px; display: flex; align-items: center; font-size: var(--fontSizeBase200); padding-right: 52px; }
+      .pack-clear { position: absolute; top: var(--spacingVerticalXS); right: var(--spacingHorizontalS); padding-inline: var(--spacingHorizontalS); }
+      .pack-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+      .pack-table, .pack-table tbody, .pack-row, .pack-row td { display: block; }
+      .pack-row { padding-block: var(--spacingVerticalXS); border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2); }
+      .pack-row td { height: auto; padding: var(--spacingVerticalXXS) var(--spacingHorizontalM); border: 0; }
+      .pack-row .pack-tags { font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); }
+      .pack-pager { padding-inline: var(--spacingHorizontalS); gap: var(--spacingHorizontalXS); }
+      .pack-page-button { width: 28px; min-width: 28px; padding-inline: var(--spacingHorizontalXXS); }
+      .pack-page-label { display: none; }
+    }
+    @container packs (max-width: 300px) {
+      .pack-tab { padding-inline: var(--spacingHorizontalXXS); min-height: 32px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; scroll-behavior: auto !important; }
+      .spinner { animation: none; }
+    }
+    @media (forced-colors: active) {
+      .tab[aria-selected="true"]::after, .rail-tab[aria-current="page"]::after { background: Highlight; forced-color-adjust: none; }
+      .pack-row.selected { outline: 2px solid Highlight; outline-offset: -2px; }
+      .message-bar { border: 1px solid CanvasText; }
+    }
+  </style>
+</head>
+<body class="theme-system">
+  <svg class="sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-puzzle" viewBox="0 0 20 20"><path d="M11 3c-.69 0-1.25.56-1.25 1.25V5H6.5a.5.5 0 0 0-.5.5v3.25h-.75a1.25 1.25 0 1 0 0 2.5H6v3.25c0 .28.22.5.5.5h3.25v.75a1.25 1.25 0 1 0 2.5 0V15h3.25a.5.5 0 0 0 .5-.5v-2.25h-.75a2.25 2.25 0 0 1 0-4.5H16V5.5a.5.5 0 0 0-.5-.5h-3.25v-.75C12.25 3.56 11.69 3 11 3M8.76 4a2.25 2.25 0 0 1 4.48 0h2.26c.83 0 1.5.67 1.5 1.5v3.25h-1.75a1.25 1.25 0 1 0 0 2.5H17v3.25c0 .83-.67 1.5-1.5 1.5h-2.26a2.25 2.25 0 0 1-4.48 0H6.5A1.5 1.5 0 0 1 5 14.5v-2.26a2.25 2.25 0 0 1 0-4.48V5.5C5 4.67 5.67 4 6.5 4z"/></symbol>
+    <symbol id="i-puzzle-filled" viewBox="0 0 20 20"><path d="M11 2a2 2 0 0 0-2 2H6.5C5.67 4 5 4.67 5 5.5V8a2 2 0 1 0 0 4v2.5c0 .83.67 1.5 1.5 1.5H9a2 2 0 1 0 4 0h2.5c.83 0 1.5-.67 1.5-1.5V12h-1a2 2 0 1 1 0-4h1V5.5c0-.83-.67-1.5-1.5-1.5H13a2 2 0 0 0-2-2"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 20 20"><path d="M4.5 3A2.5 2.5 0 0 0 2 5.5v9A2.5 2.5 0 0 0 4.5 17h11a2.5 2.5 0 0 0 2.5-2.5v-7A2.5 2.5 0 0 0 15.5 5H9.7L8.23 3.51A1.8 1.8 0 0 0 6.98 3zM3 5.5C3 4.67 3.67 4 4.5 4h2.48q.32 0 .53.22L8.8 5.5 7.44 6.85a.5.5 0 0 1-.35.15H3zM3 8h4.09c.4 0 .78-.16 1.06-.44L9.7 6h5.79c.83 0 1.5.67 1.5 1.5v7c0 .83-.67 1.5-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z"/></symbol>
+    <symbol id="i-folder-filled" viewBox="0 0 20 20"><path d="M2 5.5A2.5 2.5 0 0 1 4.5 3h2.48c.47 0 .91.18 1.24.51L9.5 4.8 7.44 6.85a.5.5 0 0 1-.35.15H2zM2 8v6.5A2.5 2.5 0 0 0 4.5 17h11a2.5 2.5 0 0 0 2.5-2.5v-7A2.5 2.5 0 0 0 15.5 5h-4.8L8.16 7.56A1.5 1.5 0 0 1 7.09 8z"/></symbol>
+    <symbol id="i-info" viewBox="0 0 20 20"><path d="M10.5 8.91a.5.5 0 0 0-1 .09v4.6a.5.5 0 0 0 1-.1V8.91m.3-2.16a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0M18 10a8 8 0 1 0-16 0 8 8 0 0 0 16 0M3 10a7 7 0 1 1 14 0 7 7 0 0 1-14 0"/></symbol>
+    <symbol id="i-info-filled" viewBox="0 0 20 20"><path d="M18 10a8 8 0 1 0-16 0 8 8 0 0 0 16 0M9.5 8.91a.5.5 0 0 1 1 0v4.69a.5.5 0 0 1-1 0V8.9m-.25-2.16a.75.75 0 1 1 1.5 0 .75.75 0 0 1-1.5 0"/></symbol>
+    <symbol id="i-warning-filled" viewBox="0 0 20 20"><path d="M7.37 3.56a3 3 0 0 1 5.26 0l5.5 10A3 3 0 0 1 15.5 18h-11a3 3 0 0 1-2.63-4.44zM10 12.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5m0-6.25a.5.5 0 0 0-.5.5v4a.5.5 0 0 0 1 0V7a.5.5 0 0 0-.5-.5"/></symbol>
+    <symbol id="i-check-circle-filled" viewBox="0 0 20 20"><path d="M10 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16m3.36 5.65a.5.5 0 0 0-.64-.06l-.07.06L9 11.3 7.35 9.65l-.07-.06a.5.5 0 0 0-.7.7l.07.07 2 2 .07.06c.17.11.4.11.56 0l.07-.06 4-4 .07-.08a.5.5 0 0 0-.06-.63"/></symbol>
+    <symbol id="i-diamond-dismiss-filled" viewBox="0 0 20 20"><path d="M7.88 1.88a3 3 0 0 1 4.24 0l6 6a3 3 0 0 1 0 4.24l-6 6a3 3 0 0 1-4.24 0l-6-6a3 3 0 0 1 0-4.24zM13.1 6.9a.5.5 0 0 0-.7 0L10 9.3 7.6 6.9a.5.5 0 0 0-.7.7L9.3 10l-2.4 2.4a.5.5 0 0 0 .7.7l2.4-2.4 2.4 2.4a.5.5 0 0 0 .7-.7L10.7 10l2.4-2.4a.5.5 0 0 0 0-.7"/></symbol>
+    <symbol id="i-error12" viewBox="0 0 12 12"><path d="M6 11A5 5 0 1 0 6 1a5 5 0 0 0 0 10m-.75-2.75a.75.75 0 1 1 1.5 0 .75.75 0 0 1-1.5 0m.26-4.84a.5.5 0 0 1 .98 0l.01.09v2.59a.5.5 0 0 1-1 0V3.41"/></symbol>
+    <symbol id="i-check12" viewBox="0 0 12 12"><path d="M9.76 3.2c.3.29.32.76.04 1.06l-4.25 4.5a.75.75 0 0 1-1.08.02L2.22 6.53a.75.75 0 0 1 1.06-1.06l1.7 1.7L8.7 3.24a.75.75 0 0 1 1.06-.04"/></symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 20 20"><path d="M9.16 16.87a.5.5 0 1 0 .67-.74L3.67 10.5H17.5a.5.5 0 0 0 0-1H3.67l6.16-5.63a.5.5 0 0 0-.67-.74L2.24 9.44a.75.75 0 0 0 0 1.11z"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 20 20"><path d="M1.91 7.38A8.5 8.5 0 0 1 3.7 4.3a.5.5 0 0 1 .54-.13l1.92.68a1 1 0 0 0 1.32-.76l.36-2a.5.5 0 0 1 .4-.4 9 9 0 0 1 3.55 0q.32.08.38.4l.37 2a1 1 0 0 0 1.32.76l1.92-.68a.5.5 0 0 1 .54.13 8.5 8.5 0 0 1 1.78 3.08q.08.31-.15.54l-1.56 1.32a1 1 0 0 0 0 1.52l1.56 1.32a.5.5 0 0 1 .15.54 8.5 8.5 0 0 1-1.78 3.08.5.5 0 0 1-.54.13l-1.92-.68a1 1 0 0 0-1.32.76l-.37 2a.5.5 0 0 1-.38.4 8.5 8.5 0 0 1-3.56 0 .5.5 0 0 1-.39-.4l-.36-2a1 1 0 0 0-1.32-.76l-1.92.68a.5.5 0 0 1-.54-.13 8.5 8.5 0 0 1-1.78-3.08.5.5 0 0 1 .15-.54l1.56-1.32a1 1 0 0 0 0-1.52L2.06 7.92a.5.5 0 0 1-.15-.54m1.06 0 1.3 1.1a2 2 0 0 1 0 3.04l-1.3 1.1q.45 1.19 1.25 2.16l1.6-.58a2 2 0 0 1 2.63 1.53l.3 1.67a8 8 0 0 0 2.5 0l.3-1.67a2 2 0 0 1 2.64-1.53l1.6.58a8 8 0 0 0 1.24-2.16l-1.3-1.1a2 2 0 0 1 0-3.04l1.3-1.1a8 8 0 0 0-1.25-2.16l-1.6.58a2 2 0 0 1-2.63-1.53l-.3-1.67a8 8 0 0 0-2.5 0l-.3 1.67A2 2 0 0 1 5.81 5.8l-1.6-.58a8 8 0 0 0-1.24 2.16M7.5 10a2.5 2.5 0 1 1 5 0 2.5 2.5 0 0 1-5 0m1 0a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 20 20"><path d="M7.5 11c.83 0 1.5.67 1.5 1.5v4c0 .83-.67 1.5-1.5 1.5h-4A1.5 1.5 0 0 1 2 16.5v-4c0-.83.67-1.5 1.5-1.5zm9 0c.83 0 1.5.67 1.5 1.5v4c0 .83-.67 1.5-1.5 1.5h-4a1.5 1.5 0 0 1-1.5-1.5v-4c0-.83.67-1.5 1.5-1.5zm-9 1h-4a.5.5 0 0 0-.5.5v4c0 .28.22.5.5.5h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 0-.5-.5m9 0h-4a.5.5 0 0 0-.5.5v4c0 .28.22.5.5.5h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 0-.5-.5m-9-10C8.33 2 9 2.67 9 3.5v4C9 8.33 8.33 9 7.5 9h-4A1.5 1.5 0 0 1 2 7.5v-4C2 2.67 2.67 2 3.5 2zm9 0c.83 0 1.5.67 1.5 1.5v4c0 .83-.67 1.5-1.5 1.5h-4A1.5 1.5 0 0 1 11 7.5v-4c0-.83.67-1.5 1.5-1.5zm-9 1h-4a.5.5 0 0 0-.5.5v4c0 .28.22.5.5.5h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 0-.5-.5m9 0h-4a.5.5 0 0 0-.5.5v4c0 .28.22.5.5.5h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 0-.5-.5"/></symbol>
+    <symbol id="i-record" viewBox="0 0 20 20"><path d="M10 14.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9M10 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16m-7 8a7 7 0 1 1 14 0 7 7 0 0 1-14 0"/></symbol>
+    <symbol id="i-comment" viewBox="0 0 20 20"><path d="M10.48 13.84h4.92c.9 0 1.6-.71 1.6-1.56V5.57C17 4.7 16.3 4 15.4 4H4.6C3.7 4 3 4.71 3 5.57v6.7c0 .86.7 1.57 1.6 1.57h1.6V17zM6.8 17.8a1 1 0 0 1-1.4-.2 1 1 0 0 1-.2-.59v-2.17h-.6A2.6 2.6 0 0 1 2 12.28V5.57A2.6 2.6 0 0 1 4.6 3h10.8C16.84 3 18 4.15 18 5.57v6.7a2.6 2.6 0 0 1-2.6 2.57h-4.59z"/></symbol>
+    <symbol id="i-add" viewBox="0 0 20 20"><path d="M10 2.5c.28 0 .5.22.5.5v6.5H17a.5.5 0 0 1 0 1h-6.5V17a.5.5 0 0 1-1 0v-6.5H3a.5.5 0 0 1 0-1h6.5V3c0-.28.22-.5.5-.5"/></symbol>
+    <symbol id="i-navigation" viewBox="0 0 20 20"><path d="M2 4.5c0-.28.22-.5.5-.5h15a.5.5 0 0 1 0 1h-15a.5.5 0 0 1-.5-.5m0 5c0-.28.22-.5.5-.5h15a.5.5 0 0 1 0 1h-15a.5.5 0 0 1-.5-.5m.5 4.5a.5.5 0 0 0 0 1h15a.5.5 0 0 0 0-1z"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 20 20"><path d="M4 10a6 6 0 0 1 10.47-4H12.5a.5.5 0 0 0 0 1h3a.5.5 0 0 0 .5-.5v-3a.5.5 0 0 0-1 0v1.6a7 7 0 1 0 1.98 4.36.5.5 0 1 0-1 .08L16 10a6 6 0 0 1-12 0"/></symbol>
+    <symbol id="i-search" viewBox="0 0 20 20"><path d="M13.73 14.44a6.5 6.5 0 1 1 .7-.7l3.42 3.4a.5.5 0 0 1-.63.77l-.07-.06zm-.71-.71A5.5 5.5 0 0 0 15 9.5a5.5 5.5 0 1 0-1.98 4.23"/></symbol>
+    <symbol id="i-chevron-left" viewBox="0 0 20 20"><path d="M12.35 15.85a.5.5 0 0 1-.7 0L6.16 10.4a.55.55 0 0 1 0-.78l5.49-5.46a.5.5 0 1 1 .7.7L7.2 10l5.16 5.15c.2.2.2.5 0 .7"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 20 20"><path d="M7.65 4.15c.2-.2.5-.2.7 0l5.49 5.46c.21.22.21.57 0 .78l-5.49 5.47a.5.5 0 0 1-.7-.71L12.8 10 7.65 4.85a.5.5 0 0 1 0-.7"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 20 20"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"/></symbol>
+    <symbol id="i-dismiss" viewBox="0 0 20 20"><path d="m4.09 4.22.06-.07a.5.5 0 0 1 .63-.06l.07.06L10 9.29l5.15-5.14a.5.5 0 0 1 .63-.06l.07.06c.18.17.2.44.06.63l-.06.07L10.71 10l5.14 5.15c.18.17.2.44.06.63l-.06.07a.5.5 0 0 1-.63.06l-.07-.06L10 10.71l-5.15 5.14a.5.5 0 0 1-.63.06l-.07-.06a.5.5 0 0 1-.06-.63l.06-.07L9.29 10 4.15 4.85a.5.5 0 0 1-.06-.63l.06-.07z"/></symbol>
+    <symbol id="i-open" viewBox="0 0 16 16"><path d="M4.5 3C3.67 3 3 3.67 3 4.5v7c0 .83.67 1.5 1.5 1.5h7c.83 0 1.5-.67 1.5-1.5V9.27a.5.5 0 0 1 1 0v2.23a2.5 2.5 0 0 1-2.5 2.5h-7A2.5 2.5 0 0 1 2 11.5v-7A2.5 2.5 0 0 1 4.5 2h2.23a.5.5 0 0 1 0 1zm4.27-.5c0-.28.22-.5.5-.5h4.23c.28 0 .5.22.5.5v4.23a.5.5 0 0 1-1 0V3.71L9.62 7.08a.5.5 0 1 1-.7-.7L12.29 3H9.27a.5.5 0 0 1-.5-.5"/></symbol>
+  </svg>
+  <a class="skip-link" href="#settings-title">Skip to Settings</a>
+  <section class="proto" aria-label="Design preview controls, outside the product UI">
+    <details id="preview-details">
+      <summary>073 preview · exploring · mock-only controls</summary>
+      <div class="proto-content">
+        <p>Not approved. Proposed Settings &gt; Local artifacts. Nothing here is read, sent, imported, or written, and no Dude owner exists. Every source, name, hash, receipt, note, and path is an illustrative sample.</p>
+        <p>Request import plays a scripted illustration of the request phases. A sample source stops at Permission requested, or at Dude's refusal for the 13-artifact and Blocked samples. Any other valid source stops at Delivered to Dude. Owner results appear only when you choose them under Scenario. Production enters Settings on Packs; this file opens Local artifacts for review (<code>?section=packs</code> starts on Packs).</p>
+        <div class="proto-controls">
+          <label>Preview appearance
+            <select id="proto-theme">
+              <option value="host">Follow host</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
+          <label>Joined session
+            <select id="proto-session">
+              <option value="ready">Joined and idle</option>
+              <option value="queued">Joined; queued input (refused after the click)</option>
+              <option value="busy">Session not idle</option>
+              <option value="waiter">A request waits in Needs you</option>
+              <option value="capture">Idea capture unreconciled</option>
+              <option value="pack">Pack request unreconciled</option>
+              <option value="disconnected">Disconnected</option>
+              <option value="unavailable">Workspace or provider unavailable</option>
+            </select>
+          </label>
+          <label>Scenario
+            <select id="proto-scenario"></select>
+          </label>
+        </div>
+        <p>Compare, each in a new tab:
+          <a href="../../052-dude-canvas-ui/design/fluent-desktop-workspace.html" target="_blank" rel="noopener noreferrer">052 workspace baseline</a> ·
+          <a href="../../063-dude-canvas-settings/design/pack-management.html" target="_blank" rel="noopener noreferrer">063 Packs baseline</a> ·
+          <a href="../../074-dude-canvas-about/design/about.html" target="_blank" rel="noopener noreferrer">074 About baseline</a> ·
+          <a href="../../062-dude-canvas-workspace-integration/design/workspace-integration.html" target="_blank" rel="noopener noreferrer">062 workspace reference</a> ·
+          <a href="../spec.md" target="_blank" rel="noopener noreferrer">073 specification</a> ·
+          <a href="../plan.md" target="_blank" rel="noopener noreferrer">073 plan</a></p>
+      </div>
+    </details>
+  </section>
+  <div id="app">
+    <header class="command-bar">
+      <div class="titlebar"><span class="brand">Dude</span><span class="workspace-label" id="workspace-label">Joined workspace</span></div>
+      <div class="selector">
+        <a class="finder-reference" href="../../062-dude-canvas-workspace-integration/design/workspace-integration.html?view=overview" target="_blank" rel="noopener noreferrer" aria-label="Work finder in the approved 062 reference, opens a new tab" title="Work finder · 062 reference (new tab)">
+          <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+          <span class="finder-label">Work finder <span class="finder-ref">· 062 reference</span></span>
+        </a>
+      </div>
+      <div class="toolbar" id="workspace-actions" role="toolbar" aria-label="Workspace actions" hidden>
+        <button class="button subtle toolbar-button" id="reload-packs" type="button" aria-label="Reload packs" title="Reload pack information (preview: re-applies the embedded capture; nothing is read)">
+          <svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg><span class="reload-label">Reload packs</span>
+        </button>
+        <button class="button subtle toolbar-button" id="refresh" type="button" aria-label="Refresh" title="Refresh (preview: re-applies frozen request data; nothing is read)" hidden>
+          <svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg><span class="reload-label">Refresh</span>
+        </button>
+      </div>
+    </header>
+    <div class="shell-body">
+      <nav class="rail" aria-label="Workspace navigation">
+        <button class="button subtle icon-button rail-toggle" id="nav-toggle" type="button" aria-label="Expand navigation pane" title="Expand navigation pane" aria-expanded="false" aria-controls="rail-items">
+          <svg class="icon" aria-hidden="true"><use href="#i-navigation"/></svg>
+        </button>
+        <div class="rail-contents" id="rail-items">
+          <div class="rail-destinations">
+            <a class="rail-tab" href="../../062-dude-canvas-workspace-integration/design/workspace-integration.html?view=overview" target="_blank" rel="noopener noreferrer" aria-label="Overview, 062 reference, opens a new tab" title="Overview · 062 reference (new tab)">
+              <svg class="icon" aria-hidden="true"><use href="#i-grid"/></svg><span class="rail-label">Overview <span class="rail-ref">· ref</span></span>
+            </a>
+            <a class="rail-tab" href="../../062-dude-canvas-workspace-integration/design/workspace-integration.html?view=now&amp;select=062" target="_blank" rel="noopener noreferrer" aria-label="Now, 062 reference, opens a new tab" title="Now · 062 reference (new tab)">
+              <svg class="icon" aria-hidden="true"><use href="#i-record"/></svg><span class="rail-label">Now <span class="rail-ref">· ref</span></span>
+            </a>
+            <button class="rail-tab" type="button" data-destination="needs" aria-label="Needs you" title="Needs you">
+              <svg class="icon" aria-hidden="true"><use href="#i-comment"/></svg><span class="rail-label">Needs you</span>
+            </button>
+            <a class="rail-tab" href="../../062-dude-canvas-workspace-integration/design/workspace-integration.html?view=new" target="_blank" rel="noopener noreferrer" aria-label="New idea, 062 reference, opens a new tab" title="New idea · 062 reference (new tab)">
+              <svg class="icon" aria-hidden="true"><use href="#i-add"/></svg><span class="rail-label">New idea <span class="rail-ref">· ref</span></span>
+            </a>
+          </div>
+          <div class="rail-footer">
+            <button class="rail-tab" type="button" data-destination="settings" aria-current="page" aria-label="Settings, current page" title="Settings">
+              <svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span class="rail-label">Settings</span>
+            </button>
+          </div>
+        </div>
+      </nav>
+      <main class="product" aria-label="Workspace">
+        <div class="settings-panel" id="settings" data-section="local">
+          <header class="settings-header">
+            <h1 id="settings-title" tabindex="-1">Settings</h1>
+            <div class="section-tabs" role="tablist" aria-label="Settings sections">
+              <button class="tab section-tab" id="section-tab-packs" type="button" role="tab" data-section="packs" aria-selected="false" aria-controls="section-packs" tabindex="-1">
+                <span class="tab-icon" aria-hidden="true"><svg class="icon icon-regular"><use href="#i-puzzle"/></svg><svg class="icon icon-filled"><use href="#i-puzzle-filled"/></svg></span>
+                <span class="tab-content"><span class="tab-text">Packs</span><span class="tab-reserve" aria-hidden="true">Packs</span></span>
+              </button>
+              <button class="tab section-tab" id="section-tab-local" type="button" role="tab" data-section="local" aria-selected="true" aria-controls="section-local" tabindex="0">
+                <span class="tab-icon" aria-hidden="true"><svg class="icon icon-regular"><use href="#i-folder"/></svg><svg class="icon icon-filled"><use href="#i-folder-filled"/></svg></span>
+                <span class="tab-content"><span class="tab-text">Local artifacts</span><span class="tab-reserve" aria-hidden="true">Local artifacts</span></span>
+              </button>
+              <button class="tab section-tab" id="section-tab-about" type="button" role="tab" data-section="about" aria-selected="false" aria-controls="section-about" tabindex="-1">
+                <span class="tab-icon" aria-hidden="true"><svg class="icon icon-regular"><use href="#i-info"/></svg><svg class="icon icon-filled"><use href="#i-info-filled"/></svg></span>
+                <span class="tab-content"><span class="tab-text">About</span><span class="tab-reserve" aria-hidden="true">About</span></span>
+              </button>
+            </div>
+          </header>
+          <div class="section-panel packs-panel" id="section-packs" role="tabpanel" aria-labelledby="section-tab-packs" hidden>
+            <div class="pack-layout" id="pack-layout">
+              <section class="pack-browser" aria-labelledby="packs-results-heading">
+                <div class="pack-tabs" role="tablist" aria-label="Pack context">
+                  <button class="tab pack-tab" id="pack-tab-installed" type="button" role="tab" data-context="installed" aria-selected="true" aria-controls="pack-panel" tabindex="0">
+                    <span class="tab-content"><span class="tab-text">Installed <span class="pack-tab-count" data-count="installed"></span></span><span class="tab-reserve" aria-hidden="true">Installed <span class="pack-tab-count" data-count="installed"></span></span></span>
+                  </button>
+                  <button class="tab pack-tab" id="pack-tab-available" type="button" role="tab" data-context="available" aria-selected="false" aria-controls="pack-panel" tabindex="-1">
+                    <span class="tab-content"><span class="tab-text">Available <span class="pack-tab-count" data-count="available"></span></span><span class="tab-reserve" aria-hidden="true">Available <span class="pack-tab-count" data-count="available"></span></span></span>
+                  </button>
+                </div>
+                <div class="pack-panel" id="pack-panel" role="tabpanel" aria-labelledby="pack-tab-installed">
+                  <div class="pack-toolbar">
+                    <div class="pack-filter-field">
+                      <label for="use-case-filter">Use case</label>
+                      <span class="dropdown"><select id="use-case-filter" aria-controls="pack-rows"></select><svg class="icon" aria-hidden="true"><use href="#i-chevron-down"/></svg></span>
+                    </div>
+                    <button class="button pack-clear" id="clear-filter" type="button">Clear</button>
+                  </div>
+                  <h2 class="visually-hidden" id="packs-results-heading" tabindex="-1">Installed packs</h2>
+                  <p class="visually-hidden" id="packs-status" role="status" aria-live="polite"></p>
+                  <div class="pack-scroll" id="pack-scroll">
+                    <table class="pack-table" id="pack-table" aria-label="Installed packs">
+                      <thead><tr><th scope="col">Pack</th><th scope="col">Use cases</th></tr></thead>
+                      <tbody id="pack-rows"></tbody>
+                    </table>
+                    <div class="empty" id="pack-empty" hidden></div>
+                  </div>
+                  <div class="pack-pager">
+                    <button class="button pack-page-button" id="previous-page" type="button" aria-label="Previous pack page" aria-controls="pack-rows">
+                      <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"/></svg><span class="pack-page-label">Previous</span>
+                    </button>
+                    <div class="pack-metrics" role="status" aria-live="polite" aria-atomic="true"><span id="pack-count"></span><span id="pack-page"></span></div>
+                    <button class="button pack-page-button" id="next-page" type="button" aria-label="Next pack page" aria-controls="pack-rows">
+                      <span class="pack-page-label">Next</span><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg>
+                    </button>
+                  </div>
+                </div>
+              </section>
+              <dialog class="pack-detail" id="pack-detail" aria-labelledby="pack-detail-title">
+                <header class="pack-detail-header">
+                  <div class="pack-detail-heading"><p class="eyebrow" id="pack-detail-scope"></p><h2 id="pack-detail-title"></h2></div>
+                  <button class="button subtle icon-button" id="pack-detail-close" type="button" aria-label="Close pack details">
+                    <svg class="icon" aria-hidden="true"><use href="#i-dismiss"/></svg>
+                  </button>
+                </header>
+                <div class="pack-detail-body" id="pack-detail-body" tabindex="0" role="region" aria-label="Pack metadata, source, and files"></div>
+                <footer class="pack-detail-footer"><button class="button" id="pack-detail-back" type="button">Back to results</button></footer>
+              </dialog>
+            </div>
+          </div>
+          <div class="section-panel local-panel" id="section-local" role="tabpanel" aria-labelledby="section-tab-local">
+            <div class="local-body">
+              <div class="local-intro">
+                <h2 class="subheading" id="local-title">Import an agent or skill</h2>
+                <p>Imported agents and skills become local artifacts: project files named <code class="code-inline">dude-local-*</code> in <code class="code-inline">.github/agents</code> and <code class="code-inline">.github/skills</code>. They belong to this project and are separate from installed packs.</p>
+              </div>
+              <form class="import-form" id="import-form" novalidate>
+                <div class="field">
+                  <label class="field-label strong" for="import-source">Source</label>
+                  <span class="input" id="import-source-wrap">
+                    <input id="import-source" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="Local path or GitHub URL" aria-describedby="import-source-hint" aria-invalid="false">
+                  </span>
+                  <p class="field-message" id="import-source-error" hidden><svg class="icon12" aria-hidden="true"><use href="#i-error12"/></svg><span id="import-source-error-text"></span></p>
+                  <p class="field-hint" id="import-source-hint">One local file or directory path, or a public GitHub file, directory, or raw file URL. Canvas never asks for credentials.</p>
+                  <dl class="source-forms">
+                    <dt>Local file or directory</dt><dd>&lt;path to the file or directory&gt;</dd>
+                    <dt>GitHub file</dt><dd>https://github.com/&lt;owner&gt;/&lt;repo&gt;/blob/&lt;ref&gt;/&lt;file&gt;</dd>
+                    <dt>GitHub directory</dt><dd>https://github.com/&lt;owner&gt;/&lt;repo&gt;/tree/&lt;ref&gt;/&lt;directory&gt;</dd>
+                    <dt>Raw GitHub file</dt><dd>https://raw.githubusercontent.com/&lt;owner&gt;/&lt;repo&gt;/&lt;ref&gt;/&lt;file&gt;</dd>
+                  </dl>
+                </div>
+                <div class="request-actions">
+                  <button class="button primary" id="request-import" type="submit" aria-describedby="request-note">Request import</button>
+                  <p class="eyebrow" id="request-note">Dude previews the import and asks for your permission in Needs you before changing any file.</p>
+                </div>
+              </form>
+              <section class="import-request" id="import-request" aria-labelledby="import-request-title" hidden>
+                <h3 class="import-request-heading" id="import-request-title">Import request</h3>
+                <div class="message-bar" id="import-status" tabindex="-1" role="group" aria-labelledby="import-status-title" aria-describedby="import-status-text">
+                  <span class="mb-icon" id="import-status-icon" aria-hidden="true"></span>
+                  <div class="mb-body" role="status" aria-live="polite" aria-atomic="true">
+                    <span class="mb-title" id="import-status-title"></span>
+                    <div class="mb-text" id="import-status-text"></div>
+                  </div>
+                  <div class="mb-actions" id="import-status-actions" hidden>
+                    <button class="button primary" id="open-needs" type="button">Open Needs you</button>
+                  </div>
+                </div>
+                <dl class="about-facts request-sheet" id="request-sheet"></dl>
+                <p class="eyebrow" id="request-footnote"></p>
+              </section>
+            </div>
+          </div>
+          <div class="section-panel about-panel" id="section-about" role="tabpanel" aria-labelledby="section-tab-about" hidden>
+            <div class="about-body">
+              <h2 class="about-identity" id="about-title">Dude</h2>
+              <dl class="about-facts" id="about-facts" aria-busy="false">
+                <div class="about-row"><dt>Dude version</dt><dd id="about-version">Development (main)</dd></div>
+                <div class="about-row"><dt>Author</dt><dd>Enrique Gonzalez</dd></div>
+                <div class="about-row"><dt>Repository</dt><dd><a class="link" id="about-repository" href="https://github.com/E-G-C/dude" target="_blank" rel="noopener noreferrer" aria-label="https://github.com/E-G-C/dude (opens in a new tab)">https://<wbr>github.com/<wbr><span class="nowrap">E-G-C/dude<svg class="icon16" aria-hidden="true"><use href="#i-open"/></svg></span></a></dd></div>
+                <div class="about-row"><dt>Recorded channel/ref</dt><dd id="about-channel">Development (main)</dd></div>
+              </dl>
+              <p class="about-note" id="about-note">Recorded installation metadata; installed files are not verified.</p>
+              <p class="visually-hidden" id="about-status" role="status" aria-live="polite"></p>
+            </div>
+          </div>
+        </div>
+        <div class="needs-view" id="needs-view" hidden>
+          <div class="measure" id="needs-body"></div>
+          <p class="visually-hidden" id="needs-status" role="status" aria-live="polite"></p>
+        </div>
+      </main>
+    </div>
+    <footer class="status-bar" id="status-bar" aria-label="Workspace status" tabindex="0"></footer>
+  </div>
+  <dialog class="nav-overlay" id="nav-dialog" aria-labelledby="nav-dialog-title">
+    <div class="nav-heading">
+      <span id="nav-dialog-title" class="brand">Navigation</span>
+      <button class="button subtle icon-button" id="nav-close" type="button" aria-label="Close navigation pane">
+        <svg class="icon" aria-hidden="true"><use href="#i-dismiss"/></svg>
+      </button>
+    </div>
+    <p class="eyebrow nav-note">Overview, Now, and New idea open the 062 reference in a new tab.</p>
+  </dialog>
+  <noscript><p class="eyebrow">Sections, the import request illustration, and Packs need local JavaScript in this preview. No live data is loaded.</p></noscript>
+  <!-- Frozen 074 captures, read 2026-09-25, reused unchanged. Never fetched or refreshed by this file. -->
+  <script type="application/json" id="about-capture">{"installedRef":"main","sourceRef":"main"}</script>
+  <script type="application/json" id="profile-capture">
+    {"installed":{
+      "authoring":{"files":[".github/agents/dude-pack-authoring-agent-smith.agent.md",".github/agents/dude-pack-authoring-instruction-smith.agent.md",".github/agents/dude-pack-authoring-pack-smith.agent.md",".github/agents/dude-pack-authoring-prompt-smith.agent.md",".github/agents/dude-pack-authoring-skill-smith.agent.md",".github/skills/dude-pack-authoring-instruction-conventions",".github/skills/dude-pack-authoring-pack-conventions",".github/skills/dude-pack-authoring-prompt-conventions"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}},
+      "clearline":{"files":[".github/agents/dude-pack-clearline-stylist.agent.md",".github/prompts/dude-pack-clearline-apply-visual-system.prompt.md",".github/skills/dude-pack-clearline-visual"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}},
+      "coding":{"files":[".github/agents/dude-pack-coding-architect.agent.md",".github/agents/dude-pack-coding-coder.agent.md",".github/agents/dude-pack-coding-reviewer.agent.md",".github/agents/dude-pack-coding-tester.agent.md",".github/instructions/dude-pack-coding-engineering-standards.instructions.md",".github/instructions/dude-pack-coding-host-controls.instructions.md",".github/skills/dude-pack-coding-spec-artifacts"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}},
+      "design":{"files":[".github/skills/dude-pack-design-frontend-aesthetics",".github/skills/dude-pack-design-workflow"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}},
+      "fluent-ui":{"files":[".github/agents/dude-pack-fluent-ui-specialist.agent.md"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}},
+      "release":{"files":[".github/agents/dude-pack-release-manager.agent.md",".github/skills/dude-pack-release-pipeline-parity",".github/skills/dude-pack-release-tag-driven-versioning",".github/skills/dude-pack-release-writeback-via-pr"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}},
+      "rubber-duck":{"files":[".github/agents/dude-pack-rubber-duck-retrospective.agent.md"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}},
+      "strata":{"files":[".github/agents/dude-pack-strata-stylist.agent.md",".github/prompts/dude-pack-strata-apply-visual-system.prompt.md",".github/skills/dude-pack-strata-visual"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}},
+      "writing":{"files":[".github/skills/dude-pack-writing-avoid-ai-tropes",".github/skills/dude-pack-writing-style"],"source":{"type":"local","location":"/Users/eg/work/dude/library/packs"}}
+    }}
+  </script>
+  <script type="application/json" id="catalog-capture">
+    {"origin":"local","packs":[
+      {"name":"authoring","description":"Bundle-authoring specialists — expert smiths for creating agents, skills, instructions, prompts, and packs. Dev tooling for building and maintaining Dude bundles.","use_cases":["bundle-authoring"]},
+      {"name":"beads","description":"Current-only tracked execution via Beads for canonical .dude/specs features, with exact-owner import, Beads-authoritative work, and a one-way tasks.md mirror.","use_cases":["work-tracking"]},
+      {"name":"clearline","description":"Framework-agnostic visual system for interfaces, graphics, documents, and slides: calm neutrals, four accents, Inter typography, an 8-point grid with 4-point half steps, a shared left edge, and an optional project-supplied mark.","use_cases":["ui","visual-design"]},
+      {"name":"coding","description":"Software-development specialists for implementation, architecture, testing, and independent code review, with shared engineering standards.","use_cases":["software-development"]},
+      {"name":"copilot-sdk","description":"GitHub Copilot SDK specialist for SDK app architecture, hooks, custom agents, MCP, skills, authentication, deployment, and Rust integration.","use_cases":["software-development"]},
+      {"name":"design","description":"A visual design-proposal lane: mood, layout, look-and-feel, mockups, surface design, brand direction, preview approval, and applying an approved visual spec — overlaid on the task/verification lifecycle.","use_cases":["ui","visual-design"]},
+      {"name":"docsy","description":"Docsy Hugo theme specialist: install paths, content authoring, theme customization, shortcodes, search/i18n/versioning, deployment, and AI-agent support.","use_cases":["documentation","web-development"]},
+      {"name":"fluent-ui","description":"Fluent UI React v9 specialist for design system compliance, component selection, theming, layout patterns, and accessible UI composition.","use_cases":["ui"]},
+      {"name":"hugo","description":"Hugo site architecture, templates, asset pipeline, migration, and troubleshooting specialists for Hugo static sites.","use_cases":["web-development"]},
+      {"name":"newsroom","description":"Turn transcripts, notes, and calendar invites into Hugo news articles and events: a newsroom writer + event deep-fetcher, with article, calendar-event, and static-safe-time skills.","use_cases":["web-development","writing"]},
+      {"name":"practices","description":"Engineering-practice workflows. Currently: tests-first (TDD) implementation discipline.","use_cases":["software-development"]},
+      {"name":"release","description":"Release engineering specialist + skills for tag-driven versioning, GitHub Actions / Azure Pipelines parity, and protected-branch version write-back.","use_cases":["release-management"]},
+      {"name":"rubber-duck","description":"Read-only, non-authoritative retrospective for successful feature and Ship completion.","use_cases":["retrospective"]},
+      {"name":"rust","description":"Rust specialist for Cargo workspaces, async/concurrency, ownership-heavy code, performance work, and Tauri desktop/mobile backends.","use_cases":["software-development"]},
+      {"name":"strata","description":"Layered visual system for interfaces, graphics, data visualization, and documents: one structural language with two colour palettes, plane-and-rule elevation with no drop shadows, working UI type scale, 4/8 spacing, motion, and measured accessibility — in CSS, SCSS, JSON, and Tailwind, with a folder-local token validator.","use_cases":["ui","visual-design"]},
+      {"name":"technical-docs","description":"Create or update traceable technical documents from software repositories, source code, configuration, tests, transcripts, notes, drafts, and existing Markdown. Scales beyond the context window with an evidence ledger, incremental drafting, and coverage and lint gates.","use_cases":["documentation","writing"]},
+      {"name":"web","description":"Backend and frontend specialist agents for web application work (APIs, services, persistence + UI, components, accessibility).","use_cases":["api","ui","web-development"]},
+      {"name":"writing","description":"Write plain, concise, actionable documents, feature definitions, and user replies, and remove common AI writing tells.","use_cases":["writing"]}
+    ]}
+  </script>
+  <script>
+    'use strict';
+    const $ = id => document.getElementById(id);
+    const params = new URLSearchParams(location.search);
+    const ABOUT = JSON.parse($('about-capture').textContent);
+    const INSTALLED = JSON.parse($('profile-capture').textContent).installed;
+    const CATALOG = JSON.parse($('catalog-capture').textContent);
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined && text !== null) node.textContent = text;
+      return node;
+    }
+    function svgIcon(symbol, className = 'icon') {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', className);
+      svg.setAttribute('aria-hidden', 'true');
+      const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+      use.setAttribute('href', `#${symbol}`);
+      svg.append(use);
+      return svg;
+    }
+    function makeButton(label, { icon = null, className = '', primary = false, type = 'button', id = null } = {}) {
+      const node = el('button', ['button', primary ? 'primary' : '', className].filter(Boolean).join(' '));
+      node.type = type;
+      if (id) node.id = id;
+      if (icon) node.append(svgIcon(icon));
+      node.append(document.createTextNode(label));
+      return node;
+    }
+    function loopTab(event, container) {
+      const stops = [...container.querySelectorAll('a[href], button:not(:disabled), summary, select, [tabindex="0"]')]
+        .filter(node => node.getClientRects().length);
+      if (!stops.length) return;
+      const first = stops[0], last = stops.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+    function roveTabs(event, tabs, index, activate) {
+      const moves = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: tabs.length - 1 };
+      if (!(event.key in moves) || event.altKey || event.ctrlKey || event.metaKey) return;
+      event.preventDefault();
+      activate(tabs[(moves[event.key] + tabs.length) % tabs.length]);
+    }
+    function onBackdrop(dialog, dismiss) {
+      dialog.addEventListener('click', event => {
+        if (event.target !== dialog || !dialog.matches(':modal')) return;
+        const box = dialog.getBoundingClientRect();
+        if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dismiss();
+      });
+    }
+
+    /* ---------------- Illustrative samples (never an observed import) ----------------
+       Each permission follows plan.md "Permission field" mapping: directory =
+       one target per plan group with revision sha256:<plan_sha256>; focused =
+       one target per written path with its analyzed destination state. */
+    const GENERATION = '6f69ff38-3eab-4205-b380-471189e5e95d';
+    const CUSTOM_RECEIPT = '9c2a7f09-318c-4423-bc8b-48ac57dc8e64';
+    const WHY = 'Importing writes project files. Dude needs your literal permission for these exact targets.';
+    const UNBLOCKS = 'Dude can apply this reviewed import and report the verified result in Settings > Local artifacts.';
+    const DIRECTORY_LINES = 'Nothing is executed.\nApply is all-or-nothing with rollback.\nReplaced files are overwritten.';
+    const PLAN_CLEAN = 'sha256:b05799084a5d41db45b11b92698e3a532d1df74099a539dc2311cc53e4f27337';
+    const PLAN_WARNED = 'sha256:e5e56600754924295821559884f67a16e5afbe435a604335f46a019edc5da9be';
+    const SAMPLES = {
+      'focused-skill': {
+        source: 'C:\\Users\\you\\agent-kit\\skills\\review-checklist\\SKILL.md',
+        receipt: 'd68e3660-1984-44c8-a867-c5446dfd3c68',
+        permission: {
+          revision: 'd3cf745d-ed5d-40e5-83ba-4b753bf1f025',
+          prompt: 'Import the skill review-checklist as dude-local-review-checklist?',
+          operation: 'import:file',
+          targets: [
+            { target: '.github/skills/dude-local-review-checklist/SKILL.md\nAnalyzed state: missing\nDecision: create', revision: 'missing' },
+            { target: '.github/skills/dude-local-review-checklist/LICENSE\nAnalyzed state: missing\nDecision: create the reviewed MIT license sibling', revision: 'missing' },
+          ],
+          consequences: 'Creates both files with the default adaptations only: strips the model and compatibility frontmatter and names the skill dude-local-review-checklist.\nPreserves license: MIT in the new LICENSE file.\nUnresolved sibling references, not imported: scripts/check.sh, templates/report.md.\nFocused import is not transactional. If the second write fails, the first file stays written.',
+          eligibility: 'Source: C:\\Users\\you\\agent-kit\\skills\\review-checklist\\SKILL.md\nLocal file that parses as a Dude skill named review-checklist.',
+          confirmation: 'IMPORT SKILL dude-local-review-checklist',
+        },
+      },
+      'focused-agent': {
+        source: 'https://github.com/example-org/agent-kit/blob/main/agents/security-reviewer.agent.md',
+        receipt: 'e7425d7f-89a1-407f-8af7-4461e31d4357',
+        permission: {
+          revision: '59e378b3-457f-444c-9550-80aa6e93a7f2',
+          prompt: 'Import the agent security-reviewer as dude-local-security-reviewer, replacing the existing file?',
+          operation: 'import:file',
+          targets: [
+            { target: '.github/agents/dude-local-security-reviewer.agent.md\nAnalyzed state: existing file\nDecision: replace', revision: 'sha256:a367e36f36e940739526c3e3c4c21ffbc408b250992391ec05a71b7ea1daf053' },
+          ],
+          consequences: 'Replaces the existing agent file; its current contents are overwritten.\nDefault adaptations only: strips the model and tools frontmatter, inserts the coordinator-only block, and keeps license: Apache-2.0 in a Source License section.\nThe body names Claude tools (Bash, Read). Canvas offers no other adaptation choices; to choose them, decline and continue in chat.\nReferenced skill not present locally, not imported: .github/skills/secret-scan/\nFocused import is not transactional.',
+          eligibility: 'Source: https://github.com/example-org/agent-kit/blob/main/agents/security-reviewer.agent.md\nCanonical raw URL: https://raw.githubusercontent.com/example-org/agent-kit/main/agents/security-reviewer.agent.md\nPublic GitHub file that parses as a Dude agent.',
+          confirmation: 'IMPORT AGENT dude-local-security-reviewer',
+        },
+      },
+      clean: {
+        source: 'https://github.com/example-org/agent-kit/tree/main/kit',
+        receipt: 'c5d0f25a-5d3a-45d3-b393-2a1895e56a7a',
+        permission: {
+          revision: 'e4a7e9ae-8a8e-4bbd-92b4-7b420d8d316f',
+          prompt: 'Import 2 artifacts from the reviewed directory plan?',
+          operation: 'import:directory',
+          targets: [
+            { target: 'agent dude-local-release-notes\nDestination: .github/agents/dude-local-release-notes.agent.md\n  and .github/agents/dude-local-release-notes.support/\n3 files: 3 new, 0 replaced', revision: PLAN_CLEAN },
+            { target: 'skill dude-local-review-checklist\nDestination: .github/skills/dude-local-review-checklist/\n3 files: 2 new, 1 replaced\nReplaced: SKILL.md', revision: PLAN_CLEAN },
+          ],
+          consequences: `Clean: no static or advisory warnings.\n${DIRECTORY_LINES}`,
+          eligibility: 'Source: https://github.com/example-org/agent-kit/tree/main/kit\nResolved commit: bb413474e1ba9c3633aa7352d3b4572de6f15cce',
+          confirmation: 'IMPORT DIRECTORY 2 ARTIFACTS',
+        },
+      },
+      warned: {
+        source: 'C:\\Users\\you\\agent-kit\\ops',
+        receipt: '9ca70de7-90c0-4bdf-a1e7-f2a462ea5898',
+        permission: {
+          revision: '083e2fc4-9459-4ce1-be31-a7fd3bb0c992',
+          prompt: 'Import 3 artifacts from a directory with warnings?',
+          operation: 'import:directory',
+          targets: [
+            { target: 'agent dude-local-deploy-review\nDestination: .github/agents/dude-local-deploy-review.agent.md\n  and .github/agents/dude-local-deploy-review.support/\n3 files: 3 new, 0 replaced', revision: PLAN_WARNED },
+            { target: 'skill dude-local-incident-notes\nDestination: .github/skills/dude-local-incident-notes/\n2 files: 2 new, 0 replaced', revision: PLAN_WARNED },
+            { target: 'skill dude-local-log-triage\nDestination: .github/skills/dude-local-log-triage/\n3 files: 1 new, 2 replaced\nReplaced: SKILL.md, scripts/collect.sh', revision: PLAN_WARNED },
+          ],
+          consequences: `Warned: 2 flagged files and 1 unreviewed or unbatched file.\nlog-triage/scripts/collect.sh: static dynamic-unsafe-execution, static destructive-action, advisory destructive-action\ndeploy-review/deploy-review.agent.md: static network-exfiltration\nUnreviewed or unbatched files: 1\n${DIRECTORY_LINES}`,
+          eligibility: 'Source: C:\\Users\\you\\agent-kit\\ops\nLocal directory.',
+          confirmation: 'IMPORT WITH WARNINGS 3 ARTIFACTS',
+        },
+      },
+      capacity: { source: 'https://github.com/example-org/agent-kit/tree/main/catalog', receipt: '413407fd-c814-411e-afea-c3ee3a2bf694', refusal: 'unavailable-capacity' },
+      blocked: { source: 'C:\\Users\\you\\agent-kit\\legacy', receipt: 'fa1522fc-9996-43a5-a97b-b5b464caa825', refusal: 'failed-blocked' },
+    };
+    // Owner results: the import_result acknowledgment fields (outcome,
+    // mutation, written, uncertain, note). Shown only when chosen as a scenario,
+    // or as Dude's refusal before permission for the capacity/Blocked samples.
+    const RESULTS = {
+      'applied-focused': { sample: 'focused-skill', response: 'consent', outcome: 'applied', mutation: 'applied',
+        written: ['.github/skills/dude-local-review-checklist/SKILL.md', '.github/skills/dude-local-review-checklist/LICENSE'], uncertain: [],
+        note: 'Imported review-checklist as dude-local-review-checklist with the default adaptations and kept its MIT license in LICENSE. dude-lint passed. scripts/check.sh and templates/report.md were not imported.' },
+      'applied-directory': { sample: 'clean', response: 'consent', outcome: 'applied', mutation: 'applied',
+        written: ['.github/agents/dude-local-release-notes.agent.md', '.github/agents/dude-local-release-notes.support/LICENSE',
+          '.github/agents/dude-local-release-notes.support/templates/changelog.md', '.github/skills/dude-local-review-checklist/LICENSE',
+          '.github/skills/dude-local-review-checklist/SKILL.md', '.github/skills/dude-local-review-checklist/checklists/security.md'], uncertain: [],
+        note: 'Installed 2 artifacts exactly as reviewed in plan sha256:b0579908…f27337, replacing SKILL.md. dude-lint passed.' },
+      declined: { sample: 'warned', response: 'decline', outcome: 'declined', mutation: 'none', written: [], uncertain: [],
+        note: 'You declined this import. Nothing was applied.' },
+      'failed-blocked': { sample: 'blocked', response: null, outcome: 'failed', mutation: 'none', written: [], uncertain: [],
+        note: 'The directory is Blocked, so Dude asked for no permission. legacy-sync/SKILL.md sets model, which needs focused adaptation, and triage/triage.agent.md lacks the coordinator-only paragraph. Use focused import in chat or prepare a clean source.' },
+      'failed-restored': { sample: 'clean', response: 'consent', outcome: 'failed', mutation: 'restored', written: [], uncertain: [],
+        note: 'apply-directory could not write .github/agents/dude-local-release-notes.support/templates/changelog.md and rolled back. Dude verified that SKILL.md has its previous contents and that none of the 5 new files remains.' },
+      'failed-partial': { sample: 'focused-skill', response: 'consent', outcome: 'failed', mutation: 'applied',
+        written: ['.github/skills/dude-local-review-checklist/SKILL.md'], uncertain: [],
+        note: 'Wrote SKILL.md, then writing LICENSE failed (access denied). The skill is incomplete and its MIT license is not preserved. dude-lint was not run.' },
+      'unavailable-capacity': { sample: 'capacity', response: null, outcome: 'unavailable', mutation: 'none', written: [], uncertain: [],
+        note: 'This directory contains 13 agents or skills. A Canvas permission can show at most 12, so Dude asked for no permission and changed nothing. Continue in chat to review and import the complete directory; Dude will not split it or leave anything out.' },
+      stale: { sample: 'focused-agent', response: 'consent', outcome: 'stale', mutation: 'none', written: [], uncertain: [],
+        note: 'The destination .github/agents/dude-local-security-reviewer.agent.md changed after the preview, so its reviewed state no longer matches. Nothing was written. Request the import again for a fresh preview and permission.' },
+      uncertain: { sample: 'warned', response: 'consent', outcome: 'uncertain', mutation: 'uncertain', written: [],
+        uncertain: ['.github/skills/dude-local-log-triage/SKILL.md', '.github/skills/dude-local-log-triage/scripts/collect.sh',
+          '.dude/state/import-transactions/c86a70f0-b0a9-4cae-921a-8d2295d05be5'],
+        note: 'apply-directory reported recovery-failed: after a write failure it could not verify the rollback. Recovery material is kept in .dude/state/import-transactions. Check the uncertain paths before another import.' },
+    };
+    const INVALID = {
+      'invalid-empty': '',
+      'invalid-control': 'C:\\Users\\you\\agent-kit\\ops\tbackup',
+      'invalid-long': `C:\\Users\\you\\agent-kit\\${'nested-folder\\'.repeat(150)}SKILL.md`,
+      'invalid-http': 'http://github.com/example-org/agent-kit/blob/main/agents/security-reviewer.agent.md',
+      'invalid-host': 'https://gitlab.com/example-org/agent-kit/-/blob/main/skills/review-checklist/SKILL.md',
+      'invalid-credentials': 'https://you@github.com/example-org/agent-kit/tree/main/kit',
+      'invalid-port': 'https://github.com:443/example-org/agent-kit/tree/main/kit',
+      'invalid-query': 'https://github.com/example-org/agent-kit/tree/main/kit?tab=readme-ov-file',
+      'invalid-fragment': 'https://github.com/example-org/agent-kit/blob/main/skills/review-checklist/SKILL.md#L12',
+    };
+    const SCENARIOS = [
+      ['Start', [
+        ['idle-empty', 'Idle, empty Source'],
+        ['start-focused-skill', 'Sample: focused skill with LICENSE (local file)'],
+        ['start-focused-agent', 'Sample: focused agent that replaces a file (GitHub file)'],
+        ['start-clean', 'Sample: Clean directory, agent and skill (GitHub directory)'],
+        ['start-warned', 'Sample: Warned directory, 3 artifacts (local directory)'],
+        ['start-capacity', 'Sample: 13 agents or skills (GitHub directory)'],
+        ['start-blocked', 'Sample: Blocked directory (local directory)'],
+      ]],
+      ['Validation, after Request import', [
+        ['invalid-empty', 'Empty'], ['invalid-control', 'Tab or other control character'], ['invalid-long', 'Over 2,048 UTF-8 bytes'],
+        ['invalid-http', 'http:// URL'], ['invalid-host', 'Host other than GitHub'], ['invalid-credentials', 'User name in URL'],
+        ['invalid-port', 'Explicit port'], ['invalid-query', 'Query'], ['invalid-fragment', 'Fragment'],
+      ]],
+      ['Request phases (Clean directory)', [
+        ['phase-preparing', 'Preparing request'], ['phase-prepared', 'Request prepared'], ['phase-submitting', 'Requesting owner action'],
+        ['phase-admitted', 'Admitted; delivery unconfirmed'], ['phase-delivered', 'Delivered to Dude'],
+        ['phase-owner-before', 'Waiting for owner result, before any permission'],
+        ['phase-owner-after', 'Waiting for owner result, after a permission response'],
+        ['phase-delivery-uncertain', 'Uncertain delivery, unreconciled'],
+      ]],
+      ['Permission requested (then Open Needs you)', [
+        ['permission-focused-skill', 'Focused skill with LICENSE sibling'], ['permission-focused-agent', 'Focused agent, replace'],
+        ['permission-clean', 'Clean directory: agent with .support/ and skill'], ['permission-warned', 'Warned directory: 3 artifacts'],
+      ]],
+      ['Owner results (illustration; no import occurred)', [
+        ['result-applied-focused', 'Applied: focused skill and LICENSE'], ['result-applied-directory', 'Applied: Clean directory with .support/ paths'],
+        ['result-declined', 'Declined: Warned directory'], ['result-failed-blocked', 'Failed, no change: Blocked directory'],
+        ['result-failed-restored', 'Failed, verified restoration: Clean directory'], ['result-failed-partial', 'Failed, partial change: focused skill'],
+        ['result-unavailable-capacity', 'Unavailable: 13 agents or skills'], ['result-unavailable-notsent', 'Unavailable: not sent (queued input)'],
+        ['result-stale', 'Stale: focused agent'], ['result-uncertain', 'Uncertain: Warned directory recovery failed'],
+      ]],
+    ];
+    const SCENARIO_IDS = new Set(SCENARIOS.flatMap(([, items]) => items.map(([id]) => id)));
+    const SESSIONS = ['ready', 'queued', 'busy', 'waiter', 'capture', 'pack', 'disconnected', 'unavailable'];
+
+    /* ---------------- Copy: Packs PHASES labels, import-specific sentences ---------------- */
+    const PHASES = {
+      preparing: ['Preparing request', 'Checking the source text and the joined session. Nothing is read from the source, and this does not grant permission.'],
+      prepared: ['Request prepared', 'Nothing has been sent. This request will not be submitted automatically on reload or return.'],
+      submitting: ['Requesting owner action', 'Sending this request to Dude once. Delivery is not yet confirmed.'],
+      admitted: ['Admitted; delivery unconfirmed', 'The provider accepted this request, but delivery to Dude is not confirmed. Nothing will be resent.'],
+      delivered: ['Delivered to Dude', 'Dude previews the import and asks for permission in Needs you before changing any file.'],
+      waiting_permission: ['Permission requested', 'Review the exact files and respond to this request in Needs you.'],
+      waiting_owner: ['Waiting for owner result', 'Dude is working on this request. No file change is confirmed until Dude reports a verified result here.'],
+      applied: ['Applied', 'Dude verified the import. When the result arrived, Canvas confirmed each written path was a regular file in a local artifact folder.'],
+      declined: ['Declined', 'The permission was declined. This request will not be repeated.'],
+      failed: ['Failed', 'Dude did not complete this import. This request will not be repeated.'],
+      unavailable: ['Unavailable', 'Dude could not offer this import here. Nothing will be retried automatically.'],
+      stale: ['Stale request or result', 'The reviewed source, destination, or plan changed. A new request needs a fresh preview and permission.'],
+      uncertain: ['Uncertain', 'Dude could not establish the resulting files. Check the paths below before you request another import.'],
+    };
+    const NOT_SENT = 'The joined agent must be idle, with no waiting request or queued input. This request was not sent.';
+    const SEND_UNCERTAIN = 'Delivery could not be confirmed. Wait for Dude to reconcile this request, and do not repeat it.';
+    const NEW_SESSION = 'New agents or skills may not be available until you start a new session.';
+    const FILE_CHANGES = {
+      none: ['No change.', 'Dude reports that no files changed.'],
+      applied: ['Applied.', 'The files below were written and then verified.'],
+      partial: ['Partial change.', 'Dude wrote the files below before the import failed. The import is incomplete.'],
+      restored: ['Restored.', 'Dude verified that changed files were restored after a caught failure. This is not a crash-recovery guarantee.'],
+      uncertain: ['Uncertain.', 'Dude could not establish the resulting files or their restoration.'],
+    };
+    const READY_NOTE = 'Dude previews the import and asks for your permission in Needs you before changing any file.';
+    const REASONS = {
+      unavailable: 'The current workspace and joined provider must be available before requesting an import.',
+      disconnected: 'Canvas is reconnecting to the joined session. Nothing is sent until the connection is current.',
+      busy: 'The joined agent is busy. Request import becomes available when the session is idle.',
+      waiter: 'A request is waiting in Needs you. Respond to it before requesting an import.',
+      capture: 'An idea capture needs owner reconciliation before an import can be requested.',
+      pack: 'A pack request needs owner reconciliation before an import can be requested.',
+      open: 'This import request is still open. Wait for its result; nothing will be resent.',
+      permission: 'This import request is waiting for your permission response in Needs you.',
+      uncertain: 'Delivery of this import request is uncertain. Wait for Dude to reconcile it; nothing will be resent.',
+    };
+
+    // Frontend source checks (plan "HTTP And Source Bounds"). The typed text is
+    // never changed; the provider and import.mjs remain the real validators.
+    function validateSource(raw) {
+      const value = raw.trim();
+      if (!value) return 'Enter a local path or a GitHub URL.';
+      if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value)) return 'Remove line breaks, tabs, and other control characters. The source must be a single line.';
+      const bytes = new TextEncoder().encode(value).length;
+      if (bytes > 2048) return `This source is ${bytes.toLocaleString('en-US')} UTF-8 bytes. The limit is 2,048, and nothing was shortened.`;
+      const scheme = /^([A-Za-z][A-Za-z0-9+.-]+):/.exec(value);
+      if (!scheme) return '';
+      const name = scheme[1].toLowerCase();
+      if (name === 'file') return 'Enter the local path itself, without file://.';
+      if (name !== 'https') return 'Use an https:// URL. Canvas accepts public GitHub URLs only.';
+      const rest = value.slice(scheme[0].length);
+      if (!rest.startsWith('//')) return 'Enter the complete https:// GitHub URL.';
+      const authority = rest.slice(2).split(/[/?#\\]/)[0];
+      if (authority.includes('@')) return 'Remove the user name or password from the URL. Canvas never sends credentials.';
+      if (authority.includes(':')) return 'Remove the port number from the URL.';
+      if (!['github.com', 'raw.githubusercontent.com'].includes(authority.toLowerCase())) return 'Use a github.com or raw.githubusercontent.com URL.';
+      if (value.includes('?')) return 'Remove the query, the part that starts with ?.';
+      if (value.includes('#')) return 'Remove the fragment, the part that starts with #.';
+      if (/\\|%2f|%5c/i.test(value)) return 'Remove backslashes and encoded slashes (%2F or %5C) from the URL.';
+      return '';
+    }
+    /* ---------------- State ---------------- */
+    const INITIAL_PACKS = { context: 'installed', tag: '', page: 1, selected: null };
+    const state = {
+      view: 'settings',          // 'settings' | 'needs' (main area)
+      section: 'local',          // Settings local section
+      session: 'ready',          // simulated joined-session condition
+      request: null,             // the latest import request (one per tab)
+      validation: '',
+      needsReturn: false,        // Open Needs you path is active (Back shown)
+      needsSelected: false,      // Needs you shows the record rather than the list
+      draft: null,               // unsent permission response, kept in this tab
+      timers: [],
+      packs: { ...INITIAL_PACKS },
+      packScroll: 0,
+      read: 'current',
+    };
+    const freshDraft = () => ({ confirmation: '', assent: false, declining: false, declineText: '', error: '' });
+    state.draft = freshDraft();
+    function clearTimers() { state.timers.forEach(clearTimeout); state.timers = []; }
+    const isTerminal = request => ['applied', 'declined', 'failed', 'unavailable', 'stale'].includes(request.phase)
+      || (request.phase === 'uncertain' && !request.deliveryUncertain);
+
+    /* ---------------- About (074 behavior, unchanged) ---------------- */
+    const RELEASE = /^v\d+\.\d+\.\d+$/;
+    const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9._/+-]*$/;
+    function usableRef(value) {
+      if (typeof value !== 'string' || !SAFE_REF.test(value) || value.includes('..') || value.includes('//')) return null;
+      return value.split('/').some(part => !part || part.startsWith('.') || part.endsWith('.') || part.endsWith('.lock')) ? null : value;
+    }
+    function versionText(ref) {
+      if (!ref) return null;
+      if (RELEASE.test(ref)) return ref;
+      return ref === 'main' ? 'Development (main)' : `Recorded ref (${ref})`;
+    }
+    function channelText(ref) {
+      if (!ref) return null;
+      if (RELEASE.test(ref)) return `Pinned release (${ref})`;
+      if (ref === 'main') return 'Development (main)';
+      return ref === 'latest' ? 'Stable releases (latest)' : `Recorded ref (${ref})`;
+    }
+    const aboutPanel = $('section-about');
+    function fillValue(node, text) {
+      node.replaceChildren();
+      node.classList.toggle('unavailable', text === null);
+      node.textContent = text ?? 'Unavailable';
+    }
+    function renderAbout() {
+      fillValue($('about-version'), versionText(usableRef(ABOUT.installedRef)));
+      fillValue($('about-channel'), channelText(usableRef(ABOUT.sourceRef)));
+      $('about-note').textContent = 'Recorded installation metadata; installed files are not verified.';
+      syncPanelScroll(aboutPanel);
+    }
+    // A panel takes focus only when it has something to scroll (074 rule).
+    function syncPanelScroll(panel) {
+      const scrollable = !panel.hidden && panel.scrollHeight > panel.clientHeight + 1;
+      if (scrollable) panel.tabIndex = 0;
+      else panel.removeAttribute('tabindex');
+    }
+    const localPanel = $('section-local');
+    [aboutPanel, localPanel].forEach(panel => {
+      const observer = new ResizeObserver(() => syncPanelScroll(panel));
+      observer.observe(panel);
+      observer.observe(panel.firstElementChild);
+    });
+
+    /* ---------------- Settings sections ---------------- */
+    const sectionTabs = [...document.querySelectorAll('.section-tab')];
+    const packsPanel = $('section-packs');
+    const packScroll = $('pack-scroll');
+    const tabFor = section => sectionTabs.find(tab => tab.dataset.section === section);
+    function selectSection(section, { focus = false, initial = false } = {}) {
+      const leaving = state.section;
+      if (section === leaving && !initial) { if (focus) tabFor(section).focus(); return; }
+      if (leaving === 'packs' && !packsPanel.hidden) { state.packScroll = packScroll.scrollTop; releaseDetail(); }
+      state.section = section;
+      sectionTabs.forEach(tab => {
+        const selected = tab.dataset.section === section;
+        tab.setAttribute('aria-selected', String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+      });
+      packsPanel.hidden = section !== 'packs';
+      localPanel.hidden = section !== 'local';
+      aboutPanel.hidden = section !== 'about';
+      $('settings').dataset.section = section;
+      syncChrome();
+      if (focus) tabFor(section).focus();
+      if (section === 'about') renderAbout();
+      else if (section === 'local') { renderLocal(); syncPanelScroll(localPanel); }
+      else {
+        renderPacks();
+        packScroll.scrollTop = state.packScroll;
+        restoreDetail();
+      }
+    }
+    sectionTabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => selectSection(tab.dataset.section, { focus: true }));
+      tab.addEventListener('keydown', event => roveTabs(event, sectionTabs, index, next => selectSection(next.dataset.section, { focus: true })));
+    });
+
+    /* ---------------- Packs (settings.jsx behavior, unchanged) ---------------- */
+    const PAGE_SIZE = 5;
+    const ITEMS = CATALOG.packs.map(pack => ({ ...pack, installed: Object.hasOwn(INSTALLED, pack.name), entry: INSTALLED[pack.name] || null }));
+    const TAGS = [...new Set(CATALOG.packs.flatMap(pack => pack.use_cases))];
+    const TOTALS = { installed: ITEMS.filter(item => item.installed).length, available: ITEMS.filter(item => !item.installed).length };
+    const tagsText = pack => pack.use_cases.length ? pack.use_cases.join(', ') : 'No use cases declared';
+    const contextLabel = () => state.packs.context === 'installed' ? 'Installed' : 'Available';
+    const packTabs = [...document.querySelectorAll('.pack-tab')];
+    const filter = $('use-case-filter');
+    const detail = $('pack-detail');
+    const layout = $('pack-layout');
+    const narrowDetail = window.matchMedia('(max-width: 1099px)');
+    const rowButton = name => name ? document.querySelector(`[data-open-pack="${CSS.escape(name)}"]`) : null;
+
+    filter.append(new Option('All use cases', ''), ...TAGS.map(tag => new Option(tag, tag)));
+    document.querySelectorAll('[data-count]').forEach(node => { node.textContent = String(TOTALS[node.dataset.count]); });
+    packTabs.forEach(tab => tab.setAttribute('aria-label', `${tab.dataset.context === 'installed' ? 'Installed' : 'Available'} (${TOTALS[tab.dataset.context]})`));
+
+    function model() {
+      const view = state.packs;
+      const context = ITEMS.filter(item => item.installed === (view.context === 'installed'));
+      const matches = context.filter(item => !view.tag || item.use_cases.includes(view.tag));
+      const pages = Math.ceil(matches.length / PAGE_SIZE);
+      const page = Math.min(view.page, Math.max(1, pages));
+      const offset = (page - 1) * PAGE_SIZE;
+      const visible = matches.slice(offset, offset + PAGE_SIZE);
+      return { matches, pages, page, offset, visible, selected: visible.find(item => item.name === view.selected) || null };
+    }
+    function packRow(item) {
+      const row = el('tr', 'pack-row');
+      row.classList.toggle('selected', item.name === state.packs.selected);
+      const name = el('td');
+      const open = el('button', 'pack-open', item.name);
+      open.type = 'button';
+      open.dataset.openPack = item.name;
+      open.setAttribute('aria-label', `${item.name}. ${tagsText(item)}`);
+      open.setAttribute('aria-controls', 'pack-detail');
+      open.setAttribute('aria-expanded', String(item.name === state.packs.selected));
+      open.addEventListener('keydown', event => {
+        if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+        const buttons = [...document.querySelectorAll('#pack-rows .pack-open')];
+        const index = buttons.indexOf(open);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+          : Math.max(0, Math.min(buttons.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
+        event.preventDefault();
+        buttons[next].focus();
+      });
+      name.append(open);
+      row.append(name, el('td', 'pack-tags', tagsText(item)));
+      row.addEventListener('click', () => selectPack(item.name));
+      return row;
+    }
+    function renderPacks() {
+      const m = model();
+      state.packs.page = m.page;
+      if (!m.selected) state.packs.selected = null;
+      packTabs.forEach(tab => {
+        const selected = tab.dataset.context === state.packs.context;
+        tab.setAttribute('aria-selected', String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+      });
+      $('pack-panel').setAttribute('aria-labelledby', `pack-tab-${state.packs.context}`);
+      $('packs-results-heading').textContent = `${contextLabel()} packs`;
+      $('pack-table').setAttribute('aria-label', `${contextLabel()} packs`);
+      filter.value = state.packs.tag;
+      $('pack-rows').replaceChildren(...m.visible.map(packRow));
+      $('pack-table').hidden = !m.visible.length;
+      const empty = $('pack-empty');
+      empty.hidden = Boolean(m.visible.length);
+      if (!m.visible.length) {
+        const installed = state.packs.context === 'installed';
+        empty.replaceChildren(
+          el('p', 'pack-metadata-heading', state.packs.tag ? 'No matching packs' : installed ? 'No installed packs' : 'No available packs'),
+          el('p', '', state.packs.tag ? 'Clear the use case to see all packs in this context.'
+            : installed ? 'The installed profile contains no packs.' : 'No catalog packs are outside installed membership.'),
+          el('p', 'code', `Catalog origin: ${CATALOG.origin}`));
+      }
+      $('pack-count').textContent = !m.matches.length ? '0 matches'
+        : `${m.offset + 1}–${m.offset + m.visible.length} of ${m.matches.length}${state.packs.tag ? ' matches' : ''}`;
+      $('pack-page').textContent = m.pages ? `Page ${m.page} of ${m.pages}` : 'No pages';
+      $('previous-page').disabled = m.page <= 1;
+      $('next-page').disabled = m.page >= m.pages;
+      syncDetail(m.selected);
+    }
+    // packActionReason with the imports extension (plan: shared exclusion).
+    // Only the preview's own limit is marked as preview text.
+    function packReason() {
+      const session = state.session, request = state.request;
+      if (session === 'unavailable' || session === 'disconnected') return { text: 'The current workspace and joined provider must be available before requesting a change.' };
+      if (request && !request.notSent && !isTerminal(request)) return { text: 'An artifact import needs owner reconciliation before a pack request can be sent.' };
+      if (session === 'pack') return { text: 'Another pack request needs owner reconciliation. Nothing will be resent.' };
+      if (session === 'capture') return { text: 'An idea capture needs owner reconciliation before a pack request can be sent.' };
+      if (session === 'busy' || session === 'waiter') return { text: 'The joined agent must be idle, with no waiting request or queued input. This request was not sent.' };
+      return { preview: true, text: 'Preview only: this file sends no pack requests. The 063 baseline shows that flow.' };
+    }
+    function syncPackReason() {
+      const node = $('pack-action-reason');
+      if (!node) return;
+      const reason = packReason();
+      node.textContent = reason.text;
+      node.className = reason.preview ? 'proto-inline' : 'eyebrow';
+    }
+    function fact(list, label, content) {
+      const value = el('dd');
+      value.append(typeof content === 'string' ? document.createTextNode(content) : content);
+      list.append(el('dt', '', label), value);
+    }
+    function fillDetail(item) {
+      $('pack-detail-scope').textContent = `${contextLabel()} · Workspace scope`;
+      $('pack-detail-title').textContent = item.name;
+      const body = $('pack-detail-body');
+      body.replaceChildren(el('p', 'prose', item.description || 'No description declared.'));
+      const actions = el('div', 'pack-actions');
+      (item.installed ? [['refresh', 'Refresh pack'], ['remove', 'Remove']] : [['install', 'Install']]).forEach(([operation, label]) => {
+        const button = el('button', operation === 'install' ? 'button primary' : 'button', label);
+        button.type = 'button';
+        button.disabled = true;
+        button.setAttribute('aria-describedby', 'pack-action-reason');
+        actions.append(button);
+      });
+      const reason = el('p', 'eyebrow');
+      reason.id = 'pack-action-reason';
+      const group = el('div', 'tight');
+      group.append(actions, reason);
+      const facts = el('dl', 'pack-metadata');
+      fact(facts, 'Use cases', tagsText(item));
+      fact(facts, 'Current catalog origin', el('span', 'code', CATALOG.origin));
+      fact(facts, 'Declared tools', 'Not acquired in this snapshot.');
+      body.append(group, facts);
+      syncPackReason();
+      if (item.installed) {
+        const source = el('dl', 'pack-metadata');
+        fact(source, 'Type', el('span', 'code', item.entry.source.type));
+        fact(source, 'Location', el('span', 'code', item.entry.source.location));
+        const files = el('details', 'pack-files');
+        files.open = true;
+        const list = el('ul');
+        item.entry.files.forEach(file => { const entry = el('li'); entry.append(el('code', 'code', file)); list.append(entry); });
+        files.append(el('summary', '', `Recorded files (${item.entry.files.length})`), list);
+        body.append(el('h3', 'pack-metadata-heading', 'Recorded installed source'), source, files,
+          el('p', 'eyebrow', 'Membership and files: .dude/metadata/profile.md. Recorded source does not verify installed bytes.'));
+      } else {
+        const projected = el('div', 'tight');
+        projected.append(el('h3', 'pack-metadata-heading', 'Projected files'), el('p', '', 'Not acquired in this snapshot.'));
+        body.append(projected);
+      }
+    }
+    function releaseDetail() {
+      // A hidden section keeps its selection but never keeps a dialog on top.
+      if (detail.open) detail.close();
+      layout.classList.remove('has-details');
+    }
+    function syncDetail(selected) {
+      if (!selected || state.section !== 'packs' || state.view !== 'settings') { releaseDetail(); return; }
+      fillDetail(selected);
+      const modal = narrowDetail.matches;
+      if (detail.open && detail.matches(':modal') !== modal) detail.close();
+      layout.classList.toggle('has-details', !modal);
+      if (!detail.open) { if (modal) detail.showModal(); else detail.setAttribute('open', ''); }
+    }
+    function restoreDetail() { syncDetail(model().selected); }
+    function selectPack(name) {
+      state.packs.selected = name;
+      renderPacks();
+      $('pack-detail-close').focus();
+    }
+    function closePack() {
+      const name = state.packs.selected;
+      state.packs.selected = null;
+      renderPacks();
+      (rowButton(name) || $('packs-results-heading')).focus();
+    }
+    $('pack-detail-close').addEventListener('click', closePack);
+    $('pack-detail-back').addEventListener('click', closePack);
+    detail.addEventListener('cancel', event => { event.preventDefault(); closePack(); });
+    detail.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !detail.matches(':modal')) { event.preventDefault(); closePack(); }
+      else if (event.key === 'Tab' && detail.matches(':modal')) loopTab(event, detail);
+    });
+    onBackdrop(detail, closePack);
+    narrowDetail.addEventListener('change', () => {
+      if (state.section !== 'packs' || state.view !== 'settings' || !model().selected) return;
+      restoreDetail();
+      if (detail.matches(':modal')) $('pack-detail-close').focus();
+    });
+    function switchContext(context) {
+      if (context === state.packs.context) return;
+      state.packs = { ...INITIAL_PACKS, context };
+      packScroll.scrollTop = 0;
+      renderPacks();
+    }
+    packTabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => { switchContext(tab.dataset.context); tab.focus(); });
+      tab.addEventListener('keydown', event => roveTabs(event, packTabs, index, next => { switchContext(next.dataset.context); next.focus(); }));
+    });
+    function changeFilter(tag) {
+      const firstPage = ITEMS.filter(item => item.installed === (state.packs.context === 'installed')
+        && (!tag || item.use_cases.includes(tag))).slice(0, PAGE_SIZE);
+      state.packs = { ...state.packs, tag, page: 1, selected: firstPage.some(item => item.name === state.packs.selected) ? state.packs.selected : null };
+      packScroll.scrollTop = 0;
+      renderPacks();
+    }
+    filter.addEventListener('change', () => changeFilter(filter.value));
+    $('clear-filter').addEventListener('click', () => { changeFilter(''); filter.focus(); });
+    function changePage(delta) {
+      state.packs = { ...state.packs, page: state.packs.page + delta, selected: null };
+      packScroll.scrollTop = 0;
+      renderPacks();
+      $('settings-title').focus();
+    }
+    $('previous-page').addEventListener('click', () => changePage(-1));
+    $('next-page').addEventListener('click', () => changePage(1));
+    $('reload-packs').addEventListener('click', () => {
+      // A product reload replaces the snapshot: context stays, the rest resets.
+      if (detail.contains(document.activeElement)) $('reload-packs').focus();
+      state.packs = { ...INITIAL_PACKS, context: state.packs.context };
+      packScroll.scrollTop = 0;
+      renderPacks();
+      $('packs-status').textContent = 'Pack view reset from the embedded capture. Nothing was read.';
+    });
+    /* ---------------- Local artifacts ---------------- */
+    const input = $('import-source');
+    const inputWrap = $('import-source-wrap');
+    function showValidation(message) {
+      state.validation = message;
+      $('import-source-error-text').textContent = message;
+      $('import-source-error').hidden = false;
+      inputWrap.classList.add('invalid');
+      input.setAttribute('aria-invalid', 'true');
+      input.setAttribute('aria-describedby', 'import-source-error import-source-hint');
+    }
+    function hideValidation() {
+      state.validation = '';
+      $('import-source-error').hidden = true;
+      $('import-source-error-text').textContent = '';
+      inputWrap.classList.remove('invalid');
+      input.setAttribute('aria-invalid', 'false');
+      input.setAttribute('aria-describedby', 'import-source-hint');
+    }
+    input.addEventListener('input', () => { if (state.validation) hideValidation(); });
+    // Disabled reasons: the envelope's list, most specific first. Queued input
+    // is known only to the provider, so it is refused after the click instead.
+    function requestReason() {
+      const session = state.session, request = state.request;
+      if (session === 'unavailable') return REASONS.unavailable;
+      if (session === 'disconnected') return REASONS.disconnected;
+      if (request && !request.notSent && !isTerminal(request)) {
+        return request.phase === 'waiting_permission' ? REASONS.permission : request.deliveryUncertain ? REASONS.uncertain : REASONS.open;
+      }
+      if (session === 'pack') return REASONS.pack;
+      if (session === 'capture') return REASONS.capture;
+      if (session === 'waiter') return REASONS.waiter;
+      if (session === 'busy') return REASONS.busy;
+      return null;
+    }
+    $('import-form').addEventListener('submit', event => {
+      event.preventDefault();
+      if (requestReason()) return;
+      const error = validateSource(input.value);
+      if (error) { showValidation(error); input.focus(); return; }
+      hideValidation();
+      startRequest(input.value.trim());
+    });
+    const resultFields = result => ({ phase: result.outcome, result: { outcome: result.outcome, mutation: result.mutation,
+      written: result.written, uncertain: result.uncertain, note: result.note } });
+    // Scripted illustration of one admitted request. It never reaches a result
+    // on its own except Dude's refusal before permission (capacity, Blocked).
+    function startRequest(source) {
+      clearTimers();
+      const sampleId = Object.keys(SAMPLES).find(key => SAMPLES[key].source === source) || null;
+      const sample = sampleId ? SAMPLES[sampleId] : null;
+      const request = { sample: sampleId, source, receipt: null, phase: 'preparing', message: null, result: null,
+        permission: null, deliveryUncertain: false, notSent: false };
+      state.request = request;
+      state.draft = freshDraft();
+      state.needsSelected = false;
+      renderLocal();
+      focusImportStatus();
+      const steps = [];
+      if (state.session === 'queued') {
+        steps.push([900, r => { r.phase = 'unavailable'; r.message = NOT_SENT; r.notSent = true; }]);
+      } else {
+        steps.push([700, r => { r.phase = 'prepared'; r.receipt = sample ? sample.receipt : CUSTOM_RECEIPT; }]);
+        steps.push([500, r => { r.phase = 'submitting'; }]);
+        steps.push([700, r => { r.phase = 'admitted'; }]);
+        steps.push([900, r => { r.phase = 'delivered'; }]);
+        if (sample) {
+          steps.push([900, r => { r.phase = 'waiting_owner'; }]);
+          steps.push([1300, r => {
+            if (sample.permission) { r.phase = 'waiting_permission'; r.permission = { status: 'pending', response: null }; }
+            else Object.assign(r, resultFields(RESULTS[sample.refusal]));
+          }]);
+        }
+      }
+      let delay = 0;
+      for (const [ms, step] of steps) {
+        delay += ms;
+        state.timers.push(setTimeout(() => {
+          if (state.request !== request) return;
+          step(request);
+          renderLocal();
+          syncPackReason();
+          if (state.view === 'needs') renderNeeds({ keepFocus: true });
+        }, delay));
+      }
+    }
+    function statusLook(request) {
+      switch (request.phase) {
+        case 'waiting_permission': return ['info', 'i-comment'];
+        case 'applied': return ['success', 'i-check-circle-filled'];
+        case 'declined': return ['info', 'i-info-filled'];
+        case 'failed': return ['error', 'i-diamond-dismiss-filled'];
+        case 'unavailable': case 'stale': case 'uncertain': return ['warning', 'i-warning-filled'];
+        default: return ['info', null];
+      }
+    }
+    function sheetRow(label, content, className = '') {
+      const row = el('div', className ? `about-row ${className}` : 'about-row');
+      const value = el('dd');
+      value.append(content);
+      row.append(el('dt', '', label), value);
+      return row;
+    }
+    function pathList(paths) {
+      const list = el('ul', 'path-list');
+      paths.forEach(path => { const item = el('li'); item.append(el('code', 'code', path)); list.append(item); });
+      return list;
+    }
+    function fileChange(result) {
+      const key = result.outcome === 'applied' ? 'applied' : result.mutation === 'applied' ? 'partial' : result.mutation;
+      const [word, sentence] = FILE_CHANGES[key];
+      const text = el('span');
+      text.append(el('span', 'semibold', word), document.createTextNode(` ${sentence}`));
+      return text;
+    }
+    function renderLocal() {
+      const request = state.request;
+      const reason = requestReason();
+      $('request-import').disabled = Boolean(reason);
+      $('request-note').textContent = reason || READY_NOTE;
+      const region = $('import-request');
+      region.hidden = !request;
+      if (request) {
+        const [intent, icon] = statusLook(request);
+        const bar = $('import-status');
+        bar.className = `message-bar intent-${intent}`;
+        const iconHost = $('import-status-icon');
+        iconHost.replaceChildren(icon ? svgIcon(icon) : el('span', 'spinner'));
+        const [title, sentence] = PHASES[request.phase];
+        $('import-status-title').textContent = title;
+        const text = $('import-status-text');
+        text.replaceChildren(el('span', '', request.message || sentence));
+        if (request.phase === 'applied') text.append(el('span', '', NEW_SESSION));
+        const waiting = request.phase === 'waiting_permission' && request.permission?.status === 'pending';
+        $('import-status-actions').hidden = !waiting;
+        const sheet = $('request-sheet');
+        sheet.replaceChildren(sheetRow('Requested source', el('code', 'code', request.source)));
+        if (request.receipt) sheet.append(sheetRow('Receipt', el('code', 'code', request.receipt)));
+        const result = request.result;
+        if (result) {
+          sheet.append(sheetRow("Dude's note", el('span', 'prose', result.note)), sheetRow('File changes', fileChange(result)));
+          if (result.written.length) sheet.append(sheetRow(`Written files (${result.written.length})`, pathList(result.written), 'paths'));
+          if (result.uncertain.length) sheet.append(sheetRow(`Uncertain paths (${result.uncertain.length})`, pathList(result.uncertain), 'paths'));
+        }
+        const footnote = $('request-footnote');
+        footnote.textContent = result ? 'Checked when Dude reported this result. Canvas does not watch these files afterward.'
+          : request.notSent ? '' : 'Leaving Settings does not cancel this request, and nothing is sent again automatically.';
+        footnote.hidden = !footnote.textContent;
+      }
+      syncPanelScroll(localPanel);
+    }
+    $('open-needs').addEventListener('click', () => openNeeds());
+    // Focus the status headline, keeping its section heading and title in view
+    // even when a narrow panel is shorter than the status itself.
+    function focusImportStatus() {
+      const panel = localPanel, region = $('import-request');
+      panel.scrollTop += region.getBoundingClientRect().top - panel.getBoundingClientRect().top - 8;
+      $('import-status').focus({ preventScroll: true });
+    }
+
+    /* ---------------- Chrome: toolbar, labels, status bar ---------------- */
+    function syncChrome() {
+      const inSettings = state.view === 'settings';
+      $('reload-packs').hidden = !(inSettings && state.section === 'packs');
+      $('refresh').hidden = inSettings;
+      $('workspace-actions').hidden = $('reload-packs').hidden && $('refresh').hidden;
+      $('workspace-label').textContent = state.session === 'unavailable' ? 'Workspace' : 'Joined workspace';
+      const bar = $('status-bar');
+      const coverage = state.session === 'unavailable' ? 'Current request coverage unavailable' : 'Current request coverage: current';
+      const connection = state.session === 'disconnected' ? 'Reconnecting; no automatic resend' : 'Connected';
+      if (inSettings) {
+        bar.tabIndex = 0;
+        bar.replaceChildren(el('span', '', state.section === 'about' ? 'About · Read only'
+          : state.section === 'local' ? `Local artifacts · ${state.session === 'unavailable' ? coverage : connection}`
+            : 'Installed: current · Catalog: current'));
+      } else {
+        bar.removeAttribute('tabindex');
+        bar.replaceChildren(el('span', '', 'Work coverage unavailable'), el('span', '', coverage), el('span', '', connection),
+          el('span', '', 'Source freshness: unavailable'), el('span', 'read-time', 'No complete read'));
+      }
+    }
+    function showView(view) {
+      state.view = view;
+      $('settings').hidden = view !== 'settings';
+      $('needs-view').hidden = view !== 'needs';
+      if (view !== 'settings') releaseDetail();
+      document.querySelectorAll('[data-destination]').forEach(node => {
+        const current = node.dataset.destination === view;
+        const label = node.dataset.destination === 'needs' ? 'Needs you' : 'Settings';
+        if (current) node.setAttribute('aria-current', 'page');
+        else node.removeAttribute('aria-current');
+        node.setAttribute('aria-label', current ? `${label}, current page` : label);
+      });
+      syncChrome();
+    }
+    /* ---------------- Needs you (needs-you.jsx anatomy) ---------------- */
+    function currentRecord() {
+      const request = state.request;
+      const fields = request?.sample ? SAMPLES[request.sample].permission : null;
+      if (!request?.permission || !fields) return null;
+      return { request, fields, receipt: SAMPLES[request.sample].receipt, status: request.permission.status };
+    }
+    function notice(intent, title, text, id) {
+      const bar = el('div', `message-bar intent-${intent}`);
+      if (id) { bar.id = id; bar.tabIndex = -1; bar.setAttribute('aria-label', 'Response status'); }
+      const icon = el('span', 'mb-icon');
+      icon.setAttribute('aria-hidden', 'true');
+      icon.append(svgIcon(intent === 'error' ? 'i-diamond-dismiss-filled' : 'i-info-filled'));
+      const body = el('div', 'mb-body');
+      body.setAttribute('role', 'status');
+      const copy = el('div', 'mb-text');
+      copy.append(el('span', '', text));
+      body.append(el('span', 'mb-title', title), copy);
+      bar.append(icon, body);
+      return bar;
+    }
+    function responseStatus(record) {
+      if (record.status === 'awaiting') return ['Awaiting acknowledgment', 'Sent to the joined owner. Acceptance and application are not yet confirmed.'];
+      if (record.status === 'acknowledged') return ['Permission acknowledged', 'The owner acknowledged this permission response. Check the import request in Local artifacts for its result.'];
+      const d = state.draft;
+      return d.confirmation || d.assent || d.declining || d.declineText
+        ? ['Responding', 'Your response is unsent and stays in this tab.']
+        : ['Current request', 'The current owner is waiting for your response.'];
+    }
+    function updateResponseStatus() {
+      const record = currentRecord(), node = $('response-status');
+      if (!record || !node) return;
+      const [title, text] = responseStatus(record);
+      node.querySelector('.mb-title').textContent = title;
+      node.querySelector('.mb-text').replaceChildren(el('span', '', text));
+    }
+    function labeledTextarea(label, id, value, onInput, tall = false) {
+      const field = el('div', 'field');
+      const caption = el('label', 'field-label', label);
+      caption.htmlFor = id;
+      const wrap = el('span', tall ? 'textarea tall' : 'textarea');
+      const area = el('textarea');
+      area.id = id;
+      area.autocomplete = 'off';
+      area.spellcheck = false;
+      area.value = value;
+      area.addEventListener('input', () => onInput(area.value));
+      wrap.append(area);
+      field.append(caption, wrap);
+      return field;
+    }
+    function respond(kind) {
+      const request = state.request;
+      request.permission = { status: 'awaiting', response: kind };
+      request.phase = 'waiting_owner';
+      state.draft.error = '';
+      renderNeeds();
+      $('response-status').focus();
+      renderLocal();
+      state.timers.push(setTimeout(() => {
+        if (state.request !== request || request.permission.status !== 'awaiting') return;
+        request.permission.status = 'acknowledged';
+        if (state.view === 'needs') renderNeeds({ keepFocus: true });
+        renderLocal();
+      }, 900));
+    }
+    function renderRecord(body, record) {
+      const { fields } = record;
+      const pending = record.status === 'pending';
+      const all = makeButton('All requests', { icon: 'i-arrow-left', className: 'back', id: 'needs-all' });
+      all.addEventListener('click', () => { state.needsSelected = false; renderNeeds(); $('needs-title').focus(); });
+      const header = el('header', 'detail-header');
+      const row = el('div', 'row');
+      row.append(el('span', 'badge', 'Permission'), el('span', 'eyebrow', 'Blocking clarification in this context'));
+      const title = el('h1', 'title', 'Needs you');
+      title.id = 'needs-title';
+      title.tabIndex = -1;
+      header.append(row, title, el('p', 'prose', fields.prompt));
+      const scope = el('section', 'scope');
+      scope.setAttribute('aria-label', 'Request scope');
+      const identity = el('div', 'tight');
+      identity.append(el('span', 'semibold', 'This session · no canonical idea'));
+      scope.append(el('span', 'eyebrow', 'This request is about'), identity, el('span', '', 'Owner: dude'),
+        el('span', 'code', `Request: import:${record.receipt} · Revision: ${fields.revision}`),
+        el('span', 'code', `Source: session\n${GENERATION}`));
+      const why = el('section', 'scope');
+      why.append(el('span', 'semibold', 'Why your input is needed'), el('p', 'prose', WHY),
+        el('span', 'semibold', 'What this unblocks'), el('p', 'prose', UNBLOCKS));
+      const stack = el('div', 'stack');
+      const [statusTitle, statusText] = responseStatus(record);
+      stack.append(notice('info', statusTitle, statusText, 'response-status'));
+      const form = el('form', 'stack');
+      form.noValidate = true;
+      const operation = el('section', 'scope');
+      operation.setAttribute('aria-label', 'Exact operation');
+      const targets = el('ol');
+      fields.targets.forEach(target => { const item = el('li'); item.append(el('p', 'code', `${target.target}\nRevision: ${target.revision}`)); targets.append(item); });
+      operation.append(el('span', 'semibold', fields.operation), targets, el('p', 'prose', fields.consequences),
+        el('span', 'semibold', 'Owner eligibility context'), el('p', 'prose', fields.eligibility));
+      form.append(operation);
+      if (pending) {
+        const literal = el('div', 'field');
+        literal.append(el('span', 'field-label', 'Required literal confirmation'), el('p', 'code', fields.confirmation));
+        const typed = labeledTextarea('Enter the exact confirmation', 'confirm-input', state.draft.confirmation,
+          value => { state.draft.confirmation = value; updateResponseStatus(); });
+        const check = el('label', 'checkbox');
+        const box = el('input');
+        box.type = 'checkbox';
+        box.id = 'assent';
+        box.checked = state.draft.assent;
+        box.addEventListener('change', () => { state.draft.assent = box.checked; updateResponseStatus(); });
+        const indicator = el('span', 'checkbox-indicator');
+        indicator.append(svgIcon('i-check12', 'icon12'));
+        check.append(box, indicator, el('span', 'checkbox-label', 'I grant permission for this operation on these exact targets.'));
+        form.append(literal, typed, check);
+      }
+      form.append(el('span', 'eyebrow', 'The operation owner revalidates safety and executes or refuses. Canvas does not execute this operation.'));
+      if (state.draft.error) form.append(notice('error', 'Response not sent', state.draft.error));
+      const actions = el('div', 'actions');
+      const send = makeButton('Send permission', { primary: true, type: 'submit', id: 'send-permission' });
+      const decline = makeButton('Decline', { id: 'decline-toggle' });
+      send.disabled = decline.disabled = !pending;
+      decline.addEventListener('click', () => { state.draft.declining = !state.draft.declining; state.draft.error = ''; renderNeeds({ keepFocus: true }); });
+      actions.append(send, decline);
+      form.append(actions);
+      form.addEventListener('submit', event => {
+        event.preventDefault();
+        if (!pending) return;
+        if (!state.draft.assent || state.draft.confirmation !== fields.confirmation) {
+          state.draft.error = 'Confirm the exact operation and enter the current literal confirmation. Copying the text alone is not permission.';
+          renderNeeds({ keepFocus: true });
+          return;
+        }
+        respond('consent');
+      });
+      stack.append(form);
+      // Import permissions have no Defer or Save as idea meaning, so neither is offered.
+      if (state.draft.declining && pending) {
+        const section = el('section', 'stack');
+        section.setAttribute('aria-label', 'Decline permission');
+        const sendDecline = makeButton('Send decline', { className: 'back', id: 'send-decline' });
+        sendDecline.addEventListener('click', () => {
+          if (!state.draft.declineText.trim()) {
+            state.draft.error = 'Enter the requested response. Your wording will be sent unchanged.';
+            renderNeeds({ keepFocus: true });
+            return;
+          }
+          respond('decline');
+        });
+        section.append(labeledTextarea('Reason for declining', 'decline-input', state.draft.declineText,
+          value => { state.draft.declineText = value; updateResponseStatus(); }, true), sendDecline);
+        stack.append(section);
+      }
+      body.append(all, header, scope, why, stack);
+    }
+    function requestOption(title, caption, strong, onOpen) {
+      const option = el('button', 'button request-option');
+      option.type = 'button';
+      const text = el('span', 'tight');
+      text.append(el('span', strong ? 'semibold' : '', title), el('span', 'eyebrow', caption));
+      option.append(text);
+      option.addEventListener('click', onOpen);
+      return option;
+    }
+    function referenceOption(label, caption, view) {
+      const link = el('a', 'button request-option');
+      link.href = `../../062-dude-canvas-workspace-integration/design/workspace-integration.html?view=${view}`;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      const text = el('span', 'tight');
+      text.append(el('span', 'semibold', label), el('span', 'eyebrow', caption));
+      link.append(text);
+      return link;
+    }
+    function renderList(body, record) {
+      const title = el('h1', 'title', 'Needs you');
+      title.id = 'needs-title';
+      title.tabIndex = -1;
+      body.append(title);
+      const open = () => { state.needsSelected = true; renderNeeds(); $('needs-title').focus(); };
+      const pending = record?.status === 'pending';
+      if (pending || state.session === 'waiter') {
+        const section = el('section', 'stack');
+        section.setAttribute('aria-labelledby', 'needs-title');
+        section.append(el('p', 'prose', 'Choose the request you want to answer. Other contexts remain available.'));
+        if (pending) section.append(requestOption(record.fields.prompt, 'Permission · dude · This session · no canonical idea', true, open));
+        if (state.session === 'waiter') section.append(referenceOption('A request waiting in another context', 'Opens the 062 reference in a new tab', 'needs'));
+        body.append(section);
+      } else {
+        const section = el('section', 'stack');
+        const idea = el('a', 'button back', 'New idea');
+        idea.href = '../../062-dude-canvas-workspace-integration/design/workspace-integration.html?view=new';
+        idea.target = '_blank';
+        idea.rel = 'noopener noreferrer';
+        idea.setAttribute('aria-label', 'New idea, 062 reference, opens a new tab');
+        section.append(el('h2', 'subheading', 'No current requests from the joined owner'),
+          el('p', 'prose', 'No admitted request is waiting in this provider. Captured ideas and source-backed dispositions remain in Overview.'), idea);
+        body.append(section);
+      }
+      if (record && !pending) {
+        const past = el('section', 'stack');
+        past.setAttribute('aria-label', 'Request receipts');
+        past.append(el('h2', 'subheading', 'Request receipts'),
+          requestOption(record.fields.prompt, `${record.status === 'acknowledged' ? 'Permission acknowledged' : 'Awaiting acknowledgment'} · dude`, false, open));
+        body.append(past);
+      }
+    }
+    function renderNeeds({ keepFocus = false } = {}) {
+      const focusedId = keepFocus ? document.activeElement?.id : null;
+      const body = $('needs-body');
+      const record = currentRecord();
+      body.replaceChildren();
+      if (state.needsReturn) {
+        const back = makeButton('Back to Local artifacts', { icon: 'i-arrow-left', className: 'back', id: 'needs-back' });
+        back.addEventListener('click', backToLocal);
+        body.append(back);
+      }
+      if (record && state.needsSelected) renderRecord(body, record);
+      else renderList(body, record);
+      if (focusedId) {
+        const node = document.getElementById(focusedId);
+        if (node && node.closest('#needs-view')) node.focus({ preventScroll: true });
+        else if (document.activeElement === document.body) $('needs-title')?.focus({ preventScroll: true });
+      }
+    }
+    function openNeeds() {
+      state.needsReturn = true;
+      state.needsSelected = true;
+      showView('needs');
+      renderNeeds();
+      $('needs-view').scrollTop = 0;
+      $('needs-title').focus({ preventScroll: true });
+    }
+    function backToLocal() {
+      state.needsReturn = false;
+      showView('settings');
+      selectSection('local', { initial: true });
+      focusImportStatus();
+    }
+    $('refresh').addEventListener('click', () => {
+      if (state.view === 'needs') renderNeeds({ keepFocus: true });
+      $('needs-status').textContent = 'Preview request data re-applied. Nothing was read.';
+    });
+
+    /* ---------------- Rail and narrow navigation ---------------- */
+    // Ordinary navigation ends a permission return path. Re-entering Settings
+    // from elsewhere remounts it: Packs first, a fresh Packs view, an empty
+    // Source. The import request itself lives outside the section and stays.
+    function navigate(destination) {
+      state.needsReturn = false;
+      if (destination === 'settings') {
+        if (state.view !== 'settings') {
+          state.packs = { ...INITIAL_PACKS };
+          state.packScroll = 0;
+          packScroll.scrollTop = 0;
+          input.value = '';
+          hideValidation();
+          showView('settings');
+          selectSection('packs', { initial: true });
+        }
+        return $('settings-title');
+      }
+      showView('needs');
+      renderNeeds();
+      $('needs-view').scrollTop = 0;
+      return $('needs-title');
+    }
+    const app = $('app'), navToggle = $('nav-toggle'), navDialog = $('nav-dialog');
+    const narrowNav = window.matchMedia('(max-width: 719px)');
+    const dialogNav = $('rail-items').cloneNode(true);
+    dialogNav.removeAttribute('id');
+    navDialog.append(dialogNav);
+    let expanded = false, navReturn = null;
+    function syncNavigation() {
+      app.classList.toggle('rail-expanded', !narrowNav.matches && expanded);
+      const open = narrowNav.matches ? navDialog.open : expanded;
+      const label = open ? 'Collapse navigation pane' : 'Expand navigation pane';
+      navToggle.setAttribute('aria-expanded', String(open));
+      navToggle.setAttribute('aria-controls', narrowNav.matches ? 'nav-dialog' : 'rail-items');
+      navToggle.setAttribute('aria-label', label);
+      navToggle.title = label;
+    }
+    navToggle.addEventListener('click', () => {
+      if (narrowNav.matches) {
+        navDialog.showModal();
+        dialogNav.querySelector('[aria-current="page"]').focus();
+      } else expanded = !expanded;
+      syncNavigation();
+    });
+    $('nav-close').addEventListener('click', () => navDialog.close());
+    navDialog.addEventListener('close', () => {
+      syncNavigation();
+      (navReturn || navToggle).focus();
+      navReturn = null;
+    });
+    navDialog.addEventListener('keydown', event => { if (event.key === 'Tab') loopTab(event, navDialog); });
+    onBackdrop(navDialog, () => navDialog.close());
+    narrowNav.addEventListener('change', () => {
+      expanded = false;
+      if (navDialog.open) navDialog.close();
+      syncNavigation();
+    });
+    document.addEventListener('click', event => {
+      const target = event.target.closest('[data-destination]');
+      if (!target) return;
+      const focusTarget = navigate(target.dataset.destination);
+      if (navDialog.contains(target)) { navReturn = focusTarget; navDialog.close(); }
+      else focusTarget?.focus();
+    });
+    dialogNav.querySelectorAll('a').forEach(link => link.addEventListener('click', () => navDialog.close()));
+
+    /* ---------------- Preview-only controls ---------------- */
+    function applyScenario(id) {
+      clearTimers();
+      state.needsReturn = false;
+      state.needsSelected = false;
+      state.draft = freshDraft();
+      hideValidation();
+      let source = '', request = null;
+      if (id.startsWith('start-')) source = SAMPLES[id.slice(6)].source;
+      else if (id.startsWith('invalid-')) source = INVALID[id];
+      else if (id.startsWith('phase-')) {
+        const sample = SAMPLES.clean;
+        source = sample.source;
+        const base = { sample: 'clean', source, receipt: sample.receipt, message: null, result: null, permission: null, deliveryUncertain: false, notSent: false };
+        const phases = { 'phase-preparing': 'preparing', 'phase-prepared': 'prepared', 'phase-submitting': 'submitting', 'phase-admitted': 'admitted',
+          'phase-delivered': 'delivered', 'phase-owner-before': 'waiting_owner', 'phase-owner-after': 'waiting_owner', 'phase-delivery-uncertain': 'uncertain' };
+        request = { ...base, phase: phases[id] };
+        if (id === 'phase-preparing') request.receipt = null;
+        if (id === 'phase-owner-after') request.permission = { status: 'acknowledged', response: 'consent' };
+        if (id === 'phase-delivery-uncertain') { request.deliveryUncertain = true; request.message = SEND_UNCERTAIN; }
+      } else if (id.startsWith('permission-')) {
+        const sampleId = id.slice(11);
+        source = SAMPLES[sampleId].source;
+        request = { sample: sampleId, source, receipt: SAMPLES[sampleId].receipt, phase: 'waiting_permission', message: null, result: null,
+          permission: { status: 'pending', response: null }, deliveryUncertain: false, notSent: false };
+      } else if (id === 'result-unavailable-notsent') {
+        source = SAMPLES.clean.source;
+        state.session = 'queued';
+        request = { sample: 'clean', source, receipt: null, phase: 'unavailable', message: NOT_SENT, result: null,
+          permission: null, deliveryUncertain: false, notSent: true };
+      } else if (id.startsWith('result-')) {
+        const result = RESULTS[id.slice(7)];
+        const sample = SAMPLES[result.sample];
+        source = sample.source;
+        request = { sample: result.sample, source, receipt: sample.receipt, message: null, permission: result.response
+          ? { status: 'acknowledged', response: result.response } : null, deliveryUncertain: false, notSent: false, ...resultFields(result) };
+      }
+      input.value = source;
+      state.request = request;
+      $('proto-session').value = state.session;
+      if (state.view !== 'settings') showView('settings');
+      selectSection('local', { initial: true });
+      if (id.startsWith('invalid-')) showValidation(validateSource(source));
+      syncPackReason();
+    }
+    const protoTheme = $('proto-theme'), protoSession = $('proto-session'), protoScenario = $('proto-scenario');
+    SCENARIOS.forEach(([group, items]) => {
+      const optgroup = document.createElement('optgroup');
+      optgroup.label = group;
+      items.forEach(([id, label]) => optgroup.append(new Option(label, id)));
+      protoScenario.append(optgroup);
+    });
+    protoTheme.value = document.documentElement.dataset.protoTheme || 'host';
+    protoTheme.addEventListener('change', () => {
+      if (protoTheme.value === 'host') delete document.documentElement.dataset.protoTheme;
+      else document.documentElement.dataset.protoTheme = protoTheme.value;
+    });
+    protoSession.addEventListener('change', () => {
+      state.session = protoSession.value;
+      renderLocal();
+      syncPackReason();
+      syncChrome();
+      if (state.view === 'needs') renderNeeds({ keepFocus: true });
+    });
+    protoScenario.addEventListener('change', () => applyScenario(protoScenario.value));
+
+    const initialSession = params.get('session');
+    state.session = SESSIONS.includes(initialSession) ? initialSession : 'ready';
+    protoSession.value = state.session;
+    const initialScenario = SCENARIO_IDS.has(params.get('scenario')) ? params.get('scenario') : 'idle-empty';
+    protoScenario.value = initialScenario;
+    applyScenario(initialScenario);
+    const initialSection = params.get('section');
+    if (initialSection === 'packs' || initialSection === 'about') selectSection(initialSection);
+    if (params.get('view') === 'needs') {
+      if (currentRecord()?.status === 'pending') openNeeds();
+      else navigate('needs');
+    }
+    if (params.get('drawer') === 'open') $('preview-details').open = true;
+    syncNavigation();
+  </script>
+</body>
+</html>
+
