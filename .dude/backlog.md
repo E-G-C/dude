@@ -4,27 +4,17 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 ## Where are we?
 
-- Current work: **1** (1 active, 0 blocked)
+- Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
 - Ideas awaiting definition: **7**
-- Defined awaiting work: **1**
-- Completed: **66**
+- Defined awaiting work: **2**
+- Completed: **70**
 
 ## Current
 
-Blocked 0 · Active 1 · Next 0
+Blocked 0 · Active 0 · Next 0
 
-### Active
-
-- `062` · `dude-canvas-workspace-integration` — Dude Canvas Workspace Integration (`.dude/ideas/062-dude-canvas-workspace-integration.md`)
-
-### Current work map
-
-```mermaid
-kanban
-  active[Active]
-    work_1[062 dude-canvas-workspace-integration]
-```
+No current work to diagram.
 
 ## Planned
 
@@ -36,11 +26,12 @@ kanban
 - `070` · `dude-canvas-skill-customization` — Dude Canvas Skill Customization (`.dude/ideas/070-dude-canvas-skill-customization.md`)
 - `071` · `dude-canvas-pack-authoring` — Dude Canvas Pack Authoring (`.dude/ideas/071-dude-canvas-pack-authoring.md`)
 - `072` · `dude-canvas-bundle-upgrade` — Dude Canvas Bundle Upgrade (`.dude/ideas/072-dude-canvas-bundle-upgrade.md`)
-- `073` · `dude-canvas-artifact-import` — Dude Canvas Artifact Import (`.dude/ideas/073-dude-canvas-artifact-import.md`)
+- `080` · `dude-canvas-pack-documentation` — Dude Canvas Pack Documentation (`.dude/ideas/080-dude-canvas-pack-documentation.md`)
 
 ### Defined awaiting work
 
 - `068` · `agent-to-agent-communication` — Local and remote agent communication (`.dude/ideas/068-agent-to-agent-communication.md`)
+- `073` · `dude-canvas-artifact-import` — Dude Canvas Artifact Import (`.dude/ideas/073-dude-canvas-artifact-import.md`)
 
 ## Completed
 
@@ -102,6 +93,7 @@ kanban
 - `059` · `annotation-direct-manipulation` — Annotation Direct Manipulation (`.dude/ideas/059-annotation-direct-manipulation.md`)
 - `060` · `recoverable-work-handoffs` — Recoverable Work Handoffs (`.dude/ideas/060-recoverable-work-handoffs.md`)
 - `061` · `work-inspection-source-capacity` — Work Inspection Source Capacity (`.dude/ideas/061-work-inspection-source-capacity.md`)
+- `062` · `dude-canvas-workspace-integration` — Dude Canvas Workspace Integration (`.dude/ideas/062-dude-canvas-workspace-integration.md`)
 - `063` · `dude-canvas-settings` — Dude Canvas Settings (`.dude/ideas/063-dude-canvas-settings.md`)
 - `064` · `work-receipt-overflow-handling` — Work Receipt Overflow Handling (`.dude/ideas/064-work-receipt-overflow-handling.md`)
 - `065` · `work-history-event-compaction` — Work History Event Compaction (`.dude/ideas/065-work-history-event-compaction.md`)
@@ -110,6 +102,9 @@ kanban
 - `074` · `dude-canvas-about` — Dude Canvas About (`.dude/ideas/074-dude-canvas-about.md`)
 - `075` · `dude-development-base-release` — Dude Development Base Release (`.dude/ideas/075-dude-development-base-release.md`)
 - `076` · `duplicate-feature-number-prefixes` — Duplicate Feature Number Prefixes (`.dude/ideas/076-duplicate-feature-number-prefixes.md`)
+- `077` · `work-model-packet-capacity` — Work Model Packet Capacity (`.dude/ideas/077-work-model-packet-capacity.md`)
+- `078` · `dude-canvas-pack-sources` — Dude Canvas Pack Sources (`.dude/ideas/078-dude-canvas-pack-sources.md`)
+- `079` · `dude-canvas-local-artifacts` — Dude Canvas Local Artifacts (`.dude/ideas/079-dude-canvas-local-artifacts.md`)
 
 ## Dependency and order notes
 

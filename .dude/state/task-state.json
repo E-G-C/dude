@@ -538,10 +538,10 @@
       "T001@a062c1d4": "x",
       "T002@b062d2e5": "x",
       "T003@c062e3f6": "x",
-      "T004@d062f4a7": "~",
-      "T005@e062a5b8": " "
+      "T004@d062f4a7": "x",
+      "T005@e062a5b8": "x"
     },
-    "updated_at": "2026-09-19T04:49:55.000Z"
+    "updated_at": "2026-09-28T18:55:05.420Z"
   },
   ".dude/specs/063-dude-canvas-settings/tasks.md": {
     "glyphs": {
@@ -587,6 +587,21 @@
     },
     "updated_at": "2026-09-22T00:27:20.000Z"
   },
+  ".dude/specs/073-dude-canvas-artifact-import/tasks.md": {
+    "glyphs": {
+      "T001@50646b45": " ",
+      "T002@1306a77d": " ",
+      "T003@190b3654": " ",
+      "T004@7ea1291e": " ",
+      "T005@5a9de139": " ",
+      "T006@46b41403": " ",
+      "T007@12f7b7c0": " ",
+      "T008@2867ff70": " ",
+      "T009@2bc71fe5": " ",
+      "T010@b1c15d3a": " "
+    },
+    "updated_at": "2026-10-01T10:43:17.243Z"
+  },
   ".dude/specs/074-dude-canvas-about/tasks.md": {
     "glyphs": {
       "T001@c47e1b20": "x",
@@ -607,5 +622,11 @@
       "T001@9c4e71b2": "x"
     },
     "updated_at": "2026-09-27T15:54:06.000Z"
+  },
+  ".dude/specs/077-work-model-packet-capacity/tasks.md": {
+    "glyphs": {
+      "T001@b7c9e2a4": "x"
+    },
+    "updated_at": "2026-09-28T03:12:07.361Z"
   }
 }

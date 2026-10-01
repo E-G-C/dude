@@ -61,8 +61,12 @@ calls do not establish Work admission. In particular, its ordinal-6/7 finalized
 results still say `completed: false`, `reason: learning-required`; their
 governance projections are not carried into the next component measurement.
 The ordinal-7 receipt size and ordinal-8 byte overflow therefore describe no
-completed Work cycle or reachable byte ceiling. The small-workspace public
-runner test remains a separate control, not the full-reference proof.
+completed Work cycle or reachable byte ceiling. Those controls were recorded
+against the former 131,072-byte model budget, so the component test adds one
+inert optional session whose measured packet footprint is exactly the revised
+capacity difference; the byte ceiling, not a count limit, still ends its
+growth. The small-workspace public runner test remains a separate control, not
+the full-reference proof.
 
 Run the scoped source suites in an owned validation copy. Refresh `src/`, this
 fixture directory, and the complete static `.dude/{ideas,specs,state,memory,metadata}`

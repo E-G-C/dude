@@ -26,6 +26,7 @@ import {
   inspect,
   inspectRetainedOccurrencesV2,
   modelPacket,
+  retainedProjectionPrefixV2,
   runCommand,
   sha256,
   validateAssessment,
@@ -1058,6 +1059,17 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
         || item.currentRunRecordHash !== sha256(canonicalJson(currentRunRecord.substantive))) {
         return { terminal: orphan('projection-plan-mismatch', label) };
       }
+      // An item this preparation's fresh Inspection already holds exactly once
+      // on both surfaces, such as a re-derived governance event from an earlier
+      // invocation, needs no lane write: the lane owner refuses that no-op as a
+      // replay. Settlement still verifies both surfaces before acceptance.
+      const retained = runtimeInspection === null
+        ? null
+        : retainedProjectionPrefixV2(runtimeInspection, batch);
+      if (retained === null || 'reason' in retained) {
+        return { terminal: orphan('projection-plan-mismatch', label) };
+      }
+      if (index < retained.count) continue;
 
       const stagedRecord = clone(item.currentRunRecord);
       const applied = runDeterministic(

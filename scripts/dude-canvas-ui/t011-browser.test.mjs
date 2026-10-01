@@ -1559,6 +1559,11 @@ async function observeReviewChooser(page) {
   };
 }
 
+const shortPanelFixture = Object.freeze({
+  viewport: {width:1000, height:300, dpr:2},
+  frame: {width:942, clientHeight:118, rawHeight:117.5},
+});
+
 /**
  * A fresh-fixture control uses the same production bundle, source bytes,
  * geometry, observer, and picker instrumentation as the retained positive.
@@ -1614,28 +1619,35 @@ async function runShortPanelWheelControl(variant, record) {
       && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
     `${variant} focused Review engine`, 60_000);
     record.binding = await observer.bind();
-    await viewport(page, 1000, 'light', 300, 2);
-    // Font/platform layout need not leave a fractional remainder. Deliberately
-    // arrange the old half-pixel edge instead of mistaking it for product UI.
+    await viewport(
+      page,
+      shortPanelFixture.viewport.width,
+      'light',
+      shortPanelFixture.viewport.height,
+      shortPanelFixture.viewport.dpr,
+    );
+    // Fix the synthetic frame to the same half-pixel edge on every platform.
     // First annotation admission still owns pinning and replaces this height.
     record.fractionalFixture = await evaluate(page, `(() => {
       const frame = document.querySelector('.dude-review-frame');
+      const expected = ${JSON.stringify(shortPanelFixture.frame)};
       const before = {rect:frame.getBoundingClientRect().toJSON(), clientHeight:frame.clientHeight};
-      frame.style.height = (frame.clientHeight - 0.5) + 'px';
+      frame.style.height = expected.rawHeight + 'px';
       return {before, arrangedHeight:frame.getBoundingClientRect().height};
     })()`);
     record.shortPanel = await until(async () => {
       record.lastShortPanel = await observeRuntime(page, `(() => {
       const frame = document.querySelector('.dude-review-frame');
       if (!frame) return null;
+      const expected = ${JSON.stringify(shortPanelFixture.frame)};
       const rect = frame.getBoundingClientRect();
-      const admitted = frame.clientWidth === 942
-        && frame.clientHeight === 118
-        && rect.width === 942
-        && rect.height === 117.5
+      const admitted = frame.clientWidth === expected.width
+        && frame.clientHeight === expected.clientHeight
+        && rect.width === expected.width
+        && rect.height === expected.rawHeight
         && !frame.classList.contains('dude-review-frame-pinned')
         && document.querySelector('.dude-review-overlay')?.getAttribute('viewBox')
-          === '0 0 942 118'
+          === '0 0 ' + expected.width + ' ' + expected.clientHeight
         && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]');
       return {
           admitted,
@@ -9575,7 +9587,7 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     treatment:{
       browser:'existing installed discovery',
       source:'identical createPreview bytes in three fresh fixtures',
-      viewport:{width:1000,height:300,dpr:2},
+      viewport:{...shortPanelFixture.viewport},
       delta:{x:0,y:360},
       variants:[
         'legacy standalone outside-point wheel (observation only)',
@@ -9673,10 +9685,6 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
     'focused floating-toolbar Review engine', 60_000);
     wheelExperiment.variants.positioned.binding = await wheelObserver.bind();
-    const shortPanelFixture = Object.freeze({
-      viewport: {width:1000, height:300, dpr:2},
-      frame: {width:942, clientHeight:118, rawHeight:117.5},
-    });
     await viewport(
       page,
       shortPanelFixture.viewport.width,
@@ -9686,8 +9694,9 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     );
     wheelExperiment.variants.positioned.fractionalFixture = await evaluate(page, `(() => {
       const frame = document.querySelector('.dude-review-frame');
+      const expected = ${JSON.stringify(shortPanelFixture.frame)};
       const before = {rect:frame.getBoundingClientRect().toJSON(), clientHeight:frame.clientHeight};
-      frame.style.height = (frame.clientHeight - 0.5) + 'px';
+      frame.style.height = expected.rawHeight + 'px';
       return {before, arrangedHeight:frame.getBoundingClientRect().height};
     })()`);
     let shortViewport;
@@ -10381,13 +10390,13 @@ test('T012 review regression: short-panel floating tools stay inside their palet
         && same(positioned.geometry, overlayNegative.geometry),
       outsidePoint:same(standalone.requestedPoint, positioned.requestedPoint),
       dpr:[standalone, positioned, overlayNegative]
-        .every(value => value.geometry?.viewport?.dpr === 2),
+        .every(value => value.geometry?.viewport?.dpr === shortPanelFixture.viewport.dpr),
       dimensions:[standalone, positioned, overlayNegative].every(value => (
-        value.geometry?.viewport?.width === 1000
-          && value.geometry?.viewport?.height === 300
-          && value.geometry?.frame?.clientWidth === 942
-          && value.geometry?.frame?.clientHeight === 118
-          && value.geometry?.frame?.rect?.height === 117.5
+        value.geometry?.viewport?.width === shortPanelFixture.viewport.width
+          && value.geometry?.viewport?.height === shortPanelFixture.viewport.height
+          && value.geometry?.frame?.clientWidth === shortPanelFixture.frame.width
+          && value.geometry?.frame?.clientHeight === shortPanelFixture.frame.clientHeight
+          && value.geometry?.frame?.rect?.height === shortPanelFixture.frame.rawHeight
       )),
     };
     wheelExperiment.matched = matched;
