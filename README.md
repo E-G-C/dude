@@ -201,10 +201,16 @@ Feature 068. A fresh supported Copilot host session discovered and selected the
 installed advisor without making a model or advice call. That result does not
 prove that an already-running chat hot-reloaded its tool catalog. An existing
 chat may require a reload to discover a changed agent catalog. No
-other language source was delivered. Feature 068's scope choices remain
-unanswered or deferred; this activation neither completes its definition nor
-starts implementation. Installed pack files use the reserved `dude-pack-*`
-namespace and survive core upgrades.
+other language source was delivered. Feature 068 later added opt-in
+agent-to-agent communication to the core extension; it does not need this
+pack. Start by asking the model to call `dude_a2a_propose` with the selected
+external config path and profile ID. Review its complete native tool result
+before the exact next eligible local approval; an assistant summary or
+private-log relay is not a substitute. Source and local distribution have
+offline checks, but native result/status visibility and real host use remain
+unqualified. See
+[Agent-to-agent communication](docs/agent-to-agent-communication.md). Installed
+pack files use the reserved `dude-pack-*` namespace and survive core upgrades.
 
 ## What Dude Writes
 
@@ -438,5 +444,6 @@ Read these when you need more than the first-feature path:
 - [Starting from a PRD draft](docs/prd-drafts.md) — use a longer product draft as input.
 - [Definition and execution reference](docs/reference.md) — advanced details and ownership rules.
 - [Pack catalog](library/packs/README.md) — optional expansions and how to install them.
+- [Agent-to-agent communication](docs/agent-to-agent-communication.md) — `dude_a2a_propose`, complete native-result review, and local approval for opt-in questions and named verification; real host use remains unqualified.
 - [Upgrading the bundle](docs/upgrading.md) — update Dude itself safely.
 - [Repository development workflow](docs/commands.md#repository-development-workflow) — core, pack, project-local, and docs-only changes.

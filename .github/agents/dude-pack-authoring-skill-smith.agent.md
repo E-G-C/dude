@@ -3,7 +3,7 @@ name: "Skill Smith"
 description: "Authors and reviews SKILL.md files: frontmatter name and trigger description, argument-hint, and procedure structure. Use when creating or refining a skill."
 tools: ["read", "search", "edit"]
 user-invocable: false
-model: gpt-5.6-sol-fast
+model: claude-sonnet-5.5
 ---
 
 You are the skill authoring specialist.

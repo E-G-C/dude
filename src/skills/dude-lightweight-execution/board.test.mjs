@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { run, parseArgs, applyLightweightWorkRequest } from './board.mjs';
-import { renderArtifacts } from './backlog.mjs';
+import { refreshCommittedBacklog, renderArtifacts } from './backlog.mjs';
 import { parseTasks, renderBoard } from '../dude-engine/lib/tasks.mjs';
 import { buildLightweightWorkPostimages } from '../dude-engine/lib/lightweight-work-postimage.mjs';
 import { canonicalJson } from '../dude-work/recovery.mjs';
@@ -920,6 +920,331 @@ test('board preserves an unrelated feature entry across a successful --write', (
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  }
+});
+
+test('terminal manual resolution: manual close preserves retained fixture bytes', async () => {
+  // This disposable fixture models eligibility, exact current human
+  // confirmation, and fresh independent acceptance as already satisfied. It
+  // does not authenticate an operator, inspect a real owner, run eligibility
+  // policy, reconstruct trusted attestations, or qualify any live feature.
+  const { root, file } = scaffoldBacklogHookFeature();
+  const repositoryRoot = fs.realpathSync(fileURLToPath(new URL('../../../', import.meta.url)));
+  const relativeTasks = `.dude/specs/${BACKLOG_HOOK_FEATURE}/tasks.md`;
+  const ownerRelative = `.dude/ideas/${BACKLOG_HOOK_FEATURE}.md`;
+  const snapshotRelative = '.dude/state/task-state.json';
+  const prerequisiteKey = 'T000@70726570';
+  const targetKey = BACKLOG_HOOK_TASK;
+  const siblingKey = 'T002@7369626c';
+  const unrelatedKey = '.dude/specs/999-unrelated/tasks.md';
+  const ownerPath = path.join(root, ...ownerRelative.split('/'));
+  const snapshotPath = path.join(root, ...snapshotRelative.split('/'));
+  const modeledInputs = Object.freeze({
+    eligibility: 'already satisfied by fixture input only',
+    confirmation:
+      `Authorize MANUAL acceptance and close for .dude/specs/${BACKLOG_HOOK_FEATURE}/spec.md ${targetKey} at fixture-current-revision using fixture-terminal-evidence, accepted revision 7; retain ownership records.`,
+    verification: 'fixture-verification-pass',
+    review: 'fixture-independent-review-acceptance',
+  });
+
+  /** Capture every regular fixture file as a complete relative-path/buffer map. */
+  const captureFixtureTree = () => {
+    /** @type {Map<string, Buffer>} */
+    const captured = new Map();
+    const visit = (directory) => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const absolute = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          visit(absolute);
+        } else if (entry.isFile()) {
+          captured.set(path.relative(root, absolute).split(path.sep).join('/'), fs.readFileSync(absolute));
+        }
+      }
+    };
+    visit(root);
+    return captured;
+  };
+
+  try {
+    assert.equal(path.relative(root, file).startsWith('..'), false, 'tasks target stays below disposable root');
+    assert.equal(
+      path.relative(repositoryRoot, file).startsWith('..'),
+      true,
+      'tasks target is outside the live repository',
+    );
+
+    const ownerFixture = [
+      '---',
+      'title: Backlog Hook Fixture',
+      `slug: ${BACKLOG_HOOK_SLUG}`,
+      'status: defined',
+      `spec_path: .dude/specs/${BACKLOG_HOOK_FEATURE}/spec.md`,
+      '---',
+      '',
+      '# Idea: Backlog Hook Fixture',
+      '',
+      '## Idea',
+      '',
+      'Exercise a modeled ordinary manual close without granting live authority.',
+      '',
+      '## Coordinator Log',
+      '',
+      '- 2026-09-26T22:39:00Z - Prior synthetic Work result remains hard-stop / evidence-incomplete.',
+      '- 2026-09-26T22:40:00Z - Prior synthetic required check was skipped and remains retained failure history.',
+      '',
+    ].join('\n');
+    fs.writeFileSync(ownerPath, ownerFixture);
+
+    const taskHistory = [
+      '## Lightweight Execution History',
+      '',
+      '- dude-run-event: {"fixture":"synthetic-old-run","outcome":"verification-failed"}',
+      '- dude-run-event: {"fixture":"synthetic-old-acceptance","outcome":"required-check-skipped"}',
+      '',
+    ].join('\n');
+    const canonicalTasks = [
+      '# Tasks: Backlog Hook Fixture',
+      '',
+      `**Feature identity**: \`.dude/specs/${BACKLOG_HOOK_FEATURE}/spec.md\``,
+      '',
+      '## Phase 1: Retained Manual-Close Fixture',
+      '',
+      `- [x] ${prerequisiteKey} [Shared] Preserve the implemented prerequisite`,
+      '    Requirement: this completed prerequisite remains byte-stable.',
+      `- [~] ${targetKey} [US1] Accept the already-present implementation`,
+      `    deps: ${prerequisiteKey}`,
+      '    Requirement: close this same key without rewriting retained evidence.',
+      `- [ ] ${siblingKey} [US2] Keep the sibling open`,
+      `    deps: ${targetKey}`,
+      '    Requirement: do not claim or close the next task.',
+      '',
+      taskHistory,
+    ].join('\n');
+    const seededTasks = renderBoard(parseTasks(canonicalTasks));
+    fs.writeFileSync(file, seededTasks);
+
+    const unrelatedEntry = {
+      glyphs: { 'T999@756e726c': '!' },
+      updated_at: '2026-01-02T03:04:05.006Z',
+    };
+    const initialSnapshot = {
+      [relativeTasks]: {
+        glyphs: {
+          [prerequisiteKey]: 'x',
+          [targetKey]: '~',
+          [siblingKey]: ' ',
+        },
+        updated_at: '2026-09-26T22:40:00.000Z',
+      },
+      [unrelatedKey]: unrelatedEntry,
+    };
+    fs.writeFileSync(snapshotPath, `${JSON.stringify(initialSnapshot, null, 2)}\n`);
+
+    const retainedBuffers = new Map([
+      ['.fixture-retained/synthetic-old-run.json', Buffer.from(
+        '{"fixtureOnly":true,"terminal":"hard-stop","reason":"evidence-incomplete"}\n',
+      )],
+      ['.fixture-retained/synthetic-failure-capture.json', Buffer.from(
+        '{"fixtureOnly":true,"verification":"failed","requiredCheck":"failed"}\n',
+      )],
+      ['.fixture-retained/synthetic-learning-capture.json', Buffer.from(
+        '{"fixtureOnly":true,"learning":"alternative-authorized","acceptance":"skipped"}\n',
+      )],
+      ['.fixture-retained/synthetic-ownership-claim.bin', Buffer.concat([
+        Buffer.from('SYNTHETIC CLAIM - NOT A CONTROL\n'),
+        Buffer.from([0x00, 0x01, 0x02, 0xff]),
+      ])],
+      ['.fixture-retained/synthetic-checkpoint.bin', Buffer.concat([
+        Buffer.from('SYNTHETIC CHECKPOINT - NOT AN ATTESTATION\n'),
+        Buffer.from([0xff, 0x02, 0x01, 0x00]),
+      ])],
+    ]);
+    for (const [relative, bytes] of retainedBuffers) {
+      const absolute = path.join(root, ...relative.split('/'));
+      fs.mkdirSync(path.dirname(absolute), { recursive: true });
+      fs.writeFileSync(absolute, bytes);
+    }
+
+    // Seed both derived backlog files before capturing complete preimages.
+    refreshCommittedBacklog({ root });
+    const { readTaskState } = await loadTaskStateLib();
+    const seededState = readTaskState(root);
+    assert.equal(seededState.status, 'ok', 'fixture snapshot starts valid');
+    assert.deepEqual(seededState.state, initialSnapshot, 'fixture snapshot carries target and unrelated entries');
+    assertFreshBacklogPair(root, 'seeded manual-close fixture');
+    assertBacklogClassification(root, 'active', 'seeded manual-close fixture');
+
+    const preimages = captureFixtureTree();
+    const tasksBefore = preimages.get(relativeTasks);
+    const ownerBefore = preimages.get(ownerRelative);
+    const snapshotBefore = preimages.get(snapshotRelative);
+    assert.ok(tasksBefore && ownerBefore && snapshotBefore, 'all authoritative preimages are captured');
+    const parsedBefore = parseTasks(tasksBefore.toString('utf8'));
+    assert.equal(parsedBefore.warnings.length, 0, 'fixture task preimage is canonical');
+    assert.equal(parsedBefore.byId.get(targetKey)?.glyph, '~', 'same-key target starts in progress');
+    assert.equal(parsedBefore.byId.get(targetKey)?.blockedBy, null, 'same-key target is unblocked');
+    assert.equal(parsedBefore.byId.get(siblingKey)?.glyph, ' ', 'sibling starts open');
+    const historyBefore = Buffer.from(parsedBefore.history?.suffix ?? '');
+    assert.deepEqual(historyBefore, Buffer.from(taskHistory), 'complete failed/skipped task history preimage');
+
+    const targetHeader = `- [~] ${targetKey} [US1] Accept the already-present implementation`;
+    const closedTargetHeader = `- [x] ${targetKey} [US1] Accept the already-present implementation`;
+    assert.equal(tasksBefore.toString('utf8').split(targetHeader).length - 1, 1, 'one canonical target header');
+    const oneStateChange = tasksBefore.toString('utf8').replace(targetHeader, closedTargetHeader);
+    const expectedTasks = Buffer.from(renderBoard(parseTasks(oneStateChange)));
+
+    const manualLine = Buffer.from(
+      `- 2026-09-26T22:45:20Z - MANUAL ${relativeTasks} ${targetKey}: ${modeledInputs.eligibility}; confirmed "${modeledInputs.confirmation}"; fresh ${modeledInputs.verification} and ${modeledInputs.review} modeled satisfied; retained synthetic claim/checkpoint; separate ordinary close only; old Work run remains failed and unsettled.\n`,
+    );
+    fs.appendFileSync(ownerPath, manualLine);
+
+    const setResult = boardCli(['set', file, targetKey, 'done', '--write', '--root', root]);
+    assert.equal(setResult.status, 0, `actual set CLI failed: ${setResult.stdout}${setResult.stderr}`);
+    assert.equal(setResult.signal, null, 'actual set CLI exits normally');
+
+    const renderStartedAt = Date.now();
+    const renderResult = boardCli(['render', file, '--write', '--root', root]);
+    const renderFinishedAt = Date.now();
+    assert.equal(renderResult.status, 0, `actual render CLI failed: ${renderResult.stdout}${renderResult.stderr}`);
+    assert.equal(renderResult.signal, null, 'actual render CLI exits normally');
+
+    const observedState = readTaskState(root);
+    assert.equal(observedState.status, 'ok', 'actual CLI leaves a valid snapshot');
+    const observedUpdatedAt = observedState.state[relativeTasks].updated_at;
+    const observedUpdatedAtMs = Date.parse(observedUpdatedAt);
+    assert.equal(Number.isNaN(observedUpdatedAtMs), false, 'final render writes an ISO timestamp');
+    assert.ok(
+      observedUpdatedAtMs >= renderStartedAt && observedUpdatedAtMs <= renderFinishedAt,
+      `final updated_at ${observedUpdatedAt} falls inside the real render interval`,
+    );
+
+    // The observed timestamp is used only after the independent interval check.
+    const expectedSnapshotObject = {
+      [relativeTasks]: {
+        glyphs: {
+          [prerequisiteKey]: 'x',
+          [targetKey]: 'x',
+          [siblingKey]: ' ',
+        },
+        updated_at: observedUpdatedAt,
+      },
+      [unrelatedKey]: unrelatedEntry,
+    };
+    const expectedSnapshot = Buffer.from(`${JSON.stringify(expectedSnapshotObject, null, 2)}\n`);
+
+    const ordinaryCloseLines = Buffer.from([
+      `- 2026-09-26T22:45:21Z - State: ordinary manual writer changed only ${targetKey} from [~] to [x].`,
+      `- 2026-09-26T22:45:22Z - Render: refreshed the derived Lightweight board and snapshot for ${relativeTasks}.`,
+      `- 2026-09-26T22:45:23Z - Close: manually accepted ${targetKey}; old Work remains failed and unsettled; no next task selected.`,
+      '',
+    ].join('\n'));
+    fs.appendFileSync(ownerPath, ordinaryCloseLines);
+    const expectedFinalBacklog = renderArtifacts({ root });
+    refreshCommittedBacklog({ root });
+
+    const tasksAfter = fs.readFileSync(file);
+    const ownerAfter = fs.readFileSync(ownerPath);
+    const snapshotAfter = fs.readFileSync(snapshotPath);
+    assert.deepEqual(tasksAfter, expectedTasks, 'complete task postimage is one same-key close plus renderBoard');
+    assert.deepEqual(snapshotAfter, expectedSnapshot, 'complete snapshot matches the independently serialized glyph map');
+    assert.deepEqual(
+      ownerAfter,
+      Buffer.concat([ownerBefore, manualLine, ordinaryCloseLines]),
+      'owner postimage is exactly the preimage plus MANUAL and state/render/close appends',
+    );
+    assert.deepEqual(
+      ownerAfter.subarray(0, ownerBefore.length),
+      ownerBefore,
+      'prior owner-log prefix remains byte-identical',
+    );
+    const ownerAppend = ownerAfter.subarray(ownerBefore.length).toString('utf8');
+    assert.equal(ownerAppend.match(/ - MANUAL /g)?.length, 1, 'exactly one modeled MANUAL line is appended');
+    assert.ok(
+      ownerAppend.indexOf(' - MANUAL ') < ownerAppend.indexOf(' - State:')
+        && ownerAppend.indexOf(' - State:') < ownerAppend.indexOf(' - Render:')
+        && ownerAppend.indexOf(' - Render:') < ownerAppend.indexOf(' - Close:'),
+      'MANUAL and ordinary close events remain in required order',
+    );
+
+    const parsedAfter = parseTasks(tasksAfter.toString('utf8'));
+    const stableTaskContract = (task) => ({
+      id: task.id,
+      label: task.label,
+      description: task.description,
+      deps: task.deps,
+      blockedBy: task.blockedBy,
+      extraMeta: task.extraMeta,
+    });
+    assert.deepEqual(
+      parsedAfter.tasks.map(stableTaskContract),
+      parsedBefore.tasks.map(stableTaskContract),
+      'task identities, requirements, descriptions, dependencies, and blockers stay unchanged',
+    );
+    assert.equal(parsedAfter.byId.get(targetKey)?.glyph, 'x', 'only the same target closes');
+    assert.equal(parsedAfter.byId.get(prerequisiteKey)?.glyph, 'x', 'completed prerequisite stays complete');
+    assert.equal(parsedAfter.byId.get(siblingKey)?.glyph, ' ', 'open sibling remains open and unclaimed');
+    assert.deepEqual(
+      Buffer.from(parsedAfter.history?.suffix ?? ''),
+      historyBefore,
+      'complete failed/skipped task-history suffix remains byte-identical',
+    );
+
+    assert.deepEqual(observedState.state[unrelatedKey], unrelatedEntry, 'unrelated snapshot entry is exact');
+    assert.notEqual(
+      observedState.state[relativeTasks].updated_at,
+      initialSnapshot[relativeTasks].updated_at,
+      'only the target feature receives a fresh timestamp',
+    );
+    assert.deepEqual(
+      Object.keys(observedState.state).sort(),
+      [relativeTasks, unrelatedKey].sort(),
+      'snapshot gains or loses no feature entries',
+    );
+
+    for (const [relative, expected] of retainedBuffers) {
+      assert.deepEqual(
+        fs.readFileSync(path.join(root, ...relative.split('/'))),
+        expected,
+        `${relative}: retained synthetic bytes stay literal and unchanged`,
+      );
+    }
+    assert.match(historyBefore.toString('utf8'), /verification-failed/, 'retained history keeps its failure');
+    assert.match(historyBefore.toString('utf8'), /required-check-skipped/, 'retained history keeps its skip');
+
+    const actualFinalBacklog = readBacklogPair(root);
+    assert.deepEqual(actualFinalBacklog.markdown, Buffer.from(expectedFinalBacklog.markdown));
+    assert.deepEqual(actualFinalBacklog.html, Buffer.from(expectedFinalBacklog.html));
+    assertFreshBacklogPair(root, 'final manual-close fixture');
+    assert.equal(
+      markdownGroupForIdea(actualFinalBacklog.markdown.toString('utf8'), ownerRelative),
+      'Defined awaiting work',
+      'open sibling remains ordinary defined work rather than an automatically claimed next task',
+    );
+    assert.equal(
+      htmlGroupForIdea(actualFinalBacklog.html.toString('utf8'), ownerRelative),
+      'planned/defined-awaiting-work',
+      'HTML backlog also makes no automatic next-task claim',
+    );
+
+    const postimages = captureFixtureTree();
+    assert.deepEqual([...postimages.keys()].sort(), [...preimages.keys()].sort(), 'fixture creates or deletes no files');
+    const changed = [...preimages.keys()]
+      .filter((relative) => !preimages.get(relative).equals(postimages.get(relative)))
+      .sort();
+    assert.deepEqual(changed, [
+      '.dude/backlog.html',
+      '.dude/backlog.md',
+      ownerRelative,
+      relativeTasks,
+      snapshotRelative,
+    ].sort(), 'complete fixture delta is limited to tasks, snapshot, owner log, and backlog pair');
+    for (const relative of preimages.keys()) {
+      if (!changed.includes(relative)) {
+        assert.deepEqual(postimages.get(relative), preimages.get(relative), `${relative}: unchanged fixture postimage`);
+      }
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -2598,6 +2923,451 @@ test('T006 lightweight boundary refuses noncanonical values before any write', (
     const badOwnerPath = laneRequest(root);
     badOwnerPath.owner = { ...badOwnerPath.owner, ideaPath: 'ideas/lane.md' };
     assertLaneRefusal(root, badOwnerPath, 'invalid-canonical-value', 'owner path outside .dude/ideas', { observable: false });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('terminal administrative reconciliation: blocked same-task close preserves retained fixture bytes', async () => {
+  // This disposable fixture models every policy, mapping, permission, and
+  // acceptance gate as already satisfied input. It does not authenticate an
+  // operator, inspect a real host, create Work authority, or qualify a live task.
+  const { root, file } = scaffoldBacklogHookFeature();
+  const repositoryRoot = fs.realpathSync(fileURLToPath(new URL('../../../', import.meta.url)));
+  const relativeTasks = `.dude/specs/${BACKLOG_HOOK_FEATURE}/tasks.md`;
+  const ownerRelative = `.dude/ideas/${BACKLOG_HOOK_FEATURE}.md`;
+  const specRelative = `.dude/specs/${BACKLOG_HOOK_FEATURE}/spec.md`;
+  const planRelative = `.dude/specs/${BACKLOG_HOOK_FEATURE}/plan.md`;
+  const snapshotRelative = '.dude/state/task-state.json';
+  const prerequisiteKey = 'T000@70726570';
+  const targetKey = BACKLOG_HOOK_TASK;
+  const siblingKey = 'T002@7369626c';
+  const unrelatedKey = '.dude/specs/999-unrelated/tasks.md';
+  const obsoleteBlocker = 'external-dependency synthetic-obsolete-native-share-token';
+  const blockerLine = `    blocked-by: ${obsoleteBlocker}`;
+  const ownerPath = path.join(root, ...ownerRelative.split('/'));
+  const specPath = path.join(root, ...specRelative.split('/'));
+  const planPath = path.join(root, ...planRelative.split('/'));
+  const snapshotPath = path.join(root, ...snapshotRelative.split('/'));
+  const liveClaimRelative = '.fixture-live-controls/T001.claim';
+  const liveCheckpointRelative = '.fixture-live-controls/T001.checkpoint';
+  const liveClaimPath = path.join(root, ...liveClaimRelative.split('/'));
+  const liveCheckpointPath = path.join(root, ...liveCheckpointRelative.split('/'));
+  const modeledInputs = Object.freeze({
+    scope: 'current Windows CLI plus exactly three retained physical-LAN sharing observations',
+    mapping: 'reviewed one-to-one amendment preserving the same task purpose',
+    blocker: `${blockerLine} independently proved obsolete`,
+    provenance: 'genuine retained invocation/lifecycle/session/operation abandonment evidence; original terminal row unavailable',
+    ownerAbsence: 'independent fixture no-supervisor/no-worker/no-handoff finding',
+    effects: 'complete preimages and operation records prove no completion projection, lane write, or receipt',
+    controls: 'separate cleanup authorization/results match both preserved preimages and fresh absence checks',
+    permission: 'current natural-language fixture permission bound to this exact preview and administrative delta',
+    acceptance: 'current independent Tester pass and independent Reviewer acceptance',
+  });
+
+  /** Capture every regular fixture file as a complete relative-path/buffer map. */
+  const captureFixtureTree = () => {
+    /** @type {Map<string, Buffer>} */
+    const captured = new Map();
+    const visit = (directory) => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const absolute = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          visit(absolute);
+        } else if (entry.isFile()) {
+          captured.set(path.relative(root, absolute).split(path.sep).join('/'), fs.readFileSync(absolute));
+        }
+      }
+    };
+    visit(root);
+    return captured;
+  };
+
+  try {
+    assert.equal(path.relative(root, file).startsWith('..'), false, 'tasks target stays below disposable root');
+    assert.equal(path.relative(repositoryRoot, file).startsWith('..'), true, 'fixture stays outside the live repository');
+    assert.ok(root.length < 120, `disposable root stays short (${root.length} characters)`);
+
+    const ownerFixture = [
+      '---',
+      'title: Backlog Hook Fixture',
+      `slug: ${BACKLOG_HOOK_SLUG}`,
+      'status: defined',
+      `spec_path: .dude/specs/${BACKLOG_HOOK_FEATURE}/spec.md`,
+      '---',
+      '',
+      '# Idea: Backlog Hook Fixture',
+      '',
+      '## Idea',
+      '',
+      'Exercise one synthetic post-terminal administrative reconciliation without granting live authority.',
+      '',
+      '## Coordinator Log',
+      '',
+      `- 2026-10-03T20:00:00Z - Definition reconciliation: ${targetKey} maps one-to-one from the original sharing acceptance task to the current Windows CLI plus exactly three retained physical-LAN sharing obligations; the same task purpose is preserved and the mapping was independently reviewed.`,
+      '- 2026-10-03T20:01:00Z - Synthetic old Work failure, reviewed learning, pending attempt, and accounting remain unresolved in retained fixture evidence.',
+      '',
+    ].join('\n');
+    fs.writeFileSync(ownerPath, ownerFixture);
+
+    const currentSpec = [
+      '# Feature Specification: Backlog Hook Fixture',
+      '',
+      '## Current Explicit Acceptance',
+      '',
+      '- Exercise the local Windows CLI acceptance.',
+      '- Retain the exact approved physical-LAN sharing observation A.',
+      '- Retain the exact approved physical-LAN sharing observation B.',
+      '- Retain the exact approved physical-LAN sharing observation C.',
+      '',
+      'Wire-busy behavior, broader concurrency or LAN behavior, macOS, the App, and descendants remain unqualified.',
+      '',
+    ].join('\n');
+    fs.writeFileSync(specPath, currentSpec);
+    const currentPlan = [
+      '# Implementation Plan: Backlog Hook Fixture',
+      '',
+      'The reviewed definition mapping keeps one residual acceptance task with the same purpose.',
+      'Use current evidence for the amended scope; do not inherit completion from superseded obligations.',
+      '',
+    ].join('\n');
+    fs.writeFileSync(planPath, currentPlan);
+
+    const taskHistory = [
+      '## Lightweight Execution History',
+      '',
+      '- dude-run-event: {"fixtureOnly":true,"type":"approach-occurrence","disposition":"verification-failed"}',
+      '- dude-run-event: {"fixtureOnly":true,"type":"finding-occurrence","disposition":"learning-required"}',
+      '- dude-run-event: {"fixtureOnly":true,"type":"learning-review","disposition":"reviewed"}',
+      '',
+    ].join('\n');
+    const canonicalTasks = [
+      '# Tasks: Backlog Hook Fixture',
+      '',
+      `**Feature identity**: \`.dude/specs/${BACKLOG_HOOK_FEATURE}/spec.md\``,
+      '',
+      '## Phase 1: Administrative Reconciliation Fixture',
+      '',
+      `- [x] ${prerequisiteKey} [Shared] Preserve the completed prerequisite`,
+      '    Requirement: the prerequisite and its dependency meaning stay unchanged.',
+      `- [!] ${targetKey} [US3] Reconcile the explicitly amended current acceptance`,
+      `    deps: ${prerequisiteKey}`,
+      blockerLine,
+      '    Current acceptance: local Windows CLI plus retained physical-LAN observations A, B, and C.',
+      '    Mapping: reviewed one-to-one amendment preserving the same task purpose.',
+      '    Limits: wire-busy, broader concurrency or LAN behavior, macOS, App, and descendants remain unqualified.',
+      `- [ ] ${siblingKey} [US4] Keep the dependent final review open`,
+      `    deps: ${targetKey}`,
+      '    Requirement: do not claim, execute, or close this dependent task.',
+      '',
+      taskHistory,
+    ].join('\n');
+    const seededTasks = renderBoard(parseTasks(canonicalTasks));
+    fs.writeFileSync(file, seededTasks);
+
+    const unrelatedEntry = {
+      glyphs: { 'T999@756e726c': '!' },
+      updated_at: '2026-01-02T03:04:05.006Z',
+    };
+    const initialSnapshot = {
+      [relativeTasks]: {
+        glyphs: {
+          [prerequisiteKey]: 'x',
+          [targetKey]: '!',
+          [siblingKey]: ' ',
+        },
+        updated_at: '2026-10-03T20:01:00.000Z',
+      },
+      [unrelatedKey]: unrelatedEntry,
+    };
+    fs.writeFileSync(snapshotPath, `${JSON.stringify(initialSnapshot, null, 2)}\n`);
+
+    const claimPreimage = Buffer.concat([
+      Buffer.from('SYNTHETIC OLD OWNERSHIP CLAIM PREIMAGE - NOT LIVE AUTHORITY\n'),
+      Buffer.from([0x00, 0x11, 0x22, 0xff]),
+    ]);
+    const checkpointPreimage = Buffer.concat([
+      Buffer.from('SYNTHETIC OLD CHECKPOINT PREIMAGE - NOT LIVE AUTHORITY\n'),
+      Buffer.from([0xff, 0x22, 0x11, 0x00]),
+    ]);
+    const cleanupAuthorization = Buffer.from(`${JSON.stringify({
+      fixtureOnly: true,
+      authority: 'separate-control-cleanup-only',
+      targets: [liveClaimRelative, liveCheckpointRelative],
+      claimPreimageSha256: sha256(claimPreimage),
+      checkpointPreimageSha256: sha256(checkpointPreimage),
+      grantsTaskAuthority: false,
+    }, null, 2)}\n`);
+    const cleanupResult = Buffer.from(`${JSON.stringify({
+      fixtureOnly: true,
+      targets: [liveClaimRelative, liveCheckpointRelative],
+      removed: [liveClaimRelative, liveCheckpointRelative],
+      observedAbsent: [liveClaimRelative, liveCheckpointRelative],
+      taskStateChanged: false,
+    }, null, 2)}\n`);
+    const currentRunLearning = Buffer.from([
+      '{"fixtureOnly":true,"surface":"current-run","type":"learning-required","revision":1}',
+      '{"fixtureOnly":true,"surface":"current-run","type":"learning-reviewed","revision":1}',
+      '',
+    ].join('\n'));
+    const authoritativeLearning = Buffer.from([
+      '{"fixtureOnly":true,"surface":"authoritative-lane-history","type":"learning-required","revision":1}',
+      '{"fixtureOnly":true,"surface":"authoritative-lane-history","type":"learning-reviewed","revision":1}',
+      '',
+    ].join('\n'));
+    const retainedBuffers = new Map([
+      ['.fixture-retained/synthetic-old-run.json', Buffer.from(
+        '{"fixtureOnly":true,"invocation":"old-admin-run","lifecycle":"abandoned","originalTerminalRow":null}\n',
+      )],
+      ['.fixture-retained/synthetic-abandonment-provenance.json', Buffer.from(
+        '{"fixtureOnly":true,"invocation":true,"lifecycle":true,"session":true,"operation":true,"ownerAbsent":true}\n',
+      )],
+      ['.fixture-retained/synthetic-failure-captures.ndjson', Buffer.from(
+        '{"fixtureOnly":true,"outcome":"verification-failed"}\n{"fixtureOnly":true,"outcome":"reviewed-learning-retained"}\n',
+      )],
+      ['.fixture-retained/synthetic-pending-accounting.json', Buffer.from(
+        '{"fixtureOnly":true,"pendingAttempt":"address-review","attemptCount":1,"recoveryCount":0,"settled":false}\n',
+      )],
+      ['.fixture-retained/current-run-learning.ndjson', currentRunLearning],
+      ['.fixture-retained/authoritative-lane-learning.ndjson', authoritativeLearning],
+      ['.fixture-retained/synthetic-operation-effects.json', Buffer.from(
+        '{"fixtureOnly":true,"completionProjection":false,"laneWrite":false,"receipt":false,"knownEarlierLearningWrites":true}\n',
+      )],
+      ['.fixture-retained/synthetic-ownership-claim.preimage.bin', claimPreimage],
+      ['.fixture-retained/synthetic-checkpoint.preimage.bin', checkpointPreimage],
+      ['.fixture-retained/separate-cleanup-authorization.json', cleanupAuthorization],
+      ['.fixture-retained/separate-cleanup-result.json', cleanupResult],
+      [`.dude/specs/${BACKLOG_HOOK_FEATURE}/discovered.md`, Buffer.from(
+        '# Discovered Work\n\n- Synthetic retained discovery remains unresolved.\n',
+      )],
+      [`.dude/specs/${BACKLOG_HOOK_FEATURE}/archive/synthetic-superseded-scope.md`, Buffer.from(
+        '# Archived Fixture Scope\n\nOriginal broad acceptance wording remains historical and uncompleted.\n',
+      )],
+    ]);
+    for (const [relative, bytes] of retainedBuffers) {
+      const absolute = path.join(root, ...relative.split('/'));
+      fs.mkdirSync(path.dirname(absolute), { recursive: true });
+      fs.writeFileSync(absolute, bytes);
+    }
+
+    assert.equal(fs.existsSync(liveClaimPath), false, 'synthetic live ownership claim starts absent');
+    assert.equal(fs.existsSync(liveCheckpointPath), false, 'synthetic live checkpoint starts absent');
+
+    refreshCommittedBacklog({ root });
+    const { readTaskState } = await loadTaskStateLib();
+    const seededState = readTaskState(root);
+    assert.equal(seededState.status, 'ok', 'fixture snapshot starts valid');
+    assert.deepEqual(seededState.state, initialSnapshot, 'fixture snapshot carries target and unrelated entries');
+    assertFreshBacklogPair(root, 'seeded administrative fixture');
+    const seededBacklog = readBacklogPair(root);
+    assert.equal(
+      markdownGroupForIdea(seededBacklog.markdown.toString('utf8'), ownerRelative),
+      'Blocked',
+      'obsolete blocker begins in the blocked backlog group',
+    );
+    assert.equal(
+      htmlGroupForIdea(seededBacklog.html.toString('utf8'), ownerRelative),
+      'current/blocked',
+      'HTML backlog begins with the same blocked classification',
+    );
+
+    const preimages = captureFixtureTree();
+    const tasksBefore = preimages.get(relativeTasks);
+    const ownerBefore = preimages.get(ownerRelative);
+    const snapshotBefore = preimages.get(snapshotRelative);
+    assert.ok(tasksBefore && ownerBefore && snapshotBefore, 'all authoritative preimages are captured');
+    const parsedBefore = parseTasks(tasksBefore.toString('utf8'));
+    assert.equal(parsedBefore.warnings.length, 0, 'fixture task preimage is canonical');
+    assert.equal(parsedBefore.byId.get(prerequisiteKey)?.glyph, 'x', 'prerequisite starts done');
+    assert.equal(parsedBefore.byId.get(targetKey)?.glyph, '!', 'same-key target starts blocked');
+    assert.equal(parsedBefore.byId.get(targetKey)?.blockedBy, obsoleteBlocker, 'target has the one exact obsolete blocker');
+    assert.deepEqual(parsedBefore.byId.get(targetKey)?.deps, [prerequisiteKey], 'target dependency is satisfied');
+    assert.equal(parsedBefore.byId.get(siblingKey)?.glyph, ' ', 'dependent sibling starts open');
+    assert.deepEqual(parsedBefore.byId.get(siblingKey)?.deps, [targetKey], 'dependent sibling retains the target dependency');
+    const historyBefore = Buffer.from(parsedBefore.history?.suffix ?? '');
+    assert.deepEqual(historyBefore, Buffer.from(taskHistory), 'complete task-history suffix preimage is captured');
+    assert.doesNotMatch(historyBefore.toString('utf8'), /terminal-result/, 'fixture history invents no terminal result row');
+
+    const targetHeader = `- [!] ${targetKey} [US3] Reconcile the explicitly amended current acceptance`;
+    const closedTargetHeader = `- [x] ${targetKey} [US3] Reconcile the explicitly amended current acceptance`;
+    const tasksBeforeText = tasksBefore.toString('utf8');
+    assert.equal(tasksBeforeText.split(`${blockerLine}\n`).length - 1, 1, 'one exact canonical blocker line exists');
+    assert.equal(tasksBeforeText.split(targetHeader).length - 1, 1, 'one canonical target header exists');
+    const metadataRemovedText = tasksBeforeText.replace(`${blockerLine}\n`, '');
+    const expectedTasks = Buffer.from(renderBoard(parseTasks(
+      metadataRemovedText.replace(targetHeader, closedTargetHeader),
+    )));
+
+    const manualLine = Buffer.from(
+      `- 2026-10-03T20:10:00Z - MANUAL post-terminal administrative reconciliation for ${relativeTasks} ${targetKey}: ${modeledInputs.scope}; ${modeledInputs.mapping}; ${modeledInputs.provenance}; ${modeledInputs.ownerAbsence}; ${modeledInputs.effects}; ${modeledInputs.controls}; ${modeledInputs.permission}; ${modeledInputs.acceptance}; ${modeledInputs.blocker}; old Work failure, learning, pending attempt, and accounting remain unsettled; conditional same-task close only.\n`,
+    );
+    fs.appendFileSync(ownerPath, manualLine);
+
+    // The fixture models the coordinator's separately authorized metadata edit.
+    // The actual board writer is then exercised for state, render, and snapshot.
+    fs.writeFileSync(file, metadataRemovedText);
+    const parsedAfterMetadata = parseTasks(fs.readFileSync(file, 'utf8'));
+    assert.equal(parsedAfterMetadata.byId.get(targetKey)?.glyph, '!', 'blocker removal creates no intermediate claim');
+    assert.equal(parsedAfterMetadata.byId.get(targetKey)?.blockedBy, null, 'only the obsolete blocker metadata is removed');
+    assert.deepEqual(fs.readFileSync(snapshotPath), snapshotBefore, 'metadata edit does not fabricate a snapshot write');
+    const backlogBeforeCli = readBacklogPair(root);
+    assert.deepEqual(backlogBeforeCli.markdown, preimages.get('.dude/backlog.md'), 'metadata edit does not refresh Markdown backlog');
+    assert.deepEqual(backlogBeforeCli.html, preimages.get('.dude/backlog.html'), 'metadata edit does not refresh HTML backlog');
+
+    const setResult = boardCli(['set', file, targetKey, 'done', '--write', '--root', root]);
+    assert.equal(setResult.status, 0, `actual set CLI failed: ${setResult.stdout}${setResult.stderr}`);
+    assert.equal(setResult.signal, null, 'actual set CLI exits normally');
+
+    const renderStartedAt = Date.now();
+    const renderResult = boardCli(['render', file, '--write', '--root', root]);
+    const renderFinishedAt = Date.now();
+    assert.equal(renderResult.status, 0, `actual render CLI failed: ${renderResult.stdout}${renderResult.stderr}`);
+    assert.equal(renderResult.signal, null, 'actual render CLI exits normally');
+
+    const observedState = readTaskState(root);
+    assert.equal(observedState.status, 'ok', 'actual CLI leaves a valid snapshot');
+    const observedUpdatedAt = observedState.state[relativeTasks].updated_at;
+    const observedUpdatedAtMs = Date.parse(observedUpdatedAt);
+    assert.equal(Number.isNaN(observedUpdatedAtMs), false, 'final render writes an ISO timestamp');
+    assert.ok(
+      observedUpdatedAtMs >= renderStartedAt && observedUpdatedAtMs <= renderFinishedAt,
+      `final updated_at ${observedUpdatedAt} falls inside the actual render interval`,
+    );
+
+    const expectedSnapshotObject = {
+      [relativeTasks]: {
+        glyphs: {
+          [prerequisiteKey]: 'x',
+          [targetKey]: 'x',
+          [siblingKey]: ' ',
+        },
+        updated_at: observedUpdatedAt,
+      },
+      [unrelatedKey]: unrelatedEntry,
+    };
+    const expectedSnapshot = Buffer.from(`${JSON.stringify(expectedSnapshotObject, null, 2)}\n`);
+
+    const ordinaryCloseLines = Buffer.from([
+      `- 2026-10-03T20:10:01Z - Blocker: removed only "${blockerLine.trim()}" from ${targetKey} after its modeled independent resolution proof.`,
+      `- 2026-10-03T20:10:02Z - State: ordinary administrative writer changed only ${targetKey} from [!] to [x].`,
+      `- 2026-10-03T20:10:03Z - Render: refreshed the derived Lightweight board and snapshot for ${relativeTasks}.`,
+      `- 2026-10-03T20:10:04Z - Close: accepted only the current amended scope for ${targetKey}; old Work and learning remain unsettled; no successor, native operation, or Git action authorized.`,
+      '',
+    ].join('\n'));
+    fs.appendFileSync(ownerPath, ordinaryCloseLines);
+    const expectedFinalBacklog = renderArtifacts({ root });
+    refreshCommittedBacklog({ root });
+
+    const tasksAfter = fs.readFileSync(file);
+    const ownerAfter = fs.readFileSync(ownerPath);
+    const snapshotAfter = fs.readFileSync(snapshotPath);
+    assert.deepEqual(
+      tasksAfter,
+      expectedTasks,
+      'complete task postimage is the exact blocker removal, same-key close, and expected renderBoard result',
+    );
+    assert.deepEqual(snapshotAfter, expectedSnapshot, 'complete snapshot matches the independently serialized glyph map');
+    assert.deepEqual(
+      ownerAfter,
+      Buffer.concat([ownerBefore, manualLine, ordinaryCloseLines]),
+      'owner postimage is exactly the preimage plus MANUAL and blocker/state/render/close appends',
+    );
+    assert.deepEqual(ownerAfter.subarray(0, ownerBefore.length), ownerBefore, 'prior owner-log prefix remains byte-identical');
+    const ownerAppend = ownerAfter.subarray(ownerBefore.length).toString('utf8');
+    assert.equal(ownerAppend.match(/ - MANUAL /g)?.length, 1, 'exactly one modeled MANUAL line is appended');
+    assert.ok(
+      ownerAppend.indexOf(' - MANUAL ') < ownerAppend.indexOf(' - Blocker:')
+        && ownerAppend.indexOf(' - Blocker:') < ownerAppend.indexOf(' - State:')
+        && ownerAppend.indexOf(' - State:') < ownerAppend.indexOf(' - Render:')
+        && ownerAppend.indexOf(' - Render:') < ownerAppend.indexOf(' - Close:'),
+      'MANUAL and ordinary administrative events remain in required order',
+    );
+    assert.doesNotMatch(
+      ownerAppend,
+      /dude-run-event|learning-resolution|task-settled|Work permit|Work receipt/,
+      'administrative owner appends manufacture no Work or learning-resolution event',
+    );
+
+    const parsedAfter = parseTasks(tasksAfter.toString('utf8'));
+    const stableTaskContract = (task) => ({
+      id: task.id,
+      label: task.label,
+      description: task.description,
+      deps: task.deps,
+      extraMeta: task.extraMeta,
+    });
+    assert.deepEqual(
+      parsedAfter.tasks.map(stableTaskContract),
+      parsedBefore.tasks.map(stableTaskContract),
+      'task identities, current obligations, labels, descriptions, dependencies, and other metadata stay unchanged',
+    );
+    assert.equal(parsedAfter.byId.get(targetKey)?.glyph, 'x', 'only the same blocked target closes');
+    assert.equal(parsedAfter.byId.get(targetKey)?.blockedBy, null, 'the exact obsolete blocker stays removed');
+    assert.equal(parsedAfter.byId.get(prerequisiteKey)?.glyph, 'x', 'completed prerequisite stays complete');
+    assert.equal(parsedAfter.byId.get(siblingKey)?.glyph, ' ', 'open dependent sibling remains open and unclaimed');
+    assert.deepEqual(parsedAfter.byId.get(siblingKey)?.deps, [targetKey], 'dependent sibling keeps its exact dependency');
+    assert.deepEqual(
+      Buffer.from(parsedAfter.history?.suffix ?? ''),
+      historyBefore,
+      'complete old task-history suffix remains byte-identical',
+    );
+
+    assert.deepEqual(observedState.state[unrelatedKey], unrelatedEntry, 'unrelated snapshot entry is exact');
+    assert.notEqual(
+      observedState.state[relativeTasks].updated_at,
+      initialSnapshot[relativeTasks].updated_at,
+      'only the target feature receives a fresh serializer timestamp',
+    );
+    assert.deepEqual(
+      Object.keys(observedState.state).sort(),
+      [relativeTasks, unrelatedKey].sort(),
+      'snapshot gains or loses no feature entries',
+    );
+
+    for (const [relative, expected] of retainedBuffers) {
+      assert.deepEqual(
+        fs.readFileSync(path.join(root, ...relative.split('/'))),
+        expected,
+        `${relative}: retained synthetic evidence and cleanup bytes stay literal and unchanged`,
+      );
+    }
+    assert.match(currentRunLearning.toString('utf8'), /learning-required[\s\S]*learning-reviewed/, 'current-run retains required and reviewed learning');
+    assert.match(authoritativeLearning.toString('utf8'), /learning-required[\s\S]*learning-reviewed/, 'lane history retains required and reviewed learning');
+    assert.equal(fs.existsSync(liveClaimPath), false, 'separately cleaned ownership claim remains absent');
+    assert.equal(fs.existsSync(liveCheckpointPath), false, 'separately cleaned checkpoint remains absent');
+
+    const actualFinalBacklog = readBacklogPair(root);
+    assert.deepEqual(actualFinalBacklog.markdown, Buffer.from(expectedFinalBacklog.markdown));
+    assert.deepEqual(actualFinalBacklog.html, Buffer.from(expectedFinalBacklog.html));
+    assertFreshBacklogPair(root, 'final administrative fixture');
+    assert.equal(
+      markdownGroupForIdea(actualFinalBacklog.markdown.toString('utf8'), ownerRelative),
+      'Defined awaiting work',
+      'open dependent remains ordinary defined work rather than an automatically claimed successor',
+    );
+    assert.equal(
+      htmlGroupForIdea(actualFinalBacklog.html.toString('utf8'), ownerRelative),
+      'planned/defined-awaiting-work',
+      'HTML backlog also makes no automatic successor claim',
+    );
+
+    const postimages = captureFixtureTree();
+    assert.deepEqual([...postimages.keys()].sort(), [...preimages.keys()].sort(), 'fixture creates or deletes no files');
+    const changed = [...preimages.keys()]
+      .filter((relative) => !preimages.get(relative).equals(postimages.get(relative)))
+      .sort();
+    assert.deepEqual(changed, [
+      '.dude/backlog.html',
+      '.dude/backlog.md',
+      ownerRelative,
+      relativeTasks,
+      snapshotRelative,
+    ].sort(), 'complete fixture delta is limited to the five legitimate surfaces');
+    for (const relative of preimages.keys()) {
+      if (!changed.includes(relative)) {
+        assert.deepEqual(postimages.get(relative), preimages.get(relative), `${relative}: unchanged fixture postimage`);
+      }
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

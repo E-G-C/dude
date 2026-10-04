@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **7**
+- Ideas awaiting definition: **8**
 - Defined awaiting work: **2**
-- Completed: **70**
+- Completed: **72**
 
 ## Current
 
@@ -23,6 +23,7 @@ No current work to diagram.
 - `053` · `design-stage-critique` — Design-Stage Critique (`.dude/ideas/053-design-stage-critique.md`)
 - `054` · `mockup-opens-in-review` — Mockup Opens in Review (`.dude/ideas/054-mockup-opens-in-review.md`)
 - `058` · `outcome-aligned-intake` — Outcome-Aligned Intake (`.dude/ideas/058-outcome-aligned-intake.md`)
+- `067` · `work-type-presentation` — Work Type Presentation (`.dude/ideas/067-work-type-presentation.md`)
 - `070` · `dude-canvas-skill-customization` — Dude Canvas Skill Customization (`.dude/ideas/070-dude-canvas-skill-customization.md`)
 - `071` · `dude-canvas-pack-authoring` — Dude Canvas Pack Authoring (`.dude/ideas/071-dude-canvas-pack-authoring.md`)
 - `072` · `dude-canvas-bundle-upgrade` — Dude Canvas Bundle Upgrade (`.dude/ideas/072-dude-canvas-bundle-upgrade.md`)
@@ -100,7 +101,9 @@ No current work to diagram.
 - `066` · `canvas-without-beads` — Canvas Without Beads (`.dude/ideas/066-canvas-without-beads.md`)
 - `069` · `a2a-library-foundation` — A2A library foundation (`.dude/ideas/069-a2a-library-foundation.md`)
 - `074` · `dude-canvas-about` — Dude Canvas About (`.dude/ideas/074-dude-canvas-about.md`)
+- `074` · `work-readable-evidence-handoff` — Work Readable Evidence Handoff (`.dude/ideas/074-work-readable-evidence-handoff.md`)
 - `075` · `dude-development-base-release` — Dude Development Base Release (`.dude/ideas/075-dude-development-base-release.md`)
+- `075` · `terminal-work-manual-resolution` — Terminal Work Manual Resolution (`.dude/ideas/075-terminal-work-manual-resolution.md`)
 - `076` · `duplicate-feature-number-prefixes` — Duplicate Feature Number Prefixes (`.dude/ideas/076-duplicate-feature-number-prefixes.md`)
 - `077` · `work-model-packet-capacity` — Work Model Packet Capacity (`.dude/ideas/077-work-model-packet-capacity.md`)
 - `078` · `dude-canvas-pack-sources` — Dude Canvas Pack Sources (`.dude/ideas/078-dude-canvas-pack-sources.md`)

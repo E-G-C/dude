@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { fork, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   isReleaseFile,
@@ -88,6 +88,27 @@ const REVIEW_LIB_FILES = Object.freeze([
   'lib/review/browser.mjs',
   'lib/review/data.mjs',
   'lib/review/png.mjs',
+]);
+/** The delivered A2A surface: wiring, modules, the lazily imported runtime, and its notice. */
+const A2A_RUNTIME_FILES = Object.freeze([
+  'extension.mjs',
+  'lib/a2a.mjs',
+  'lib/a2a-transport.mjs',
+  'lib/a2a-verify.mjs',
+  'lib/a2a-runtime.mjs',
+  'lib/a2a-runtime.mjs.LEGAL.txt',
+]);
+/** Test and build-only inputs of the A2A runtime; none may ship. */
+const A2A_BUILD_ONLY = Object.freeze([
+  'src/extensions/dude/a2a.test.mjs',
+  'src/extensions/dude/a2a-transport.test.mjs',
+  'src/extensions/dude/a2a-verify.test.mjs',
+  'scripts/dude-a2a/.gitignore',
+  'scripts/dude-a2a/build.mjs',
+  'scripts/dude-a2a/build.test.mjs',
+  'scripts/dude-a2a/entry.mjs',
+  'scripts/dude-a2a/package-lock.json',
+  'scripts/dude-a2a/package.json',
 ]);
 const T007_PROJECTION_PAIRS = [
   ['src/skills/dude-bundle-import/SKILL.md', '.github/skills/dude-bundle-import/SKILL.md'],
@@ -467,6 +488,469 @@ test('T011 release stages exact published Canvas runtime bytes without frontend,
     assert.equal(staged.includes('scripts/dude-canvas-ui/package-lock.json'), false);
   } finally {
     fs.rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Start a disposable release's own extension in a fake host: a package-shaped
+ * stand-in for `@github/copilot-sdk/extension` that records the join and the
+ * session log. The released runtime file is wrapped so each import is counted,
+ * and the child counts `listen` calls. This proves how the delivered files
+ * behave, not how a real Copilot host delivers events, shows logs, or runs
+ * tools.
+ * @param {string} releaseRoot The staged release, also the fake session's workspace.
+ * @param {string} owner A disposable folder outside it for the owner's files.
+ * @returns {Promise<any>}
+ */
+function runReleasedExtension(releaseRoot, owner) {
+  const lib = path.join(releaseRoot, '.github/extensions/dude/lib');
+  fs.renameSync(path.join(lib, 'a2a-runtime.mjs'), path.join(lib, 'a2a-runtime.counted.mjs'));
+  fs.writeFileSync(path.join(lib, 'a2a-runtime.mjs'), [
+    'globalThis.__dudeA2aRuntimeImports = (globalThis.__dudeA2aRuntimeImports ?? 0) + 1;',
+    "export * from './a2a-runtime.counted.mjs';",
+    '',
+  ].join('\n'));
+  const sdkRoot = path.join(releaseRoot, 'node_modules/@github/copilot-sdk');
+  w(sdkRoot, 'package.json', JSON.stringify({ name: '@github/copilot-sdk', type: 'module', exports: { './extension': './extension.mjs' } }));
+  w(sdkRoot, 'extension.mjs', [
+    'let joins = 0;',
+    'let sends = 0;',
+    'let options = null;',
+    'const logs = [];',
+    'export function createCanvas(value) { return value; }',
+    'export async function joinSession(value) {',
+    '  joins += 1;',
+    '  options = value;',
+    '  return {',
+    "    sessionId: 'fake-host-session',",
+    '    log: async (message) => { logs.push(message); },',
+    '    send: async () => { sends += 1; throw new Error("session.send is not a proposal route"); },',
+    '    rpc: { queue: { pendingItems: async () => ({ items: [], steeringMessages: [], inFlightSteeringCount: 0 }) } },',
+    '  };',
+    '}',
+    'export const harness = { joins: () => joins, sends: () => sends, options: () => options, logs: () => logs };',
+    '',
+  ].join('\n'));
+  // Fixture PEM text, not certificates: the real TLS loader must refuse it.
+  w(owner, 'cert.pem', 'fixture certificate text, not a real certificate\n');
+  w(owner, 'key.pem', 'fixture key text, not a real key\n');
+  const configPath = path.join(owner, 'a2a.json');
+  const serving = {
+    role: 'serve',
+    label: 'B',
+    workspace: releaseRoot,
+    peer: { label: 'A', address: '127.0.0.1', certSha256: 'ab'.repeat(32) },
+    tls: { certFile: path.join(owner, 'cert.pem'), keyFile: path.join(owner, 'key.pem') },
+    sharing: { allowed: 'Conclusions and approved evidence', excluded: 'Secrets', purpose: 'Confirmation' },
+    contentBytes: 4096,
+    repeatUse: 'activation',
+    listen: { address: '127.0.0.1', port: 18_444 },
+    evidenceRoots: [releaseRoot],
+  };
+  const document = {
+    profiles: {
+      'b-share': serving,
+      'b-command': { ...serving, verification: { commands: ['unit-check', 'evidence-check'], revision: 'worktree', repeatUse: 2 } },
+      'a-ask': {
+        role: 'ask',
+        label: 'A',
+        workspace: releaseRoot,
+        peer: { label: 'B', address: '127.0.0.1', port: 18_443, certSha256: 'cd'.repeat(32) },
+        tls: { certFile: path.join(owner, 'cert.pem'), keyFile: path.join(owner, 'key.pem') },
+        sharing: { allowed: 'Questions', excluded: 'Secrets', purpose: 'Confirmation' },
+        contentBytes: 4096,
+        askTimeoutMs: 1000,
+        repeatUse: 1,
+      },
+    },
+    commands: {
+      'unit-check': {
+        executable: process.execPath,
+        args: ['fixture-verify.mjs', '{suite}'],
+        params: { suite: { enum: ['unit', 'integration'] } },
+        cwd: releaseRoot,
+        env: { inherit: ['PATH'], set: { CI: 'fixture-fixed-value-not-for-display' } },
+        timeoutMs: 1000,
+        outputBytes: 128,
+        effects: 'Runs fixture checks and may write a fixture report',
+      },
+      'evidence-check': {
+        executable: process.execPath,
+        args: ['fixture-records.mjs', '{record}'],
+        params: { record: { pattern: '^fixture-[a-z]+$' } },
+        cwd: releaseRoot,
+        env: { inherit: [], set: {} },
+        timeoutMs: 2000,
+        outputBytes: 256,
+        effects: 'Reads fixture records',
+      },
+    },
+  };
+  // Size the independent whole-result oracle, not a returned body or a
+  // production override. All other bindings and both commands stay valid.
+  /** @type {Record<string, typeof document.profiles['b-command']>} */
+  const boundaryProfiles = {};
+  for (const { profileId, bytes } of [{ profileId: 'b-atcap', bytes: 4490 }, { profileId: 'b-above', bytes: 4491 }]) {
+    const profile = structuredClone(document.profiles['b-command']);
+    profile.sharing.purpose = 'Confirmation Ω漢🙂';
+    const base = expectedReleasedProposal(
+      releaseRoot, owner, profileId,
+      '00000000-0000-0000-0000-000000000000', '000000000000', '0'.repeat(64),
+      profile.sharing.purpose,
+    );
+    const padding = bytes - Buffer.byteLength(base, 'utf8');
+    assert.ok(padding >= 0, 'the complete command fixture must fit before boundary padding');
+    profile.sharing.purpose += 'x'.repeat(padding);
+    boundaryProfiles[profileId] = profile;
+  }
+  w(owner, 'a2a.json', JSON.stringify({ ...document, profiles: { ...document.profiles, ...boundaryProfiles } }));
+  const driverPath = path.join(releaseRoot, 't018-driver.mjs');
+  fs.writeFileSync(driverPath, `
+import net from 'node:net';
+import tls from 'node:tls';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+let listens = 0;
+let connects = 0;
+let spawns = 0;
+net.Server.prototype.listen = () => { listens += 1; throw new Error('No listeners in the delivery fixture'); };
+tls.connect = () => { connects += 1; throw new Error('No peer connections in the delivery fixture'); };
+childProcess.spawn = () => { spawns += 1; throw new Error('No command or Git probe in the delivery fixture'); };
+syncBuiltinESMExports();
+const imports = () => globalThis.__dudeA2aRuntimeImports ?? 0;
+const waitFor = async (probe) => {
+  for (let index = 0; index < 400 && !probe(); index += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  return probe();
+};
+const report = {};
+try {
+  const { harness } = await import('./node_modules/@github/copilot-sdk/extension.mjs');
+  await import('./.github/extensions/dude/extension.mjs');
+  const { A2A_PROPOSAL_BYTES, A2A_FILE_BYTES } = await import('./.github/extensions/dude/lib/a2a.mjs');
+  report.limits = { proposalBytes: A2A_PROPOSAL_BYTES, fileBytes: A2A_FILE_BYTES };
+  const options = harness.options();
+  const lines = () => harness.logs();
+  report.joins = harness.joins();
+  report.optionKeys = Object.keys(options).sort();
+  report.toolNames = options.tools.map((tool) => tool.name);
+  report.canvasIds = options.canvases.map((canvas) => canvas.id);
+  report.needsYouOps = options.tools.find((tool) => tool.name === 'dude_needs_you').parameters.properties.op.enum;
+  report.hasOnEvent = typeof options.onEvent === 'function';
+  report.importsAtStart = imports();
+  let callSequence = 0;
+  const call = async (name, args, signal = new AbortController().signal) => {
+    const tool = options.tools.find((entry) => entry.name === name);
+    const result = await tool.handler(args, {
+      sessionId: 'fake-host-session', toolName: name, toolCallId: 'fake-' + (++callSequence), arguments: args, signal,
+    });
+    if (name === 'dude_a2a_propose') return result;
+    return { resultType: result.resultType, ...JSON.parse(result.textResultForLlm) };
+  };
+  const defaultOff = async () => ({
+    ask: await call('dude_a2a_ask', { question: 'Is claim X supported?' }),
+    receive: await call('dude_a2a_receive', {}),
+    reply: await call('dude_a2a_reply', { exchangeId: 'x', conclusion: 'c', limitations: 'l', evidence: [] }),
+    verify: await call('dude_a2a_verify', { exchangeId: 'x', commandId: 'unit-tests', params: {} }),
+  });
+  report.defaultOff = await defaultOff();
+  report.importsAfterDefaultOff = imports();
+  options.onEvent({ type: 'user.message', data: { content: 'hello' } });
+  options.onEvent({ type: 'user.message', data: { content: 'dude a2a stop' } });
+  report.stopWhileOff = await waitFor(() => lines().find((line) => line.startsWith('A2A stop:')));
+  options.onEvent({ type: 'user.message', data: { content: ${JSON.stringify(`dude a2a propose ${configPath} a-ask`)} } });
+  report.retiredRoute = await waitFor(() => lines().find((line) => line.startsWith('A2A command not recognized;')));
+  options.onEvent({ type: 'user.message', data: { content: 'dude a2a approve 000000000000' } });
+  report.retiredApproval = await waitFor(() => lines().find((line) => line.startsWith('A2A approval refused:')));
+  const proposalArgs = ${JSON.stringify({ configPath, profileId: 'a-ask' })};
+  report.invalidArguments = [];
+  for (const args of [
+    true, {}, { configPath: proposalArgs.configPath },
+    { ...proposalArgs, approved: true },
+    { ...proposalArgs, textResultForLlm: 'caller-supplied proposal' },
+    { ...proposalArgs, command: 'override' },
+  ]) report.invalidArguments.push(await call('dude_a2a_propose', args));
+  report.proposals = {};
+  for (const profileId of ['b-share', 'b-command', 'a-ask']) {
+    const completion = new AbortController();
+    report.proposals[profileId] = await call('dude_a2a_propose', { ...proposalArgs, profileId }, completion.signal);
+    completion.abort(); // Normal SDK completion is not root cancellation.
+  }
+  report.proposalSchema = options.tools.find((tool) => tool.name === 'dude_a2a_propose').parameters;
+  report.importsAfterProposal = imports();
+  report.offAfterProposal = await defaultOff();
+  report.atCap = await call('dude_a2a_propose', { ...proposalArgs, profileId: 'b-atcap' });
+  const replacedCode = /approve ([0-9a-f]{12});/.exec(report.atCap.textResultForLlm)?.[1];
+  report.oversize = await call('dude_a2a_propose', { ...proposalArgs, profileId: 'b-above' });
+  const beforeReplacedApproval = lines().length;
+  options.onEvent({ type: 'user.message', data: { content: 'dude a2a approve ' + replacedCode } });
+  report.replacedApproval = await waitFor(() => lines().slice(beforeReplacedApproval).find((line) => line.startsWith('A2A approval refused:')));
+  report.importsAfterRefusal = imports();
+  report.offAfterRefusal = await defaultOff();
+  const completion = new AbortController();
+  const proposal = await call('dude_a2a_propose', proposalArgs, completion.signal);
+  completion.abort();
+  report.freshProposal = proposal;
+  report.proposalLogCount = lines().filter((line) => line.includes('Approval:')).length;
+  const code = /approve ([0-9a-f]{12});/.exec(proposal.textResultForLlm)?.[1];
+  const beforeApproval = lines().length;
+  options.onEvent({ type: 'user.message', data: { content: 'dude a2a approve ' + code } });
+  report.approvalOutcome = await waitFor(() => lines().slice(beforeApproval).find((line) => /^(?:Activation: active|A2A approval refused)/.test(line)));
+  report.importsAfterApproval = imports();
+  report.sessionSends = harness.sends();
+} catch (error) {
+  report.error = error instanceof Error ? error.stack : String(error);
+}
+report.listens = listens;
+report.connects = connects;
+report.spawns = spawns;
+process.send?.(report);
+`);
+  return new Promise((resolve, reject) => {
+    const child = fork(driverPath, [], { cwd: releaseRoot, silent: true });
+    /** @type {Buffer[]} */
+    const stderr = [];
+    /** @type {any} */
+    let report = null;
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, 20_000);
+    child.stderr?.on('data', (chunk) => stderr.push(chunk));
+    child.on('message', (message) => { report = message; });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      clearTimeout(timeout);
+      // Wait for the owned child and its pipes before callers remove its roots.
+      if (timedOut) reject(new Error('released extension harness timed out; child exited'));
+      else if (code === 0 && report) resolve({ ...report, stderr: Buffer.concat(stderr).toString('utf8') });
+      else reject(new Error(`released extension harness exited ${code} without a report: ${Buffer.concat(stderr).toString('utf8')}`));
+    });
+  });
+}
+
+/**
+ * Independent whole-result oracle, also used to size the boundary fixtures.
+ * @param {string} releaseRoot @param {string} owner @param {string} profileId
+ * @param {string} generation @param {string} code @param {string} digest @param {string} purpose
+ */
+function expectedReleasedProposal(releaseRoot, owner, profileId, generation, code, digest, purpose) {
+  const ask = profileId === 'a-ask';
+  const commands = ['b-command', 'b-atcap', 'b-above'].includes(profileId);
+  const configPath = path.join(owner, 'a2a.json');
+  return [
+    'Proposal only: nothing is activated. Review this entire native tool result before local approval.',
+    `Proposal: ${ask ? 'A ask' : 'B serve'}`,
+    `Config: ${configPath}; digest sha256:${digest}; profile ${profileId}`,
+    `Local: fake-host-session; provider ${generation}; workspace ${releaseRoot}`,
+    ...(ask ? [
+      `Peer: B; https://127.0.0.1:18443/; SHA-256 ${Array(32).fill('CD').join(':')}`,
+      'SHARING: Questions; excludes Secrets',
+      `Purpose: ${purpose}`,
+      'Limits: 4096 bytes per message; 1000 ms ask timeout',
+      'Validity/repeat use: until activation ends; 1 exchange',
+    ] : [
+      `Peer: A; client address 127.0.0.1; SHA-256 ${Array(32).fill('AB').join(':')}`,
+      'Listen: https://127.0.0.1:18444/',
+      'SHARING: Conclusions and approved evidence; excludes Secrets',
+      `Purpose: ${purpose}; evidence roots ${releaseRoot}`,
+      'Sharing limits: 4096 bytes per message; validity until activation ends; repeat use every in-scope exchange while active',
+      `COMMANDS: ${commands ? 'unit-check, evidence-check' : 'none approved'}; separate from SHARING`,
+      ...(commands ? [
+        'Command: unit-check',
+        `Executable: ${process.execPath}`,
+        'Argv: ["fixture-verify.mjs","{suite}"]; parameters suite one of ["unit","integration"]',
+        `Cwd: ${releaseRoot}`,
+        'Environment names: inherit PATH; fixed CI; values hidden',
+        'Run limits: 1000 ms; 128 bytes per stream',
+        'Effects/resources: Runs fixture checks and may write a fixture report, not guaranteed',
+        'Command: evidence-check',
+        `Executable: ${process.execPath}`,
+        'Argv: ["fixture-records.mjs","{record}"]; parameters record matching ^fixture-[a-z]+$',
+        `Cwd: ${releaseRoot}`,
+        'Environment names: inherit none; fixed none; values hidden',
+        'Run limits: 2000 ms; 256 bytes per stream',
+        'Effects/resources: Reads fixture records, not guaranteed',
+        'Revision: current worktree; explicitly allows dirty current files and unknown revision when unobservable; never substituted for a pin; no default',
+        'Git: not configured; revision observations unavailable',
+        'Git observation policy: before/after HEAD and tracked/untracked status probes when available; ignored files and transient changes can escape observation. No revision probe has run to create this proposal.',
+        'Command validity/repeat use: until activation ends; 2 runs',
+      ] : []),
+    ]),
+    ask ? 'Risks: No global isolation; model persuasion/disclosure and injected-root approval spoofing remain possible. Host prompts stay unchanged; disclosure cannot be recalled.'
+      : 'Risks: Ordinary host permissions are not global isolation. Peer/source text can persuade models or cause disclosure. Host-approved injection can spoof root approval. Revision probes miss ignored/transient changes; project code can exceed declared effects. Host prompts remain unchanged. Stop does not guarantee termination or recall disclosure.',
+    ask ? 'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted. This asking profile grants no local verification operation.'
+      : commands ? 'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted; command output is not automatically redacted and may contain sensitive information. Commands never widen SHARING.'
+        : 'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted; command output is not automatically redacted. No command is approved by this proposal.',
+    'Review: if any native result detail is hidden, truncated, or inaccessible, do not approve. An assistant summary or private-log relay cannot replace it.',
+    'Lifetime: this result is a snapshot, not live status. Normal tool completion preserves an otherwise valid pending proposal. Stop, cancellation, expiry, replacement, intervening/queued input, or changed session/provider/workspace/config/TLS bindings invalidates it. Historical text may remain visible.',
+    `Approval: dude a2a approve ${code}; ${ask ? 'this current local proposal only' : 'current matching proposal/context only'}, consumed once`,
+    'Next: after complete review, type or paste the exact current approval as the next eligible local root input. To decline or cancel, use dude a2a stop.',
+  ].join('\n');
+}
+
+/**
+ * Whole-result expectations for the delivered tool's fixture profiles.
+ * Only the provider generation and one-use code are nondeterministic.
+ * @param {any} result @param {string} releaseRoot @param {string} owner @param {string} profileId
+ */
+function assertReleasedProposal(result, releaseRoot, owner, profileId) {
+  assert.deepEqual(Object.keys(result).sort(), ['resultType', 'textResultForLlm']);
+  assert.equal(result.resultType, 'success');
+  const text = result.textResultForLlm;
+  const generation = /^Local: fake-host-session; provider ([0-9a-f-]{36}); workspace /m.exec(text)?.[1];
+  const code = /^Approval: dude a2a approve ([0-9a-f]{12});/m.exec(text)?.[1];
+  assert.ok(generation);
+  assert.ok(code);
+  const config = fs.readFileSync(path.join(owner, 'a2a.json'));
+  const digest = createHash('sha256').update(config).digest('hex');
+  const purpose = JSON.parse(config.toString('utf8')).profiles[profileId].sharing.purpose;
+  const expected = expectedReleasedProposal(releaseRoot, owner, profileId, generation, code, digest, purpose);
+  assert.equal(text, expected, `complete native result for ${profileId}`);
+  assert.doesNotMatch(text, /fixture-fixed-value-not-for-display|fixture (?:certificate|key) text/);
+  return Buffer.byteLength(text);
+}
+
+test('T018 release ships the lazy A2A runtime and notice byte-for-byte, and its delivered extension stays off without the optional A2A pack', { timeout: 60_000 }, async (context) => {
+  // Arrange
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-rel-t018-a2a-'));
+  const owner = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-rel-t018-owner-'));
+  /** @param {Buffer} bytes */
+  const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+  try {
+    // Act
+    const result = buildRelease({ repoRoot, outDir, ref: 'v0.0.0-t018-fixture' });
+    const staged = listRelativeFiles(outDir);
+    const outputs = listCoreOutputs(repoRoot);
+    assert.deepEqual(staged, [
+      ...outputs.map((output) => output.relPath),
+      '.github/skills/project/SKILL.md', '.dude/metadata/bundle-manifest.md', '.dude/metadata/profile.md',
+    ].sort(), 'the release contains exactly the validated core map and three seeded files');
+    assert.deepEqual(result.files, staged);
+    const coreMap = outputs.map((output) => {
+      const expected = output.abs ? fs.readFileSync(output.abs) : /** @type {Buffer} */ (output.bytes);
+      const released = fs.readFileSync(path.join(outDir, output.relPath));
+      assert.ok(released.equals(expected), `source/release parity: ${output.relPath}`);
+      return { path: output.relPath, bytes: released.length, sha256: digest(released) };
+    });
+    const releaseBytes = staged.reduce((sum, relative) => sum + fs.statSync(path.join(outDir, relative)).size, 0);
+    context.diagnostic(`T024 source/release core map: ${coreMap.length} outputs; ${coreMap.reduce((sum, row) => sum + row.bytes, 0)} bytes; SHA-256 ${digest(Buffer.from(JSON.stringify(coreMap)))}. Release: ${staged.length} files; ${releaseBytes} bytes before test instrumentation.`);
+    // Keep whole-map drift a failure without hiding the independently useful
+    // delivered A2A checks behind an unrelated dogfood mismatch.
+    await context.test('T024 source/dogfood whole-core parity', () => {
+      for (const output of outputs) {
+        const expected = output.abs ? fs.readFileSync(output.abs) : /** @type {Buffer} */ (output.bytes);
+        assert.ok(fs.readFileSync(path.join(repoRoot, output.relPath)).equals(expected), `source/dogfood parity: ${output.relPath}`);
+      }
+    });
+
+    // Assert: the delivered bytes and what never ships.
+    for (const relative of A2A_RUNTIME_FILES) {
+      const deployRel = `.github/extensions/dude/${relative}`;
+      assert.ok(result.files.includes(deployRel), deployRel);
+      assert.deepEqual(
+        fs.readFileSync(path.join(outDir, ...deployRel.split('/'))),
+        fs.readFileSync(path.join(repoRoot, 'src/extensions/dude', ...relative.split('/'))),
+        `${deployRel} must be byte-identical to source`,
+      );
+    }
+    assert.deepEqual(
+      staged.filter((rel) => /\.test\.|(?:^|\/)node_modules(?:\/|$)|^scripts\/|dude-a2a|dude-pack-/.test(rel)),
+      [],
+      'no tests, dependencies, build tooling, or optional pack files ship',
+    );
+    const buildOnlyHashes = new Set(A2A_BUILD_ONLY.map((rel) => digest(fs.readFileSync(path.join(repoRoot, ...rel.split('/'))))));
+    for (const rel of staged) {
+      assert.equal(buildOnlyHashes.has(digest(fs.readFileSync(path.join(outDir, ...rel.split('/'))))), false, `${rel} ships build-only bytes`);
+    }
+    assert.match(fs.readFileSync(path.join(outDir, '.dude/metadata/profile.md'), 'utf8'), /"installed": \{\}/, 'the release installs no optional pack');
+
+    // Assert: the delivered extension, run in a fake host with no A2A pack present.
+    const report = await runReleasedExtension(outDir, owner);
+    assert.equal(report.error, undefined, report.error);
+    assert.equal(report.stderr, '');
+    assert.equal(report.joins, 1, 'one normal joinSession');
+    assert.deepEqual(report.optionKeys, ['canvases', 'onEvent', 'tools'], 'no hooks, permission handler, or tool filters');
+    assert.deepEqual(report.toolNames, ['dude_needs_you', 'dude_a2a_propose', 'dude_a2a_ask', 'dude_a2a_receive', 'dude_a2a_reply', 'dude_a2a_verify']);
+    assert.deepEqual(report.canvasIds, ['dude'], 'the Dude canvas is still registered');
+    assert.deepEqual(report.needsYouOps, ['request', 'acknowledge']);
+    assert.equal(report.hasOnEvent, true);
+    assert.equal(report.importsAtStart, 0, 'the released runtime is not loaded at startup');
+    for (const [phase, outcomes] of [
+      ['default-off', report.defaultOff], ['after preparation', report.offAfterProposal], ['after refusal', report.offAfterRefusal],
+    ]) {
+      assert.deepEqual(
+        [outcomes.ask.resultType, outcomes.ask.outcome, outcomes.ask.reason, outcomes.ask.delivery],
+        ['failure', 'refused', 'no_activation', 'not_sent'],
+        phase,
+      );
+      for (const name of ['receive', 'reply', 'verify']) {
+        const refused = outcomes[name];
+        assert.deepEqual([refused.resultType, refused.outcome, refused.reason], ['failure', 'refused', 'no_activation'], `${phase}: ${name}`);
+      }
+    }
+    assert.equal(report.importsAfterDefaultOff, 0, 'default-off tool calls load nothing');
+    assert.equal(report.stopWhileOff, 'A2A stop: nothing was active or pending. Nothing changed.');
+    assert.match(report.retiredRoute, /^A2A command not recognized; request a proposal with dude_a2a_propose/);
+    assert.equal(report.retiredApproval, 'A2A approval refused: no proposal is pending. Nothing was activated.');
+    assert.equal(report.invalidArguments.length, 6);
+    for (const refusal of report.invalidArguments) {
+      assert.equal(refusal.resultType, 'failure');
+      assert.match(refusal.textResultForLlm, /^A2A proposal refused: use exactly configPath and profileId/);
+      assert.ok(Buffer.byteLength(refusal.textResultForLlm) < 1024);
+      assert.doesNotMatch(refusal.textResultForLlm, /Approval:|caller-supplied proposal/);
+    }
+    assert.deepEqual(Object.keys(report.proposals), ['b-share', 'b-command', 'a-ask']);
+    for (const [profileId, proposal] of Object.entries(report.proposals)) {
+      const bytes = assertReleasedProposal(proposal, outDir, owner, profileId);
+      context.diagnostic(`T024 registered ${profileId} native result: ${bytes} bytes; full text matched the fixture expectation (not native UI evidence).`);
+    }
+    await context.test('T028 delivered guard accepts all 4490 bytes and refuses 4491 without approval or effects', () => {
+      assert.deepEqual(report.limits, { proposalBytes: 4490, fileBytes: 1024 * 1024 }, 'frozen output bound and independent input limit');
+      assert.equal(assertReleasedProposal(report.atCap, outDir, owner, 'b-atcap'), 4490);
+      assert.ok(report.atCap.textResultForLlm.length < 4490, 'the complete accepted result contains multibyte text');
+      const config = fs.readFileSync(path.join(owner, 'a2a.json'));
+      const expectedOversize = expectedReleasedProposal(
+        outDir, owner, 'b-above', '00000000-0000-0000-0000-000000000000', '000000000000',
+        digest(config), JSON.parse(config.toString('utf8')).profiles['b-above'].sharing.purpose,
+      );
+      assert.equal(Buffer.byteLength(expectedOversize, 'utf8'), 4491, 'otherwise valid companions differ by one rendered byte');
+      assert.deepEqual(report.oversize, {
+        resultType: 'failure',
+        textResultForLlm: [
+          'A2A proposal refused: the complete proposal exceeds the fixed native-display size limit; select a smaller profile.',
+          'No proposal is pending from this attempt. Nothing was activated.',
+          'Next: correct the local cause, then request a fresh proposal if you want to continue.',
+        ].join('\n'),
+      }, 'only the closed refusal returns, never a body, code, approval line, or fallback');
+      assert.ok(Buffer.byteLength(report.oversize.textResultForLlm, 'utf8') < 512);
+      assert.equal(report.replacedApproval, 'A2A approval refused: no proposal is pending. Nothing was activated.');
+      assert.equal(report.importsAfterRefusal, 0, 'oversize and rejected replaced-code approval load no A2A runtime');
+      assertReleasedProposal(report.freshProposal, outDir, owner, 'a-ask');
+      assert.equal(report.listens, 0);
+      assert.equal(report.connects, 0);
+      assert.equal(report.spawns, 0);
+      assert.equal(report.sessionSends, 0);
+    });
+    assert.equal(report.proposalSchema.additionalProperties, false);
+    assert.deepEqual(report.proposalSchema.required, ['configPath', 'profileId']);
+    assert.deepEqual(Object.keys(report.proposalSchema.properties), ['configPath', 'profileId']);
+    for (const field of Object.values(/** @type {Record<string, any>} */ (report.proposalSchema.properties))) assert.equal(field.type, 'string');
+    assert.equal(report.proposalLogCount, 0, 'the complete proposal is returned, never relayed through the log');
+    assert.equal(report.importsAfterProposal, 0, 'a proposal loads no runtime');
+    assert.equal(report.approvalOutcome, 'A2A approval refused: the TLS certificate or key could not be loaded. Nothing was activated.',
+      'fixture PEM text is refused by the real TLS loader, not reported as success');
+    assert.equal(report.importsAfterApproval, 1, 'only the local approval loads the released runtime, through the counted file');
+    assert.equal(report.listens, 0, 'no listener at any point');
+    assert.equal(report.connects, 0, 'no peer connection at any point');
+    assert.equal(report.spawns, 0, 'no command or Git probe');
+    assert.equal(report.sessionSends, 0, 'no model continuation through session.send');
+  } finally {
+    fs.rmSync(outDir, { recursive: true, force: true });
+    fs.rmSync(owner, { recursive: true, force: true });
+    assert.equal(fs.existsSync(outDir), false);
+    assert.equal(fs.existsSync(owner), false);
+    context.diagnostic('T028 test-owned release and owner roots removed after the fixture child closed; no real host or peer was used.');
   }
 });
 

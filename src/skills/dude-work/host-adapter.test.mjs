@@ -16,6 +16,7 @@ import { buildLightweightWorkPostimages } from '../dude-engine/lib/lightweight-w
 import {
   approachHash,
   buildApproachOccurrenceEventV1,
+  buildGovernanceEventV1,
   captureCompletionV2,
   canonicalJson,
   canonicalTarget,
@@ -4857,6 +4858,1035 @@ function capturedSpecialistInput(state, semantic, root) {
   return { input, result, runtimeInvocations };
 }
 
+/** Independent test oracle for the unchanged domain-separated text identity.
+ * @param {string} domain @param {unknown} material */
+function feature074SemanticIdentity(domain, material) {
+  return sha256(canonicalJson({ type: `specialist-attestation:${domain}`, version: 1, material }));
+}
+
+/** @param {Record<string, unknown>} envelope @param {Record<string, unknown>[]} checks */
+function feature074VerificationText(envelope, checks) {
+  return {
+    type: 'verification-text',
+    version: 1,
+    checks: envelope.checks.map(check => {
+      const actual = checks.find(row => (
+        check.definitionIdentity === feature074SemanticIdentity('check-definition', row.definition)
+      ));
+      assert.ok(actual);
+      assert.equal(check.outcome, actual.outcome);
+      assert.equal(check.evidenceIdentity, feature074SemanticIdentity('check-evidence', actual.evidence));
+      return { definition: actual.definition, evidence: actual.evidence };
+    }),
+  };
+}
+
+/** @param {string} root @param {number[]} [covered] */
+function feature074HistoricalRunnerFixture(root, covered = [0, 1]) {
+  const fixtureBytes = fs.readFileSync(new URL(
+    '../../../scripts/fixtures/074-work-readable-evidence-handoff/hash-only-pair.json', import.meta.url,
+  ));
+  assert.equal(sha256(fixtureBytes.toString('utf8').replaceAll('\r\n', '\n')),
+    '98a4ffb9e5896446e55a3ed7d76633d8866ad4e1cf4be6d62c9382e7239ffda6');
+  const fixture = JSON.parse(fixtureBytes.toString('utf8'));
+  assert.deepEqual(fixture.target, TARGET);
+  const retainedEvidence = clone(fixture.retainedEvidence);
+  const events = JSON.parse(Buffer.from(retainedEvidence.currentRun[0].bytes.base64, 'base64'))
+    .records.map(row => row.substantive.event);
+  // Only the disposable lane gets seeded. The fixture's original streams are
+  // kept verbatim, including the current-run event wrappers and order.
+  sealedRetentionInput(root, [], events, {});
+  for (const source of ['verification', 'review']) {
+    for (const index of covered) {
+      const entry = fixture.retainedEvidence[source][index];
+      const capture = focusedCapturedEnvelope(entry);
+      const attachment = {
+        type: 'readable-evidence-attachment', version: 1,
+        reference: {
+          sourceCaptureIdentity: sha256(canonicalJson(capture)),
+          sourceOutcomeHash: entry.outcomeHash,
+        },
+        text: clone(fixture.preimages[source][index]),
+      };
+      retainedEvidence[source].push(sealedTransportInput({
+        lane: { kind: 'lightweight' }, [source]: [sealedCapture(TARGET, entry.state, [attachment])],
+      })[source][0]);
+    }
+  }
+  return { fixture, fixtureBytes, retainedEvidence, events };
+}
+
+nodeTest('Feature 074 T003: an attachment without its retained occurrence refuses before runner ownership or a challenge', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const { retainedEvidence, events } = feature074HistoricalRunnerFixture(root, [1]);
+    const input = sealedRetentionInput(root, events.slice(0, 2), events.slice(0, 2), {});
+    retainedEvidence.currentRun = input.currentRun;
+    const inspection = runCommand('inspect', {
+      trigger: 'explicit-inspection', input: seededRunnerInput(root, retainedEvidence),
+    }).inspection;
+    assert.deepEqual(inspection.blockers, [], 'complete matching originals and text remain inspectable');
+    const request = focusedRunnerRequest(root, { retainedEvidence });
+    const checkpoint = memoryCheckpointStore();
+    const files = laneSurfaceDigests(root);
+    let calls = 0;
+    const result = await runHostAdapter(request, {
+      checkpoint: checkpoint.port,
+      runtime: { identity: sha256('Feature074 T003 invalid admission'), invoke() { calls += 1; } },
+      exchange() { calls += 1; return null; },
+    });
+    assert.equal(result.reason, 'evidence-incomplete');
+    assert.equal(result.detail, 'retainedEvidence: invalid verification/review');
+    assert.deepEqual(result.blocker, {
+      code: 'evidence-incomplete', subject: 'occurrence-retention', evidenceHash: inspection.evidenceHash,
+    });
+    assert.equal(calls, 0);
+    assert.deepEqual(checkpoint.calls, []);
+    assert.deepEqual(focusedRunnerAcceptedState(result), request.state);
+    assert.deepEqual(laneSurfaceDigests(root), files);
+  });
+});
+
+nodeTest('Feature 074 T003: retained input containers cannot invoke a caller before admission', async t => {
+  for (const mode of ['record getter', 'record proxy', 'array getter', 'array proxy', 'array extra field']) {
+    await t.test(mode, async () => {
+      await withSealedWorkspace(async root => {
+        writeSealedTaskState(root);
+        const fixture = feature074HistoricalRunnerFixture(root);
+        let retainedEvidence = fixture.retainedEvidence;
+        let reads = 0;
+        if (mode === 'record getter') {
+          const rows = retainedEvidence.verification;
+          Object.defineProperty(retainedEvidence, 'verification', {
+            enumerable: true, get() { reads += 1; return rows; },
+          });
+        } else if (mode === 'record proxy') {
+          retainedEvidence = new Proxy(retainedEvidence, {
+            ownKeys(target) { reads += 1; return Reflect.ownKeys(target); },
+          });
+        } else if (mode === 'array getter') {
+          const entry = retainedEvidence.verification[0];
+          Object.defineProperty(retainedEvidence.verification, '0', {
+            enumerable: true, get() { reads += 1; return entry; },
+          });
+        } else if (mode === 'array proxy') {
+          retainedEvidence.verification = new Proxy(retainedEvidence.verification, {
+            get(target, key) { reads += 1; return Reflect.get(target, key); },
+          });
+        } else {
+          retainedEvidence.verification.matches = true;
+        }
+        const checkpoint = memoryCheckpointStore();
+        let calls = 0;
+        const request = focusedRunnerRequest(root, { retainedEvidence });
+        const result = await runHostAdapter(request, {
+          checkpoint: checkpoint.port,
+          exchange(challenge) { calls += 1; return focusedCancelResponse(challenge); },
+        });
+        assert.equal(reads, 0, 'untrusted containers must stay inert');
+        assert.equal(result.reason, 'evidence-incomplete');
+        assert.equal(calls, 0);
+        assert.deepEqual(checkpoint.calls, []);
+        assert.deepEqual(focusedRunnerAcceptedState(result), request.state);
+      });
+    });
+  }
+});
+
+nodeTest('Feature 074 T003: frozen hash-only approaches reach one bound learning packet with full, partial, or absent supplements', async t => {
+  for (const covered of [[0, 1], [0], [1], []]) {
+    await t.test(`covered captures from attempts ${JSON.stringify(covered)}`, async () => {
+      await withSealedWorkspace(async root => {
+        writeSealedTaskState(root);
+        const { fixture, retainedEvidence, events, fixtureBytes } = feature074HistoricalRunnerFixture(root, covered);
+        // Original duplicate history acquisitions still cost sources and retain
+        // their raw multiplicity; no trusted capture is duplicated.
+        retainedEvidence.currentRun.push(clone(retainedEvidence.currentRun[0]));
+        const original = clone(retainedEvidence);
+        const request = focusedRunnerRequest(root, { retainedEvidence });
+        delete request.assessment;
+        delete request.specialistResult;
+        const files = laneSurfaceDigests(root);
+        const checkpoint = memoryCheckpointStore();
+        const calls = [];
+        const challenges = [];
+        let laneCalls = 0;
+        const result = await runHostAdapter(request, {
+          checkpoint: checkpoint.port,
+          runtime: {
+            identity: sha256('Feature074 T003 historical consumer'),
+            invoke(command, lowLevelRequest) {
+              calls.push({ command, request: clone(lowLevelRequest) });
+              return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+            },
+          },
+          laneOwner: {
+            identity: sha256('Feature074 T003 no lane effects'),
+            apply() { laneCalls += 1; throw new Error('historical admission must remain read-only'); },
+          },
+          exchange(challenge) {
+            challenges.push(clone(challenge));
+            return focusedCancelResponse(challenge);
+          },
+        });
+        assert.equal(result.reason, 'cancelled', result.detail ?? result.reason);
+        assert.equal(result.outcome, 'ended');
+        assert.deepEqual(challenges.map(challenge => challenge.kind), ['learning-review']);
+        assert.equal(laneCalls, 0);
+        assert.equal(calls.some(call => ['authorize', 'complete', 'learn'].includes(call.command)), false);
+        assert.ok(result.steps.some(step => step.step === 'advance-governance:resume-learning'
+          && step.reason === 'governance-resumed' && step.outcome === 'accepted'));
+        const challenge = challenges[0];
+        const state = focusedRunnerAcceptedState(challenge);
+        assert.equal(state.overallUsed, 0);
+        assert.deepEqual(state.recoveryUsed, []);
+        assert.deepEqual(state.pending, []);
+        assert.equal(state.learningGovernance.phase, 'required', 'text never discharges learning');
+        const repeat = deriveEarliestRepeatRelationshipV1(events);
+        assert.deepEqual(state.learningGovernance.trigger, repeat);
+        assert.deepEqual(state.learningGovernance.failedApproachSet, deriveFailedApproachSetV1(repeat, events));
+        assert.equal(state.learningGovernance.failedApproachSet.approachBasisIdentities.length, 2);
+        assert.deepEqual(events.filter(event => event.type === 'approach-occurrence')
+          .map(event => event.occurrence.chronology.attemptOrdinal), [2, 1]);
+        for (const event of events.filter(event => event.type === 'approach-occurrence')) {
+          assert.equal(event.occurrence.disposition, 'verification-failed');
+          for (const field of [
+            'mechanismIdentities', 'assumptionIdentities', 'evidenceAcquisitionIdentities', 'validationPlanIdentities',
+          ]) assert.deepEqual(event.basis[field], []);
+        }
+        const { challengeIdentity, bindingIdentity, ...boundBody } = challenge;
+        assert.match(challengeIdentity, /^[a-f0-9]{64}$/);
+        assert.equal(bindingIdentity, sha256(canonicalJson(boundBody)));
+        assert.equal(challenge.stateHash, sha256(Buffer.from(challenge.stateBase64, 'base64')));
+        assert.equal(challenge.governanceIdentity, state.learningGovernance.governanceIdentity);
+        assert.equal(challenge.governanceRequestIdentity, sha256(canonicalJson({
+          action: 'review-learning', input: calls.at(-1).request.input,
+        })));
+        assert.deepEqual(challenge.modelPacket, modelPacket(challenge.inspection));
+        assert.deepEqual(expandModelPacket(challenge.modelPacket), originalAvailableProjection(challenge.inspection));
+        assert.ok(Buffer.byteLength(canonicalJson(challenge.modelPacket)) < 262_144);
+        const attachments = challenge.modelPacket.items.flatMap(item => item.frames
+          .filter(frame => Object.hasOwn(frame, 'reference'))
+          .map(frame => ({ tag: item.tag, payload: item.payload, frame })));
+        assert.equal(attachments.length, covered.length * 2);
+        for (const source of ['verification', 'review']) {
+          for (const [index, originalEntry] of fixture.retainedEvidence[source].entries()) {
+            const originalBody = JSON.parse(Buffer.from(originalEntry.bytes.base64, 'base64'));
+            assert.equal(originalBody.records.length, 1, 'the frozen capture contains no readable record');
+            const capture = originalBody.records[0].substantive;
+            const identity = sha256(canonicalJson(capture));
+            const normalized = canonicalJson({
+              target: originalBody.target, state: originalBody.state, records: [capture],
+            });
+            const originalItem = challenge.inspection.items.find(item => (
+              item.source === source && item.sha256 === originalEntry.outcomeHash
+            ));
+            assert.equal(originalItem.text, normalized, 'original normalized capture bytes remain exact');
+            const matched = attachments.filter(row => row.frame.reference.sourceCaptureIdentity === identity);
+            assert.equal(matched.length, covered.includes(index) ? 1 : 0,
+              'one valid covered approach says nothing about missing preimages for the other');
+            if (matched.length === 0) continue;
+            const row = matched[0];
+            assert.equal(row.tag, source);
+            assert.equal(Object.hasOwn(row.frame, 'capture'), false);
+            assert.deepEqual(row.frame.reference, {
+              sourceCaptureIdentity: identity, sourceOutcomeHash: originalEntry.outcomeHash,
+            });
+            assert.deepEqual(row.payload.text, fixture.preimages[source][index]);
+            const envelope = JSON.parse(Buffer.from(capture.bytes.base64, 'base64'));
+            assert.equal(row.frame.binding.envelopeIdentity, envelope.envelopeIdentity);
+            assert.equal(row.frame.binding.attemptIdentity, envelope.attemptIdentity);
+            assert.equal(row.frame.binding.resultIdentity, envelope.resultIdentity);
+            if (source === 'review') {
+              const verification = normalizeVerificationEnvelopeV2(
+                focusedCapturedEnvelope(fixture.retainedEvidence.verification[index]),
+              );
+              const review = normalizeIndependentReviewEnvelopeV2(capture, verification);
+              assert.equal(review.verdict, 'rejected');
+              assert.equal(row.frame.binding.verificationEnvelopeIdentity, verification.envelopeIdentity);
+              if (review.findings[0].observation.kind === 'check-result') {
+                assert.equal(review.findings[0].observation.identity, verification.checks[0].checkIdentity);
+                assert.equal(Object.hasOwn(row.payload.text.findings[0], 'observedEvidence'), false);
+              }
+            }
+          }
+        }
+        for (const call of calls) {
+          for (const field of RETAINED_STREAMS) {
+            assert.deepEqual(call.request.input[field].slice(0, original[field].length), original[field],
+              `${call.command}:${field}: the retained prefix is never rebuilt or pruned`);
+          }
+        }
+        assert.deepEqual(retainedEvidence, original);
+        assert.deepEqual(laneSurfaceDigests(root), files);
+        assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+        assert.deepEqual(fs.readFileSync(new URL(
+          '../../../scripts/fixtures/074-work-readable-evidence-handoff/hash-only-pair.json', import.meta.url,
+        )), fixtureBytes);
+      });
+    });
+  }
+});
+
+nodeTest('Feature 074 T003: an outstanding learning packet cannot acquire caller mutations or late response attachments', async t => {
+  for (const lateField of [null, 'retainedEvidence', 'attachments', 'modelPacket']) {
+    await t.test(lateField ?? 'caller mutation then ordinary cancellation', async () => {
+      await withSealedWorkspace(async root => {
+        writeSealedTaskState(root);
+        const { retainedEvidence } = feature074HistoricalRunnerFixture(root);
+        const original = clone(retainedEvidence);
+        const request = focusedRunnerRequest(root, { retainedEvidence });
+        const checkpoint = memoryCheckpointStore();
+        const calls = [];
+        let packetBytes;
+        let accepted;
+        const result = await runHostAdapter(request, {
+          checkpoint: checkpoint.port,
+          runtime: {
+            identity: sha256('Feature074 T003 immutable retained snapshot'),
+            invoke(command, lowLevelRequest) {
+              calls.push({ command, request: clone(lowLevelRequest) });
+              return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+            },
+          },
+          async exchange(challenge) {
+            assert.equal(challenge.kind, 'learning-review');
+            accepted = focusedRunnerAcceptedState(challenge);
+            packetBytes = canonicalJson(challenge.modelPacket);
+            retainedEvidence.verification[2].bytes.base64 = Buffer.from('tampered late preimage').toString('base64');
+            retainedEvidence.review.splice(0);
+            retainedEvidence.currentRun.reverse();
+            request.retainedEvidence = { lateReplacement: true };
+            await yieldToEventLoop();
+            assert.equal(canonicalJson(challenge.modelPacket), packetBytes);
+            assert.deepEqual(expandModelPacket(challenge.modelPacket), originalAvailableProjection(challenge.inspection));
+            const response = focusedCancelResponse(challenge);
+            if (lateField) response[lateField] = original;
+            return response;
+          },
+        });
+        assert.equal(result.reason, lateField ? 'challenge-response-invalid' : 'cancelled');
+        if (lateField) assert.equal(result.detail, 'challenge-response-envelope');
+        assert.deepEqual(focusedRunnerAcceptedState(result), accepted);
+        assert.equal(accepted.overallUsed, 0);
+        assert.deepEqual(accepted.pending, []);
+        assert.equal(accepted.learningGovernance.phase, 'required');
+        assert.equal(calls.some(call => call.command === 'learn'), false);
+        for (const call of calls) {
+          for (const field of RETAINED_STREAMS) {
+            assert.deepEqual(call.request.input[field].slice(0, original[field].length), original[field]);
+          }
+        }
+        if (!lateField) assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+      });
+    });
+  }
+});
+
+/** Rehash the synthetic negative's full transport/reference, but not its text.
+ * @param {Record<string, unknown>} retained @param {'verification'|'review'} source
+ * @param {(capture:Record<string, unknown>)=>void} mutate */
+function feature074ChangedOriginal(retained, source, mutate) {
+  retained[source][0] = changedRetainedCapture(retained[source][0], body => {
+    mutate(body.records[0].substantive);
+  });
+  const original = retained[source][0];
+  retained[source][2] = changedRetainedCapture(retained[source][2], body => {
+    body.records[0].substantive.reference = {
+      sourceCaptureIdentity: sha256(canonicalJson(focusedCapturedEnvelope(original))),
+      sourceOutcomeHash: original.outcomeHash,
+    };
+  });
+}
+
+nodeTest('Feature 074 T003: historical negatives fail at their binding guard before any checkpoint claim', async t => {
+  const changeAttachment = (retained, source, mutate) => {
+    retained[source][2] = changedRetainedCapture(retained[source][2], body => mutate(body.records[0].substantive));
+  };
+  const changeReview = (retained, mutate) => feature074ChangedOriginal(retained, 'review', capture => {
+    const { envelopeIdentity, ...body } = JSON.parse(Buffer.from(capture.bytes.base64, 'base64'));
+    mutate(body);
+    const envelope = { ...body, envelopeIdentity: sha256(canonicalJson(body)) };
+    capture.bytes = capturedBytesV1(canonicalJson(envelope));
+    capture.outcomeHash = capture.bytes.sha256;
+  });
+  const cases = [
+    ['unknown attachment field', value => changeAttachment(value, 'verification', row => { row.matches = true; }), /unknown field 'matches'/],
+    ['unknown reference field', value => changeAttachment(value, 'verification', row => { row.reference.path = 'never-loaded'; }), /unknown field 'path'/],
+    ['wrong attachment version', value => changeAttachment(value, 'verification', row => { row.version = 2; }), /version.*literal.*1/],
+    ['wrong text version', value => changeAttachment(value, 'verification', row => { row.text.version = 2; }), /version.*literal.*1/],
+    ['wrong text kind', value => changeAttachment(value, 'verification', row => {
+      row.text = { type: 'independent-review-text', version: 1, checks: row.text.checks };
+    }), /type.*source kind/],
+    ['missing literal preimage', value => changeAttachment(value, 'verification', row => { delete row.text; }), /missing field 'text'/],
+    ['path substitute', value => changeAttachment(value, 'verification', row => { row.text = { path: 'C:/never-loaded.json' }; }), /unknown field 'path'/],
+    ['URL substitute', value => changeAttachment(value, 'verification', row => { row.text.checks[0].evidence = 'https://invalid.example/not-fetched'; }), /evidence.*canonical order/],
+    ['hash-only substitute', value => changeAttachment(value, 'verification', row => { row.text.checks[0].evidence = sha256('not a preimage'); }), /evidence.*canonical order/],
+    ['changed literal with recomputed outer hash', value => changeAttachment(value, 'verification', row => { row.text.checks[0].definition += 'x'; }), /definition.*canonical order/],
+    ['wrong original stream', value => changeAttachment(value, 'verification', row => { row.reference.sourceOutcomeHash = sha256('absent original'); }), /exactly one original source/],
+    ['wrong full capture identity', value => changeAttachment(value, 'verification', row => { row.reference.sourceCaptureIdentity = sha256('wrong capture'); }), /sourceCaptureIdentity.*complete original capture/],
+    ['wrong source class', value => {
+      changeAttachment(value, 'verification', row => {
+        row.reference.sourceOutcomeHash = value.review[0].outcomeHash;
+        row.reference.sourceCaptureIdentity = sha256(canonicalJson(focusedCapturedEnvelope(value.review[0])));
+      });
+      value.review.splice(2, 1); // Avoid an earlier duplicate-reference refusal.
+    }, /exactly one original source in the same class/],
+    ['missing original review', value => { value.review.splice(0, 1); }, /exactly one original source/],
+    ['unavailable bound verification', value => { value.verification = []; }, /exact bound verification envelope/],
+    ['duplicate equal reference', value => { value.verification.push(clone(value.verification[2])); }, /duplicate attachments/],
+    ['duplicate conflicting reference', value => {
+      value.verification.push(changedRetainedCapture(value.verification[2], body => {
+        body.records[0].substantive.text.checks[0].evidence += 'conflict';
+      }));
+    }, /duplicate attachments/],
+    ['already-readable original', value => {
+      const text = JSON.parse(Buffer.from(value.verification[2].bytes.base64, 'base64')).records[0].substantive.text;
+      value.verification[0] = changedRetainedCapture(value.verification[0], body => { body.records.push({ substantive: text }); });
+      changeAttachment(value, 'verification', row => { row.reference.sourceOutcomeHash = value.verification[0].outcomeHash; });
+    }, /original canonical capture-only stream/],
+    ['attachment chain', value => {
+      value.verification.push(changedRetainedCapture(value.verification[2], body => {
+        const row = body.records[0].substantive;
+        row.reference = { sourceCaptureIdentity: sha256('chain identity'), sourceOutcomeHash: value.verification[2].outcomeHash };
+      }));
+    }, /original canonical capture-only stream/],
+    ['unsupported original envelope version', value => changeReview(value, body => { body.version = 1; }), /current-format specialist capture/],
+    ['wrong capture outcome hash', value => feature074ChangedOriginal(value, 'verification', capture => {
+      capture.outcomeHash = sha256('not envelope bytes');
+    }), /outcomeHash.*exact envelope bytes/],
+    ['bad capture bytes descriptor', value => feature074ChangedOriginal(value, 'verification', capture => {
+      capture.bytes.sha256 = sha256('wrong decoded bytes');
+    }), /bytes descriptor must bind the complete decoded bytes/],
+    ['noncanonical original envelope', value => feature074ChangedOriginal(value, 'verification', capture => {
+      capture.bytes = capturedBytesV1(JSON.stringify(JSON.parse(Buffer.from(capture.bytes.base64, 'base64')), null, 2));
+      capture.outcomeHash = capture.bytes.sha256;
+    }), /exact canonical JSON/],
+    ['wrong outer attachment target', value => {
+      value.verification[2] = changedRetainedCapture(value.verification[2], body => { body.target = clone(SECOND_TARGET); });
+    }, /target.*canonical Inspection target/],
+    ['wrong attachment state', value => {
+      value.verification[2] = changedRetainedCapture(value.verification[2], body => { body.state = 'passed'; });
+    }, /state.*authoritative source outcome/],
+    ['forbidden lint attachment', value => { value.lint = [clone(value.verification[2])]; }, /attachments are forbidden in lint/],
+    ['forbidden current-run attachment', value => { value.currentRun.push(clone(value.verification[2])); }, /forbidden in this source/],
+    ['presentation-only text', value => {
+      const body = JSON.parse(Buffer.from(value.verification[2].bytes.base64, 'base64'));
+      body.records[0].presentation = { summary: 'not substantive text' };
+      value.verification[2].bytes.base64 = Buffer.from(canonicalJson(body)).toString('base64');
+    }, /unknown field 'presentation'/],
+    ['incomplete review row set', value => changeAttachment(value, 'review', row => { row.text.findings = []; }), /every finding exactly once/],
+    ['invented check-result observation', value => changeAttachment(value, 'review', row => {
+      row.text.findings[0].observedEvidence = 'not independently observed';
+    }), /observedEvidence.*forbidden.*check-result/],
+    ...['attemptIdentity', 'sourceRevisionIdentity', 'inspectedEvidenceHash', 'resultIdentity'].map(field => [
+      `wrong review ${field}`, value => changeReview(value, body => { body[field] = sha256(`wrong ${field}`); }),
+      new RegExp(`${field}.*bound verification`),
+    ]),
+    ['wrong exact verification binding', value => changeReview(value, body => {
+      const other = normalizeVerificationEnvelopeV2(focusedCapturedEnvelope(value.verification[1]));
+      body.verificationEnvelopeIdentity = other.envelopeIdentity;
+      // Keep the observation valid under the nominated verification so it
+      // cannot mask the cross-attempt envelope-binding check.
+      const finding = body.findings[0];
+      finding.observation.identity = other.checks[0].checkIdentity;
+      finding.findingIdentity = sha256(canonicalJson({
+        version: 2, basisIdentity: finding.basisIdentity, observation: finding.observation,
+      }));
+    }), /attemptIdentity.*bound verification/],
+    ['wrong reviewer invocation', value => feature074ChangedOriginal(value, 'review', capture => {
+      capture.authority.invocationIdentity = sha256('wrong reviewer invocation');
+    }), /authority.*reviewer authority and invocation/],
+    ['wrong check observation', value => changeReview(value, body => {
+      const finding = body.findings[0];
+      finding.observation.identity = sha256('unavailable check');
+      finding.findingIdentity = sha256(canonicalJson({
+        version: 2, basisIdentity: finding.basisIdentity, observation: finding.observation,
+      }));
+    }), /observation.*bound verification check/],
+  ];
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    for (const [name, mutate, guard] of cases) {
+      await t.test(name, async () => {
+        const { retainedEvidence } = feature074HistoricalRunnerFixture(root);
+        mutate(retainedEvidence);
+        const input = seededRunnerInput(root, retainedEvidence);
+        assert.throws(() => runCommand('inspect', { trigger: 'explicit-inspection', input }), guard);
+        const files = laneSurfaceDigests(root);
+        const checkpoint = memoryCheckpointStore();
+        let calls = 0;
+        const request = focusedRunnerRequest(root, { retainedEvidence });
+        const result = await runHostAdapter(request, {
+          checkpoint: checkpoint.port,
+          runtime: { identity: sha256(`Feature074 T003 ${name}`), invoke() { calls += 1; } },
+          exchange() { calls += 1; return null; },
+        });
+        assert.equal(result.reason, 'evidence-incomplete');
+        assert.match(result.detail, /^retainedEvidence: invalid (verification|review|lint|current-run|current-run\/verification\/review\/lint input)$/);
+        assert.equal(calls, 0);
+        assert.equal(result.acceptedRevision, 0);
+        assert.equal(result.hostRevision, 0);
+        assert.deepEqual(checkpoint.calls, []);
+        assert.deepEqual(focusedRunnerAcceptedState(result), request.state);
+        assert.deepEqual(laneSurfaceDigests(root), files);
+      });
+    }
+  });
+});
+
+nodeTest('Feature 074 T003: raw sources and descriptors independently admit 63 and 64 and refuse 65', async t => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const { retainedEvidence: history } = feature074HistoricalRunnerFixture(root);
+    for (const count of [63, 64, 65]) {
+      await t.test(`raw sources ${count}`, async () => {
+        const retained = clone(history);
+        const base = rawSourceCount(seededRunnerInput(root, retained));
+        retained.currentRun.push(...Array.from({ length: count - base }, () => clone(retained.currentRun[0])));
+        const input = seededRunnerInput(root, retained);
+        assert.equal(rawSourceCount(input), count);
+        let reads = 0;
+        if (count === 65) {
+          // A duplicate supplement still pays a source before semantic matching
+          // or a nested byte accessor can run.
+          retained.verification[3] = retained.verification[2];
+          Object.defineProperty(retained.verification[2], 'bytes', {
+            enumerable: true, get() { reads += 1; throw new Error('source count must come first'); },
+          });
+        } else {
+          const inspection = runCommand('inspect', { trigger: 'explicit-inspection', input }).inspection;
+          assert.ok(inspection.items.length < 63, 'descriptor sharing does not discount raw acquisitions');
+          assert.ok(Buffer.byteLength(canonicalJson(modelPacket(inspection))) < 262_144);
+        }
+        const probe = await probeRetainedAdmission(root, retained);
+        assert.equal(reads, 0);
+        if (count <= 64) {
+          assert.equal(probe.result.reason, 'cancelled');
+          assert.deepEqual(probe.kinds, ['learning-review']);
+          assert.equal(probe.inputs[0].currentRun.length, retained.currentRun.length + 1);
+        } else {
+          assert.equal(probe.result.reason, 'evidence-incomplete');
+          assert.deepEqual(probe.result.capacity, {
+            budget: 'source-entries', limit: 64, required: 65, source: 'verification', target: canonicalTarget(TARGET),
+          });
+          assert.deepEqual(probe.checkpoint.calls, []);
+          assert.deepEqual(probe.kinds, []);
+        }
+        t.diagnostic(canonicalJson({ budget: 'source-entries', required: count, reason: probe.result.reason }));
+      });
+      await t.test(`retained descriptors ${count}`, async () => {
+        const retained = clone(history);
+        const base = runCommand('inspect', {
+          trigger: 'explicit-inspection', input: seededRunnerInput(root, retained),
+        }).inspection.items.length;
+        retained.lint = sealedTransportInput({
+          lane: { kind: 'lightweight' },
+          lint: Array.from({ length: count - base + 1 }, (_, index) => (
+            sealedCapture(TARGET, 'passed', [{ boundedDescriptor: index }])
+          )),
+        }).lint;
+        const input = seededRunnerInput(root, retained);
+        assert.equal(rawSourceCount(input), count - 1, 'source capacity is noncontrolling');
+        if (count <= 64) {
+          const inspection = runCommand('inspect', { trigger: 'explicit-inspection', input }).inspection;
+          assert.equal(inspection.items.length, count);
+          assert.deepEqual(expandModelPacket(modelPacket(inspection)), originalAvailableProjection(inspection));
+        }
+        const probe = await probeRetainedAdmission(root, retained);
+        if (count <= 64) {
+          assert.equal(probe.result.reason, 'cancelled');
+          assert.deepEqual(probe.kinds, ['learning-review']);
+        } else {
+          assert.deepEqual(probe.result.capacity, {
+            budget: 'retained-descriptors', limit: 64, required: 65, source: 'session', target: null,
+          });
+          assert.deepEqual(probe.checkpoint.calls, []);
+          assert.deepEqual(probe.kinds, []);
+        }
+        t.diagnostic(canonicalJson({ budget: 'retained-descriptors', required: count, reason: probe.result.reason }));
+      });
+    }
+  });
+});
+
+nodeTest('Feature 074 T003: original body and aggregate byte limits count attachments without changing the packet', async t => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const { retainedEvidence: history } = feature074HistoricalRunnerFixture(root);
+    const expected = runCommand('inspect', {
+      trigger: 'explicit-inspection', input: seededRunnerInput(root, history),
+    }).inspection;
+    const retained = clone(history);
+    for (const size of [1_048_576, 1_048_577]) {
+      retained.currentRun[0] = sizedRetainedPresentation(history.currentRun[0], size);
+      const probe = await probeRetainedAdmission(root, retained);
+      if (size === 1_048_576) {
+        assert.equal(probe.result.reason, 'cancelled');
+        const inspection = runCommand('inspect', { trigger: 'explicit-inspection', input: probe.inputs[0] }).inspection;
+        assert.deepEqual(inspection, expected, 'excluded presentation is still charged as acquired bytes');
+      } else {
+        assert.deepEqual(probe.result.capacity, {
+          budget: 'source-body-bytes', limit: 1_048_576, required: size,
+          source: 'current-run', target: canonicalTarget(TARGET),
+        });
+        assert.deepEqual(probe.checkpoint.calls, []);
+        assert.deepEqual(probe.kinds, []);
+      }
+    }
+    const aggregate = clone(history);
+    aggregate.currentRun = Array.from({ length: 4 }, () => clone(history.currentRun[0]));
+    const input = seededRunnerInput(root, aggregate);
+    const workspaceBytes = [IDEA_PATH, TASKS_PATH, TARGET.specPath, TARGET.specPath.replace('/spec.md', '/plan.md')]
+      .reduce((sum, relative) => sum + fs.statSync(path.join(root, relative)).size, 0);
+    const otherBytes = RETAINED_STREAMS.flatMap(field => input[field]).slice(4)
+      .reduce((sum, entry) => sum + Buffer.from(entry.bytes.base64, 'base64').byteLength, 0);
+    const remaining = 4_194_304 - workspaceBytes - otherBytes;
+    aggregate.currentRun = aggregate.currentRun.map((entry, index) => sizedRetainedPresentation(
+      entry, Math.floor(remaining / 4) + (index < remaining % 4 ? 1 : 0),
+    ));
+    const bodyTotal = value => {
+      const input = seededRunnerInput(root, value);
+      return workspaceBytes + RETAINED_STREAMS.flatMap(field => input[field])
+        .reduce((sum, entry) => sum + Buffer.from(entry.bytes.base64, 'base64').byteLength, 0);
+    };
+    assert.equal(bodyTotal(aggregate), 4_194_304);
+    const exact = await probeRetainedAdmission(root, aggregate);
+    assert.equal(exact.result.reason, 'cancelled', exact.result.detail);
+    assert.deepEqual(exact.kinds, ['learning-review']);
+    const last = aggregate.currentRun[3];
+    aggregate.currentRun[3] = sizedRetainedPresentation(last, Buffer.from(last.bytes.base64, 'base64').byteLength + 1);
+    assert.equal(bodyTotal(aggregate), 4_194_305);
+    const excess = await probeRetainedAdmission(root, aggregate);
+    assert.deepEqual(excess.result.capacity, {
+      budget: 'inspection-body-bytes', limit: 4_194_304, required: 4_194_305,
+      source: 'verification', target: canonicalTarget(TARGET),
+    });
+    assert.deepEqual(excess.checkpoint.calls, []);
+    assert.deepEqual(excess.kinds, []);
+    t.diagnostic('source bodies: 1048576 admitted, 1048577 refused; aggregate: 4194304 admitted, 4194305 refused');
+  });
+});
+
+nodeTest('Feature 074 T003: the actual complete historical learning packet fits 262144 bytes and refuses 262145 before ownership', async t => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    fs.writeFileSync(path.join(root, IDEA_PATH),
+      fs.readFileSync(path.join(root, IDEA_PATH), 'utf8').replace('- 2026-08-10 exact owner event', ''));
+    const { retainedEvidence: history } = feature074HistoricalRunnerFixture(root);
+    const retained = clone(history);
+    let length = 90_000;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      retained.lint = sealedTransportInput({
+        lane: { kind: 'lightweight' }, lint: [sealedCapture(TARGET, 'passed', [{ padding: 'x'.repeat(length) }])],
+      }).lint;
+      const measured = await measurePrivateModelView(seededRunnerInput(root, retained));
+      if (measured.modelBytes === 262_144) break;
+      length += 262_144 - measured.modelBytes;
+    }
+    const input = seededRunnerInput(root, retained);
+    const exact = await measurePrivateModelView(input);
+    assert.equal(exact.modelBytes, 262_144);
+    assert.equal(exact.inspection.overflow, false);
+    assert.ok(rawSourceCount(input) < 64);
+    const checkpoint = memoryCheckpointStore();
+    const packets = [];
+    const request = focusedRunnerRequest(root, { retainedEvidence: retained });
+    const result = await runHostAdapter(request, {
+      checkpoint: checkpoint.port,
+      exchange(challenge) {
+        assert.equal(challenge.kind, 'learning-review');
+        assert.equal(Buffer.byteLength(canonicalJson(challenge.modelPacket)), 262_144);
+        assert.deepEqual(expandModelPacket(challenge.modelPacket), originalAvailableProjection(challenge.inspection));
+        packets.push(challenge.modelPacket);
+        return focusedCancelResponse(challenge);
+      },
+    });
+    assert.equal(result.reason, 'cancelled', result.detail);
+    assert.equal(packets.length, 1);
+    assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+    retained.lint[0] = changedRetainedCapture(retained.lint[0], body => { body.records[0].substantive.padding += 'x'; });
+    const extra = await measurePrivateModelView(seededRunnerInput(root, retained));
+    assert.equal(extra.modelBytes, 262_145);
+    assert.equal(extra.inspection.overflow, true);
+    assert.equal(modelPacket(extra.inspection), null);
+    assert.ok(extra.inspection.items.every(item => !Object.hasOwn(item, 'text')));
+    const refused = await probeRetainedAdmission(root, retained);
+    assert.equal(refused.result.reason, 'evidence-incomplete');
+    assert.deepEqual(refused.result.blocker, extra.inspection.blockers[0]);
+    assert.deepEqual(refused.checkpoint.calls, []);
+    assert.deepEqual(refused.kinds, []);
+    assert.deepEqual(focusedRunnerAcceptedState(refused.result), request.state);
+    t.diagnostic(canonicalJson({ admittedModelBytes: 262_144, refusedModelBytes: 262_145, sources: rawSourceCount(input) }));
+  });
+});
+
+nodeTest('Feature 074 T003: retained attachment requests keep the one-megabyte foreground ceiling', async t => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const { retainedEvidence } = feature074HistoricalRunnerFixture(root);
+    const request = focusedRunnerRequest(root, { retainedEvidence });
+    const text = canonicalJson(request);
+    const exact = text + ' '.repeat(1_048_576 - Buffer.byteLength(text));
+    assert.equal(Buffer.byteLength(exact), 1_048_576);
+    const env = { TMPDIR: root, TMP: root, TEMP: root };
+    const files = laneSurfaceDigests(root);
+    const refused = await runFocusedRunnerCli(request, () => assert.fail('oversized input dispatched'), {
+      env, requestText: `${exact} `, endAfterRequest: true,
+    });
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /request must contain 1 through 1048576 bytes/);
+    assert.deepEqual(refused.rows, []);
+    const accepted = await runFocusedRunnerCli(request, challenge => {
+      assert.equal(challenge.kind, 'learning-review');
+      assert.equal(focusedRunnerAcceptedState(challenge).overallUsed, 0);
+      return focusedCancelResponse(challenge);
+    }, { env, requestText: exact });
+    assert.equal(accepted.code, 0, accepted.stderr);
+    assert.equal(accepted.stderr, '');
+    assert.equal(accepted.rows.at(-1).reason, 'cancelled');
+    assert.deepEqual(laneSurfaceDigests(root), files);
+    t.diagnostic(refused.stderr.trim());
+  });
+});
+
+nodeTest('Feature 074 T002: actual adapter streams retain complete text beside the unchanged trusted pair', () => {
+  withSealedWorkspace(root => {
+    const state = pendingActionState('address-test', ['lint', 'verification']);
+    const semantic = specialistResult('readable adapter', 'accepted');
+    semantic.operations = ['address-test'];
+    semantic.outcome = 'failed';
+    semantic.verification.checks = [
+      { definition: ' \tfirst e\u0301 🧪\r\n', outcome: 'failed', evidence: ' raw "failure" \\ 🧪\r\n ' },
+      { definition: 'second', outcome: 'passed', evidence: 'second evidence' },
+    ];
+    const before = canonicalJson({ state, semantic });
+    const prepared = prepareSpecialistResult(state, semantic);
+    const observed = capturedSpecialistInput(state, semantic, root);
+    assert.equal(observed.result.outcome, 'effect-required', observed.result.reason);
+    assert.equal(observed.result.reason, 'occurrence-retention-required');
+    assert.equal(observed.runtimeInvocations, 1);
+    assert.equal(canonicalJson({ state, semantic }), before);
+
+    for (const field of ['verification', 'review', 'lint']) {
+      assert.deepEqual(observed.input[field], prepared.streams[field]);
+      const entry = observed.input[field][0];
+      const bytes = Buffer.from(entry.bytes.base64, 'base64').toString('utf8');
+      const body = JSON.parse(bytes);
+      assert.equal(body.records.length, 2, `${field}: capture and matching text are substantive`);
+      assert.equal(bytes, canonicalJson(body));
+      assert.deepEqual(body.records.map(record => Object.keys(record)), [['substantive'], ['substantive']]);
+      const records = body.records.map(record => record.substantive);
+      assert.equal(entry.outcomeHash, sha256(canonicalJson({
+        target: entry.target, state: entry.state, records,
+      })));
+      assert.notEqual(entry.outcomeHash, sha256(canonicalJson({
+        target: entry.target, state: entry.state, records: records.slice(0, 1),
+      })), 'outer hash charges readable text');
+      if (field === 'review') {
+        assert.deepEqual(records[1], { type: 'independent-review-text', version: 1, findings: [] });
+      } else {
+        const envelope = normalizeVerificationEnvelopeV2(records[0]);
+        assert.deepEqual(records[1], feature074VerificationText(envelope, semantic.verification.checks));
+        assert.equal(entry.state, 'failed');
+      }
+    }
+    assert.deepEqual(observed.input.lint, observed.input.verification);
+    const basis = observed.result.effect.projectionBatch.events[0].basis;
+    for (const field of [
+      'mechanismIdentities', 'assumptionIdentities', 'evidenceAcquisitionIdentities', 'validationPlanIdentities',
+    ]) assert.deepEqual(basis[field], []);
+  });
+});
+
+nodeTest('Feature 074 T002: bad results after pure preparation have no capture, state, or file effects', () => {
+  withSealedWorkspace(root => {
+    writeSealedTaskState(root);
+    const state = pendingState('autonomous');
+    const files = feature060Preimages(root);
+    const mutations = [
+      ['raw row 17', result => {
+        result.verification.checks = [...feature060Checks(16), feature060Checks(1)[0]];
+      }, /checks must contain 1 through 16 rows/],
+      ['evidence byte 16385', result => {
+        result.verification.checks[0].evidence = `${'🧪'.repeat(4096)}x`;
+      }, /evidence must contain 1 through 16384 UTF-8 bytes/],
+      ['duplicate finding', result => { result.review.findings.push(clone(result.review.findings[0])); },
+        /duplicate findings/],
+      ['unbound check', result => {
+        result.review.findings[0].basis.checkDefinition = 'not the bound check';
+        result.review.findings[0].observation = { kind: 'check-result' };
+      }, /bound verification check/],
+      ['fabricated observation', result => {
+        result.review.findings[0].observation = { kind: 'check-result', evidence: 'fabricated' };
+      }, /unknown field 'evidence'/],
+      ['caller readable metadata', result => {
+        result.verification.text = { type: 'verification-text', version: 1, checks: [] };
+      }, /unknown field 'text'/],
+      ['caller context', result => { result.context = { sourceRevision: 'override' }; }, /unknown field 'context'/],
+    ];
+    for (const [label, mutate, expected] of mutations) {
+      const semantic = specialistResult(`T002 invalid ${label}`, 'rejected');
+      const before = canonicalJson({ state, semantic });
+      const prepared = prepareSpecialistResult(state, semantic);
+      assert.equal(canonicalJson({ state, semantic }), before, label);
+      assert.equal(Object.isFrozen(prepared.result), true, label);
+      const submitted = clone(prepared.result);
+      mutate(submitted);
+      let calls = 0;
+      const adapter = createHostAdapter(sealedInitial({ state }), sealedPorts(() => { calls += 1; }));
+      const authority = acceptedAuthorityTuple(adapter.snapshot());
+      const request = sealedRequest(adapter, 'record-attempt-result', {
+        attemptResult: { input: sealedRecordInput(root), result: submitted },
+      });
+      assert.throws(() => validateHostAdapterRequest(request, state), expected, label);
+      const refused = adapter.run(request);
+      assert.equal(refused.outcome, 'closed-refusal', label);
+      assert.equal(refused.reason, 'malformed-request', label);
+      assert.equal(refused.next.kind, 'correction', label);
+      assert.equal(refused.session.pendingEffect, null, label);
+      assert.deepEqual(acceptedAuthorityTuple(refused.session), authority, label);
+      assert.equal(calls, 0, label);
+      assert.deepEqual(feature060Preimages(root), files, label);
+    }
+  });
+});
+
+nodeTest('Feature 074 T002: two actual failed attempts reach a fresh bound learning-review packet with all text', async t => {
+  for (const verdict of ['rejected', 'accepted']) {
+    await t.test(verdict === 'rejected' ? 'both review observation kinds' : 'accepted empty review', async () => {
+      await withSealedWorkspace(async root => {
+        writeSealedTaskState(root);
+        const request = focusedRunnerRequest(root);
+        delete request.assessment;
+        delete request.specialistResult;
+        const checkpoint = memoryCheckpointStore();
+        const sourceCalls = [];
+        const sourceChallenges = [];
+        const results = [];
+        let assessment;
+        const firstRun = await runHostAdapter(request, {
+          checkpoint: checkpoint.port,
+          runtime: {
+            identity: sha256(`Feature074 fresh producer:${verdict}`),
+            invoke(command, lowLevelRequest) {
+              const original = clone(lowLevelRequest);
+              const value = runCommand(command, lowLevelRequest);
+              sourceCalls.push({ command, request: original, value: clone(value) });
+              return { status: 'returned', value };
+            },
+          },
+          exchange(challenge) {
+            sourceChallenges.push(clone(challenge));
+            if (challenge.kind === 'assessment' && results.length < 2) {
+              assessment = focusedChallengeAssessment(challenge, {
+                // Rejected reviews repeat a finding across two distinct approaches.
+                // Empty reviews repeat a failed approach without inventing findings.
+                materialInputs: focusedMaterialInputs([
+                  `src/readable-${verdict === 'rejected' ? results.length : 'same'}.mjs`,
+                ]),
+              });
+              return focusedChallengeResponse(challenge, 'assessment', assessment);
+            }
+            if (challenge.kind === 'specialist-pair' && results.length < 2) {
+              const ordinal = results.length + 1;
+              const checks = [
+                { definition: ' \tShared "check" e\u0301 🧪\r\n', outcome: 'failed', evidence: ` failure ${ordinal}\r\n\\ "🧪" ` },
+                { definition: 'linked check', outcome: 'failed', evidence: `linked failure ${ordinal}\n` },
+              ];
+              const pair = {
+                outcome: 'failed',
+                operations: clone(assessment.materialInputs.operations),
+                changedTargets: [],
+                verification: { checks: ordinal === 1 ? checks : [...checks].reverse() },
+                review: {
+                  verdict,
+                  findings: verdict === 'accepted' ? [] : [
+                    {
+                      basis: {
+                        expectation: { kind: 'governing-rule', reference: ' literal "rule" e\u0301\r\n ' },
+                        subjects: [TARGET.taskKey],
+                        failureClass: 'readable-evidence-failure',
+                        checkDefinition: checks[0].definition,
+                      },
+                      observation: { kind: 'observed-evidence', evidence: ` actual observation ${ordinal} 🧪\r\n` },
+                    },
+                    {
+                      basis: {
+                        expectation: { kind: 'expected-condition', reference: 'linked check must pass' },
+                        subjects: [TARGET.taskKey],
+                        failureClass: 'linked-check-failure',
+                        checkDefinition: checks[1].definition,
+                      },
+                      observation: { kind: 'check-result' },
+                    },
+                  ],
+                },
+              };
+              if (ordinal === 2) pair.review.findings.reverse();
+              results.push(clone(pair));
+              return focusedChallengeResponse(challenge, 'specialistResult', pair);
+            }
+            return focusedCancelResponse(challenge);
+          },
+        });
+        assert.equal(firstRun.outcome, 'ended', firstRun.detail ?? firstRun.reason);
+        assert.equal(firstRun.reason, 'cancelled');
+        assert.deepEqual(sourceChallenges.map(challenge => challenge.kind), [
+          'assessment', 'specialist-pair', 'assessment', 'specialist-pair', 'learning-review',
+        ]);
+        const priorState = focusedRunnerAcceptedState(firstRun);
+        assert.equal(priorState.overallUsed, 2);
+        assert.deepEqual(priorState.pending, []);
+        assert.equal(priorState.learningGovernance.phase, 'required');
+        assert.equal(priorState.learningGovernance.failedApproachSet.approachBasisIdentities.length,
+          verdict === 'rejected' ? 2 : 1);
+        assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+
+        const captures = sourceCalls.filter(call => call.command === 'complete' && call.request.mode === 'capture');
+        assert.equal(captures.length, 2);
+        const originalInput = sourceCalls.at(-1).request.input;
+        const retainedEvidence = Object.fromEntries(RETAINED_STREAMS.map(field => [field, clone(originalInput[field])]));
+        for (const field of ['verification', 'review']) {
+          assert.deepEqual(retainedEvidence[field], captures.flatMap(call => call.request.input[field]),
+            `${field}: retain actual observed streams, not reconstructed carriers`);
+        }
+        const retainedBytes = canonicalJson(retainedEvidence);
+        const files = feature060Preimages(root);
+        const freshRequest = focusedRunnerRequest(root, { retainedEvidence });
+        delete freshRequest.assessment;
+        delete freshRequest.specialistResult;
+        const freshCheckpoint = memoryCheckpointStore();
+        const freshCalls = [];
+        const freshChallenges = [];
+        let laneCalls = 0;
+        const freshRun = await runHostAdapter(freshRequest, {
+          checkpoint: freshCheckpoint.port,
+          runtime: {
+            identity: sha256(`Feature074 fresh retained consumer:${verdict}`),
+            invoke(command, lowLevelRequest) {
+              freshCalls.push({ command, request: clone(lowLevelRequest) });
+              return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+            },
+          },
+          laneOwner: {
+            identity: sha256(`Feature074 no fresh lane effects:${verdict}`),
+            apply() { laneCalls += 1; throw new Error('fresh learning inspection must not mutate the lane'); },
+          },
+          exchange(challenge) {
+            freshChallenges.push(clone(challenge));
+            return focusedCancelResponse(challenge);
+          },
+        });
+        assert.equal(freshRun.outcome, 'ended', freshRun.detail ?? freshRun.reason);
+        assert.equal(freshRun.reason, 'cancelled');
+        assert.deepEqual(freshChallenges.map(challenge => challenge.kind), ['learning-review']);
+        assert.equal(laneCalls, 0);
+        assert.equal(freshCalls.some(call => ['authorize', 'complete', 'learn'].includes(call.command)), false);
+        assert.ok(freshRun.steps.some(step => step.step === 'advance-governance:resume-learning'
+          && step.outcome === 'accepted' && step.reason === 'governance-resumed'));
+        const challenge = freshChallenges[0];
+        assert.deepEqual(focusedRunnerAcceptedState(challenge), {
+          ...freshRequest.state, learningGovernance: priorState.learningGovernance,
+        });
+        const { challengeIdentity, bindingIdentity, ...boundBody } = challenge;
+        assert.notEqual(challengeIdentity, sourceChallenges.at(-1).challengeIdentity);
+        assert.equal(bindingIdentity, sha256(canonicalJson(boundBody)));
+        assert.equal(challenge.stateHash, sha256(Buffer.from(challenge.stateBase64, 'base64')));
+        assert.equal(challenge.governanceIdentity, priorState.learningGovernance.governanceIdentity);
+        assert.equal(challenge.governanceRequestIdentity, sha256(canonicalJson({
+          action: 'review-learning', input: freshCalls.at(-1).request.input,
+        })));
+        assert.deepEqual(challenge.modelPacket, modelPacket(challenge.inspection));
+        assert.deepEqual(expandModelPacket(challenge.modelPacket), originalAvailableProjection(challenge.inspection));
+        assert.ok(Buffer.byteLength(canonicalJson(challenge.modelPacket)) <= 262_144);
+
+        const frames = tag => challenge.modelPacket.items.filter(item => item.tag === tag)
+          .flatMap(item => item.frames.map(frame => ({ payload: item.payload, frame })));
+        assert.equal(frames('verification').length, 2);
+        assert.equal(frames('review').length, 2);
+        const verificationEnvelopes = [];
+        for (const [index, call] of captures.entries()) {
+          const input = call.request.input;
+          const verificationCapture = focusedCapturedEnvelope(input.verification[0]);
+          const reviewCapture = focusedCapturedEnvelope(input.review[0]);
+          const verification = normalizeVerificationEnvelopeV2(verificationCapture);
+          const review = normalizeIndependentReviewEnvelopeV2(reviewCapture, verification);
+          verificationEnvelopes.push(verification);
+          assert.equal(review.verdict, verdict);
+          assert.equal(review.attemptOrdinal, index + 1);
+          assert.equal(review.reviewOrdinal, 1);
+          assert.equal(verification.inspectedEvidenceHash, call.request.state.pending[0].evidenceHash);
+          assert.equal(call.request.completion.attemptIdentity, verification.attemptIdentity);
+          assert.equal(call.request.completion.resultIdentity, verification.resultIdentity);
+          assert.equal(input.verification[0].state, 'failed');
+          const verificationText = feature074VerificationText(verification, results[index].verification.checks);
+          const reviewText = {
+            type: 'independent-review-text',
+            version: 1,
+            findings: review.findings.map(finding => {
+              const actual = results[index].review.findings.find(row => (
+                finding.basis.expectation.identity === feature074SemanticIdentity('finding-expectation', row.basis.expectation)
+                && finding.basis.checkDefinitionIdentity === feature074SemanticIdentity('check-definition', row.basis.checkDefinition)
+              ));
+              assert.ok(actual);
+              assert.deepEqual(finding.basis.subjects, actual.basis.subjects);
+              assert.equal(finding.basis.failureClass, actual.basis.failureClass);
+              if (finding.observation.kind === 'check-result') {
+                const boundCheck = verification.checks.find(check => check.checkIdentity === finding.observation.identity);
+                assert.ok(boundCheck);
+                assert.equal(boundCheck.definitionIdentity, finding.basis.checkDefinitionIdentity);
+              }
+              return {
+                expectationReference: actual.basis.expectation.reference,
+                checkDefinition: actual.basis.checkDefinition,
+                ...(actual.observation.kind === 'observed-evidence'
+                  ? { observedEvidence: actual.observation.evidence } : {}),
+              };
+            }),
+          };
+          for (const [tag, envelope, capture, text] of [
+            ['verification', verification, verificationCapture, verificationText],
+            ['review', review, reviewCapture, reviewText],
+          ]) {
+            const match = frames(tag).find(({ frame }) => frame.binding.envelopeIdentity === envelope.envelopeIdentity);
+            assert.ok(match, `${tag}: exact attempt ${index + 1} frame`);
+            const { type, version, target, checks, verdict: resultVerdict, findings, ...binding } = envelope;
+            assert.deepEqual(match.payload, {
+              type, version, target,
+              ...(tag === 'verification' ? { checks } : { verdict: resultVerdict, findings }),
+              text,
+            });
+            assert.deepEqual(match.frame.binding, binding);
+            assert.equal(Object.hasOwn(match.frame, 'reference'), false, 'fresh capture provenance');
+            const { base64, ...bytes } = capture.bytes;
+            assert.deepEqual(match.frame.capture, { ...capture, bytes });
+          }
+        }
+        for (const field of ['attemptIdentity', 'resultIdentity', 'sourceRevisionIdentity', 'envelopeIdentity']) {
+          assert.equal(new Set(verificationEnvelopes.map(envelope => envelope[field])).size, 2, field);
+        }
+        const occurrences = t003LaneEvents(root, TARGET).target.filter(event => event.type === 'approach-occurrence');
+        assert.equal(occurrences.length, 2);
+        for (const event of occurrences) {
+          for (const field of [
+            'mechanismIdentities', 'assumptionIdentities', 'evidenceAcquisitionIdentities', 'validationPlanIdentities',
+          ]) assert.deepEqual(event.basis[field], []);
+        }
+        for (const call of freshCalls) {
+          for (const field of RETAINED_STREAMS) {
+            assert.deepEqual(call.request.input[field].slice(0, retainedEvidence[field].length), retainedEvidence[field]);
+          }
+        }
+        assert.equal(canonicalJson(retainedEvidence), retainedBytes);
+        assert.deepEqual(feature060Preimages(root), files);
+        assert.deepEqual(freshCheckpoint.pair, { claim: null, checkpoint: null });
+        assert.deepEqual(focusedRunnerAcceptedState(freshRun), focusedRunnerAcceptedState(challenge));
+      });
+    });
+  }
+});
+
 nodeTest('Tester lint reuse follows the exact current six-action matrix', () => {
   const matrix = [
     ['execute-task', ['verification'], false],
@@ -4932,8 +5962,9 @@ nodeTest('lint and verification reuse one conservative Tester capture with ident
         );
         const lintBody = JSON.parse(Buffer.from(lintRow.bytes.base64, 'base64').toString('utf8'));
         assert.deepEqual(lintBody, verificationBody, `${label}: exact stream body`);
-        assert.equal(verificationBody.records.length, 1, `${label}: sole Tester capture`);
-        assert.equal(lintBody.records.length, 1, `${label}: reused Tester capture`);
+        assert.equal(verificationBody.records.length, 2, `${label}: Tester capture and text`);
+        assert.equal(lintBody.records.length, 2, `${label}: reused complete Tester stream`);
+        assert.equal(verificationBody.records[1].substantive.type, 'verification-text');
         const verificationCapture = verificationBody.records[0].substantive;
         const lintCapture = lintBody.records[0].substantive;
         assert.equal(
@@ -7169,7 +8200,7 @@ nodeTest('Feature 029 rebuilds the owner suffix through actual host-adapter sett
 /**
  * @param {Record<string, unknown>} request
  * @param {(challenge:Record<string, unknown>)=>Record<string, unknown>|null} respond
- * @param {{env?:Record<string,string>,endAfterRequest?:boolean}} [options]
+ * @param {{env?:Record<string,string>,endAfterRequest?:boolean,requestText?:string}} [options]
  */
 function runFocusedRunnerCli(request, respond, options = {}) {
   return new Promise((resolve, reject) => {
@@ -7226,7 +8257,7 @@ function runFocusedRunnerCli(request, respond, options = {}) {
       }
       resolve({ code, rows, stderr });
     });
-    child.stdin.write(`${canonicalJson(request)}\n`);
+    child.stdin.write(`${options.requestText ?? canonicalJson(request)}\n`);
     if (options.endAfterRequest) child.stdin.end();
   });
 }
@@ -9820,9 +10851,9 @@ nodeTest('repeated-permit refusal: a fresh invocation settles a re-derived gover
       'both surfaces already hold the same required event',
     );
 
-    // Act: invocation 2 starts from fresh RunState with only that history. A
-    // different approach fails, so completion re-derives the earliest retained
-    // repeat: the same governance, whose required event is already retained.
+    // Act: invocation 2 starts from fresh RunState with only that history.
+    // Admission restores the retained learning requirement before any attempt;
+    // its already-retained required event must not be projected again.
     const second = focusedRunnerRequest(root, { retainedEvidence });
     delete second.assessment;
     delete second.specialistResult;
@@ -9883,15 +10914,20 @@ nodeTest('repeated-permit refusal: a fresh invocation settles a re-derived gover
     assert.equal(result.reason, 'task-settled');
     assert.deepEqual(
       challenges.map(challenge => challenge.kind),
-      ['assessment', 'specialist-pair', 'learning-review', 'assessment', 'specialist-pair'],
+      ['learning-review', 'assessment', 'specialist-pair'],
     );
-    assert.equal(challenges[2].governanceIdentity, governanceIdentity, 'the same governance is re-derived');
+    assert.equal(challenges[0].governanceIdentity, governanceIdentity, 'the same governance is re-derived');
     const stepNames = result.steps.map(step => step.step);
-    assert.ok(stepNames.includes('attempt:1:governance:prepare-projection:1'), trace);
-    assert.equal(stepNames.some(step => /^attempt:1:governance:(?:apply|commit)-projection/.test(step)), false, trace);
-    const settled = result.steps.find(step => step.step === 'attempt:1:settle-governance');
+    const resumed = result.steps.find(step => step.step === 'advance-governance:resume-learning');
+    assert.equal(resumed?.outcome, 'accepted', trace);
+    assert.equal(resumed?.reason, 'governance-resumed', trace);
+    assert.ok(stepNames.indexOf('advance-governance:resume-learning')
+      < stepNames.indexOf('attempt:1:authorize-attempt'), trace);
+    assert.equal(stepNames.some(step => /^attempt:\d+:governance:(?:apply|commit)-projection/.test(step)), false, trace);
+    const settled = result.steps.find(step => step.step === 'learning-result:settle-effect');
     assert.equal(settled?.outcome, 'accepted', trace);
     assert.equal(settled?.reason, 'projection-verified', trace);
+    assert.equal(focusedRunnerAcceptedState(result).overallUsed, 1, 'only the governed alternative charges this run');
     // One-time lane history: the old prefix stays intact, each event is written
     // once, and the retained required event is never appended again.
     const lane = t003LaneEvents(root, TARGET).target;
@@ -12832,7 +13868,7 @@ nodeTest('descriptor-only overflow: unknown post-apply growth reports the fresh 
           assert.equal(applied.ok, true);
           // External bytes arriving after the prechecked lane transaction were
           // not knowable at preparation. Its receipt is not claimed settled.
-          fs.appendFileSync(path.join(root, TASKS_PATH), `${'x'.repeat(3_088)}\n`);
+          fs.appendFileSync(path.join(root, TASKS_PATH), `${'x'.repeat(1_089)}\n`);
           return applied;
         },
       },
@@ -12854,6 +13890,9 @@ nodeTest('descriptor-only overflow: unknown post-apply growth reports the fresh 
     const measured = await measurePrivateModelView(last.request.input);
     assert.deepEqual(measured.inspection, last.value.inspection);
     assert.equal(measured.modelBytes, limits.bytes + 1, 'unknown growth crosses the real byte ceiling by one');
+    context.diagnostic(canonicalJson({
+      unknownGrowthOverflow: { modelBytes: measured.modelBytes, limit: limits.bytes },
+    }));
     assert.deepEqual(expandModelPacket(measured.packet), originalAvailableProjection({
       target: TARGET, items: measured.items,
     }));
@@ -12882,15 +13921,18 @@ nodeTest('descriptor-only overflow: unknown post-apply growth reports the fresh 
   });
 });
 
-nodeTest('T002 known growth: forked runner exits nonzero before its excessive projection is applied', async () => {
+nodeTest('T002 known growth: forked runner exits nonzero before its excessive projection is applied', async (context) => {
   await withSealedWorkspace(async (root) => {
-    const request = latePacketOverflowRunnerRequest(root, limits.bytes / 2 - 6_789);
+    const request = latePacketOverflowRunnerRequest(root, limits.bytes / 2 - 7_789);
+    // Task padding occurs in both task and lane evidence. Readable text and
+    // the larger descriptor byte counts also pay the complete packet budget.
+    request.specialistResult.verification.checks[0].evidence += '.';
     const filesBefore = laneSurfaceDigests(root);
     const temp = path.join(root, 'tmp');
     fs.mkdirSync(temp);
     const execution = await runFocusedRunnerCli(request, () => {
       assert.fail('overflow must not emit another input-required challenge');
-    }, { env: { TMPDIR: temp } });
+    }, { env: { TMPDIR: temp, TMP: temp, TEMP: temp } });
     assert.equal(execution.code, 1);
     assert.equal(execution.stderr, '');
     assert.deepEqual(execution.rows.map((row) => row.type), ['result']);
@@ -12905,6 +13947,11 @@ nodeTest('T002 known growth: forked runner exits nonzero before its excessive pr
     assert.equal(result.capacity.budget, 'model-packet-bytes');
     assert.equal(result.capacity.limit, limits.bytes);
     assert.equal(result.capacity.required, limits.bytes + 6);
+    assert.equal(result.capacity.source, 'model-packet');
+    assert.deepEqual(result.capacity.target, canonicalTarget(TARGET));
+    context.diagnostic(canonicalJson({
+      knownGrowthPrediction: { capacity: result.capacity, evidenceHash: result.haltReport.evidenceHash },
+    }));
     assert.equal(result.haltReport.nextAction, 'request-human-input');
     assert.deepEqual(laneSurfaceDigests(root), filesBefore);
     assert.equal(focusedRunnerAcceptedState(result).pending.length, 1);
@@ -13095,7 +14142,7 @@ nodeTest('descriptor-only overflow: an effectful runner port cannot claim a no-e
           if (command === 'transition' && lowLevelRequest.mode === 'commit-lane-receipt') {
             // The mandatory last owner event alone must exceed the byte budget;
             // dropping the preceding owner event must not make this guard moot.
-            fs.appendFileSync(ownerPath, `\n- 2026-08-10 ${marker} ${'x'.repeat(3_084)}\n`);
+            fs.appendFileSync(ownerPath, `\n- 2026-08-10 ${marker} ${'x'.repeat(1_085)}\n`);
             receiptInput = clone(lowLevelRequest.input);
           }
           const value = runCommand(command, lowLevelRequest);
@@ -13379,7 +14426,13 @@ function t003TrustedCapture(entry) {
   const body = JSON.parse(
     Buffer.from(/** @type {string} */ (bytes.base64), 'base64').toString('utf8'),
   );
-  assert.equal(body.records.length, 1);
+  assert.ok(body.records.length === 1 || body.records.length === 2);
+  if (body.records.length === 2) {
+    assert.deepEqual(Object.keys(body.records[1]), ['substantive']);
+    assert.equal(body.records[1].substantive.type,
+      body.records[0].substantive.authority.kind === 'verification'
+        ? 'verification-text' : 'independent-review-text');
+  }
   return body.records[0].substantive;
 }
 
@@ -13522,6 +14575,13 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
     }).inspection;
     const literalReference = await measurePrivateModelView(initialInput, { literalHistory: true });
     assert.equal(literalReference.modelBytes - reservedBytes, 131_023, 'the immutable pre-compaction reference control');
+    const historicalReference = await measurePrivateModelView(referenceInput, {
+      literalHistory: true, historicalPacketLimit: true,
+    });
+    assert.equal(historicalReference.modelBytes, 131_023, 'the immutable pre-compaction reference control');
+    const currentLiteral = await measurePrivateModelView(referenceInput, { literalHistory: true });
+    assert.equal(currentLiteral.modelBytes, 131_707, 'the current cap admits the complete owner log');
+    assert.equal(currentLiteral.inspection.overflow, false);
     const sameProjectionLiteral = await renderPrivateModelProjection(
       target, initialInspection.items, { literalHistory: true },
     );
@@ -13596,274 +14656,58 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
       undefined,
       true,
     );
-    assert.equal(directResume.transition.resumed, true);
-    assert.equal(directResume.transition.resumedFrom, 'retained-occurrences');
+    // Retained reviewed history cannot restore a missing accepted branch.
+    // Keep this admission refusal separate from the counterfactual size control.
+    assert.equal(directResume.inspection.overflow, false);
+    assert.deepEqual(directResume.inspection.blockers, []);
+    assert.equal(inspectRetainedOccurrencesV2(directResume.inspection).blocker, null);
+    assert.equal(directResume.transition.resumed, false);
+    assert.equal(directResume.transition.reason, 'governance-unresolved');
+    assert.deepEqual(directResume.transition.state, historicalState);
     const resumeAdapter = createHostAdapter({
       state: historicalState,
       target,
       inspectionIdentity: sha256(canonicalJson(initialInspection)),
     });
+    const beforeResume = resumeAdapter.snapshot();
     const resumed = resumeAdapter.run(sealedRequest(resumeAdapter, 'advance-governance', {
       governance: { action: 'resume-learning', input: initialInput },
     }));
-    assert.equal(resumed.outcome, 'accepted', resumed.reason);
-    assert.equal(resumed.reason, 'governance-resumed');
-    assert.deepEqual(resumed.session.acceptedState, directResume.transition.state);
-    assert.equal(resumed.session.acceptedState.learningGovernance.phase, 'required');
-    assert.equal(resumeAdapter.end('cancelled').reason, 'cancelled');
-
-    const projectedState = clone(resumed.session.acceptedState);
-    projectedState.learningGovernance.phase = 'projected';
-    projectedState.learningGovernance.reviewIdentity = learning.reviewIdentity;
-    validateRunState(projectedState);
-    const runtimeCalls = [];
-    const laneCalls = [];
-    let producedStreams = null;
-    const supervisor = sealedSupervisorSession();
-    const noEffect = sealedNoEffectAuthority({
-      identity: sha256('Feature 064 T003 no-effect authority'),
-    });
-    const adapter = createAuthorizedHostAdapter({
-      state: projectedState,
-      target,
-      inspectionIdentity: sha256(canonicalJson(initialInspection)),
-    }, {
-      supervisorSession: supervisor,
-      noEffectAuthority: noEffect,
-      runtime: {
-        identity: sha256('Feature 064 T003 recovery runtime'),
-        invoke(command, lowLevelRequest) {
-          const value = runCommand(command, lowLevelRequest);
-          runtimeCalls.push({
-            command,
-            mode: lowLevelRequest.mode ?? 'ordinary',
-            request: clone(lowLevelRequest),
-            value: clone(value),
-          });
-          if (command === 'complete' && lowLevelRequest.mode === 'capture') {
-            producedStreams = clone(lowLevelRequest.input);
-          }
-          return { status: 'returned', value };
-        },
-      },
-      laneOwner: {
-        identity: sha256('Feature 064 T003 lane owner'),
-        apply(laneRequest) {
-          laneCalls.push(clone(laneRequest));
-          return applyLightweightWorkRequest(laneRequest);
-        },
-      },
-    });
-    const admitted = adapter.snapshot();
-    assert.equal(canonicalJson(reference).includes(admitted.invocationIdentity), false);
-    assert.equal(canonicalJson(reference).includes(admitted.workerToken), false);
-    assert.equal(canonicalJson(episode).includes(admitted.invocationIdentity), false);
-    assert.equal(canonicalJson(episode).includes(admitted.workerToken), false);
-    assert.equal(admitted.authorities.supervisorAuthorityIdentity, supervisor.identity);
-    assert.equal(admitted.authorities.noEffectAuthorityIdentity, noEffect.identity);
-
-    const bound = adapter.run(sealedRequest(adapter, 'advance-governance', {
-      governance: { action: 'bind-alternative', input: initialInput },
-    }));
-    assert.equal(bound.outcome, 'accepted', bound.reason);
-    assert.equal(bound.reason, 'post-learning-inspection-bound');
-    assert.equal(bound.session.acceptedState.learningGovernance.phase, 'alternative-inspected');
-    const selected = learning.alternatives.find(
-      alternative => alternative.alternativeIdentity === learning.selectedAlternativeIdentity,
-    );
-    assert.ok(selected);
-    const authorizationBinding = t003LaneBinding(root, reference, target);
-    const assessment = {
-      evidenceHash: initialInspection.evidenceHash,
-      intent: 'unchanged',
-      action: selected.approachBasis.action,
-      materialInputs: clone(selected.approachBasis.materialInputs),
-      equivalence: 'distinct',
-      retention: 'transient',
-      summary: 'Retain one fresh fixture-owned verification, review, and lint episode.',
-    };
-    const authorized = adapter.run(sealedRequest(adapter, 'authorize-attempt', {
-      authorization: {
-        input: initialInput,
-        assessment,
-        permit: {
-          lanePrestate: authorizationBinding.lanePrestate,
-          targetMapping: authorizationBinding.targetMapping,
-        },
-      },
-    }));
-    assert.equal(authorized.outcome, 'accepted', authorized.reason);
-    assert.equal(authorized.reason, 'authorized');
-    assert.equal(authorized.session.acceptedState.overallUsed, 5);
-    assert.equal(authorized.session.acceptedState.recoveryUsed[0].count, 4);
-    assert.equal(
-      authorized.session.acceptedState.learningGovernance.phase,
-      'alternative-authorized',
-    );
-
-    const recordInput = clone(initialInput);
-    delete recordInput.verification;
-    delete recordInput.review;
-    delete recordInput.lint;
-    const captured = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
-      attemptResult: {
-        input: recordInput,
-        result: clone(episode.payload.specialistResult),
-      },
-    }));
-    assert.equal(captured.outcome, 'effect-required', captured.reason);
-    assert.equal(captured.reason, 'occurrence-retention-required');
-    assert.equal(captured.effect.projectionBatch.events.length, 1);
-    assert.ok(producedStreams);
-    assert.deepEqual({
-      verification: producedStreams.verification.length,
-      review: producedStreams.review.length,
-      lint: producedStreams.lint.length,
-    }, { verification: 1, review: 1, lint: 1 });
-    const producedVerification = normalizeVerificationEnvelopeV2(
-      t003TrustedCapture(producedStreams.verification[0]),
-    );
-    const producedReview = normalizeIndependentReviewEnvelopeV2(
-      t003TrustedCapture(producedStreams.review[0]),
-      producedVerification,
-    );
-    assert.equal(producedVerification.checks.length, 16);
-    assert.ok(producedVerification.checks.every(check => check.outcome === 'passed'));
-    assert.equal(producedReview.verdict, 'accepted');
-    assert.deepEqual(producedReview.findings, []);
-    assert.equal(
-      producedReview.verificationEnvelopeIdentity,
-      producedVerification.envelopeIdentity,
-    );
-    assert.notEqual(
-      producedVerification.attemptIdentity,
-      episode.payload.label,
-      'the fixture label supplies no attempt authority',
-    );
+    assert.equal(resumed.outcome, 'hard-stop', resumed.reason);
+    assert.equal(resumed.reason, 'governance-unresolved');
+    assert.deepEqual(resumed.session.acceptedState, historicalState);
+    assert.deepEqual(acceptedAuthorityTuple(resumed.session), acceptedAuthorityTuple(beforeResume));
+    assert.equal(resumed.session.pendingEffect, null);
+    for (const [relative, bytes] of filePreimages) {
+      assert.deepEqual(fs.readFileSync(path.join(root, relative)), bytes, relative);
+    }
+    assert.equal(resumeAdapter.end('hard-stop-recorded').reason, 'hard-stop-recorded');
 
     let retainedInput = clone(initialInput);
-    for (const field of ['verification', 'review', 'lint']) {
-      retainedInput[field].push(...producedStreams[field]);
-    }
-    const captureInspection = runCommand('inspect', {
-      trigger: 'explicit-inspection',
-      input: retainedInput,
-    }).inspection;
-    stages.push(await t003StageMeasurement({
-      label: 'ordinal-5-captures',
-      root,
-      reference,
-      input: retainedInput,
-      inspection: captureInspection,
-    }));
-    const projectionBinding = t003LaneBinding(root, reference, target);
-    const prepared = adapter.run(sealedRequest(adapter, 'prepare-authoritative-projection', {
-      projection: {
-        input: retainedInput,
-        laneBinding: {
-          lanePrestate: projectionBinding.lanePrestate,
-          targetMapping: projectionBinding.targetMapping,
-          operationTime: '2026-09-18T12:00:05Z',
-        },
-      },
-    }));
-    assert.equal(prepared.outcome, 'effect-required', prepared.reason);
-    assert.equal(prepared.reason, 'projection-prepared');
-    const item = prepared.product.plan.items[0];
-    const beforeApplyState = adapter.snapshot();
-    const applied = adapter.run(sealedRequest(adapter, 'apply-lane-effect', {
-      laneApplication: {
-        ...projectionBinding.application,
-        permit: item.projectionPermit,
-        mutation: item.mutation,
-      },
-    }));
-    assert.equal(applied.outcome, 'effect-required', applied.reason);
-    assert.equal(applied.reason, 'lane-projection-applied');
-    assert.equal(laneCalls.length, 1);
-    assert.equal(laneCalls[0].root, root);
-    assert.equal(laneCalls[0].operation, 'work-project');
-    assert.deepEqual(
-      acceptedAuthorityTuple(adapter.snapshot()),
-      acceptedAuthorityTuple(beforeApplyState),
-    );
-    assert.deepEqual(adapter.snapshot().pendingEffect, beforeApplyState.pendingEffect);
-    const laneFirstInspection = runCommand('inspect', {
-      trigger: 'explicit-inspection',
-      input: retainedInput,
-    }).inspection;
-    stages.push(await t003StageMeasurement({
-      label: 'ordinal-5-lane-first',
-      root,
-      reference,
-      input: retainedInput,
-      inspection: laneFirstInspection,
-    }));
-    assert.deepEqual(stages.at(-1).surfaces, {
-      currentRun: 12,
-      laneTarget: 13,
-      laneGlobal: 21,
-      equal: false,
-    });
-    retainedInput = publishCurrentRun(retainedInput, item.currentRunRecord);
-    const publishedInspection = runCommand('inspect', {
-      trigger: 'explicit-inspection',
-      input: retainedInput,
-    }).inspection;
-    stages.push(await t003StageMeasurement({
-      label: 'ordinal-5-receipt',
-      root,
-      reference,
-      input: retainedInput,
-      inspection: publishedInspection,
-    }));
-    assert.deepEqual(stages.at(-1).surfaces, {
-      currentRun: 13,
-      laneTarget: 13,
-      laneGlobal: 21,
-      equal: true,
-    });
-    const committed = adapter.run(sealedRequest(adapter, 'commit-lane-receipt', {
-      laneReceipt: {
-        input: retainedInput,
-        permit: item.projectionPermit,
-        receipt: applied.product.receipt,
-      },
-    }));
-    assert.equal(committed.outcome, 'effect-required', committed.reason);
-    assert.equal(committed.reason, 'lane-receipt-committed');
-    const settled = adapter.run(sealedRequest(adapter, 'settle-effect', {
-      input: retainedInput,
-    }));
-    assert.equal(settled.outcome, 'accepted', settled.reason);
-    assert.equal(settled.reason, 'completed');
-    assert.equal(settled.session.acceptedState.learningGovernance.phase, 'alternative-verified');
-    assert.equal(settled.session.acceptedState.pending.length, 0);
-    assert.equal(settled.session.acceptedState.completed.length, 5);
-    assert.match(
-      fs.readFileSync(
-        path.join(root, `${target.specPath.slice(0, -'spec.md'.length)}tasks.md`),
-        'utf8',
-      ),
-      new RegExp(`- \\[~\\] ${target.taskKey}`),
-      'retention does not close the fixture task',
-    );
-    const receipts = [clone(applied.product.receipt)];
-
+    const receipts = [];
     let refusal = null;
-    // Exact event sharing postpones this counterfactual component's real
-    // overflow. Carry the same complete payloads until that byte guard fires.
-    for (let ordinal = 6; ordinal <= 14; ordinal += 1) {
+    let currentReadableCapture = null;
+    // Use the existing historical-shape builder and independent pending state
+    // for every ordinal. These component calls never claim Work admission.
+    for (let ordinal = 5; ordinal <= 14; ordinal += 1) {
       const preCaptureInspection = runCommand('inspect', {
         trigger: 'explicit-inspection',
         input: retainedInput,
       }).inspection;
+      assert.equal(preCaptureInspection.overflow, false);
+      assert.deepEqual(preCaptureInspection.blockers, []);
       const pair = buildRetentionPair({
         target,
         episode,
         ordinal,
         authorizationEvidenceHash: preCaptureInspection.evidenceHash,
       });
+      assert.equal(pair.verification.checks.length, 16);
+      assert.ok(pair.verification.checks.every(check => check.outcome === 'passed'));
+      assert.equal(pair.review.verdict, 'accepted');
+      assert.deepEqual(pair.review.findings, []);
+      assert.equal(pair.review.verificationEnvelopeIdentity, pair.verification.envelopeIdentity);
+      assert.notEqual(pair.verification.attemptIdentity, episode.payload.label);
       const captureInput = appendRetentionPair(retainedInput, pair);
       const state = t003CounterfactualPendingState(
         target,
@@ -13909,6 +14753,7 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
         // The reserved session is the last source, so its prefix is the first
         // to cross; every earlier descriptor still loses its text, and only
         // the packet blocker names the byte stop.
+        assert.equal(modelPacket(capturedPrefix.inspection), null);
         assert.ok(capturedPrefix.inspection.items.every(item => !Object.hasOwn(item, 'text')));
         assert.equal(capturedPrefix.inspection.items.at(-1).source, 'session');
         assert.equal(capturedPrefix.inspection.items.at(-1).status, 'overflow');
@@ -13951,6 +14796,42 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
         input: captureInput,
         inspection: capturedPrefix.inspection,
       }));
+      if (ordinal === 5) {
+        // Today's producer also retains readable text. Measure it separately;
+        // do not mistake the frozen hash-only growth oracle for current output.
+        const currentPair = prepareSpecialistResult(state, pair.semanticResult);
+        assert.deepEqual(currentPair.completion, pair.completion);
+        const currentInput = clone(retainedInput);
+        for (const field of ['verification', 'review', 'lint']) {
+          assert.equal(currentPair.streams[field].length, 1);
+          assert.deepEqual(
+            t003TrustedCapture(currentPair.streams[field][0]),
+            t003TrustedCapture(pair.streams[field]),
+          );
+          const body = JSON.parse(
+            Buffer.from(currentPair.streams[field][0].bytes.base64, 'base64').toString('utf8'),
+          );
+          assert.equal(body.records.length, 2, `${field}: current captures keep readable text`);
+          currentInput[field].push(...currentPair.streams[field]);
+        }
+        const currentCapture = captureCompletionV2(
+          state, currentInput, currentPair.completion, undefined, true,
+        );
+        assert.equal(currentCapture.inspection.overflow, false);
+        assert.equal(currentCapture.completion.captured, true, currentCapture.completion.reason);
+        currentReadableCapture = await t003StageMeasurement({
+          label: 'current-readable-ordinal-5-captures',
+          root,
+          reference,
+          input: currentInput,
+          inspection: currentCapture.inspection,
+        });
+        assert.equal(currentReadableCapture.capacityAdmissible, true);
+        assert.equal(currentReadableCapture.canonicalBytes, 118_351 + reservedBytes);
+        assert.equal(currentReadableCapture.canonicalBytes - stages.at(-1).canonicalBytes, 2_656);
+        assert.equal(canonicalJson(state), stateBefore);
+        assert.deepEqual(t003FileIdentities(root, reference), filesBefore);
+      }
       const capturedState = capturedPrefix.completion.state;
       const batch = capturedPrefix.completion.projectionBatch;
       const binding = t003LaneBinding(root, reference, target);
@@ -14030,6 +14911,8 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
       receipts.push(clone(application.receipt));
       retainedInput = publishedInput;
     }
+    assert.equal(t003ParsedTargetTask(root, target).glyph, '~', 'component retention does not close the task');
+    assert.equal(t003SnapshotGlyph(root, target), '~');
 
     // Recorded against the former budget; the reserved session shifts each row
     // by its exact bytes and one item, occurrence, and source.
@@ -14122,16 +15005,6 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
     assert.equal(literalReference.modelBytes - reservedBytes - research[0].packetBytes, 10);
     assert.ok(sameProjectionLiteralBytes > stages[0].canonicalBytes,
       'compare the exact selected projection, not an assumed offset from historical research');
-    assert.deepEqual(runtimeCalls.map(({ command, mode }) => `${command}:${mode}`), [
-      'transition:bind-post-learning-inspection',
-      'transition:issue-attempt-permit',
-      'authorize:recovery',
-      'complete:capture',
-      'transition:prepare-projection',
-      'transition:prepare-projection',
-      'transition:commit-lane-receipt',
-      'complete:finalize',
-    ]);
     context.diagnostic(canonicalJson({
       feature064T003ComponentMeasurement: {
         classification: 'counterfactual-component-growth-not-supported-Work-continuation',
@@ -14141,13 +15014,20 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
         productionOrder: 'lane-first',
         packetLimit: limits.bytes,
         reservedSessionBytes: reservedBytes,
+        measurementBasis: 'historical-shape-retention-pairs-and-independent-pending-states',
+        currentReadableCapture,
+        historyOnlyResume: {
+          resumed: directResume.transition.resumed,
+          reason: resumed.reason,
+          acceptedStateUnchanged: true,
+        },
         stages,
         literalHistoryReferenceBytes: literalReference.modelBytes,
         sameProjectionLiteralReferenceBytes: sameProjectionLiteralBytes,
         lastFittingComponentPrefix: 'ordinal-13-receipt',
         firstCounterfactualByteOverflow: refusal,
         discardedComponentSuccessors: {
-          ordinals: [6, 7, 8, 9, 10, 11, 12, 13],
+          ordinals: [5, 6, 7, 8, 9, 10, 11, 12, 13],
           finalized: true,
           completed: false,
           reason: 'learning-required',
@@ -17285,8 +18165,9 @@ nodeTest('Feature 060 T002: real verification and review failures remain Work ou
  * then end by cancellation. This supplies no historical incident or old state.
  * @param {string} root @param {string} label @param {number[]} findingCounts
  * @param {Record<string, unknown>} [retainedEvidence]
+ * @param {string} [repeatedFinding]
  */
-async function observedRunnerHistory(root, label, findingCounts, retainedEvidence) {
+async function observedRunnerHistory(root, label, findingCounts, retainedEvidence, repeatedFinding) {
   const request = focusedRunnerRequest(root, retainedEvidence ? { retainedEvidence } : {});
   delete request.assessment;
   delete request.specialistResult;
@@ -17306,6 +18187,12 @@ async function observedRunnerHistory(root, label, findingCounts, retainedEvidenc
       },
     },
     exchange(challenge) {
+      if (challenge.kind === 'learning-review') {
+        assert.ok(repeatedFinding);
+        assert.equal(ordinal, findingCounts.length);
+        assert.equal(focusedRunnerAcceptedState(challenge).learningGovernance.phase, 'required');
+        return focusedCancelResponse(challenge);
+      }
       if (challenge.kind === 'assessment') {
         if (ordinal === findingCounts.length) return focusedCancelResponse(challenge);
         assessment = focusedChallengeAssessment(challenge, {
@@ -17315,16 +18202,17 @@ async function observedRunnerHistory(root, label, findingCounts, retainedEvidenc
       }
       assert.equal(challenge.kind, 'specialist-pair');
       const count = findingCounts[ordinal];
+      const findingLabel = repeatedFinding ?? `${label}-${ordinal}`;
       const pair = count === 0
         ? focusedFailedSpecialistPair(assessment, `${label}-${ordinal}`)
-        : focusedSpecialistPair(assessment, `${label}-${ordinal}`, 'rejected');
+        : focusedSpecialistPair(assessment, findingLabel, 'rejected');
       if (count > 0) {
         const finding = pair.review.findings[0];
         pair.review.findings = Array.from({ length: count }, (_, index) => ({
           ...clone(finding),
           basis: {
             ...clone(finding.basis),
-            expectation: { kind: 'governing-rule', reference: `${label}-${ordinal}-${index}` },
+            expectation: { kind: 'governing-rule', reference: `${findingLabel}-${index}` },
           },
         }));
       }
@@ -17342,6 +18230,341 @@ async function observedRunnerHistory(root, label, findingCounts, retainedEvidenc
     retainedEvidence: Object.fromEntries(RETAINED_STREAMS.map(field => [field, clone(input[field])])),
   };
 }
+
+nodeTest('Work recovery admission: fresh retained required learning precedes authorization', async context => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const historical = await observedRunnerHistory(
+      root, 'admission-learning', [1, 1], undefined, 'unresolved-review-finding',
+    );
+    const retainedEvidence = historical.retainedEvidence;
+    const original = canonicalJson(retainedEvidence);
+    const historicalState = focusedRunnerAcceptedState(historical.result);
+    const required = historicalState.learningGovernance;
+    assert.equal(required.phase, 'required');
+    assert.equal(required.trigger.channel, 'finding');
+    assert.equal(required.failedApproachSet.approachBasisIdentities.length, 2);
+    assert.equal(historicalState.overallUsed, 2);
+
+    const request = focusedRunnerRequest(root, { retainedEvidence });
+    request.state.policy.overall = 'unlimited';
+    request.state.policy.recovery = 'unlimited';
+    delete request.assessment;
+    delete request.specialistResult;
+    const input = seededRunnerInput(root, retainedEvidence);
+    const inspection = runCommand('inspect', { trigger: 'explicit-inspection', input }).inspection;
+    assert.deepEqual(inspection.blockers, []);
+    assert.equal(inspection.overflow, false);
+    const retention = inspectRetainedOccurrencesV2(inspection);
+    assert.equal(retention.blocker, null);
+    assert.deepEqual(deriveEarliestRepeatRelationshipV1(retention.retained), required.trigger);
+    assert.ok(feature029PacketBytes(inspection) < 262_144);
+    // The same complete companions already restore through the semantic adapter.
+    const control = createHostAdapter(sealedInitial({ state: request.state }));
+    const resumed = control.run(sealedRequest(control, 'advance-governance', {
+      governance: { action: 'resume-learning', input },
+    }));
+    assert.equal(resumed.outcome, 'accepted');
+    assert.equal(resumed.reason, 'governance-resumed');
+    assert.deepEqual(resumed.session.acceptedState.learningGovernance, required);
+
+    const files = feature060Preimages(root);
+    const checkpoint = memoryCheckpointStore();
+    const calls = [];
+    const challenges = [];
+    const result = await runHostAdapter(request, {
+      checkpoint: checkpoint.port,
+      runtime: {
+        identity: sha256('fresh-required-learning-admission'),
+        invoke(command, lowLevelRequest) {
+          calls.push({ command, request: clone(lowLevelRequest) });
+          return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+        },
+      },
+      exchange(challenge) {
+        challenges.push(clone(challenge));
+        if (challenge.kind === 'assessment') {
+          return focusedChallengeResponse(challenge, 'assessment', focusedChallengeAssessment(challenge, {
+            action: 'address-review',
+            materialInputs: {
+              targets: ['src/admission-review-repair.mjs'],
+              operations: ['address-review'],
+              checks: ['review', 'verification'],
+            },
+          }));
+        }
+        return focusedCancelResponse(challenge);
+      },
+    });
+    const state = focusedRunnerAcceptedState(result);
+    context.diagnostic(JSON.stringify({
+      challenges: challenges.map(challenge => challenge.kind),
+      runtime: calls.map(call => `${call.command}:${call.request.mode ?? ''}`),
+      overallUsed: state.overallUsed, recoveryUsed: state.recoveryUsed, pending: state.pending.length,
+    }));
+    assert.deepEqual(challenges.map(challenge => challenge.kind), ['learning-review']);
+    assert.equal(result.reason, 'cancelled');
+    assert.equal(result.outcome, 'ended');
+    assert.equal(calls.some(call => ['authorize', 'complete'].includes(call.command)), false);
+    assert.ok(result.steps.some(step => step.step === 'advance-governance:resume-learning'
+      && step.outcome === 'accepted' && step.reason === 'governance-resumed'));
+    assert.equal(challenges[0].governanceIdentity, required.governanceIdentity);
+    assert.deepEqual(focusedRunnerAcceptedState(challenges[0]).learningGovernance, required);
+    assert.deepEqual(state, { ...request.state, learningGovernance: required });
+    for (const call of calls) {
+      for (const field of RETAINED_STREAMS) {
+        assert.deepEqual(call.request.input[field].slice(0, retainedEvidence[field].length),
+          retainedEvidence[field], `${call.command}:${field}`);
+      }
+    }
+    assert.equal(canonicalJson(retainedEvidence), original);
+    assert.deepEqual(feature060Preimages(root), files);
+    assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+  });
+});
+
+nodeTest('Work recovery admission: occurrence-only history rederives required learning', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const required = requiredGovernanceFixture(root);
+    const occurrences = required.governedEvents.filter(event => event.type.endsWith('occurrence'));
+    const input = sealedRetentionInput(root, occurrences, occurrences, required.streams);
+    const retainedEvidence = Object.fromEntries(RETAINED_STREAMS.map(field => [field, clone(input[field])]));
+    const original = canonicalJson(retainedEvidence);
+    const files = feature060Preimages(root);
+    const checkpoint = memoryCheckpointStore();
+    const kinds = [];
+    const request = focusedRunnerRequest(root, { retainedEvidence });
+    const result = await runHostAdapter(request, {
+      checkpoint: checkpoint.port,
+      exchange(challenge) {
+        kinds.push(challenge.kind);
+        assert.equal(challenge.kind, 'learning-review');
+        assert.deepEqual(focusedRunnerAcceptedState(challenge), {
+          ...request.state, learningGovernance: required.state.learningGovernance,
+        });
+        return focusedCancelResponse(challenge);
+      },
+    });
+    assert.deepEqual(kinds, ['learning-review']);
+    assert.equal(result.reason, 'cancelled');
+    assert.equal(result.steps.some(step => step.step.endsWith(':authorize-attempt')), false);
+    assert.equal(canonicalJson(retainedEvidence), original);
+    assert.deepEqual(feature060Preimages(root), files);
+    assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+  });
+});
+
+nodeTest('Work recovery admission: learning history without its repeat evidence refuses before admission', async context => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const required = requiredGovernanceFixture(root);
+    const selected = projectedGovernanceBranch(root, required, 'selected-alternative');
+    const requiredEvent = buildGovernanceEventV1(required.state.learningGovernance);
+    const firstAttempt = required.governedEvents.slice(0, 2);
+    const reviewedEvents = selected.learnedEvents.filter(event => !event.type.endsWith('occurrence'));
+    for (const [label, events] of [
+      ['absent occurrences', [requiredEvent]],
+      ['one attempt only', [...firstAttempt, requiredEvent]],
+      ['reviewed without occurrences', reviewedEvents],
+    ]) {
+      await context.test(label, async () => {
+        const input = sealedRetentionInput(root, events, events, required.streams);
+        const retainedEvidence = Object.fromEntries(RETAINED_STREAMS.map(field => [field, clone(input[field])]));
+        const original = canonicalJson(retainedEvidence);
+        const inspection = runCommand('inspect', {
+          trigger: 'explicit-inspection', input: seededRunnerInput(root, retainedEvidence),
+        }).inspection;
+        assert.deepEqual(inspection.blockers, []);
+        assert.equal(inspection.overflow, false);
+        const files = feature060Preimages(root);
+        const checkpoint = memoryCheckpointStore();
+        const request = focusedRunnerRequest(root, { retainedEvidence });
+        const kinds = [];
+        const result = await runHostAdapter(request, {
+          checkpoint: checkpoint.port,
+          exchange(challenge) {
+            kinds.push(challenge.kind);
+            return focusedCancelResponse(challenge);
+          },
+        });
+        assert.equal(result.outcome, 'hard-stop');
+        assert.equal(result.reason, 'evidence-incomplete');
+        assert.equal(result.blocker.subject, 'occurrence-retention');
+        assert.deepEqual(kinds, []);
+        assert.deepEqual(focusedRunnerAcceptedState(result), request.state);
+        assert.deepEqual(checkpoint.calls, []);
+        assert.equal(canonicalJson(retainedEvidence), original);
+        assert.deepEqual(feature060Preimages(root), files);
+      });
+    }
+  });
+});
+
+nodeTest('Work recovery admission: unsupported or inconsistent governance history cannot reopen learning', async context => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const required = requiredGovernanceFixture(root);
+    const governance = required.state.learningGovernance;
+    const requiredEvent = buildGovernanceEventV1(governance);
+    const occurrences = required.governedEvents.filter(event => event.type.endsWith('occurrence'));
+    const selected = projectedGovernanceBranch(root, required, 'selected-alternative');
+    const inspected = inspectedGovernanceBranch(root, selected, required);
+    const ending = createHostAdapter(sealedInitial({ state: inspected }));
+    const ended = ending.run(sealedRequest(ending, 'advance-governance', {
+      governance: {
+        action: 'controlled-end',
+        input: sealedRetentionInput(root, selected.learnedEvents, selected.learnedEvents, required.streams),
+      },
+    }));
+    assert.equal(ended.outcome, 'ended');
+    const resolvedEvent = buildGovernanceEventV1(ended.session.acceptedState.learningGovernance);
+    assert.equal(resolvedEvent.controlledEnd.governanceBranchStatus, 'resolved');
+
+    const conflicting = clone(governance);
+    conflicting.failedApproachSet.chronologyCutoff += 1;
+    const { setIdentity, ...conflictingSet } = conflicting.failedApproachSet;
+    conflicting.failedApproachSet.setIdentity = sha256(canonicalJson(conflictingSet));
+    conflicting.triggerEvidenceHash = sha256(canonicalJson({
+      trigger: conflicting.trigger,
+      failedApproachSetIdentity: conflicting.failedApproachSet.setIdentity,
+    }));
+    const foreign = clone(governance);
+    foreign.target = clone(SECOND_TARGET);
+    foreign.failedApproachSet.target = clone(SECOND_TARGET);
+    const { setIdentity: foreignSetIdentity, ...foreignSet } = foreign.failedApproachSet;
+    foreign.failedApproachSet.setIdentity = sha256(canonicalJson(foreignSet));
+    foreign.governanceIdentity = sha256(canonicalJson({
+      version: 1, target: foreign.target, repeatIdentity: sha256(canonicalJson(foreign.trigger)),
+    }));
+    foreign.triggerEvidenceHash = sha256(canonicalJson({
+      trigger: foreign.trigger, failedApproachSetIdentity: foreign.failedApproachSet.setIdentity,
+    }));
+    const staleEvents = [...occurrences, buildGovernanceEventV1({ ...governance, revision: 2 })];
+    const conflictingEvents = [...required.governedEvents, buildGovernanceEventV1(conflicting)];
+    const resolvedEvents = [...selected.learnedEvents, resolvedEvent];
+    const cases = [
+      ['missing current-run projection', occurrences, required.governedEvents],
+      ['missing lane projection', required.governedEvents, occurrences],
+      ['duplicate projection', [...required.governedEvents, requiredEvent], required.governedEvents],
+      ['stale revision', staleEvents, staleEvents],
+      ['conflicting failed set', conflictingEvents, conflictingEvents],
+      ['wrong-target governance', [...occurrences, buildGovernanceEventV1(foreign)], required.governedEvents],
+      ['reviewed history', selected.learnedEvents, selected.learnedEvents],
+      ['partial reviewed history', selected.learnedEvents, required.governedEvents],
+      ['resolved controlled end', resolvedEvents, resolvedEvents],
+    ];
+    for (const [label, currentEvents, laneEvents] of cases) {
+      await context.test(label, async () => {
+        const input = sealedRetentionInput(root, currentEvents, laneEvents, required.streams);
+        const retainedEvidence = Object.fromEntries(RETAINED_STREAMS.map(field => [field, clone(input[field])]));
+        const original = canonicalJson(retainedEvidence);
+        const inspection = runCommand('inspect', {
+          trigger: 'explicit-inspection', input: seededRunnerInput(root, retainedEvidence),
+        }).inspection;
+        assert.deepEqual(inspection.blockers, []);
+        assert.equal(inspection.overflow, false);
+        assert.equal(inspectRetainedOccurrencesV2(inspection).blocker, null);
+        const files = feature060Preimages(root);
+        const checkpoint = memoryCheckpointStore();
+        const calls = [];
+        const kinds = [];
+        const request = focusedRunnerRequest(root, { retainedEvidence });
+        const result = await runHostAdapter(request, {
+          checkpoint: checkpoint.port,
+          runtime: {
+            identity: sha256(`governance-history:${label}`),
+            invoke(command, lowLevelRequest) {
+              calls.push(`${command}:${lowLevelRequest.mode ?? ''}`);
+              return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+            },
+          },
+          exchange(challenge) {
+            kinds.push(challenge.kind);
+            return focusedCancelResponse(challenge);
+          },
+        });
+        assert.equal(result.outcome, 'hard-stop');
+        assert.equal(result.reason, 'governance-unresolved');
+        assert.deepEqual(kinds, []);
+        assert.deepEqual(calls, ['inspect:', 'transition:resume-governance']);
+        assert.deepEqual(focusedRunnerAcceptedState(result), request.state);
+        assert.equal(result.acceptedRevision, 0);
+        assert.equal(canonicalJson(retainedEvidence), original);
+        assert.deepEqual(feature060Preimages(root), files);
+        assert.ok(checkpoint.pair.claim);
+        assert.ok(checkpoint.pair.checkpoint);
+        assert.equal(checkpoint.calls.includes('clear'), false);
+      });
+    }
+  });
+});
+
+nodeTest('Work recovery admission: only a freshly governed alternative can charge the new run', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const historical = await observedRunnerHistory(
+      root, 'governed-admission', [1, 1], undefined, 'governed-review-finding',
+    );
+    const retainedEvidence = historical.retainedEvidence;
+    const original = canonicalJson(retainedEvidence);
+    const originalEvents = t003LaneEvents(root, TARGET).target;
+    const request = focusedRunnerRequest(root, { retainedEvidence });
+    delete request.assessment;
+    delete request.specialistResult;
+    const calls = [];
+    const kinds = [];
+    const checkpoint = memoryCheckpointStore();
+    let alternative;
+    const result = await runHostAdapter(request, {
+      checkpoint: checkpoint.port,
+      runtime: {
+        identity: sha256('fresh-governed-alternative'),
+        invoke(command, lowLevelRequest) {
+          calls.push(`${command}:${lowLevelRequest.mode ?? ''}`);
+          return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+        },
+      },
+      exchange(challenge) {
+        kinds.push(challenge.kind);
+        const state = focusedRunnerAcceptedState(challenge);
+        assert.deepEqual(state.completed, []);
+        if (challenge.kind === 'learning-review') {
+          assert.equal(state.overallUsed, 0);
+          assert.deepEqual(state.pending, []);
+          assert.deepEqual(state.recoveryUsed, []);
+          const governed = governanceReview(state, 'selected-alternative');
+          alternative = governed.credible;
+          return focusedChallengeResponse(challenge, 'review', governed.review);
+        }
+        if (challenge.kind === 'assessment') {
+          assert.equal(state.learningGovernance.phase, 'alternative-inspected');
+          assert.equal(state.overallUsed, 0);
+          assert.deepEqual(state.pending, []);
+          assert.deepEqual(state.recoveryUsed, []);
+          return focusedChallengeResponse(challenge, 'assessment', focusedChallengeAssessment(challenge, {
+            action: 'retry-task', materialInputs: clone(alternative.approachBasis.materialInputs),
+          }));
+        }
+        assert.equal(challenge.kind, 'specialist-pair');
+        assert.equal(state.overallUsed, 1);
+        assert.equal(state.recoveryUsed[0].count, 1);
+        assert.equal(state.pending.length, 1);
+        assert.equal(state.learningGovernance.selectedAlternativeIdentity, alternative.alternativeIdentity);
+        return focusedCancelResponse(challenge);
+      },
+    });
+    assert.equal(result.reason, 'cancelled', `${result.reason}: ${result.detail ?? ''}`);
+    assert.deepEqual(kinds, ['learning-review', 'assessment', 'specialist-pair']);
+    assert.equal(calls.filter(call => call === 'authorize:recovery').length, 1);
+    assert.ok(calls.indexOf('transition:resume-governance') < calls.indexOf('learn:'));
+    assert.ok(calls.indexOf('transition:bind-post-learning-inspection') < calls.indexOf('authorize:recovery'));
+    assert.equal(calls.some(call => call.startsWith('complete:')), false);
+    assert.deepEqual(t003LaneEvents(root, TARGET).target.slice(0, originalEvents.length), originalEvents);
+    assert.equal(canonicalJson(retainedEvidence), original);
+    assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+  });
+});
 
 nodeTest('Feature 060 T001: original runtime-port captures seed a fresh run without adopting old authority', async () => {
   await withSealedWorkspace(async root => {
@@ -17458,15 +18681,70 @@ function changedRetainedCapture(entry, mutate) {
   }).currentRun[0];
 }
 
+/** @param {Record<string, unknown>} retained */
+function legacyCaptureOnlyEvidence(retained) {
+  const legacy = clone(retained);
+  // Keep retention oracles on exact capture-only companions. Readable reviews
+  // require their verification earlier, during Inspection.
+  for (const field of ['verification', 'review', 'lint']) {
+    legacy[field] = retained[field].map(entry => {
+      const before = JSON.parse(Buffer.from(entry.bytes.base64, 'base64'));
+      assert.equal(before.records.length, 2, `${field}: actual capture and text`);
+      const captured = changedRetainedCapture(entry, body => {
+        body.records = [body.records[0]];
+      });
+      const after = JSON.parse(Buffer.from(captured.bytes.base64, 'base64'));
+      assert.deepEqual(after.records, [before.records[0]], `${field}: exact original capture`);
+      return captured;
+    });
+  }
+  return legacy;
+}
+
 nodeTest('Feature 060 T001: missing, conflicting, and wrongly bound original sources refuse before admission', async () => {
   await withSealedWorkspace(async root => {
     writeSealedTaskState(root);
     const observed = await observedRunnerHistory(root, 'source-bindings', [1]);
     const original = observed.retainedEvidence;
+    const originalBytes = canonicalJson(original);
+    const legacy = legacyCaptureOnlyEvidence(original);
     const files = laneSurfaceDigests(root);
+    const controlRequest = focusedRunnerRequest(root, { retainedEvidence: legacy });
+    delete controlRequest.assessment;
+    delete controlRequest.specialistResult;
+    const controlCheckpoint = memoryCheckpointStore();
+    const controlCalls = [];
+    const controlChallenges = [];
+    const control = await runHostAdapter(controlRequest, {
+      checkpoint: controlCheckpoint.port,
+      runtime: {
+        identity: sha256('legacy-source-bindings'),
+        invoke(command, request) {
+          controlCalls.push(command);
+          return { status: 'returned', value: runCommand(command, request) };
+        },
+      },
+      exchange(challenge) {
+        controlChallenges.push(challenge.kind);
+        assert.equal(challenge.kind, 'assessment', 'valid legacy history reaches fresh Assessment');
+        assert.deepEqual(focusedRunnerAcceptedState(challenge), controlRequest.state);
+        return focusedCancelResponse(challenge);
+      },
+    });
+    assert.equal(control.outcome, 'ended');
+    assert.equal(control.reason, 'cancelled');
+    assert.deepEqual(controlCalls, ['inspect', 'inspect']);
+    assert.deepEqual(controlChallenges, ['assessment']);
+    assert.deepEqual(focusedRunnerAcceptedState(control), controlRequest.state);
+    assert.deepEqual(controlCheckpoint.pair, { claim: null, checkpoint: null });
+    assert.deepEqual(laneSurfaceDigests(root), files);
+    assert.equal(canonicalJson(original), originalBytes, 'legacy control does not rewrite fresh captures');
     const cases = [
       ['missing current-run', value => { value.currentRun = []; }, 'missing current-run'],
       ['missing verification', value => { value.verification = []; }, 'missing verification'],
+      ['missing verification with fresh readable review', value => {
+        value.verification = [];
+      }, 'invalid review', original],
       ['missing review', value => { value.review = []; }, 'missing review'],
       ['partial history', value => {
         value.currentRun[0] = changedRetainedCapture(value.currentRun[0], body => { body.records.pop(); });
@@ -17526,8 +18804,8 @@ nodeTest('Feature 060 T001: missing, conflicting, and wrongly bound original sou
         ).toString('base64') };
       }, 'invalid current-run'],
     ];
-    for (const [label, mutate, detail] of cases) {
-      const retainedEvidence = clone(original);
+    for (const [label, mutate, detail, companions = legacy] of cases) {
+      const retainedEvidence = clone(companions);
       mutate(retainedEvidence);
       const checkpoint = memoryCheckpointStore();
       let calls = 0;
@@ -18345,11 +19623,21 @@ nodeTest('Feature 060 T003: early source refusals preserve bound facts through t
     writeSealedTaskState(root);
     const retained = (await observedRunnerHistory(root, 't003-early-history', [0])).retainedEvidence;
     const original = canonicalJson(retained);
+    const legacy = legacyCaptureOnlyEvidence(retained);
     const files = feature060Preimages(root);
+    const control = await probeRetainedAdmission(root, legacy);
+    assert.equal(control.result.outcome, 'ended');
+    assert.equal(control.result.reason, 'cancelled');
+    assert.deepEqual(control.kinds, ['assessment'], 'complete legacy companions reach fresh Assessment');
+    assert.equal(control.inputs.length, 2);
+    assert.deepEqual(focusedRunnerAcceptedState(control.result), emptyState('autonomous'));
+    assert.deepEqual(control.checkpoint.pair, { claim: null, checkpoint: null });
+    assert.deepEqual(feature060Preimages(root), files);
     for (const field of ['currentRun', 'verification', 'review']) {
-      const incomplete = { ...clone(retained), [field]: [] };
+      const incomplete = { ...clone(legacy), [field]: [] };
       const probe = await probeRetainedAdmission(root, incomplete);
       const result = probe.result;
+      assert.equal(result.outcome, 'hard-stop', field);
       assert.equal(result.reason, 'evidence-incomplete', field);
       assert.equal(result.blocker.subject, 'occurrence-retention', field);
       assert.equal(result.haltReport.subject, result.blocker.subject, field);
@@ -18360,7 +19648,22 @@ nodeTest('Feature 060 T003: early source refusals preserve bound facts through t
       assert.deepEqual(probe.kinds, [], field);
       assert.deepEqual(focusedRunnerAcceptedState(result), emptyState('autonomous'), field);
       assert.equal(Object.hasOwn(result, 'capacity'), false, field);
+      assert.equal(result.hostRevision, 0, field);
+      assert.equal(result.acceptedRevision, 0, field);
     }
+    const fresh = await probeRetainedAdmission(root, { ...clone(retained), verification: [] });
+    assert.equal(fresh.result.outcome, 'hard-stop');
+    assert.equal(fresh.result.reason, 'evidence-incomplete');
+    assert.equal(fresh.result.detail, 'retainedEvidence: invalid review');
+    assert.equal(Object.hasOwn(fresh.result, 'blocker'), false, 'readable binding fails before a bound Inspection');
+    assert.equal(Object.hasOwn(fresh.result, 'capacity'), false);
+    assert.deepEqual(fresh.result.haltReport, { halted: true, resolved: false, unresolved: ['target', 'subject'] });
+    assert.deepEqual(fresh.checkpoint.calls, []);
+    assert.deepEqual(fresh.inputs, []);
+    assert.deepEqual(fresh.kinds, []);
+    assert.deepEqual(focusedRunnerAcceptedState(fresh.result), emptyState('autonomous'));
+    assert.equal(fresh.result.hostRevision, 0);
+    assert.equal(fresh.result.acceptedRevision, 0);
     const temp = fs.mkdtempSync(path.join(root, 't003-cli-'));
     const execution = await runFocusedRunnerCli(focusedRunnerRequest(root), () => {
       assert.fail('missing sources must refuse before a challenge');
@@ -18506,8 +19809,8 @@ nodeTest('Feature 060 T003: a synthetic non-overflow governance refusal preserve
     const unresolved = { halted: true, resolved: false, unresolved: ['reason', 'subject'] };
     assert.deepEqual(describeUnattendedHalt(runtime.transition, runtime.inspection), unresolved);
 
-    // The runner has no resume-learning intent. Exercise its supported review
-    // route with the real reducer's still-unprojected state instead: that route
+    // A carried seal stays on the runner's supported review route. Exercise
+    // the real reducer's still-unprojected state instead: that route
     // refuses an outstanding projection commitment, not a missing old snapshot.
     const initialState = required.unprojectedState;
     validateRunState(initialState);

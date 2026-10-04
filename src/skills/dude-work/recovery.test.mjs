@@ -23,6 +23,7 @@ import {
 } from '../dude-lightweight-execution/board.mjs';
 import * as recoveryRuntime from './recovery.mjs';
 import { createHostAdapter } from './host-adapter.mjs';
+import { buildSpecialistAttestation } from './specialist-attestation.mjs';
 import {
   acquisitionMetrics,
   buildRetentionPair,
@@ -37,6 +38,7 @@ import {
   readRetentionEpisodeFixture,
   renderPrivateModelProjection,
   withHistoryIncidentWorkspace,
+  withReferenceWorkspace,
 } from '../../../scripts/fixtures/064-work-receipt-overflow-handling/model-view-test-helpers.mjs';
 
 import {
@@ -20645,6 +20647,120 @@ test('T005 incident contracts: the exact-evidence branch derives intent, events,
   });
 });
 
+test('T005 incident recovery admission: original correction resumes required learning through the adapter', () => {
+  withIncidentWorkspace((root) => {
+    const evidence = t005IncidentEvidence(root);
+    const state = autonomousState();
+    const input = cliInput(t005IncidentInput(root, evidence.events, evidence.fixtures));
+    const corrected = t003Invoke('transition', {
+      mode: 'incident-correction',
+      state,
+      input,
+      incident: t005AcceptedEvidence(root),
+    }).transition;
+    assert.equal(corrected.prepared, true);
+    assert.equal(corrected.branch, 'exact-evidence');
+    assert.deepEqual(corrected.state, state);
+    assert.equal(corrected.supersessionEvent.resultingTargetState, 'in-progress-learning-required');
+    const governance = t002RequiredGovernance(evidence.events);
+    assert.deepEqual(corrected.governanceBatch.events, [recoveryRuntime.buildGovernanceEventV1(governance)]);
+    const governedEvents = [...evidence.events, ...corrected.governanceBatch.events];
+    const companionsBefore = canonicalJson(evidence.fixtures);
+
+    for (const events of [governedEvents, [...governedEvents, corrected.supersessionEvent]]) {
+      const retainedInput = t005IncidentInput(root, events, evidence.fixtures, '~', null);
+      const inspection = inspect(retainedInput);
+      assert.deepEqual(inspection.blockers, []);
+      assert.equal(inspection.overflow, false);
+      assert.equal(inspectRetainedOccurrencesV2(inspection).blocker, null);
+      const adapter = createHostAdapter({
+        state, target: clone(F7_TARGET), inspectionIdentity: inspection.evidenceHash,
+      }, t018Ports());
+      const files = t018WorkspaceSnapshot(root);
+      const resumed = adapter.run(t018Request(adapter, 'advance-governance', {
+        governance: { action: 'resume-learning', input: cliInput(retainedInput) },
+      }));
+      assert.equal(resumed.outcome, 'accepted', resumed.reason);
+      assert.equal(resumed.reason, 'governance-resumed');
+      assert.deepEqual(resumed.session.acceptedState, { ...state, learningGovernance: governance });
+      assert.deepEqual(t018WorkspaceSnapshot(root), files);
+    }
+    assert.deepEqual(state, autonomousState());
+    assert.equal(canonicalJson(evidence.fixtures), companionsBefore);
+  });
+});
+
+test('T005 incident recovery admission: supersession never bypasses exact evidence or dual retention', () => {
+  withIncidentWorkspace((root) => {
+    const evidence = t005IncidentEvidence(root);
+    const state = autonomousState();
+    const input = cliInput(t005IncidentInput(root, evidence.events, evidence.fixtures));
+    const corrected = t003Invoke('transition', {
+      mode: 'incident-correction',
+      state,
+      input,
+      incident: t005AcceptedEvidence(root),
+    }).transition;
+    assert.equal(corrected.prepared, true);
+    const incident = corrected.supersessionEvent;
+    const governedEvents = [...evidence.events, ...corrected.governanceBatch.events];
+    const events = [...governedEvents, incident];
+    const changedIncident = (overrides) => {
+      const { eventHash, ...body } = incident;
+      const changed = { ...body, ...overrides };
+      return { ...changed, eventHash: sha256(canonicalJson(changed)) };
+    };
+    const otherInventory = changedIncident({ evidenceInventoryHash: t005Hash('other-incident-evidence') });
+    const otherIncident = changedIncident({ incidentIdentity: t005Hash('other-incident') });
+    const incomplete = changedIncident({
+      branch: 'evidence-incomplete', resultingTargetState: 'blocked-evidence-incomplete',
+    });
+    for (const event of [otherInventory, otherIncident, incomplete]) {
+      recoveryRuntime.validateIncidentSupersessionEventV1(event);
+    }
+    const staleGovernance = recoveryRuntime.buildGovernanceEventV1({
+      ...t002RequiredGovernance(evidence.events), revision: 2,
+    });
+    const wrongTarget = changedIncident({ target: clone(TARGET) });
+    const invalidHash = { ...incident, eventHash: t005Hash('invalid-incident-hash') };
+    const unresolved = 'governance-unresolved';
+    const incompleteRetention = 'occurrence-retention-incomplete';
+    const cases = [
+      ['missing current-run incident', governedEvents, events, unresolved],
+      ['missing lane incident', events, governedEvents, unresolved],
+      ['duplicate current-run incident', [...events, incident], events, unresolved],
+      ['duplicate lane incident', events, [...events, incident], unresolved],
+      ['conflicting surfaces', events, [...governedEvents, otherIncident], unresolved],
+      ['wrong evidence inventory', [...governedEvents, otherInventory], [...governedEvents, otherInventory], unresolved],
+      ['incomplete branch', [...governedEvents, incomplete], [...governedEvents, incomplete], unresolved],
+      ['missing required projection', [...evidence.events, incident], [...evidence.events, incident], unresolved],
+      ['stale required revision', [...evidence.events, staleGovernance, incident], [...evidence.events, staleGovernance, incident], unresolved],
+      ['wrong incident target', [...governedEvents, wrongTarget], [...governedEvents, wrongTarget], incompleteRetention],
+      ['invalid incident hash', [...governedEvents, invalidHash], [...governedEvents, invalidHash], incompleteRetention],
+      ['missing original companions', events, events, incompleteRetention],
+    ];
+    for (const [label, currentEvents, laneEvents, reason] of cases) {
+      const retainedInput = t005IncidentInput(
+        root, laneEvents, label === 'missing original companions' ? evidence.fixtures.slice(0, 1) : evidence.fixtures,
+        '~', null,
+      );
+      retainedInput.currentRun = [capture(F7_TARGET, 'failed', currentEvents.map((event) => ({ event })))];
+      const inspection = inspect(retainedInput);
+      assert.deepEqual(inspection.blockers, [], label);
+      assert.equal(inspection.overflow, false, label);
+      if (reason === unresolved) assert.equal(inspectRetainedOccurrencesV2(inspection).blocker, null, label);
+      const files = t018WorkspaceSnapshot(root);
+      const refused = t003Invoke('transition', {
+        mode: 'resume-governance', state, input: cliInput(retainedInput),
+      }).transition;
+      assert.equal(refused.resumed, false, label);
+      assert.equal(refused.reason, reason, label);
+      assert.deepEqual(refused.state, state, label);
+      assert.deepEqual(t018WorkspaceSnapshot(root), files, label);
+    }
+  });
+});
+
 test('cross-invocation chronology: incident evidence keeps the retained higher-to-lower finding order', () => {
   withIncidentWorkspace(root => {
     const fixtures = [3, 1].map((attemptOrdinal, index) => t002PendingFixture({
@@ -22960,9 +23076,9 @@ function t003WriterAcceptedTypes() {
   return new Set(accepted);
 }
 
-/** @param {string} root @param {Record<string, unknown>[]} currentEvents @param {Record<string, unknown>[]} laneEvents @param {ReturnType<typeof t002PendingFixture>} trustedFixture */
-function t003ReaderAuthorization(root, currentEvents, laneEvents, trustedFixture) {
-  const input = t002RetentionInput(root, currentEvents, laneEvents, [trustedFixture]);
+/** @param {string} root @param {Record<string, unknown>[]} currentEvents @param {Record<string, unknown>[]} laneEvents @param {ReturnType<typeof t002PendingFixture>[]} trustedFixtures */
+function t003ReaderAuthorization(root, currentEvents, laneEvents, trustedFixtures) {
+  const input = t002RetentionInput(root, currentEvents, laneEvents, trustedFixtures);
   return runtimeFunction('runCommand')('authorize', {
     trigger: 'post-failure',
     state: autonomousState(),
@@ -22987,10 +23103,9 @@ test('T003 round-trip invariant independently observes writer and reader accepta
     const occurrenceByType = Object.fromEntries(
       occurrenceCapture.occurrenceEvents.map((event) => [event.type, event]),
     );
-    const repeatEvents = [
-      t002ApproachEvent({ attemptOrdinal: 1, basisLabel: 't003-round-trip' }),
-      t002ApproachEvent({ attemptOrdinal: 2, basisLabel: 't003-round-trip' }),
-    ];
+    const repeated = t002FinalizeRepeatChannel(root, 'approach');
+    const repeatEvents = repeated.allEvents;
+    const trustedFixtures = [trustedFixture, repeated.first, repeated.second];
     const governance = t002RequiredGovernance(repeatEvents);
     const failedSet = /** @type {Record<string, unknown>} */ (governance.failedApproachSet);
     const failedBases = /** @type {string[]} */ (failedSet.approachBasisIdentities);
@@ -23003,7 +23118,7 @@ test('T003 round-trip invariant independently observes writer and reader accepta
     const eventFixtures = {
       'approach-occurrence': [occurrenceByType['approach-occurrence']],
       'finding-occurrence': occurrenceCapture.occurrenceEvents,
-      'learning-review': [recoveryRuntime.buildLearningReviewEventV2({
+      'learning-review': [...repeatEvents, recoveryRuntime.buildLearningReviewEventV2({
         governanceIdentity: governance.governanceIdentity,
         target: governance.target,
         trigger: governance.trigger,
@@ -23015,7 +23130,7 @@ test('T003 round-trip invariant independently observes writer and reader accepta
         outcome: 'selected-alternative',
         selectedAlternativeIdentity: credible.alternativeIdentity,
       })],
-      'learning-governance': [recoveryRuntime.buildGovernanceEventV1(governance)],
+      'learning-governance': [...repeatEvents, recoveryRuntime.buildGovernanceEventV1(governance)],
       'incident-supersession': [t001AuditOnlyEvent()],
     };
 
@@ -23035,12 +23150,12 @@ test('T003 round-trip invariant independently observes writer and reader accepta
       }
       const corruptEvents = clone(events);
       corruptEvents[targetIndexes[0]].eventHash = sha256(`feature-010-t003-corrupt-${type}`);
-      const declaration = /** @type {{relevance: string}} */ (recoveryRuntime.LANE_EVENT_TYPES[type]);
-      const currentEvents = declaration.relevance === 'retention-relevant' ? events : [];
-      const corruptCurrentEvents = declaration.relevance === 'retention-relevant' ? corruptEvents : [];
+      const retained = (event) => recoveryRuntime.LANE_EVENT_TYPES[event.type].relevance === 'retention-relevant';
+      const currentEvents = events.filter(retained);
+      const corruptCurrentEvents = corruptEvents.filter(retained);
 
-      const accepted = t003ReaderAuthorization(root, currentEvents, events, trustedFixture);
-      const refused = t003ReaderAuthorization(root, corruptCurrentEvents, corruptEvents, trustedFixture);
+      const accepted = t003ReaderAuthorization(root, currentEvents, events, trustedFixtures);
+      const refused = t003ReaderAuthorization(root, corruptCurrentEvents, corruptEvents, trustedFixtures);
       assert.equal(accepted.authorized, true, `${type} valid reader fixture must authorize`);
       assert.equal(refused.authorized, false, `${type} corrupt reader fixture must be rejected`);
       assert.equal(refused.reason, 'evidence-incomplete', `${type} corrupt reader reason`);
@@ -23051,7 +23166,7 @@ test('T003 round-trip invariant independently observes writer and reader accepta
       root,
       [],
       [{ type: T003_UNDECLARED_EVENT_TYPE, version: 1 }],
-      trustedFixture,
+      trustedFixtures,
     );
 
     // Assert
@@ -26330,6 +26445,1377 @@ function feature064TrustedItem(source, capture, state) {
   return evidence(source, canonicalJson({ target: capture.target, state, records: [capture] }), true);
 }
 
+/** Independent preimage calculation: do not use the new receiver helper in the oracle.
+ * @param {string} domain @param {unknown} material */
+function feature074SemanticIdentity(domain, material) {
+  return sha256(canonicalJson({ type: `specialist-attestation:${domain}`, version: 1, material }));
+}
+
+/**
+ * Synthetic sole results use the existing capture-only producer. The test, not
+ * the producer, supplies literal readable records in canonical envelope order.
+ * @param {{ordinal?:number, count?:number, findingCount?:number, accepted?:boolean,
+ *   checks?:{definition:string,outcome:string,evidence:string}[]}} [options]
+ */
+function feature074Pair(options = {}) {
+  const ordinal = options.ordinal ?? 1;
+  const checks = options.checks ?? Array.from({ length: options.count ?? 2 }, (_, index) => ({
+    definition: `check ${index}: preserve "quotes", \\paths, café, e\u0301, 🧪\r\n`,
+    outcome: index === 0 ? 'failed' : 'passed',
+    evidence: `result ${index}\n  exact whitespace\tand Unicode Ω`,
+  }));
+  const materialInputs = {
+    targets: ['src/readable-fixture.mjs'], operations: ['retry-task'], checks: ['verification'],
+  };
+  const common = {
+    target: clone(TARGET),
+    sourceRevision: `synthetic-readable-revision-${ordinal}`,
+    inspectedEvidenceHash: sha256(`readable-inspection-${ordinal}`),
+    resultMaterial: `synthetic sole result ${ordinal}`,
+  };
+  const attempt = {
+    ordinal,
+    authorizationEvidenceHash: sha256(`readable-authorization-${ordinal}`),
+    approachBasis: {
+      version: 1, target: clone(TARGET), action: 'retry-task', materialInputs,
+      mechanismIdentities: [], assumptionIdentities: [],
+      evidenceAcquisitionIdentities: [], validationPlanIdentities: [],
+    },
+  };
+  const tester = { role: 'Tester', occurrence: 1 };
+  const reviewer = { role: 'Reviewer', occurrence: 1 };
+  const verificationInput = {
+    kind: 'verification',
+    context: { ...clone(common), attempt, dispatch: tester },
+    result: { ...clone(common), attemptOrdinal: ordinal, dispatch: tester, checks },
+  };
+  const verificationCapture = buildSpecialistAttestation(verificationInput);
+  const verification = recoveryRuntime.normalizeVerificationEnvelopeV2(verificationCapture);
+  const sourceFindings = options.accepted ? [] : [
+    {
+      basis: {
+        expectation: { kind: 'expected-condition', reference: 'the bound check must pass\n' },
+        subjects: ['src/readable-fixture.mjs'], failureClass: 'verification-failure',
+        checkDefinition: checks[0].definition,
+      },
+      observation: { kind: 'check-result' },
+    },
+    {
+      basis: {
+        expectation: { kind: 'governing-rule', reference: 'preserve all supplied evidence exactly' },
+        subjects: ['src/readable-fixture.mjs'], failureClass: 'semantic-loss',
+        checkDefinition: checks.at(-1).definition,
+      },
+      observation: { kind: 'observed-evidence', evidence: 'observed "rejection" 🧪\r\n  no approval' },
+    },
+  ];
+  const findings = options.findingCount === undefined ? sourceFindings
+    : Array.from({ length: options.findingCount }, (_, index) => {
+      const finding = clone(sourceFindings[index % sourceFindings.length]);
+      finding.basis.expectation.reference += ` ${index}`;
+      return finding;
+    });
+  const reviewInput = {
+    kind: 'independent-review',
+    context: {
+      ...clone(common), attempt, dispatch: reviewer, reviewOrdinal: 1,
+      verification: { capture: verificationCapture, dispatch: tester },
+    },
+    result: {
+      ...clone(common), attemptOrdinal: ordinal, dispatch: reviewer, reviewOrdinal: 1,
+      verdict: options.accepted ? 'accepted' : 'rejected', findings,
+    },
+  };
+  const reviewCapture = buildSpecialistAttestation(reviewInput);
+  const review = recoveryRuntime.normalizeIndependentReviewEnvelopeV2(reviewCapture, verification);
+  const verificationText = {
+    type: 'verification-text', version: 1,
+    checks: verification.checks.map(check => {
+      const row = checks.find(candidate => (
+        feature074SemanticIdentity('check-definition', candidate.definition) === check.definitionIdentity
+      ));
+      assert.ok(row, 'every envelope check has its exact source row');
+      return { definition: row.definition, evidence: row.evidence };
+    }),
+  };
+  const reviewText = feature074ReviewText(review, findings);
+  return {
+    verificationInput, reviewInput, verificationCapture, reviewCapture, verification, review,
+    verificationText, reviewText,
+    verificationState: checks.some(check => check.outcome === 'failed') ? 'failed' : 'passed',
+  };
+}
+
+/** @param {Record<string,unknown>} review @param {Record<string,unknown>[]} findings */
+function feature074ReviewText(review, findings) {
+  return {
+    type: 'independent-review-text', version: 1,
+    findings: review.findings.map(finding => {
+      const row = findings.find(candidate => feature074SemanticIdentity(
+        'finding-expectation', candidate.basis.expectation,
+      ) === finding.basis.expectation.identity);
+      assert.ok(row, 'every envelope finding has its exact source row');
+      return {
+        expectationReference: row.basis.expectation.reference,
+        checkDefinition: row.basis.checkDefinition,
+        ...(row.observation.kind === 'observed-evidence'
+          ? { observedEvidence: row.observation.evidence } : {}),
+      };
+    }),
+  };
+}
+
+/** @param {string} source @param {string} state @param {unknown[]} records */
+function feature074Item(source, state, records) {
+  return evidence(source, canonicalJson({ target: TARGET, state, records }), true);
+}
+
+/** @param {ReturnType<typeof feature074Pair>} pair */
+function feature074FreshItems(pair) {
+  return [
+    feature074Item('review', pair.review.verdict, [pair.reviewCapture, pair.reviewText]),
+    feature074Item('verification', pair.verificationState, [pair.verificationCapture, pair.verificationText]),
+  ];
+}
+
+/** @param {Record<string, unknown>} original @param {Record<string, unknown>} text */
+function feature074Attachment(original, text) {
+  const body = JSON.parse(original.text);
+  assert.equal(body.records.length, 1);
+  return {
+    type: 'readable-evidence-attachment', version: 1,
+    reference: {
+      sourceCaptureIdentity: recoveryRuntime.trustedSourceCaptureIdentityV2(body.records[0]),
+      sourceOutcomeHash: original.sha256,
+    },
+    text: clone(text),
+  };
+}
+
+/** Rebind every transport hash so a negative isolates the intended semantic guard.
+ * @param {Record<string,unknown>} original @param {(body:Record<string,unknown>)=>void} change */
+function feature074ChangedCapture(original, change) {
+  const body = JSON.parse(Buffer.from(original.bytes.base64, 'base64').toString('utf8'));
+  delete body.envelopeIdentity;
+  change(body);
+  const envelope = t002WithIdentity(body);
+  const bytes = recoveryRuntime.capturedBytesV1(canonicalJson(envelope));
+  return { ...clone(original), target: clone(body.target), outcomeHash: bytes.sha256, bytes };
+}
+
+/** Public collected transport for normalized fixture items.
+ * @param {Record<string,unknown>[]} items */
+function feature074Raw(items) {
+  const raw = rawInputs();
+  for (const item of items) {
+    const body = JSON.parse(item.text);
+    assert.ok(['verification', 'review', 'lint', 'current-run'].includes(item.source));
+    const field = item.source === 'current-run' ? 'currentRun' : item.source;
+    raw[field].push(capture(body.target, body.state, body.records));
+  }
+  return raw;
+}
+
+test('Feature 074 T001: shared semantic identity preserves the producer calculation and capture-only bytes', () => {
+  const identity = runtimeFunction('specialistSemanticIdentityV1');
+  for (const [domain, material] of [
+    ['check-definition', ' exact e\u0301 🧪\r\n'],
+    ['check-evidence', 'failed, not passed'],
+    ['finding-expectation', { kind: 'governing-rule', reference: 'literal reference' }],
+    ['finding-observation', 'literal observation'],
+    ['source-revision', 'synthetic revision'],
+    ['result', 'synthetic result'],
+    ['dispatch-authority', { kind: 'verification', role: 'Tester' }],
+    ['dispatch-invocation', { occurrence: 1 }],
+  ]) assert.equal(identity(domain, material), feature074SemanticIdentity(domain, material));
+  const pair = feature074Pair();
+  assert.deepEqual(buildSpecialistAttestation(pair.verificationInput), pair.verificationCapture);
+  assert.deepEqual(buildSpecialistAttestation(pair.reviewInput), pair.reviewCapture);
+  assert.deepEqual(Object.keys(pair.verificationCapture).sort(), ['authority', 'bytes', 'outcomeHash', 'state', 'target']);
+  assert.equal(pair.verification.checks[0].definitionIdentity, feature074SemanticIdentity(
+    'check-definition', pair.verificationText.checks[0].definition,
+  ));
+});
+
+test('Feature 074 T001: the immutable hash-only reference retains exact pre-feature Inspection and model bytes', () => {
+  withReferenceWorkspace(({ input, referenceBytes }) => {
+    const before = sha256(referenceBytes);
+    const inspection = recoveryRuntime.runCommand('inspect', {
+      trigger: 'explicit-inspection', input,
+    }).inspection;
+    const packet = modelPacket(inspection);
+    // Measured with byte-verified pre-task recovery and capture-only producer.
+    assert.deepEqual(contentDescriptor(canonicalJson(inspection)), {
+      sha256: '61d34eea96b87317ee4727275326324c82f5132a7f447026d70e54e9c0b0613b',
+      byteLength: 159_184,
+    });
+    assert.equal(inspection.evidenceHash, '27a5036bd5b744ddb1fc57f2f3b6c0886ba95303c2a44b620f4908bd3dca1bfa');
+    assert.deepEqual(contentDescriptor(canonicalJson(packet)), {
+      sha256: '5a222a609d4584f6a22500389a1812f310af400fcd33dcddbc734b8bd8c2c34e',
+      byteLength: 107_680,
+    });
+    assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+    assert.equal(sha256(referenceBytes), before);
+  });
+});
+
+test('Feature 074 T001: fresh readable verification and both review observations expand losslessly with a lint mirror', () => {
+  const pair = feature074Pair();
+  const items = feature074FreshItems(pair);
+  items.push({ ...items[1], source: 'lint' });
+  const before = canonicalJson(items);
+  const inspection = buildInspection(TARGET, items);
+  const packet = modelPacket(inspection);
+  assert.deepEqual(packet.items.map(item => item.tag), ['review', 'verification']);
+  assert.deepEqual(packet.items[0].payload.text, pair.reviewText);
+  assert.deepEqual(packet.items[1].payload.text, pair.verificationText);
+  assert.deepEqual(packet.items[1].frames[0].occurrences, [
+    { source: 'verification', position: 1 }, { source: 'lint', position: 2 },
+  ]);
+  assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+  assert.equal(canonicalJson(items), before);
+});
+
+test('Feature 074 T001: matching historical attachments keep original captures separate and self-contained', () => {
+  const pair = feature074Pair();
+  const review = feature064TrustedItem('review', pair.reviewCapture, pair.review.verdict);
+  const verification = feature064TrustedItem('verification', pair.verificationCapture, pair.verificationState);
+  const items = [
+    review,
+    feature074Item('review', pair.review.verdict, [feature074Attachment(review, pair.reviewText)]),
+    verification,
+    feature074Item('verification', pair.verificationState, [feature074Attachment(verification, pair.verificationText)]),
+  ];
+  const inspection = buildInspection(TARGET, items);
+  const packet = modelPacket(inspection);
+  const attachments = packet.items.filter(item => item.frames.some(frame => Object.hasOwn(frame, 'reference')));
+  assert.equal(attachments.length, 2);
+  for (const item of attachments) {
+    assert.ok(item.payload.text);
+    assert.equal(item.frames.length, 1);
+    assert.equal(Object.hasOwn(item.frames[0], 'capture'), false);
+  }
+  assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+  assert.equal(inspection.items[0].text, review.text);
+  assert.equal(inspection.items[2].text, verification.text);
+});
+
+test('Feature 074 T001: semantic tamper cannot hide behind recomputed outer hashes or a wrong-target filter', () => {
+  const pair = feature074Pair();
+  const text = clone(pair.verificationText);
+  text.checks[0].definition += ' tampered';
+  const records = [pair.verificationCapture, text];
+  assert.throws(
+    () => buildInspection(TARGET, [feature074Item('verification', pair.verificationState, records)]),
+    /definition.*match/,
+  );
+  const raw = rawInputs({
+    verification: [capture({ ...TARGET, taskKey: SECOND_TASK_KEY }, pair.verificationState, records)],
+  });
+  assert.throws(() => collectEvidence(TARGET, raw), /readable.*target|target.*match/);
+});
+
+test('Feature 074 T001: accepted empty review and hash-only verification remain honest without invented preimages', () => {
+  const pair = feature074Pair({ accepted: true });
+  const items = [
+    feature074Item('review', 'accepted', [pair.reviewCapture, pair.reviewText]),
+    feature064TrustedItem('verification', pair.verificationCapture, pair.verificationState),
+  ];
+  const raw = feature074Raw(items);
+  const before = clone(raw);
+  const inspection = buildInspection(TARGET, collectEvidence(TARGET, raw));
+  const packet = modelPacket(inspection);
+  const review = packet.items.find(item => item.tag === 'review');
+  const verification = packet.items.find(item => item.tag === 'verification');
+  assert.deepEqual(review.payload.text, { type: 'independent-review-text', version: 1, findings: [] });
+  assert.equal(review.payload.verdict, 'accepted');
+  assert.deepEqual(review.payload.findings, []);
+  assert.equal(Object.hasOwn(verification.payload, 'text'), false);
+  assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+  assert.deepEqual(clone(raw), before);
+});
+
+test('Feature 074 T001: raw 16 rows fit and row 17 refuses before an identical row could disappear', async t => {
+  for (const source of ['verification', 'review']) {
+    await t.test(source, () => {
+      const pair = feature074Pair({ count: 16, findingCount: 16 });
+      const items = feature074FreshItems(pair);
+      const inspection = buildInspection(TARGET, collectEvidence(TARGET, feature074Raw(items)));
+      assert.equal(inspection.overflow, false);
+      const packet = modelPacket(inspection);
+      const field = source === 'verification' ? 'checks' : 'findings';
+      assert.equal(packet.items.find(item => item.tag === source).payload.text[field].length, 16);
+      assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+      const changed = items.map(item => {
+        if (item.source !== source) return item;
+        const body = JSON.parse(item.text);
+        body.records[1][field].push(clone(body.records[1][field][0]));
+        return feature074Item(source, body.state, body.records);
+      });
+      assert.throws(() => collectEvidence(TARGET, feature074Raw(changed)), /through 16 raw rows/);
+      assert.throws(() => buildInspection(TARGET, changed), /through 16 raw rows/);
+    });
+  }
+});
+
+test('Feature 074 T001: each semantic field enforces 16384 UTF-8 bytes, not code units or display length', async t => {
+  const maximum = '🧪'.repeat(4096);
+  assert.equal(maximum.length, 8192);
+  assert.equal(Buffer.byteLength(maximum), 16_384);
+  for (const field of ['definition', 'evidence', 'expectationReference', 'checkDefinition', 'observedEvidence']) {
+    await t.test(field, () => {
+      let pair = feature074Pair({ checks: [{
+        definition: field === 'definition' ? maximum : 'check',
+        evidence: field === 'evidence' ? maximum : 'failed observation', outcome: 'failed',
+      }] });
+      let items;
+      let source;
+      if (field === 'definition' || field === 'evidence') {
+        source = 'verification';
+        items = [feature074FreshItems(pair)[1]];
+      } else {
+        source = 'review';
+        const input = clone(pair.reviewInput);
+        input.result.findings = [clone(input.result.findings.find(
+          finding => finding.observation.kind === 'observed-evidence',
+        ))];
+        const finding = input.result.findings[0];
+        if (field === 'expectationReference') finding.basis.expectation.reference = maximum;
+        if (field === 'checkDefinition') finding.basis.checkDefinition = maximum;
+        if (field === 'observedEvidence') finding.observation.evidence = maximum;
+        const reviewCapture = buildSpecialistAttestation(input);
+        const review = recoveryRuntime.normalizeIndependentReviewEnvelopeV2(reviewCapture, pair.verification);
+        pair = { ...pair, reviewCapture, review, reviewText: feature074ReviewText(review, input.result.findings) };
+        items = feature074FreshItems(pair);
+      }
+      const inspection = buildInspection(TARGET, collectEvidence(TARGET, feature074Raw(items)));
+      assert.equal(inspection.overflow, false, 'packet capacity is not the string-bound guard');
+      assert.deepEqual(expandModelPacket(modelPacket(inspection)), originalAvailableProjection(inspection));
+      for (const replacement of [`${maximum}a`, '']) {
+        const changed = items.map(item => {
+          if (item.source !== source) return item;
+          const body = JSON.parse(item.text);
+          const rows = body.records[1][source === 'verification' ? 'checks' : 'findings'];
+          rows[0][field] = replacement;
+          return feature074Item(source, body.state, body.records);
+        });
+        assert.throws(() => buildInspection(TARGET, changed), /1 through 16384 UTF-8 bytes/);
+        assert.throws(() => collectEvidence(TARGET, feature074Raw(changed)), /1 through 16384 UTF-8 bytes/);
+      }
+    });
+  }
+});
+
+test('Feature 074 T001: missing, extra, reordered, duplicate, and tampered readable rows refuse at their guards', async t => {
+  const pair = feature074Pair();
+  const cases = [
+    ['verification missing', 'verification', text => text.checks.pop(), /cover every check/],
+    ['verification extra', 'verification', text => text.checks.push({ definition: 'extra', evidence: 'extra' }), /cover every check/],
+    ['verification reordered', 'verification', text => text.checks.reverse(), /definition.*canonical order/],
+    ['verification identical duplicate', 'verification', text => { text.checks[1] = clone(text.checks[0]); }, /duplicate definitions/],
+    ['verification conflicting duplicate', 'verification', text => { text.checks[1].definition = text.checks[0].definition; }, /duplicate definitions/],
+    ['verification evidence', 'verification', text => { text.checks[0].evidence += ' changed'; }, /evidence.*canonical order/],
+    ['review missing', 'review', text => text.findings.pop(), /cover every finding/],
+    ['review extra', 'review', text => text.findings.push(clone(text.findings[0])), /cover every finding/],
+    ['review reordered', 'review', text => text.findings.reverse(), /expectationReference.*bound expectation/],
+    ['review expectation', 'review', text => { text.findings[0].expectationReference += ' changed'; }, /expectationReference.*bound expectation/],
+    ['review definition', 'review', text => { text.findings[0].checkDefinition += ' changed'; }, /checkDefinition.*bound definition/],
+    ['review observation', 'review', text => { text.findings.find(row => Object.hasOwn(row, 'observedEvidence')).observedEvidence += ' changed'; }, /observedEvidence.*bound observation/],
+    ['review missing observation', 'review', text => { delete text.findings.find(row => Object.hasOwn(row, 'observedEvidence')).observedEvidence; }, /observedEvidence.*bound observation/],
+    ['review invented check observation', 'review', text => { text.findings.find(row => !Object.hasOwn(row, 'observedEvidence')).observedEvidence = 'invented'; }, /observedEvidence.*forbidden.*check-result/],
+  ];
+  for (const [name, source, mutate, expected] of cases) {
+    await t.test(name, () => {
+      const text = clone(source === 'verification' ? pair.verificationText : pair.reviewText);
+      mutate(text);
+      const items = feature074FreshItems(pair).map(item => {
+        if (item.source !== source) return item;
+        const body = JSON.parse(item.text);
+        return feature074Item(source, body.state, [body.records[0], text]);
+      });
+      assert.throws(() => buildInspection(TARGET, items), expected);
+      assert.throws(() => collectEvidence(TARGET, feature074Raw(items)), expected);
+    });
+  }
+});
+
+test('Feature 074 T001: closed reserved shapes and placement refuse without literal or wrong-target fallback', async t => {
+  const pair = feature074Pair();
+  const verification = pair.verificationCapture;
+  const text = pair.verificationText;
+  const original = feature064TrustedItem('verification', verification, pair.verificationState);
+  const attachment = feature074Attachment(original, text);
+  const cases = [
+    ['unknown text field', 'verification', [verification, { ...text, summary: 'not a preimage' }], /unknown field/],
+    ['unknown row field', 'verification', [verification, { ...text, checks: text.checks.map(row => ({ ...row, matches: true })) }], /unknown field/],
+    ['wrong text version', 'verification', [verification, { ...text, version: 2 }], /version.*literal.*1/],
+    ['wrong text kind', 'verification', [verification, { ...text, type: 'independent-review-text' }], /type.*source kind/],
+    ['orphan text', 'verification', [text], /capture followed by/],
+    ['reversed carrier', 'verification', [text, verification], /capture followed by/],
+    ['extra carrier record', 'verification', [verification, text, { note: 'extra' }], /capture followed by/],
+    ['two text records', 'verification', [verification, text, clone(text)], /capture followed by/],
+    ['capture inside attachment entry', 'verification', [attachment, verification], /exactly one attachment/],
+    ['unknown attachment field', 'verification', [{ ...attachment, matches: true }], /unknown field/],
+    ['unknown reference field', 'verification', [{ ...attachment, reference: { ...attachment.reference, path: 'not-loaded' } }], /unknown field/],
+    ['wrong attachment version', 'verification', [{ ...attachment, version: 2 }], /version.*literal.*1/],
+    ['path-only attachment', 'verification', [{ type: attachment.type, version: 1, path: 'C:/not-loaded.json' }], /unknown field|missing field/],
+    ['attachment lint', 'lint', [attachment], /attachments are forbidden in lint/],
+    ['attachment current-run', 'current-run', [attachment], /forbidden in this source/],
+    ['fresh current-run', 'current-run', [verification, text], /forbidden in this source/],
+  ];
+  for (const [name, source, records, expected] of cases) {
+    await t.test(name, () => {
+      const item = feature074Item(source, 'failed', records);
+      assert.throws(() => buildInspection(TARGET, [original, item]), expected);
+      const raw = feature074Raw([original, item]);
+      assert.throws(() => collectEvidence(TARGET, raw), expected);
+      const field = source === 'current-run' ? 'currentRun' : source;
+      raw[field].at(-1).target = { ...TARGET, taskKey: SECOND_TASK_KEY };
+      assert.throws(() => collectEvidence(TARGET, raw), expected,
+        'a wrong outer target cannot discard a malformed recognized record');
+    });
+  }
+  for (const records of [[attachment], [verification, text]]) {
+    const body = canonicalJson({ target: TARGET, state: 'failed', records });
+    assert.throws(() => buildInspection(TARGET, [evidence('session', body)]), /forbidden/);
+    for (const target of [TARGET, { ...TARGET, taskKey: SECOND_TASK_KEY }]) {
+      assert.throws(() => collectEvidence(TARGET, rawInputs({
+        session: { target, availability: 'available', bytes: Buffer.from(body) },
+      })), /session readable evidence.*forbidden/);
+    }
+  }
+});
+
+test('Feature 074 T001: fresh carriers bind every outer field, exact envelope bytes, and the lint co-role', async t => {
+  const pair = feature074Pair();
+  const items = feature074FreshItems(pair);
+  const raw = feature074Raw(items);
+  const variants = [
+    ['wrong source state', value => { value.verification[0] = capture(TARGET, 'passed', [pair.verificationCapture, pair.verificationText]); }, /authoritative source outcome/],
+    ['outer state conflict', value => { value.verification[0].state = 'passed'; }, /state.*outer state/],
+    ['outer target conflict', value => { value.verification[0].target = { ...TARGET, taskKey: SECOND_TASK_KEY }; }, /target.*outer target/],
+    ['outer hash conflict', value => { value.verification[0].outcomeHash = sha256('wrong'); }, /outcomeHash.*substantive stream/],
+    ['presentation wrapper', value => {
+      const entry = value.verification[0];
+      const body = JSON.parse(entry.bytes.toString());
+      body.records[1].presentation = { summary: 'presentation is not evidence' };
+      entry.bytes = Buffer.from(canonicalJson(body));
+    }, /unknown field 'presentation'/],
+    ['noncanonical envelope', value => {
+      const changed = clone(pair.verificationCapture);
+      changed.bytes = recoveryRuntime.capturedBytesV1(JSON.stringify(pair.verification, null, 2));
+      changed.outcomeHash = changed.bytes.sha256;
+      value.verification[0] = capture(TARGET, pair.verificationState, [changed, pair.verificationText]);
+    }, /exact canonical JSON/],
+    ['capture outcome hash', value => {
+      const changed = { ...clone(pair.verificationCapture), outcomeHash: sha256('not the envelope') };
+      value.verification[0] = capture(TARGET, pair.verificationState, [changed, pair.verificationText]);
+    }, /outcomeHash.*exact envelope bytes/],
+    ['capture descriptor', value => {
+      const changed = clone(pair.verificationCapture);
+      changed.bytes.sha256 = sha256('not the bytes');
+      value.verification[0] = capture(TARGET, pair.verificationState, [changed, pair.verificationText]);
+    }, /bytes.*sha256|complete.*bytes|decoded bytes/],
+    ['unsupported envelope version', value => {
+      const changed = feature074ChangedCapture(pair.verificationCapture, body => { body.version = 1; });
+      value.verification[0] = capture(TARGET, pair.verificationState, [changed, pair.verificationText]);
+    }, /current-format specialist envelope/],
+  ];
+  for (const [name, mutate, expected] of variants) {
+    await t.test(name, () => {
+      const changed = feature074Raw(items);
+      mutate(changed);
+      assert.throws(() => collectEvidence(TARGET, changed), expected);
+    });
+  }
+  assert.throws(() => buildInspection(TARGET, [{ ...items[1], source: 'lint' }]), /byte-identical verification/);
+  const different = feature074Pair({ ordinal: 2 });
+  assert.throws(() => buildInspection(TARGET, [
+    items[1], { ...feature074FreshItems(different)[1], source: 'lint' },
+  ]), /byte-identical verification/);
+  raw.lint.push(clone(raw.verification[0]));
+  const packet = modelPacket(buildInspection(TARGET, collectEvidence(TARGET, raw)));
+  assert.ok(packet.items.find(item => item.tag === 'verification').frames[0].occurrences.some(row => row.source === 'lint'));
+  const oldWithDifferentOutcome = { ...clone(pair.verificationCapture), outcomeHash: sha256('legacy accepted hash') };
+  assert.doesNotThrow(() => buildInspection(TARGET, [
+    feature064TrustedItem('verification', oldWithDifferentOutcome, pair.verificationState),
+  ]), 'the additional capture outcome predicate is not retrofitted onto hash-only evidence');
+  const otherTarget = { ...TARGET, taskKey: SECOND_TASK_KEY };
+  const foreignCapture = feature074ChangedCapture(pair.verificationCapture, body => { body.target = otherTarget; });
+  const foreignRaw = rawInputs({
+    verification: [capture(otherTarget, pair.verificationState, [foreignCapture, pair.verificationText])],
+  });
+  assert.throws(() => collectEvidence(TARGET, foreignRaw), /target.*canonical Inspection target/,
+    'a completely valid foreign readable carrier cannot be silently filtered');
+  foreignRaw.verification[0] = capture(otherTarget, pair.verificationState, [foreignCapture]);
+  assert.equal(collectEvidence(TARGET, foreignRaw).find(item => item.source === 'verification').status, 'stale',
+    'old hash-only wrong-target filtering is unchanged');
+});
+
+test('Feature 074 T001: review matching repeats exact verification context and the stricter basis rules', async t => {
+  const pair = feature074Pair();
+  for (const field of ['attemptIdentity', 'sourceRevisionIdentity', 'inspectedEvidenceHash', 'resultIdentity']) {
+    await t.test(field, () => {
+      const changed = feature074ChangedCapture(pair.reviewCapture, body => { body[field] = sha256(`wrong ${field}`); });
+      const items = [
+        feature074Item('review', 'rejected', [changed, pair.reviewText]),
+        feature074FreshItems(pair)[1],
+      ];
+      assert.throws(() => buildInspection(TARGET, items), new RegExp(`${field}.*bound verification`));
+      assert.throws(() => collectEvidence(TARGET, feature074Raw(items)), new RegExp(`${field}.*bound verification`));
+    });
+  }
+  const resealFinding = finding => {
+    finding.basisIdentity = sha256(canonicalJson(finding.basis));
+    finding.findingIdentity = sha256(canonicalJson({
+      version: 2, basisIdentity: finding.basisIdentity, observation: finding.observation,
+    }));
+  };
+  const cases = [
+    ['basis target', body => {
+      body.findings[0].basis.target.taskKey = SECOND_TASK_KEY;
+      resealFinding(body.findings[0]);
+    }, /basis.target.*envelope target/],
+    ['wrong check observation', body => {
+      body.findings.find(finding => finding.observation.kind === 'check-result').observation.identity = sha256('another check');
+      body.findings.forEach(resealFinding);
+    }, /observation.*bound verification check/],
+    ['same check identity with different definition', body => {
+      const finding = body.findings.find(finding => finding.observation.kind === 'check-result');
+      finding.basis.checkDefinitionIdentity = pair.verification.checks.find(
+        check => check.checkIdentity !== finding.observation.identity,
+      ).definitionIdentity;
+      resealFinding(finding);
+    }, /observation.*same definition identity/],
+    ['identical finding', body => { body.findings = [body.findings[0], clone(body.findings[0])]; }, /findingIdentity and duplicate-free/],
+    ['conflicting finding basis', body => {
+      const finding = clone(body.findings.find(finding => finding.observation.kind === 'observed-evidence'));
+      const second = clone(finding);
+      second.observation.identity = feature074SemanticIdentity('finding-observation', 'different observation');
+      resealFinding(second);
+      body.findings = [finding, second];
+    }, /duplicate finding or basis identities/],
+  ];
+  for (const [name, mutate, expected] of cases) {
+    await t.test(name, () => {
+      const changed = feature074ChangedCapture(pair.reviewCapture, body => {
+        mutate(body);
+        body.findings.sort((left, right) => Buffer.compare(Buffer.from(left.findingIdentity), Buffer.from(right.findingIdentity)));
+      });
+      const envelope = JSON.parse(Buffer.from(changed.bytes.base64, 'base64').toString());
+      const text = clone(pair.reviewText);
+      if (name === 'conflicting finding basis') {
+        const observed = pair.reviewText.findings.find(row => Object.hasOwn(row, 'observedEvidence'));
+        text.findings = envelope.findings.map(finding => ({
+          ...clone(observed),
+          observedEvidence: finding.observation.identity === feature074SemanticIdentity('finding-observation', 'different observation')
+            ? 'different observation' : observed.observedEvidence,
+        }));
+      } else if (name === 'basis target') {
+        // Reordering changed identities must not accidentally select a text-order guard.
+        text.findings = envelope.findings.map(finding => clone(pair.reviewText.findings.find(row => (
+          feature074SemanticIdentity('finding-expectation', {
+            kind: finding.basis.expectation.kind, reference: row.expectationReference,
+          }) === finding.basis.expectation.identity
+        ))));
+      }
+      const items = [
+        feature074Item('review', 'rejected', [changed, text]),
+        feature074FreshItems(pair)[1],
+      ];
+      assert.throws(() => buildInspection(TARGET, items), expected);
+    });
+  }
+  assert.throws(() => buildInspection(TARGET, [feature074FreshItems(pair)[0]]), /exact bound verification/);
+  const foreign = feature074Pair({ ordinal: 2 });
+  assert.throws(() => buildInspection(TARGET, [
+    feature074FreshItems(pair)[0], feature074FreshItems(foreign)[1],
+  ]), /exact bound verification/);
+  const changedAuthority = clone(pair.reviewCapture);
+  changedAuthority.authority.invocationIdentity = sha256('different reviewer invocation');
+  assert.throws(() => buildInspection(TARGET, [
+    feature074Item('review', 'rejected', [changedAuthority, pair.reviewText]), feature074FreshItems(pair)[1],
+  ]), /authority.*reviewer authority and invocation/);
+});
+
+test('Feature 074 T001: attachment references reject duplicates, conflicts, absent originals, and replacement context', async t => {
+  const pair = feature074Pair();
+  const original = feature064TrustedItem('verification', pair.verificationCapture, pair.verificationState);
+  const record = feature074Attachment(original, pair.verificationText);
+  const attachment = feature074Item('verification', pair.verificationState, [record]);
+  const other = feature074Pair({ ordinal: 2 });
+  const otherOriginal = feature064TrustedItem('verification', other.verificationCapture, other.verificationState);
+  const cases = [
+    ['orphan reference', [attachment], /exactly one original source/],
+    ['identical attachment', [original, attachment, clone(attachment)], /duplicate attachments/],
+    ['conflicting attachment', [original, attachment, feature074Item('verification', pair.verificationState, [{
+      ...clone(record), text: { ...clone(pair.verificationText), checks: [{ definition: 'conflicting', evidence: 'conflicting' }] },
+    }])], /duplicate attachments/],
+    ['duplicate original', [original, clone(original), attachment], /duplicate.*capture|captures.*duplicate-free/],
+    ['wrong capture identity', [original, feature074Item('verification', pair.verificationState, [{
+      ...clone(record), reference: { ...record.reference, sourceCaptureIdentity: sha256('wrong capture') },
+    }])], /sourceCaptureIdentity.*complete original capture/],
+    ['wrong source hash', [original, feature074Item('verification', pair.verificationState, [{
+      ...clone(record), reference: { ...record.reference, sourceOutcomeHash: sha256('wrong source') },
+    }])], /exactly one original source/],
+    ['other attempt capture', [otherOriginal, feature074Item('verification', pair.verificationState, [{
+      ...clone(record), reference: { ...record.reference, sourceOutcomeHash: otherOriginal.sha256 },
+    }])], /sourceCaptureIdentity.*complete original capture/],
+    ['wrong attachment state', [original, feature074Item('verification', 'passed', [record])], /state.*authoritative source outcome/],
+    ['reordered original', [attachment, original], /follow its original/],
+    ['already readable source', [feature074FreshItems(pair)[1], feature074Item('verification', pair.verificationState, [{
+      ...clone(record), reference: { ...record.reference, sourceOutcomeHash: feature074FreshItems(pair)[1].sha256 },
+    }])], /original canonical capture-only stream/],
+    ['attachment chain', [original, attachment, feature074Item('verification', pair.verificationState, [{
+      ...clone(record),
+      reference: { sourceCaptureIdentity: sha256('chain'), sourceOutcomeHash: attachment.sha256 },
+    }])], /original canonical capture-only stream/],
+    ['partial text', [original, feature074Item('verification', pair.verificationState, [{
+      ...clone(record), text: { ...clone(pair.verificationText), checks: pair.verificationText.checks.slice(0, 1) },
+    }])], /cover every check/],
+    ['tampered text with new outer hash', [original, feature074Item('verification', pair.verificationState, [{
+      ...clone(record), text: {
+        ...clone(pair.verificationText),
+        checks: pair.verificationText.checks.map(row => ({ ...row, evidence: `${row.evidence} changed` })),
+      },
+    }])], /evidence.*canonical order/],
+  ];
+  for (const [name, items, expected] of cases) {
+    await t.test(name, () => {
+      assert.throws(() => buildInspection(TARGET, items), expected);
+      assert.throws(() => collectEvidence(TARGET, feature074Raw(items)), expected);
+    });
+  }
+  await t.test('same envelope under two capture authorities is not an exact verification', () => {
+    const second = clone(pair.verificationCapture);
+    second.authority.authorityIdentity = sha256('other authority');
+    assert.throws(() => buildInspection(TARGET, [
+      original, feature064TrustedItem('verification', second, pair.verificationState), attachment,
+    ]), /duplicate envelope identity/);
+  });
+  await t.test('unsupported original envelope cannot gain readable coverage', () => {
+    const old = feature074ChangedCapture(pair.verificationCapture, body => { body.version = 1; });
+    const oldItem = feature064TrustedItem('verification', old, pair.verificationState);
+    assert.throws(() => buildInspection(TARGET, [
+      oldItem,
+      feature074Item('verification', pair.verificationState, [feature074Attachment(oldItem, pair.verificationText)]),
+    ]), /current-format specialist capture/);
+  });
+  await t.test('legacy capture outcome mismatch is ineligible for an attachment', () => {
+    const old = { ...clone(pair.verificationCapture), outcomeHash: sha256('legacy different outcome') };
+    const oldItem = feature064TrustedItem('verification', old, pair.verificationState);
+    assert.throws(() => buildInspection(TARGET, [
+      oldItem,
+      feature074Item('verification', pair.verificationState, [feature074Attachment(oldItem, pair.verificationText)]),
+    ]), /outcomeHash.*exact envelope bytes/);
+  });
+  await t.test('review attachment still needs its exact verification, not its preimages', () => {
+    const review = feature064TrustedItem('review', pair.reviewCapture, 'rejected');
+    const supplement = feature074Item('review', 'rejected', [feature074Attachment(review, pair.reviewText)]);
+    assert.throws(() => buildInspection(TARGET, [review, supplement]), /exact bound verification/);
+    const inspection = buildInspection(TARGET, [review, supplement, original]);
+    const packet = modelPacket(inspection);
+    assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+    assert.equal(Object.hasOwn(packet.items.find(item => item.tag === 'verification').payload, 'text'), false);
+  });
+  await t.test('wrong class cannot resolve a verification reference through review', () => {
+    const wrong = feature074Item('review', 'rejected', [{ ...record, text: pair.reviewText }]);
+    assert.throws(() => buildInspection(TARGET, [original, wrong]), /exactly one original source in the same class/);
+  });
+});
+
+test('Feature 074 T001: direct Inspection and model entry points repeat validation instead of trusting present or hashes', () => {
+  const pair = feature074Pair();
+  const inspection = buildInspection(TARGET, feature074FreshItems(pair));
+  const changed = clone(inspection);
+  const body = JSON.parse(changed.items[1].text);
+  body.records[1].checks[0].evidence += ' forged';
+  changed.items[1] = feature074Item('verification', pair.verificationState, body.records);
+  changed.evidenceHash = evidenceHash(TARGET, changed.items);
+  assert.throws(() => validateInspection(changed), /evidence.*canonical order/);
+  assert.throws(() => modelPacket(changed), /evidence.*canonical order/);
+  const original = feature064TrustedItem('verification', pair.verificationCapture, pair.verificationState);
+  const item = feature074Item('verification', pair.verificationState, [feature074Attachment(original, pair.verificationText)]);
+  const valid = buildInspection(TARGET, [original, item]);
+  const orphan = { ...valid, items: [item], evidenceHash: evidenceHash(TARGET, [item]) };
+  assert.throws(() => validateInspection(orphan), /exactly one original source/);
+  assert.throws(() => modelPacket(orphan), /exactly one original source/);
+  const duplicate = { ...valid, items: [original, item, clone(item)] };
+  assert.throws(() => validateInspection(duplicate), /duplicate attachments/);
+  assert.throws(() => modelPacket(duplicate), /duplicate attachments/);
+  assert.throws(() => buildInspection(TARGET, [original, { ...item, status: 'conflict' }]), /present canonical/);
+});
+
+test('Feature 074 T001: retained review lint captures validate their own authority and envelope in mixed evidence', async t => {
+  const pair = feature074Pair();
+  const original = feature064TrustedItem('verification', pair.verificationCapture, pair.verificationState);
+  const lint = { ...original, source: 'lint' };
+  const wrongAuthority = clone(pair.verificationCapture);
+  wrongAuthority.authority.kind = 'independent-review';
+  const changedEnvelope = { ...clone(pair.verification), resultIdentity: sha256('tampered lint result') };
+  const changedBytes = recoveryRuntime.capturedBytesV1(canonicalJson(changedEnvelope));
+  const tamperedEnvelope = {
+    ...clone(pair.verificationCapture), outcomeHash: changedBytes.sha256, bytes: changedBytes,
+  };
+  const variants = [
+    ['wrong authority kind', wrongAuthority, /verification trusted capture\.authority\.kind.*must be verification/],
+    ['tampered envelope', tamperedEnvelope, /VerificationEnvelopeV2\.envelopeIdentity.*recomputed envelope identity/],
+  ];
+  const readableInputs = [
+    ['fresh', [feature074FreshItems(pair)[1]]],
+    ['attachment', [
+      original,
+      feature074Item('verification', pair.verificationState, [feature074Attachment(original, pair.verificationText)]),
+    ]],
+  ];
+  for (const [name, captureValue, expected] of variants) {
+    recoveryRuntime.validateTrustedSourceCaptureV2(captureValue);
+    assert.equal(
+      JSON.parse(Buffer.from(captureValue.bytes.base64, 'base64').toString()).envelopeIdentity,
+      pair.verification.envelopeIdentity,
+      'the invalid lint capture still names the indexed valid verification envelope',
+    );
+    assert.throws(() => recoveryRuntime.normalizeVerificationEnvelopeV2(captureValue), expected);
+    const changedLint = feature064TrustedItem('lint', captureValue, pair.verificationState);
+    validateEvidenceItem(changedLint);
+    assert.throws(() => buildInspection(TARGET, [original, changedLint]), expected,
+      'the existing hash-only path already refuses the same invalid lint capture');
+    for (const [carrier, companions] of readableInputs) {
+      const valid = buildInspection(TARGET, [...companions, lint]);
+      assert.deepEqual(valid.blockers, []);
+      assert.deepEqual(expandModelPacket(modelPacket(valid)), originalAvailableProjection(valid));
+      const changedItems = valid.items.map(item => item.source === 'lint' ? changedLint : item);
+      const changed = { ...valid, items: changedItems, evidenceHash: evidenceHash(TARGET, changedItems) };
+      for (const [entry, receive] of [
+        ['buildInspection', value => buildInspection(TARGET, value.items)],
+        ['validateInspection', validateInspection],
+        ['modelPacket', modelPacket],
+      ]) {
+        await t.test(`${carrier}: ${name}: ${entry}`, () => {
+          assert.doesNotThrow(() => receive(valid));
+          assert.throws(() => receive(changed), expected);
+        });
+      }
+      await t.test(`${carrier}: ${name}: collectEvidence`, () => {
+        assert.doesNotThrow(() => collectEvidence(TARGET, feature074Raw(valid.items)));
+        const raw = feature074Raw(changedItems);
+        assert.equal(raw.lint[0].outcomeHash, changedLint.sha256,
+          'the outer stream hash and complete EvidenceItem descriptor are recomputed');
+        assert.throws(() => collectEvidence(TARGET, raw), expected);
+      });
+    }
+  }
+});
+
+test('Feature 074 T001: retained review lint validation preserves the legacy capture outcome rule', () => {
+  const pair = feature074Pair();
+  const legacyCapture = { ...clone(pair.verificationCapture), outcomeHash: sha256('legacy capture outcome') };
+  const lint = feature064TrustedItem('lint', legacyCapture, pair.verificationState);
+  for (const verification of [
+    feature064TrustedItem('verification', pair.verificationCapture, pair.verificationState),
+    feature074FreshItems(pair)[1],
+  ]) {
+    const items = [verification, lint];
+    const before = canonicalJson(items);
+    const inspection = buildInspection(TARGET, items);
+    validateInspection(inspection);
+    assert.deepEqual(expandModelPacket(modelPacket(inspection)), originalAvailableProjection(inspection));
+    assert.equal(canonicalJson(items), before);
+  }
+});
+
+test('Feature 074 T001: retained review reserved carriers refuse forbidden direct source placements', async t => {
+  const pair = feature074Pair();
+  const review = feature064TrustedItem('review', pair.reviewCapture, pair.review.verdict);
+  const verification = feature064TrustedItem('verification', pair.verificationCapture, pair.verificationState);
+  const originals = [review, verification];
+  const carriers = [
+    ['fresh verification', feature074FreshItems(pair)[1], [review]],
+    ['fresh review', feature074FreshItems(pair)[0], [verification]],
+    ['attachment', feature074Item('verification', pair.verificationState, [
+      feature074Attachment(verification, pair.verificationText),
+    ]), originals],
+  ];
+  for (const [name, carrier, companions] of carriers) {
+    const admitted = buildInspection(TARGET, [...companions, carrier]);
+    assert.deepEqual(admitted.blockers, []);
+    assert.deepEqual(expandModelPacket(modelPacket(admitted)), originalAvailableProjection(admitted),
+      `${name} is valid in its permitted source with complete companions`);
+    for (const source of ['task-history', 'definition-plan', 'lane-history', 'current-run', 'session']) {
+      const valid = buildInspection(TARGET, [evidence(source, 'ordinary complete source', true), ...originals]);
+      assert.deepEqual(valid.blockers, []);
+      for (const variant of ['valid', 'invalid version', 'changed preimage']) {
+        const body = JSON.parse(carrier.text);
+        const record = body.records.at(-1);
+        if (variant === 'invalid version') record.version = 2;
+        if (variant === 'changed preimage') {
+          const text = record.type === 'readable-evidence-attachment' ? record.text : record;
+          if (text.type === 'verification-text') text.checks[0].evidence += ' changed';
+          else text.findings.find(row => Object.hasOwn(row, 'observedEvidence')).observedEvidence += ' changed';
+        }
+        const misplaced = evidence(source, canonicalJson(body), true);
+        validateEvidenceItem(misplaced);
+        const items = valid.items.map(item => item.source === source ? misplaced : item);
+        const changed = { ...valid, items, evidenceHash: evidenceHash(TARGET, items) };
+        for (const [entry, receive] of [
+          ['buildInspection', value => buildInspection(TARGET, value.items)],
+          ['validateInspection', validateInspection],
+          ['modelPacket', modelPacket],
+        ]) {
+          await t.test(`${name}: ${source}: ${variant}: ${entry}`, () => {
+            assert.doesNotThrow(() => receive(valid));
+            assert.throws(() => receive(changed), new RegExp(`${source} readable carrier.*forbidden in this source`));
+          });
+        }
+      }
+    }
+  }
+});
+
+test('Feature 074 T001: retained review reserved recognition leaves ordinary prose and nested semantic data inert', () => {
+  const reserved = { type: 'verification-text', version: 2, checks: [] };
+  const literal = canonicalJson(reserved);
+  const texts = [
+    `ordinary prose quoting ${literal}\n`,
+    canonicalJson({ note: reserved }),
+    canonicalJson({ target: TARGET, state: 'failed', records: [{ note: reserved }] }),
+    canonicalJson({ target: TARGET, state: 'failed', records: [{ substantive: { note: literal } }] }),
+  ];
+  for (const source of ['task-history', 'definition-plan', 'lane-history', 'current-run', 'session']) {
+    for (const text of texts) {
+      const inspection = buildInspection(TARGET, [evidence(source, text, true)]);
+      validateInspection(inspection);
+      const packet = modelPacket(inspection);
+      assert.equal(packet.items[0].tag, 'literal');
+      assert.equal(packet.items[0].text, text);
+      assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+    }
+  }
+  const pair = feature074Pair({
+    checks: [{ definition: `quoted ${literal}`, outcome: 'failed', evidence: literal }],
+  });
+  const inspection = buildInspection(TARGET, [ownerEvidence(literal), ...feature074FreshItems(pair)]);
+  assert.deepEqual(expandModelPacket(modelPacket(inspection)), originalAvailableProjection(inspection));
+});
+
+test('Feature 074 T001: hostile containers, Unicode, and graph excess refuse without invoking caller behavior', async t => {
+  const pair = feature074Pair();
+  const item = feature074FreshItems(pair)[1];
+  let invoked = 0;
+  const trap = () => { invoked += 1; throw new Error('caller behavior must not execute'); };
+  const cases = [
+    ['item Proxy', () => [new Proxy(item, { get: trap, getPrototypeOf: trap, ownKeys: trap })], /Proxy/],
+    ['array Proxy', () => new Proxy([item], { get: trap, getPrototypeOf: trap, ownKeys: trap }), /Proxy/],
+    ['accessor item', () => {
+      const value = { ...item };
+      Object.defineProperty(value, 'text', { enumerable: true, get: trap });
+      return [value];
+    }, /data property/],
+    ['custom array prototype', () => Object.setPrototypeOf([item], { map: trap, [Symbol.iterator]: trap }), /plain array/],
+    ['custom item prototype', () => [Object.setPrototypeOf({ ...item }, { toJSON: trap })], /plain object/],
+    ['sparse items', () => [item, , item], /sparse array/],
+    ['extra array field', () => Object.assign([item], { extra: true }), /extra property/],
+  ];
+  for (const [name, make, expected] of cases) {
+    await t.test(name, () => {
+      // The wire carries JSON bytes, never live record objects. Exercise the
+      // existing inert runtime-result boundary before its Inspection reader,
+      // rather than changing legacy resource/authority precedence for Proxies.
+      withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), root => {
+        const request = {
+          trigger: 'explicit-inspection',
+          input: cliInput(autonomousInspectInput(root, {
+            verification: [capture(TARGET, pair.verificationState, [pair.verificationCapture, pair.verificationText])],
+            review: [capture(TARGET, 'rejected', [pair.reviewCapture, pair.reviewText])],
+          })),
+        };
+        const result = recoveryRuntime.runCommand('inspect', request);
+        assert.equal(recoveryRuntime.validateRecoveryRuntimeResultV1('inspect', request, result), true);
+        const supplied = { ...result, inspection: { ...result.inspection, items: make() } };
+        assert.throws(() => recoveryRuntime.validateRecoveryRuntimeResultV1('inspect', request, supplied), expected);
+      });
+      assert.equal(invoked, 0);
+    });
+  }
+  const invalidUnicode = JSON.parse(item.text);
+  invalidUnicode.records[1].checks[0].definition = '\ud800';
+  const raw = rawInputs({
+    verification: [{ target: TARGET, state: pair.verificationState, outcomeHash: EMPTY_HASH,
+      bytes: Buffer.from(JSON.stringify(invalidUnicode)) }],
+  });
+  assert.throws(() => collectEvidence(TARGET, raw), /canonical JSON domain/,
+    'escaped non-scalar Unicode is rejected before source filtering');
+  const wrongTarget = { ...TARGET, taskKey: SECOND_TASK_KEY };
+  raw.verification[0].target = wrongTarget;
+  assert.throws(() => collectEvidence(TARGET, raw), /canonical JSON domain/);
+  for (const [name, material, expected] of [
+    ['depth', Array.from({ length: 33 }).reduce(value => ({ nested: value }), {}), /maximum depth of 32/],
+    ['entries', Array.from({ length: 4097 }, () => 1), /maximum entry count of 4096/],
+  ]) {
+    await t.test(name, () => {
+      const body = JSON.parse(item.text);
+      body.records[1].extra = material;
+      assert.throws(() => buildInspection(TARGET, [
+        feature074Item('verification', pair.verificationState, body.records),
+      ]), expected);
+    });
+  }
+});
+
+test('Feature 074 T001: prototype-named fields cannot disappear during bounded detachment', () => {
+  const pair = feature074Pair();
+  for (const row of [false, true]) {
+    const body = JSON.parse(feature074FreshItems(pair)[1].text);
+    const target = row ? body.records[1].checks[0] : body.records[1];
+    Object.defineProperty(target, '__proto__', { value: null, enumerable: true });
+    const items = [feature074Item('verification', pair.verificationState, body.records)];
+    assert.throws(() => buildInspection(TARGET, items), /unknown field '__proto__'/);
+    assert.throws(() => collectEvidence(TARGET, feature074Raw(items)), /unknown field '__proto__'/);
+  }
+});
+
+test('Feature 074 T001: mixed old, fresh, shared, mirrored, attachment, and history-reference frames expand every occurrence', () => {
+  const first = feature074Pair();
+  const second = feature074Pair({ ordinal: 2 });
+  const third = feature074Pair({ ordinal: 3 });
+  const original = feature064TrustedItem('verification', third.verificationCapture, third.verificationState);
+  const trustedEvents = [t002ApproachEvent(), t002FindingEvent()];
+  const [history, current] = feature065HistoryItems(trustedEvents, [[...trustedEvents, trustedEvents[0]]]);
+  const firstItems = feature074FreshItems(first);
+  const secondItems = feature074FreshItems(second);
+  const items = [
+    history, current, ...firstItems, ...secondItems, original,
+    feature074Item('verification', third.verificationState, [feature074Attachment(original, third.verificationText)]),
+    { ...firstItems[1], source: 'lint' },
+    evidence('session', 'an unrelated untrusted note'),
+  ];
+  const before = canonicalJson(items);
+  const inspection = buildInspection(TARGET, items);
+  const packet = modelPacket(inspection);
+  assert.ok(packet.items.some(item => item.tag === 'current-run'));
+  const sharedReview = packet.items.find(item => item.tag === 'review');
+  assert.equal(sharedReview.frames.length, 2);
+  const sharedVerification = packet.items.find(item => item.tag === 'verification' && item.payload.text);
+  assert.equal(sharedVerification.frames.length, 3, 'fresh and attached payloads share only complete equality');
+  assert.equal(sharedVerification.frames.filter(frame => Object.hasOwn(frame, 'reference')).length, 1);
+  assert.equal(sharedVerification.frames.filter(frame => Object.hasOwn(frame, 'capture')).length, 2);
+  assert.equal(new Set(sharedVerification.frames.map(frame => frame.binding.attemptIdentity)).size, 3);
+  const expanded = expandModelPacket(packet);
+  assert.deepEqual(expanded, originalAvailableProjection(inspection));
+  assert.equal(expanded.items.length, items.length);
+  assert.equal(canonicalJson(items), before);
+
+  const changed = feature074Pair({ ordinal: 4, checks: [{
+    definition: 'a different check', evidence: 'a different result', outcome: 'passed',
+  }], accepted: true });
+  const different = modelPacket(buildInspection(TARGET, [...items, ...feature074FreshItems(changed)]));
+  assert.equal(different.items.filter(item => item.tag === 'verification' && item.payload.text).length, 2);
+  assert.equal(different.items.filter(item => item.tag === 'review').length, 2);
+
+  const forged = clone(packet);
+  const frame = forged.items.find(item => item.tag === 'verification' && item.payload.text)
+    .frames.find(frame => Object.hasOwn(frame, 'reference'));
+  frame.capture = clone(sharedVerification.frames.find(frame => Object.hasOwn(frame, 'capture')).capture);
+  assert.throws(() => expandModelPacket(forged), /deep-equal/, 'reference and capture are mutually exclusive');
+});
+
+test('Feature 074 T001: inverse verifies the referenced original, not only an attachment descriptor', () => {
+  const pair = feature074Pair();
+  const original = feature064TrustedItem('verification', pair.verificationCapture, pair.verificationState);
+  const record = feature074Attachment(original, pair.verificationText);
+  const attachment = feature074Item('verification', pair.verificationState, [record]);
+  const packet = modelPacket(buildInspection(TARGET, [original, attachment]));
+  const missing = clone(packet);
+  missing.items.shift();
+  missing.items[0].frames[0].occurrences[0].position = 0;
+  assert.throws(() => expandModelPacket(missing), /one original source inside the packet/);
+
+  const forged = clone(packet);
+  const frame = forged.items[1].frames[0];
+  frame.reference.sourceCaptureIdentity = sha256('not the original capture');
+  const falseRecord = { ...clone(record), reference: clone(frame.reference) };
+  const text = canonicalJson({ target: TARGET, state: pair.verificationState, records: [falseRecord] });
+  frame.descriptor = { ...frame.descriptor, ...contentDescriptor(text) };
+  assert.throws(() => expandModelPacket(forged), /strictly equal/,
+    'a valid new descriptor cannot substitute a different original capture');
+
+  const wrongBinding = clone(packet);
+  wrongBinding.items[1].frames[0].binding.attemptIdentity = sha256('wrong frame binding');
+  assert.throws(() => expandModelPacket(wrongBinding), /derive from its original envelope/);
+});
+
+test('Feature 074 T001: owner suffix measurement uses full readable context without omitting original captures', async () => {
+  const pair = feature074Pair();
+  const review = feature064TrustedItem('review', pair.reviewCapture, 'rejected');
+  const verification = feature064TrustedItem('verification', pair.verificationCapture, pair.verificationState);
+  const nonOwner = [
+    review, feature074Item('review', 'rejected', [feature074Attachment(review, pair.reviewText)]),
+    verification,
+    feature074Item('verification', pair.verificationState, [feature074Attachment(verification, pair.verificationText)]),
+  ];
+  const events = [datedOwnerEvent('old '.repeat(45_000)), datedOwnerEvent('new '.repeat(45_000))];
+  const owner = evidence('owner-log', ownerLogBody(events), true);
+  const all = [owner, ...nonOwner];
+  assert.ok(Buffer.byteLength(canonicalJson(await renderPrivateModelProjection(TARGET, all))) > 262_144);
+  const inspection = buildInspection(TARGET, all);
+  assert.equal(inspection.overflow, false);
+  const packet = modelPacket(inspection);
+  const selectedOwner = JSON.parse(inspection.items[0].text);
+  assert.equal(selectedOwner.includedEventCount, 1);
+  assert.equal(selectedOwner.omittedEventCount, 1);
+  assert.deepEqual(selectedOwner.events, events.slice(-1));
+  assert.deepEqual(inspection.items.slice(1), nonOwner);
+  assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+  assert.ok(packet.items.some(item => item.tag === 'review' && item.payload.text));
+  assert.ok(packet.items.some(item => item.tag === 'verification' && !Object.hasOwn(item.payload, 'text')));
+});
+
+test('model packet cap: valid readable evidence between 128 and 256 KiB is admitted intact', async t => {
+  const pair = feature074Pair({
+    accepted: true,
+    checks: Array.from({ length: 12 }, (_, index) => ({
+      definition: `mid-budget check ${index}`, outcome: 'passed',
+      evidence: 'r'.repeat(16_000),
+    })),
+  });
+  const items = feature074FreshItems(pair);
+  const before = canonicalJson(items);
+  const raw = feature074Raw(items);
+  const normalized = collectEvidence(TARGET, raw);
+  const packet = await renderPrivateModelProjection(TARGET, normalized);
+  const bytes = Buffer.byteLength(canonicalJson(packet));
+  assert.ok(bytes > 131_072 && bytes <= 262_144);
+  assert.deepEqual(expandModelPacket(packet), originalAvailableProjection({ target: TARGET, items: normalized }));
+  const inspection = buildInspection(TARGET, normalized);
+  assert.equal(inspection.overflow, false, `${bytes} complete canonical bytes must fit`);
+  assert.doesNotThrow(() => validateInspection(inspection));
+  assert.deepEqual(modelPacket(inspection), packet);
+  assert.equal(canonicalJson(items), before);
+  assert.ok(raw.verification.every(entry => entry.bytes.length <= 1_048_576));
+  t.diagnostic(canonicalJson({ modelBytes: bytes, limit: 262_144, completeInverse: true }));
+});
+
+test('Feature 074 T001: all readable metadata pays the actual 262144 and 262145 byte boundary', async t => {
+  for (const historical of [false, true]) {
+    await t.test(historical ? 'attachment' : 'fresh', async context => {
+      const makeItems = length => {
+        const pair = feature074Pair({
+          accepted: true,
+          checks: Array.from({ length: 16 }, (_, index) => ({
+            definition: `bounded check ${index}`, outcome: index === 0 ? 'failed' : 'passed',
+            evidence: 'r'.repeat(index === 15 ? length : 16_384),
+          })),
+        });
+        const original = feature064TrustedItem('verification', pair.verificationCapture, pair.verificationState);
+        return historical ? [
+          original,
+          feature074Item('verification', pair.verificationState, [feature074Attachment(original, pair.verificationText)]),
+        ] : [feature074FreshItems(pair)[1]];
+      };
+      let length = 1;
+      let packet;
+      let items;
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        assert.ok(length >= 1 && length <= 16_384);
+        items = makeItems(length);
+        packet = await renderPrivateModelProjection(TARGET, items);
+        const difference = 262_144 - Buffer.byteLength(canonicalJson(packet));
+        if (difference === 0) break;
+        length += difference;
+      }
+      assert.equal(Buffer.byteLength(canonicalJson(packet)), 262_144);
+      assert.ok(length < 16_384, 'the first excess stays below the semantic string limit');
+      const exact = buildInspection(TARGET, items);
+      assert.equal(exact.overflow, false);
+      assert.doesNotThrow(() => validateInspection(exact));
+      assert.deepEqual(modelPacket(exact), packet);
+      assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(exact));
+      const excessItems = makeItems(length + 1);
+      const excessPacket = await renderPrivateModelProjection(TARGET, excessItems);
+      assert.equal(Buffer.byteLength(canonicalJson(excessPacket)), 262_145);
+      const excess = buildInspection(TARGET, excessItems);
+      assert.equal(excess.overflow, true);
+      assert.equal(modelPacket(excess), null);
+      assert.ok(excess.items.every(item => !Object.hasOwn(item, 'text')));
+      assert.ok(excess.blockers.some(blocker => blocker.subject === 'model-packet'));
+      const forged = {
+        target: TARGET, items: excessItems, overflow: false, blockers: [],
+        evidenceHash: evidenceHash(TARGET, excessItems),
+      };
+      assert.throws(() => validateInspection(forged), /packet limits/);
+      assert.throws(() => modelPacket(forged), /packet limits/);
+      const raw = feature074Raw(excessItems);
+      const transportBodies = raw.verification.map(entry => entry.bytes.length);
+      assert.ok(Math.max(...transportBodies) < 1_048_576);
+      assert.ok(transportBodies.reduce((sum, size) => sum + size, 0) < 4_194_304);
+      assert.ok(excessItems.length < 64);
+      context.diagnostic(canonicalJson({
+        exactBytes: 262_144, excessBytes: 262_145, variableSemanticBytes: length,
+        originalDescriptors: items.length, rawVerificationSources: raw.verification.length,
+        largestTransportBody: Math.max(...transportBodies),
+      }));
+    });
+  }
+});
+
+test('Feature 074 T001: raw sources and retained descriptors remain independent at 63, 64, and 65', () => {
+  const pair = feature074Pair();
+  const original = feature064TrustedItem('verification', pair.verificationCapture, pair.verificationState);
+  const attachment = feature074Item('verification', pair.verificationState, [feature074Attachment(original, pair.verificationText)]);
+  for (const count of [63, 64, 65]) {
+    const raw = feature074Raw([original, attachment]);
+    // Three workspace sources, two verification acquisitions, then raw repeats
+    // that only the descriptor stage may collapse.
+    raw.currentRun = Array.from({ length: count - 5 }, () => capture(TARGET, 'failed', [{ note: 'same raw acquisition' }]));
+    if (count <= 64) {
+      const inspection = buildInspection(TARGET, collectEvidence(TARGET, raw));
+      assert.equal(inspection.overflow, false);
+      assert.ok(inspection.items.length < 63, 'descriptors do not control this source boundary');
+    } else {
+      assert.throws(() => collectEvidence(TARGET, raw), error => {
+        const diagnostic = recoveryRuntime.capacityDiagnostic(error);
+        assert.equal(diagnostic.budget, 'source-entries');
+        assert.equal(diagnostic.required, 65);
+        return true;
+      });
+    }
+    const items = [original, attachment, ...Array.from({ length: count - 2 }, (_, index) => ({
+      source: 'session', required: false, status: 'nontext',
+      sha256: sha256(`unavailable descriptor ${index}`), byteLength: 1,
+    }))];
+    if (count <= 64) {
+      const inspection = buildInspection(TARGET, items);
+      assert.equal(inspection.items.length, count);
+      assert.equal(inspection.overflow, false);
+      assert.equal(modelPacket(inspection).items.length, 2);
+      assert.deepEqual(expandModelPacket(modelPacket(inspection)), originalAvailableProjection(inspection));
+    } else {
+      assert.throws(() => buildInspection(TARGET, items), error => {
+        const diagnostic = recoveryRuntime.capacityDiagnostic(error);
+        assert.equal(diagnostic.budget, 'retained-descriptors');
+        assert.equal(diagnostic.required, 65);
+        return true;
+      });
+    }
+  }
+});
+/** Frozen synthetic inputs, never a captured session or a regenerated old stream. */
+function feature074HistoricalFixture() {
+  const bytes = fs.readFileSync(new URL(
+    '../../../scripts/fixtures/074-work-readable-evidence-handoff/hash-only-pair.json', import.meta.url,
+  ));
+  // Checkout line endings affect only JSON framing, not any encoded transport.
+  assert.equal(sha256(bytes.toString('utf8').replaceAll('\r\n', '\n')),
+    '98a4ffb9e5896446e55a3ed7d76633d8866ad4e1cf4be6d62c9382e7239ffda6');
+  return JSON.parse(bytes.toString('utf8'));
+}
+
+/** @param {ReturnType<typeof feature074HistoricalFixture>} fixture @param {number[]} [covered] */
+function feature074HistoricalRaw(fixture, covered = [0, 1]) {
+  const target = fixture.target;
+  const retained = fixture.retainedEvidence;
+  const streams = Object.fromEntries(Object.entries(retained).map(([source, entries]) => [
+    source, entries.map(entry => ({ ...clone(entry), bytes: Buffer.from(entry.bytes.base64, 'base64') })),
+  ]));
+  for (const source of ['verification', 'review']) {
+    for (const index of covered) {
+      const entry = retained[source][index];
+      const body = JSON.parse(Buffer.from(entry.bytes.base64, 'base64'));
+      const original = evidence(source, canonicalJson({
+        target: body.target, state: body.state, records: body.records.map(row => row.substantive),
+      }), true);
+      streams[source].push(capture(target, entry.state, [
+        feature074Attachment(original, fixture.preimages[source][index]),
+      ]));
+    }
+  }
+  const events = JSON.parse(streams.currentRun[0].bytes).records.map(row => row.substantive.event);
+  return {
+    raw: {
+      directIdeas: [{
+        path: '.dude/ideas/018-autonomous-runstate-continuity.md', bytes: ideaBytes(target.specPath),
+      }],
+      tasks: {
+        path: target.specPath.replace('/spec.md', '/tasks.md'),
+        bytes: Buffer.from([
+          '# Tasks', '', `- [~] ${target.taskKey} [Shared] Synthetic historical evidence`, '',
+          '## Lightweight Execution History', '', ...events.map(t002V2EventLine), '',
+        ].join('\n')),
+      },
+      lane: { kind: 'lightweight' },
+      ...streams,
+    },
+    events,
+  };
+}
+
+test('Feature 074 T003: attachments require retained occurrence applicability, not just matching text', () => {
+  const fixture = feature074HistoricalFixture();
+  for (const covered of [[0], [1], [0, 1]]) {
+    const { raw, events } = feature074HistoricalRaw(fixture, covered);
+    const inspectRaw = () => buildInspection(fixture.target, collectEvidence(fixture.target, raw));
+    const complete = inspectRaw();
+    assert.deepEqual(complete.blockers, []);
+    assert.equal(recoveryRuntime.inspectRetainedOccurrencesV2(complete).blocker, null);
+    assert.deepEqual(expandModelPacket(modelPacket(complete)), originalAvailableProjection(complete));
+
+    // Keep both originals and valid text, but remove the referenced attempt's
+    // occurrences from BOTH surfaces. No one-sided-history guard can mask this.
+    const unrelated = events.filter(event => (
+      event.occurrence.attemptIdentity !== events[covered[0] * 2].occurrence.attemptIdentity
+    ));
+    raw.currentRun = [capture(fixture.target, 'failed', unrelated.map(event => ({ event })))];
+    raw.tasks.bytes = Buffer.from([
+      '# Tasks', '', `- [~] ${fixture.target.taskKey} [Shared] Synthetic historical evidence`, '',
+      '## Lightweight Execution History', '', ...unrelated.map(t002V2EventLine), '',
+    ].join('\n'));
+    const inspection = inspectRaw();
+    assert.deepEqual(inspection.blockers, [], 'ordinary Inspection does not require dual retention');
+    assert.deepEqual(expandModelPacket(modelPacket(inspection)), originalAvailableProjection(inspection));
+    const refused = recoveryRuntime.inspectRetainedOccurrencesV2(inspection);
+    assert.deepEqual(refused.blocker, {
+      code: 'evidence-incomplete', subject: 'occurrence-retention', evidenceHash: inspection.evidenceHash,
+    });
+    assert.equal(refused.source, 'verification/review');
+  }
+});
+
+test('Feature 074 T003: frozen original transports, capture identities, and event bytes are pinned', () => {
+  const fixture = feature074HistoricalFixture();
+  const pins = {
+    verification: [
+      ['d410a5289f0d771c14fa09b495bb994206a7bf9f0b328e1cb01997e632047689', '0aa8293d098022af76f54d0efa4c3dccdb8486f81a0662465350de73aa46fb45', '27ae507f29b5acef178a3ecd26c4378ed7b2739a137d8cfe3e917bd85c64be64'],
+      ['fd540d290d34081f5921d4941342cdc67a7a4d700b56587008ba5da0c1858281', 'a20bbce2c168dbb5ce6ca06085092e3dbba11f6caf064a461324ed0fd576efcd', 'ad921cd987c868378d70c68fee0a601024de58abcc9baf4b727a3e2e432052a9'],
+    ],
+    review: [
+      ['5b85d8a597c8162c0ad339f0e20dc76b1d1bd384c1250013d6558d0f4fd9e347', '026e656d39a6d4b9dd042b9819037b5daeacf6bcd06556df1d1c75a5192a297a', '205c90f26946f2e5491d698bbf1823aa23c4dba75a89b8a21c2cc18d1b48bdcc'],
+      ['33721946a3401e1f15dc84ca215ee4b03809c0ebd941027bb0e1d1abd696b906', '867e29c66d613f80704e95874a6950d0e93bf48eae3c00d92a6f3eb0f31eb921', '5d11607e6f5a27685698a32bb95851e62669fb8df5d27cd260ebd54e04e1e18c'],
+    ],
+  };
+  for (const source of ['verification', 'review']) {
+    for (const [index, entry] of fixture.retainedEvidence[source].entries()) {
+      const bytes = Buffer.from(entry.bytes.base64, 'base64');
+      const body = JSON.parse(bytes);
+      assert.equal(bytes.toString('utf8'), canonicalJson(body));
+      assert.equal(body.records.length, 1);
+      assert.deepEqual(Object.keys(body.records[0]), ['substantive']);
+      const capture = recoveryRuntime.validateTrustedSourceCaptureV2(body.records[0].substantive);
+      const envelope = JSON.parse(Buffer.from(capture.bytes.base64, 'base64'));
+      assert.deepEqual([
+        sha256(bytes), recoveryRuntime.trustedSourceCaptureIdentityV2(capture), envelope.envelopeIdentity,
+      ], pins[source][index]);
+      assert.equal(capture.outcomeHash, capture.bytes.sha256);
+      assert.equal(entry.outcomeHash, sha256(canonicalJson({
+        target: body.target, state: body.state, records: [capture],
+      })));
+    }
+  }
+  const { raw, events } = feature074HistoricalRaw(fixture);
+  assert.deepEqual(events.map(event => event.eventHash), [
+    'cde9cadc604ef5ac681339b44c5515be7eb541c5fb1cff4c498eaa9515ba0b6c',
+    '993c778f69a8da0992c83f439992954d2c4530963887245cb0b096dd0ed33b8e',
+    '873b388870d65f301eba9d44709405166c70cb4e98e3efed7b8057ad24955860',
+    'dbf8abb187f60082ed49fd754927d9b7b4acfb11a913cd3064a841bc533a18bd',
+  ]);
+  assert.ok(raw.currentRun[0].bytes.equals(Buffer.from(fixture.retainedEvidence.currentRun[0].bytes.base64, 'base64')));
+  const inspection = buildInspection(fixture.target, collectEvidence(fixture.target, raw));
+  const retained = recoveryRuntime.inspectRetainedOccurrencesV2(inspection);
+  assert.equal(retained.blocker, null);
+  assert.deepEqual(retained.retained, events);
+});
+
+test('Feature 074 T003: capture-only coverage, exact review occurrence provenance, and lane-first prefixes stay distinct', () => {
+  const fixture = feature074HistoricalFixture();
+  for (const source of ['verification', 'review']) {
+    const { raw } = feature074HistoricalRaw(fixture, [0]);
+    raw[source === 'verification' ? 'review' : 'verification'].pop();
+    const inspection = buildInspection(fixture.target, collectEvidence(fixture.target, raw));
+    assert.equal(recoveryRuntime.inspectRetainedOccurrencesV2(inspection).blocker, null);
+    const packet = modelPacket(inspection);
+    const attachments = packet.items.flatMap(item => item.frames
+      .filter(frame => Object.hasOwn(frame, 'reference')).map(frame => ({ tag: item.tag, frame })));
+    assert.equal(attachments.length, 1, 'one capture cannot manufacture the other three preimages');
+    assert.equal(attachments[0].tag, source);
+    assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+  }
+  for (const mode of ['no occurrences', 'lane-first', 'wrong review capture']) {
+    const { raw, events } = feature074HistoricalRaw(fixture);
+    let current = events;
+    let lane = events;
+    if (mode === 'no occurrences') current = lane = [];
+    else if (mode === 'lane-first') current = events.slice(0, 2);
+    else {
+      const { eventHash, ...event } = events[1];
+      event.sourceCaptureIdentity = sha256('another review capture');
+      events[1] = { ...event, eventHash: sha256(canonicalJson(event)) };
+    }
+    raw.currentRun = current.length ? [capture(fixture.target, 'failed', current.map(event => ({ event })))] : [];
+    raw.tasks.bytes = Buffer.from([
+      '# Tasks', '', `- [~] ${fixture.target.taskKey} [Shared] Synthetic historical evidence`, '',
+      '## Lightweight Execution History', '', ...lane.map(t002V2EventLine), '',
+    ].join('\n'));
+    const inspection = buildInspection(fixture.target, collectEvidence(fixture.target, raw));
+    assert.deepEqual(inspection.blockers, [], mode);
+    assert.deepEqual(expandModelPacket(modelPacket(inspection)), originalAvailableProjection(inspection), mode);
+    const refused = recoveryRuntime.inspectRetainedOccurrencesV2(inspection);
+    assert.equal(refused.blocker.subject, 'occurrence-retention', mode);
+    assert.equal(refused.blocker.evidenceHash, inspection.evidenceHash);
+    assert.equal(refused.source, mode === 'lane-first' ? 'current-run' : 'verification/review');
+    if (mode === 'no occurrences') {
+      raw.verification.splice(2);
+      raw.review.splice(2);
+      const old = buildInspection(fixture.target, collectEvidence(fixture.target, raw));
+      assert.equal(recoveryRuntime.inspectRetainedOccurrencesV2(old).blocker, null,
+        'no new applicability predicate is imposed on unchanged hash-only evidence');
+    }
+  }
+});
+
+test('Feature 074 T003: historical full row correspondence refuses partial, extra, reordered, and duplicate rows', async t => {
+  const pair = feature074Pair();
+  for (const source of ['verification', 'review']) {
+    const field = source === 'verification' ? 'checks' : 'findings';
+    for (const mode of ['partial', 'extra', 'reordered', 'equal duplicate', 'raw 17']) {
+      await t.test(`${source}: ${mode}`, () => {
+        const originals = [
+          feature064TrustedItem('review', pair.reviewCapture, 'rejected'),
+          feature064TrustedItem('verification', pair.verificationCapture, pair.verificationState),
+        ];
+        const original = originals.find(item => item.source === source);
+        const text = clone(source === 'verification' ? pair.verificationText : pair.reviewText);
+        let guard;
+        if (mode === 'partial') {
+          text[field].pop();
+          guard = /cover every (check|finding) exactly once/;
+        } else if (mode === 'extra') {
+          text[field].push(source === 'verification'
+            ? { definition: 'extra definition', evidence: 'extra evidence' }
+            : { expectationReference: 'extra expectation', checkDefinition: 'extra definition', observedEvidence: 'extra observation' });
+          guard = /cover every (check|finding) exactly once/;
+        } else if (mode === 'reordered') {
+          text[field].reverse();
+          guard = source === 'verification' ? /definition.*canonical order/ : /expectationReference.*bound expectation/;
+        } else if (mode === 'equal duplicate') {
+          text[field][1] = clone(text[field][0]);
+          guard = source === 'verification' ? /duplicate definitions/ : /expectationReference.*bound expectation/;
+        } else {
+          text[field] = Array.from({ length: 17 }, () => clone(text[field][0]));
+          guard = /through 16 raw rows/;
+        }
+        const item = feature074Item(source, source === 'verification' ? pair.verificationState : 'rejected', [
+          feature074Attachment(original, text),
+        ]);
+        const items = source === 'review' ? [originals[0], item, originals[1]] : [...originals, item];
+        assert.throws(() => buildInspection(TARGET, items), guard);
+        assert.throws(() => collectEvidence(TARGET, feature074Raw(items)), guard);
+        const forged = { target: TARGET, items, overflow: false, blockers: [], evidenceHash: evidenceHash(TARGET, items) };
+        assert.throws(() => validateInspection(forged), guard);
+        assert.throws(() => modelPacket(forged), guard);
+      });
+    }
+  }
+});
+
 test('Feature 064 T001: the closed model view expands literals, trusted payloads, and exact co-roles', () => {
   const trusted = t002EnvelopeFixture();
   const items = [
@@ -27992,7 +29478,29 @@ test('Feature 065 T001: complete incident baseline and pure preflight expose sam
       budget: 'model-packet-bytes', limit: 131_072, required: 131_619,
       source: 'model-packet', target: canonicalTarget(input.target),
     });
+    assert.equal(limits.bytes, 262_144, 'current policy is independent of the frozen baseline');
     assert.ok(reference.baseline.capacity.required <= limits.bytes);
+    const historicalBaseline = await measurePrivatePreflight(args, {
+      literalHistory: true, historicalPacketLimit: true,
+    });
+    assert.deepEqual(historicalBaseline.capacity, reference.baseline.capacity);
+    assert.deepEqual(historicalBaseline.measurements.map(row => row.modelBytes), [130_975, 129_151, 130_678, 131_619]);
+    assert.deepEqual(historicalBaseline.measurements.map(row => row.inspection.overflow), [false, false, false, true]);
+    assert.equal(modelPacket(historicalBaseline.measurements.at(-1).inspection), null);
+    assert.ok(historicalBaseline.measurements.at(-1).inspection.items.every(item => !Object.hasOwn(item, 'text')));
+    for (const [index, row] of historicalBaseline.measurements.entries()) {
+      assert.deepEqual(expandModelPacket(row.packet), originalAvailableProjection({
+        target: input.target, items: row.items,
+      }));
+      const expected = reference.baseline.prefixes[index];
+      const owner = JSON.parse(row.items.find(item => item.source === 'owner-log').text);
+      assert.equal(row.items.length, expected.originalDescriptors);
+      assert.equal(row.packet.items.length, expected.physicalItems);
+      assert.equal(expandModelPacket(row.packet).items.length, expected.availableOccurrences);
+      assert.equal(owner.totalEventCount, expected.ownerEvents.total);
+      assert.equal(owner.includedEventCount, expected.ownerEvents.included);
+      assert.equal(owner.omittedEventCount, expected.ownerEvents.omitted);
+    }
     const baseline = await measurePrivatePreflight(args, { literalHistory: true });
     assert.equal(baseline.capacity, null);
     assert.equal(baseline.result.transition.prepared, true, baseline.result.transition.reason);
@@ -28052,8 +29560,10 @@ test('Feature 065 T001: complete incident baseline and pure preflight expose sam
       assert.equal(row.modelBytes, Buffer.byteLength(canonicalJson(row.packet)));
       assert.equal(row.inspection.evidenceHash, evidenceHash(input.target, row.inspection.items, false));
       assert.deepEqual(modelPacket(row.inspection), row.packet);
-      if (index < baseline.measurements.length) {
-        assert.deepEqual(row.rawItems, baseline.measurements[index].rawItems,
+      assert.deepEqual(row.rawItems, baseline.measurements[index].rawItems,
+        'the new cap does not change acquisition or normalized evidence');
+      if (index < historicalBaseline.measurements.length) {
+        assert.deepEqual(row.rawItems, historicalBaseline.measurements[index].rawItems,
           'baseline changes selection only, not acquisition or normalized evidence');
       }
       const literal = await renderPrivateModelProjection(input.target, row.items, { literalHistory: true });

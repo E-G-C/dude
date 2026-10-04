@@ -1,6 +1,6 @@
 ---
 name: "dude-work"
-description: "Use for @dude work continuous execution inside the active Lightweight or Tracked lane until a named natural stop. Do NOT use for a single task state change (dude-lightweight-execution), for read-only status or diff, or to import tracked work."
+description: "Use when running @dude work continuously inside the active Lightweight or Tracked lane until a named natural stop, when asked for MANUAL acceptance and close after an autonomous Lightweight Work evidence-byte hard stop, or when explicitly reconciling one already-worked Lightweight task whose old Work authority is terminal or abandoned. Do NOT use for an ordinary single task state change (dude-lightweight-execution), for read-only status or diff, or to import tracked work."
 ---
 
 # Continuous Work
@@ -44,7 +44,9 @@ After the canonical ownership gate passes but before the first claim, apply any 
 
 1. Before every task start or resume, after every block or failure, and on explicit inspection, use `recovery.mjs` to acquire all available supported current-format evidence exactly bound to the canonical task and feature. A feature-only inspection is a read-only report: do not authorize work, consume counters, or mutate state. Unavailable optional session history alone is nonblocking.
 2. Treat each Inspection as one immutable evidence capture. Its sole model-facing packet uses `dude-work-model-view-v1`, a self-contained lossless projection rather than a trusted summary or authority source. Share only exact, complete, validated verification or review payloads, or complete byte-identical event bodies through private packet-local current-run references into earlier literal task history. Retain every ordered occurrence, original descriptor, and authority binding. Event references preserve record order and duplicates, leave unmatched records inline, and apply only when the complete encoded item is smaller; ineligible captures stay literal. Resolve typed eligibility and cross-review bindings from the full validated evidence set before measuring any prefix or owner suffix. Rebuild event references within each actual packet, and charge the format, payloads, frames, descriptors, mappings, and all other metadata so the complete original available projection remains reconstructible. The machine Inspection, captured bytes and hashes, task and current-run histories, and audit histories keep their established complete forms. All non-owner admitted evidence remains complete; task history stays literal, and current-run references restore every original record. An admitted owner-log item carries exact owner identity, complete-log digest, byte length, and event-count metadata plus the maximal whole-event suffix that fits that fresh packet; omitted owner events are not inspected text. Outside that existing exception, do not prune or retire history or create persistent compaction state. Admit only the runtime's one complete model packet and obtain one schema-bound model Assessment carrying that Inspection's `evidenceHash`. Overflow produces a descriptor-only report, no model call, and no recovery; never split or batch evidence. Scripts remain deterministic and make no model calls.
-3. Keep the idea inventory and both evidence budgets separate. The complete exact-owner inventory has its own ceiling of 999 direct `.dude/ideas` children, counting unsupported files and directories, and the 1,000th entry refuses before its name or any candidate body is read. However many ideas back it, exact ownership costs one owner source. The independent 64-source-entry budget covers the owner, task, and lane sources, the autonomous `definition-plan` source, each tracked issue acquisition, each supplied capture, and an optional supplied session, counted before any capture is decoded, normalized, or shared. The independent 64-retained-descriptor budget includes unavailable descriptors and is also charged before sharing. An admitted projection satisfies `physical items <= available original occurrences <= original retained descriptors <= 64`; physical item capacity is derived from those original descriptors, with no separate 16-item veto. The exported packet limit is exactly `{items:64,bytes:262144}`. Its `items` field exposes that derived ceiling, while its byte field remains an independent check; neither replaces either raw budget. The limit of 16 checks per attestation and every other resource, validation, and authority ceiling remain unchanged. Inventory bodies still pay the existing individual and aggregate byte charges.
+   Include admitted readable text and bindings before binding the learning exchange; never insert late attachments into it or send a second packet.
+3. Keep the idea inventory and both evidence budgets separate. The complete exact-owner inventory has its own ceiling of 999 direct `.dude/ideas` children, counting unsupported files and directories, and the 1,000th entry refuses before its name or any candidate body is read. However many ideas back it, exact ownership costs one owner source. The independent 64-source-entry budget covers the owner, task, and lane sources, the autonomous `definition-plan` source, each tracked issue acquisition, each supplied capture, and an optional supplied session, counted before any capture is decoded, normalized, or shared. The independent 64-retained-descriptor budget includes unavailable descriptors and is also charged before sharing. An admitted projection satisfies `physical items <= available original occurrences <= original retained descriptors <= 64`; physical item capacity is derived from those original descriptors, with no separate 16-item veto. The exported packet limit is exactly `{items:64,bytes:262144}` (256 KiB). Its `items` field exposes that derived ceiling, while its byte field remains an independent check; neither replaces either raw budget. The limit of 16 checks per attestation and every other resource, validation, and authority ceiling remain unchanged. Inventory bodies still pay the existing individual and aggregate byte charges.
+   Fresh readable text grows its existing capture body; each historical attachment costs one source and one retained descriptor before sharing. Charge all readable text, references, and bindings; existing body, aggregate, transport, graph, and completion-headroom limits still apply.
 4. Authorization through `authorizeAttempt` freshly rebuilds one immutable Inspection from authoritative captures. If the Assessment `evidenceHash` differs, return `evidence-drift` with unchanged state, counters, pending entries, and completed tuples. Before that authorization charges an attempt, records a pending entry, or permits implementation dispatch, independently verify raw-source and original-descriptor headroom for every mandatory completion capture: under `autonomous`, one new verification and one new independent review, plus lint when `requiredChecksForAction` includes it and current-run when that stream is absent. Each capture reserves one new source even when it replaces an empty placeholder; placeholder replacement adds no descriptor, while an independent append adds one, and an absent current-run adds both. Never assume a future payload will equal one already available. Guarded completion reserves nothing, and an absent optional session is never reserved. Within this headroom check, source exhaustion precedes descriptor exhaustion; earlier eligibility, authority, learning, and resource gates keep their precedence. A refusal returns `evidence-incomplete` carrying the exhausted budget, its fixed limit, the demand, the safe source or canonical target, and the fixed next action, leaving state, counters, pending entries, and completed tuples unchanged with no task or lane write. Count admission promises no future byte fit: later acquisition still rechecks every byte ceiling.
 5. Ordinary work performs the post-block inspection, reports it, and stops. Only `--recover-on-block` permits recovery. `authorizeAttempt` alone charges each authorization once, and `completeAttempt` alone validates the stored action's concrete result. Recovery permits at most one pending authorization per invocation; never allow concurrent pending authorizations and never grant fan-out authority. Independent overall and exact-target recovery budgets remain in force, and `unlimited` removes only its numeric cap without bypassing hard blockers or no-progress stops. Completion or interruption clears only the exact pending authorization without refund; fresh verification or lint failure and review rejection stop completion and become evidence for a later inspection. Historical test, lint, or review failures may support their matching repair action. Missing or lost transient run state stops.
 6. Keep the hardcoded action check sets: `execute-task` and `retry-task` require `verification`; `address-test` requires `lint` and `verification`; `address-review` requires `review` and `verification`; `reconcile-derived-definition` requires `lint`, `review`, and `verification`; `retain-learning` requires `lint`; action `none` requires no checks.
@@ -56,9 +58,11 @@ After the canonical ownership gate passes but before the first claim, apply any 
 
 `host-adapter.mjs` is the sole ordinary Work runtime boundary. Every ordinary Work runtime call uses its ten closed semantic operations: fresh inspection, attempt authorization, attempt-result recording, effect settlement, governance advance, authoritative projection preparation, lane-effect authorization, lane-effect application, lane-receipt commitment, and read-only run audit, framed by the adapter's own begin, worker handoff, resume, and end. Inspection, authorization, completion, learning, transition, and audit reach `recovery.mjs` only through that adapter. Ordinary Work never selects among legacy completion, trusted capture or finalize, learning, and transition routes at the prompt level; the adapter derives each low-level route deterministically from current policy, the pending authorization, the validated governance phase, and typed trusted evidence, and rejects a caller-supplied low-level route token before invocation, so a trusted review rejection reaches the established trusted completion and recovery-or-learning flow rather than an incompatible legacy envelope. `recovery.mjs`, its CLI, and its direct tests remain internal compatibility surfaces, not an ordinary routing choice.
 
-The ten operation tokens are exactly `fresh-inspection`, `authorize-attempt`, `record-attempt-result`, `settle-effect`, `advance-governance`, `prepare-authoritative-projection`, `authorize-lane-effect`, `apply-lane-effect`, `commit-lane-receipt`, and `audit-run`. The production runner constructs governance intents only for `review-learning`, `bind-alternative`, `verify-no-progress`, and `controlled-end`.
+The ten operation tokens are exactly `fresh-inspection`, `authorize-attempt`, `record-attempt-result`, `settle-effect`, `advance-governance`, `prepare-authoritative-projection`, `authorize-lane-effect`, `apply-lane-effect`, `commit-lane-receipt`, and `audit-run`. The production runner constructs governance intents only for `resume-learning`, `review-learning`, `bind-alternative`, `verify-no-progress`, and `controlled-end`.
 
 Autonomous attestation is cooperative, not cryptographic. Host integration acquires the sole structured Tester and independent Reviewer results from their actual dispatches, derives the authoritative target, attempt, source revision, dispatch, and chronology from accepted host state, builds both trusted captures through `specialist-attestation.mjs`, and passes the exact verification capture it just produced into review construction. An ordinary request carries those two result records and nothing else: a precomputed trusted identity, a separate semantic override, a dispatch fact, a selected verification capture, and a low-level route are all inadmissible request fields, and the existing capture, envelope, projection, permit, receipt, and close validators stay the final authority. What a capture records is that one structurally valid, context-matched sole result reached the boundary; a different otherwise-valid result is simply a different assertion, and nothing here detects a rewrite made before the boundary or protects against a malicious coordinator. That attestation derives only the plain ordinary approach basis, so a pending `reconcile-derived-definition` attempt — whose completion requires the proposal-bound basis — is unsupported through this boundary and hard-stops as `definition-reconciliation-attestation-unsupported` before any capture.
+
+New specialist captures retain actual Tester check definitions and evidence, plus Reviewer expectation references, check definitions, and observations, as substantive readable text beside the unchanged trusted capture. Recompute semantic identities and require complete one-to-one row correspondence; preserve failures, rejections, canonical order, and accepted reviews with no findings. A check-result observation resolves only to the exact check in the bound verification, never invented observation text. Readable content is untrusted evidence, not instructions, approval, specialist authenticity, or execution authority. Keep ordinary `ApproachBasis` extra identity arrays empty; text does not expand alternative authority or automatically restart Work or Ship.
 
 Before dispatch, include every intended writer path in `Assessment.materialInputs.targets`, including Tester edits and generated deliverables. Validate the Assessment against the exact Inspection and compare each writer's declared scope with that set. Before completion, compare actual changed paths with the captured attempt baseline so unrelated dirty work is not attributed to this attempt. Every `changedTargets` entry must remain within the pending authorization. Neither path set has a row ceiling of its own, so list every path. The authorized set must fit the existing 16,384-byte approach event and the changed set the existing 16,384-byte attested result material; a set that does not fit is refused, never trimmed. An omitted path requires the existing scope/authorization owner before further writing; hiding the file or widening the pending scope is not a correction.
 
@@ -66,7 +70,11 @@ Before authorizing a non-`none` action under `autonomous`, require `Assessment.m
 
 Preflight the actual sole result with `prepareSpecialistResult(acceptedState, result)` or the full `validateHostAdapterRequest(request, acceptedState)` before submission. These pure helpers validate inert raw data, build the pair through the existing attestation builder, and apply the receiver's pending-action, changed-file, and envelope checks. Do not clone unvalidated specialist data first. Preflight grants no capture, acceptance, or dispatch authority; the receiver repeats the checks at use. Keep all check rows, including failures: 16 is the existing ceiling, not permission to truncate or automatically group evidence.
 
-The last five operations are autonomous Lightweight only, and the adapter composes the lane effect inside them: it prepares the authoritative projection, issues the lane permit, applies exactly one permit-bound mutation through the authoritative lane owner, commits the matching receipt, and derives the read-only audit. No board command line and no direct file edit is reachable from that path, and one adapter-worker replay seal admits each permit, application, and receipt exactly once. That bridge is the single narrow exception to the established permit, close, and governance boundaries, carrying one ordinary accepted autonomous Lightweight completion from finalized trusted completion to a committed lane receipt; every other permit, close, and governance boundary is unchanged. `incident-correction` is never an ordinary operation and stays the exceptional internal correction path that `## Host Incidents And Recovery Notice` governs.
+The last five operations are autonomous Lightweight only, and the adapter composes the lane effect inside them: it prepares the authoritative projection, issues the lane permit, applies exactly one permit-bound mutation through the authoritative lane owner, commits the matching receipt, and derives the read-only audit. No board command line and no direct file edit is reachable from that path, and one adapter-worker replay seal admits each permit, application, and receipt exactly once. That bridge is the single narrow exception to the established permit, close, and governance boundaries, carrying one ordinary accepted autonomous Lightweight completion from finalized trusted completion to a committed lane receipt; every other permit, close, and governance boundary is unchanged. `incident-correction` is never an ordinary operation and stays the exceptional internal correction path that `## Host Incidents And Recovery Notice` governs. The separate post-terminal procedure in `## Explicit Manual Terminal Resolution` runs outside the Work invocation and is not a Work-originated lane mutation; it leaves this adapter-only rule unchanged.
+
+Its `### Post-Terminal Administrative Reconciliation` path is likewise an
+outside-Work administrative action. It never calls the adapter, creates a Work
+permit or receipt, or adds another exception to this adapter-only boundary.
 
 Before an applicable autonomous Lightweight permit becomes usable, projection preparation and lane-permit issuance preflight every fully known remaining lane-first prefix and receipt footprint. They start from complete original acquisitions and accumulated captures before owner-log projection, use the full-set model context, and build the same exact postimages as the lane writer. One bounded private batch capsule retains the preparation input and bindings; application freshly reacquires and rederives the permit, mutation, mapping, source, target, and prestate, so drift invalidates the earlier fit. The capsule is released on consumption, supersession, or end. Predicted bytes are never observed authority and add no public input, RunState field, checkpoint field, schema, or persistent reservation. Capacity reports distinguish `source-entries`, `retained-descriptors`, and the exact-known `model-packet-bytes`, whose fixed limit is 262,144. A later unpredictable overflow remains a fresh descriptor-only `evidence-incomplete` stop: preserve accepted prestate and every earlier write or receipt, and never claim whole-operation rollback. Unknown tracked postimages gain no prediction.
 
@@ -93,9 +101,15 @@ Finalization never changes the Work decision. The runner preserves the original 
 
 A later Work or Ship run requires a separate explicit execution request and normal fresh admission, including fresh absence and ownership checks. Cleanup never starts another invocation, revives old RunState, continues the stopped goal, completes the task, or derives authority from returned state, age, a PID, EOF, child exit, or a model assertion. True orphans retain the independently confirmed supervisor-absence, exact-pair manual cleanup, and post-clean absence and admission rules in `## Checkpoint Lifecycle And Manual Cleanup`. Cancellation and supervisor, context, identity, or RunState loss keep their existing stops. Successful same-invocation next-ready continuation and all learning, verification, review, settlement, close, and budget authority remain unchanged. Never move this exception into Ship's pre-Work policy.
 
-An independently authorized fresh request may include `retainedEvidence`, a closed object with exactly `currentRun`, `verification`, `review`, and `lint` arrays of existing capture entries using canonical `{base64}` bytes. Supply only original raw inputs the host actually retained from `dependencies.runtime.invoke`: completion capture carries the adapter-built trusted pair, and later projection or settlement calls carry published current-run records and accumulated streams. Keep the complete matching captures unchanged, including order and duplicates. The runner validates transport, exact bindings, and dual retention before ownership, then rechecks evidence at each existing operation boundary. A historical source refusal carries a bounded missing or invalid source class and, when an Inspection establishes it, its bound blocker.
+An independently authorized fresh request may include `retainedEvidence`, a closed object with exactly `currentRun`, `verification`, `review`, and `lint` arrays of existing capture entries using canonical `{base64}` bytes. Preserve original raw inputs the host actually retained from `dependencies.runtime.invoke`: completion capture carries the adapter-built trusted pair, and later projection or settlement calls carry published current-run records and accumulated streams. Keep the complete matching captures unchanged, including order and duplicates. The runner validates transport, exact bindings, and dual retention before ownership, then rechecks evidence at each existing operation boundary. A historical source refusal carries a bounded missing or invalid source class and, when an Inspection establishes it, its bound blocker.
+
+Historical preimages are explicit input before `runHostAdapter`, through the existing `retainedEvidence.verification` or `retainedEvidence.review` array. Append a separate attachment-only entry after the original hash-only capture, referencing that exact capture and its substantive source hash. Never replace or duplicate the original capture. Recompute every semantic identity and verify exact target, attempt, source revision, inspected evidence, result, and verification-to-review bindings, including retained occurrence authority. This is later supplemental admission, not recovered original bytes or a repeated specialist dispatch.
 
 The runner has no historical loader or archive export. If the host retained the complete original captures but omitted them, the coordinator asks that host to correct the handoff through `retainedEvidence`. If those captures were never retained or are no longer available, report the required source class as unavailable and keep admission stopped. Do not guess a loader or session file, reconstruct proof, or infer permission for another invocation. Normalized Inspection text, model packets, stdout summaries, lane history alone, and checkpoints are not capture sources. History restores no RunState, counter, permit, or pending effect and cannot replace the current attempt's sole Tester and independent Reviewer. Seeded history pays for one additional, initially empty live current-run capture; only that final capture grows. All source, descriptor, body, packet, and completion-headroom limits still apply. Admission does not promise that later bytes will fit or that learning governance will authorize an attempt.
+
+Missing required preimages leave the affected comparison unresolved under existing stop/cancel behavior, even if another approach has readable text. Never infer text, an alternative, or no progress from hashes. This adds no public input, loader, state, registry, or capability.
+
+When a fresh run has no accepted learning governance but its validated retained occurrences establish a repeat, the runner invokes `advance-governance` with `resume-learning` before requesting an Assessment or authorizing an attempt. The existing recovery route re-derives the exact required learning without restoring prior accounting. An existing required projection must match on both retained surfaces. A validated exact-evidence incident supersession may accompany it when its target, evidence inventory, and dual retention match; that record supersedes the unauthorized block, not learning. Learning history without its repeat evidence refuses admission. Partial, stale, conflicting, or wrong-target governance history refuses; later or resolved learning history also refuses restoration without its accepted branch state rather than reopening learning. No attempt is charged or dispatched until the existing learning and authorization gates permit it. Fresh history without learning or a repeat keeps its ordinary path.
 
 The runner requires an unblocked `[~]` task. For an eligible pending task, the coordinator first completes normal selection, ownership, dependency, and read-only evidence prerequisites, including the same retention check when historical proof is required. Use the existing setup adapter in this order: `fresh-inspection`, `authorize-lane-effect` with the `initial-claim` mutation, `apply-lane-effect`, then `commit-lane-receipt`. Settle that receipt and end setup through its permitted normal `end('controlled-end')` before starting the runner. Reacquire the exact owner, task mapping, and in-progress poststate; carry the unchanged accepted state and policy into fresh runner bindings. Failed setup or cleanup stops this sequence. Do not start a second claim, edit a glyph, use the board CLI, or relax the runner prestate.
 
@@ -109,13 +123,26 @@ Keep the runtime's validated `blocker` on its matching adapter hard stop, runner
 
 Use `haltReport` and its existing next-action classification without treating a resolved report as permission to continue. When a field remains unresolved, preserve the raw refusal reason and accepted state that are known, and state the missing attribution. A `governance-unresolved` refusal with a 131,020-byte packet and `overflow=false` establishes neither capacity exhaustion nor safe retry from unchanged accepted bytes. If its historical inputs are unavailable, leave the cause unisolated; a synthetic contract test is not a reproduction of that incident. The coordinator routes the refusal to the existing evidence or learning-governance owner and names any required decision. Do not imply a repair is underway, add a governance intent, or change learning eligibility to force progress.
 
+A later request under `## Explicit Manual Terminal Resolution` does not rewrite
+that refusal or turn it into permission. The original overflow path keeps its
+exact terminal requirements; `### Post-Terminal Administrative Reconciliation`
+may assess genuine terminal or abandonment provenance only under its complete
+current-evidence gate, and it must report an unavailable terminal row as
+unavailable.
+
 ## Supervisor And Worker Continuity
 
 The active coordinator turn is the invocation supervisor. Before launching any adapter worker it creates a cryptographically random invocation identity plus the first worker token and generation, retains them outside checkpoint bytes, and supplies them explicitly to every initial and replacement worker. Checkpoint bytes never establish caller identity: a checkpoint cannot tell a caller who it is, and an unmatched supplied identity refuses.
 
 Exactly one active worker token and generation may write. Handoff is the only replacement path: the supervisor must have observed the exact prior-worker exit, then supply the matching prior token and generation together with one fresh token and next generation. There is no timeout, PID inference, lock stealing, automatic takeover, or concurrent writer path.
 
-The accepted recovery boundary is persistent-shell death and replaceable adapter-worker death, and only while the active coordinator supervisor and its independently retained invocation identity survive. Loss of that supervisor, its coordinator context, or that identity is a hard stop; no fresh Work invocation starts automatically. Post-hard-stop, cross-invocation, cross-session, takeover, and orphan recovery remain unavailable. Cross-conversation, VS Code restart, machine restart, and cross-machine resume are out of scope.
+The accepted recovery boundary is persistent-shell death and replaceable adapter-worker death, and only while the active coordinator supervisor and its independently retained invocation identity survive. Loss of that supervisor, its coordinator context, or that identity is a hard stop; no fresh Work invocation starts automatically. Post-hard-stop, cross-invocation, cross-session, takeover, and orphan recovery remain unavailable. Cross-conversation, VS Code restart, machine restart, and cross-machine resume are out of scope. `## Explicit Manual Terminal Resolution` is neither resume nor recovery: only its complete separate gate, including terminal, no-owner, and no-effect proofs, can authorize an outside-Work acceptance and ordinary manual close while retaining the old invocation and ownership pair.
+
+That retained-pair continuity rule remains exact for the original overflow
+path. The distinct `### Post-Terminal Administrative Reconciliation` path may
+recognize only the unchanged complete pair or the separately authorized,
+fully proved cleanup disposition that its own gate permits. Neither path
+revives a supervisor, resumes an invocation, or grants fresh Work admission.
 
 Resume runs only after an accepted handoff and before any other replacement-worker operation, and it compares every bound authority fact exactly before any route runs: supplied invocation identity, active worker token and generation, `acceptedRevision` and `hostRevision`, real workspace and canonical target, exact defined owner and specification identity, active lane and authoritative task and lane prestate descriptors, canonical RunState bytes and hash, and any in-flight effect identity with its exact receipt or unchanged-prestate proof. Drift, corruption, conflicting revision, stale worker, unknown effect, or missing identity is a hard stop, and the adapter never infers state from lane state or history.
 
@@ -153,6 +180,373 @@ Creation and update times are diagnostic only. Age never authorizes resume, clea
 
 An orphan claim or checkpoint refuses lazily on the next claim or load. The refusal derives the workspace-target key itself and reports that safe identifier with the bounded ownership-claim and checkpoint pair; it never accepts a caller-chosen cleanup path and adds no cleanup command. The user or operator must first confirm independently that no invocation or coordinator supervisor remains for that key. Manual removal then targets only that bounded pair, and a post-clean load and claim preflight must prove both artifacts absent before a fresh exclusive claim. Partial cleanup, a changed artifact, reappearance, operation failure, or failed absence validation is a hard stop that keeps blocking replacement work. Manual cleanup permits only a later user-authorized clean claim after existing cleanup and preflight requirements. That later claim is never a takeover, orphan resume, or cross-session continuation.
 
+## Explicit Manual Terminal Resolution
+
+This is the only instruction-level path for accepting already-present work after
+the narrowly supported terminal Work failure below. It is an outside-Work,
+preview-and-confirm administrative action, not continuation, recovery, or
+settlement of the old invocation. Use the existing coordinator, discovered
+specialist roles, exact owner log, and ordinary Lightweight writer. Do not add a
+command, parser, flag, consent token, abstraction, state, schema, registry,
+harness, standalone preview file, generic override, or new runtime path.
+This section also solely owns the distinct bounded administrative
+reconciliation path defined later.
+
+The next four subsections retain the original overflow procedure. Their
+unblocked `[~]` target, unchanged obligations, returned terminal row, first
+131,072-byte overflow, retained ownership pair, prescribed confirmation, and
+fresh acceptance requirements apply only to that procedure and remain
+mandatory there. `### Post-Terminal Administrative Reconciliation` is a
+distinct path with its own complete gate; never substitute a condition from
+one path for a missing condition in the other.
+
+### Establish Eligibility And Absence Of Effects
+
+Act only on an explicit human request and establish every condition before
+offering the confirmation. Read the current specification, plan, canonical task
+unit, relevant implementation, and retained Work evidence:
+
+1. Resolve the lane, package, owner, and task from current authoritative
+   artifacts. Require a live Lightweight lane, exactly one `status: defined`
+   owner by exact `spec_path:`, and one unblocked `[~]` target whose durable key,
+   meaning, requirements, and obligations match the failed attempt exactly. The
+   implementation under consideration must already be present from that pending
+   `address-review` attempt. Refuse a tracked target, active Work invocation,
+   guarded Work target, ambiguous mapping, changed requirement, rekeyed task,
+   blocked task, or any need for new implementation.
+2. Require retained evidence that the old invocation used autonomous policy and
+   returned exactly `hard-stop` / `evidence-incomplete` because its first
+   completion projection exceeded the then-active `model-packet-bytes` limit of
+   131,072 bytes before `apply-lane-effect` or any completion writer entry. Its
+   accepted RunState must remain on the `alternative-authorized` branch with
+   that pending `address-review` attempt. The earlier reviewed alternative and
+   its required learning projection must be complete, and their retained
+   current-run and authoritative lane-history copies must match. No new
+   implementation, alternative attempt, definition repair, missing learning
+   projection, or pending evaluation sequence may be needed.
+3. Correlate the returned terminal row, accepted RunState bytes and hash,
+   `acceptedRevision`, and operation evidence to the exact host invocation and
+   workspace-target key. A reason label, packet byte count, checkpoint,
+   unchanged revision, or matching summary alone proves none of those bindings.
+4. Establish owner absence from fresh authoritative host and session lifecycle
+   observations for the actual invocation, supervisor, workers, and pending
+   handoffs; they must establish that none can still act for the exact key. If
+   those observations are insufficient, an operator must
+   independently inspect the relevant host and coordinator sessions and confirm
+   that none can still act for the exact key. Record the observations and checks,
+   not only the conclusion. Worker exit, a PID, age, an orphan flag, checkpoint
+   possession, or a model assertion alone is insufficient. Unknown ownership
+   refuses, and this procedure performs no cleanup.
+5. Prove no completion effect in two independent ways. First, the original
+   operation evidence must show the overflow and rejection before completion
+   writer entry. Second, freshly compare the relevant preimages with current
+   canonical task and snapshot bytes, the exact owner lane-history prefix, and
+   retained current-run history. Those comparisons must establish that the
+   failed completion produced no completion projection, lane write, or receipt
+   on either retained surface. Earlier authorized implementation edits are not
+   that effect and still need current acceptance. Missing preimages, unavailable
+   or partial evidence, a one-sided projection, conflicting records, uncertain
+   effects, or possible writer entry refuses.
+
+Cancellation, supervisor or context loss, first-Assessment rejection,
+source-entry or retained-descriptor exhaustion, post-writer or receipt failure,
+and every other terminal class remain unsupported. Do not reconstruct proof from
+summaries, probe the old state with a new adapter invocation, or reinterpret an
+equal accepted state as no-effect evidence.
+
+### Preview And Bind Human Permission
+
+Present one current coordinator preview that identifies:
+
+- the exact workspace, exact owner and `spec_path`, durable task key, unchanged
+  requirements, and canonical task prestate;
+- the original terminal reference and content hash, linked operation and
+  accepted-state evidence hashes, and accepted revision;
+- the observed owner-absence and two-part no-effect bases;
+- the implementation revision and a content-hash list covering all relevant
+  current bytes, including dirty and untracked content; and
+- the proposed fresh independent acceptance and, only if it succeeds, ordinary
+  manual close of that same task, while retaining every old failure, obligation,
+  ownership control, and learning disposition and promising no future Work
+  admission.
+
+A commit identifier alone does not identify an uncommitted worktree. Preserve
+the complete preview in the current interaction and require this literal
+confirmation with its displayed values substituted:
+
+```text
+Authorize MANUAL acceptance and close for <spec_path> <taskKey> at <currentRevision> using <terminalEvidence>, accepted revision <N>; retain ownership records.
+```
+
+`currentRevision` is the displayed revision and complete content-hash list.
+`terminalEvidence` is the displayed original terminal reference and content hash
+with its linked evidence. They are observed references, not invented identities
+or a persisted consent object. Prior Work or Ship permission, generic `yes`,
+ordinary `accept T0NN`, and retrospective questions such as
+`why did you stop?` are not permission. Confirmation cannot repair missing
+terminal, ownership, learning, or effect proof. Any material change to the
+preview invalidates it and requires a new preview and literal confirmation
+through the existing Needs You handoff or ordinary chat fallback.
+
+### Obtain Fresh Independent Acceptance
+
+Use `dude-generic-routing` and the current roster to discover a matching
+verification specialist who did not author the implementation; do not require
+an optional pack or project-local role. Obtain fresh independent verification of
+the exact confirmed bytes against every unchanged required obligation, then
+obtain a fresh acceptance judgment from an independent Reviewer against those
+same bytes and every obligation. Give the verifier the exact current runner
+commands, selectors, revision, and check definitions. Give the Reviewer the
+current task requirements and work, complete relevant terminal and learning
+evidence, and the returned verification results.
+
+Historical green output, an implementation author's report, and old Work
+captures cannot replace either result. Keep every required check, outcome,
+failure count, and skip visible. A failure, required skip, rejection,
+unavailable proof, or complete evidence that exceeds an existing applicable
+limit stops without repair, implementation changes, retry, or close. Changed
+material needs separate authorization followed by a new preview, confirmation,
+verification, and review.
+
+These are new ordinary manual-acceptance results. Do not reconstruct an old
+trusted attestation, invoke `specialist-attestation.mjs` for the dead attempt,
+rewrite the old verification/review pair, submit a replacement Work packet, or
+shorten, split, regroup, or relabel old history to fit a limit.
+
+### Recheck, Record, And Close
+
+Before the first write, freshly re-resolve and compare the exact owner, lane,
+task key and prestate, requirements, material bytes and hashes, terminal and
+accepted-state evidence, owner absence, no-effect proof, acceptance results, and
+the retained ownership-claim/checkpoint bytes and hashes. Recheck every value
+bound by the confirmation. A missing, partial, corrupt, changed, stale, or
+mismatched basis refuses; retained controls never grant ownership. During the
+disposition, allow only the known owner-log and ordinary same-task lane changes.
+Unrelated drift stops further writing.
+
+Only after all rechecks pass, append one ordinary UTC Coordinator Log line to the
+exact owner, labeled `MANUAL`, before any lane mutation. Name the exact
+feature/task, old terminal result, terminal evidence reference and hash, accepted
+revision, no-owner and no-effect evidence basis, confirmed revision and
+permission, fresh verification and review references, retained controls, and the
+limited authority for separate manual close. State that the old Work run remains
+failed and unsettled. Use safe evidence references rather than raw invocation
+secrets, consent tokens, or private session paths.
+
+The MANUAL line is plain append-only prose. It is not a `dude-run-event`,
+learning-resolution event, Work audit, new status, task metadata, or advance
+evidence that close succeeded. It changes no RunState, settles no effect, and
+clears no learning seal.
+
+Only the coordinator may then use the existing
+`board.mjs set <tasks.md> <same-taskKey> done --write` path and complete the
+ordinary Lightweight state, render, snapshot, close-log, backlog-refresh, and
+lint duties. Do not call `applyLightweightWorkRequest`, issue a Work permit or
+receipt, restore or revive the old accepted state, claim `ended` or
+`task-settled` for the old run, clear a blocker, change requirements, or rekey the
+task.
+
+Preserve all old captures and history, failed and skipped results, learning
+dispositions, accepted RunState bytes, counters, pending obligations, permits,
+receipts, and ownership-claim/checkpoint bytes. Do not settle the old run, clear
+learning, clean controls, automatically select another task, or promise that a
+later Work request will be admitted. Cleanup remains separately authorized by
+`## Checkpoint Lifecycle And Manual Cleanup`.
+
+The ordinary close is not one transaction across the owner log, board, snapshot,
+derived backlog, and lint. If any part writes and a later part fails, stop and
+report exactly what committed and what remains incomplete. Do not claim rollback,
+successful close, or permission to repair or retry. A successful report names
+only the manual task outcome, preserves the old terminal failure and outstanding
+obligations, and starts no next task.
+
+All ordinary Work ownership, learning, verification, review, admission,
+cancellation, recovery, settlement, close, and resource-limit rules remain
+unchanged outside this explicit path.
+
+This procedure is cooperative instruction policy. It does not authenticate the
+human or coordinator, enforce the gates in the writer, or protect against a
+malicious coordinator.
+
+### Post-Terminal Administrative Reconciliation
+
+Use this distinct path only after an explicit human request concerning one
+currently defined, already-worked, non-complete Lightweight task. Its old
+autonomous Work invocation must be genuinely terminal or abandoned, no old
+owner may remain able to act, and complete retained reviewed learning must make
+normal fresh admission unavailable without that old live authority. This is
+current administrative acceptance and conditional same-key close outside Work,
+not fresh admission, continuation, recovery, restart, or completion or
+settlement of the old attempt. A blocked task, amended definition, or separately
+cleaned control pair is a fact to reconcile, never authority by itself. The
+existence or implementation of this procedure grants no target eligibility,
+human permission, native-operation consent, next-task action, or Git action.
+
+**1. Reconcile the current target without writing.** Resolve the exact current
+workspace, live Lightweight authority, unique `status: defined` owner by exact
+`spec_path:`, task key and unit parsed under the canonical task grammar, and
+current dependencies. Require one already-worked, non-done task with satisfied
+dependencies. Read its current specification, plan, task body, implementation
+and evidence revision, and authorized definition and reconciliation history.
+Any active Work invocation, resolver diagnostic, missing or multiple owner,
+resolved owner, tracked authority, ambiguous or wrong target, unsatisfied
+dependency, or never-worked task refuses.
+
+An explicit scope amendment qualifies only when its recorded, reviewed mapping
+is genuinely one-to-one and preserves the same task purpose. Assess every
+current obligation; do not require obsolete failed-attempt obligations or byte
+equality with superseded prose. A retained key, title, lifecycle number, or old
+green result does not establish semantic continuity or current acceptance. A
+split, merge, rekey, changed purpose, missing mapping, or unreviewed amendment
+refuses.
+
+Identify the exact displayed `blocked-by:` line and its actual current cause. A
+matching independent verifier must establish that the cause is resolved under
+the current definition before the line can become an administrative delta.
+Completed dependencies, amended wording, or an assertion that the blocker is
+stale does not prove resolution. An unresolved dependency or blocker stops
+before a preview can lead to any disposition, metadata edit, or close.
+
+**2. Establish provenance, owner absence, controls, and effects.** Inspect the
+actual original acquisitions and both complete retention surfaces. Require the
+full original authority, failure, ordered occurrence, binding, reviewed-learning,
+pending-attempt, and accounting evidence, including complete matching
+required-learning and reviewed-learning records in retained current-run and
+authoritative lane history. Existing inspectability and resource limits still
+apply. Normalized summaries, hash-only claims without their preimages,
+reconstructed captures, an Inspection packet, one retention surface, a
+checkpoint, or returned historical state cannot replace those sources. Missing,
+partial, stale, conflicting, wrong-target, wrong-authority, or uninspectable
+evidence refuses.
+
+Correlate the actual terminal return when one exists. If the original terminal
+row is unavailable, require genuine retained invocation, lifecycle, session,
+and operation evidence that establishes abandonment of that exact invocation.
+Report the missing row and the actual observed basis; invent no returned result
+or stop reason. Fresh authoritative host observations, or independently
+established operator checks, must prove that no supervisor, worker, or pending
+handoff can still act for the exact target. Worker exit, age, a process
+identifier, old returned state, cancellation, pause, or a model assertion alone
+does not prove owner absence or grant administrative permission.
+
+Reconcile the ownership claim and checkpoint separately from owner absence:
+
+- If the complete retained pair still exists, prove it remains byte-identical
+  and leave it unchanged. It confers no current authority.
+- If the pair was already removed, inspect its actual preserved preimages and
+  hashes, exact separate cleanup authorization, observed removal results, and
+  fresh absence checks for both controls. Partial, corrupt, changed,
+  unexplained, or reappearing controls refuse. Never recreate a pair to qualify.
+
+Prove effects independently of abandonment, owner absence, and cleanup. Compare
+actual operation requests and results and the relevant pre-completion preimages
+with the current canonical tasks, optional snapshot, exact owner lane-history
+prefix, and retained current-run history. Account from actual evidence for
+every intervening authorized definition and lane write; an approved scope
+amendment is not unexplained drift. Known earlier occurrence, learning, or
+blocker writes may remain as accounted historical effects. Conclusively
+establish that the old completion neither closed the task nor left a possibly
+applied completion projection, lane write, or receipt. Missing preimages,
+one-sided or contradictory retention, a possible writer entry, or any unknown
+lane or completion effect refuses. A historical pending attempt remains
+untouched and unsettled. Product qualification limits cannot excuse an
+unaccounted workflow effect, and no adapter may be invoked against old returned
+state to manufacture this proof.
+
+**3. Bind one current permission and current acceptance.** Present one current
+preview naming the exact workspace, owner, `spec_path`, task key, canonical
+prestate and blocker line, dependencies, current obligations and one-to-one
+mapping, current definition and implementation/evidence revisions, and complete
+current material hashes, including dirty and untracked bytes. Include safe
+references to the actual terminal or abandonment provenance, owner-absence
+evidence, effect accounting, control disposition, and proposed independent
+acceptance. Do not expose secrets or raw private session paths.
+
+Require a literal current human reply unambiguously bound to that one exact
+preview. Ordinary natural language may refer to the displayed preview, but it
+must authorize current acceptance, removal of the named proved-obsolete
+`blocked-by:` line, and conditional administrative close of that same task. Add
+no prescribed phrase, parser, flag, token, or stored consent object. Generic or
+unbound assent is insufficient. Implementation direction, previous Work or
+Ship permission, the original path's confirmation, cleanup consent, native or
+operator approval, a retrospective question, or a model-authored approval
+supplies no current close authority. If permission is absent, use the existing
+Needs You handoff or ordinary chat fallback; do not invent a clarification or
+permission.
+
+Obtain a matching independent Tester and an independent Reviewer judgment
+covering every current explicitly defined obligation, the exact current
+material, and current blocker resolution. Retain an existing current judgment
+only when it still matches that complete scope and fresh inspection confirms
+its source, bindings, exact material, and applicability; obtain only missing or
+invalidated judgments. Still-valid approved operator tests or observations may
+support only obligations for which the current definition expressly permits
+retention, and only after fresh inspection proves their actual source,
+provenance, bindings, scope, and current applicability. That fresh inspection
+is the current check; do not force a redundant native rerun, request another
+operation-specific consent token, or infer wider scope merely because old Work
+ended. Historical green output against superseded scope, self-report, proxy
+evidence beyond its accepted boundary, and stale or wrong material are
+insufficient. A missing or invalidated required check, required skip, failure,
+or review rejection prevents close. Route a real proof gap to its existing
+owner without implementation repair, expanded scope, invented native consent,
+or a hidden retry.
+
+**4. Recheck and apply only the administrative delta.** Before the first write,
+freshly recheck every preview binding, dependency, blocker-resolution proof,
+current acceptance result, owner-absence finding, control disposition, effect
+comparison, evidence preimage, and expected intervening byte. Use the existing
+owner and task mutation preflights and normal task-state reader. Snapshot
+absence remains valid; a corrupt or unsafe snapshot or path refuses before the
+MANUAL or metadata write. Unrelated drift stops, and changed material requires
+new permission and affected acceptance.
+
+After all gates and rechecks pass, append one plain UTC `MANUAL` disposition to
+the exact owner's existing Coordinator Log, explicitly labeled as
+post-terminal administrative reconciliation. Record the current obligations
+and one-to-one mapping, actual terminal or abandonment basis and unavailable
+terminal row when applicable, current human permission, independent Tester and
+Reviewer acceptance, exact resolved blocker, no-owner and conclusive-effect
+findings, and unchanged-retained or separately-cleaned control disposition.
+The old run, learning, pending attempt, and accounting remain as recorded. Use
+ordinary log prose, not a `dude-run-event`, learning event, audit, status,
+permission record, Work settlement, or advance claim that close succeeded.
+
+Only after that append may the coordinator remove exactly the displayed
+proved-obsolete `blocked-by:` line from the canonical task. Preserve the exact
+line in the inspected preimage and identify its disposition in the ordinary
+log. Change no task key, body, dependencies, other metadata, obligation, or
+history. The existing board writer retains blocker metadata, so perform only
+this authorized edit; do not add a removal flag, pass an empty replacement, or
+change the parser or writer.
+
+Then the coordinator uses the existing same-task
+`board.mjs set <tasks.md> <same-taskKey> done --write` path and completes the
+ordinary render, snapshot, blocker/state/render/close logging, final backlog
+refresh, and lint duties. Do not insert an intermediate `[~]` claim, call
+`applyLightweightWorkRequest` or any Work wrapper or adapter, restore old
+RunState, identity, counters, attempts, permits, or receipts, resolve learning,
+claim `ended` or `task-settled` for the old run, clean controls, create a
+workflow, schema, state, cap, or role, select another task automatically, or
+perform Git work.
+
+Preserve every old history and capture byte, failure, learning record, pending
+obligation, accounting entry, permit, receipt, cleanup preimage and result,
+archive, and discovered-work record. Keep every product boundary that current
+acceptance did not qualify explicit. These ordinary log, metadata, board,
+render, snapshot, backlog, and lint operations are not one transaction. Recheck
+expected bytes between steps; after any failure, stop and report which MANUAL
+or ordinary log append, blocker metadata edit, glyph, render, snapshot, backlog
+refresh, and validation effects committed and what remains undone, with no
+rollback, retry, or successful-close fiction. A successful report names only
+the current accepted scope, its unqualified limits, the actual provenance, and
+the separate administrative task outcome. It leaves the old Work failure,
+learning, pending obligations, and accounting unsettled and starts no
+successor.
+
+This remains cooperative instruction policy. It authenticates neither the
+human nor the evidence sources and adds no runtime enforcement.
+
 ## Automatic Unchanged-Intent Redefinition
 
 This section is the sole detailed owner of when that definition-reconciliation route runs without a user prompt and of the order it follows; `dude-feature-definition` owns protected intent, Spec Lead staging, parsed integrity, coordinator reconciliation, the non-open-drop pause, and its single `dropped-defective` exception. Only explicit `autonomous` Work with recovery opted in reaches the automatic route, and only in Lightweight. Eligibility needs fresh trusted Inspection evidence of either a deterministic contradiction or impossible gate causally traced to the current definition, which needs no artificial retry, or a current learning-governance conclusion that materially different implementation approaches cannot resolve the blocker. A viable alternative approach, or stale, ambiguous, wrong-target, or caller-asserted evidence, is ineligible. Guarded Work, non-Work flows, and ordinary explicit redefinition keep their existing prompts and behavior unchanged, and tracked targets still refuse before any helper or write.
@@ -175,7 +569,13 @@ Attempt ordinals are invocation-local budget counters. Retain distinct attempts 
 
 While the requirement is unresolved, refuse another attempt on the affected target and refuse generic escalation, no-progress, ordinary block, close, resolving status, task-boundary settlement, and ordinary controlled end before projection or mutation. Preserve the normalized result and its prior/current evidence and approach identities for later authoritative retention. This initial seal authorizes no selected alternative, learning resolution, target mutation, or controlled end.
 
-Retention and projection travel as one bounded batch of at most 17 events; a normal completion batch carries exactly one approach event and zero through sixteen finding events. Project that same batch into existing current-run evidence and the exact authoritative lane history, then freshly reacquire and verify both surfaces. A missing, one-sided, stale, duplicate, wrong-target, or conflicting projection leaves governance unresolved and blocks every attempt, revisit, ordinary target disposition, and release of the evidence.
+Retention and projection travel as one bounded batch of at most 17 events; a normal completion batch carries exactly one approach event and zero through sixteen finding events. Project that same batch into existing current-run evidence and the exact authoritative lane history, then freshly reacquire and verify both surfaces. A missing, one-sided, stale, duplicate, wrong-target, or conflicting projection leaves governance unresolved and blocks every attempt, revisit, ordinary target disposition, and release of the evidence. Only the fully eligible outside-Work procedure in `## Explicit Manual Terminal Resolution` may authorize a separate manual close of its already projected `alternative-authorized` branch while retaining that branch unchanged; it does not resolve, reopen, release, rewrite, or satisfy this learning governance, and every ordinary Work or generic disposition remains sealed.
+
+That branch sentence remains scoped to the original overflow path. The distinct
+`### Post-Terminal Administrative Reconciliation` path may authorize only its
+separately qualified current same-task administrative outcome after its complete
+gate. It likewise leaves every retained learning record and old branch sealed,
+unresolved, and unusable as live Work authority.
 
 A learning review reads complete fresh task, run, attempt, approach, verification, review, lane-history, and assumption evidence, and compares each candidate alternative against the complete failed-approach set for that target and channel rather than the most recent attempt alone. Deterministic identity establishes material difference and binds the selected alternative to its discriminating check; model reasoning may judge only credibility inside that bounded evidence, and a disguised repetition is never materially different. When no credible alternative and no new distinguishing evidence exist, the complete no-alternative conclusion is projected, freshly verified, and re-inspected before `no-progress-verified`.
 
@@ -187,7 +587,7 @@ Irreducible hard stops and exhausted budgets keep immediate precedence. They sto
 
 `transition controlled-end` is available only from `alternative-inspected`, after fresh post-learning Inspection and before attempt-permit issuance, or from `no-progress-verified`, after fresh no-new-distinguishing-evidence verification and before the lane no-progress disposition. It resolves the governance branch for audit while the target lane disposition stays pending and unchanged; it authorizes no attempt and applies no no-progress.
 
-`transition resume-governance` restores or deterministically re-derives the requirement before any normal transition on the affected target. Where projection was impossible, the exact captured basis, occurrence, evidence, and chronology already in existing history remain authoritative and sufficient for that re-derivation. If governance is neither safely retained nor deterministically re-derivable, stop without releasing the required evidence.
+`transition resume-governance` restores or deterministically re-derives the requirement before any normal transition on the affected target. Where no governance projection was retained, the exact captured basis, occurrence, evidence, and chronology already in existing history remain authoritative and sufficient for that re-derivation. Re-derivation never rewinds a retained later or resolved branch. If governance is neither safely retained nor deterministically re-derivable, stop without releasing the required evidence.
 
 `audit` reads existing current-run and authoritative lane history and never a second store. It reports in-progress or controlled-end learning governance from freshly reacquired evidence, including the affected target, trigger, governance status, target disposition, invocation outcome, and projection status. Named hard-stop reporting remains separate at the runner terminal chokepoint. No audit claims target completion, an ordinary block, a close, an attempted alternative, or an applied no-progress that did not occur.
 

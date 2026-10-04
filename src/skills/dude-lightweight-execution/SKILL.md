@@ -58,6 +58,19 @@ On claim, only the coordinator sets `[~]`. On a routed blocker, only the coordin
 
 Read-only status may compare a human-applied `[x]` with the coordinator snapshot and report what would revert, but it never writes. On the next mutating pass, an unverified `[x]` is coordinator-downgraded to `[~]`, rendered, snapshotted, and logged unless the user supplied `accept T0NN` with evidence or attestation. Accepted manual completion remains `[x]` and is logged. Do not silently accept or repeatedly downgrade an accepted task.
 
+For a terminal Work target, ordinary `accept T0NN`, a human-applied `[x]`, and
+the availability of `board.mjs` supply no exception or bypass. Load `dude-work`
+`## Explicit Manual Terminal Resolution`; unless its complete outside-Work gate
+and exact current confirmation pass, retain this section's ordinary
+downgrade/refusal behavior.
+
+Its `### Post-Terminal Administrative Reconciliation` subsection is the
+distinct second path for a currently defined blocked same-key task whose old
+Work authority is terminal or abandoned. Its preview-bound current permission,
+proved blocker resolution, and actual unchanged-retained or
+separately-cleaned control disposition must all pass; ordinary acceptance alone
+supplies no bypass.
+
 ## Lightweight Close Protocol
 
 For a completion claim:
@@ -69,6 +82,24 @@ For a completion claim:
 5. Only the coordinator runs `board.mjs set ... done --write`, regenerates the derived view, appends state/render/close events, and runs `dude-lint`.
 
 Implementation alone never closes a task. If evidence, review, ownership, render, or lint fails, do not mark `[x]`; report or route the blocker.
+
+For a terminal Work target, this protocol supplies the writer, not admission
+authority. Enter it only after `dude-work`
+`## Explicit Manual Terminal Resolution` has admitted the exact target,
+rechecked the confirmed basis and retained controls, obtained fresh independent
+acceptance, and appended its MANUAL owner-log disposition. That gate waives none
+of the steps above. If the disposition or ordinary close partially commits
+before a later write, render, snapshot, backlog refresh, or lint failure, report
+the committed and incomplete effects without claiming rollback, success, or
+retry permission, and do not select another task.
+
+For `### Post-Terminal Administrative Reconciliation`, the same writer-only
+rule applies only after that owning subsection has rechecked its current
+permission, exact proved-obsolete blocker line, and actual
+unchanged-retained or separately-cleaned control disposition and has appended
+its distinct MANUAL entry. Only the coordinator removes that one authorized
+blocker line before same-key close. Ordinary close, acceptance, or blocker
+resolution supplies no admission or freshness bypass.
 
 After a bounded task closes successfully, apply the coordinator's `## Completion Closeout` contract once in that same final response.
 

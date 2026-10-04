@@ -3499,12 +3499,12 @@ test('extension lifecycle contains rejected session logs without touching stdout
     assert.equal(result.sessionLogCalls, 3, 'both opens and the successful close attempt session logging');
     assert.equal(result.stdoutWrites, 0, 'neither lifecycle nor logging containment may use stdout');
     assert.deepEqual(result.sessionRegistration, {
-      toolNames: ['dude_needs_you'],
+      toolNames: ['dude_needs_you', 'dude_a2a_propose', 'dude_a2a_ask', 'dude_a2a_receive', 'dude_a2a_reply', 'dude_a2a_verify'],
       operationNames: ['request', 'acknowledge'],
       acknowledgmentKinds: ['canvas_response', 'outside_answer', 'capture', 'pack_result'],
       hasOnEvent: true,
       canvasCount: 1,
-    }, 'the existing Canvas and one closed two-operation handoff share the joined session');
+    }, 'the existing Canvas, one closed two-operation handoff, and the opt-in A2A ask, receive, reply, and verify tools share the joined session');
   } finally {
     fs.rmSync(harness.root, { recursive: true, force: true });
   }

@@ -17,11 +17,13 @@ import {
   validateTrustedSourceCaptureV2,
   validateVerificationEnvelopeV2,
 } from './recovery.mjs';
-import { buildSpecialistAttestation } from './specialist-attestation.mjs';
+import * as specialistAttestation from './specialist-attestation.mjs';
 import {
   buildRetentionPair,
   readRetentionEpisodeFixture,
 } from '../../../scripts/fixtures/064-work-receipt-overflow-handling/model-view-test-helpers.mjs';
+
+const { buildSpecialistAttestation, buildSpecialistAttestationWithText } = specialistAttestation;
 
 const TARGET = Object.freeze({
   specPath: '.dude/specs/019-specialist-attestation-producer/spec.md',
@@ -1267,4 +1269,322 @@ test('Feature 064 T003: the retained episode is a 16-check fixture assertion wit
   assert.equal(packet.items.length, 2);
   assert.equal(packet.items.find(({ tag }) => tag === 'verification').payload.checks.length, 16);
   assert.equal(episode.classification, 'test-owned-fixture-assertion-not-production-verdict');
+});
+
+test('Feature 074 T002: text builder preserves exact envelope-ordered rows and capture-only bytes', () => {
+  const checks = [
+    { definition: ' \tnode "check" e\u0301 🧪\r\n', outcome: 'failed', evidence: ' failed\r\n\t"raw" \\ evidence 🧪 ' },
+    { definition: 'node focused test', outcome: 'passed', evidence: ' exact passing evidence\n' },
+    { definition: 'third check', outcome: 'failed', evidence: 'third failure, not a success' },
+  ];
+  const verificationRequest = verificationInput(checks);
+  const legacyVerification = buildVerification(verificationRequest);
+  const findings = [
+    {
+      ...clone(OBSERVED_FINDING),
+      basis: {
+        ...clone(OBSERVED_FINDING.basis),
+        expectation: { kind: 'governing-rule', reference: ' \tRule "074" e\u0301\r\n' },
+        checkDefinition: checks[0].definition,
+      },
+      observation: { kind: 'observed-evidence', evidence: ' observed "failure" \\ 🧪\r\n ' },
+    },
+    clone(CHECK_FINDING),
+  ];
+  const reviewRequest = reviewInput(legacyVerification.capture, 'rejected', findings);
+  const emptyRequest = reviewInput(legacyVerification.capture, 'accepted', []);
+  const legacyReview = buildReview(reviewRequest);
+  const legacyEmpty = buildReview(emptyRequest);
+  // Pinned from the unchanged capture-only producer in the focused RED run.
+  assert.deepEqual({
+    verification: sha256(canonicalJson(legacyVerification.capture)),
+    review: sha256(canonicalJson(legacyReview.capture)),
+    empty: sha256(canonicalJson(legacyEmpty.capture)),
+  }, {
+    verification: '9e893b0e38038476275c3ee4f042ece76012aa80dcdb7ce962c84dc97af78993',
+    review: '329d30e5e3d30da49a8ae417161110e1153c6bd8944e4ff5978f8c7e909bba7d',
+    empty: '5a1de9c7f2f566c20bdf209bef37d2c839c4929016142095aa329561f0153771',
+  });
+  const originalInputs = canonicalJson([verificationRequest, reviewRequest, emptyRequest]);
+
+  assert.equal(typeof buildSpecialistAttestationWithText, 'function');
+  const verification = buildSpecialistAttestationWithText(verificationRequest);
+  const review = buildSpecialistAttestationWithText(reviewRequest);
+  const empty = buildSpecialistAttestationWithText(emptyRequest);
+  assert.deepEqual(Object.keys(verification).sort(), ['capture', 'text']);
+  assert.deepEqual(verification.capture, legacyVerification.capture);
+  assert.deepEqual(review.capture, legacyReview.capture);
+  assert.deepEqual(empty.capture, legacyEmpty.capture);
+  assert.deepEqual(verification.text, {
+    type: 'verification-text',
+    version: 1,
+    checks: legacyVerification.envelope.checks.map(check => {
+      const actual = checks.find(row => (
+        semanticIdentity('check-definition', row.definition) === check.definitionIdentity
+      ));
+      assert.ok(actual);
+      assert.equal(check.outcome, actual.outcome);
+      return { definition: actual.definition, evidence: actual.evidence };
+    }),
+  });
+  assert.deepEqual(review.text, {
+    type: 'independent-review-text',
+    version: 1,
+    findings: legacyReview.envelope.findings.map(finding => {
+      const actual = findings.find(row => expectedReviewFinding(
+        row, TARGET, legacyVerification.envelope,
+      ).findingIdentity === finding.findingIdentity);
+      assert.ok(actual);
+      return {
+        expectationReference: actual.basis.expectation.reference,
+        checkDefinition: actual.basis.checkDefinition,
+        ...(actual.observation.kind === 'observed-evidence'
+          ? { observedEvidence: actual.observation.evidence } : {}),
+      };
+    }),
+  });
+  assert.deepEqual(empty.text, { type: 'independent-review-text', version: 1, findings: [] });
+  assert.equal(legacyReview.envelope.verdict, 'rejected');
+  assert.equal(legacyEmpty.envelope.verdict, 'accepted');
+  const checkResultIndex = legacyReview.envelope.findings.findIndex(finding => (
+    finding.observation.kind === 'check-result'
+  ));
+  assert.equal(Object.hasOwn(review.text.findings[checkResultIndex], 'observedEvidence'), false);
+  assert.ok(legacyVerification.envelope.checks.some(check => (
+    check.checkIdentity === legacyReview.envelope.findings[checkResultIndex].observation.identity
+  )));
+
+  assert.deepEqual(
+    buildSpecialistAttestationWithText(verificationInput([checks[2], checks[0], checks[1]])),
+    verification,
+  );
+  assert.deepEqual(
+    buildSpecialistAttestationWithText(reviewInput(verification.capture, 'rejected', [...findings].reverse())),
+    review,
+  );
+  assert.equal(canonicalJson([verificationRequest, reviewRequest, emptyRequest]), originalInputs);
+});
+
+/** Both entry points must retain the same rejection, not just reject somewhere.
+ * @param {unknown} input @param {RegExp} expected */
+function assertAttestationRefusal(input, expected) {
+  let message;
+  assert.throws(() => buildSpecialistAttestation(input), error => {
+    assert.ok(error instanceof TypeError);
+    assert.match(error.message, expected);
+    message = error.message;
+    return true;
+  });
+  assert.throws(() => buildSpecialistAttestationWithText(input), { name: 'TypeError', message });
+}
+
+test('Feature 074 T002: raw 16-row sets survive and duplicates or row 17 refuse before mapping', () => {
+  const checks = Array.from({ length: 16 }, (_, index) => ({
+    definition: `raw check ${index}`,
+    outcome: index % 2 ? 'passed' : 'failed',
+    evidence: `raw evidence ${index}`,
+  }));
+  const verification = buildSpecialistAttestationWithText(verificationInput(checks));
+  const envelope = normalizeVerificationEnvelopeV2(verification.capture);
+  assertVerificationSemantics(envelope, checks);
+  assert.equal(verification.text.checks.length, 16);
+  assert.deepEqual(new Set(verification.text.checks.map(row => row.definition)),
+    new Set(checks.map(row => row.definition)));
+  const findings = checks.map((check, index) => ({
+    basis: {
+      expectation: { kind: 'expected-condition', reference: `raw expectation ${index}` },
+      subjects: ['T001@70726f64'],
+      failureClass: 'raw-failure',
+      checkDefinition: check.definition,
+    },
+    observation: index % 2 ? { kind: 'check-result' }
+      : { kind: 'observed-evidence', evidence: `raw observation ${index}` },
+  }));
+  const reviewRequest = reviewInput(verification.capture, 'rejected', findings);
+  const review = buildSpecialistAttestationWithText(reviewRequest);
+  const reviewEnvelope = normalizeIndependentReviewEnvelopeV2(review.capture, envelope);
+  assertReviewSemantics({ capture: review.capture, envelope: reviewEnvelope, verification: envelope }, reviewRequest.result);
+  assert.equal(review.text.findings.length, 16);
+  assert.equal(review.text.findings.filter(row => Object.hasOwn(row, 'observedEvidence')).length, 8);
+  assert.deepEqual(buildSpecialistAttestationWithText(verificationInput([...checks].reverse())), verification);
+  assert.deepEqual(buildSpecialistAttestationWithText(
+    reviewInput(verification.capture, 'rejected', [...findings].reverse()),
+  ), review);
+
+  // Raw limits win even when the extra row would be a byte-identical duplicate.
+  assertAttestationRefusal(verificationInput([...checks, checks[0]]), /checks must contain 1 through 16 rows/);
+  assertAttestationRefusal(reviewInput(verification.capture, 'rejected', [...findings, findings[0]]),
+    /findings must contain 0 through 16 rows/);
+  for (const duplicate of [checks[0], { ...checks[0], evidence: 'different' }, { ...checks[0], outcome: 'passed' }]) {
+    assertAttestationRefusal(verificationInput([checks[0], duplicate]), /duplicate definition/);
+  }
+  for (const duplicate of [
+    findings[0],
+    { ...clone(findings[0]), observation: { kind: 'observed-evidence', evidence: 'different' } },
+  ]) assertAttestationRefusal(reviewInput(verification.capture, 'rejected', [findings[0], duplicate]), /duplicate findings/);
+  assertAttestationRefusal(verificationInput([]), /checks must contain 1 through 16 rows/);
+  assertAttestationRefusal(reviewInput(verification.capture, 'accepted', [findings[0]]), /empty for accepted review/);
+  assertAttestationRefusal(reviewInput(verification.capture, 'rejected', []), /nonempty for rejected review/);
+});
+
+test('Feature 074 T002: every retained semantic field enforces the unchanged UTF-8 byte bounds', async t => {
+  const exact = '🧪'.repeat(4096);
+  assert.equal(Buffer.byteLength(exact), 16_384);
+  assert.equal(Buffer.byteLength(`${exact}x`), 16_385);
+  for (const field of ['definition', 'evidence']) {
+    await t.test(`verification ${field}`, () => {
+      const input = verificationInput();
+      input.result.checks[0][field] = exact;
+      assert.equal(buildSpecialistAttestationWithText(input).text.checks[0][field], exact);
+      for (const invalidText of ['', `${exact}x`]) {
+        input.result.checks[0][field] = invalidText;
+        assertAttestationRefusal(input, new RegExp(`${field} must contain 1 through 16384 UTF-8 bytes`));
+      }
+    });
+  }
+  const verification = buildSpecialistAttestationWithText(verificationInput());
+  for (const field of ['expectationReference', 'checkDefinition', 'observedEvidence']) {
+    await t.test(`review ${field}`, () => {
+      const input = reviewInput(verification.capture, 'rejected', [OBSERVED_FINDING]);
+      const finding = input.result.findings[0];
+      const container = field === 'expectationReference' ? finding.basis.expectation
+        : field === 'checkDefinition' ? finding.basis : finding.observation;
+      const key = field === 'expectationReference' ? 'reference'
+        : field === 'checkDefinition' ? 'checkDefinition' : 'evidence';
+      container[key] = exact;
+      assert.equal(buildSpecialistAttestationWithText(input).text.findings[0][field], exact);
+      for (const invalidText of ['', `${exact}x`]) {
+        container[key] = invalidText;
+        assertAttestationRefusal(input, new RegExp(`${key} must contain 1 through 16384 UTF-8 bytes`));
+      }
+    });
+  }
+});
+
+test('Feature 074 T002: text construction retains closed inert-data guards without executing hostile values', () => {
+  const verification = buildSpecialistAttestationWithText(verificationInput());
+  let behaviorCalls = 0;
+  const hostile = () => { behaviorCalls += 1; throw new Error('caller behavior ran'); };
+  const cases = [
+    ['caller-supplied text', () => ({ ...verificationInput(), text: verification.text }), /unknown field 'text'/],
+    ['caller identity', () => {
+      const input = verificationInput();
+      input.result.checks[0].checkIdentity = sha256('caller');
+      return input;
+    }, /unknown field 'checkIdentity'/],
+    ['missing evidence', () => {
+      const input = verificationInput();
+      delete input.result.checks[0].evidence;
+      return input;
+    }, /missing field 'evidence'/],
+    ['proxy', () => {
+      const input = verificationInput();
+      input.result.checks[0] = new Proxy(input.result.checks[0], { get: hostile, ownKeys: hostile });
+      return input;
+    }, /must not contain a Proxy/],
+    ['accessor', () => {
+      const input = reviewInput(verification.capture, 'rejected', [OBSERVED_FINDING]);
+      Object.defineProperty(input.result.findings[0].observation, 'evidence', { enumerable: true, get: hostile });
+      return input;
+    }, /enumerable data field/],
+    ['custom prototype', () => {
+      const input = verificationInput();
+      Object.setPrototypeOf(input.result.checks[0], { toJSON: hostile });
+      return input;
+    }, /plain data object/],
+    ['sparse rows', () => {
+      const input = verificationInput();
+      input.result.checks.length = 2;
+      return input;
+    }, /dense data array/],
+    ['array behavior', () => {
+      const input = verificationInput();
+      Object.defineProperty(input.result.checks, Symbol.iterator, { value: hostile });
+      return input;
+    }, /extra fields/],
+    ['cycle', () => {
+      const input = verificationInput();
+      input.result.checks[0].evidence = input;
+      return input;
+    }, /cycle/],
+    ['depth bound', () => {
+      let input = {};
+      for (let index = 0; index < 34; index += 1) input = { child: input };
+      return input;
+    }, /maximum depth of 32/],
+    ['entry bound', () => ({ rows: Array(4096).fill(null) }), /maximum entry count of 4096/],
+    ['invalid Unicode', () => {
+      const input = verificationInput();
+      input.result.checks[0].evidence = '\ud800';
+      return input;
+    }, /surrogate|Unicode/],
+    ['fabricated check observation', () => reviewInput(verification.capture, 'rejected', [{
+      ...clone(CHECK_FINDING), observation: { kind: 'check-result', evidence: 'invented' },
+    }]), /unknown field 'evidence'/],
+  ];
+  for (const [label, makeInput, expected] of cases) {
+    assertAttestationRefusal(makeInput(), expected);
+    assert.equal(behaviorCalls, 0, label);
+  }
+});
+
+test('Feature 074 T002: vetted verification cross-bindings and exact check-result observations remain mandatory', () => {
+  const original = buildSpecialistAttestationWithText(verificationInput());
+  const originalEnvelope = normalizeVerificationEnvelopeV2(original.capture);
+  const review = buildSpecialistAttestationWithText(reviewInput(original.capture, 'rejected', [CHECK_FINDING]));
+  const reviewEnvelope = normalizeIndependentReviewEnvelopeV2(review.capture, originalEnvelope);
+  assert.equal(reviewEnvelope.findings[0].observation.identity, originalEnvelope.checks[0].checkIdentity);
+  assert.equal(Object.hasOwn(review.text.findings[0], 'observedEvidence'), false);
+
+  // Each replacement is a valid builder-produced capture on its own. Only its
+  // relation to the otherwise unchanged review is invalid.
+  const vettedCrossBindings = [
+    ['target', input => {
+      input.context.target.taskKey = 'T002@696e7467';
+      input.context.attempt.approachBasis.target.taskKey = 'T002@696e7467';
+      input.result.target.taskKey = 'T002@696e7467';
+    }, /verification.target/],
+    ['attempt', input => {
+      input.context.attempt.ordinal = 2;
+      input.result.attemptOrdinal = 2;
+    }, /verification.attemptIdentity/],
+    ['source revision', input => {
+      input.context.sourceRevision = 'different source';
+      input.result.sourceRevision = input.context.sourceRevision;
+    }, /verification.sourceRevisionIdentity/],
+    ['inspection', input => {
+      input.context.inspectedEvidenceHash = sha256('different inspection');
+      input.result.inspectedEvidenceHash = input.context.inspectedEvidenceHash;
+    }, /verification.inspectedEvidenceHash/],
+    ['result', input => {
+      input.context.resultMaterial = 'different result';
+      input.result.resultMaterial = input.context.resultMaterial;
+    }, /verification.resultIdentity/],
+    ['dispatch', input => {
+      input.context.dispatch.occurrence = 2;
+      input.result.dispatch.occurrence = 2;
+    }, /capture.authority must be builder-derived/],
+  ];
+  for (const [label, mutate, expected] of vettedCrossBindings) {
+    const input = verificationInput();
+    mutate(input);
+    const replacement = buildSpecialistAttestationWithText(input);
+    validateTrustedSourceCaptureV2(replacement.capture);
+    validateVerificationEnvelopeV2(normalizeVerificationEnvelopeV2(replacement.capture));
+    assert.notDeepEqual(replacement.capture, original.capture, label);
+    assertAttestationRefusal(reviewInput(replacement.capture, 'rejected', [CHECK_FINDING]), expected);
+  }
+  const differentCheck = buildSpecialistAttestationWithText(verificationInput([
+    { definition: 'another definition', outcome: 'failed', evidence: 'another check' },
+  ]));
+  assertAttestationRefusal(reviewInput(differentCheck.capture, 'rejected', [CHECK_FINDING]), /bound verification check/);
+  const changedEvidence = buildSpecialistAttestationWithText(verificationInput([
+    { definition: 'node focused test', outcome: 'failed', evidence: 'changed check result' },
+  ]));
+  const changedEnvelope = normalizeVerificationEnvelopeV2(changedEvidence.capture);
+  const rebound = buildSpecialistAttestationWithText(reviewInput(changedEvidence.capture, 'rejected', [CHECK_FINDING]));
+  const reboundEnvelope = normalizeIndependentReviewEnvelopeV2(rebound.capture, changedEnvelope);
+  assert.equal(reboundEnvelope.findings[0].observation.identity, changedEnvelope.checks[0].checkIdentity);
+  assert.notEqual(reboundEnvelope.findings[0].observation.identity, reviewEnvelope.findings[0].observation.identity);
+  assert.notEqual(reboundEnvelope.verificationEnvelopeIdentity, reviewEnvelope.verificationEnvelopeIdentity);
 });

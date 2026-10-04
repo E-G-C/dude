@@ -114,6 +114,10 @@ const MAX_IDEA_INVENTORY_ENTRIES = 999;
 const MAX_RETAINED_DESCRIPTORS = 64;
 const MAX_ERROR_JSON_BYTES = 8_192;
 const MAX_PACKET_BYTES = 262_144;
+const MAX_SEMANTIC_TEXT_BYTES = 16_384;
+const READABLE_RECORD_TYPES = Object.freeze([
+  'verification-text', 'independent-review-text', 'readable-evidence-attachment',
+]);
 const MAX_REGISTRY_ENTRIES = 64;
 const MAX_RUNTIME_RESULT_DEPTH = 32;
 const MAX_RUNTIME_RESULT_ENTRIES = 4096;
@@ -416,7 +420,11 @@ function detachRuntimeData(value, label) {
     const detached = {};
     for (const key of keys) {
       charge(key);
-      detached[key] = visit(source[key], depth + 1, `${path}.${key}`);
+      // Preserve even __proto__ as data so closed-schema validation sees it.
+      Object.defineProperty(detached, key, {
+        value: visit(source[key], depth + 1, `${path}.${key}`),
+        enumerable: true, configurable: true, writable: true,
+      });
     }
     active.delete(current);
     return detached;
@@ -539,8 +547,11 @@ function assertDenseDataArray(value, label) {
   return values;
 }
 
-/** @param {unknown} value @param {string} label */
-function assertDenseDataArrayLength(value, label) {
+/** Also used before the runner composes retained stream references. Reads no
+ * capture bodies and invokes no caller iterators or indexed accessors.
+ * @param {unknown} value @param {string} label */
+export function assertDenseDataArrayLength(value, label) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must be a plain data array');
   if (!Array.isArray(value)) invalid(label, 'must be an array');
   assertPlainArrayPrototype(value, label);
   const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
@@ -670,6 +681,12 @@ export function sha256(value) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+/** The producer's unchanged domain-separated preimage identity.
+ * @param {string} domain @param {unknown} material */
+export function specialistSemanticIdentityV1(domain, material) {
+  return sha256(canonicalJson({ type: `specialist-attestation:${domain}`, version: 1, material }));
+}
+
 /** Describe complete content without retaining it. @param {string | ArrayBuffer | ArrayBufferView} value */
 export function contentDescriptor(value) {
   if (typeof value === 'string') assertUnicodeScalarString(value, 'content');
@@ -778,8 +795,8 @@ function chargeByteSequence(value, label, budget, source) {
   if (bytes) chargeBodyLength(bytes.byteLength, label, budget, source);
 }
 
-/** @param {Record<string, unknown>} raw */
-function validateDeclaredJsonCaptures(raw) {
+/** @param {Record<string, unknown>} raw @param {Record<string, unknown>} target */
+function validateDeclaredJsonCaptures(raw, target) {
   const lane = assertRecord(raw.lane, 'rawInputs.lane');
   if (lane.kind === 'tracked') {
     parseCanonicalJsonBytes(lane.listBytes, 'tracked list captured JSON');
@@ -810,7 +827,16 @@ function validateDeclaredJsonCaptures(raw) {
         [],
         `rawInputs.${field}[${index}]`,
       );
-      parseCanonicalJsonBytes(entry.bytes, `${source} captured JSON`);
+      const body = parseCanonicalJsonBytes(entry.bytes, `${source} captured JSON`);
+      if (hasReadableRecord(body)) validateReadableTransportV1(body, entry, source, target);
+    }
+  }
+  if (Object.hasOwn(raw, 'session')) {
+    const session = assertRecord(raw.session, 'rawInputs.session');
+    const captured = decodeCapturedBytes(session.bytes);
+    if (captured.text !== null) {
+      const body = parseModelSourceBody(captured.text);
+      if (hasReadableRecord(body)) invalid('session readable evidence', 'is forbidden');
     }
   }
 }
@@ -2313,7 +2339,7 @@ function collectEvidenceInternal(targetValue, rawValue, dependenciesValue, conte
     context.capturesCharged === true,
     target,
   );
-  validateDeclaredJsonCaptures(raw);
+  validateDeclaredJsonCaptures(raw, target);
   const owner = normalizeOwnerLog(raw.directIdeas, /** @type {string} */ (target.specPath), context.ownerDiagnostics || []);
   const taskHistory = normalizeTaskHistory(raw.tasks, target);
   const lane = normalizeLaneHistory(raw.lane, target, taskHistory, dependencies);
@@ -2363,7 +2389,7 @@ function collectEvidenceInternal(targetValue, rawValue, dependenciesValue, conte
     CHECK_STATES,
   );
   const lint = normalizeCaptureStream(raw.lint, target, 'lint', 'lint', CHECK_STATES);
-  return [
+  const items = [
     owner.item,
     taskHistory.item,
     ...(definitionPlan ? [definitionPlan] : []),
@@ -2374,6 +2400,12 @@ function collectEvidenceInternal(targetValue, rawValue, dependenciesValue, conte
     ...lint,
     normalizeSession(raw.session, target),
   ];
+  // Validate the complete supplied set before Inspection ordering or deduplication.
+  if (items.some(item => typeof item.text === 'string'
+    && hasReadableRecord(parseModelSourceBody(item.text)))) {
+    modelPayloadContext(target, items);
+  }
+  return items;
 }
 
 /** Collect concrete evidence from the closed captured-input shape. @param {unknown} target @param {unknown} rawInputs @param {unknown} [dependencies] @param {string} [policyMode] */
@@ -3058,12 +3090,237 @@ function isAvailable(item) {
 }
 
 /**
+ * @typedef {{type:'verification-text',version:1,checks:{definition:string,evidence:string}[]}} VerificationTextV1
+ * @typedef {{type:'independent-review-text',version:1,
+ *   findings:{expectationReference:string,checkDefinition:string,observedEvidence?:string}[]}} IndependentReviewTextV1
+ * @typedef {VerificationTextV1|IndependentReviewTextV1} ReadableTextV1
+ * @typedef {{sourceCaptureIdentity:string,sourceOutcomeHash:string}} ReadableReferenceV1
+ * @typedef {{kind:'fresh',capture:Record<string,unknown>,text:ReadableTextV1}
+ *   |{kind:'attachment',reference:ReadableReferenceV1,text:ReadableTextV1}} ReadableCarrierV1
+ */
+
+/** Syntax failure alone makes an existing source ineligible for typed rendering.
+ * @param {string} text @returns {unknown} */
+function parseModelSourceBody(text) {
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return null;
+  }
+}
+
+/** Only record-boundary discriminators are reserved; semantic strings stay inert.
+ * @param {unknown} value */
+function isReadableRecord(value) {
+  return isPlainRecord(value)
+    && READABLE_RECORD_TYPES.includes(/** @type {string} */ (value.type));
+}
+
+/** Recognize misplaced records too, before a target filter or literal fallback.
+ * @param {unknown} value */
+function hasReadableRecord(value) {
+  if (isReadableRecord(value)) return true;
+  if (Array.isArray(value)) return value.some(record => isReadableRecord(record)
+    || (isPlainRecord(record) && isReadableRecord(record.substantive)));
+  if (!isPlainRecord(value)) return false;
+  if (isReadableRecord(value.substantive)) return true;
+  return Array.isArray(value.records) && value.records.some(record => (
+    isReadableRecord(record) || (isPlainRecord(record) && isReadableRecord(record.substantive))
+  ));
+}
+
+/** @param {unknown} value @param {string} label @returns {string} */
+function validateSemanticTextV1(value, label) {
+  assertUnicodeScalarString(value, label);
+  const text = /** @type {string} */ (value);
+  const length = Buffer.byteLength(text);
+  if (length < 1 || length > MAX_SEMANTIC_TEXT_BYTES) {
+    invalid(label, `must contain 1 through ${MAX_SEMANTIC_TEXT_BYTES} UTF-8 bytes`);
+  }
+  return text;
+}
+
+/** Check bounded inert data before semantic row validation or identity calculation.
+ * @param {unknown} value @param {string} source @param {string} label @returns {ReadableTextV1} */
+function validateReadableTextShapeV1(value, source, label) {
+  const data = detachRuntimeData(value, label);
+  const verification = source === 'verification' || source === 'lint';
+  const field = verification ? 'checks' : 'findings';
+  const record = assertExactRecord(data, ['type', 'version', field], [], label);
+  if (record.type !== (verification ? 'verification-text' : 'independent-review-text')) {
+    invalid(`${label}.type`, 'must match the source kind');
+  }
+  if (record.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  const rows = assertDenseDataArray(record[field], `${label}.${field}`);
+  if (rows.length < (verification ? 1 : 0) || rows.length > 16) {
+    invalid(`${label}.${field}`, `must contain ${verification ? 1 : 0} through 16 raw rows`);
+  }
+  const definitions = new Set();
+  for (const [index, value] of rows.entries()) {
+    const rowLabel = `${label}.${field}[${index}]`;
+    if (verification) {
+      const row = assertExactRecord(value, ['definition', 'evidence'], [], rowLabel);
+      const definition = validateSemanticTextV1(row.definition, `${rowLabel}.definition`);
+      validateSemanticTextV1(row.evidence, `${rowLabel}.evidence`);
+      if (definitions.has(definition)) invalid(`${label}.checks`, 'must not contain duplicate definitions');
+      definitions.add(definition);
+    } else {
+      const row = assertExactRecord(
+        value, ['expectationReference', 'checkDefinition'], ['observedEvidence'], rowLabel,
+      );
+      validateSemanticTextV1(row.expectationReference, `${rowLabel}.expectationReference`);
+      validateSemanticTextV1(row.checkDefinition, `${rowLabel}.checkDefinition`);
+      if (Object.hasOwn(row, 'observedEvidence')) {
+        validateSemanticTextV1(row.observedEvidence, `${rowLabel}.observedEvidence`);
+      }
+    }
+  }
+  return /** @type {ReadableTextV1} */ (data);
+}
+
+/** Validate the two new normalized bodies without inventing missing context.
+ * @param {unknown} value @param {string} source @param {unknown} target
+ * @returns {ReadableCarrierV1|null} */
+function readableCarrierV1(value, source, target) {
+  if (!hasReadableRecord(value)) return null;
+  const label = `${source} readable carrier`;
+  if (!['verification', 'review', 'lint'].includes(source)) invalid(label, 'is forbidden in this source');
+  const body = assertExactRecord(detachRuntimeData(value, label), ['target', 'state', 'records'], [], label);
+  if (canonicalJson(body.target) !== canonicalJson(canonicalTarget(target))) {
+    invalid(`${label}.target`, 'must match the canonical Inspection target');
+  }
+  const records = assertDenseDataArray(body.records, `${label}.records`);
+  const first = assertRecord(records[0], `${label}.records[0]`);
+  if (first.type === 'readable-evidence-attachment') {
+    if (source === 'lint') invalid(label, 'attachments are forbidden in lint');
+    if (records.length !== 1) invalid(`${label}.records`, 'must contain exactly one attachment');
+    const attachment = assertExactRecord(first, ['type', 'version', 'reference', 'text'], [], label);
+    if (attachment.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+    const reference = assertExactRecord(
+      attachment.reference, ['sourceCaptureIdentity', 'sourceOutcomeHash'], [], `${label}.reference`,
+    );
+    assertHash(reference.sourceCaptureIdentity, `${label}.reference.sourceCaptureIdentity`);
+    assertHash(reference.sourceOutcomeHash, `${label}.reference.sourceOutcomeHash`);
+    return {
+      kind: 'attachment',
+      reference: /** @type {ReadableReferenceV1} */ (reference),
+      text: validateReadableTextShapeV1(attachment.text, source, `${label}.text`),
+    };
+  }
+  if (records.length !== 2 || !isReadableRecord(records[1])) {
+    invalid(`${label}.records`, 'must contain exactly a capture followed by its readable text');
+  }
+  const text = validateReadableTextShapeV1(records[1], source, `${label}.text`);
+  const capture = /** @type {Record<string,unknown>} */ (
+    validateTrustedSourceCaptureV2(first, `${label}.capture`)
+  );
+  if (canonicalJson(capture.target) !== canonicalJson(body.target)) {
+    invalid(`${label}.capture.target`, 'must match the outer target');
+  }
+  const authority = /** @type {Record<string,unknown>} */ (capture.authority);
+  if (authority.kind !== (source === 'review' ? 'independent-review' : 'verification')) {
+    invalid(`${label}.capture.authority.kind`, 'must match the source kind');
+  }
+  const bytes = /** @type {Record<string,unknown>} */ (capture.bytes);
+  if (capture.outcomeHash !== bytes.sha256) {
+    invalid(`${label}.capture.outcomeHash`, 'must bind the exact envelope bytes');
+  }
+  return { kind: 'fresh', capture, text };
+}
+
+/** Called on original wrapped transport, before wrong-target filtering.
+ * @param {unknown} value @param {Record<string,unknown>} entry
+ * @param {string} source @param {unknown} target */
+function validateReadableTransportV1(value, entry, source, target) {
+  const label = `${source} readable transport`;
+  const body = assertExactRecord(detachRuntimeData(value, label), ['target', 'state', 'records'], [], label);
+  const records = assertDenseDataArray(body.records, `${label}.records`).map((record, index) => (
+    assertExactRecord(record, ['substantive'], [], `${label}.records[${index}]`).substantive
+  ));
+  const normalized = { target: body.target, state: body.state, records };
+  readableCarrierV1(normalized, source, target);
+  if (canonicalJson(entry.target) !== canonicalJson(body.target)) {
+    invalid(`${label}.target`, 'must match the complete outer target');
+  }
+  if (entry.state !== body.state) invalid(`${label}.state`, 'must match the complete outer state');
+  if (entry.outcomeHash !== sha256(canonicalJson(normalized))) {
+    invalid(`${label}.outcomeHash`, 'must match the complete substantive stream');
+  }
+}
+
+/** Existing envelope validators retain check/finding identities, verdicts and
+ * exact review-to-verification bindings. This adds only preimage correspondence.
+ * @param {ReadableTextV1} text @param {Record<string,unknown>} envelope
+ * @param {Record<string,unknown>|undefined} verification @param {string} label */
+function validateReadableCorrespondenceV1(text, envelope, verification, label) {
+  if (text.type === 'verification-text') {
+    validateVerificationEnvelopeV2(envelope);
+    const checks = /** @type {Record<string,unknown>[]} */ (envelope.checks);
+    if (text.checks.length !== checks.length) invalid(label, 'must cover every check exactly once');
+    const definitions = new Set();
+    for (const [index, row] of text.checks.entries()) {
+      const check = checks[index];
+      if (definitions.has(check.definitionIdentity)) invalid(label, 'must not contain duplicate definitions');
+      definitions.add(check.definitionIdentity);
+      for (const [field, domain, identity] of [
+        ['definition', 'check-definition', check.definitionIdentity],
+        ['evidence', 'check-evidence', check.evidenceIdentity],
+      ]) {
+        if (specialistSemanticIdentityV1(/** @type {string} */ (domain), row[field]) !== identity) {
+          invalid(`${label}.checks[${index}].${field}`, 'must match the envelope row in canonical order');
+        }
+      }
+    }
+    return;
+  }
+  if (!verification) invalid(label, 'must resolve the exact bound verification envelope');
+  validateIndependentReviewEnvelopeV2(envelope, verification);
+  const findings = /** @type {Record<string,unknown>[]} */ (envelope.findings);
+  if (text.findings.length !== findings.length) invalid(label, 'must cover every finding exactly once');
+  const bases = new Set();
+  const identities = new Set();
+  for (const [index, row] of text.findings.entries()) {
+    const finding = findings[index];
+    const basis = /** @type {Record<string,unknown>} */ (finding.basis);
+    const expectation = /** @type {Record<string,unknown>} */ (basis.expectation);
+    const observation = /** @type {Record<string,unknown>} */ (finding.observation);
+    if (canonicalJson(basis.target) !== canonicalJson(envelope.target)) {
+      invalid(`${label}.findings[${index}].basis.target`, 'must match the envelope target');
+    }
+    if (bases.has(finding.basisIdentity) || identities.has(finding.findingIdentity)) {
+      invalid(label, 'must not contain duplicate finding or basis identities');
+    }
+    bases.add(finding.basisIdentity);
+    identities.add(finding.findingIdentity);
+    if (specialistSemanticIdentityV1('finding-expectation', {
+      kind: expectation.kind, reference: row.expectationReference,
+    }) !== expectation.identity) {
+      invalid(`${label}.findings[${index}].expectationReference`, 'must match the bound expectation');
+    }
+    if (specialistSemanticIdentityV1('check-definition', row.checkDefinition) !== basis.checkDefinitionIdentity) {
+      invalid(`${label}.findings[${index}].checkDefinition`, 'must match the bound definition');
+    }
+    if (observation.kind === 'check-result') {
+      if (Object.hasOwn(row, 'observedEvidence')) {
+        invalid(`${label}.findings[${index}].observedEvidence`, 'is forbidden for a check-result observation');
+      }
+    } else if (!Object.hasOwn(row, 'observedEvidence')
+      || specialistSemanticIdentityV1('finding-observation', row.observedEvidence) !== observation.identity) {
+      invalid(`${label}.findings[${index}].observedEvidence`, 'must match the bound observation');
+    }
+  }
+}
+
+/**
  * @typedef {{source:string,position:number}} ModelOccurrence
  * @typedef {{descriptor:ReturnType<typeof descriptor>,occurrences:ModelOccurrence[]}} ModelFrame
+ * @typedef {{capture:Record<string,unknown>,reference?:never}
+ *   |{reference:ReadableReferenceV1,capture?:never}} ModelProvenance
  * @typedef {{tag:'verification'|'review',payload:Record<string,unknown>,outer:Record<string,unknown>,
- *   capture:Record<string,unknown>,binding:Record<string,unknown>}} ModelPayload
- * @typedef {ModelFrame & {outer:Record<string,unknown>,capture:Record<string,unknown>,
- *   binding:Record<string,unknown>}} TrustedModelFrame
+ *   binding:Record<string,unknown>} & ModelProvenance} ModelPayload
+ * @typedef {ModelFrame & {outer:Record<string,unknown>,binding:Record<string,unknown>}
+ *   & ModelProvenance} TrustedModelFrame
  * @typedef {{tag:'literal',text:string,frames:ModelFrame[]}} LiteralModelItem
  * @typedef {{tag:'current-run',body:Record<string,unknown>,frames:ModelFrame[]}} CurrentRunModelItem
  * @typedef {{tag:'verification'|'review',payload:Record<string,unknown>,frames:TrustedModelFrame[]}} TypedModelItem
@@ -3074,25 +3331,32 @@ function isAvailable(item) {
  * Unsupported bodies remain literal; recognized v2 envelopes use the existing
  * normalizers without catching their authority or malformed-evidence refusals.
  * @param {unknown} target @param {Record<string, unknown>[]} items
- * @returns {Map<Record<string,unknown>,ModelPayload>}
+ * @returns {Map<string,ModelPayload>}
  */
 function modelPayloadContext(target, items) {
-  /** @type {{item:Record<string,unknown>,body:Record<string,unknown>,capture:Record<string,unknown>,
-   *   envelope:Record<string,unknown>,kind:string}[]} */
+  /** @typedef {{item:Record<string,unknown>,body:Record<string,unknown>,
+   *   carrier:ReadableCarrierV1|null,index:number}} ModelSource */
+  /** @type {ModelSource[]} */
+  const sources = [];
+  /** @type {(ModelSource & {capture:Record<string,unknown>,envelope:Record<string,unknown>,kind:string})[]} */
   const rows = [];
-  for (const item of items) {
-    if (item.status !== 'present' || typeof item.text !== 'string'
-      || !['verification', 'lint', 'review'].includes(/** @type {string} */ (item.source))) continue;
-    let body;
-    try {
-      body = JSON.parse(item.text);
-    } catch (error) {
-      if (!(error instanceof SyntaxError)) throw error;
-      continue;
+  for (const [index, item] of items.entries()) {
+    validateEvidenceItem(item);
+    if (typeof item.text !== 'string') continue;
+    // Reserved records must be recognized even in sources that stay literal.
+    const body = parseModelSourceBody(item.text);
+    const carrier = readableCarrierV1(body, /** @type {string} */ (item.source), target);
+    if (carrier && (item.status !== 'present' || canonicalJson(body) !== item.text)) {
+      invalid(`${item.source} readable carrier`, 'must be present canonical source data');
     }
+    if (item.status !== 'present' || !['verification', 'lint', 'review'].includes(
+      /** @type {string} */ (item.source),
+    )) continue;
     if (!isPlainRecord(body) || Object.keys(body).length !== 3
       || !Object.hasOwn(body, 'target') || !Object.hasOwn(body, 'state')
       || !Array.isArray(body.records)) continue;
+    const source = { item, body, carrier, index };
+    sources.push(source);
     for (const record of body.records) {
       if (!isPlainRecord(record)
         || (!Object.hasOwn(record, 'authority') && !Object.hasOwn(record, 'bytes'))) continue;
@@ -3103,49 +3367,81 @@ function modelPayloadContext(target, items) {
         parseCanonicalJsonBytes(validateCapturedBytesV1(capture.bytes, `${label}.bytes`).decoded, `${label}.bytes`)
       );
       if (envelope?.version !== 2
-        || envelope.type !== `${kind}-envelope`) continue;
-      rows.push({ item, body, capture, envelope, kind });
+        || envelope.type !== `${kind}-envelope`) {
+        if (carrier) invalid(`${label}.bytes`, 'must contain the current-format specialist envelope');
+        continue;
+      }
+      rows.push({ ...source, capture, envelope, kind });
     }
   }
+  const readable = sources.some(source => source.carrier !== null);
+  const verificationIdentities = new Set(rows
+    .filter(row => row.item.source === 'verification').map(row => row.envelope.envelopeIdentity));
+  // Reuse the authority index on supported captures. Unrelated legacy bodies
+  // and old reviews with unavailable bindings keep their existing literal form.
+  const trusted = readable ? indexTrustedEnvelopeRowsV2(rows.filter(row => (
+    row.item.source !== 'lint' && (row.kind === 'verification'
+      || verificationIdentities.has(row.envelope.verificationEnvelopeIdentity))
+  )).map(row => ({
+    capture: row.capture,
+    captureIdentity: trustedSourceCaptureIdentityV2(row.capture),
+    kind: row.kind,
+    sourceState: /** @type {string} */ (row.body.state),
+  }))) : null;
   /** @type {Map<string,Record<string,unknown>>} */
   const verifications = new Map();
-  /** @type {Map<Record<string,unknown>,ModelPayload>} */
+  /** @type {Map<string,ModelPayload>} */
   const context = new Map();
-  /** @param {typeof rows[number]} row @param {Record<string,unknown>} envelope */
-  const retain = (row, envelope) => {
+  /** @param {ModelSource} row @param {Record<string,unknown>} capture
+   * @param {Record<string,unknown>} envelope @param {ReadableTextV1} [text]
+   * @param {ReadableReferenceV1} [reference] */
+  const retain = (row, capture, envelope, text, reference) => {
     if (canonicalJson(row.body.target) !== canonicalJson(canonicalTarget(target))
-      || targetKey(row.capture.target) !== targetKey(target)) {
+      || targetKey(capture.target) !== targetKey(target)) {
       invalid(`${row.item.source} model source.target`, 'must match the fresh Inspection target');
     }
-    const expectedState = row.kind === 'verification'
+    const verification = envelope.type === 'verification-envelope';
+    const expectedState = verification
       ? (/** @type {Record<string,unknown>[]} */ (envelope.checks)
         .some((check) => check.outcome === 'failed') ? 'failed' : 'passed')
       : envelope.verdict;
     if (row.body.state !== expectedState) {
       invalid(`${row.item.source} model source.state`, 'must match its authoritative source outcome');
     }
-    if (/** @type {unknown[]} */ (row.body.records).length !== 1
-      || canonicalJson(row.body) !== row.item.text) return;
-    const captured = /** @type {Record<string,unknown>} */ (row.capture.bytes);
+    if (!text && (/** @type {unknown[]} */ (row.body.records).length !== 1
+      || canonicalJson(row.body) !== row.item.text)) return;
+    const captured = /** @type {Record<string,unknown>} */ (capture.bytes);
     if (!Buffer.from(canonicalJson(envelope)).equals(
       Buffer.from(/** @type {string} */ (captured.base64), 'base64'),
     )) return;
-    const payloadFields = row.kind === 'verification'
+    if (text) validateReadableCorrespondenceV1(
+      text, envelope, verifications.get(/** @type {string} */ (envelope.verificationEnvelopeIdentity)),
+      `${row.item.source} readable text`,
+    );
+    const payloadFields = verification
       ? ['type', 'version', 'target', 'checks']
       : ['type', 'version', 'target', 'verdict', 'findings'];
     const { base64, ...bytes } = captured;
-    context.set(row.item, {
-      tag: row.kind === 'verification' ? 'verification' : 'review',
-      payload: Object.fromEntries(payloadFields.map((field) => [field, envelope[field]])),
+    context.set(canonicalJson(row.item), {
+      tag: verification ? 'verification' : 'review',
+      payload: {
+        ...Object.fromEntries(payloadFields.map((field) => [field, envelope[field]])),
+        ...(text ? { text } : {}),
+      },
       outer: { target: row.body.target, state: row.body.state },
-      capture: { ...row.capture, bytes },
+      ...(reference ? { reference } : { capture: { ...capture, bytes } }),
       binding: Object.fromEntries(Object.entries(envelope)
         .filter(([field]) => !payloadFields.includes(field))),
     });
   };
   for (const row of rows.filter((row) => row.kind === 'verification')) {
-    const envelope = /** @type {Record<string,unknown>} */ (normalizeVerificationEnvelopeV2(row.capture));
-    retain(row, envelope);
+    // The index excludes lint; an equal envelope identity does not validate its capture.
+    const indexed = row.item.source === 'verification'
+      ? trusted?.verifications.get(/** @type {string} */ (row.envelope.envelopeIdentity))
+      : undefined;
+    const envelope = indexed?.envelope
+      ?? /** @type {Record<string,unknown>} */ (normalizeVerificationEnvelopeV2(row.capture));
+    retain(row, row.capture, envelope, row.carrier?.text);
     if (row.item.source === 'verification') {
       verifications.set(/** @type {string} */ (envelope.envelopeIdentity), envelope);
     }
@@ -3154,10 +3450,59 @@ function modelPayloadContext(target, items) {
     const verification = verifications.get(/** @type {string} */ (row.envelope.verificationEnvelopeIdentity));
     // An unavailable binding grants no typed view; the existing authority reader
     // still owns the incomplete-evidence refusal using the unchanged literal body.
-    if (!verification) continue;
-    retain(row, /** @type {Record<string,unknown>} */ (
+    if (!verification) {
+      if (row.carrier) invalid('review readable text', 'must resolve the exact bound verification envelope');
+      continue;
+    }
+    retain(row, row.capture, /** @type {Record<string,unknown>} */ (
       normalizeIndependentReviewEnvelopeV2(row.capture, verification)
-    ));
+    ), row.carrier?.text);
+  }
+  const attachments = new Set();
+  for (const source of sources) {
+    const carrier = source.carrier;
+    if (!carrier) continue;
+    if (carrier.kind === 'fresh') {
+      if (source.item.source === 'lint' && !sources.some(candidate => (
+        candidate.item.source === 'verification' && candidate.carrier?.kind === 'fresh'
+          && candidate.item.text === source.item.text
+      ))) invalid('lint readable carrier', 'requires a byte-identical verification carrier');
+      continue;
+    }
+    const label = `${source.item.source} readable attachment`;
+    const reference = carrier.reference;
+    if (attachments.has(reference.sourceCaptureIdentity)) {
+      invalid(label, 'must not contain duplicate attachments for one capture');
+    }
+    attachments.add(reference.sourceCaptureIdentity);
+    const originals = sources.filter(candidate => candidate.item.source === source.item.source
+      && candidate.item.sha256 === reference.sourceOutcomeHash);
+    if (originals.length !== 1) invalid(label, 'must resolve exactly one original source in the same class');
+    const original = originals[0];
+    if (original.carrier !== null || /** @type {unknown[]} */ (original.body.records).length !== 1
+      || canonicalJson(original.body) !== original.item.text) {
+      invalid(label, 'must reference an original canonical capture-only stream');
+    }
+    if (original.index >= source.index) invalid(label, 'must follow its original source');
+    const row = rows.find(candidate => candidate.item === original.item);
+    if (!row) invalid(label, 'must reference a current-format specialist capture');
+    if (trustedSourceCaptureIdentityV2(row.capture) !== reference.sourceCaptureIdentity) {
+      invalid(`${label}.reference.sourceCaptureIdentity`, 'must match the complete original capture');
+    }
+    if (row.capture.outcomeHash !== /** @type {Record<string,unknown>} */ (row.capture.bytes).sha256) {
+      invalid(`${label}.capture.outcomeHash`, 'must bind the exact envelope bytes');
+    }
+    if (canonicalJson(row.capture.target) !== canonicalJson(canonicalTarget(target))) {
+      invalid(`${label}.capture.target`, 'must match the canonical Inspection target');
+    }
+    const verification = verifications.get(/** @type {string} */ (row.envelope.verificationEnvelopeIdentity));
+    if (row.kind === 'independent-review' && !verification) {
+      invalid(label, 'must resolve the exact bound verification envelope');
+    }
+    const envelope = /** @type {Record<string,unknown>} */ (row.kind === 'verification'
+      ? normalizeVerificationEnvelopeV2(row.capture)
+      : normalizeIndependentReviewEnvelopeV2(row.capture, verification));
+    retain(source, row.capture, envelope, carrier.text, reference);
   }
   return context;
 }
@@ -3250,7 +3595,7 @@ function modelCurrentRunItem(target, item, frame, events) {
 
 /**
  * @param {unknown} target @param {unknown} value
- * @param {Map<Record<string,unknown>,ModelPayload>} [context]
+ * @param {Map<string,ModelPayload>} [context]
  */
 function packetProjection(target, value, context) {
   const originals = /** @type {Record<string, unknown>[]} */ (assertDenseDataArray(value, 'EvidenceItem list'));
@@ -3266,12 +3611,15 @@ function packetProjection(target, value, context) {
     const frame = { descriptor: descriptor(item), occurrences: [{ source, position }] };
     /** @type {LiteralModelItem} */
     const literal = { tag: 'literal', text: /** @type {string} */ (item.text), frames: [frame] };
-    const payload = payloads.get(item);
+    const payload = payloads.get(canonicalJson(item));
     /** @type {TypedModelItem|null} */
     const typed = payload ? {
       tag: payload.tag,
       payload: payload.payload,
-      frames: [{ ...frame, outer: payload.outer, capture: payload.capture, binding: payload.binding }],
+      frames: [{
+        ...frame, outer: payload.outer, binding: payload.binding,
+        ...(payload.reference ? { reference: payload.reference } : { capture: payload.capture }),
+      }],
     } : null;
     if (source === 'lint' && item.status === 'present' && item.text !== '[]') {
       const prior = units.find((unit) => unit.source === 'verification'
@@ -3326,7 +3674,7 @@ function packetProjection(target, value, context) {
       frames: group.flatMap((member) => member.typed.frames),
     };
     const literalCost = group.reduce((total, member) => total + canonicalBytes(member.literal), group.length - 1);
-    if (canonicalBytes(candidate) < literalCost) {
+    if (Object.hasOwn(candidate.payload, 'text') || canonicalBytes(candidate) < literalCost) {
       selected.push({ position: unit.position, item: candidate });
     } else {
       selected.push(...group.map((member) => ({ position: member.position, item: member.literal })));
@@ -3515,6 +3863,9 @@ export function buildInspection(target, values) {
 /** Keep complete selected bytes private even when the public Inspection must be descriptor-only. @param {unknown} target @param {unknown[]} values */
 function measuredInspection(target, values) {
   const inspectionTarget = canonicalTarget(target);
+  const context = modelPayloadContext(inspectionTarget, /** @type {Record<string,unknown>[]} */ (
+    assertDenseDataArray(values, 'EvidenceItem list')
+  ));
   const ordered = orderAndDedupeItems(values);
   for (const item of ordered) {
     if (item.status === 'missing' && Object.hasOwn(item, 'text') && item.text !== '') {
@@ -3525,8 +3876,6 @@ function measuredInspection(target, values) {
       invalid('EvidenceItem.text', 'must contain the complete available body');
     }
   }
-  const context = modelPayloadContext(inspectionTarget, ordered);
-
   /** @type {Record<string, unknown>[]} */
   let selectedItems = ordered;
   const presentOwnerItems = ordered.filter((item) => (
@@ -3620,6 +3969,7 @@ export function validateInspection(value) {
   const items = /** @type {Record<string, unknown>[]} */ (
     assertDenseDataArray(inspection.items, 'Inspection.items')
   );
+  const context = inspection.overflow ? undefined : modelPayloadContext(inspection.target, items);
   const canonicalItems = orderAndDedupeItems(items);
   if (canonicalJson(items) !== canonicalJson(canonicalItems)) {
     invalid('Inspection.items', 'must use canonical source order and contain no exact duplicates');
@@ -3648,7 +3998,7 @@ export function validateInspection(value) {
     }
   }
   if (!inspection.overflow) {
-    const packet = packetProjection(inspection.target, items);
+    const packet = packetProjection(inspection.target, items, context);
     if (Buffer.byteLength(canonicalJson(packet)) > MAX_PACKET_BYTES) {
       invalid('Inspection.overflow', 'must be true when packet limits are exceeded');
     }
@@ -7857,16 +8207,27 @@ function trustedCaptureRowsFromInspectionV2(inspection) {
       });
     }
   }
-  const captureIdentities = rows.map((row) => row.captureIdentity);
-  if (new Set(captureIdentities).size !== captureIdentities.length) {
+  assertUniqueTrustedCapturesV2(rows);
+  return rows;
+}
+
+/** @param {{captureIdentity:string}[]} rows */
+function assertUniqueTrustedCapturesV2(rows) {
+  const identities = rows.map(row => row.captureIdentity);
+  if (new Set(identities).size !== identities.length) {
     invalid('trusted Inspection captures', 'must be duplicate-free');
   }
-  return rows;
 }
 
 /** @param {Record<string, unknown>} inspection */
 function trustedEnvelopeIndexFromInspectionV2(inspection) {
-  const captures = trustedCaptureRowsFromInspectionV2(inspection);
+  return indexTrustedEnvelopeRowsV2(trustedCaptureRowsFromInspectionV2(inspection));
+}
+
+/** Shared capture/envelope authority index; readable records supply no authority.
+ * @param {ReturnType<typeof trustedCaptureRowsFromInspectionV2>} captures */
+function indexTrustedEnvelopeRowsV2(captures) {
+  assertUniqueTrustedCapturesV2(captures);
   const verificationRows = captures
     .filter((row) => row.kind === 'verification')
     .map((row) => ({ ...row, envelope: /** @type {Record<string, unknown>} */ (normalizeVerificationEnvelopeV2(row.capture)) }));
@@ -8581,6 +8942,7 @@ function dualRetainedOccurrenceEventsV2(inspection) {
 /** @param {Record<string, unknown>[]} events @param {ReturnType<typeof trustedEnvelopeIndexFromInspectionV2>} trusted */
 function validateRetainedOccurrenceAuthorityV2(events, trusted) {
   const approaches = events.filter((event) => event.type === 'approach-occurrence');
+  const captureIdentities = new Set();
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index];
     const occurrence = /** @type {Record<string, unknown>} */ (event.occurrence);
@@ -8629,6 +8991,8 @@ function validateRetainedOccurrenceAuthorityV2(events, trusted) {
         ) !== occurrence.attemptIdentity) {
         invalid(`retained occurrence events[${index}]`, 'conflicts with its fresh trusted completion envelopes');
       }
+      captureIdentities.add(verification.captureIdentity);
+      captureIdentities.add(review.captureIdentity);
       continue;
     }
     if (event.type !== 'finding-occurrence') continue;
@@ -8666,6 +9030,7 @@ function validateRetainedOccurrenceAuthorityV2(events, trusted) {
       invalid(`retained occurrence events[${index}]`, 'conflicts with its retained attempt approach occurrence');
     }
   }
+  return captureIdentities;
 }
 
 /**
@@ -8677,9 +9042,34 @@ export function inspectRetainedOccurrencesV2(inspection) {
   let source = 'current-run';
   try {
     const retained = dualRetainedOccurrenceEventsV2(inspection).retained;
-    if (retained.length > 0) {
+    const items = /** @type {Record<string, unknown>[]} */ (inspection.items);
+    const readablePayloads = items.some(item => typeof item.text === 'string'
+      && hasReadableRecord(parseModelSourceBody(item.text)))
+      ? [...modelPayloadContext(inspection.target, items).values()]
+      : [];
+    if (retained.length > 0 || readablePayloads.some(payload => payload.reference)) {
       source = 'verification/review';
-      validateRetainedOccurrenceAuthorityV2(retained, trustedEnvelopeIndexFromInspectionV2(inspection));
+      const trusted = trustedEnvelopeIndexFromInspectionV2(inspection);
+      const retainedCaptures = validateRetainedOccurrenceAuthorityV2(retained, trusted);
+      // Matching preimages establish correspondence, not applicability. Only
+      // already-validated occurrence relationships admit their exact captures.
+      // Keep this check at history admission, never in lane-first projections.
+      for (const payload of readablePayloads) {
+        if (payload.reference && !retainedCaptures.has(payload.reference.sourceCaptureIdentity)) {
+          invalid('readable attachment occurrence retention', 'must reference a validated retained approach capture');
+        }
+      }
+    }
+    const learningHistory = [
+      ...currentRunEventsV2(inspection),
+      ...laneHistoryEventsV2(inspection).filter((event) => (
+        inspection.target.lane !== 'lightweight'
+          || targetKey(event.target) === targetKey(inspection.target)
+      )),
+    ].some((event) => event.type === 'learning-governance' || event.type === 'learning-review');
+    if (learningHistory && deriveEarliestRepeatRelationshipV1(retained) === null) {
+      source = 'current-run';
+      invalid('occurrence retention', 'must retain the repeat evidence for learning history');
     }
     return { retained, blocker: null, source: null };
   } catch (error) {
@@ -12898,6 +13288,31 @@ export function resumeGovernanceV2(stateValue, inputValue, dependencies, transpo
     })),
   };
   validateLearningGovernanceV1(governance);
+  // Restore only required learning. An exact retained incident supersedes the
+  // unauthorized block, not the learning requirement.
+  const index = dualSurfaceEventIndexV2(inspection);
+  const governanceHistory = [
+    ...index.currentRun.byHash.values(),
+    ...[...index.lane.byHash.values()].filter((event) => (
+      target.lane !== 'lightweight' || targetKey(event.target) === targetKey(target)
+    )),
+  ].filter((event) => laneEventDeclaration(event.type)?.relevance === 'audit-only');
+  if (governanceHistory.length > 0) {
+    const requiredEvent = canonicalJson(buildGovernanceEventV1(governance));
+    const unresolvedHistory = governanceHistory.some((event) => {
+      if (event.type === 'learning-governance') return canonicalJson(event) !== requiredEvent;
+      if (event.type !== 'incident-supersession'
+        || targetKey(event.target) !== targetKey(target)
+        || event.branch !== 'exact-evidence') return true;
+      const evidence = incidentBranchEvidenceV2(inspection);
+      if (evidence.incompleteReason || event.evidenceInventoryHash !== evidence.evidenceInventoryHash) return true;
+      const batch = buildProjectionBatchV1('incident-supersession', target, [event], 'retained incident supersession');
+      return !verifyBatchProjectionV2(inspection, batch).verified;
+    });
+    if (unresolvedHistory || retainedGovernanceProjectionV2(inspection, governance).reason) {
+      return respond({ resumed: false, reason: 'governance-unresolved', state });
+    }
+  }
   const nextState = carryOptionalRunState(state, {
     policy: { .../** @type {Record<string, unknown>} */ (state.policy) },
     overallUsed: state.overallUsed,
@@ -14709,13 +15124,21 @@ function incidentBranchEvidenceV2(inspection) {
   } catch {
     return { incompleteReason: 'repeat-not-established' };
   }
+  const reviewEnvelopeIdentities = events.map((event) => (
+    /** @type {Record<string, unknown>} */ (event.occurrence).reviewEnvelopeIdentity
+  ));
   return {
     repeat,
     findingOccurrenceEvents: events,
     failedApproachSet,
-    reviewEnvelopeIdentities: events.map((event) => (
-      /** @type {Record<string, unknown>} */ (event.occurrence).reviewEnvelopeIdentity
-    )),
+    reviewEnvelopeIdentities,
+    evidenceInventoryHash: sha256(canonicalJson({
+      version: 1,
+      target: canonicalTarget(FEATURE_007_TARGET),
+      branch: 'exact-evidence',
+      reviewEnvelopeIdentities,
+      findingOccurrenceEventHashes: events.map((event) => event.eventHash),
+    })),
   };
 }
 
@@ -14828,16 +15251,9 @@ export function prepareIncidentCorrectionV2(stateValue, inputValue, requestValue
   if (exact && Object.hasOwn(state, 'learningGovernance')) {
     return respond({ prepared: false, reason: 'learning-governance-conflict', state });
   }
-  const evidenceInventoryHash = sha256(canonicalJson(exact
-    ? {
-      version: 1,
-      target: canonicalTarget(FEATURE_007_TARGET),
-      branch: 'exact-evidence',
-      reviewEnvelopeIdentities: derived.reviewEnvelopeIdentities,
-      findingOccurrenceEventHashes: /** @type {Record<string, unknown>[]} */ (derived.findingOccurrenceEvents)
-        .map((event) => event.eventHash),
-    }
-    : {
+  const evidenceInventoryHash = exact
+    ? derived.evidenceInventoryHash
+    : sha256(canonicalJson({
       version: 1,
       target: canonicalTarget(FEATURE_007_TARGET),
       branch: 'evidence-incomplete',

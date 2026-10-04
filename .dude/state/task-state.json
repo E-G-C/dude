@@ -576,6 +576,27 @@
     },
     "updated_at": "2026-09-21T03:16:41.000Z"
   },
+  ".dude/specs/068-agent-to-agent-communication/tasks.md": {
+    "glyphs": {
+      "T013@b068e013": "x",
+      "T014@b068e014": "x",
+      "T015@b068e015": "x",
+      "T016@b068e016": "x",
+      "T017@b068e017": "x",
+      "T018@b068e018": "x",
+      "T021@c068f021": "x",
+      "T022@c068f022": "x",
+      "T023@c068f023": "x",
+      "T024@c068f024": "x",
+      "T025@d068g025": "x",
+      "T026@d068g026": "x",
+      "T027@d068g027": "x",
+      "T028@d068g028": "x",
+      "T019@b068e019": "x",
+      "T020@b068e020": " "
+    },
+    "updated_at": "2026-10-04T01:26:17.813Z"
+  },
   ".dude/specs/069-a2a-library-foundation/tasks.md": {
     "glyphs": {
       "T001@8b1c2a60": "x",
@@ -610,12 +631,33 @@
     },
     "updated_at": "2026-09-26T15:56:42.038Z"
   },
+  ".dude/specs/074-work-readable-evidence-handoff/tasks.md": {
+    "glyphs": {
+      "T001@d074a101": "x",
+      "T002@d074b202": "x",
+      "T003@d074c303": "x",
+      "T004@d074d404": "x",
+      "T005@d074e505": "x"
+    },
+    "updated_at": "2026-09-27T19:21:08.856Z"
+  },
   ".dude/specs/075-dude-development-base-release/tasks.md": {
     "glyphs": {
       "T001@d8c3a59e": "x",
       "T002@72f6b104": "x"
     },
     "updated_at": "2026-09-27T02:54:37.404Z"
+  },
+  ".dude/specs/075-terminal-work-manual-resolution/tasks.md": {
+    "glyphs": {
+      "T001@m075rule": "x",
+      "T002@a075link": "x",
+      "T003@v075test": "x",
+      "T004@s075reco": "x",
+      "T005@a075reco": "x",
+      "T006@v075reco": "x"
+    },
+    "updated_at": "2026-10-03T23:47:04.844Z"
   },
   ".dude/specs/076-duplicate-feature-number-prefixes/tasks.md": {
     "glyphs": {
