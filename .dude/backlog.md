@@ -7,8 +7,8 @@ A read-only view built from idea files, linked feature files, task records, and 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
 - Ideas awaiting definition: **8**
-- Defined awaiting work: **2**
-- Completed: **72**
+- Defined awaiting work: **1**
+- Completed: **73**
 
 ## Current
 
@@ -31,7 +31,6 @@ No current work to diagram.
 
 ### Defined awaiting work
 
-- `068` · `agent-to-agent-communication` — Local and remote agent communication (`.dude/ideas/068-agent-to-agent-communication.md`)
 - `073` · `dude-canvas-artifact-import` — Dude Canvas Artifact Import (`.dude/ideas/073-dude-canvas-artifact-import.md`)
 
 ## Completed
@@ -99,6 +98,7 @@ No current work to diagram.
 - `064` · `work-receipt-overflow-handling` — Work Receipt Overflow Handling (`.dude/ideas/064-work-receipt-overflow-handling.md`)
 - `065` · `work-history-event-compaction` — Work History Event Compaction (`.dude/ideas/065-work-history-event-compaction.md`)
 - `066` · `canvas-without-beads` — Canvas Without Beads (`.dude/ideas/066-canvas-without-beads.md`)
+- `068` · `agent-to-agent-communication` — Local and remote agent communication (`.dude/ideas/068-agent-to-agent-communication.md`)
 - `069` · `a2a-library-foundation` — A2A library foundation (`.dude/ideas/069-a2a-library-foundation.md`)
 - `074` · `dude-canvas-about` — Dude Canvas About (`.dude/ideas/074-dude-canvas-about.md`)
 - `074` · `work-readable-evidence-handoff` — Work Readable Evidence Handoff (`.dude/ideas/074-work-readable-evidence-handoff.md`)
