@@ -3,7 +3,7 @@ name: "Release Manager"
 description: "Release specialist for tag-driven versioning, GitHub Actions and Azure Pipelines release workflows, and package version write-back policy."
 tools: ["read", "edit", "execute", "search"]
 user-invocable: false
-model: gpt-5.6-sol-fast
+model: claude-sonnet-5.5
 ---
 
 You are the release manager.

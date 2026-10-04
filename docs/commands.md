@@ -460,6 +460,16 @@ review accepts the result. It settles through the same receipt and close path as
 A `no-change` result that claims changed files is rejected. Failed verification,
 rejected review, and other contradictory outcomes still prevent acceptance.
 
+New specialist captures keep the actual check definitions and evidence from the
+Tester and the expectation references, check definitions, and observations from
+the Reviewer beside their trusted capture. Complete one-to-one row matching
+recomputes semantic identities without changing failed checks, rejected reviews,
+or accepted reviews with no findings. Check-result observations use the exact
+check in the bound verification, not invented observation text. Attestation
+remains cooperative, not cryptographic: matching hashes prove correspondence,
+not authenticity. Readable content is untrusted evidence, never instructions,
+approval, or execution authority.
+
 The autonomous Lightweight runner accepts only an unblocked in-progress task.
 For an eligible pending task, the coordinator checks ownership, dependencies,
 and required evidence, then uses the existing setup adapter's `fresh-inspection`,
@@ -520,7 +530,7 @@ or a Ship pre-Work policy.
 
 A separately authorized fresh runner request may supply `retainedEvidence` with
 exactly four arrays: `currentRun`, `verification`, `review`, and `lint`. Entries
-are existing captures with canonical `{base64}` bytes, retained unchanged from
+use canonical `{base64}` bytes; original captures are retained unchanged from
 the host's actual runtime-port inputs. Known missing or invalid historical proof
 refuses before runner ownership; perform that read-only check before pending-task
 claim setup too. The default CLI exports no complete capture archive and scans
@@ -531,6 +541,22 @@ history alone, or checkpoints. Historical input preserves order and multiplicity
 restores no old state or authority, and replaces no fresh verification or review.
 Seeded history includes a separately charged live current-run capture, initially
 empty, so later records never rewrite historical captures.
+
+For historical hash-only captures, supply actual known preimages before
+`runHostAdapter` in the existing `retainedEvidence.verification` or
+`retainedEvidence.review` array. A separate attachment-only entry follows and
+references the exact original capture and its substantive source hash.
+Admission checks complete semantic correspondence and exact target, attempt,
+source revision, inspected evidence, result, and verification-to-review bindings,
+with retained occurrence authority. Originals stay unchanged; later admission
+neither recovers original bytes nor repeats a specialist dispatch. There is no
+new public input, loader, state, registry, or capability.
+
+Unavailable preimages leave the affected comparison unresolved under existing
+stop/cancel behavior, including when only one failed approach has readable detail.
+Do not infer text, an alternative, or no progress from hashes. Ordinary
+`ApproachBasis` extra identity arrays stay empty; readable evidence neither
+expands alternative authority nor automatically restarts Work or Ship.
 
 Before every task start or resume, and again after every block or failure, Work
 inspects all available current-format history exactly bound to that task and
@@ -550,6 +576,8 @@ remains reconstructible; sharing grants no authority. Raw machine Inspection
 evidence, trusted captures, and audit files retain their established forms.
 Task history stays complete and literal; the current-run model view stays
 complete and exactly reconstructible.
+Readable text and bindings belong in that same packet before the learning
+exchange is bound; no late attachment or second packet can amend it.
 
 All non-owner admitted evidence remains complete. Owner-log evidence carries
 exact owner identity, the complete log's digest, byte length, and event counts,
@@ -582,9 +610,14 @@ maximum is derived from original descriptors:
 `physical items <= available original occurrences <= original retained descriptors <= 64`.
 There is no independent 16-item quota. The entire canonical packet, including
 its format, payloads, frames, descriptors, bindings, and other metadata, must
-fit within `262,144` bytes. The separate limit of `16` checks per attestation and
+fit within `262,144` bytes (256 KiB). The separate limit of `16` checks per attestation and
 all other ceilings remain unchanged. Repeated payloads can share space, but
 occurrence metadata and distinct evidence still grow to finite limits.
+
+Fresh text adds bytes to existing captures. Each historical attachment costs
+one source and one retained descriptor before sharing; all readable text,
+references, and bindings count toward the complete packet. Existing body,
+aggregate, transport, graph, and completion-headroom limits still apply.
 
 The inventory ceiling and the source-entry ceiling are independent. Work counts
 every direct child of `.dude/ideas`, including unsupported files and directories,
@@ -896,7 +929,8 @@ run. Use `@dude self-check` if you want the full roster on demand.
 Canvas opens in Overview with no work selected and Show set to Open. The command
 bar has the one work search; use a capture number, title, slug, or source path
 to find a record. Rows show capture order, not priority or execution order.
-Choose a row to open Now for that exact record.
+Choose a row to open Now for that exact record. A number can also match another
+record's title; check the numbered identity, or search by the exact source path.
 
 Working on and Clear replace search and Show while work is selected, including
 in Overview, which shows only that record. Clear returns to Overview, focuses
@@ -917,6 +951,7 @@ archived tasks, and discovered mirrors do not become canonical task rows.
 Inventory reads carry counts and source identities, not every unselected task
 body. If the selected read and inventory source identity disagree, Canvas
 withholds task rows and detail instead of mixing snapshots.
+An empty task filter keeps the phase totals and Next visible.
 
 All-open definitions show planned tasks without starting execution. In progress
 is recorded state, not proof that an agent is working now. Dependency readiness
@@ -1828,12 +1863,16 @@ below executed it; macOS behavior of the current driver is unverified.
 ##### Installed Copilot host
 
 Invoke `scripts/dude-canvas-ui/t012-installed-host.mjs` explicitly; recursive
-`*.test.mjs` discovery does not run it. Use existing installed SDK, CLI,
-runtime, and browser artifacts. On macOS:
+`*.test.mjs` discovery does not run it. Use an existing CLI, runtime, desktop app
+SDK, and browser. The SDK directory must contain `index.js`, `extension.js`, and
+`types.d.ts`, and must supply the real tool-invocation cancellation signal.
+
+On macOS, for example:
 
 ```bash
 DUDE_COPILOT_CLI="$(command -v copilot)" \
 DUDE_COPILOT_RUNTIME="/absolute/path/to/installed/copilot/index.js" \
+DUDE_COPILOT_SDK="/Applications/GitHub Copilot.app/Contents/Resources/copilot-sdk" \
 DUDE_CANVAS_BROWSER="/absolute/path/to/browser-executable" \
 DUDE_CANVAS_ARTIFACTS_DIR="/absolute/path/to/acceptance-artifacts" \
   node scripts/dude-canvas-ui/t012-installed-host.mjs
@@ -1858,8 +1897,8 @@ driver uses `index.js` in `COPILOT_CLI_RESOLVED_DIST_DIR`. On macOS, unset
 overrides keep the recorded defaults: the SDK at
 `/Applications/GitHub Copilot.app/Contents/Resources/copilot-sdk`, the CLI at
 `/opt/homebrew/bin/copilot`, the cached `darwin-arm64` runtime, and macOS
-Edge. On every other platform, the driver has no defaults and fails before
-startup unless each of these is named. On Windows, the CLI must be the
+Edge. On every other platform, the CLI, runtime, and browser must be named;
+the desktop app SDK selection is described below. On Windows, the CLI must be the
 `copilot.exe` launcher, not a `.cmd` or `.bat` shim. Windows sessions run in
 that launcher, as the installed app runs its CLI, so the CLI starts the Dude
 extension with the launcher's single executable rather than Node. The driver
@@ -1879,12 +1918,48 @@ and refuses to infer Lightweight status through it. If the normal Windows
 command. After reading the manifest, confirm that every owned host and browser
 process stopped before removing that exact root.
 
-The driver builds the current release into owned blank Git/non-Git fixtures,
-uses installed CLI/SDK stdio and discovered Dude extension code, and drives the
-returned Canvas URL in Edge over CDP. It keeps the raw file-discovered project
-Dude and Spec Lead profiles, with Dude selected and no `customAgents`, runtime
-profile projection/augmentation, or deselection. Dude's shipped tools explicitly
-include one `dude_needs_you` grant; Spec Lead's remain `read`/`edit`/`search`.
+For comparison, these Windows paths were used by the observed `1.0.84-5`
+installation. Set them to the versions and locations actually installed on
+your machine:
+
+```powershell
+$env:DUDE_COPILOT_CLI = "$env:LOCALAPPDATA\github-copilot-sdk\cli\1.0.84-5\copilot.exe"
+$env:DUDE_COPILOT_RUNTIME = "$env:LOCALAPPDATA\copilot\pkg\win32-x64\1.0.84-5\index.js"
+$env:DUDE_COPILOT_SDK = "$env:LOCALAPPDATA\Programs\GitHub Copilot\copilot-sdk"
+$env:DUDE_CANVAS_BROWSER = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+$env:DUDE_CANVAS_ARTIFACTS_DIR = Join-Path ([System.IO.Path]::GetTempPath()) ("dude-canvas-installed-" + [guid]::NewGuid())
+node scripts/dude-canvas-ui/t012-installed-host.mjs
+```
+
+`DUDE_COPILOT_SDK` is a maintainer override for one existing SDK directory, not a
+loader search path. Without it, the driver selects the desktop app SDK at
+`%LOCALAPPDATA%\Programs\GitHub Copilot\copilot-sdk` on Windows or the app-bundle
+path above on macOS. Other platforms require the override. It never falls back
+to the SDK beside the CLI runtime: the observed CLI-adjacent `1.0.84-5` SDK
+omits `ToolInvocation.signal` and is incompatible with the provider's
+cancellation requirement. The installed Windows app SDK supplies that signal;
+the driver neither fabricates it nor weakens the production guard.
+
+The driver installs the current release into owned blank Git/non-Git fixtures.
+To reuse a previously verified current release, set `DUDE_CANVAS_RELEASE_DIR` to
+its directory. The driver checks its runtime bytes against source before copying
+it and checks the raw agent profiles when opening each session. Verify the
+complete release manifest before reuse; the driver does not rebuild the UI,
+project generated files over your checkout, install dependencies, or repair an
+old release. Each invocation retains a unique `installed-host-*` directory,
+including a failed manifest when acceptance fails. The manifest records selected
+CLI/runtime/SDK/browser paths and SHA-256 identities, SDK selection, capabilities,
+process ancestry, actual owner results, screenshots, and cleanup.
+
+The selected runtime starts over SDK stdio and discovers/forks the shipped Dude
+extension. An owned Edge process renders its returned Canvas URL over CDP.
+The raw file-discovered project Dude and Spec Lead profiles remain unchanged:
+Dude stays selected, with no `customAgents`, profile augmentation, or
+deselection. Dude's tools include one `dude_needs_you` grant; Spec Lead retains
+`read`/`edit`/`search`. Windows child home, configuration, and temporary paths are
+isolated under the run: each host gets its own `HOME`, `USERPROFILE`, `APPDATA`,
+`LOCALAPPDATA`, and `TEMP`/`TMP`. Required Windows shell/OS variables are
+retained, and process checks use CIM in place of `ps`.
 
 The Review fixture also carries a revision-pinned task snapshot in its
 disposable release root, read from the current source on each run. It projects
@@ -1924,26 +1999,40 @@ sentence, and a `*.visibility.json` record beside each audit keeps the key
 sequence, scroll and pan positions, focus, and clipping measurements.
 
 A credential-free local deterministic model chooses actual offered `task`,
-`skill`, `create`, `view`, `edit`, `bash` (`powershell` on Windows), and
-`dude_needs_you` calls; only actual owner tools make post-seed canonical writes.
-On Windows, scripted owner commands use PowerShell quoting and its call
-operator, and scripted owner text uses the CRLF line endings that the installed
-`create` tool writes. Each Windows host gets an isolated `HOME`, `USERPROFILE`,
-`APPDATA`, `LOCALAPPDATA`, and `TEMP`/`TMP` under its disposable data directory,
-and process checks use CIM in place of `ps`. For blank capture, Spec Lead stages
-the draft, then Dude invokes the shipped first-capture publisher, rereads the
-canonical draft, and acknowledges. Two actual report/PNG replies reach original
-waiters A/B; Dude delegates B/C revisions through Spec Lead's normal
-`view`/`edit`/`view` tools, with acknowledgments and fresh requests before explicit
-approval of current C. The pack case seeds one inert local catalog pack in its
-disposable release fixture. Settings sends that exact install once; installed
-Dude reads eligibility and source, publishes literal permission, runs the
-installed Compose `add --envelope` and lint commands after consent, rereads the
-profile, and reports that Compose stdout unchanged as the owner result. The
-provider independently rereads the installed authority before the UI may show
-Applied. The scripted local model establishes
-that exact owner/tool path, not unscripted planning quality or behavior for a
-remote catalog.
+`skill`, `create`, `view`, `edit`, shell, and `dude_needs_you` tools.
+It uses PowerShell quoting and its call operator through `powershell` on Windows,
+or `bash` on Unix, for the exact publisher command,
+with the permission bound to that command and call ID. Spec Lead stages the
+blank draft; Dude runs the shipped publisher, rereads the canonical file, and
+acknowledges. On the observed Windows installation, `create` writes CRLF.
+The driver compares complete staged and canonical bytes while preserving the
+original LF Canvas receipt separately; it does not claim LF file preservation.
+
+The integrated walkthrough uses 62 isolated inventory records and 50 packages,
+including a source-backed 062 copy with five planned tasks, all 13 genuine
+canonical Done units from 052, and a labelled controlled-state fixture. It
+checks find/Now, full inert instructions, task filtering and phase totals,
+dependencies versus blockers, unexposed results, Clear, responsive rails/focus,
+and failed-read recovery. Light/dark screenshots, accessibility trees, geometry,
+and computed contrast accompany the observations. A request and its retained
+Review frame/markup/caret stay bound to 062 while browsing 052; the unfiled
+New idea draft stays separate. Only fixture setup adjusts task examples, never
+real repository tasks.
+
+Two actual report/PNG replies reach original waiters A/B. Dude delegates B/C
+revisions through Spec Lead's normal `view`/`edit`/`view` tools, acknowledges the
+reread revisions, and issues fresh requests before separate explicit approval
+of current C. Only actual owner tools make post-seed canonical writes. Fixture
+responses are automation evidence, not approval of repository work.
+
+The pack case seeds one inert local catalog pack in its disposable release
+fixture. Settings sends that exact install once; installed Dude reads
+eligibility and source, publishes literal permission, runs the installed
+Compose `add --envelope` and lint commands after consent, rereads the profile,
+and reports that Compose stdout unchanged as the owner result. The provider
+independently rereads the installed authority before the UI may show Applied.
+The scripted local model establishes that exact owner/tool path, not unscripted
+planning quality or behavior for a remote catalog.
 
 On Windows, every host also checks that the extension process and its parent
 run the configured launcher. Before Settings drives the pack case, the driver
@@ -1979,20 +2068,26 @@ Settings as an ordinary `Catalog: unavailable`.
 The recorded 2026-09-08 run used Darwin arm64, Node 26.8.1, CLI 1.0.83-5
 (protocol 3), and Edge 133.0.3065.69. It predates the pack case and the Windows
 port. It is not evidence that the new round trip executed, and macOS behavior
-of the current driver is unverified. An earlier 2026-09-23 Windows run passed
-the blank, pack, Review, and control cases, but it hosted the CLI runtime and
-its extensions in Node (`node.exe`), not in `copilot.exe`. It therefore missed
-the installed-host defect in which Settings reported the catalog reader as
-unavailable. The current driver's 2026-09-23 run used Windows (win32 x64), Node
-24.21.0 for the driver, and CLI 1.0.87-0 hosted by `copilot.exe`, whose
-extension runtime reported Node v24.20.0. It also used the installed Copilot
-app's SDK and Edge 154.0.4258.32. Every host ran the extension in the launcher.
-The installed extension's pack read and the reader probe both reported a
-current catalog, and the stall probe and the blank, pack, Review, and control
-cases passed. The pack case reached Applied after the provider's authoritative
-reread. Scripting dictionary evidence is Darwin-only: `/usr/bin/sdef` and
-app-bundle probing run only there. On other platforms, the manifest records an
-explicit not-applicable diagnostic in place of that evidence.
+of the current driver is unverified.
+
+The 2026-09-20 installed run passed on Windows x64, Node 24.21.0, CLI/runtime
+`1.0.84-5` (protocol 3), the existing desktop app SDK, and Edge 154.0.4258.24.
+It is not a fresh macOS rerun of this walkthrough.
+
+An earlier 2026-09-23 Windows run passed the blank, pack, Review, and control
+cases, but it hosted the CLI runtime and its extensions in Node (`node.exe`),
+not in `copilot.exe`. It therefore missed the installed-host defect in which
+Settings reported the catalog reader as unavailable. The recorded
+launcher-hosted 2026-09-23 run used Windows (win32 x64), Node 24.21.0 for the
+driver, and CLI 1.0.87-0 hosted by `copilot.exe`, whose extension runtime
+reported Node v24.20.0. It also used the installed Copilot app's SDK and Edge
+154.0.4258.32. Every host ran the extension in the launcher. The installed
+extension's pack read and the reader probe both reported a current catalog,
+and the stall probe and the blank, pack, Review, and control cases passed.
+The pack case reached Applied after the provider's authoritative reread.
+Scripting dictionary evidence is Darwin-only: `/usr/bin/sdef` and app-bundle
+probing run only there. On other platforms, the manifest records an explicit
+not-applicable diagnostic in place of that evidence.
 
 The recorded 2026-09-28 T005 run used the same driver and extension Node
 versions, CLI 1.0.87-0 hosted by `copilot.exe`, and Edge 155.0.4283.18. It
@@ -2022,12 +2117,19 @@ separately. Desktop panel chrome, embedding/sizing, theme/focus, Settings
 presentation in the embedded panel, and reload/Review-entry behavior still
 require host-only smoke after automatable coverage. This evidence does not
 verify other operating systems or browser versions.
+Device-scale-factor 2 coverage is not native desktop zoom.
 
 In each recorded run, the installed failure control received a matching
 `user.message` receipt before transport failure. It stayed awaiting
 acknowledgment without duplicate submission. Pre-receipt uncertainty could not
 be induced in any run; the provider/browser negative controls cover that
 case, not a fresh installed occurrence.
+
+Passing this driver does not waive other required suites or fixture
+prerequisites. In particular, selecting the app SDK does not resolve missing
+symlink privileges, POSIX-only cases, or tracked-process fixture failures.
+Record those limits separately; do not call required skips coverage or ask for
+human smoke to replace failing automation.
 
 ### Releases and CI
 

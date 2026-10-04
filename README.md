@@ -163,6 +163,7 @@ it is useful.
 | `coding` | coder, tester, architect, and code reviewer | you want Dude to implement software |
 | `beads` | a tracked issue board | you need issue-level tracking beyond `tasks.md` |
 | `web` | backend and frontend specialists | you are building a web application |
+| `a2a` | catalog source for one read-only A2A JavaScript advisor and two source-backed knowledge skills | after disposable Compose and actual-advice validation, you need A2A protocol or JavaScript SDK advice |
 | `clearline` | the Clearline visual system | the project selects Clearline for one or more surfaces |
 | `release` | release engineering and versioning guidance | you publish versioned releases |
 | `rubber-duck` | a read-only retrospective teammate | you want advisory findings at a pending successful feature completion reached through direct feature work or a Ship invocation that completes its feature |
@@ -185,9 +186,31 @@ node .github/skills/dude-compose/compose.mjs list --use-case ui --json
 ```
 
 `--use-case <id>` returns exact matches. JSON pack objects include `use_cases`;
-a pack without a declaration returns `[]`. The catalog currently holds 18
-packs. Installed pack files use the reserved `dude-pack-*` namespace and survive
-core upgrades.
+a pack without a declaration returns `[]`. The source catalog currently holds
+19 direct pack entries. The `a2a` entry now contains its complete planned source
+provider set: one read-only JavaScript advisor plus protocol and JavaScript
+knowledge skills. Catalog source availability remains separate from installed
+host availability. Compose verification covered all 19 catalog packs with 56
+warnings, no failures, and no leftovers. In a disposable host, the four
+installed A2A files and profile survived `build-dev`; fresh advisor discovery
+and direct guidance reads then produced three observed responses: protocol
+guidance, JavaScript guidance, and refusal of an excluded request. Those
+disposable installations were removed afterward. A2A is now installed in this
+repository's dogfood profile through a separate explicit opt-in to support
+Feature 068. A fresh supported Copilot host session discovered and selected the
+installed advisor without making a model or advice call. That result does not
+prove that an already-running chat hot-reloaded its tool catalog. An existing
+chat may require a reload to discover a changed agent catalog. No
+other language source was delivered. Feature 068 later added opt-in
+agent-to-agent communication to the core extension; it does not need this
+pack. Start by asking the model to call `dude_a2a_propose` with the selected
+external config path and profile ID. Review its complete native tool result
+before the exact next eligible local approval; an assistant summary or
+private-log relay is not a substitute. Source and local distribution have
+offline checks, but native result/status visibility and real host use remain
+unqualified. See
+[Agent-to-agent communication](docs/agent-to-agent-communication.md). Installed
+pack files use the reserved `dude-pack-*` namespace and survive core upgrades.
 
 ## What Dude Writes
 
@@ -421,5 +444,6 @@ Read these when you need more than the first-feature path:
 - [Starting from a PRD draft](docs/prd-drafts.md) — use a longer product draft as input.
 - [Definition and execution reference](docs/reference.md) — advanced details and ownership rules.
 - [Pack catalog](library/packs/README.md) — optional expansions and how to install them.
+- [Agent-to-agent communication](docs/agent-to-agent-communication.md) — `dude_a2a_propose`, complete native-result review, and local approval for opt-in questions and named verification; real host use remains unqualified.
 - [Upgrading the bundle](docs/upgrading.md) — update Dude itself safely.
 - [Repository development workflow](docs/commands.md#repository-development-workflow) — core, pack, project-local, and docs-only changes.

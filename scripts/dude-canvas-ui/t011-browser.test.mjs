@@ -22,6 +22,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { NEEDS_YOU_LIMITS, createNeedsYou } from '../../src/extensions/dude/lib/needs-you.mjs';
 import { createReview } from '../../src/extensions/dude/lib/review.mjs';
+import { findBrowser } from '../../src/extensions/dude/lib/review/browser.mjs';
 import { buildReport, jsonBytes } from '../../src/extensions/dude/lib/review/data.mjs';
 import { decodePng } from '../../src/extensions/dude/lib/review/png.mjs';
 import { closeInstance, openInstance } from '../../src/extensions/dude/lib/canvas-server.mjs';
@@ -1559,10 +1560,116 @@ async function observeReviewChooser(page) {
   };
 }
 
-const shortPanelFixture = Object.freeze({
-  viewport: {width:1000, height:300, dpr:2},
-  frame: {width:942, clientHeight:118, rawHeight:117.5},
+const SHORT_PANEL_FIXTURE = Object.freeze({
+  viewport:Object.freeze({width:1000, height:300, dpr:2}),
+  normalizationDelta:0.5,
 });
+
+/**
+ * Admit the renderer's natural viewport, then deliberately exercise
+ * half-pixel pinning. Font/layout rounding is not a product contract. The
+ * fixture height applies only while unpinned, never overriding the real lock.
+ * @param {Cdp} page
+ * @param {Record<string,any>} record
+ * @param {{width:number,height:number,dpr:number}} [expected]
+ */
+async function prepareFractionalReviewPanel(page, record, expected = SHORT_PANEL_FIXTURE.viewport) {
+  await viewport(page, expected.width, 'light', expected.height, expected.dpr);
+  const observe = () => observeRuntime(page, `(() => {
+    const frame = document.querySelector('.dude-review-frame');
+    if (!frame) return null;
+    const expected = ${JSON.stringify(expected)};
+    const rect = frame.getBoundingClientRect();
+    const viewBox = document.querySelector('.dude-review-overlay')?.getAttribute('viewBox')
+      || null;
+    const boxDisabled = document.querySelector('[aria-label="Box (B)"]')?.matches(':disabled,[aria-disabled="true"]') ?? null;
+    const style = getComputedStyle(frame);
+    const parentStyle = getComputedStyle(frame.parentElement);
+    return {
+      viewport:{width:innerWidth,height:innerHeight,dpr:devicePixelRatio},
+      frame:{
+        clientWidth:frame.clientWidth,
+        clientHeight:frame.clientHeight,
+        offsetWidth:frame.offsetWidth,
+        offsetHeight:frame.offsetHeight,
+        rect:rect.toJSON(),
+        clientRect:frame.getClientRects()[0]?.toJSON() || null,
+        computed:{
+          width:style.width,
+          height:style.height,
+          flex:style.flex,
+          boxSizing:style.boxSizing,
+          borderTopWidth:style.borderTopWidth,
+          borderBottomWidth:style.borderBottomWidth,
+          paddingTop:style.paddingTop,
+          paddingBottom:style.paddingBottom,
+        },
+        parent:{
+          clientWidth:frame.parentElement.clientWidth,
+          clientHeight:frame.parentElement.clientHeight,
+          offsetWidth:frame.parentElement.offsetWidth,
+          offsetHeight:frame.parentElement.offsetHeight,
+          rect:frame.parentElement.getBoundingClientRect().toJSON(),
+          computed:{
+            width:parentStyle.width,
+            height:parentStyle.height,
+            boxSizing:parentStyle.boxSizing,
+            borderTopWidth:parentStyle.borderTopWidth,
+            borderBottomWidth:parentStyle.borderBottomWidth,
+            paddingTop:parentStyle.paddingTop,
+            paddingBottom:parentStyle.paddingBottom,
+          },
+        },
+        pinned:frame.classList.contains('dude-review-frame-pinned'),
+      },
+      viewBox,
+      boxDisabled,
+      admitted:innerWidth === expected.width
+        && innerHeight === expected.height
+        && devicePixelRatio === expected.dpr
+        && frame.clientWidth > 0
+        && frame.clientHeight > 0
+        && rect.width === frame.clientWidth
+        && rect.top >= 0 && rect.bottom <= innerHeight
+        && !frame.classList.contains('dude-review-frame-pinned')
+        && viewBox === '0 0 ' + frame.clientWidth + ' ' + frame.clientHeight
+        && !boxDisabled,
+    };
+  })()`);
+  const natural = await until(async () => {
+    const observation = await observe();
+    record.naturalShortPanelObservation = observation;
+    return observation?.admitted ? observation : null;
+  }, `${record.variant} natural viewport admitted at native DPR2`);
+  const rawHeight = natural.frame.clientHeight - SHORT_PANEL_FIXTURE.normalizationDelta;
+  record.fractionalFixture = {
+    before: { rect: natural.frame.rect, clientHeight: natural.frame.clientHeight },
+    arrangedHeight: rawHeight,
+  };
+  await evaluate(page, `(() => {
+    const style = document.createElement('style');
+    style.textContent = '.dude-review-frame:not(.dude-review-frame-pinned) { height: ${rawHeight}px; }';
+    document.head.append(style);
+  })()`);
+  return until(async () => {
+    const observation = await observe();
+    record.shortPanelObservation = observation;
+    record.lastShortPanel = observation;
+    // All three variants compare only this geometry schema, not diagnostics.
+    return observation?.admitted
+      && observation.frame.clientWidth === natural.frame.clientWidth
+      && observation.frame.clientHeight === natural.frame.clientHeight
+      && observation.frame.rect.height === rawHeight ? {
+        viewport:observation.viewport,
+        frame:{
+          clientWidth:observation.frame.clientWidth,
+          clientHeight:observation.frame.clientHeight,
+          rect:observation.frame.rect,
+        },
+        viewBox:observation.viewBox,
+      } : null;
+  }, `${record.variant} deliberately fractional unpinned panel`);
+}
 
 /**
  * A fresh-fixture control uses the same production bundle, source bytes,
@@ -1619,53 +1726,7 @@ async function runShortPanelWheelControl(variant, record) {
       && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
     `${variant} focused Review engine`, 60_000);
     record.binding = await observer.bind();
-    await viewport(
-      page,
-      shortPanelFixture.viewport.width,
-      'light',
-      shortPanelFixture.viewport.height,
-      shortPanelFixture.viewport.dpr,
-    );
-    // Fix the synthetic frame to the same half-pixel edge on every platform.
-    // First annotation admission still owns pinning and replaces this height.
-    record.fractionalFixture = await evaluate(page, `(() => {
-      const frame = document.querySelector('.dude-review-frame');
-      const expected = ${JSON.stringify(shortPanelFixture.frame)};
-      const before = {rect:frame.getBoundingClientRect().toJSON(), clientHeight:frame.clientHeight};
-      frame.style.height = expected.rawHeight + 'px';
-      return {before, arrangedHeight:frame.getBoundingClientRect().height};
-    })()`);
-    record.shortPanel = await until(async () => {
-      record.lastShortPanel = await observeRuntime(page, `(() => {
-      const frame = document.querySelector('.dude-review-frame');
-      if (!frame) return null;
-      const expected = ${JSON.stringify(shortPanelFixture.frame)};
-      const rect = frame.getBoundingClientRect();
-      const admitted = frame.clientWidth === expected.width
-        && frame.clientHeight === expected.clientHeight
-        && rect.width === expected.width
-        && rect.height === expected.rawHeight
-        && !frame.classList.contains('dude-review-frame-pinned')
-        && document.querySelector('.dude-review-overlay')?.getAttribute('viewBox')
-          === '0 0 ' + expected.width + ' ' + expected.clientHeight
-        && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]');
-      return {
-          admitted,
-          viewport:{width:innerWidth,height:innerHeight,dpr:devicePixelRatio},
-          frame:{
-            clientWidth:frame.clientWidth,
-            clientHeight:frame.clientHeight,
-            rect:rect.toJSON(),
-            pinned:frame.classList.contains('dude-review-frame-pinned'),
-          },
-          viewBox:document.querySelector('.dude-review-overlay')?.getAttribute('viewBox'),
-          boxDisabled:document.querySelector('[aria-label="Box (B)"]')?.matches(':disabled,[aria-disabled="true"]'),
-        };
-      })()`);
-      if (!record.lastShortPanel?.admitted) return null;
-      const { viewport, frame, viewBox } = record.lastShortPanel;
-      return { viewport, frame: { clientWidth: frame.clientWidth, clientHeight: frame.clientHeight, rect: frame.rect }, viewBox };
-    }, `${variant} exact unpinned short panel`);
+    record.shortPanel = await prepareFractionalReviewPanel(page, record);
     record.qualification = await qualifyReviewSourceObserver(observer);
     record.stage = record.qualification.passed ? 'qualified' : 'qualification-failed';
     if (!record.qualification.passed) return record;
@@ -1827,6 +1888,31 @@ function installFailingCaptureBrowser() {
     read() {
       return JSON.parse(fs.readFileSync(receipt, 'utf8'));
     },
+    close() {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+function installIncompatibleCaptureBrowser() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-t004-capture-browser-'));
+  const bin = path.join(root, 'bin');
+  fs.mkdirSync(bin);
+  const executable = path.join(
+    bin,
+    process.platform === 'win32' ? 'msedge.exe' : 'microsoft-edge',
+  );
+  fs.copyFileSync(process.execPath, executable, fs.constants.COPYFILE_EXCL);
+  if (process.platform !== 'win32') fs.chmodSync(executable, 0o755);
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${originalPath ?? ''}`;
+  return {
+    executable,
+    nodeExecutable:process.execPath,
+    nodeSha256:sha256(fs.readFileSync(process.execPath)),
+    executableSha256:sha256(fs.readFileSync(executable)),
     close() {
       if (originalPath === undefined) delete process.env.PATH;
       else process.env.PATH = originalPath;
@@ -5233,6 +5319,7 @@ test('T002 production shell: one numbered finder, selected-only Overview, Clear,
   const runtimeErrors = [];
   const network = [];
   const observations = {};
+  context.after(() => writeEvidenceJson(output, 't002-transport', { ...observations, network }));
   try {
     // Arrange: 62 admitted records include exactly 50 feature packages. Five
     // completed features and one resolved idea make the initial Open count 56.
@@ -5260,10 +5347,15 @@ test('T002 production shell: one numbered finder, selected-only Overview, Clear,
     page.on('Network.requestWillBeSent', event => {
       if (!event.request.url.startsWith(fixture.instance.url)) return;
       network.push({
+        requestId: event.requestId,
         method: event.request.method,
         path: new URL(event.request.url).pathname,
         body: event.request.postData ?? null,
       });
+    });
+    page.on('Network.loadingFailed', event => {
+      observations.transportFailures ??= [];
+      observations.transportFailures.push(event);
     });
 
     // Act: open the actual committed bundle through the production server.
@@ -5525,30 +5617,34 @@ test('T002 production shell: one numbered finder, selected-only Overview, Clear,
     await click(page, button('Now'));
     await visible(page, 'Current instruction for record-034');
 
-    // Act: fail one selected-target response. Selection is still explicit and
-    // cannot fall back to the prior record while the read is unavailable.
+    // Act: Clear's refresh may still be in flight when 035 is selected. Hold
+    // that ordering deliberately, but fail only 035's response: failing the
+    // earlier {} read would leave the selected read successful.
     await click(page, button('Back to Overview'));
-    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
-    await fill(page, field('Search work'), '035');
-    let failedTarget = null;
+    const heldRefreshes = [];
     page.on('Fetch.requestPaused', event => {
-      if (!event.request.url.endsWith('/api/refresh')) return;
-      if (JSON.parse(event.request.postData || '{}').target === '.dude/ideas/035-record-035.md') {
-        failedTarget = event;
-      } else {
-        // Clear can still have a legitimate unselected read in flight. Drain
-        // it normally; this fixture faults only the newly selected target.
-        void page.send('Fetch.continueRequest', { requestId: event.requestId })
-          .catch(error => runtimeErrors.push({ fixture: 'continue prior refresh', message: error.message }));
-      }
+      if (event.request.url.endsWith('/api/refresh')) heldRefreshes.push(event);
     });
     await page.send('Fetch.enable', {
       patterns: [{ urlPattern: '*/api/refresh', requestStage: 'Response' }],
     });
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
+    const heldClear = await until(() => heldRefreshes.find(event =>
+      JSON.parse(event.request.postData).target === undefined),
+    'held Clear response before selected-target failure');
+    await fill(page, field('Search work'), '035');
     await evaluate(page, `${field('Search work')}.focus()`);
     await pressNavigationKey(page, 'ArrowDown');
     await press(page, 'Enter');
-    await until(() => failedTarget, 'selected target response to fail');
+    await page.send('Fetch.continueRequest', { requestId: heldClear.requestId });
+    const failedTarget = await until(() => heldRefreshes.find(event =>
+      JSON.parse(event.request.postData).target === records[34].ideaPath),
+    'exact selected target response to fail');
+    assert.notEqual(failedTarget.networkId, heldClear.networkId);
+    observations.failureControl = {
+      heldClear: { networkId:heldClear.networkId, body:heldClear.request.postData },
+      failedTarget: { networkId:failedTarget.networkId, body:failedTarget.request.postData },
+    };
     assert.deepEqual(JSON.parse(failedTarget.request.postData), { target: '.dude/ideas/035-record-035.md' },
       'the transport fault must reach the newly selected target, not an earlier queued read');
     await page.send('Fetch.failRequest', { requestId: failedTarget.requestId, errorReason: 'ConnectionReset' });
@@ -7152,6 +7248,346 @@ test('T004 Review opening: late success and error cannot override newer navigati
   }
 });
 
+test('T004 US4: Save as idea and Defer preserve literal unfiled and source-backed outcomes', {
+  timeout: 180_000,
+  concurrency: false,
+}, async (context) => {
+  if (!browserReady(context)) return;
+  const output = evidence(context, 't004-save-as-idea-defer');
+  const board = installEmptyBoard();
+  const publications = [];
+  let browserState;
+  let fixture;
+  let root;
+  const runtimeErrors = [];
+  const network = [];
+  try {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-t004-us4-'));
+    const sourceIdea = createIdea(root, 820, 'source-backed-later-work');
+    const sourceFile = path.join(root, ...sourceIdea.ideaPath.split('/'));
+    const sourceBytes = fs.readFileSync(sourceFile);
+    fixture = await createFixture(root);
+
+    const saveRequest = requestFor(fixture, 'fact', { input: { kind: 'text' } });
+    saveRequest.prompt = 'Choose only the literal unfiled intent to retain';
+    const savePublication = await publish(fixture, saveRequest);
+    publications.push(savePublication);
+    const ordinaryRequest = requestFor(fixture, 'fact', { input: { kind: 'text' } });
+    ordinaryRequest.prompt = 'Set this unfiled request aside without capture';
+    const ordinaryPublication = await publish(fixture, ordinaryRequest);
+    publications.push(ordinaryPublication);
+    const sourceRequest = requestFor(fixture, 'fact', { input: { kind: 'text' } }, {
+      kind: 'idea',
+      ideaPath: sourceIdea.ideaPath,
+    });
+    sourceRequest.prompt = 'Defer this exact source-backed idea without duplication';
+    const sourcePublication = await publish(fixture, sourceRequest);
+    publications.push(sourcePublication);
+
+    browserState = await startBrowser();
+    const { page } = browserState;
+    page.on('Runtime.exceptionThrown', event => runtimeErrors.push(event));
+    page.on('Network.requestWillBeSent', event => {
+      if (!event.request.url.startsWith(fixture.instance.url)) return;
+      network.push({
+        order:network.length + 1,
+        method:event.request.method,
+        path:new URL(event.request.url).pathname,
+        body:event.request.postData ?? null,
+      });
+    });
+    await navigate(page, fixture, 1440, 'light');
+
+    const ideaPaths = () => fs.readdirSync(path.join(root, '.dude', 'ideas')).sort();
+    const openRequest = async prompt => {
+      await click(page, button('Needs you'));
+      if (await evaluate(page, `Boolean(${button('All requests')})`)) {
+        await click(page, button('All requests'));
+      }
+      await click(page, `[...document.querySelectorAll('button')].find(node =>
+        node.innerText.includes(${JSON.stringify(prompt)}) && node.getClientRects().length)`);
+      await visible(page, prompt);
+    };
+
+    // Save as idea is entered through the selected current request. The
+    // original waiter receives only capture_intent; the fixture owner then
+    // creates one canonical draft and acknowledges after the provider reread.
+    await openRequest(saveRequest.prompt);
+    await click(page, button('Save as idea'));
+    await visible(page, 'Capture only the intent you choose');
+    const savedIntent = '  Preserve\u00a0only this selected intent.\n\nKeep *literal* spacing.  ';
+    await fill(page, field('Intent to retain'), savedIntent);
+    assert.equal(await evaluate(page, `${field('Intent to retain')}.value`), savedIntent);
+    await click(page, button('Capture this intent'));
+    const saveResult = JSON.parse((await savePublication.result).textResultForLlm);
+    assert.deepEqual({
+      status:saveResult.status,
+      acceptedAnswer:saveResult.acceptedAnswer,
+      response:saveResult.response,
+      capture:saveResult.capture,
+      recognizes:saveResult.receipt.recognizes,
+      scope:saveResult.receipt.scope,
+    }, {
+      status:'capture_intent',
+      acceptedAnswer:false,
+      response:null,
+      capture:{ intent:savedIntent, continuation:'capture_only' },
+      recognizes:'capture',
+      scope:{ kind:'session' },
+    });
+    await visible(page, 'Awaiting acknowledgment');
+    const deliveredCapture = fixture.provider.read().captures.find(
+      item => item.receipt.receiptId === saveResult.receipt.receiptId,
+    );
+    assert.equal(deliveredCapture.intent, savedIntent);
+    assert.equal(deliveredCapture.saved, false,
+      'delivery through the original waiter is not a Saved result');
+    assert.equal(fixture.sends.length, 0,
+      'Save as idea returns through its selected waiter instead of sending ordinary chat');
+
+    const ideasBeforeOwner = ideaPaths();
+    const canonicalIdea = createIdea(root, 821, 'saved-literal-request-intent');
+    write(root, canonicalIdea.ideaPath, [
+      '---',
+      'title: saved literal request intent',
+      'slug: saved-literal-request-intent',
+      'status: draft',
+      'spec_path: ',
+      '---',
+      '',
+      '## Idea',
+      '',
+      savedIntent,
+      '',
+    ].join('\n'));
+    const canonicalFile = path.join(root, ...canonicalIdea.ideaPath.split('/'));
+    const canonicalBytes = fs.readFileSync(canonicalFile);
+    assert.deepEqual(ideaPaths(), [...ideasBeforeOwner, path.basename(canonicalIdea.ideaPath)].sort(),
+      'the test-owned original owner creates exactly one canonical draft');
+    assert.equal(canonicalBytes.toString('utf8').split(savedIntent).length - 1, 1,
+      'the canonical draft retains the selected literal intent exactly once');
+    const canonicalSource = {
+      kind:'file',
+      path:canonicalIdea.ideaPath,
+      revision:hash(canonicalBytes),
+    };
+    const workReadsBeforeAck = network.filter(entry => entry.path === '/api/work-index').length;
+    const saveAck = await acknowledge(
+      fixture,
+      saveResult.receipt,
+      'applied',
+      canonicalSource,
+    );
+    assert.equal(saveAck.saved, true);
+    assert.deepEqual({
+      path:saveAck.receipt.reread.canonicalIdeaPath,
+      source:saveAck.receipt.reread.source,
+      durable:saveAck.receipt.reread.durable,
+    }, {
+      path:canonicalIdea.ideaPath,
+      source:canonicalSource,
+      durable:true,
+    }, 'the fixture owner acknowledgment contains the completed canonical reread');
+    await visible(page, 'Idea saved');
+    await until(
+      () => network.filter(entry => entry.path === '/api/work-index').length > workReadsBeforeAck,
+      'post-ack canonical work-index reread',
+    );
+    assert.equal(
+      fixture.provider.read().captures.find(
+        item => item.receipt.receiptId === saveResult.receipt.receiptId,
+      )?.saved,
+      true,
+      'Saved presentation follows the current provider reread',
+    );
+    await saveRegressionProof(page, output, 'save-as-idea-owner-acknowledged', {
+      fixtureOwnerSimulation:true,
+      userOrAgentApproval:false,
+      originalWaiter:saveResult,
+      ownerAcknowledgment:saveAck,
+      canonicalIdea:{ path:canonicalIdea.ideaPath, revision:canonicalSource.revision },
+    });
+    await click(page, button('Overview'));
+    await visible(page, 'saved literal request intent');
+    assert.equal(await evaluate(page, `Boolean(document.querySelector(
+      '[data-work-path="${canonicalIdea.ideaPath}"]'
+    ))`), true, 'the owner-confirmed canonical draft is discoverable');
+
+    // Ordinary Defer is a response, not intake. Preserve the exact note,
+    // resolve the original waiter, and show the owner's non-durable outcome
+    // without creating another capture or idea.
+    await openRequest(ordinaryRequest.prompt);
+    await click(page, button('Defer'));
+    await visible(page, 'This matter is not saved');
+    const ordinaryNote = '  Revisit this unfiled question later.\n\nDo not capture it.  ';
+    await fill(page, field('Deferral note (optional)'), ordinaryNote);
+    assert.equal(await evaluate(page, `${field('Deferral note (optional)')}.value`), ordinaryNote);
+    const ideasBeforeOrdinaryDefer = ideaPaths();
+    const capturesBeforeOrdinaryDefer = fixture.provider.read().captures.length;
+    await click(page, button('Request deferral'));
+    const ordinaryResult = JSON.parse((await ordinaryPublication.result).textResultForLlm);
+    assert.deepEqual({
+      status:ordinaryResult.status,
+      acceptedAnswer:ordinaryResult.acceptedAnswer,
+      response:ordinaryResult.response,
+    }, {
+      status:'awaiting_acknowledgment',
+      acceptedAnswer:false,
+      response:{ class:'fact', action:'defer', text:ordinaryNote },
+    });
+    await visible(page, 'Awaiting acknowledgment');
+    const ordinaryAck = await acknowledge(
+      fixture,
+      ordinaryResult.receipt,
+      'deferred',
+      ordinaryRequest.source,
+    );
+    await visible(page, 'This deferral is not confirmed as durable. No idea was created');
+    const ordinaryRecord = fixture.provider.read().requests.find(
+      item => item.request.requestRef === ordinaryRequest.requestRef,
+    );
+    assert.deepEqual({
+      phase:ordinaryRecord.phase,
+      responseAction:ordinaryRecord.responseAction,
+      durable:ordinaryRecord.durable,
+      captures:fixture.provider.read().captures.length,
+      ideas:ideaPaths(),
+    }, {
+      phase:'deferred',
+      responseAction:'defer',
+      durable:false,
+      captures:capturesBeforeOrdinaryDefer,
+      ideas:ideasBeforeOrdinaryDefer,
+    });
+    await saveRegressionProof(page, output, 'ordinary-defer-owner-acknowledged', {
+      fixtureOwnerSimulation:true,
+      userOrAgentApproval:false,
+      originalWaiter:ordinaryResult,
+      ownerAcknowledgment:ordinaryAck,
+      durable:ordinaryRecord.durable,
+    });
+
+    // Source-backed Defer rereads the existing exact idea. The file, body,
+    // canonical path count, and single earlier capture remain unchanged while
+    // the durable owner disposition stays visible and discoverable.
+    await openRequest(sourceRequest.prompt);
+    await click(page, button('Defer'));
+    await visible(page, 'Request a source-backed deferral');
+    const sourceNote = '  Preserve this existing\u00a0idea and its context.\n\nNo duplicate.  ';
+    await fill(page, field('Deferral note (optional)'), sourceNote);
+    assert.equal(await evaluate(page, `${field('Deferral note (optional)')}.value`), sourceNote);
+    const ideasBeforeSourceDefer = ideaPaths();
+    const canonicalBeforeSourceDefer = fs.readFileSync(canonicalFile);
+    await click(page, button('Request deferral'));
+    const sourceResult = JSON.parse((await sourcePublication.result).textResultForLlm);
+    assert.deepEqual({
+      status:sourceResult.status,
+      acceptedAnswer:sourceResult.acceptedAnswer,
+      response:sourceResult.response,
+      scope:sourceResult.receipt.scope,
+    }, {
+      status:'awaiting_acknowledgment',
+      acceptedAnswer:false,
+      response:{ class:'fact', action:'defer', text:sourceNote },
+      scope:{ kind:'idea', ideaPath:sourceIdea.ideaPath },
+    });
+    const sourceAck = await acknowledge(
+      fixture,
+      sourceResult.receipt,
+      'deferred',
+      sourceRequest.source,
+    );
+    await visible(page, 'The owner recorded a source-backed deferral');
+    const sourceRecord = fixture.provider.read().requests.find(
+      item => item.request.requestRef === sourceRequest.requestRef,
+    );
+    assert.deepEqual({
+      phase:sourceRecord.phase,
+      responseAction:sourceRecord.responseAction,
+      durable:sourceRecord.durable,
+      rereadSource:sourceAck.receipt.reread.source,
+      rereadDurable:sourceAck.receipt.reread.durable,
+    }, {
+      phase:'deferred',
+      responseAction:'defer',
+      durable:true,
+      rereadSource:sourceRequest.source,
+      rereadDurable:true,
+    });
+    assert.deepEqual(ideaPaths(), ideasBeforeSourceDefer,
+      'source-backed deferral creates no duplicate canonical idea');
+    assert.equal(fs.readFileSync(sourceFile).equals(sourceBytes), true,
+      'source-backed deferral preserves the existing idea body');
+    assert.equal(fs.readFileSync(canonicalFile).equals(canonicalBeforeSourceDefer), true,
+      'source-backed deferral preserves the separately captured canonical draft');
+    assert.equal(fixture.provider.read().captures.length, 1,
+      'only the explicit Save as idea path created capture state');
+    await saveRegressionProof(page, output, 'source-backed-defer-owner-acknowledged', {
+      fixtureOwnerSimulation:true,
+      userOrAgentApproval:false,
+      originalWaiter:sourceResult,
+      ownerAcknowledgment:sourceAck,
+      source:{ path:sourceIdea.ideaPath, revision:sourceRequest.source.revision },
+    });
+    await click(page, button('Overview'));
+    await visible(page, 'source backed later work');
+    const finalIdeaPaths = ideaPaths();
+    assert.deepEqual(finalIdeaPaths, [
+      path.basename(sourceIdea.ideaPath),
+      path.basename(canonicalIdea.ideaPath),
+    ].sort());
+    assert.equal(await evaluate(page, `document.querySelectorAll(
+      '[data-work-path="${sourceIdea.ideaPath}"]'
+    ).length`), 1, 'the source-backed context remains discoverable exactly once');
+    await saveRegressionProof(page, output, 'us4-final-discovery', {
+      sourceIdea:sourceIdea.ideaPath,
+      capturedIdea:canonicalIdea.ideaPath,
+      ideaPaths:finalIdeaPaths,
+    });
+
+    assert.equal(network.filter(entry =>
+      entry.method === 'POST' && entry.path === '/api/needs-you/capture-receipt').length, 1);
+    assert.equal(network.filter(entry =>
+      entry.method === 'POST' && entry.path === '/api/needs-you/capture').length, 1);
+    assert.equal(network.filter(entry =>
+      entry.method === 'POST' && entry.path === '/api/needs-you/respond').length, 2);
+    assert.deepEqual(runtimeErrors, []);
+    const proof = {
+      browser:browserState.version.Browser,
+      fixtureOwnerSimulation:true,
+      userOrAgentApproval:false,
+      literalIntent:savedIntent,
+      canonicalIdea:{ path:canonicalIdea.ideaPath, revision:canonicalSource.revision },
+      ordinaryDefer:{ response:ordinaryResult.response, acknowledgment:ordinaryAck.status, durable:false },
+      sourceBackedDefer:{
+        response:sourceResult.response,
+        acknowledgment:sourceAck.status,
+        durable:sourceRecord.durable,
+        path:sourceIdea.ideaPath,
+      },
+      captures:fixture.provider.read().captures.length,
+      ideaPaths:finalIdeaPaths,
+      network,
+    };
+    writeEvidenceJson(output, 't004-us4-effects', proof);
+    output.results.push({
+      case:'t004-save-as-idea-and-defer',
+      pass:true,
+      browser:browserState.version.Browser,
+      capturePosts:network.filter(entry => entry.path === '/api/needs-you/capture').length,
+      responsePosts:network.filter(entry => entry.path === '/api/needs-you/respond').length,
+      ideaPaths:finalIdeaPaths,
+    });
+  } finally {
+    for (const publication of publications) publication.controller.abort();
+    if (browserState) await cleanupBrowserDriver(browserState);
+    if (fixture) await fixture.close({ removeRoot:fs.existsSync(fixture.root) });
+    else if (root) fs.rmSync(root, { recursive:true, force:true });
+    await Promise.allSettled(publications.map(publication => publication.result));
+    board.close();
+  }
+});
+
 test('T011 browser: complete finder, six owner forms, keyboard context, late reads, and uncertain delivery', {
   timeout: 300_000,
   concurrency: false,
@@ -7540,6 +7976,8 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
     const preview = createPreview(root, /** @type {any} */ (feature));
     const fixture = await createFixture(root);
     fixtures.push(fixture);
+    // Match the production compositor and sRGB path; disabling GPU only in
+    // its owner reference changes Windows text-edge rasterization.
     browserState = await startBrowser(1, false, true);
     const { page } = browserState;
     page.on('Runtime.exceptionThrown', (event) => runtimeErrors.push(event));
@@ -7723,6 +8161,9 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
         reviewVisible:Boolean(document.querySelector('[data-review-workspace]')?.getClientRects().length)};
     })()`);
     const immediateReturnFocus = await returnFocus();
+    await until(() => evaluate(page, `['Open Review', 'Needs you'].includes(
+      document.activeElement?.innerText.trim()
+    )`), 'scheduled Back focus restoration');
     await settleFocusPaint(page);
     const framedReturnFocus = await returnFocus();
     writeEvidenceJson(output, 'back-return-focus', { immediate: immediateReturnFocus, postFrame: framedReturnFocus });
@@ -8204,9 +8645,9 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
 
     // Align the independent fresh-render PNG with a text-bearing region that
     // neither visible surface touches. Exact equality is intentionally not the
-    // oracle: the owner screenshot carries a display ICC profile while capture
-    // is explicitly sRGB, so 8-bit conversion may round a channel by one. The
-    // correct origin must instead be the unique nearest physical-pixel offset.
+    // oracle: the matched compositor still permits the existing two-level
+    // channel rounding bound. The correct origin must also be the unique
+    // nearest physical-pixel offset.
     const control = [];
     for (let y = 40; y < 80; y += 1) for (let x = 100; x < 340; x += 1) {
       const absolute = {
@@ -8257,6 +8698,12 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
     };
     writeEvidenceJson(output, 'review-send-alignment.metrics', {
       geometry: paletteOwnerGeometry, ownerScale, pngScale, alignedControl, chromeExclusion,
+    });
+    writeEvidenceJson(output, 'review-send-aligned-control', {
+      frame:paletteHomeGeometry.frame,
+      ownerScale,
+      pngScale,
+      alignedControl,
     });
     assert.ok(alignedControl.samples > 100 && alignedControl.distinctSourceColors > 16,
       'the alignment control must contain real text edges rather than a uniform background');
@@ -9587,7 +10034,7 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     treatment:{
       browser:'existing installed discovery',
       source:'identical createPreview bytes in three fresh fixtures',
-      viewport:{...shortPanelFixture.viewport},
+      viewport:{...SHORT_PANEL_FIXTURE.viewport},
       delta:{x:0,y:360},
       variants:[
         'legacy standalone outside-point wheel (observation only)',
@@ -9685,45 +10132,20 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`),
     'focused floating-toolbar Review engine', 60_000);
     wheelExperiment.variants.positioned.binding = await wheelObserver.bind();
-    await viewport(
-      page,
-      shortPanelFixture.viewport.width,
-      'light',
-      shortPanelFixture.viewport.height,
-      shortPanelFixture.viewport.dpr,
-    );
-    wheelExperiment.variants.positioned.fractionalFixture = await evaluate(page, `(() => {
-      const frame = document.querySelector('.dude-review-frame');
-      const expected = ${JSON.stringify(shortPanelFixture.frame)};
-      const before = {rect:frame.getBoundingClientRect().toJSON(), clientHeight:frame.clientHeight};
-      frame.style.height = expected.rawHeight + 'px';
-      return {before, arrangedHeight:frame.getBoundingClientRect().height};
-    })()`);
+    const shortPanelFixture = SHORT_PANEL_FIXTURE;
     let shortViewport;
     try {
-      // This synthetic fixture has one approved short-panel geometry. Capture
-      // its unpinned half-pixel rectangle before any annotation can pin it.
-      shortViewport = await until(() => evaluate(page, `(() => {
-        const frame = document.querySelector('.dude-review-frame');
-        if (!frame) return null;
-        const expected = ${JSON.stringify(shortPanelFixture.frame)};
-        const {x, y, top, right, bottom, left, width, height}
-          = frame.getBoundingClientRect();
-        const viewBox = document.querySelector('.dude-review-overlay')?.getAttribute('viewBox');
-        return frame.clientWidth === expected.width
-          && frame.clientHeight === expected.clientHeight
-          && width === expected.width
-          && height === expected.rawHeight
-          && !frame.classList.contains('dude-review-frame-pinned')
-          && viewBox === '0 0 ' + frame.clientWidth + ' ' + frame.clientHeight
-          && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')
-          ? {
-            width:frame.clientWidth,
-            height:frame.clientHeight,
-            viewBox,
-            rawFrame:{x, y, top, right, bottom, left, width, height},
-          } : null;
-      })()`), 'unannotated short viewport admitted at native DPR2');
+      const geometry = await prepareFractionalReviewPanel(
+        page,
+        wheelExperiment.variants.positioned,
+      );
+      wheelExperiment.variants.positioned.shortPanel = geometry;
+      shortViewport = {
+        width:geometry.frame.clientWidth,
+        height:geometry.frame.clientHeight,
+        viewBox:geometry.viewBox,
+        rawFrame:geometry.frame.rect,
+      };
     } catch (error) {
       const admissionFailure = await evaluate(page, `(() => {
         const frame = document.querySelector('.dude-review-frame');
@@ -9802,15 +10224,6 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     await evaluate(page, `window.floatingFrame = document.querySelector('.dude-review-frame iframe');
       window.floatingLoads = 0;
       window.floatingFrame.addEventListener('load', () => window.floatingLoads++)`);
-    wheelExperiment.variants.positioned.shortPanel = {
-      viewport:structuredClone(shortPanelFixture.viewport),
-      frame:{
-        clientWidth:shortViewport.width,
-        clientHeight:shortViewport.height,
-        rect:structuredClone(shortViewport.rawFrame),
-      },
-      viewBox:shortViewport.viewBox,
-    };
     wheelExperiment.variants.positioned.qualification =
       await qualifyReviewSourceObserver(wheelObserver);
     wheelExperiment.variants.positioned.stage =
@@ -10381,6 +10794,31 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     };
     const { standalone, positioned, overlayNegative } = wheelExperiment.summaries;
     const same = (left, right) => isDeepStrictEqual(left, right);
+    const unchangedWheelViewTraffic = wheel => {
+      const pre = wheel?.pre?.source?.view;
+      const post = wheel?.post?.source?.view;
+      const queries = wheel?.post?.source?.probe?.queries;
+      const marker = wheel?.marker?.sourceQuery;
+      const correlations = wheel?.bridge?.correlations;
+      if (!pre || !post
+        || typeof pre.signature !== 'string' || !pre.signature
+        || typeof post.signature !== 'string' || !post.signature
+        || !pre.viewport || typeof pre.viewport !== 'object'
+        || !post.viewport || typeof post.viewport !== 'object'
+        || !Array.isArray(queries) || !Number.isInteger(marker)
+        || marker < 0 || marker > queries.length
+        || !Array.isArray(correlations)
+        || !same(pre.signature, post.signature)
+        || !same(pre.viewport, post.viewport)) return false;
+      return queries.slice(marker).every(query => (
+        query.op === 'view' && correlations.some(pair => (
+          pair.query.channel === query.channel && pair.query.id === query.id
+            && pair.reply.type === 'dude-review-result' && !pair.reply.error
+            && pair.reply.signature === post.signature
+            && same(pair.reply.viewport, post.viewport)
+        ))
+      ));
+    };
     const matched = {
       browser:standalone.browser === positioned.browser
         && positioned.browser === overlayNegative.browser,
@@ -10394,9 +10832,10 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       dimensions:[standalone, positioned, overlayNegative].every(value => (
         value.geometry?.viewport?.width === shortPanelFixture.viewport.width
           && value.geometry?.viewport?.height === shortPanelFixture.viewport.height
-          && value.geometry?.frame?.clientWidth === shortPanelFixture.frame.width
-          && value.geometry?.frame?.clientHeight === shortPanelFixture.frame.clientHeight
-          && value.geometry?.frame?.rect?.height === shortPanelFixture.frame.rawHeight
+          && value.geometry?.frame?.clientWidth === shortViewport.width
+          && value.geometry?.frame?.clientHeight === shortViewport.height
+          && value.geometry?.frame?.rect?.height
+            === shortViewport.height - shortPanelFixture.normalizationDelta
       )),
     };
     wheelExperiment.matched = matched;
@@ -10408,8 +10847,60 @@ test('T012 review regression: short-panel floating tools stay inside their palet
           && !value.chooser.headingOption
       ));
     const positionedWheel = wheelExperiment.variants.positioned.wheel;
-    const positionedSourceQueries = positionedWheel.post.source.probe.queries
-      .slice(positionedWheel.marker.sourceQuery);
+    // ResizeObserver can finish its paired read-only view queries during the
+    // gesture. They are not scroll delivery; require complete pre/post source
+    // identity plus correlated successful replies rather than trusting a
+    // coherent but newly observed post-wheel source.
+    const positionedReadOnlyQueries = unchangedWheelViewTraffic(positionedWheel);
+    const coherentDriftWheel = structuredClone(positionedWheel);
+    const coherentQueries = coherentDriftWheel.post.source.probe.queries
+          .slice(coherentDriftWheel.marker.sourceQuery);
+    const coherentQueryKeys = new Set(coherentQueries.map(query => (
+          `${query.channel}\u0000${query.id}`
+    )));
+    const coherentSignature = `sha256:${'f'.repeat(64)}`;
+    const coherentViewport = {
+          ...coherentDriftWheel.post.source.view.viewport,
+          documentWidth:coherentDriftWheel.post.source.view.viewport.documentWidth + 1,
+    };
+    coherentDriftWheel.post.source.view.signature = coherentSignature;
+    coherentDriftWheel.post.source.view.viewport = coherentViewport;
+    let coherentReplies = 0;
+    for (const pair of coherentDriftWheel.bridge.correlations) {
+          if (!coherentQueryKeys.has(`${pair.query.channel}\u0000${pair.query.id}`)
+            || pair.reply.type !== 'dude-review-result' || pair.reply.error
+            || !pair.reply.viewport) continue;
+          pair.reply.signature = coherentSignature;
+          pair.reply.viewport = structuredClone(coherentViewport);
+          coherentReplies += 1;
+    }
+    const coherentLatest = coherentDriftWheel.bridge.latestView;
+    if (coherentLatest && coherentQueryKeys.has(
+          `${coherentLatest.query.channel}\u0000${coherentLatest.query.id}`,
+    )) {
+          coherentLatest.reply.signature = coherentSignature;
+          coherentLatest.reply.viewport = structuredClone(coherentViewport);
+    }
+    const missingPreWheel = structuredClone(positionedWheel);
+    const missingPostWheel = structuredClone(positionedWheel);
+    delete missingPreWheel.pre.source.view;
+    delete missingPostWheel.post.source.view;
+    const wheelOracleControls = {
+          benignReadOnlyTrafficAccepted:positionedReadOnlyQueries,
+          missingPreRejected:!unchangedWheelViewTraffic(missingPreWheel),
+          missingPostRejected:!unchangedWheelViewTraffic(missingPostWheel),
+          coherentDriftRejected:!unchangedWheelViewTraffic(coherentDriftWheel),
+          coherentDrift:{
+            correlatedQueries:coherentQueries.length,
+            correlatedReplies:coherentReplies,
+            preSignature:coherentDriftWheel.pre.source.view.signature,
+            postSignature:coherentDriftWheel.post.source.view.signature,
+            preViewport:coherentDriftWheel.pre.source.view.viewport,
+            postViewport:coherentDriftWheel.post.source.view.viewport,
+            sourceScrollEvents:coherentDriftWheel.receiver.sourceScrollEvents.length,
+          },
+    };
+    wheelExperiment.variants.positioned.oracleControls = wheelOracleControls;
     const negativeWheel = wheelExperiment.variants.overlayNegative.wheel;
     const negativeSourceQueries = negativeWheel.post.source.probe.queries
       .slice(negativeWheel.marker.sourceQuery);
@@ -10437,7 +10928,8 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       && positioned.receiver?.outsideOverlay
       && !positioned.receiver?.overlay
       && !positioned.receiver?.source
-      && positionedSourceQueries.length === 0
+      && positionedReadOnlyQueries
+      && positioned.receiver.sourceScrollEvents.length === 0
       && positioned.source.scrollY === 0
       && positioned.source.headingVisible
       && positioned.source.headingTarget?.selector === '#heading'
@@ -10508,6 +11000,25 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       };
     }
     wheelExperiment.variants.positioned.stage = 'chooser-observed';
+    assert.deepEqual(
+      {
+        benignReadOnlyTrafficAccepted:wheelOracleControls.benignReadOnlyTrafficAccepted,
+        missingPreRejected:wheelOracleControls.missingPreRejected,
+        missingPostRejected:wheelOracleControls.missingPostRejected,
+        coherentDriftRejected:wheelOracleControls.coherentDriftRejected,
+        allPostQueriesRemainCorrelated:
+          wheelOracleControls.coherentDrift.correlatedQueries
+            === wheelOracleControls.coherentDrift.correlatedReplies,
+      },
+      {
+        benignReadOnlyTrafficAccepted:true,
+        missingPreRejected:true,
+        missingPostRejected:true,
+        coherentDriftRejected:true,
+        allPostQueriesRemainCorrelated:true,
+      },
+      'the wheel oracle accepts benign view traffic and rejects missing or coherently drifted sources',
+    );
     writeEvidenceJson(output, 'short-panel-wheel-discriminator', wheelExperiment);
     assert.equal(
       wheelExperiment.discriminator.status,
@@ -11880,8 +12391,7 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     ));
     const frameFields = ['x', 'y', 'top', 'right', 'bottom', 'left', 'width', 'height'];
     const expectedRawFrame = shortViewport.rawFrame;
-    const expectedNormalizationDelta = shortPanelFixture.frame.clientHeight
-      - shortPanelFixture.frame.rawHeight;
+    const expectedNormalizationDelta = shortPanelFixture.normalizationDelta;
     const normalizationDelta = shortViewport.height - expectedRawFrame.height;
     const expectedPinnedFrame = {
       ...expectedRawFrame,
@@ -13831,6 +14341,10 @@ test('T012 review regression: double-click opens an annotation comment while dra
         viewBox:overlay.getAttribute('viewBox'),
       };
     })()`);
+    observations.fractionalPanel = { variant:'double-click' };
+    await prepareFractionalReviewPanel(
+      page, observations.fractionalPanel, { width:1000, height:900, dpr:2 },
+    );
     const frame = await frameSnapshot();
     assert.ok(frame.clientWidth >= 900 && frame.clientHeight >= 360,
       `the reviewed frame must hold the marked regions: ${JSON.stringify(frame)}`);
@@ -15455,10 +15969,13 @@ test('T012 review regression: real keyboard focus visibly paints floating tools 
 
       // Then reset modality with a real pointer trigger and establish the same
       // target through the production forward-Tab path used by the acceptance.
+      // Capture the ring-free toggle before navigation so the native sequence
+      // from the roving tool to its sibling toggle stays uninterrupted.
       await pointerFocusSource(id);
       const keyboardMark = await eventMark();
+      const keyboardBefore = await state(`${id}-keyboard-predecessor`, toggle);
       const tabPath = [];
-      for (let step = 0; step < 24; step += 1) {
+      for (let step = 0; step < 80; step += 1) {
         if (await evaluate(page, `document.activeElement === (${selectedTool})`)) break;
         await pressNavigationKey(page, 'Tab');
         tabPath.push(await evaluate(page, `document.activeElement?.getAttribute('aria-label')
@@ -15499,11 +16016,14 @@ test('T012 review regression: real keyboard focus visibly paints floating tools 
           });
         }
       }
-      const keyboardBefore = await state(`${id}-keyboard-predecessor`, toggle);
+      // Keep the earlier ring-free screenshot: taking another screenshot at
+      // the predecessor would interrupt the native selected-tool-to-toggle path.
       const predecessor = await evaluate(page, `document.activeElement?.getAttribute('aria-label')
         || document.activeElement?.innerText?.trim()`);
       const beforeInputReceiver = await receiver();
       await pressNavigationKey(page, 'Tab');
+      tabPath.push(await evaluate(page, `document.activeElement?.getAttribute('aria-label')
+        || document.activeElement?.innerText?.trim()`));
       const afterInputReceiver = await receiver();
       const keyboard = await state(`${id}-keyboard-focused`, toggle);
       const keyboardEvents = await eventsSince(keyboardMark);
@@ -15519,7 +16039,7 @@ test('T012 review regression: real keyboard focus visibly paints floating tools 
         theme,
         placement,
         control: keyboard.target.name,
-        navigation: 'native forward Tab path to the selected toolbar item, then native Tab to the pinned toggle',
+        navigation: 'native forward Tab path to the selected toolbar item, then the pinned toggle',
         tabPath,
         predecessor,
         arrivalReceiver,
@@ -15541,8 +16061,16 @@ test('T012 review regression: real keyboard focus visibly paints floating tools 
       scenarios.push(scenario);
       addKeyboardFindings(scenario, keyboardEvents);
       addCalibrationFindings(scenario);
-      if (predecessor !== 'Highlight (H)') {
-        findings.push({ id, issue: 'forward Tab did not establish the selected toolbar predecessor', predecessor, tabPath });
+      const expectedToggle = placement === 'vertical'
+        ? 'Switch tools to horizontal' : 'Switch tools to vertical';
+      if (predecessor !== 'Highlight (H)'
+        || !isDeepStrictEqual(tabPath.slice(-2), ['Highlight (H)', expectedToggle])) {
+        findings.push({
+          id,
+          issue: 'forward Tab did not establish the selected toolbar predecessor',
+          predecessor:tabPath.at(-2) || null,
+          tabPath,
+        });
       }
     };
 
@@ -15595,6 +16123,242 @@ test('T012 review regression: real keyboard focus visibly paints floating tools 
     }
     if (fixture) await fixture.close();
     await board.close();
+  }
+});
+
+test('T004 browser: current capture failure keeps Review usable and save-only across platforms', {
+  timeout: 240_000,
+  concurrency: false,
+}, async (context) => {
+  if (!browserReady(context)) return;
+  const output = evidence(context, 't004-portable-capture-failure');
+  const board = installEmptyBoard();
+  const incompatibleBrowser = installIncompatibleCaptureBrowser();
+  let browserState;
+  let fixture;
+  let publication;
+  let root;
+  const runtimeErrors = [];
+  const network = [];
+  const baseCaptures = [];
+  const sealCalls = [];
+  try {
+    const selectedCaptureBrowser = findBrowser();
+    assert.equal(path.resolve(selectedCaptureBrowser), path.resolve(incompatibleBrowser.executable),
+      'production capture discovery selects the test-owned incompatible native executable');
+    assert.equal(incompatibleBrowser.executableSha256, incompatibleBrowser.nodeSha256,
+      'the discovered fixture is an exact owned copy of this Node executable');
+
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-t004-capture-failure-'));
+    const feature = createIdea(root, 713, 'portable-capture-failure', 'defined');
+    const preview = createPreview(root, /** @type {any} */ (feature));
+    fixture = await createFixture(root, null, base => ({
+      ...base,
+      async openReview(input) {
+        const opened = await base.openReview(input);
+        baseCaptures.push({
+          requestRef:input.request.requestRef,
+          capture:structuredClone(opened.capture),
+        });
+        return opened;
+      },
+      async sealReview(input) {
+        sealCalls.push(input.request.requestRef);
+        return base.sealReview(input);
+      },
+    }));
+    const scope = {
+      kind:'feature',
+      ideaPath:feature.ideaPath,
+      specPath:feature.specPath,
+    };
+    const request = requestFor(fixture, 'preview', preview, scope);
+    request.prompt = 'Keep working markup when native image capture fails';
+    publication = await publish(fixture, request);
+    browserState = await startBrowser();
+    const { page } = browserState;
+    page.on('Runtime.exceptionThrown', event => runtimeErrors.push(event));
+    page.on('Network.requestWillBeSent', event => {
+      if (!event.request.url.startsWith(fixture.instance.url)) return;
+      network.push({
+        order:network.length + 1,
+        method:event.request.method,
+        path:new URL(event.request.url).pathname,
+        body:event.request.postData ?? null,
+      });
+    });
+
+    await navigate(page, fixture, 1440, 'light');
+    await click(page, `document.querySelector('[data-work-path="${feature.ideaPath}"]')`);
+    await visible(page, 'Review design');
+    await click(page, button('Review design'));
+    await visible(page, 'Image capture unavailable. Read notice');
+    await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
+      && !document.querySelector('[aria-label="Box (B)"]').disabled`),
+    'capture-failed Review engine remains usable', 30_000);
+    assert.equal(baseCaptures.length, 1);
+    const actualCapture = baseCaptures[0].capture;
+    assert.deepEqual({
+      available:actualCapture.available,
+      reason:actualCapture.reason,
+      exitCode:actualCapture.detail?.exitCode,
+      stageAccepted:['child_exit', 'pipe_write'].includes(actualCapture.detail?.stage),
+    }, {
+      available:false,
+      reason:'review_capture_failed',
+      exitCode:9,
+      stageAccepted:true,
+    }, 'Node exits 9 under the actual capture browser flags at the real adapter boundary');
+    const failureWording = actualCapture.detail.stage === 'pipe_write'
+      ? 'The capture browser command pipe failed.'
+      : 'The capture browser exited before the operation completed.';
+    const expectedWarning = `${failureWording} Review cannot send report-only feedback. Working annotations are retained.`;
+    await openReviewNotice(page, 'Image capture unavailable');
+    await visible(page, expectedWarning);
+    await closeReviewDetails(page);
+
+    // The actual engine remains available. Create native markup, explicitly
+    // save it, then edit its comment and let the normal working-file path keep
+    // that edit before returning through the product's Back control.
+    const savesBefore = network.filter(entry =>
+      entry.method === 'POST' && entry.path === '/api/needs-you/review/save').length;
+    await click(page, `document.querySelector('[aria-label="Box (B)"]')`);
+    await openReviewDetails(page);
+    await click(page, button('Add at center'));
+    await visible(page, 'Comments (1)');
+    await until(() => evaluate(page, `!${button('Save markup')}.disabled`),
+      'capture-failed explicit Save markup enabled');
+    await click(page, button('Save markup'));
+    await until(() => network.filter(entry =>
+      entry.method === 'POST' && entry.path === '/api/needs-you/review/save').length === savesBefore + 1,
+    'capture-failed explicit working save');
+    await openReviewDetails(page);
+    await visible(page, 'Working markup matches the saved revision');
+    await closeReviewDetails(page);
+    await click(page, button('Comments (1)'));
+    const workingComment = '  Capture failed; keep this\u00a0working edit.\nSecond line.  ';
+    await fill(page, field('Comment (optional)'), workingComment);
+    assert.equal(await evaluate(page, `${field('Comment (optional)')}.value`), workingComment);
+
+    const current = fixture.provider.read().requests.find(
+      ({ requestHandle }) => requestHandle === publication.record.requestHandle,
+    );
+    const reviewDirectory = path.join(
+      root,
+      ...path.posix.dirname(feature.specPath).split('/'),
+      'reviews',
+      current.reviewSubmissionId,
+    );
+    const workingFile = path.join(reviewDirectory, 'working.json');
+    const working = await until(() => {
+      if (!fs.existsSync(workingFile)) return null;
+      const value = JSON.parse(fs.readFileSync(workingFile, 'utf8'));
+      return value.state.annotations.length === 1
+        && value.state.annotations[0].comment === workingComment ? value : null;
+    }, 'capture-failed edited working.json');
+    assert.deepEqual(fs.readdirSync(reviewDirectory), ['working.json'],
+      'capture failure retains only mutable working markup');
+    await click(page, `document.querySelector('[data-review-comments-done]')`);
+    await until(() => evaluate(page, `!document.querySelector('[aria-label="Close comments"]')`),
+      'capture-failed comment editor closed');
+    await openReviewDetails(page);
+    assert.equal(await evaluate(page, `${button('Send annotations')}.disabled`), true,
+      'capture failure exposes no report-only send');
+    await closeReviewDetails(page);
+    await click(page, `document.querySelector('[data-review-return]')`);
+    await until(() => evaluate(page, `!document.querySelector(
+      '[data-review-workspace]'
+    )?.getClientRects().length && document.querySelector(
+      '#dude-tab-context'
+    )?.getAttribute('aria-selected') === 'true'`), 'capture-failed Review return');
+
+    // Remount the current app, then reopen the same request through its
+    // accessible contextual action. The real adapter must reread working.json
+    // while retaining the same honest capture failure and no seal or response.
+    await navigate(page, fixture, 1440, 'light');
+    await click(page, `document.querySelector('[data-work-path="${feature.ideaPath}"]')`);
+    await visible(page, 'Review design');
+    await click(page, button('Review design'));
+    await visible(page, 'Image capture unavailable. Read notice');
+    await until(() => evaluate(page, `Boolean(${button('Comments (1)')})
+      && !document.querySelector('[aria-label="Box (B)"]').disabled`),
+    'capture-failed saved markup restored on reopen', 30_000);
+    assert.equal(baseCaptures.length, 2);
+    assert.deepEqual(baseCaptures.map(entry => entry.capture), [actualCapture, actualCapture],
+      'reopening keeps the provider lifetime negative capture descriptor');
+    await click(page, button('Comments (1)'));
+    assert.equal(await evaluate(page, `${field('Comment (optional)')}.value`), workingComment,
+      'the edited working markup returns from working.json');
+    await click(page, `document.querySelector('[data-review-comments-done]')`);
+    await visible(page, 'Image capture unavailable. Read notice');
+    await saveRegressionProof(page, output, 'portable-capture-failure-reopened', {
+      selectedCaptureBrowser,
+      incompatibleExecutable:{
+        source:incompatibleBrowser.nodeExecutable,
+        sourceSha256:incompatibleBrowser.nodeSha256,
+        copiedPath:incompatibleBrowser.executable,
+        copiedSha256:incompatibleBrowser.executableSha256,
+      },
+      actualCapture,
+      expectedWarning,
+      working:{
+        submissionId:working.submissionId,
+        annotations:working.state.annotations.length,
+        comment:working.state.annotations[0].comment,
+      },
+    });
+
+    const finalRequest = fixture.provider.read().requests.find(
+      ({ requestHandle }) => requestHandle === publication.record.requestHandle,
+    );
+    assert.equal(finalRequest.phase, 'pending',
+      'save-only markup leaves the original owner waiter current');
+    assert.deepEqual(fs.readdirSync(reviewDirectory), ['working.json']);
+    assert.deepEqual(sealCalls, []);
+    assert.equal(network.filter(entry =>
+      entry.method === 'POST' && entry.path === '/api/needs-you/review/seal').length, 0);
+    assert.equal(network.filter(entry =>
+      entry.method === 'POST' && entry.path === '/api/needs-you/respond').length, 0);
+    assert.deepEqual(runtimeErrors, []);
+    const proof = {
+      browser:browserState.version.Browser,
+      selectedCaptureBrowser,
+      incompatibleExecutableSha256:incompatibleBrowser.executableSha256,
+      nodeExecutableSha256:incompatibleBrowser.nodeSha256,
+      actualCapture,
+      reviewOpens:baseCaptures.length,
+      workingSaves:network.filter(entry =>
+        entry.method === 'POST' && entry.path === '/api/needs-you/review/save').length,
+      workingAnnotations:working.state.annotations.length,
+      reopenedComment:working.state.annotations[0].comment,
+      requestPhase:finalRequest.phase,
+      seals:sealCalls.length,
+      responses:network.filter(entry =>
+        entry.method === 'POST' && entry.path === '/api/needs-you/respond').length,
+    };
+    writeEvidenceJson(output, 't004-portable-capture-failure', proof);
+    output.results.push({
+      case:'t004-portable-capture-failure-save-only',
+      pass:true,
+      browser:browserState.version.Browser,
+      captureFailureStage:actualCapture.detail.stage,
+      captureFailureExitCode:actualCapture.detail.exitCode,
+      reviewOpens:baseCaptures.length,
+      workingSaves:proof.workingSaves,
+      seals:proof.seals,
+      responses:proof.responses,
+    });
+  } finally {
+    await runCleanupSteps(
+      () => publication?.controller.abort(),
+      () => publication?.result.catch(() => {}),
+      () => browserState ? cleanupBrowserDriver(browserState) : undefined,
+      () => fixture
+        ? fixture.close({ removeRoot:fs.existsSync(fixture.root) })
+        : root ? fs.rmSync(root, { recursive:true, force:true }) : undefined,
+      () => incompatibleBrowser.close(),
+      () => board.close(),
+    );
   }
 });
 
@@ -17287,9 +18051,11 @@ test('T011 review regression: latest history navigation wins over superseded rea
     let closing;
     await runCleanupSteps(
       () => cleanupStep('provider disposal', () => fixture?.provider.dispose()),
-      () => cleanupStep('server close before browser', () => {
+      () => cleanupStep('server close requested before browser', () => {
         closing = fixture ? closeInstance(fixture.instanceId) : Promise.resolve();
-        return closing;
+        // Intercepted requests can hold the server open. Close the owned
+        // client before awaiting drainage, while retaining the close failure.
+        void closing.catch(() => undefined);
       }, 5_000),
       () => cleanupStep('browser close', () => browserState && cleanupBrowserDriver(browserState)),
       () => cleanupStep('server drained after browser', () => closing, 5_000),
@@ -17298,6 +18064,15 @@ test('T011 review regression: latest history navigation wins over superseded rea
       }),
       () => cleanupStep('owned board children', () => board.close()),
     );
+    writeEvidenceJson(output, 'history-cleanup', {
+      phase:'complete',
+      browserPid:browserState?.browser.pid ?? null,
+      profile:browserState?.profile ?? null,
+      browserAlive:browserState?.browser.pid ? browserPidAlive(browserState.browser.pid) : false,
+      profileExists:browserState ? fs.existsSync(browserState.profile) : false,
+      fixtureRootExists:fixture ? fs.existsSync(fixture.root) : false,
+      serverListening:fixture?.instance.server.listening ?? false,
+    });
     if (!diagnosticFailure && diagnosticRetentionError) throw diagnosticRetentionError;
   }
 });

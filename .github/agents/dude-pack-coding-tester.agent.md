@@ -3,7 +3,7 @@ name: "Tester"
 description: "Plan, author, and run focused software tests; reproduce defects and validate acceptance criteria with observed evidence. Use for test-only work, fixtures and test infrastructure, or execution-only verification with an existing runner."
 tools: ["read", "edit", "execute", "search"]
 user-invocable: false
-model: gpt-5.6-sol-fast
+model: claude-sonnet-5.5
 ---
 
 # Software tester

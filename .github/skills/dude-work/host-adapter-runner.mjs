@@ -14,6 +14,7 @@ import { WORKSPACE_PATHS, resolveMutationPath } from '../dude-engine/lib/workspa
 import { createHostAdapter, createTemporaryCheckpointStore, prepareSpecialistResult } from './host-adapter.mjs';
 import {
   HALT_NEXT_ACTIONS,
+  assertDenseDataArrayLength,
   canonicalJson,
   canonicalTarget,
   capacityDiagnostic,
@@ -22,6 +23,7 @@ import {
   classifyOutcomeReason,
   contentDescriptor,
   currentRunCapture,
+  deriveEarliestRepeatRelationshipV1,
   describeUnattendedHalt,
   inspect,
   inspectRetainedOccurrencesV2,
@@ -726,7 +728,7 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
     const input = transportInput(rawInput());
     for (const field of RETAINED_STREAMS) {
       input[field] = [
-        ...retainedEvidence[field],
+        ...Array.prototype.values.call(retainedEvidence[field]),
         ...(field === 'currentRun' ? input.currentRun : observedStreams[field]),
       ];
     }
@@ -1182,9 +1184,9 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
     let initialInspection;
     try {
       if (Object.hasOwn(request, 'retainedEvidence')) {
-        const supplied = exactRecord(request.retainedEvidence, RETAINED_STREAMS, 'retainedEvidence');
+        const supplied = captureExactDataRecord(request.retainedEvidence, RETAINED_STREAMS, [], 'retainedEvidence');
         for (const field of RETAINED_STREAMS) {
-          if (!Array.isArray(supplied[field])) throw new TypeError(`retainedEvidence.${field} must be an array`);
+          assertDenseDataArrayLength(supplied[field], `retainedEvidence.${field}`);
         }
         retainedEvidence = /** @type {Record<string, Record<string, unknown>[]>} */ (supplied);
       }
@@ -1358,6 +1360,21 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
 
     const inspected = refreshInspection('fresh-inspection');
     if (inspected.terminal) return inspected.terminal;
+
+    // Fresh accounting does not discharge an exact target's retained learning.
+    // Restore through the adapter before an Assessment can authorize an attempt.
+    if (!Object.hasOwn(state, 'learningGovernance')
+      && deriveEarliestRepeatRelationshipV1(retention.retained) !== null) {
+      const resumed = runDeterministic(
+        'advance-governance:resume-learning',
+        'advance-governance',
+        () => ({ governance: { action: 'resume-learning', input: runtimeInput() } }),
+      );
+      if (resumed.terminal) return resumed.terminal;
+      if (!expected(resumed.result, 'accepted', 'governance-resumed')) {
+        return orphan('governance-unresolved', /** @type {string} */ (resumed.result.reason));
+      }
+    }
 
     let attemptOrdinal = 0;
     let completed = false;

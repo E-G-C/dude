@@ -37,7 +37,18 @@ No completion claim without fresh verification evidence.
    cannot fit an existing receiver limit, report the specific validator,
    capacity, obligation, or file-scope gap. The gap grants no recovery authority
    and does not permit a schema or runtime-limit change or bypass an existing
-   stop.
+   stop. Only `dude-work` `## Explicit Manual Terminal Resolution` governs the
+   separately requested terminal autonomous Lightweight Work case; an overflow
+   itself grants no permission, and every fresh evidence, scope, and capacity
+   rule here still applies.
+   For `dude-work` `### Post-Terminal Administrative Reconciliation`, defer to
+   that owner to determine whether the current definition expressly permits
+   retained evidence. Freshly inspect its actual source, provenance, bindings,
+   exact material, and current applicability. A still-valid approved operator
+   observation need not be rerun merely because old Work ended, but historical
+   green output, scope inference, and stale or wrong evidence are not current
+   acceptance and do not weaken this skill's freshness, production-boundary,
+   or complete-result rules.
 7. Match the claim to the evidence scope. Partial checks support only partial
    claims. Distinguish `implemented` and `verified` from `committed`, `pushed`,
    and `merged`; each delivery claim requires its own observed repository or
