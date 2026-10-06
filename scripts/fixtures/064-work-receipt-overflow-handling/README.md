@@ -55,18 +55,27 @@ valid but permit-misbound receipt from a test-owned lane port after the permitte
 `task-settled` or successful settlement cleanup; explicit fixture cleanup is
 recorded as `hard-stop-recorded`.
 
-The separate component test retains the previous ordinal 6-8 size controls as
-counterfactual measurements. Its independent pending states and lower-level
-calls do not establish Work admission. In particular, its ordinal-6/7 finalized
-results still say `completed: false`, `reason: learning-required`; their
-governance projections are not carried into the next component measurement.
-The ordinal-7 receipt size and ordinal-8 byte overflow therefore describe no
-completed Work cycle or reachable byte ceiling. Those controls were recorded
-against the former 131,072-byte model budget, so the component test adds one
-inert optional session whose measured packet footprint is exactly the revised
-capacity difference; the byte ceiling, not a count limit, still ends its
-growth. The small-workspace public runner test remains a separate control, not
-the full-reference proof.
+The separate component test measures counterfactual packet growth. Its frozen
+history contains both required and reviewed governance, but
+`t003HistoricalState` has no accepted governance branch. Direct recovery and
+the semantic adapter must refuse that history-only resume with
+`governance-unresolved`, leaving state and files unchanged. Every measured
+ordinal instead uses the existing `buildRetentionPair` and
+`t003CounterfactualPendingState` builders. Their historical hash-only capture
+shape and independent pending states establish no Work admission or restored
+authority. A separate ordinal-5 control uses today's `prepareSpecialistResult`
+producer, verifies the same trusted pair with its readable text retained, and
+measures the extra bytes without changing the historical-shape growth series.
+
+The ordinal 5-13 finalized results say `completed: false`,
+`reason: learning-required`; their governance projections are not carried into
+the next component measurement. The ordinal-13 receipt size and ordinal-14
+byte overflow therefore describe no completed Work cycle or reachable Work
+ceiling. The immutable historical baseline uses the former 131,072-byte budget;
+current observations use 262,144 bytes. One inert optional session reserves exactly
+the capacity difference, measured by the production renderer; the byte ceiling,
+not a count limit, still ends the component growth. The small-workspace public
+runner test remains a separate control, not the full-reference proof.
 
 Run the scoped source suites in an owned validation copy. Refresh `src/`, this
 fixture directory, and the complete static `.dude/{ideas,specs,state,memory,metadata}`

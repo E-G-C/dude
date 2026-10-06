@@ -8,6 +8,7 @@ import {
   capturedBytesV1,
   normalizeIndependentReviewEnvelopeV2,
   normalizeVerificationEnvelopeV2,
+  specialistSemanticIdentityV1,
   validateApproachBasisV1,
   validateFindingBasisV1,
   validateIndependentReviewEnvelopeV2,
@@ -205,11 +206,6 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
-/** @param {string} domain @param {unknown} material */
-function semanticIdentity(domain, material) {
-  return sha256(canonicalJson({ type: `specialist-attestation:${domain}`, version: 1, material }));
-}
-
 /** @param {unknown} value @param {string} label */
 function exactCanonicalTarget(value, label) {
   const target = canonicalTarget(value);
@@ -265,10 +261,10 @@ function commonContext(context, role, label) {
     attempt,
     attemptIdentity,
     sourceRevision,
-    sourceRevisionIdentity: semanticIdentity('source-revision', sourceRevision),
+    sourceRevisionIdentity: specialistSemanticIdentityV1('source-revision', sourceRevision),
     inspectedEvidenceHash,
     resultMaterial,
-    resultIdentity: semanticIdentity('result', resultMaterial),
+    resultIdentity: specialistSemanticIdentityV1('result', resultMaterial),
     dispatch,
   };
 }
@@ -300,12 +296,12 @@ function validateResultBinding(result, context, reviewOrdinal, label) {
 
 /** @param {'verification'|'independent-review'} kind @param {ReturnType<typeof commonContext>} context */
 function authorityIdentity(kind, context) {
-  return semanticIdentity('dispatch-authority', { kind, role: context.dispatch.role });
+  return specialistSemanticIdentityV1('dispatch-authority', { kind, role: context.dispatch.role });
 }
 
 /** @param {'verification'|'independent-review'} kind @param {ReturnType<typeof commonContext>} context @param {number|null} reviewOrdinal */
 function invocationIdentity(kind, context, reviewOrdinal) {
-  return semanticIdentity('dispatch-invocation', {
+  return specialistSemanticIdentityV1('dispatch-invocation', {
     kind,
     target: context.target,
     attemptIdentity: context.attemptIdentity,
@@ -364,14 +360,24 @@ function verificationChecks(value, label) {
     }
     byDefinition.set(row.definition, row);
   }
-  return [...byDefinition.values()].map((row) => {
+  // Keep each validated preimage with its check through canonical ordering.
+  const rows = [...byDefinition.values()].map((row) => {
     const body = {
-      definitionIdentity: semanticIdentity('check-definition', row.definition),
+      definitionIdentity: specialistSemanticIdentityV1('check-definition', row.definition),
       outcome: row.outcome,
-      evidenceIdentity: semanticIdentity('check-evidence', row.evidence),
+      evidenceIdentity: specialistSemanticIdentityV1('check-evidence', row.evidence),
     };
-    return { checkIdentity: sha256(canonicalJson(body)), ...body };
-  }).sort((left, right) => Buffer.compare(Buffer.from(left.checkIdentity), Buffer.from(right.checkIdentity)));
+    return {
+      check: { checkIdentity: sha256(canonicalJson(body)), ...body },
+      text: { definition: row.definition, evidence: row.evidence },
+    };
+  }).sort((left, right) => Buffer.compare(
+    Buffer.from(left.check.checkIdentity), Buffer.from(right.check.checkIdentity),
+  ));
+  return {
+    checks: rows.map((row) => row.check),
+    text: { type: 'verification-text', version: 1, checks: rows.map((row) => row.text) },
+  };
 }
 
 /** @param {unknown} contextValue @param {unknown} resultValue */
@@ -388,6 +394,7 @@ function buildVerification(contextValue, resultValue) {
   );
   const context = commonContext(contextRecord, 'Tester', 'verification.context');
   validateResultBinding(result, context, null, 'verification.result');
+  const { checks, text } = verificationChecks(result.checks, 'verification.result.checks');
   const body = {
     type: 'verification-envelope',
     version: 2,
@@ -396,7 +403,7 @@ function buildVerification(contextValue, resultValue) {
     sourceRevisionIdentity: context.sourceRevisionIdentity,
     inspectedEvidenceHash: context.inspectedEvidenceHash,
     resultIdentity: context.resultIdentity,
-    checks: verificationChecks(result.checks, 'verification.result.checks'),
+    checks,
   };
   const envelope = { ...body, envelopeIdentity: sha256(canonicalJson(body)) };
   validateVerificationEnvelopeV2(envelope);
@@ -409,7 +416,7 @@ function buildVerification(contextValue, resultValue) {
   if (canonicalJson(normalizeVerificationEnvelopeV2(capture)) !== canonicalJson(envelope)) {
     invalid('verification capture', 'must decode to the complete built envelope');
   }
-  return capture;
+  return { capture, text };
 }
 
 /** @param {unknown} value @param {string} label */
@@ -442,11 +449,12 @@ function findingBasis(value, label) {
   return {
     expectation: {
       kind: expectationInput.kind,
-      identity: semanticIdentity('finding-expectation', {
+      identity: specialistSemanticIdentityV1('finding-expectation', {
         kind: expectationInput.kind,
         reference: expectationReference,
       }),
     },
+    expectationReference,
     subjects,
     failureClass: semanticText(input.failureClass, `${label}.failureClass`, 128),
     checkDefinition: semanticText(input.checkDefinition, `${label}.checkDefinition`),
@@ -487,7 +495,7 @@ function reviewFindings(value, target, verification, label) {
       expectation: basisInput.expectation,
       subjects: basisInput.subjects,
       failureClass: basisInput.failureClass,
-      checkDefinitionIdentity: semanticIdentity('check-definition', basisInput.checkDefinition),
+      checkDefinitionIdentity: specialistSemanticIdentityV1('check-definition', basisInput.checkDefinition),
     };
     validateFindingBasisV1(basis, `${label}[${index}].basis`);
     const observationInput = findingObservation(finding.observation, `${label}[${index}].observation`);
@@ -501,7 +509,7 @@ function reviewFindings(value, target, verification, label) {
     } else {
       observation = {
         kind: 'observed-evidence',
-        identity: semanticIdentity('finding-observation', observationInput.evidence),
+        identity: specialistSemanticIdentityV1('finding-observation', observationInput.evidence),
       };
     }
     const basisIdentity = sha256(canonicalJson(basis));
@@ -520,16 +528,28 @@ function reviewFindings(value, target, verification, label) {
     findingIdentitiesByBasis.set(basisIdentity, findingIdentity);
     findingIdentities.add(findingIdentity);
     findings.push({
-      version: 2,
-      findingIdentity,
-      basis,
-      basisIdentity,
-      observation,
+      finding: {
+        version: 2,
+        findingIdentity,
+        basis,
+        basisIdentity,
+        observation,
+      },
+      text: {
+        expectationReference: basisInput.expectationReference,
+        checkDefinition: basisInput.checkDefinition,
+        ...(observationInput.kind === 'observed-evidence'
+          ? { observedEvidence: observationInput.evidence } : {}),
+      },
     });
   }
-  return findings.sort((left, right) => (
-    Buffer.compare(Buffer.from(left.findingIdentity), Buffer.from(right.findingIdentity))
+  findings.sort((left, right) => (
+    Buffer.compare(Buffer.from(left.finding.findingIdentity), Buffer.from(right.finding.findingIdentity))
   ));
+  return {
+    findings: findings.map((row) => row.finding),
+    text: { type: 'independent-review-text', version: 1, findings: findings.map((row) => row.text) },
+  };
 }
 
 /** @param {unknown} contextValue @param {unknown} resultValue */
@@ -598,7 +618,7 @@ function buildIndependentReview(contextValue, resultValue) {
   if (verificationCapture.outcomeHash !== verificationBytes.sha256) {
     invalid('independent-review.context.verification.capture.outcomeHash', 'must bind exact envelope bytes');
   }
-  const findings = reviewFindings(
+  const { findings, text } = reviewFindings(
     result.findings,
     context.target,
     verification,
@@ -640,7 +660,7 @@ function buildIndependentReview(contextValue, resultValue) {
   if (canonicalJson(normalizeIndependentReviewEnvelopeV2(capture, verification)) !== canonicalJson(envelope)) {
     invalid('independent-review capture', 'must decode to the complete built envelope');
   }
-  return capture;
+  return { capture, text };
 }
 
 /**
@@ -650,6 +670,16 @@ function buildIndependentReview(contextValue, resultValue) {
  * @param {unknown} value
  */
 export function buildSpecialistAttestation(value) {
+  return buildSpecialistAttestationWithText(value).capture;
+}
+
+/**
+ * Build the same capture with its exact readable result fields in envelope order.
+ * Both APIs share validation and row construction; text adds no context or
+ * authority and a check-result observation has no independent observed text.
+ * @param {unknown} value Same closed {kind, context, result} input as the capture-only API.
+ */
+export function buildSpecialistAttestationWithText(value) {
   inertDataGraph(value, 'SpecialistAttestationInput');
   const input = exactRecord(value, ['kind', 'context', 'result'], 'SpecialistAttestationInput');
   if (input.kind === 'verification') return buildVerification(input.context, input.result);

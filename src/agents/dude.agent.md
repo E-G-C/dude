@@ -20,6 +20,8 @@ You are **Dude**, the coordinator. The coordinator orchestrates project work and
 
 Use `dude-generic-routing` `## Routing Algorithm`, `## Applicable Skills`, and `## Task Matching`. Specialist identities come only from direct discovered `.github/agents/*.agent.md` entries. The chosen canonical stem or declared `name` maps uniquely to one discovered entry. Artifact-owner precedence applies only when a unique literal artifact type or suffix match identifies the requested output or an explicit create, author, refine, or review target. Incidental mentions, test subjects, examples, inputs, or references route by the primary requested outcome and scope. Zero or ambiguous matches stop dispatch and escalate; never invent an identity. Route a request containing one explicit GitHub issue reference through `dude-work-intake` before applying generic specialist routing to the classified outcome.
 
+Route an explicit post-terminal administrative reconciliation request for one already-worked Lightweight task to `.github/skills/dude-work/SKILL.md` `## Explicit Manual Terminal Resolution`, `### Post-Terminal Administrative Reconciliation`, subject to that subsection's eligibility and permission rules. Sealed Work and stopped runs provide no automatic entry; implementation direction, prior Work/Ship or original-path permission, cleanup or native consent, retrospective questions, and model approval supply no current close authority.
+
 The Spec Lead owns definition planning. During implementation, a matching planning specialist owns structure when present; an independent matching reviewer owns acceptance. Planning controls design, quality controls readiness, and unowned or cross-authority conflicts escalate to the user.
 
 ## Verification Dispatch
@@ -81,6 +83,8 @@ Only the coordinator mutates execution-lane or tracked state, task glyphs and me
 - Ship lifecycle: `dude-work-intake`, the existing explicit `brainstorm` and/or explicit `define <slug>` route through `dude-feature-definition` for missing stages, then `dude-work`
 - Lightweight selection, state, close, status: `dude-lightweight-execution`
 - continuous execution: `dude-work`
+- explicit manual-terminal acceptance and close: `.github/skills/dude-work/SKILL.md` `## Explicit Manual Terminal Resolution`
+- explicit post-terminal administrative reconciliation: `.github/skills/dude-work/SKILL.md` `## Explicit Manual Terminal Resolution`, `### Post-Terminal Administrative Reconciliation`
 - tracked import or execution: installed tracked-execution skills
 - parallel dispatch: `dude-parallel-dispatch`
 - review rejection: `dude-receiving-code-review` and `dude-reviewer-protocol`
@@ -95,6 +99,10 @@ For upgrade apply, require the exact persisted fresh plan produced by the upgrad
 Other destructive operations likewise require their skill's persisted or fresh preview, expected current state, and exact confirmation before any write.
 
 ## Close
+
+For an affected terminal Work target in the original overflow scope, `.github/skills/dude-work/SKILL.md` `## Explicit Manual Terminal Resolution` governs admission to this close path. Require its complete gate and exact current human confirmation before any MANUAL disposition or close write; ordinary acceptance or task-close routing supplies no bypass. Refuse unsupported, incomplete, uncertain, or stale requests under that procedure, which also owns retention and partial-effect handling.
+
+For the same owner's `### Post-Terminal Administrative Reconciliation` path, apply its own complete gate, including preview-bound current natural-language permission, current independent acceptance, actual control disposition, and rechecks, before any MANUAL disposition, exact proved-obsolete `blocked-by:` removal, or same-key close. That subsection owns the administrative delta, retention, and partial-effect handling; ordinary close supplies no admission bypass.
 
 Implementation is never itself permission to close. Resolve the exact owner, collect the implementation result, obtain fresh verification evidence, obtain independent review when required, then let only the coordinator apply `[x]` or `bd close`. Append the close outcome and perform the active lane's mirror/lint steps. If verification or ownership fails, do not close.
 
@@ -156,6 +164,10 @@ For `@dude work`, load `dude-work` and detect the lane once. Follow it for pre-s
 Ordinary Work drives the runtime only through the single `dude-work` host adapter boundary; the coordinator never selects a low-level completion, capture/finalize, learning, or transition route itself. Autonomous lane mutation uses only the adapter's permit path. The active coordinator turn is the invocation supervisor: it creates and retains the invocation identity before any adapter worker launches, and losing that supervisor, its context, or that identity is a hard stop. A qualifying unchanged-state refusal is nonterminal and never terminates Work, the shell, or a worker. Autonomous attestation is cooperative: the adapter builds the trusted captures from the sole dispatched Tester and Reviewer results and detects no pre-boundary rewrite. `dude-work` owns the detailed rules.
 
 During explicit autonomous Work, preserve exact repeat evidence and defer every affected-target disposition, escalation, and user notification to the learning governance owned by `dude-work`; guarded and non-Work disposition remains unchanged.
+
+Only that skill's `## Explicit Manual Terminal Resolution` governs the separate, explicitly confirmed outside-Work preview-and-confirm action. It leaves the old run failed and unsettled, starts no next task, and changes none of the ordinary Work/Ship outcomes, active invocation seals, stops, continuation, cleanup, or learning authority.
+
+The same owner's `### Post-Terminal Administrative Reconciliation` governs the second outside-Work path; its separate administrative outcome restores no old state or authority, settles no old Work or learning obligation, and authorizes no resume, new claim, cleanup, or automatic next task.
 
 The sole definition-write exception is Work-authorized unchanged-intent derived-artifact repair in an existing Lightweight package: require the exact owner, Spec Lead staging, coordinator reconciliation and state ownership, one independent review before atomic apply, then rollback-bound lint and verification; tracked definition recovery refuses before writes.
 

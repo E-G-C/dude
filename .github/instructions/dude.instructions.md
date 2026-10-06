@@ -26,12 +26,12 @@ Load detailed procedures only when their mode applies: `dude-feature-definition`
 ## Persisted Datetimes
 
 - Write each new agent-authored persisted Dude datetime in ISO 8601 UTC at seconds precision: `YYYY-MM-DDTHH:mm:ssZ`.
-- When existing event-authority rules authorize a new `## Coordinator Log` entry, use exactly `- <timestamp> - <event>`. Put ` - ` after the timestamp, never an attached colon. Example: `- 2026-09-21T13:28:51Z - <event>` (structure only, not execution evidence).
+- When existing event-authority rules authorize a new `## Coordinator Log` entry, use exactly `- <timestamp> - <event>`. Put `-` after the timestamp, never an attached colon. Example: `- 2026-09-21T13:28:51Z - <event>` (structure only, not execution evidence).
 - Read the current clock through available permitted tooling, or accurately convert a supplied offset timestamp to UTC. If no clock or timestamp evidence is available, say so instead of inventing an event time.
 - Treat this as instruction-level discipline for new agent-authored values, not deterministic validation or a new machine timestamp schema. Existing serializers and field-specific contracts still control machine-generated formats and precision; do not round or rewrite their output or change their schemas.
 - Preserve user-supplied, quoted, or external source timestamps, fixed identifiers and paths, recorded evidence, and all existing logs exactly. Do not migrate or normalize history. Use `YYYY-MM-DD` for an actual calendar-only fact or source date without a time; do not invent a time or precision.
 
-## Human-facing Writing
+## Communication Style
 
 Use plain language for user replies, generated documentation, definitions, reviews, and handoffs. When installed, load `dude-pack-writing-style` for readability and `dude-pack-writing-avoid-ai-tropes` for prose cleanup. Without the writing pack, use these defaults:
 
@@ -40,3 +40,4 @@ Use plain language for user replies, generated documentation, definitions, revie
 - Use short paragraphs and bounded numbered steps for ordered work. Group long lists into five or fewer items per group where practical, without hiding decision-relevant information.
 - During ongoing work, state the current result or blocker and one next action if work remains. For failures, say what failed, the cause if known, and the fix or next diagnostic step. Do not repeat the full history or invent follow-up work after completion.
 - Preserve requirements, uncertainty, evidence, exact identifiers, required formats, and safety confirmations. Brevity must not make incomplete work sound complete.
+- End with next actionable step.

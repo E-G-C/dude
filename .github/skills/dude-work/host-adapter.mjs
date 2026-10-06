@@ -36,7 +36,7 @@ import {
   validateTarget,
   targetKey,
 } from './recovery.mjs';
-import { buildSpecialistAttestation } from './specialist-attestation.mjs';
+import { buildSpecialistAttestationWithText } from './specialist-attestation.mjs';
 
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 // Closed semantic operations. Ordinary callers never name a low-level route or
@@ -1346,12 +1346,13 @@ function handleTrustedCapture(session, trusted, response) {
 }
 
 /**
- * Present one builder-produced capture as the trusted source stream the
- * unchanged recovery routes read. The caller never names or selects it.
+ * Retain one builder-produced capture and its matching text as substantive
+ * evidence. The caller never names or selects either record.
  * @param {Record<string, unknown>} target @param {string} state @param {Record<string, unknown>} capture
+ * @param {Record<string, unknown>} text
  */
-function trustedCaptureStream(target, state, capture) {
-  const records = [capture];
+function trustedCaptureStream(target, state, capture, text) {
+  const records = [capture, text];
   const body = canonicalJson({ target, state, records: records.map((substantive) => ({ substantive })) });
   return [{
     target: clone(target),
@@ -1415,12 +1416,12 @@ function specialistAttestation(state, pending, semanticResult) {
   const reviewOrdinal = 1;
   const verification = /** @type {Record<string, unknown>} */ (semanticResult.verification);
   const review = /** @type {Record<string, unknown>} */ (semanticResult.review);
-  const verificationCapture = /** @type {Record<string, unknown>} */ (buildSpecialistAttestation({
+  const { capture: verificationCapture, text: verificationText } = buildSpecialistAttestationWithText({
     kind: 'verification',
     context: { ...clone(context), dispatch: { ...testerDispatch } },
     result: { ...clone(binding), dispatch: { ...testerDispatch }, checks: verification.checks },
-  }));
-  const reviewCapture = buildSpecialistAttestation({
+  });
+  const { capture: reviewCapture, text: reviewText } = buildSpecialistAttestationWithText({
     kind: 'independent-review',
     context: {
       ...clone(context),
@@ -1444,11 +1445,11 @@ function specialistAttestation(state, pending, semanticResult) {
   );
   const checks = /** @type {Record<string, unknown>[]} */ (verificationEnvelope.checks);
   const verificationState = checks.some((check) => check.outcome === 'failed') ? 'failed' : 'passed';
-  const testerStream = trustedCaptureStream(target, verificationState, verificationCapture);
+  const testerStream = trustedCaptureStream(target, verificationState, verificationCapture, verificationText);
   /** @type {{verification:Record<string, unknown>[],review:Record<string, unknown>[],lint:Record<string, unknown>[]}} */
   const streams = {
     verification: testerStream,
-    review: trustedCaptureStream(target, /** @type {string} */ (reviewEnvelope.verdict), reviewCapture),
+    review: trustedCaptureStream(target, /** @type {string} */ (reviewEnvelope.verdict), reviewCapture, reviewText),
     lint: [],
   };
   if (requiredChecksForAction[

@@ -64,6 +64,14 @@ const CANONICAL_COORDINATOR_PARAGRAPH = [
  * are intentionally asserted here; concrete models are always read from CONFIG.
  */
 const PACK_CATALOG = Object.freeze({
+  a2a: {
+    manifestAgents: ['dude-pack-a2a-javascript-specialist'],
+    agents: {
+      'dude-pack-a2a-javascript-specialist': {
+        modelClass: 'reasoning', tools: ['read', 'search'],
+      },
+    },
+  },
   authoring: {
     manifestAgents: [
       'dude-pack-authoring-agent-smith',
@@ -759,7 +767,7 @@ test('preserves the T005 catalog manifests, source metadata, and local delegatio
     }
     assert.doesNotThrow(() => projection.validateAgentSet(records), `${pack} local source set`);
   }
-  assert.equal(sourceCount, 31, 'the complete catalog retains its 31 authoritative pack sources');
+  assert.equal(sourceCount, 32, 'the complete catalog retains its 32 authoritative pack sources');
 });
 
 test('keeps coding roles on stable leaf identities and canonical Copilot projections', async () => {

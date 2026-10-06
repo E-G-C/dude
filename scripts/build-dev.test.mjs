@@ -111,6 +111,18 @@ const REVIEW_LIB_FILES = Object.freeze([
   'lib/review/data.mjs',
   'lib/review/png.mjs',
 ]);
+/** The delivered A2A surface: wiring, modules, the lazily imported runtime, and its notice. */
+const A2A_RUNTIME_FILES = Object.freeze([
+  'extension.mjs',
+  'lib/a2a.mjs',
+  'lib/a2a-transport.mjs',
+  'lib/a2a-verify.mjs',
+  'lib/a2a-runtime.mjs',
+  'lib/a2a-runtime.mjs.LEGAL.txt',
+]);
+const A2A_TEST_FILES = Object.freeze(['a2a.test.mjs', 'a2a-transport.test.mjs', 'a2a-verify.test.mjs']);
+/** Build-only inputs of the runtime; none may reach generated output. */
+const A2A_BUILD_INPUTS = Object.freeze(['.gitignore', 'build.mjs', 'build.test.mjs', 'entry.mjs', 'package-lock.json', 'package.json']);
 const MODEL_CONFIG = Buffer.from([
   '{',
   '  "provenance": "Fixture model mapping observed on 2026-08-10.",',
@@ -502,6 +514,129 @@ test('T011 published Canvas runtime is byte-identical to source while frontend a
   assert.equal(has(repoRoot, '.github/extensions/dude/frontend'), false);
   assert.equal(has(repoRoot, '.github/extensions/dude/needs-you.test.mjs'), false);
   assert.equal(has(repoRoot, '.github/extensions/dude/work-index.test.mjs'), false);
+});
+
+test('T018 dev bundle carries the lazy A2A runtime, notice, and modules byte-for-byte without tests, dependencies, or build tooling', () => {
+  // The checked-in dogfood copy is compared read-only; nothing builds into this workspace.
+  for (const relative of A2A_RUNTIME_FILES) {
+    assertExactBytes(
+      fs.readFileSync(path.join(repoRoot, '.github/extensions/dude', ...relative.split('/'))),
+      fs.readFileSync(path.join(repoRoot, 'src/extensions/dude', ...relative.split('/'))),
+      `.github/extensions/dude/${relative}`,
+    );
+  }
+  for (const name of A2A_TEST_FILES) assert.equal(has(repoRoot, `.github/extensions/dude/${name}`), false, name);
+  assert.equal(has(repoRoot, '.github/extensions/dude/node_modules'), false);
+
+  // The actual generator, in a disposable root holding the actual source bytes,
+  // the A2A tests, an installed dependency beside the runtime, and the runtime's
+  // real build inputs.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-t018-a2a-'));
+  try {
+    writeCanonicalConfig(root);
+    writeBuildMetadata(root);
+    for (const relative of [...A2A_RUNTIME_FILES, ...A2A_TEST_FILES]) {
+      w(root, `src/extensions/dude/${relative}`, fs.readFileSync(path.join(repoRoot, 'src/extensions/dude', ...relative.split('/'))));
+    }
+    w(root, 'src/extensions/dude/lib/node_modules/@a2a-js/sdk/package.json', '{"name":"@a2a-js/sdk","version":"1.2.0"}\n');
+    const buildOnly = [
+      ...A2A_TEST_FILES.map((name) => `src/extensions/dude/${name}`),
+      ...A2A_BUILD_INPUTS.map((name) => `scripts/dude-a2a/${name}`),
+    ];
+    for (const relative of buildOnly.filter((rel) => rel.startsWith('scripts/'))) {
+      w(root, relative, fs.readFileSync(path.join(repoRoot, ...relative.split('/'))));
+    }
+
+    const result = buildDev({ repoRoot: root });
+    const generated = snapshotTree(path.join(root, '.github/extensions/dude'))
+      .filter((entry) => entry.type === 'file')
+      .map((entry) => entry.path)
+      .sort();
+
+    assert.deepEqual(generated, [...A2A_RUNTIME_FILES].sort(), 'exactly the runtime surface is generated');
+    for (const relative of A2A_RUNTIME_FILES) {
+      assert.ok(result.written.includes(`.github/extensions/dude/${relative}`), relative);
+      assertExactBytes(
+        fs.readFileSync(path.join(root, '.github/extensions/dude', ...relative.split('/'))),
+        fs.readFileSync(path.join(repoRoot, 'src/extensions/dude', ...relative.split('/'))),
+        `generated ${relative}`,
+      );
+    }
+    const buildOnlyHashes = new Set(buildOnly.map((relative) => sha256(fs.readFileSync(path.join(repoRoot, ...relative.split('/'))))));
+    for (const entry of snapshotTree(path.join(root, '.github')).filter((row) => row.type === 'file')) {
+      assert.doesNotMatch(entry.path, /(?:^|\/)node_modules(?:\/|$)|\.test\.|dude-a2a/, entry.path);
+      assert.equal(buildOnlyHashes.has(sha256(/** @type {Buffer} */ (entry.bytes))), false, `${entry.path} carries build-only bytes`);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T024 native proposal delivery matches every validated core output without rewriting dogfood', (context) => {
+  const before = snapshotTree(path.join(repoRoot, '.github'));
+  const outputs = listCoreOutputs(repoRoot);
+  const paths = outputs.map((output) => output.relPath);
+  assert.deepEqual(enumerateCorePaths(repoRoot), paths, 'the generated core has exactly the planned destinations');
+  for (const relative of A2A_RUNTIME_FILES) assert.ok(paths.includes(`.github/extensions/dude/${relative}`), relative);
+  const map = outputs.map((output) => {
+    const expected = output.abs ? fs.readFileSync(output.abs) : /** @type {Buffer} */ (output.bytes);
+    const actual = fs.readFileSync(path.join(repoRoot, output.relPath));
+    assertExactBytes(actual, expected, output.relPath);
+    return { path: output.relPath, bytes: actual.length, sha256: sha256(actual) };
+  });
+  assert.deepEqual(snapshotTree(path.join(repoRoot, '.github')), before, 'the planner and parity check write nothing');
+  context.diagnostic(`T024 source/dogfood core map: ${map.length} outputs; ${map.reduce((sum, row) => sum + row.bytes, 0)} bytes; SHA-256 ${sha256(JSON.stringify(map))}.`);
+});
+
+test('T024 operator entrypoints require complete native proposal review and leave live support unqualified', () => {
+  const guide = fs.readFileSync(path.join(repoRoot, 'docs/agent-to-agent-communication.md'), 'utf8');
+  const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
+  const section = /### Propose\r?\n([\s\S]*?)\r?\n### Approve/.exec(guide)?.[1];
+  assert.ok(section, 'the guide has a proposal preparation section');
+  const example = /```json\s*([\s\S]*?)```/.exec(section)?.[1];
+  assert.ok(example);
+  const args = JSON.parse(example);
+  assert.deepEqual(Object.keys(args), ['configPath', 'profileId'], 'the tool example has no consent or override argument');
+  for (const value of Object.values(args)) assert.match(String(value), /^<[^>]+>$/, 'examples remain inert placeholders');
+  assert.match(section, /`dude_a2a_propose`/);
+  const oldRouteLines = guide.split(/\r?\n/).filter((line) => line.includes('dude a2a propose'));
+  assert.equal(oldRouteLines.length, 1, 'only the explicit retirement notice retains old chat syntax');
+  assert.match(oldRouteLines[0], /retired/);
+  assert.doesNotMatch(guide, /dude a2a approve [0-9a-f]{12}(?:\s|$)/, 'no usable approval code belongs in the guide');
+  const prose = guide.replace(/\s+/g, ' ');
+  assert.match(prose, /no host or peer combination is qualified/i);
+  assert.match(prose, /does not prove that the host displayed it or that the owner read it/);
+  assert.match(prose, /omission does not redact secrets placed in argv or prose/);
+  assert.match(prose, /SDK aborting the finished invocation's signal, keeps an otherwise valid proposal pending/);
+  assert.match(prose, /next eligible local root input in the same session/);
+  assert.match(prose, /Historical result text may remain visible/);
+  assert.match(readme, /`dude_a2a_propose`/);
+  assert.match(readme.replace(/\s+/g, ' '), /complete native tool result before the exact next eligible local approval/);
+});
+
+test('T028 operator guide documents the frozen byte bound without upgrading native qualification', () => {
+  const guide = fs.readFileSync(path.join(repoRoot, 'docs/agent-to-agent-communication.md'), 'utf8');
+  const prose = guide.replace(/\s+/g, ' ');
+  const proposal = /### Propose (.*?) ### Approve/.exec(prose)?.[1];
+  assert.ok(proposal);
+  assert.match(prose, /fixed 4,490-byte guard are delivered/);
+  assert.match(prose, /Independent offline acceptance covers complete content, the UTF-8 byte bound/);
+  assert.match(proposal, /fixed cap of 4,490 UTF-8 bytes to the \*\*complete rendered proposal\*\*/);
+  assert.match(proposal, /Exactly 4,490 bytes is size-eligible; 4,491 bytes is refused/);
+  assert.match(proposal, /not characters or commands, and is not user-configurable/);
+  assert.match(proposal, /independent 1 MiB input limit for configuration and TLS files still applies/);
+  assert.match(proposal, /short `proposal_too_large` refusal, with no proposal body, code, approval line, or partial approvable result/);
+  assert.match(proposal, /withdraws the previous pending proposal even when the replacement is oversized/);
+  assert.match(proposal, /Neither a refused nor a replaced code can activate anything/);
+  assert.match(proposal, /explicitly smaller profile, request a fresh proposal, review its complete native result, and give fresh local approval/);
+  assert.match(proposal, /no summary, file, log, or paging fallback, and no automatic splitting or retry/);
+  assert.match(proposal, /does not change the 2026-09-30 App failure's verdict/);
+  assert.match(prose, /2026-09-30 UTC supported-bound App case failed/);
+  assert.match(prose, /1,048,356-byte configuration with 2,328 selected commands had an expected 1,145,494-byte proposal/);
+  assert.match(prose, /six model-less native CLI direct-RPC results retained their complete expected text/);
+  assert.match(prose, /does not prove App visual or accessibility behavior, model-delivery equivalence, human review, or peer\/LAN support, and it did not exercise the new guard/);
+  assert.match(prose, /T019 remains incomplete and blocked pending fresh native\/live qualification/);
+  assert.doesNotMatch(prose, /T019 remains in progress|current runtime has no new output-size limit|T028 delivery remain pending/);
 });
 
 test('buildDev rejects malformed canonical config before cleanup and leaves prior output byte-identical', () => {

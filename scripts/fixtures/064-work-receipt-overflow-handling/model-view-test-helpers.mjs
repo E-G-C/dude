@@ -1,6 +1,7 @@
 // @ts-check
 
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -126,6 +127,74 @@ function withModelFixtureWorkspace(loaded, prefix, run, options = {}) {
   }
 }
 
+/** Independent semantic oracle, not a call to the receiver's readable validator.
+ * @param {Record<string,unknown>} text @param {Record<string,unknown>} envelope
+ * @param {Record<string,unknown>|undefined} verification */
+function assertReadablePreimages(text, envelope, verification) {
+  const exactKeys = (value, fields) => assert.deepEqual(Object.keys(value).sort(), [...fields].sort());
+  const identity = (domain, material) => createHash('sha256').update(recoveryRuntime.canonicalJson({
+    type: `specialist-attestation:${domain}`, version: 1, material,
+  })).digest('hex');
+  const semanticString = value => {
+    assert.equal(typeof value, 'string');
+    assert.ok(Buffer.byteLength(value) >= 1 && Buffer.byteLength(value) <= 16_384);
+    recoveryRuntime.canonicalJson(value);
+  };
+  assert.equal(text.version, 1);
+  if (envelope.type === 'verification-envelope') {
+    exactKeys(text, ['type', 'version', 'checks']);
+    assert.equal(text.type, 'verification-text');
+    const rows = /** @type {{definition:string,evidence:string}[]} */ (text.checks);
+    const checks = /** @type {Record<string,unknown>[]} */ (envelope.checks);
+    assert.ok(rows.length >= 1 && rows.length <= 16);
+    assert.equal(rows.length, checks.length);
+    assert.equal(new Set(rows.map(row => row.definition)).size, rows.length);
+    for (const [index, row] of rows.entries()) {
+      exactKeys(row, ['definition', 'evidence']);
+      semanticString(row.definition);
+      semanticString(row.evidence);
+      assert.equal(identity('check-definition', row.definition), checks[index].definitionIdentity);
+      assert.equal(identity('check-evidence', row.evidence), checks[index].evidenceIdentity);
+    }
+    return;
+  }
+  exactKeys(text, ['type', 'version', 'findings']);
+  assert.equal(text.type, 'independent-review-text');
+  const rows = /** @type {Record<string,unknown>[]} */ (text.findings);
+  const findings = /** @type {Record<string,unknown>[]} */ (envelope.findings);
+  assert.ok(rows.length <= 16);
+  assert.equal(rows.length, findings.length);
+  assert.equal(new Set(findings.map(row => row.basisIdentity)).size, findings.length);
+  assert.equal(new Set(findings.map(row => row.findingIdentity)).size, findings.length);
+  assert.ok(verification, 'readable review requires its exact verification');
+  for (const [index, row] of rows.entries()) {
+    const finding = findings[index];
+    const basis = /** @type {Record<string,unknown>} */ (finding.basis);
+    const expectation = /** @type {Record<string,unknown>} */ (basis.expectation);
+    const observation = /** @type {Record<string,unknown>} */ (finding.observation);
+    exactKeys(row, [
+      'expectationReference', 'checkDefinition',
+      ...(observation.kind === 'observed-evidence' ? ['observedEvidence'] : []),
+    ]);
+    semanticString(row.expectationReference);
+    semanticString(row.checkDefinition);
+    assert.deepEqual(basis.target, envelope.target);
+    assert.equal(identity('finding-expectation', {
+      kind: expectation.kind, reference: row.expectationReference,
+    }), expectation.identity);
+    assert.equal(identity('check-definition', row.checkDefinition), basis.checkDefinitionIdentity);
+    if (observation.kind === 'observed-evidence') {
+      semanticString(row.observedEvidence);
+      assert.equal(identity('finding-observation', row.observedEvidence), observation.identity);
+    } else {
+      const check = /** @type {Record<string,unknown>[]} */ (verification.checks)
+        .find(check => check.checkIdentity === observation.identity);
+      assert.ok(check, 'check-result resolves to the exact bound check');
+      assert.equal(check.definitionIdentity, basis.checkDefinitionIdentity);
+    }
+  }
+}
+
 /** Test-only inverse of the closed compact model view. @param {Record<string, unknown>} packet */
 export function expandModelPacket(packet) {
   const exactKeys = (value, fields) => {
@@ -136,6 +205,8 @@ export function expandModelPacket(packet) {
   const rows = [];
   const verifications = new Map();
   const reviews = [];
+  const attachments = [];
+  const readables = [];
   const historyLiterals = new Map();
   let previousItem = -1;
   for (const item of /** @type {Record<string, unknown>[]} */ (packet.items)) {
@@ -150,11 +221,13 @@ export function expandModelPacket(packet) {
     assert.ok(frames.length > 0);
     if (!trusted) assert.equal(frames.length, 1);
     else {
+      const payload = /** @type {Record<string,unknown>} */ (item.payload);
       exactKeys(
-        item.payload,
-        item.tag === 'verification'
+        payload,
+        [...(item.tag === 'verification'
           ? ['type', 'version', 'target', 'checks']
-          : ['type', 'version', 'target', 'verdict', 'findings'],
+          : ['type', 'version', 'target', 'verdict', 'findings']),
+        ...(Object.hasOwn(payload, 'text') ? ['text'] : [])],
       );
     }
     const firstOccurrences = /** @type {Record<string, unknown>[]} */ (frames[0].occurrences);
@@ -166,7 +239,8 @@ export function expandModelPacket(packet) {
         frame,
         !trusted
           ? ['descriptor', 'occurrences']
-          : ['descriptor', 'occurrences', 'outer', 'capture', 'binding'],
+          : ['descriptor', 'occurrences', 'outer',
+            Object.hasOwn(frame, 'reference') ? 'reference' : 'capture', 'binding'],
       );
       exactKeys(frame.descriptor, ['required', 'status', 'sha256', 'byteLength']);
       const occurrences = /** @type {Record<string, unknown>[]} */ (frame.occurrences);
@@ -174,6 +248,15 @@ export function expandModelPacket(packet) {
       if (item.tag === 'current-run') {
         assert.equal(occurrences.length, 1);
         assert.equal(occurrences[0].source, 'current-run');
+      }
+      if (trusted) {
+        if (Object.hasOwn(frame, 'reference')) {
+          assert.equal(occurrences[0].source, item.tag);
+          assert.equal(occurrences.length, 1);
+        } else {
+          assert.ok((item.tag === 'review' ? ['review'] : ['verification', 'lint'])
+            .includes(/** @type {string} */ (occurrences[0].source)));
+        }
       }
       assert.ok(/** @type {number} */ (occurrences[0].position) > previousFrame);
       previousFrame = /** @type {number} */ (occurrences[0].position);
@@ -222,10 +305,7 @@ export function expandModelPacket(packet) {
         text = recoveryRuntime.canonicalJson({ ...body, records });
       } else if (trusted) {
         exactKeys(frame.outer, ['target', 'state']);
-        exactKeys(/** @type {Record<string, unknown>} */ (frame.capture).bytes, [
-          'sha256',
-          'byteLength',
-        ]);
+        assert.deepEqual(/** @type {Record<string,unknown>} */ (frame.outer).target, packet.target);
         exactKeys(
           frame.binding,
           item.tag === 'verification'
@@ -253,29 +333,54 @@ export function expandModelPacket(packet) {
           Object.keys(/** @type {Record<string, unknown>} */ (frame.binding))
             .every(field => !Object.hasOwn(/** @type {object} */ (item.payload), field)),
         );
+        const { text: readableText, ...payload } = cloneCanonical(item.payload);
         const envelope = {
-          ...cloneCanonical(item.payload),
+          ...payload,
           ...cloneCanonical(frame.binding),
         };
-        const bytes = recoveryRuntime.capturedBytesV1(recoveryRuntime.canonicalJson(envelope));
-        assert.deepEqual(
-          { sha256: bytes.sha256, byteLength: bytes.byteLength },
-          /** @type {Record<string, unknown>} */ (frame.capture).bytes,
+        assert.deepEqual(envelope.target, packet.target);
+        assert.equal(
+          /** @type {Record<string,unknown>} */ (frame.outer).state,
+          item.tag === 'review' ? envelope.verdict
+            : envelope.checks.some(check => check.outcome === 'failed') ? 'failed' : 'passed',
         );
-        const capture = {
-          ...cloneCanonical(frame.capture),
-          bytes,
-        };
-        recoveryRuntime.validateTrustedSourceCaptureV2(capture);
-        if (item.tag === 'verification') {
-          assert.deepEqual(recoveryRuntime.normalizeVerificationEnvelopeV2(capture), envelope);
-          verifications.set(envelope.envelopeIdentity, envelope);
+        let records;
+        if (Object.hasOwn(frame, 'reference')) {
+          assert.ok(readableText, 'an attachment frame requires readable text');
+          exactKeys(frame.reference, ['sourceCaptureIdentity', 'sourceOutcomeHash']);
+          for (const hash of Object.values(/** @type {Record<string,unknown>} */ (frame.reference))) {
+            assert.match(/** @type {string} */ (hash), /^[0-9a-f]{64}$/);
+          }
+          records = [{
+            type: 'readable-evidence-attachment', version: 1,
+            reference: cloneCanonical(frame.reference), text: readableText,
+          }];
+          attachments.push({
+            source: item.tag, reference: cloneCanonical(frame.reference),
+            envelope, outer: frame.outer, position: occurrences[0].position,
+          });
         } else {
-          reviews.push({ capture, envelope });
+          exactKeys(/** @type {Record<string, unknown>} */ (frame.capture).bytes, ['sha256', 'byteLength']);
+          const bytes = recoveryRuntime.capturedBytesV1(recoveryRuntime.canonicalJson(envelope));
+          assert.deepEqual(
+            { sha256: bytes.sha256, byteLength: bytes.byteLength },
+            /** @type {Record<string, unknown>} */ (frame.capture).bytes,
+          );
+          const capture = { ...cloneCanonical(frame.capture), bytes };
+          recoveryRuntime.validateTrustedSourceCaptureV2(capture);
+          if (readableText) assert.equal(capture.outcomeHash, bytes.sha256);
+          if (item.tag === 'verification') {
+            assert.deepEqual(recoveryRuntime.normalizeVerificationEnvelopeV2(capture), envelope);
+            verifications.set(envelope.envelopeIdentity, envelope);
+          } else {
+            reviews.push({ capture, envelope });
+          }
+          records = [capture, ...(readableText ? [readableText] : [])];
         }
+        if (readableText) readables.push({ text: readableText, envelope });
         text = recoveryRuntime.canonicalJson({
           ...cloneCanonical(frame.outer),
-          records: [capture],
+          records,
         });
       }
       assert.deepEqual(recoveryRuntime.contentDescriptor(text), {
@@ -298,6 +403,40 @@ export function expandModelPacket(packet) {
   }
   rows.sort((left, right) => left.position - right.position);
   assert.deepEqual(rows.map(({ position }) => position), rows.map((_, index) => index));
+  const attachedCaptures = new Set();
+  for (const attachment of attachments) {
+    assert.equal(attachedCaptures.has(attachment.reference.sourceCaptureIdentity), false);
+    attachedCaptures.add(attachment.reference.sourceCaptureIdentity);
+    const originals = rows.filter(row => row.source === attachment.source
+      && row.descriptor.sha256 === attachment.reference.sourceOutcomeHash);
+    assert.equal(originals.length, 1, 'attachment must resolve one original source inside the packet');
+    const original = originals[0];
+    assert.ok(original.position < attachment.position, 'attachment follows its original');
+    const body = JSON.parse(original.text);
+    exactKeys(body, ['target', 'state', 'records']);
+    assert.equal(body.records.length, 1, 'attachment original must be capture-only');
+    const capture = body.records[0];
+    recoveryRuntime.validateTrustedSourceCaptureV2(capture);
+    assert.equal(
+      recoveryRuntime.trustedSourceCaptureIdentityV2(capture),
+      attachment.reference.sourceCaptureIdentity,
+    );
+    assert.equal(capture.outcomeHash, capture.bytes.sha256);
+    assert.equal(capture.authority.kind, attachment.source === 'review' ? 'independent-review' : 'verification');
+    assert.deepEqual(body.target, packet.target);
+    assert.deepEqual(capture.target, packet.target);
+    assert.deepEqual(attachment.outer, { target: body.target, state: body.state });
+    const envelopeBytes = Buffer.from(capture.bytes.base64, 'base64');
+    const envelope = JSON.parse(envelopeBytes.toString('utf8'));
+    assert.equal(recoveryRuntime.canonicalJson(envelope), envelopeBytes.toString('utf8'));
+    assert.deepEqual(envelope, attachment.envelope, 'attachment payload and binding derive from its original envelope');
+    if (attachment.source === 'verification') {
+      assert.deepEqual(recoveryRuntime.normalizeVerificationEnvelopeV2(capture), envelope);
+      verifications.set(envelope.envelopeIdentity, envelope);
+    } else {
+      reviews.push({ capture, envelope });
+    }
+  }
   const unresolved = new Set(
     reviews.map(({ envelope }) => envelope.verificationEnvelopeIdentity)
       .filter(identity => !verifications.has(identity)),
@@ -338,6 +477,9 @@ export function expandModelPacket(packet) {
       recoveryRuntime.normalizeIndependentReviewEnvelopeV2(capture, verification),
       envelope,
     );
+  }
+  for (const { text, envelope } of readables) {
+    assertReadablePreimages(text, envelope, verifications.get(envelope.verificationEnvelopeIdentity));
   }
   return {
     target: cloneCanonical(packet.target),
@@ -593,14 +735,20 @@ export function acquisitionMetrics(root, reference, input) {
 
 const measuredRuntimePromises = new Map();
 
-/** @param {boolean} literalHistory @param {'tie'|'larger'} [historyCost] */
-async function measuredRuntime(literalHistory = false, historyCost) {
-  const key = `${literalHistory}:${historyCost ?? 'actual'}`;
+/** @param {boolean} literalHistory @param {'tie'|'larger'} [historyCost] @param {boolean} [historicalPacketLimit] */
+async function measuredRuntime(literalHistory = false, historyCost, historicalPacketLimit = false) {
+  const key = `${literalHistory}:${historyCost ?? 'actual'}:${historicalPacketLimit}`;
   if (measuredRuntimePromises.has(key)) return measuredRuntimePromises.get(key);
   const promise = (async () => {
     const runtimeUrl = new URL('../../../src/skills/dude-work/recovery.mjs', import.meta.url);
     const runtimePath = fileURLToPath(runtimeUrl);
     let source = fs.readFileSync(runtimePath, 'utf8');
+    if (historicalPacketLimit) {
+      // Replay frozen 128 KiB measurements in memory, never as current policy.
+      const declaration = 'const MAX_PACKET_BYTES = 262_144;';
+      assert.equal(source.split(declaration).length, 2);
+      source = source.replace(declaration, 'const MAX_PACKET_BYTES = 131_072;');
+    }
     if (literalHistory || historyCost) {
       const selection = 'currentRun && canonicalBytes(currentRun) < canonicalBytes(unit.literal)';
       assert.equal(source.split(selection).length, 2);
@@ -693,10 +841,10 @@ function modelMeasurement(measured) {
  * Observe the private complete packet used by the unchanged production renderer.
  * The public overflow Inspection remains descriptor-only.
  * @param {Record<string, unknown>} input
- * @param {{literalHistory?:boolean}} [options]
+ * @param {{literalHistory?:boolean,historicalPacketLimit?:boolean}} [options]
  */
 export async function measurePrivateModelView(input, options = {}) {
-  const runtime = await measuredRuntime(options.literalHistory);
+  const runtime = await measuredRuntime(options.literalHistory, undefined, options.historicalPacketLimit);
   const measured = runtime.testAcquireMeasured(input);
   return modelMeasurement(measured);
 }
@@ -711,9 +859,9 @@ export async function renderPrivateModelProjection(target, items, options = {}) 
 
 /** Observe pure production preflight; this does not apply a permit or start a host.
  * @param {{state:unknown,input:unknown,batch:unknown,laneBinding:unknown}} input
- * @param {{literalHistory?:boolean}} [options] */
+ * @param {{literalHistory?:boolean,historicalPacketLimit?:boolean}} [options] */
 export async function measurePrivatePreflight(input, options = {}) {
-  const runtime = await measuredRuntime(options.literalHistory);
+  const runtime = await measuredRuntime(options.literalHistory, undefined, options.historicalPacketLimit);
   const measured = runtime.testPrepareMeasured(input.state, input.input, input.batch, input.laneBinding);
   return {
     result: measured.result,

@@ -27,9 +27,11 @@ import {
   isReleaseFile,
   listCoreOutputs,
   listCoreSourceFiles,
+  writeCoreOutput,
 } from './build-release.mjs';
 import { TIER, classifyPath, enumerateCorePaths } from '../src/skills/dude-engine/lib/ownership.mjs';
 import { classifyPlan, scanCoreInventoryPaths } from '../src/skills/dude-bundle-upgrade/upgrade.mjs';
+import { resolveMutationPath } from '../src/skills/dude-engine/lib/workspace-paths.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -6595,14 +6597,14 @@ const ORIGINAL_OWNER_FINALIZATION_DOC_FALSIFIERS = [
 ];
 
 /**
- * Keep each finalization rule in its named section and prove that deleting one
+ * Keep each guidance rule in its named section and prove that deleting one
  * normalized clause fails even when the same words remain elsewhere.
  * @param {string} section
  * @param {Array<[string, string, RegExp[] | RegExp[][]]>} requirements
  * @param {Array<[string, string]>} falsifiers
  * @param {string} context
  */
-function assertOriginalOwnerFinalizationGuidance(section, requirements, falsifiers, context) {
+function assertSectionBoundGuidance(section, requirements, falsifiers, context) {
   assertShipParagraphRequirements(section, requirements, context);
 
   for (const [label, target] of falsifiers) {
@@ -6653,18 +6655,168 @@ test('T003 original-owner first-Assessment finalization guidance is section-boun
     [ORIGINAL_OWNER_FINALIZATION_ANCHOR, ORIGINAL_OWNER_FINALIZATION_ANCHOR],
     'both exact headings expose the stable finalization anchor',
   );
-  assertOriginalOwnerFinalizationGuidance(
+  assertSectionBoundGuidance(
     owner,
     ORIGINAL_OWNER_FINALIZATION_REQUIREMENTS,
     ORIGINAL_OWNER_FINALIZATION_FALSIFIERS,
     `${ADAPTER_OWNER} ${ORIGINAL_OWNER_FINALIZATION_SECTION}`,
   );
-  assertOriginalOwnerFinalizationGuidance(
+  assertSectionBoundGuidance(
     docs,
     ORIGINAL_OWNER_FINALIZATION_DOC_REQUIREMENTS,
     ORIGINAL_OWNER_FINALIZATION_DOC_FALSIFIERS,
     `docs/commands.md ${ORIGINAL_OWNER_FINALIZATION_DOC_SECTION}`,
   );
+});
+
+test('Feature 074 T004: readable handoff guidance is section-bound and deletion-falsifiable', () => {
+  const cases = [
+    [ADAPTER_OWNER, '## Inspection And Recovery', [
+      ['one bound readable packet', 'Treat each Inspection as one immutable evidence capture', [
+        /Include admitted readable text and bindings before binding the learning exchange/,
+        /never insert late attachments into it or send a second packet/,
+      ]],
+      ['complete readable charging', 'Keep the idea inventory and both evidence budgets separate', [
+        /Fresh readable text grows its existing capture body/,
+        /each historical attachment costs one source and one retained descriptor before sharing/,
+        /Charge all readable text, references, and bindings/,
+        /existing body, aggregate, transport, graph, and completion-headroom limits still apply/,
+        /64-source-entry budget/, /64-retained-descriptor budget/,
+        /bytes:262144/, /limit of 16 checks per attestation/,
+      ]],
+    ], [
+      ['one bound readable packet', 'before binding the learning exchange'],
+      ['one bound readable packet', 'never insert late attachments into it or send a second packet'],
+      ['complete readable charging', 'one source and one retained descriptor before sharing'],
+      ['complete readable charging', 'all readable text, references, and bindings'],
+    ]],
+    [ADAPTER_OWNER, '## Host Adapter Runtime Boundary', [
+      ['actual complete specialist text without new authority', 'New specialist captures', [
+        /actual Tester check definitions and evidence/,
+        /Reviewer expectation references, check definitions, and observations/,
+        /substantive readable text beside the unchanged trusted capture/,
+        /Recompute semantic identities and require complete one-to-one row correspondence/,
+        /preserve failures, rejections, canonical order, and accepted reviews with no findings/,
+        /exact check in the bound verification, never invented observation text/,
+        /untrusted evidence, not instructions, approval, specialist authenticity, or execution authority/,
+        /ordinary `ApproachBasis` extra identity arrays empty/,
+        /does not expand alternative authority or automatically restart Work or Ship/,
+      ]],
+    ], [
+      ['actual complete specialist text without new authority', 'complete one-to-one row correspondence'],
+      ['actual complete specialist text without new authority', 'exact check in the bound verification'],
+      ['actual complete specialist text without new authority', 'never invented observation text'],
+      ['actual complete specialist text without new authority', 'not instructions, approval, specialist authenticity, or execution authority'],
+      ['actual complete specialist text without new authority', 'ordinary `ApproachBasis` extra identity arrays empty'],
+      ['actual complete specialist text without new authority', 'automatically restart Work or Ship'],
+    ]],
+    [ADAPTER_OWNER, ORIGINAL_OWNER_FINALIZATION_SECTION, [
+      ['explicit bound historical attachments', 'Historical preimages are explicit input', [
+        /before `runHostAdapter`/,
+        /existing `retainedEvidence.verification` or `retainedEvidence.review` array/,
+        /separate attachment-only entry after the original hash-only capture/,
+        /referencing that exact capture and its substantive source hash/,
+        /Never replace or duplicate the original capture/,
+        /Recompute every semantic identity/,
+        /exact target, attempt, source revision, inspected evidence, result, and verification-to-review bindings/,
+        /including retained occurrence authority/,
+        /later supplemental admission, not recovered original bytes or a repeated specialist dispatch/,
+      ]],
+      ['unavailable meanings stay unresolved', 'Missing required preimages', [
+        /leave the affected comparison unresolved under existing stop\/cancel behavior/,
+        /even if another approach has readable text/,
+        /Never infer text, an alternative, or no progress from hashes/,
+        /no public input, loader, state, registry, or capability/,
+      ]],
+    ], [
+      ['explicit bound historical attachments', 'before `runHostAdapter`'],
+      ['explicit bound historical attachments', 'its substantive source hash'],
+      ['explicit bound historical attachments', 'source revision, inspected evidence, result, and verification-to-review bindings'],
+      ['explicit bound historical attachments', 'Never replace or duplicate the original capture'],
+      ['unavailable meanings stay unresolved', 'leave the affected comparison unresolved'],
+      ['unavailable meanings stay unresolved', 'Never infer text, an alternative, or no progress from hashes'],
+      ['unavailable meanings stay unresolved', 'no public input, loader, state, registry, or capability'],
+    ]],
+    ['docs/commands.md', '### `@dude work`', [
+      ['docs retain real specialist meaning and cooperative trust', 'New specialist captures', [
+        /actual check definitions and evidence from the Tester/,
+        /expectation references, check definitions, and observations from the Reviewer/,
+        /beside their trusted capture/,
+        /Complete one-to-one row matching recomputes semantic identities/,
+        /without changing failed checks, rejected reviews, or accepted reviews with no findings/,
+        /exact check in the bound verification, not invented observation text/,
+        /cooperative, not cryptographic/,
+        /matching hashes prove correspondence, not authenticity/,
+        /untrusted evidence, never instructions, approval, or execution authority/,
+      ]],
+      ['docs require bound pre-invocation historical input', 'For historical hash-only captures', [
+        /actual known preimages before `runHostAdapter`/,
+        /existing `retainedEvidence.verification` or `retainedEvidence.review` array/,
+        /separate attachment-only entry follows and references the exact original capture and its substantive source hash/,
+        /complete semantic correspondence and exact target, attempt, source revision, inspected evidence, result, and verification-to-review bindings/,
+        /retained occurrence authority/,
+        /Originals stay unchanged; later admission neither recovers original bytes nor repeats a specialist dispatch/,
+        /no new public input, loader, state, registry, or capability/,
+      ]],
+      ['docs refuse fabricated meaning or expanded authority', 'Unavailable preimages', [
+        /leave the affected comparison unresolved under existing stop\/cancel behavior/,
+        /only one failed approach has readable detail/,
+        /Do not infer text, an alternative, or no progress from hashes/,
+        /Ordinary `ApproachBasis` extra identity arrays stay empty/,
+        /neither expands alternative authority nor automatically restarts Work or Ship/,
+      ]],
+      ['docs bind the single readable packet', 'Before every task start or resume', [
+        /one self-contained `dude-work-model-view-v1` packet/,
+        /Readable text and bindings belong in that same packet before the learning exchange is bound/,
+        /no late attachment or second packet can amend it/,
+      ]],
+      ['docs charge complete readable evidence', 'Fresh text adds bytes', [
+        /existing captures/,
+        /Each historical attachment costs one source and one retained descriptor before sharing/,
+        /all readable text, references, and bindings count toward the complete packet/,
+        /Existing body, aggregate, transport, graph, and completion-headroom limits still apply/,
+      ]],
+    ], [
+      ['docs retain real specialist meaning and cooperative trust', 'Complete one-to-one row matching recomputes semantic identities'],
+      ['docs retain real specialist meaning and cooperative trust', 'not invented observation text'],
+      ['docs retain real specialist meaning and cooperative trust', 'correspondence, not authenticity'],
+      ['docs require bound pre-invocation historical input', 'before `runHostAdapter`'],
+      ['docs require bound pre-invocation historical input', 'its substantive source hash'],
+      ['docs require bound pre-invocation historical input', 'source revision, inspected evidence, result, and verification-to-review bindings'],
+      ['docs refuse fabricated meaning or expanded authority', 'leave the affected comparison unresolved'],
+      ['docs refuse fabricated meaning or expanded authority', 'Do not infer text, an alternative, or no progress from hashes'],
+      ['docs refuse fabricated meaning or expanded authority', 'Ordinary `ApproachBasis` extra identity arrays stay empty'],
+      ['docs refuse fabricated meaning or expanded authority', 'automatically restarts Work or Ship'],
+      ['docs bind the single readable packet', 'before the learning exchange is bound'],
+      ['docs bind the single readable packet', 'no late attachment or second packet can amend it'],
+      ['docs charge complete readable evidence', 'one source and one retained descriptor before sharing'],
+    ]],
+  ];
+  for (const [relative, heading, requirements, falsifiers] of cases) {
+    assertSectionBoundGuidance(
+      markdownSection(read(relative), heading), requirements, falsifiers, `${relative} ${heading}`,
+    );
+  }
+});
+
+test('Feature 074 T004: all five Work outputs are exact core projections with no test assets', () => {
+  const outputs = listCoreOutputs(ROOT);
+  const names = ['SKILL.md', 'recovery.mjs', 'specialist-attestation.mjs', 'host-adapter.mjs', 'host-adapter-runner.mjs'];
+  for (const name of names) {
+    const source = `src/skills/dude-work/${name}`;
+    const generated = `.github/skills/dude-work/${name}`;
+    const selected = outputs.filter(output => output.relPath === generated);
+    assert.equal(selected.length, 1, `${generated}: one planned core output`);
+    assert.equal(selected[0].abs, path.join(ROOT, source), `${generated}: exact source correspondence`);
+    assert.deepEqual(fs.readFileSync(path.join(ROOT, generated)), fs.readFileSync(selected[0].abs), generated);
+  }
+  for (const name of ['recovery.test.mjs', 'specialist-attestation.test.mjs', 'host-adapter.test.mjs']) {
+    const generated = `.github/skills/dude-work/${name}`;
+    assert.equal(isReleaseFile(generated), false, generated);
+    assert.equal(outputs.some(output => output.relPath === generated), false, generated);
+  }
+  assert.equal(outputs.some(output => /(?:^|\/)(?:fixtures|tests)(?:\/|$)|\.test\.mjs$/.test(output.relPath)), false);
+  assert.equal(outputs.some(output => output.relPath.endsWith('/hash-only-pair.json')), false);
 });
 
 test('T003 original-owner first-Assessment finalization guidance matches the guarded runtime boundary', () => {
@@ -6865,14 +7017,15 @@ test('T003 the adapter owns every ordinary Work runtime route', () => {
 
   // The one production boundary the prose names is the one the adapter imports,
   // and no ordinary request may name a trusted capture stream.
-  assert.match(read(ADAPTER_SOURCE), /import \{ buildSpecialistAttestation \} from '\.\/specialist-attestation\.mjs';/);
+  assert.match(read(ADAPTER_SOURCE), /import \{ buildSpecialistAttestationWithText \} from '\.\/specialist-attestation\.mjs';/);
   assert.match(read(ADAPTER_SOURCE), /must not select the '\$\{stream\}' trusted capture/);
   assert.deepEqual([...read(ATTESTATION_SOURCE).matchAll(/^export function (\w+)/gm)].map((entry) => entry[1]), [
     'buildSpecialistAttestation',
+    'buildSpecialistAttestationWithText',
   ]);
 });
 
-test("T004 production Work topology keeps exactly ten operations and four governance actions", () => {
+test("T004 production Work topology keeps exactly ten operations and five governance actions", () => {
   const adapter = read(ADAPTER_SOURCE);
   const runner = read(ADAPTER_RUNNER_SOURCE);
   const operationBlock = adapter.match(/const OPERATIONS = Object\.freeze\(\[([\s\S]*?)\]\);/);
@@ -6893,7 +7046,7 @@ test("T004 production Work topology keeps exactly ten operations and four govern
   const actions = [...new Set(
     [...runner.matchAll(/action: \x27([^\x27]+)\x27/g)].map((match) => match[1]),
   )].sort();
-  assert.deepEqual(actions, ["bind-alternative", "controlled-end", "review-learning", "verify-no-progress"]);
+  assert.deepEqual(actions, ["bind-alternative", "controlled-end", "resume-learning", "review-learning", "verify-no-progress"]);
   assert.match(runner, /export async function runHostAdapter/);
   assert.match(runner, /adapter = createHostAdapter\(/);
   assert.match(runner, /runCommand\(command, lowLevelRequest\)/);
@@ -8203,7 +8356,7 @@ const GITHUB_ISSUE_DETAIL_MARKERS = [
 const GITHUB_ISSUE_POLICY_NEIGHBOUR_MARKERS = [
   ['GitHub issue wording', /\bGitHub issues?\b/i],
   ['issue-intake flag policy', /\b(?:existing\s+)?flag behavior\b|\b(?:issue|intake|reference|admission|unadmitted|fetched)\b[\s\S]{0,120}\b(?:flag|flagged|flagging)\b|\b(?:flag|flagged|flagging)\b[\s\S]{0,120}\b(?:issue|intake|reference|admission|unadmitted|fetched)\b/i],
-  ['issue-intake specialist-selection policy', /\b(?:current\s+)?closed-roster algorithm\b|\btesting to `Tester`\b|\bacceptance to an independent reviewer\b|\b(?:issue|intake|reference|admission|unadmitted|fetched)\b[\s\S]{0,120}\b(?:specialist(?:[-\s]+selection)?|Tester|independent reviewer)\b|\b(?:specialist(?:[-\s]+selection)?|Tester|independent reviewer)\b[\s\S]{0,120}\b(?:issue|intake|reference|admission|unadmitted|fetched)\b/i],
+  ['issue-intake specialist-selection policy', /\b(?:current\s+)?closed-roster algorithm\b|\btesting to `Tester`\b|\bacceptance to an independent reviewer\b|\b(?:issue|intake|reference|fetched)\b[\s\S]{0,120}\b(?:specialist(?:[-\s]+selection)?|Tester|independent reviewer)\b|\b(?:specialist(?:[-\s]+selection)?|Tester|independent reviewer)\b[\s\S]{0,120}\b(?:issue|intake|reference|fetched)\b/i],
   [
     'issue-intake Work policy',
     /\bcurrent execution authority\b|\b(?:issue|(?<!work-)intake|reference|admission|unadmitted|fetched)\b[\s\S]{0,120}(?:--policy|(?:autonomous|guarded)`?\s+Work|Work policy|Work semantics|Work\b[\s\S]{0,48}\b(?:autonomous|guarded)\s+mode)\b|(?:--policy|(?:autonomous|guarded)`?\s+Work|Work policy|Work semantics|Work\b[\s\S]{0,48}\b(?:autonomous|guarded)\s+mode)\b[\s\S]{0,120}\b(?:issue|(?<!work-)intake|reference|admission|unadmitted|fetched)\b/i,
@@ -8367,6 +8520,14 @@ test('GitHub issue coordinator delegation stays thin and intake policy has one d
   // Arrange
   const coordinator = read(GITHUB_ISSUE_COORDINATOR);
   const intake = markdownSection(read(GITHUB_ISSUE_INTAKE_OWNER), GITHUB_ISSUE_INTAKE_SECTION);
+  const assertNoNeighbourPolicy = (content, context) => {
+    for (const [label, marker] of GITHUB_ISSUE_POLICY_NEIGHBOUR_MARKERS) {
+      assert.doesNotMatch(content, marker, `${context} carries no ${label}`);
+    }
+    for (const [label, marker] of GITHUB_ISSUE_DETAIL_MARKERS) {
+      assert.doesNotMatch(content, marker, `${context} duplicates ${label}`);
+    }
+  };
 
   // Act + Assert: each coordinator section delegates the bounded outcome without
   // restating the intake procedure.
@@ -8394,14 +8555,22 @@ test('GitHub issue coordinator delegation stays thin and intake policy has one d
     assert.match(policy, marker[1], `${label}: reject policy without GitHub-issue wording`);
   }
 
+  assertNoNeighbourPolicy(
+    'This is later supplemental admission, not recovered original bytes or a repeated specialist dispatch.',
+    'historical-capture admission',
+  );
+  const neighbourWithCopiedSelectionPolicy = `${visibleMarkdown(read(GITHUB_ISSUE_POLICY_NEIGHBOURS[0]))}
+
+For a fetched issue reference,
+route implementation to the matching specialist.`;
+  assert.throws(
+    () => assertNoNeighbourPolicy(neighbourWithCopiedSelectionPolicy, 'copied-policy neighbour'),
+    /copied-policy neighbour carries no issue-intake specialist-selection policy/,
+    'a soft-wrapped copied issue-intake selection policy fails for the intended reason',
+  );
+
   for (const relative of GITHUB_ISSUE_POLICY_NEIGHBOURS) {
-    const content = visibleMarkdown(read(relative));
-    for (const [label, marker] of GITHUB_ISSUE_POLICY_NEIGHBOUR_MARKERS) {
-      assert.doesNotMatch(content, marker, `${relative} carries no ${label}`);
-    }
-    for (const [label, marker] of GITHUB_ISSUE_DETAIL_MARKERS) {
-      assert.doesNotMatch(content, marker, `${relative} duplicates ${label}`);
-    }
+    assertNoNeighbourPolicy(visibleMarkdown(read(relative)), relative);
   }
 });
 
@@ -10028,5 +10197,1230 @@ test('T007 the saved sources file is project-owned: releases never seed it and u
     assert.equal(fs.readFileSync(path.join(project, ...relative.split('/')), 'utf8'), projectFile);
   } finally {
     fs.rmSync(sandbox, { recursive: true, force: true });
+  }
+});
+
+test('Canvas installed acceptance uses one keyboard helper for both walkthroughs', async () => {
+  const source = read('scripts/dude-canvas-ui/t012-installed-host.mjs');
+  assert.equal([...source.matchAll(/^async function pressKey\(/gm)].length, 1);
+  const start = source.indexOf('async function pressKey(');
+  const helper = source.slice(start, source.indexOf('\n}\n', start) + 3);
+  const pressKey = Function(`${helper}; return pressKey;`)();
+  const events = [];
+  const page = { async send(method, event) { events.push({ method, ...event }); } };
+  for (const [key, virtual, modifiers] of [
+    ['Tab', 9, 8], ['ArrowLeft', 37, 8], ['PageDown', 34, 0], ['End', 35, 0], ['Enter', 13, 0],
+  ]) {
+    events.length = 0;
+    await pressKey(page, key, key, modifiers);
+    assert.deepEqual(events, ['keyDown', 'keyUp'].map(type => ({
+      method: 'Input.dispatchKeyEvent', type, key, code: key, modifiers,
+      windowsVirtualKeyCode: virtual, nativeVirtualKeyCode: virtual,
+      ...(type === 'keyDown' && key === 'Enter' ? { text: '\r', unmodifiedText: '\r' } : {}),
+    })));
+  }
+  assert.doesNotMatch(source, /pressKey\(page, '(?:Tab|ArrowLeft)', modifiers\)/);
+});
+
+test('Canvas installed acceptance releases each fault interceptor before the next walkthrough', () => {
+  const source = read('scripts/dude-canvas-ui/t012-installed-host.mjs');
+  const start = source.indexOf('class Cdp {');
+  const declaration = source.slice(start, source.indexOf('\n}\n', start) + 3);
+  const Cdp = Function(`${declaration}; return Cdp;`)();
+  // Exercise listener ownership without constructing a socket or starting the driver.
+  const page = Object.create(Cdp.prototype);
+  page.listeners = new Map();
+  const first = () => {};
+  const second = () => {};
+  const removeFirst = page.on('Fetch.requestPaused', first);
+  const removeSecond = page.on('Fetch.requestPaused', second);
+  assert.deepEqual(page.listeners.get('Fetch.requestPaused'), [first, second]);
+  removeFirst();
+  removeFirst();
+  assert.deepEqual(page.listeners.get('Fetch.requestPaused'), [second]);
+  removeSecond();
+  assert.deepEqual(page.listeners.get('Fetch.requestPaused'), []);
+  assert.equal([...source.matchAll(/const stopIntercepting = page\.on\('Fetch\.requestPaused'/g)].length, 2);
+  assert.equal([...source.matchAll(/finally \{\s+stopIntercepting\(\);\s+await page\.send\('Fetch\.disable'\)/g)].length, 2);
+});
+
+const TERMINAL_MANUAL_WORK_SOURCE = 'src/skills/dude-work/SKILL.md';
+const TERMINAL_MANUAL_WORK_HEADING = '## Explicit Manual Terminal Resolution';
+const TERMINAL_MANUAL_CONFIRMATION =
+  'Authorize MANUAL acceptance and close for <spec_path> <taskKey> at <currentRevision> using <terminalEvidence>, accepted revision <N>; retain ownership records.';
+
+/** @type {Array<[string, string, RegExp[] | RegExp[][]]>} */
+const TERMINAL_MANUAL_WORK_REQUIREMENTS = [
+  ['one detailed outside-Work owner', 'This is the only instruction-level path', [
+    /only instruction-level path/,
+    /outside-Work/,
+    /not continuation, recovery, or\s+settlement of the old invocation/,
+    /ordinary Lightweight writer/,
+    /Do not add a\s+command, parser, flag,[\s\S]*new runtime path/,
+  ]],
+  ['exact live target eligibility', 'Resolve the lane, package, owner, and task', [
+    /live Lightweight lane/,
+    /exactly one `status: defined`\s+owner by exact `spec_path:`/,
+    /one unblocked `\[~\]` target/,
+    /meaning, requirements, and obligations match the failed attempt exactly/,
+    /pending\s+`address-review` attempt/,
+    /Refuse a tracked target, active Work invocation,[\s\S]*any need for new implementation/,
+  ]],
+  ['exact supported terminal class', 'Require retained evidence that the old invocation', [
+    /autonomous policy/,
+    /exactly `hard-stop` \/ `evidence-incomplete`/,
+    /first\s+completion projection exceeded the then-active `model-packet-bytes` limit of\s+131,072 bytes/,
+    /before `apply-lane-effect` or any completion writer entry/,
+    /`alternative-authorized` branch/,
+    /pending `address-review` attempt/,
+    /learning projection must be complete/,
+    /No new\s+implementation,[\s\S]*pending evaluation sequence may be needed/,
+  ]],
+  ['terminal evidence correlation', 'Correlate the returned terminal row', [
+    /accepted RunState bytes and hash/,
+    /`acceptedRevision`/,
+    /exact host invocation and\s+workspace-target key/,
+    /reason label,[\s\S]*matching summary alone proves none of those bindings/,
+  ]],
+  ['fresh owner-absence proof', 'Establish owner absence from fresh authoritative host', [
+    /actual invocation, supervisor, workers, and pending\s+handoffs/,
+    /operator must\s+independently inspect/,
+    /Worker exit, a PID, age,[\s\S]*model assertion alone is insufficient/,
+    /Unknown ownership\s+refuses/,
+    /performs no cleanup/,
+  ]],
+  ['two-part no-effect proof', 'Prove no completion effect in two independent ways', [
+    /original\s+operation evidence must show the overflow and rejection before completion\s+writer entry/,
+    /freshly compare the relevant preimages with current\s+canonical task and snapshot bytes/,
+    /exact owner lane-history prefix/,
+    /retained current-run history/,
+    /no completion projection, lane write, or receipt/,
+    /Missing preimages,[\s\S]*possible writer entry refuses/,
+  ]],
+  ['unsupported terminal classes stay unsupported', 'Cancellation, supervisor or context loss', [
+    /every other terminal class remain unsupported/,
+    /Do not reconstruct proof from\s+summaries/,
+    /probe the old state with a new adapter invocation/,
+    /equal accepted state as no-effect evidence/,
+  ]],
+  ['preview binds exact target', 'the exact workspace, exact owner and `spec_path`', [
+    /durable task key/,
+    /unchanged\s+requirements/,
+    /canonical task prestate/,
+  ]],
+  ['preview binds terminal evidence', 'the original terminal reference and content hash', [
+    /linked operation and\s+accepted-state evidence hashes/,
+    /accepted revision/,
+  ]],
+  ['preview binds absence findings', 'the observed owner-absence and two-part no-effect bases', [
+    /owner-absence/,
+    /two-part no-effect bases/,
+  ]],
+  ['preview binds all current bytes', 'the implementation revision and a content-hash list', [
+    /all relevant\s+current bytes/,
+    /dirty and untracked content/,
+  ]],
+  ['preview limits the proposed action', 'the proposed fresh independent acceptance', [
+    /only if it succeeds/,
+    /ordinary\s+manual close of that same task/,
+    /retaining every old failure, obligation,\s+ownership control, and learning disposition/,
+    /promising no future Work\s+admission/,
+  ]],
+  ['governing prose requires the literal confirmation', 'A commit identifier alone does not identify an uncommitted worktree.', [
+    /Preserve\s+the complete preview in the current interaction/,
+    /require this literal\s+confirmation with its displayed values substituted/,
+  ]],
+  ['confirmation is current and non-generic', '`currentRevision` is the displayed revision and complete content-hash list.', [
+    /`terminalEvidence` is the displayed original terminal reference and content hash\s+with its linked evidence/,
+    /observed references, not invented identities\s+or a persisted consent object/,
+    /generic `yes`/,
+    /ordinary `accept T0NN`/,
+    /not permission/,
+    /material change to the\s+preview invalidates it/,
+    /new preview and literal confirmation/,
+  ]],
+  ['fresh independent acceptance roles', 'Use `dude-generic-routing` and the current roster', [
+    /verification\s+specialist who did not author the implementation/,
+    /fresh independent verification of\s+the exact confirmed bytes against every unchanged required obligation/,
+    /fresh acceptance judgment from an independent Reviewer/,
+    /exact current runner\s+commands, selectors, revision, and check definitions/,
+    /complete relevant terminal and learning\s+evidence/,
+  ]],
+  ['failures and skips grant no retry or close', 'Historical green output, an implementation author\'s report', [
+    /cannot replace either result/,
+    /required check, outcome,\s+failure count, and skip visible/,
+    /failure, required skip, rejection,\s+unavailable proof,[\s\S]*stops without repair, implementation changes, retry, or close/,
+    /Changed\s+material needs separate authorization/,
+    /new preview, confirmation,\s+verification, and review/,
+  ]],
+  ['old attestations and packets stay untouched', 'These are new ordinary manual-acceptance results.', [
+    /Do not reconstruct an old\s+trusted attestation/,
+    /invoke `specialist-attestation\.mjs` for the dead attempt/,
+    /rewrite the old verification\/review pair/,
+    /submit a replacement Work packet/,
+    /shorten, split, regroup, or relabel old history/,
+  ]],
+  ['fresh complete prewrite recheck', 'Before the first write, freshly re-resolve and compare', [
+    /exact owner, lane,\s+task key and prestate/,
+    /terminal and\s+accepted-state evidence/,
+    /owner absence, no-effect proof, acceptance results/,
+    /retained ownership-claim\/checkpoint bytes and hashes/,
+    /Recheck every value\s+bound by the confirmation/,
+    /missing, partial, corrupt, changed, stale, or\s+mismatched basis refuses/,
+    /retained controls never grant ownership/,
+    /only the known owner-log and ordinary same-task lane changes/,
+  ]],
+  ['one pre-lane MANUAL append', 'Only after all rechecks pass, append one ordinary UTC Coordinator Log line', [
+    /exact owner/,
+    /labeled `MANUAL`, before any lane mutation/,
+    /exact\s+feature\/task/,
+    /old terminal result/,
+    /accepted\s+revision/,
+    /no-owner and no-effect evidence basis/,
+    /confirmed revision and\s+permission/,
+    /fresh verification and review references/,
+    /retained controls/,
+    /limited authority for separate manual close/,
+    /old Work run remains\s+failed and unsettled/,
+    /rather than raw invocation\s+secrets, consent tokens, or private session paths/,
+  ]],
+  ['MANUAL changes no Work state', 'The MANUAL line is plain append-only prose.', [
+    /not a `dude-run-event`/,
+    /learning-resolution event/,
+    /Work audit/,
+    /new status/,
+    /task metadata/,
+    /advance\s+evidence that close succeeded/,
+    /changes no RunState/,
+    /settles no effect/,
+    /clears no learning seal/,
+  ]],
+  ['ordinary coordinator writer only', 'Only the coordinator may then use the existing', [
+    /`board\.mjs set <tasks\.md> <same-taskKey> done --write` path/,
+    /ordinary\s+Lightweight state, render, snapshot, close-log, backlog-refresh, and\s+lint duties/,
+    /Do not call `applyLightweightWorkRequest`/,
+    /issue a Work permit or\s+receipt/,
+    /restore or revive the old accepted state/,
+    /claim `ended` or\s+`task-settled` for the old run/,
+    /change requirements, or rekey the\s+task/,
+  ]],
+  ['all retained bytes and obligations survive', 'Preserve all old captures and history', [
+    /failed and skipped results/,
+    /learning\s+dispositions/,
+    /accepted RunState bytes/,
+    /counters, pending obligations, permits,\s+receipts, and ownership-claim\/checkpoint bytes/,
+    /Do not settle the old run/,
+    /clean controls/,
+    /automatically select another task/,
+    /promise that a\s+later Work request will be admitted/,
+    /Cleanup remains separately authorized/,
+  ]],
+  ['partial close reports only actual effects', 'The ordinary close is not one transaction', [
+    /owner log, board, snapshot,\s+derived backlog, and lint/,
+    /report exactly what committed and what remains incomplete/,
+    /Do not claim rollback,\s+successful close, or permission to repair or retry/,
+    /successful report names\s+only the manual task outcome/,
+    /old terminal failure and outstanding\s+obligations/,
+    /starts no next task/,
+  ]],
+  ['ordinary Work remains unchanged', 'All ordinary Work ownership, learning, verification, review, admission,', [
+    /cancellation, recovery, settlement, close, and resource-limit rules remain\s+unchanged outside this explicit path/,
+  ]],
+  ['guidance does not enforce or authenticate', 'This procedure is cooperative instruction policy.', [
+    /does not authenticate the\s+human or coordinator/,
+    /enforce the gates in the writer/,
+    /protect against a\s+malicious coordinator/,
+  ]],
+];
+
+/** @type {Array<[string, string]>} */
+const TERMINAL_MANUAL_WORK_FALSIFIERS = [
+  ['one detailed outside-Work owner', 'only instruction-level path'],
+  ['exact live target eligibility', '`status: defined` owner by exact `spec_path:`'],
+  ['exact supported terminal class', 'first completion projection exceeded the then-active `model-packet-bytes` limit'],
+  ['terminal evidence correlation', 'exact host invocation and workspace-target key'],
+  ['fresh owner-absence proof', 'fresh authoritative host and session lifecycle observations'],
+  ['two-part no-effect proof', 'two independent ways'],
+  ['unsupported terminal classes stay unsupported', 'every other terminal class remain unsupported'],
+  ['preview binds exact target', 'durable task key, unchanged requirements, and canonical task prestate'],
+  ['preview binds terminal evidence', 'linked operation and accepted-state evidence hashes'],
+  ['preview binds absence findings', 'two-part no-effect bases'],
+  ['preview binds all current bytes', 'including dirty and untracked content'],
+  ['preview limits the proposed action', 'ordinary manual close of that same task'],
+  ['governing prose requires the literal confirmation', 'require this literal confirmation'],
+  ['confirmation is current and non-generic', 'Any material change to the preview invalidates it'],
+  ['fresh independent acceptance roles', 'fresh acceptance judgment from an independent Reviewer'],
+  ['failures and skips grant no retry or close', 'required check, outcome, failure count, and skip visible'],
+  ['old attestations and packets stay untouched', 'submit a replacement Work packet'],
+  ['fresh complete prewrite recheck', 'Recheck every value bound by the confirmation.'],
+  ['one pre-lane MANUAL append', 'append one ordinary UTC Coordinator Log line'],
+  ['MANUAL changes no Work state', 'changes no RunState'],
+  ['ordinary coordinator writer only', '`board.mjs set <tasks.md> <same-taskKey> done --write` path'],
+  ['all retained bytes and obligations survive', 'failed and skipped results'],
+  ['partial close reports only actual effects', 'report exactly what committed and what remains incomplete'],
+  ['ordinary Work remains unchanged', 'remain unchanged outside this explicit path'],
+  ['guidance does not enforce or authenticate', 'does not authenticate the human or coordinator'],
+];
+
+/** @type {Array<{ source: string, heading: string, requirements: Array<[string, string, RegExp[] | RegExp[][]]>, falsifiers: Array<[string, string]> }>} */
+const TERMINAL_MANUAL_CONSUMER_SECTIONS = [
+  {
+    source: 'src/skills/dude-lightweight-execution/SKILL.md',
+    heading: '## Manual `[x]` Drift',
+    requirements: [
+      ['manual drift defers without bypass', 'For a terminal Work target, ordinary `accept T0NN`', [
+        /ordinary `accept T0NN`, a human-applied `\[x\]`, and\s+the availability of `board\.mjs` supply no exception or bypass/,
+        /Load `dude-work`\s+`## Explicit Manual Terminal Resolution`/,
+        /complete outside-Work gate\s+and exact current confirmation pass/,
+        /ordinary\s+downgrade\/refusal behavior/,
+      ]],
+    ],
+    falsifiers: [
+      ['manual drift defers without bypass', 'supply no exception or bypass'],
+    ],
+  },
+  {
+    source: 'src/skills/dude-lightweight-execution/SKILL.md',
+    heading: '## Lightweight Close Protocol',
+    requirements: [
+      ['close re-resolves exact ownership', '1. Re-resolve the exact unique owner', [
+        /stop on every diagnostic or ambiguity/,
+      ]],
+      ['close collects fresh verification', '2. Collect the implementation result and fresh verification', [
+        /matching verification specialist when available/,
+      ]],
+      ['close obtains independent readiness', '3. Obtain independent readiness judgment', [
+        /when required or requested/,
+      ]],
+      ['close requires fresh evidence', '4. Load `dude-verification-before-completion`.', [
+        /Fresh evidence must exist before `\[x\]`/,
+      ]],
+      ['close retains the ordinary coordinator writer', '5. Only the coordinator runs `board.mjs set ... done --write`', [
+        /regenerates the derived view/,
+        /appends state\/render\/close events/,
+        /runs `dude-lint`/,
+      ]],
+      ['implementation never closes by itself', 'Implementation alone never closes a task.', [
+        /If evidence, review, ownership, render, or lint fails, do not mark `\[x\]`/,
+      ]],
+      ['terminal close is writer not admission', 'For a terminal Work target, this protocol supplies the writer', [
+        /not admission\s+authority/,
+        /`## Explicit Manual Terminal Resolution` has admitted the exact target/,
+        /rechecked the confirmed basis and retained controls/,
+        /fresh independent\s+acceptance/,
+        /appended its MANUAL owner-log disposition/,
+        /waives none\s+of the steps above/,
+        /report\s+the committed and incomplete effects without claiming rollback, success, or\s+retry permission/,
+        /do not select another task/,
+      ]],
+    ],
+    falsifiers: [
+      ['close re-resolves exact ownership', 'exact unique owner'],
+      ['close collects fresh verification', 'fresh verification'],
+      ['close obtains independent readiness', 'independent readiness judgment'],
+      ['close requires fresh evidence', 'Fresh evidence must exist before `[x]`'],
+      ['close retains the ordinary coordinator writer', 'Only the coordinator runs `board.mjs set ... done --write`'],
+      ['implementation never closes by itself', 'Implementation alone never closes a task.'],
+      ['terminal close is writer not admission', 'supplies the writer, not admission authority'],
+    ],
+  },
+  {
+    source: 'src/skills/dude-verification-before-completion/SKILL.md',
+    heading: '## Gate',
+    requirements: [
+      ['verification capacity never grants terminal authority', '6. Preserve every obligation when grouping evidence.', [
+        /Do not omit a required\s+check or changed file/,
+        /report the specific validator,\s+capacity, obligation, or file-scope gap/,
+        /gap grants no recovery authority/,
+        /Only `dude-work` `## Explicit Manual Terminal Resolution` governs the\s+separately requested terminal autonomous Lightweight Work case/,
+        /an overflow\s+itself grants no permission/,
+        /every fresh evidence, scope, and capacity\s+rule here still applies/,
+      ]],
+    ],
+    falsifiers: [
+      ['verification capacity never grants terminal authority', 'an overflow itself grants no permission'],
+    ],
+  },
+  {
+    source: 'src/agents/dude.agent.md',
+    heading: '## Mode To Skill',
+    requirements: [
+      ['coordinator routes to the Work owner', 'explicit manual-terminal acceptance and close:', [
+        /`\.github\/skills\/dude-work\/SKILL\.md` `## Explicit Manual Terminal Resolution`/,
+      ]],
+    ],
+    falsifiers: [
+      ['coordinator routes to the Work owner', 'explicit manual-terminal acceptance and close:'],
+    ],
+  },
+  {
+    source: 'src/agents/dude.agent.md',
+    heading: '## Close',
+    requirements: [
+      ['coordinator close has no ordinary bypass', 'For an affected terminal Work target', [
+        /`## Explicit Manual Terminal Resolution` governs admission/,
+        /complete gate and exact current human confirmation before any MANUAL disposition or close write/,
+        /ordinary acceptance or task-close routing supplies no bypass/,
+        /Refuse unsupported, incomplete, uncertain, or stale requests/,
+        /owns retention and partial-effect handling/,
+      ]],
+      ['ordinary close authority stays intact', 'Implementation is never itself permission to close.', [
+        /Resolve the exact owner/,
+        /fresh verification evidence/,
+        /independent review when required/,
+        /only the coordinator apply `\[x\]` or `bd close`/,
+        /If verification or ownership fails, do not close/,
+      ]],
+    ],
+    falsifiers: [
+      ['coordinator close has no ordinary bypass', 'ordinary acceptance or task-close routing supplies no bypass'],
+      ['ordinary close authority stays intact', 'Implementation is never itself permission to close.'],
+    ],
+  },
+  {
+    source: 'src/agents/dude.agent.md',
+    heading: '## Work',
+    requirements: [
+      ['ordinary Work retains lane and stop boundaries', 'For `@dude work`, load `dude-work` and detect the lane once.', [
+        /Tracked work wins whenever Beads contains imported issues/,
+        /never falls through to Lightweight/,
+        /Run each iteration through the lane's close protocol/,
+        /Never import, auto-commit, edit user intent, create state, or silently retry/,
+      ]],
+      ['ordinary Work retains its sole runtime boundary', 'Ordinary Work drives the runtime only through the single `dude-work` host adapter boundary', [
+        /never selects a low-level completion/,
+        /Autonomous lane mutation uses only the adapter's permit path/,
+        /losing that supervisor, its context, or that identity is a hard stop/,
+        /sole dispatched Tester and Reviewer results/,
+        /`dude-work` owns the detailed rules/,
+      ]],
+      ['ordinary learning authority stays with Work', 'During explicit autonomous Work, preserve exact repeat evidence', [
+        /defer every affected-target disposition, escalation, and user notification/,
+        /learning governance owned by `dude-work`/,
+        /guarded and non-Work disposition remains unchanged/,
+      ]],
+      ['manual handling remains a separate explicit action', 'Only that skill\'s `## Explicit Manual Terminal Resolution` governs', [
+        /separate, explicitly confirmed outside-Work preview-and-confirm action/,
+        /old run failed and unsettled/,
+        /starts no next task/,
+        /changes none of the ordinary Work\/Ship outcomes, active invocation seals, stops, continuation, cleanup, or learning authority/,
+      ]],
+    ],
+    falsifiers: [
+      ['ordinary Work retains lane and stop boundaries', 'never falls through to Lightweight'],
+      ['ordinary Work retains its sole runtime boundary', 'single `dude-work` host adapter boundary'],
+      ['ordinary learning authority stays with Work', 'learning governance owned by `dude-work`'],
+      ['manual handling remains a separate explicit action', 'starts no next task'],
+    ],
+  },
+];
+
+/**
+ * Exercise one visible section's normalized rule blocks against deletion and
+ * every misplaced-copy form used by this feature's negative controls.
+ * @param {string} source
+ * @param {string} heading
+ * @param {Array<[string, string, RegExp[] | RegExp[][]]>} requirements
+ * @param {Array<[string, string]>} falsifiers
+ * @param {string} context
+ */
+function assertTerminalManualSectionRules(source, heading, requirements, falsifiers, context) {
+  const section = markdownSection(source, heading);
+  assert.deepEqual(missingParagraphRequirements(section, requirements), [], context);
+  const headingLevel = /^(#{1,6}) /.exec(heading)?.[1];
+  assert.ok(headingLevel, `${context}: valid section heading`);
+
+  for (const [label, target] of falsifiers) {
+    const requirement = requirements.find(([requirementLabel]) => requirementLabel === label);
+    assert.ok(requirement, `${context}: ${label} has one partial-deletion requirement`);
+    const { anchor } = paragraphRequirement(requirement);
+    assert.notEqual(anchor, null, `${context}: ${label} has a bounded block anchor`);
+    const [block] = anchoredRuleBlocks(section, /** @type {string} */ (anchor));
+    assert.ok(block, `${context}: ${label} partial-deletion block`);
+    const normalizedTarget = normalizeMarkdownBlock(target);
+    assert.equal(
+      block.normalized.split(normalizedTarget).length - 1,
+      1,
+      `${context}: ${label} has one normalized partial-deletion target`,
+    );
+    const rewrapped = section.replace(
+      block.raw,
+      block.normalized.replace(normalizedTarget, normalizedTarget.replace(' ', '\n  ')),
+    );
+    assert.equal(
+      missingParagraphRequirements(rewrapped, [requirement]).includes(label),
+      false,
+      `${context}: harmless soft wrapping preserves ${label}`,
+    );
+    const partiallyDeleted = section.replace(
+      block.raw,
+      block.normalized.replace(normalizedTarget, ''),
+    );
+    assert.ok(
+      missingParagraphRequirements(
+        `${partiallyDeleted}\n\nSimilar wording outside the owning block: ${normalizedTarget}`,
+        [requirement],
+      ).includes(label),
+      `${context}: deleting ${label} cannot be masked by companion wording`,
+    );
+  }
+
+  for (const requirement of requirements) {
+    const { anchor, label } = paragraphRequirement(requirement);
+    assert.notEqual(anchor, null, `${context}: ${label} has an owning-block anchor`);
+    const [block] = anchoredRuleBlocks(section, /** @type {string} */ (anchor));
+    assert.ok(block, `${context}: ${label} owning block`);
+    assert.equal(source.split(block.raw).length - 1, 1, `${context}: ${label} source block is unique`);
+
+    const deleted = source.replace(block.raw, '');
+    const mutations = new Map([
+      ['deleted', deleted],
+      ['replaced by a fenced copy', source.replace(block.raw, `\`\`\`text\n${block.raw}\n\`\`\``)],
+      ['replaced by a commented copy', source.replace(block.raw, `<!--\n${block.raw}\n-->`)],
+      ['duplicated in the owning section', source.replace(block.raw, `${block.raw}\n\n${block.raw}`)],
+      ['moved to an irrelevant section', `${deleted}\n\n${headingLevel} Terminal Manual Mutation Holding Area\n\n${block.raw}\n`],
+    ]);
+    for (const [mutation, mutatedSource] of mutations) {
+      assert.deepEqual(
+        missingParagraphRequirements(markdownSection(mutatedSource, heading), requirements),
+        [label],
+        `${context}: ${mutation} must fail only ${label}`,
+      );
+    }
+  }
+}
+
+test('terminal manual resolution: owning rules reject deletions and misplaced replacements', () => {
+  const source = read(TERMINAL_MANUAL_WORK_SOURCE);
+  assertTerminalManualSectionRules(
+    source,
+    TERMINAL_MANUAL_WORK_HEADING,
+    TERMINAL_MANUAL_WORK_REQUIREMENTS,
+    TERMINAL_MANUAL_WORK_FALSIFIERS,
+    `${TERMINAL_MANUAL_WORK_SOURCE} ${TERMINAL_MANUAL_WORK_HEADING}`,
+  );
+
+  const preview = rawMarkdownSectionBody(source, '### Preview And Bind Human Permission');
+  const confirmationFence = fencedBlockContaining(preview, TERMINAL_MANUAL_CONFIRMATION);
+  assert.equal(
+    confirmationFence,
+    `\`\`\`text\n${TERMINAL_MANUAL_CONFIRMATION}\n\`\`\``,
+    'the exact confirmation is the sole text fence in its governing preview subsection',
+  );
+  assert.equal(
+    visibleMarkdown(preview).includes(TERMINAL_MANUAL_CONFIRMATION),
+    false,
+    'the fenced literal is not itself visible governing prose',
+  );
+
+  const confirmationRequirement = TERMINAL_MANUAL_WORK_REQUIREMENTS.find(
+    ([label]) => label === 'governing prose requires the literal confirmation',
+  );
+  assert.ok(confirmationRequirement, 'literal confirmation has one governing-prose requirement');
+  const [governingBlock] = anchoredRuleBlocks(
+    markdownSection(source, TERMINAL_MANUAL_WORK_HEADING),
+    'A commit identifier alone does not identify an uncommitted worktree.',
+  );
+  const proseDeleted = source.replace(governingBlock.raw, '');
+  assert.equal(
+    fencedBlockContaining(
+      rawMarkdownSectionBody(proseDeleted, '### Preview And Bind Human Permission'),
+      TERMINAL_MANUAL_CONFIRMATION,
+    ),
+    confirmationFence,
+    'deleting governing prose leaves the exact fenced example intact',
+  );
+  assert.deepEqual(
+    missingParagraphRequirements(
+      markdownSection(proseDeleted, TERMINAL_MANUAL_WORK_HEADING),
+      [/** @type {[string, string, RegExp[] | RegExp[][]]} */ (confirmationRequirement)],
+    ),
+    ['governing prose requires the literal confirmation'],
+    'the fenced example cannot substitute for deleted governing prose',
+  );
+});
+
+test('terminal manual resolution: consumers preserve ordinary Work boundaries', () => {
+  const detailedHeadings = [
+    TERMINAL_MANUAL_WORK_HEADING,
+    '### Establish Eligibility And Absence Of Effects',
+    '### Preview And Bind Human Permission',
+    '### Obtain Fresh Independent Acceptance',
+    '### Recheck, Record, And Close',
+  ];
+  const instructionSources = [
+    TERMINAL_MANUAL_WORK_SOURCE,
+    'src/skills/dude-lightweight-execution/SKILL.md',
+    'src/skills/dude-verification-before-completion/SKILL.md',
+    'src/agents/dude.agent.md',
+  ];
+  for (const heading of detailedHeadings) {
+    assert.deepEqual(
+      instructionSources.filter((relative) => visibleMarkdown(read(relative))
+        .split('\n')
+        .some((line) => line.trim() === heading)),
+      [TERMINAL_MANUAL_WORK_SOURCE],
+      `${heading}: Work is the sole detailed owner`,
+    );
+  }
+
+  for (const entry of TERMINAL_MANUAL_CONSUMER_SECTIONS) {
+    assertTerminalManualSectionRules(
+      read(entry.source),
+      entry.heading,
+      entry.requirements,
+      entry.falsifiers,
+      `${entry.source} ${entry.heading}`,
+    );
+  }
+
+  const consumerText = TERMINAL_MANUAL_CONSUMER_SECTIONS
+    .map(({ source, heading }) => markdownSection(read(source), heading))
+    .join('\n');
+  for (const detailedTerm of [
+    '131,072',
+    '`alternative-authorized`',
+    '`acceptedRevision`',
+    'two independent ways',
+    'specialist-attestation.mjs',
+  ]) {
+    assert.equal(
+      consumerText.includes(detailedTerm),
+      false,
+      `consumer deferrals do not duplicate Work detail ${detailedTerm}`,
+    );
+  }
+});
+
+test('terminal manual resolution: generated instruction parity', () => {
+  const selectedPaths = [
+    '.github/skills/dude-work/SKILL.md',
+    '.github/skills/dude-lightweight-execution/SKILL.md',
+    '.github/skills/dude-verification-before-completion/SKILL.md',
+    '.github/agents/dude.agent.md',
+  ];
+  const sourceForGenerated = new Map([
+    ['.github/skills/dude-work/SKILL.md', TERMINAL_MANUAL_WORK_SOURCE],
+    ['.github/skills/dude-lightweight-execution/SKILL.md', 'src/skills/dude-lightweight-execution/SKILL.md'],
+    ['.github/skills/dude-verification-before-completion/SKILL.md', 'src/skills/dude-verification-before-completion/SKILL.md'],
+    ['.github/agents/dude.agent.md', 'src/agents/dude.agent.md'],
+  ]);
+  const outputs = listCoreOutputs(ROOT);
+  const selected = selectedPaths.map((relPath) => {
+    const matches = outputs.filter((output) => output.relPath === relPath);
+    assert.equal(matches.length, 1, `${relPath}: exactly one selected core output`);
+    return matches[0];
+  });
+  assert.equal(new Set(selected.map(({ relPath }) => relPath)).size, selectedPaths.length);
+
+  const tempRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dude-terminal-manual-parity-')));
+  try {
+    assert.deepEqual(fs.readdirSync(tempRoot), [], 'selected output destination starts empty');
+    const preflight = selected.map(({ relPath }) => resolveMutationPath(tempRoot, relPath));
+    assert.equal(new Set(preflight).size, selectedPaths.length, 'all selected destinations preflight uniquely');
+
+    for (const output of selected) writeCoreOutput(tempRoot, output);
+
+    /** @type {string[]} */
+    const emittedPaths = [];
+    const scan = (directory, prefix = '') => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const child = prefix ? `${prefix}/${entry.name}` : entry.name;
+        const absolute = path.join(directory, entry.name);
+        if (entry.isDirectory()) scan(absolute, child);
+        else if (entry.isFile()) emittedPaths.push(child);
+      }
+    };
+    scan(tempRoot);
+    assert.deepEqual(emittedPaths.sort(), [...selectedPaths].sort(), 'only the four selected outputs are emitted');
+
+    for (const relPath of selectedPaths) {
+      const source = sourceForGenerated.get(relPath);
+      assert.ok(source, `${relPath}: authoritative source mapping`);
+      const emitted = fs.readFileSync(path.join(tempRoot, ...relPath.split('/')));
+      assert.deepEqual(emitted, fs.readFileSync(path.join(ROOT, relPath)), `${relPath}: isolated and committed bytes`);
+      assert.deepEqual(
+        emitted,
+        materializedSourceBytes(source, relPath),
+        `${relPath}: isolated bytes preserve source-copy or agent-projection materialization`,
+      );
+    }
+
+    const emittedWork = fs.readFileSync(
+      path.join(tempRoot, ...'.github/skills/dude-work/SKILL.md'.split('/')),
+      'utf8',
+    );
+    assert.deepEqual(
+      missingParagraphRequirements(
+        markdownSection(emittedWork, TERMINAL_MANUAL_WORK_HEADING),
+        TERMINAL_MANUAL_WORK_REQUIREMENTS,
+      ),
+      [],
+      'isolated Work output retains every owning rule',
+    );
+    assert.equal(
+      fencedBlockContaining(
+        rawMarkdownSectionBody(emittedWork, '### Preview And Bind Human Permission'),
+        TERMINAL_MANUAL_CONFIRMATION,
+      ),
+      `\`\`\`text\n${TERMINAL_MANUAL_CONFIRMATION}\n\`\`\``,
+      'isolated Work output retains the exact confirmation in the preview subsection',
+    );
+    for (const entry of TERMINAL_MANUAL_CONSUMER_SECTIONS) {
+      const generated = [...sourceForGenerated.entries()]
+        .find(([, source]) => source === entry.source)?.[0];
+      assert.ok(generated, `${entry.source}: generated consumer mapping`);
+      const emitted = fs.readFileSync(path.join(tempRoot, ...generated.split('/')), 'utf8');
+      assert.deepEqual(
+        missingParagraphRequirements(markdownSection(emitted, entry.heading), entry.requirements),
+        [],
+        `${generated} ${entry.heading}: isolated output retains its owning deferral`,
+      );
+    }
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+const TERMINAL_ADMIN_WORK_HEADING = '### Post-Terminal Administrative Reconciliation';
+
+/** @type {Array<[string, string, RegExp[] | RegExp[][]]>} */
+const TERMINAL_ADMIN_BRANCH_REQUIREMENTS = [
+  ['one owner contains the distinct administrative path', 'This section also solely owns', [
+    /solely owns the distinct bounded administrative\s+reconciliation path defined later/,
+  ]],
+  ['original and administrative branches cannot substitute for one another', 'The next four subsections retain', [
+    /retain the original overflow procedure/,
+    /unblocked `\[~\]` target/,
+    /unchanged obligations/,
+    /returned terminal row/,
+    /first\s+131,072-byte overflow/,
+    /retained ownership pair/,
+    /prescribed confirmation/,
+    /fresh acceptance requirements apply only to that procedure/,
+    /`### Post-Terminal Administrative Reconciliation` is a\s+distinct path with its own complete gate/,
+    /never substitute a condition from\s+one path for a missing condition in the other/,
+  ]],
+];
+
+/** @type {Array<[string, string]>} */
+const TERMINAL_ADMIN_BRANCH_FALSIFIERS = [
+  ['one owner contains the distinct administrative path', 'distinct bounded administrative reconciliation path'],
+  ['original and administrative branches cannot substitute for one another', 'never substitute a condition from one path for a missing condition in the other'],
+];
+
+/** @type {Array<[string, string, RegExp[] | RegExp[][]]>} */
+const TERMINAL_ADMIN_WORK_REQUIREMENTS = [
+  ['bounded outside-Work administrative scope', 'Use this distinct path only after', [
+    /explicit human request/,
+    /currently defined, already-worked, non-complete Lightweight task/,
+    /genuinely terminal or abandoned/,
+    /no old\s+owner may remain able to act/,
+    /complete retained reviewed learning must make\s+normal fresh admission unavailable/,
+    /current administrative acceptance and conditional same-key close outside Work/,
+    /not fresh admission, continuation, recovery, restart,[\s\S]*settlement of the old attempt/,
+    /blocked task, amended definition, or separately\s+cleaned control pair is a fact to reconcile, never authority/,
+    /grants no target eligibility,\s+human permission, native-operation consent, next-task action, or Git action/,
+  ]],
+  ['exact current owner task and dependency gate', '**1. Reconcile the current target without writing.**', [
+    /exact current\s+workspace, live Lightweight authority, unique `status: defined` owner by exact\s+`spec_path:`/,
+    /task key and unit parsed under the canonical task grammar/,
+    /current dependencies/,
+    /one already-worked, non-done task with satisfied\s+dependencies/,
+    /current specification, plan, task body, implementation\s+and evidence revision/,
+    /authorized definition and reconciliation history/,
+    /active Work invocation, resolver diagnostic, missing or multiple owner,\s+resolved owner, tracked authority, ambiguous or wrong target, unsatisfied\s+dependency, or never-worked task refuses/,
+  ]],
+  ['genuine one-to-one current semantic mapping', 'An explicit scope amendment qualifies only', [
+    /recorded, reviewed mapping\s+is genuinely one-to-one and preserves the same task purpose/,
+    /Assess every\s+current obligation/,
+    /do not require obsolete failed-attempt obligations or byte\s+equality with superseded prose/,
+    /retained key, title, lifecycle number, or old\s+green result does not establish semantic continuity or current acceptance/,
+    /split, merge, rekey, changed purpose, missing mapping, or unreviewed amendment\s+refuses/,
+  ]],
+  ['independently resolved exact blocker', 'Identify the exact displayed `blocked-by:` line', [
+    /actual current cause/,
+    /matching independent verifier must establish that the cause is resolved under\s+the current definition/,
+    /Completed dependencies, amended wording, or an assertion that the blocker is\s+stale does not prove resolution/,
+    /unresolved dependency or blocker stops\s+before a preview can lead to any disposition, metadata edit, or close/,
+  ]],
+  ['complete retained authority and learning evidence', '**2. Establish provenance, owner absence, controls, and effects.**', [
+    /actual original acquisitions and both complete retention surfaces/,
+    /full original authority, failure, ordered occurrence, binding, reviewed-learning,\s+pending-attempt, and accounting evidence/,
+    /complete matching\s+required-learning and reviewed-learning records in retained current-run and\s+authoritative lane history/,
+    /Existing inspectability and resource limits still\s+apply/,
+    /Normalized summaries, hash-only claims without their preimages,\s+reconstructed captures, an Inspection packet, one retention surface, a\s+checkpoint, or returned historical state cannot replace those sources/,
+    /Missing,\s+partial, stale, conflicting, wrong-target, wrong-authority, or uninspectable\s+evidence refuses/,
+  ]],
+  ['genuine terminal or abandonment provenance and no owner', 'Correlate the actual terminal return when one exists.', [
+    /original terminal\s+row is unavailable/,
+    /genuine retained invocation, lifecycle, session,\s+and operation evidence that establishes abandonment of that exact invocation/,
+    /Report the missing row and the actual observed basis; invent no returned result\s+or stop reason/,
+    /Fresh authoritative host observations, or independently\s+established operator checks/,
+    /no supervisor, worker, or pending\s+handoff can still act for the exact target/,
+    /Worker exit, age, a process\s+identifier, old returned state, cancellation, pause, or a model assertion alone\s+does not prove owner absence or grant administrative permission/,
+  ]],
+  ['retained controls remain unchanged and inert', 'If the complete retained pair still exists', [
+    /prove it remains byte-identical/,
+    /leave it unchanged/,
+    /confers no current authority/,
+  ]],
+  ['separately cleaned controls require complete proof', 'If the pair was already removed', [
+    /actual preserved preimages and\s+hashes/,
+    /exact separate cleanup authorization/,
+    /observed removal results/,
+    /fresh absence checks for both controls/,
+    /Partial, corrupt, changed,\s+unexplained, or reappearing controls refuse/,
+    /Never recreate a pair to qualify/,
+  ]],
+  ['known completion effects are proved independently', 'Prove effects independently of abandonment', [
+    /actual operation requests and results and the relevant pre-completion preimages/,
+    /current canonical tasks, optional snapshot, exact owner lane-history\s+prefix, and retained current-run history/,
+    /Account from actual evidence for\s+every intervening authorized definition and lane write/,
+    /Known earlier occurrence, learning, or\s+blocker writes may remain as accounted historical effects/,
+    /old completion neither closed the task nor left a possibly\s+applied completion projection, lane write, or receipt/,
+    /Missing preimages,\s+one-sided or contradictory retention, a possible writer entry, or any unknown\s+lane or completion effect refuses/,
+    /historical pending attempt remains\s+untouched and unsettled/,
+    /Product qualification limits cannot excuse an\s+unaccounted workflow effect/,
+    /no adapter may be invoked against old returned\s+state to manufacture this proof/,
+  ]],
+  ['preview binds the exact current material and findings', '**3. Bind one current permission and current acceptance.**', [
+    /exact workspace, owner, `spec_path`, task key, canonical\s+prestate and blocker line, dependencies, current obligations and one-to-one\s+mapping/,
+    /current definition and implementation\/evidence revisions/,
+    /complete\s+current material hashes, including dirty and untracked bytes/,
+    /actual terminal or abandonment provenance, owner-absence\s+evidence, effect accounting, control disposition, and proposed independent\s+acceptance/,
+    /Do not expose secrets or raw private session paths/,
+  ]],
+  ['natural-language permission is current and action-bound', 'Require a literal current human reply', [
+    /unambiguously bound to that one exact\s+preview/,
+    /Ordinary natural language may refer to the displayed preview/,
+    /authorize current acceptance, removal of the named proved-obsolete\s+`blocked-by:` line, and conditional administrative close of that same task/,
+    /no prescribed phrase, parser, flag, token, or stored consent object/,
+    /Generic or\s+unbound assent is insufficient/,
+    /Implementation direction, previous Work or\s+Ship permission, the original path's confirmation, cleanup consent, native or\s+operator approval, a retrospective question, or a model-authored approval\s+supplies no current close authority/,
+    /existing\s+Needs You handoff or ordinary chat fallback/,
+    /do not invent a clarification or\s+permission/,
+  ]],
+  ['current independent acceptance retains only matching observations', 'Obtain a matching independent Tester', [
+    /independent Reviewer judgment/,
+    /every current explicitly defined obligation/,
+    /exact current\s+material, and current blocker resolution/,
+    /existing current judgment\s+only when it still matches that complete scope and fresh inspection confirms\s+its source, bindings, exact material, and applicability/,
+    /Still-valid approved operator tests or observations may\s+support only obligations for which the current definition expressly permits\s+retention/,
+    /fresh inspection proves their actual source,\s+provenance, bindings, scope, and current applicability/,
+    /fresh inspection\s+is the current check/,
+    /do not force a redundant native rerun, request another\s+operation-specific consent token, or infer wider scope merely because old Work\s+ended/,
+    /Historical green output against superseded scope, self-report, proxy\s+evidence beyond its accepted boundary, and stale or wrong material are\s+insufficient/,
+    /missing or invalidated required check, required skip, failure,\s+or review rejection prevents close/,
+    /without implementation repair, expanded scope, invented native consent,\s+or a hidden retry/,
+  ]],
+  ['all current bindings are rechecked before writing', '**4. Recheck and apply only the administrative delta.**', [
+    /freshly recheck every preview binding, dependency, blocker-resolution proof,\s+current acceptance result, owner-absence finding, control disposition, effect\s+comparison, evidence preimage, and expected intervening byte/,
+    /existing\s+owner and task mutation preflights and normal task-state reader/,
+    /Snapshot\s+absence remains valid/,
+    /corrupt or unsafe snapshot or path refuses before the\s+MANUAL or metadata write/,
+    /Unrelated drift stops/,
+    /changed material requires\s+new permission and affected acceptance/,
+  ]],
+  ['distinct pre-mutation MANUAL records the complete basis', 'After all gates and rechecks pass', [
+    /append one plain UTC `MANUAL` disposition/,
+    /exact owner's existing Coordinator Log/,
+    /explicitly labeled as\s+post-terminal administrative reconciliation/,
+    /current obligations\s+and one-to-one mapping/,
+    /actual terminal or abandonment basis and unavailable\s+terminal row when applicable/,
+    /current human permission/,
+    /independent Tester and\s+Reviewer acceptance/,
+    /exact resolved blocker/,
+    /no-owner and conclusive-effect\s+findings/,
+    /unchanged-retained or separately-cleaned control disposition/,
+    /old run, learning, pending attempt, and accounting remain as recorded/,
+    /not a `dude-run-event`, learning event, audit, status,\s+permission record, Work settlement, or advance claim that close succeeded/,
+  ]],
+  ['only the exact obsolete blocker line is removed', 'Only after that append may the coordinator remove', [
+    /exactly the displayed\s+proved-obsolete `blocked-by:` line/,
+    /Preserve the exact\s+line in the inspected preimage/,
+    /identify its disposition in the ordinary\s+log/,
+    /Change no task key, body, dependencies, other metadata, obligation, or\s+history/,
+    /existing board writer retains blocker metadata/,
+    /do not add a removal flag, pass an empty replacement, or\s+change the parser or writer/,
+  ]],
+  ['ordinary same-task writer creates no Work revival', 'Then the coordinator uses the existing same-task', [
+    /`board\.mjs set <tasks\.md> <same-taskKey> done --write` path/,
+    /ordinary render, snapshot, blocker\/state\/render\/close logging, final backlog\s+refresh, and lint duties/,
+    /Do not insert an intermediate `\[~\]` claim/,
+    /call\s+`applyLightweightWorkRequest` or any Work wrapper or adapter/,
+    /restore old\s+RunState, identity, counters, attempts, permits, or receipts/,
+    /resolve learning/,
+    /claim `ended` or `task-settled` for the old run/,
+    /clean controls/,
+    /select another task automatically/,
+    /perform Git work/,
+  ]],
+  ['retention and partial-effect reporting stay exact', 'Preserve every old history and capture byte', [
+    /failure, learning record, pending\s+obligation, accounting entry, permit, receipt, cleanup preimage and result,\s+archive, and discovered-work record/,
+    /Keep every product boundary that current\s+acceptance did not qualify explicit/,
+    /ordinary log, metadata, board,\s+render, snapshot, backlog, and lint operations are not one transaction/,
+    /Recheck\s+expected bytes between steps/,
+    /report which MANUAL\s+or ordinary log append, blocker metadata edit, glyph, render, snapshot, backlog\s+refresh, and validation effects committed and what remains undone/,
+    /no\s+rollback, retry, or successful-close fiction/,
+    /successful report names only\s+the current accepted scope, its unqualified limits, the actual provenance, and\s+the separate administrative task outcome/,
+    /leaves the old Work failure,\s+learning, pending obligations, and accounting unsettled/,
+    /starts no\s+successor/,
+  ]],
+  ['guidance remains policy rather than enforcement', 'This remains cooperative instruction policy.', [
+    /authenticates neither the\s+human nor the evidence sources/,
+    /adds no runtime enforcement/,
+  ]],
+];
+
+/** @type {Array<[string, string]>} */
+const TERMINAL_ADMIN_WORK_FALSIFIERS = [
+  ['bounded outside-Work administrative scope', 'complete retained reviewed learning'],
+  ['exact current owner task and dependency gate', 'one already-worked, non-done task with satisfied dependencies'],
+  ['genuine one-to-one current semantic mapping', 'genuinely one-to-one and preserves the same task purpose'],
+  ['independently resolved exact blocker', 'matching independent verifier'],
+  ['complete retained authority and learning evidence', 'both complete retention surfaces'],
+  ['genuine terminal or abandonment provenance and no owner', 'invent no returned result or stop reason'],
+  ['retained controls remain unchanged and inert', 'It confers no current authority.'],
+  ['separately cleaned controls require complete proof', 'exact separate cleanup authorization'],
+  ['known completion effects are proved independently', 'any unknown lane or completion effect refuses'],
+  ['preview binds the exact current material and findings', 'including dirty and untracked bytes'],
+  ['natural-language permission is current and action-bound', 'Ordinary natural language may refer to the displayed preview'],
+  ['current independent acceptance retains only matching observations', 'That fresh inspection is the current check'],
+  ['all current bindings are rechecked before writing', 'freshly recheck every preview binding'],
+  ['distinct pre-mutation MANUAL records the complete basis', 'explicitly labeled as post-terminal administrative reconciliation'],
+  ['only the exact obsolete blocker line is removed', 'remove exactly the displayed proved-obsolete `blocked-by:` line'],
+  ['ordinary same-task writer creates no Work revival', 'Do not insert an intermediate `[~]` claim'],
+  ['retention and partial-effect reporting stay exact', 'with no rollback, retry, or successful-close fiction'],
+  ['guidance remains policy rather than enforcement', 'adds no runtime enforcement'],
+];
+
+/** @type {Array<{ source: string, heading: string, requirements: Array<[string, string, RegExp[] | RegExp[][]]>, falsifiers: Array<[string, string]> }>} */
+const TERMINAL_ADMIN_CONSUMER_SECTIONS = [
+  {
+    source: 'src/skills/dude-lightweight-execution/SKILL.md',
+    heading: '## Manual `[x]` Drift',
+    requirements: [
+      ['manual drift points to the distinct administrative gate', 'Its `### Post-Terminal Administrative Reconciliation` subsection', [
+        /distinct second path/,
+        /currently defined blocked same-key task/,
+        /old\s+Work authority is terminal or abandoned/,
+        /preview-bound current permission/,
+        /proved blocker resolution/,
+        /actual unchanged-retained or\s+separately-cleaned control disposition/,
+        /ordinary acceptance alone\s+supplies no bypass/,
+      ]],
+    ],
+    falsifiers: [
+      ['manual drift points to the distinct administrative gate', 'ordinary acceptance alone supplies no bypass'],
+    ],
+  },
+  {
+    source: 'src/skills/dude-lightweight-execution/SKILL.md',
+    heading: '## Lightweight Close Protocol',
+    requirements: [
+      ['close remains writer-only for the administrative path', 'For `### Post-Terminal Administrative Reconciliation`', [
+        /same writer-only\s+rule applies only after that owning subsection/,
+        /rechecked its current\s+permission/,
+        /exact proved-obsolete blocker line/,
+        /actual\s+unchanged-retained or separately-cleaned control disposition/,
+        /appended\s+its distinct MANUAL entry/,
+        /Only the coordinator removes that one authorized\s+blocker line before same-key close/,
+        /Ordinary close, acceptance, or blocker\s+resolution supplies no admission or freshness bypass/,
+      ]],
+    ],
+    falsifiers: [
+      ['close remains writer-only for the administrative path', 'Only the coordinator removes that one authorized blocker line'],
+    ],
+  },
+  {
+    source: 'src/skills/dude-verification-before-completion/SKILL.md',
+    heading: '## Gate',
+    requirements: [
+      ['verification defers retained evidence without weakening freshness', 'For `dude-work` `### Post-Terminal Administrative Reconciliation`', [
+        /defer to\s+that owner/,
+        /current definition expressly permits\s+retained evidence/,
+        /Freshly inspect its actual source, provenance, bindings,\s+exact material, and current applicability/,
+        /still-valid approved operator\s+observation need not be rerun merely because old Work ended/,
+        /historical\s+green output, scope inference, and stale or wrong evidence are not current\s+acceptance/,
+        /do not weaken this skill's freshness, production-boundary,\s+or complete-result rules/,
+      ]],
+    ],
+    falsifiers: [
+      ['verification defers retained evidence without weakening freshness', 'do not weaken this skill\'s freshness'],
+    ],
+  },
+  {
+    source: 'src/agents/dude.agent.md',
+    heading: '## Routing',
+    requirements: [
+      ['coordinator routes explicit administrative reconciliation to Work', 'Route an explicit post-terminal administrative reconciliation request', [
+        /one already-worked Lightweight task/,
+        /`\.github\/skills\/dude-work\/SKILL\.md` `## Explicit Manual Terminal Resolution`, `### Post-Terminal Administrative Reconciliation`/,
+        /subject to that subsection's eligibility and permission rules/,
+        /Sealed Work and stopped runs provide no automatic entry/,
+        /implementation direction, prior Work\/Ship or original-path permission, cleanup or native consent, retrospective questions, and model approval supply no current close authority/,
+      ]],
+    ],
+    falsifiers: [
+      ['coordinator routes explicit administrative reconciliation to Work', 'Sealed Work and stopped runs provide no automatic entry'],
+    ],
+  },
+  {
+    source: 'src/agents/dude.agent.md',
+    heading: '## Mode To Skill',
+    requirements: [
+      ['mode table keeps the original path', '- explicit manual-terminal acceptance and close:', [
+        /`\.github\/skills\/dude-work\/SKILL\.md` `## Explicit Manual Terminal Resolution`/,
+      ]],
+      ['mode table adds the distinct administrative path', '- explicit post-terminal administrative reconciliation:', [
+        /`\.github\/skills\/dude-work\/SKILL\.md` `## Explicit Manual Terminal Resolution`, `### Post-Terminal Administrative Reconciliation`/,
+      ]],
+    ],
+    falsifiers: [
+      ['mode table keeps the original path', 'explicit manual-terminal acceptance and close:'],
+      ['mode table adds the distinct administrative path', 'explicit post-terminal administrative reconciliation:'],
+    ],
+  },
+  {
+    source: 'src/agents/dude.agent.md',
+    heading: '## Close',
+    requirements: [
+      ['coordinator close defers the full administrative gate', 'For the same owner\'s `### Post-Terminal Administrative Reconciliation` path', [
+        /apply its own complete gate/,
+        /preview-bound current natural-language permission/,
+        /current independent acceptance/,
+        /actual control disposition/,
+        /rechecks/,
+        /before any MANUAL disposition, exact proved-obsolete `blocked-by:` removal, or same-key close/,
+        /owns the administrative delta, retention, and partial-effect handling/,
+        /ordinary close supplies no admission bypass/,
+      ]],
+    ],
+    falsifiers: [
+      ['coordinator close defers the full administrative gate', 'ordinary close supplies no admission bypass'],
+    ],
+  },
+  {
+    source: 'src/agents/dude.agent.md',
+    heading: '## Work',
+    requirements: [
+      ['ordinary Work cannot be revived by administrative reconciliation', 'The same owner\'s `### Post-Terminal Administrative Reconciliation` governs', [
+        /second outside-Work path/,
+        /separate administrative outcome restores no old state or authority/,
+        /settles no old Work or learning obligation/,
+        /authorizes no resume, new claim, cleanup, or automatic next task/,
+      ]],
+    ],
+    falsifiers: [
+      ['ordinary Work cannot be revived by administrative reconciliation', 'restores no old state or authority'],
+    ],
+  },
+];
+
+test('terminal administrative reconciliation: owning rules reject deletions and misplaced replacements', () => {
+  const source = read(TERMINAL_MANUAL_WORK_SOURCE);
+
+  assertTerminalManualSectionRules(
+    source,
+    TERMINAL_MANUAL_WORK_HEADING,
+    TERMINAL_ADMIN_BRANCH_REQUIREMENTS,
+    TERMINAL_ADMIN_BRANCH_FALSIFIERS,
+    `${TERMINAL_MANUAL_WORK_SOURCE} ${TERMINAL_MANUAL_WORK_HEADING} branch scope`,
+  );
+  assertTerminalManualSectionRules(
+    source,
+    TERMINAL_ADMIN_WORK_HEADING,
+    TERMINAL_ADMIN_WORK_REQUIREMENTS,
+    TERMINAL_ADMIN_WORK_FALSIFIERS,
+    `${TERMINAL_MANUAL_WORK_SOURCE} ${TERMINAL_ADMIN_WORK_HEADING}`,
+  );
+
+  assert.deepEqual(
+    missingParagraphRequirements(
+      markdownSection(source, TERMINAL_MANUAL_WORK_HEADING),
+      TERMINAL_MANUAL_WORK_REQUIREMENTS,
+    ),
+    [],
+    'the original overflow branch keeps every original governing rule',
+  );
+  assert.equal(
+    fencedBlockContaining(
+      rawMarkdownSectionBody(source, '### Preview And Bind Human Permission'),
+      TERMINAL_MANUAL_CONFIRMATION,
+    ),
+    `\`\`\`text\n${TERMINAL_MANUAL_CONFIRMATION}\n\`\`\``,
+    'the original branch keeps its exact prescribed confirmation',
+  );
+});
+
+test('terminal administrative reconciliation: consumers preserve both manual paths', () => {
+  const instructionSources = [
+    TERMINAL_MANUAL_WORK_SOURCE,
+    'src/skills/dude-lightweight-execution/SKILL.md',
+    'src/skills/dude-verification-before-completion/SKILL.md',
+    'src/agents/dude.agent.md',
+  ];
+  assert.deepEqual(
+    instructionSources.filter((relative) => visibleMarkdown(read(relative))
+      .split('\n')
+      .some((line) => line.trim() === TERMINAL_ADMIN_WORK_HEADING)),
+    [TERMINAL_MANUAL_WORK_SOURCE],
+    `${TERMINAL_ADMIN_WORK_HEADING}: Work is the sole detailed owner`,
+  );
+  for (const detailedLead of [
+    '**1. Reconcile the current target without writing.**',
+    '**2. Establish provenance, owner absence, controls, and effects.**',
+    '**3. Bind one current permission and current acceptance.**',
+    '**4. Recheck and apply only the administrative delta.**',
+  ]) {
+    assert.deepEqual(
+      filesContaining(detailedLead, instructionSources),
+      [TERMINAL_MANUAL_WORK_SOURCE],
+      `${detailedLead}: detailed procedure remains in Work only`,
+    );
+  }
+
+  for (const entry of TERMINAL_MANUAL_CONSUMER_SECTIONS) {
+    assert.deepEqual(
+      missingParagraphRequirements(markdownSection(read(entry.source), entry.heading), entry.requirements),
+      [],
+      `${entry.source} ${entry.heading}: original manual path remains intact`,
+    );
+  }
+  for (const entry of TERMINAL_ADMIN_CONSUMER_SECTIONS) {
+    assertTerminalManualSectionRules(
+      read(entry.source),
+      entry.heading,
+      entry.requirements,
+      entry.falsifiers,
+      `${entry.source} ${entry.heading}`,
+    );
+  }
+
+  const consumerText = TERMINAL_ADMIN_CONSUMER_SECTIONS
+    .map(({ source, heading }) => markdownSection(read(source), heading))
+    .join('\n');
+  for (const detailedTerm of [
+    'both complete retention surfaces',
+    'ordered occurrence',
+    'hash-only claims without their preimages',
+    'actual operation requests and results',
+    'pass an empty replacement',
+  ]) {
+    assert.equal(
+      consumerText.includes(detailedTerm),
+      false,
+      `consumer pointers defer rather than duplicate Work detail ${detailedTerm}`,
+    );
+  }
+});
+
+test('terminal administrative reconciliation: generated instruction parity', () => {
+  const selectedPaths = [
+    '.github/skills/dude-work/SKILL.md',
+    '.github/skills/dude-lightweight-execution/SKILL.md',
+    '.github/skills/dude-verification-before-completion/SKILL.md',
+    '.github/agents/dude.agent.md',
+  ];
+  const sourceForGenerated = new Map([
+    ['.github/skills/dude-work/SKILL.md', TERMINAL_MANUAL_WORK_SOURCE],
+    ['.github/skills/dude-lightweight-execution/SKILL.md', 'src/skills/dude-lightweight-execution/SKILL.md'],
+    ['.github/skills/dude-verification-before-completion/SKILL.md', 'src/skills/dude-verification-before-completion/SKILL.md'],
+    ['.github/agents/dude.agent.md', 'src/agents/dude.agent.md'],
+  ]);
+  const generatedForSource = new Map(
+    [...sourceForGenerated].map(([generated, source]) => [source, generated]),
+  );
+  const outputs = listCoreOutputs(ROOT);
+  const selected = selectedPaths.map((relPath) => {
+    const matches = outputs.filter((output) => output.relPath === relPath);
+    assert.equal(matches.length, 1, `${relPath}: exactly one selected core output`);
+    return matches[0];
+  });
+  assert.equal(new Set(selected.map(({ relPath }) => relPath)).size, selectedPaths.length);
+
+  const tempRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dude-terminal-admin-parity-')));
+  try {
+    assert.deepEqual(fs.readdirSync(tempRoot), [], 'selected output destination starts empty');
+    const preflight = selected.map(({ relPath }) => resolveMutationPath(tempRoot, relPath));
+    assert.equal(new Set(preflight).size, selectedPaths.length, 'all selected destinations preflight uniquely');
+
+    for (const output of selected) writeCoreOutput(tempRoot, output);
+
+    /** @type {string[]} */
+    const emittedPaths = [];
+    const scan = (directory, prefix = '') => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const child = prefix ? `${prefix}/${entry.name}` : entry.name;
+        const absolute = path.join(directory, entry.name);
+        if (entry.isDirectory()) scan(absolute, child);
+        else if (entry.isFile()) emittedPaths.push(child);
+      }
+    };
+    scan(tempRoot);
+    assert.deepEqual(emittedPaths.sort(), [...selectedPaths].sort(), 'only the four selected outputs are emitted');
+
+    for (const relPath of selectedPaths) {
+      const source = sourceForGenerated.get(relPath);
+      assert.ok(source, `${relPath}: authoritative source mapping`);
+      const emitted = fs.readFileSync(path.join(tempRoot, ...relPath.split('/')));
+      assert.deepEqual(emitted, fs.readFileSync(path.join(ROOT, relPath)), `${relPath}: isolated and committed bytes`);
+      assert.deepEqual(
+        emitted,
+        materializedSourceBytes(source, relPath),
+        `${relPath}: isolated bytes preserve source-copy or agent-projection materialization`,
+      );
+    }
+
+    const emittedWork = fs.readFileSync(
+      path.join(tempRoot, ...'.github/skills/dude-work/SKILL.md'.split('/')),
+      'utf8',
+    );
+    assert.deepEqual(
+      missingParagraphRequirements(
+        markdownSection(emittedWork, TERMINAL_MANUAL_WORK_HEADING),
+        TERMINAL_ADMIN_BRANCH_REQUIREMENTS,
+      ),
+      [],
+      'isolated Work output keeps the two branches explicitly separate',
+    );
+    assert.deepEqual(
+      missingParagraphRequirements(
+        markdownSection(emittedWork, TERMINAL_ADMIN_WORK_HEADING),
+        TERMINAL_ADMIN_WORK_REQUIREMENTS,
+      ),
+      [],
+      'isolated Work output retains every administrative governing rule',
+    );
+    assert.deepEqual(
+      missingParagraphRequirements(
+        markdownSection(emittedWork, TERMINAL_MANUAL_WORK_HEADING),
+        TERMINAL_MANUAL_WORK_REQUIREMENTS,
+      ),
+      [],
+      'isolated Work output also retains every original governing rule',
+    );
+    assert.equal(
+      fencedBlockContaining(
+        rawMarkdownSectionBody(emittedWork, '### Preview And Bind Human Permission'),
+        TERMINAL_MANUAL_CONFIRMATION,
+      ),
+      `\`\`\`text\n${TERMINAL_MANUAL_CONFIRMATION}\n\`\`\``,
+      'isolated Work output retains the original path confirmation',
+    );
+
+    for (const entry of [...TERMINAL_MANUAL_CONSUMER_SECTIONS, ...TERMINAL_ADMIN_CONSUMER_SECTIONS]) {
+      const generated = generatedForSource.get(entry.source);
+      assert.ok(generated, `${entry.source}: generated consumer mapping`);
+      const emitted = fs.readFileSync(path.join(tempRoot, ...generated.split('/')), 'utf8');
+      assert.deepEqual(
+        missingParagraphRequirements(markdownSection(emitted, entry.heading), entry.requirements),
+        [],
+        `${generated} ${entry.heading}: isolated output retains its owning deferral`,
+      );
+    }
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });

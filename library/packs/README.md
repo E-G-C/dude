@@ -30,6 +30,7 @@ namespace, which the engine treats as a distinct ownership tier:
 | `rust` | Rust specialist agent + Tauri development skill | you write Rust or build Tauri desktop/mobile apps |
 | `fluent-ui` | Fluent UI React v9 specialist agent | you build UIs with `@fluentui/react-components` |
 | `copilot-sdk` | GitHub Copilot SDK specialist agent | you build apps on the Copilot SDK |
+| `a2a` | one read-only A2A JavaScript advisor + protocol and JavaScript knowledge skills in catalog source | after disposable Compose and actual-advice validation, you need source-backed A2A protocol or JavaScript SDK advice |
 | `newsroom` | newsroom writer + event deep-fetcher agents + article / calendar-event / static-safe-time skills | you publish news & events to a Hugo/Docsy site's News section |
 | `writing` | avoid-AI-writing-tropes and professional-style prose-quality skills | you want a canonical guard against AI writing tells and consistent prose voice |
 | `design` | design-proposal workflow + frontend-aesthetics judgment guidance | you want a visual design workflow overlaid on the task lifecycle |
@@ -39,6 +40,23 @@ namespace, which the engine treats as a distinct ownership tier:
 | `rubber-duck` | read-only retrospective agent; no skills or external dependencies | you want one advisory record at a pending successful feature completion reached through direct feature work or a Ship invocation that completes its feature |
 
 Packs are added to this table as they are migrated out of core.
+
+`a2a` now contains its complete planned provider set in catalog source. That
+source availability alone does not activate the providers in a host. The
+19-pack Compose check completed with 56 warnings, zero failures, and zero
+leftovers. A JavaScript-only disposable install preserved its four generated
+files and profile through `build-dev`. Fresh advisor discovery and selection,
+followed by reads of the shipped guidance, produced three real responses:
+protocol guidance, JavaScript guidance, and refusal of an excluded request.
+Both disposable installations were removed afterward. A2A is now installed in
+this repository's dogfood profile through a separate explicit opt-in to support
+Feature 068. A fresh supported Copilot host session discovered and selected the
+installed advisor without making a model or advice call. That result does not
+prove that an already-running chat hot-reloaded its tool catalog. An existing
+chat may require a reload to discover a changed agent catalog. No
+other language source was delivered, and Feature 068's scope choices remain
+unanswered or deferred; activation neither completes its definition nor starts
+implementation.
 
 ## Layout
 

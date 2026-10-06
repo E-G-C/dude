@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * Features 057 and 062 T012 installed-host acceptance.
+ * Feature 062 T005 installed-host acceptance, retaining the 057 T012 proof.
  *
  * This is an explicitly invoked acceptance driver, not a recursively discovered
  * unit test. It installs the current release into owned fixtures, starts the
@@ -13,7 +13,7 @@
  * The loopback model is deterministic and contains no credentials. It chooses
  * only predeclared tools actually offered by the CLI. The selected Dude session
  * projection delegates staging/revision work to the exact installed Spec Lead;
- * those agents use skill/create/view/edit/bash, and Dude invokes/acknowledges the
+ * those agents use offered skill/create/view/edit/shell tools, and Dude invokes/acknowledges the
  * shipped handoff. A separate disposable pack fixture drives Settings through
  * owner preview, exact permission, Compose application, pack-result
  * acknowledgment, and the provider's authoritative reread. The model fixture
@@ -66,8 +66,8 @@ const ROOT = path.resolve(HERE, '..', '..');
 const WINDOWS = process.platform === 'win32';
 
 /**
- * Darwin keeps the recorded macOS install defaults. No other host layout is
- * recorded here, so elsewhere every installed artifact must be named.
+ * Darwin keeps the recorded CLI/runtime/browser defaults. Elsewhere these
+ * artifacts must be named; desktop app SDK selection is independent below.
  * @param {string|undefined} configured @param {string} name @param {string} darwinDefault
  */
 function installedArtifact(configured, name, darwinDefault) {
@@ -77,12 +77,6 @@ function installedArtifact(configured, name, darwinDefault) {
     + 'only the macOS app install has recorded defaults.');
 }
 
-/** Directory containing the installed SDK's index.js. */
-const SDK = installedArtifact(
-  process.env.DUDE_COPILOT_SDK,
-  'DUDE_COPILOT_SDK',
-  '/Applications/GitHub Copilot.app/Contents/Resources/copilot-sdk',
-);
 const CLI = installedArtifact(process.env.DUDE_COPILOT_CLI, 'DUDE_COPILOT_CLI', '/opt/homebrew/bin/copilot');
 if (WINDOWS && /\.(?:bat|cmd)$/i.test(CLI)) {
   // Node spawns batch shims only through cmd.exe quoting; the exact launcher needs none.
@@ -133,6 +127,17 @@ const SHELL_INVOKE = WINDOWS ? '& ' : '';
 function ownerText(text) {
   return WINDOWS ? text.replace(/\r?\n/g, '\r\n') : text;
 }
+// The desktop app SDK supplies the real invocation AbortSignal required by
+// dude_needs_you. The adjacent CLI SDK is not an interchangeable fallback.
+const APP_SDK = process.platform === 'win32'
+  ? path.join(process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData/Local'),
+    'Programs/GitHub Copilot/copilot-sdk')
+  : process.platform === 'darwin'
+    ? '/Applications/GitHub Copilot.app/Contents/Resources/copilot-sdk'
+    : null;
+const SDK = process.env.DUDE_COPILOT_SDK ?? APP_SDK;
+const RELEASE_DIR = process.env.DUDE_CANVAS_RELEASE_DIR
+  ? path.resolve(process.env.DUDE_CANVAS_RELEASE_DIR) : null;
 const ARTIFACTS = path.resolve(
   process.env.DUDE_CANVAS_ARTIFACTS_DIR
     ?? path.join(os.tmpdir(), 'dude-canvas-t012-installed-host'),
@@ -140,11 +145,13 @@ const ARTIFACTS = path.resolve(
 // Recursive mkdir returns the first directory it created (on Windows as a
 // \\?\ namespaced path), not ARTIFACTS itself, so only ARTIFACTS is the parent.
 fs.mkdirSync(ARTIFACTS, { recursive: true });
-const RUN = fs.realpathSync(fs.mkdtempSync(path.join(ARTIFACTS, 'installed-host-')));
+// Windows realpath can return a \\?\ path. Use the equivalent file-URL path
+// spelling so shipped CLI main-entry guards see the same path as import.meta.
+const RUN = fileURLToPath(pathToFileURL(fs.realpathSync(fs.mkdtempSync(path.join(ARTIFACTS, 'installed-host-')))));
 const DEADLINE = 30_000;
 const MAX_MODEL_BODY = 4 * 1024 * 1024;
-const REVIEW_SLUG = 't012-installed-review';
-const REVIEW_ID = '001';
+const REVIEW_SLUG = 'dude-canvas-workspace-integration';
+const REVIEW_ID = '062';
 const IDEA_PATH = `.dude/ideas/${REVIEW_ID}-${REVIEW_SLUG}.md`;
 const SPEC_PATH = `.dude/specs/${REVIEW_ID}-${REVIEW_SLUG}/spec.md`;
 const DESIGN_ROOT = `.dude/specs/${REVIEW_ID}-${REVIEW_SLUG}/design`;
@@ -232,6 +239,11 @@ const DEVELOPMENT_ABOUT = Object.freeze({
   rows: installedAboutRows('Development (main), based on v1.3.0', 'Development (main)'),
 });
 const SOURCE_APP_SHA256 = '465e6a2bcb763621a676aac6be1839e301d2ce2d0fc8d233b1d48e87c342cf7e';
+const TASKS_PATH = path.posix.join(path.posix.dirname(SPEC_PATH), 'tasks.md');
+const DONE_IDEA_PATH = '.dude/ideas/052-dude-canvas-ui.md';
+const DONE_SPEC_PATH = '.dude/specs/052-dude-canvas-ui/spec.md';
+const MIXED_IDEA_PATH = '.dude/ideas/061-installed-controlled-tasks.md';
+const MIXED_SPEC_PATH = '.dude/specs/061-installed-controlled-tasks/spec.md';
 const SOURCE_LEGAL_SHA256 = '3be2d01e3b59529e54cde5f17aee76c168bcde63245c21ec387cf70ba7a6d869';
 /**
  * The Review gesture behavior lives in these static modules, not in the bundled
@@ -245,6 +257,8 @@ const SOURCE_REVIEW_MODULES = Object.freeze({
   'ui/review/styles.css': '20e3430b0e0111584f2c4d06352f69182cdeb3eff522db1a088d858fc23871af',
 });
 const APPROVED_HASHES = Object.freeze({
+  '.dude/specs/052-dude-canvas-ui/design/fluent-desktop-workspace.html':
+    'd491b002154088f4cc6cac4773a6745ac2f9a02b5f78b5a593c3c88335169d70',
   [WORKSPACE_062.designPath]:
     '1508fe1efaf6a5228784dee8c140a569927bf27eb1dfc9244679b6ae80ec2962',
   '.dude/specs/057-dude-canvas-needs-you/design/needs-you-workspace.html':
@@ -271,10 +285,13 @@ const { parseDevelopmentBaseRelease, renderDevelopmentBaseRelease } = await impo
   ROOT,
   'src/skills/dude-engine/lib/development-base-release.mjs',
 )));
-const { CopilotClient, RuntimeConnection } = await import(pathToFileURL(path.join(SDK, 'index.js')));
+let CopilotClient, RuntimeConnection;
 const { decodePng } = await import(pathToFileURL(path.join(
   ROOT,
   'src/extensions/dude/lib/review/png.mjs',
+)));
+const { parseVisibleTasks } = await import(pathToFileURL(path.join(
+  ROOT, 'src/skills/dude-engine/lib/tasks.mjs',
 )));
 
 /** @param {string|Buffer} value */
@@ -460,7 +477,9 @@ function seedWorkspaceTaskFixtures(root) {
     WORKSPACE_062.specPath,
     WORKSPACE_062.designPath,
   ]) {
-    write(root, relative, sourceBytes(relative));
+    // The Review now shares 062's scope. Keep its synthetic spec's exact
+    // preview_path binding instead of replacing it with the source preview.
+    if (relative !== SPEC_PATH) write(root, relative, sourceBytes(relative));
   }
   write(root, WORKSPACE_062.tasksPath, frozen062.snapshot);
 
@@ -607,22 +626,42 @@ function windowsPowerShell(script, env = process.env) {
   });
 }
 
+/** Bounded native queries only; no profile, inherited script, or GUI attachment.
+ * @param {string} script
+ */
+function windowsQuery(script) {
+  assert.ok(WINDOWS_POWERSHELL, 'Windows queries run only on Windows');
+  return command(WINDOWS_POWERSHELL, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', `$ErrorActionPreference='Stop'; ${script}`], {
+    timeout: 10_000,
+    windowsHide: true,
+  });
+}
+
 /** @param {number} pid */
 function processRow(pid) {
-  let result;
+  assert.ok(Number.isSafeInteger(pid) && pid > 0, 'process evidence requires an exact PID');
   if (WINDOWS) {
-    // No ps on Windows; CIM reports the same pid, parent pid, and executable.
-    // An absent process is an empty successful query, never a failed probe.
-    result = windowsPowerShell(`Get-CimInstance Win32_Process -Filter 'ProcessId=${Number(pid)}' | `
-      + "ForEach-Object { '{0} {1} {2}' -f $_.ProcessId, $_.ParentProcessId, "
-      + '$(if ($_.ExecutablePath) { $_.ExecutablePath } else { $_.Name }) }');
-    assert.ok(result.exitCode === 0 && !result.error,
-      `Windows process probe failed for ${pid}: ${result.error ?? result.stderr}`);
-  } else {
-    result = command('/bin/ps', ['-p', String(pid), '-o', 'pid=,ppid=,comm=']);
+    const result = windowsQuery(
+      `$p=Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'; `
+      + 'if ($p) { [ordered]@{pid=[int]$p.ProcessId;ppid=[int]$p.ParentProcessId;'
+      + "executable=$p.ExecutablePath;started=$p.CreationDate.ToUniversalTime().ToString('o')} "
+      + '| ConvertTo-Json -Compress }',
+    );
+    assert.ok(result.exitCode === 0 && !result.error, `Windows process evidence unavailable: ${result.error ?? result.stderr}`);
+    return result.stdout.trim() ? JSON.parse(result.stdout) : null;
   }
+  const result = command('/bin/ps', ['-p', String(pid), '-o', 'pid=,ppid=,comm=']);
+  assert.ok(result.exitCode === 0 || result.exitCode === 1,
+    `process evidence unavailable: ${result.error ?? result.stderr}`);
   const match = result.stdout.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
   return match ? { pid: Number(match[1]), ppid: Number(match[2]), executable: match[3] } : null;
+}
+
+/** @param {string} file */
+async function fileIdentity(file) {
+  const hash = createHash('sha256');
+  for await (const bytes of fs.createReadStream(file)) hash.update(bytes);
+  return { path: fs.realpathSync(file), bytes: fs.statSync(file).size, sha256: hash.digest('hex') };
 }
 
 /** @template T @param {string} label @param {()=>Promise<T>|T} operation @param {number} [ms] */
@@ -759,6 +798,15 @@ function shellArg(value) {
 /** @param {string[]} words literal or already quoted words, executable first */
 function shellCommand(words) {
   return `${SHELL_INVOKE}${words.join(' ')}`;
+}
+
+/** @param {ReturnType<typeof captureFixture>} fixture @param {string} root */
+function publisherCommand(fixture, root) {
+  return shellCommand([
+    shellArg(process.execPath), shellArg(fixture.publisher),
+    '--root', shellArg(root), '--slug', shellArg(fixture.slug),
+    '--stage', shellArg(fixture.stagePath),
+  ]);
 }
 
 /** @param {unknown} value @param {Set<unknown>} [seen] @returns {Buffer[]} */
@@ -933,7 +981,7 @@ function source(root) {
 function createReviewOwner(root) {
   write(root, IDEA_PATH, [
     '---',
-    'title: T012 installed review',
+    'title: Dude Canvas Workspace Integration (installed fixture)',
     `slug: ${REVIEW_SLUG}`,
     'status: defined',
     `spec_path: ${SPEC_PATH}`,
@@ -980,6 +1028,123 @@ function createReviewOwner(root) {
   return seedMock(root, 'A');
 }
 
+/**
+ * Expected raw units use the canonical parser's membership/visibility offsets,
+ * never a second task-header parser. This oracle compares actual HTTP and DOM
+ * output with the complete fixture bytes, including paragraphs after blanks.
+ * @param {Buffer} bytes
+ */
+function fixtureTaskUnits(bytes) {
+  const scan = parseVisibleTasks(bytes, { state: 'installed acceptance fixture' });
+  assert.deepEqual(scan.parsed.warnings, []);
+  const starts = new Set(scan.parsed.tasks.map((task) => scan.lines[task.headerLine].start));
+  const headings = scan.lines.filter((line, index) => (
+    /^#{2,3}\s+\S/.test(line.text)
+    && !(scan.parsed.board && index >= scan.parsed.board.startLine && index <= scan.parsed.board.endLine)
+  ));
+  const boundaries = [...starts, ...headings.map((line) => line.start), scan.activeEnd];
+  if (scan.parsed.board) boundaries.push(scan.lines[scan.parsed.board.startLine].start);
+  boundaries.sort((a, b) => a - b);
+  return scan.parsed.tasks.map((task) => {
+    const start = scan.lines[task.headerLine].start;
+    const end = boundaries.find((offset) => offset > start);
+    return {
+      taskKey: task.id, state: task.state, deps: task.deps, blockedBy: task.blockedBy,
+      phase: headings.filter((line) => line.start < start).at(-1)?.text.replace(/^#{2,3}\s+/, '') ?? null,
+      text: bytes.subarray(start, end).toString('utf8'),
+    };
+  });
+}
+
+/** Extend the shared source snapshot before the installed session starts, in RUN.
+ * @param {string} root @param {ReturnType<typeof seedWorkspaceTaskFixtures>} workspaceFixture
+ */
+function seedTaskWalkthrough(root, workspaceFixture) {
+  const original = sourceBytes(TASKS_PATH);
+  const planned = fs.readFileSync(path.join(root, TASKS_PATH));
+  assert.equal(revision(planned), workspaceFixture.records['062'].fixtureTasksRevision);
+
+  const doneTasksPath = path.posix.join(path.posix.dirname(DONE_SPEC_PATH), 'tasks.md');
+  const done = fs.readFileSync(path.join(root, doneTasksPath));
+  assert.equal(revision(done), workspaceFixture.records['052'].fixtureTasksRevision);
+  const doneUnits = fixtureTaskUnits(done);
+  assert.equal(doneUnits.length, 13);
+  assert.ok(doneUnits.every((task) => task.state === 'done'));
+  assert.ok(doneUnits.some((task) => task.taskKey === 'T010@052now10'));
+  assert.ok(!doneUnits.some((task) => task.taskKey === 'T004@052send4'), 'archived 052 unit stays excluded');
+  const seedOwner = (ideaPath, specPath, title, intent) => {
+    const slug = path.posix.basename(ideaPath, '.md').slice(4);
+    write(root, ideaPath, [
+      '---', `title: ${title}`, `slug: ${slug}`, `status: ${specPath ? 'defined' : 'draft'}`,
+      `spec_path: ${specPath ?? ''}`, '---', '', '## Idea', '', intent, '',
+    ].join('\n'));
+    if (specPath) write(root, specPath, `# ${title}\n\n${intent}\n`);
+  };
+  const plannedUnits = fixtureTaskUnits(planned);
+  assert.equal(plannedUnits.length, 5);
+  assert.ok(plannedUnits.every((task) => task.state === 'todo'));
+  const inertText = [
+    'Installed controlled fixture only; no live agent or real task state is represented.',
+    '',
+    '<script>globalThis.__t005TaskExecuted = true</script>',
+    '',
+    '```html',
+    '<button onclick="globalThis.__t005TaskExecuted = true">Do not execute this source</button>',
+    '- [ ] T999@fenced99 This fenced example is not a task.',
+    '```',
+    '',
+    'Full-unit continuation after blank lines: café — 東京.',
+    '',
+  ].join('\n');
+  const states = ['x', '~', '!', ' ', ' '];
+  const mixed = Buffer.from('# Controlled 062-derived task fixture, not live work\n\n'
+    + plannedUnits.map((task, index) => {
+      let text = task.text.slice(0, 3) + states[index] + task.text.slice(4);
+      if (index === 2) text = text.replace('    deps: T002@b062d2e5',
+        '    deps: T002@b062d2e5\n    blocked-by: external-dependency: isolated acceptance fixture');
+      if (index === 3) text = text.replace('    deps: T003@c062e3f6', '    deps: T001@a062c1d4');
+      if (index === 4) text = text.replace('    deps: T004@d062f4a7', '    deps: T003@c062e3f6');
+      return `## ${task.phase}\n\n${text}${index === 1 ? inertText : ''}`;
+    }).join('\n'));
+  seedOwner(MIXED_IDEA_PATH, MIXED_SPEC_PATH, 'Controlled task states (062-derived, not live)',
+    'Only this owned fixture has active/blocked examples. The copied 062 planned and 052 Done sources remain distinct.');
+  const mixedTasksPath = path.posix.join(path.posix.dirname(MIXED_SPEC_PATH), 'tasks.md');
+  write(root, mixedTasksPath, mixed);
+
+  // The separate 063 dependency/blocker control replaces one synthetic
+  // supporting package, keeping the same accepted 62-record/50-package scale.
+  for (let number = 1; number <= 60; number += 1) {
+    if (number === 47 || number === 52) continue;
+    const id = String(number).padStart(3, '0');
+    const slug = `installed-support-${id}`;
+    const ideaPath = `.dude/ideas/${id}-${slug}.md`;
+    const specPath = number <= 47 ? `.dude/specs/${id}-${slug}/spec.md` : null;
+    seedOwner(ideaPath, specPath, `Supporting fixture ${id}`, 'Synthetic inventory-scale record; not repository work.');
+    if (specPath) write(root, path.posix.join(path.posix.dirname(specPath), 'tasks.md'),
+      `# Supporting task\n\n- [ ] T001@${id}aaaaa Inspect this explicitly synthetic supporting record.\n`);
+  }
+  assert.equal(fs.readdirSync(path.join(root, '.dude/ideas')).length, 62);
+  assert.equal(fs.readdirSync(path.join(root, '.dude/specs')).length, 50);
+  const records = [
+    { name: 'planned062', ideaPath: IDEA_PATH, specPath: SPEC_PATH, tasksPath: TASKS_PATH,
+      units: plannedUnits, originalSha256: sha256(original), fixtureSha256: sha256(planned),
+      adjustment: 'Owned copy only: canonical glyphs reset to todo; generated board and terminal history preserved and non-authoritative.' },
+    { name: 'done052', ideaPath: DONE_IDEA_PATH, specPath: DONE_SPEC_PATH, tasksPath: doneTasksPath,
+      units: doneUnits, originalSha256: sha256(done), fixtureSha256: sha256(done),
+      adjustment: 'None: complete original tasks.md bytes, including ignored derived and archived content.' },
+    { name: 'controlled061', ideaPath: MIXED_IDEA_PATH, specPath: MIXED_SPEC_PATH, tasksPath: mixedTasksPath,
+      units: fixtureTaskUnits(mixed), originalSha256: sha256(original), fixtureSha256: sha256(mixed),
+      adjustment: 'Explicit 062-derived fixture: done/active/blocked/ready/waiting plus inert source examples.' },
+  ];
+  const preserved = [
+    ...records.flatMap((record) => [record.ideaPath, record.specPath, record.tasksPath]),
+    TASK_CONTROL.ideaPath, TASK_CONTROL.specPath, TASK_CONTROL.tasksPath,
+  ]
+    .map((relative) => ({ path: relative, sha256: sha256(fs.readFileSync(path.join(root, relative))) }));
+  const ideaFiles = fs.readdirSync(path.join(root, '.dude/ideas')).sort();
+  return { records, preserved, ideaFiles, inventory: { ideas: 62, packages: 50 } };
+}
+
 /** @param {'blank-non-git'|'blank-git'} kind */
 function blankIntent(kind) {
   return kind === 'blank-git'
@@ -995,6 +1160,8 @@ function blankSlug(kind) {
 /** @param {{root:string,intent:string,slug:string,evidence:string}} options */
 function captureFixture(options) {
   const title = options.slug.split('-').map((part) => part[0].toUpperCase() + part.slice(1)).join(' ');
+  // ownerText preserves the installed create tool's CRLF bytes; the Canvas
+  // receipt still retains the original LF input.
   const bytes = Buffer.from(ownerText([
     '---',
     `title: ${title}`,
@@ -1548,6 +1715,7 @@ function createBlankModel(options) {
         const stagedRead = toolMessageText(body, lastTool.tool_call_id);
         assert.ok(stagedRead.includes(ownerText(options.intent)));
         assert.ok(stagedRead.includes(`slug: ${options.slug}`));
+        assert.equal(stagedRead, ownerFixture.bytes.toString('utf8'));
         state.phase = 'capture-await-parent-task';
         answerModel(res, body, {
           role: 'assistant',
@@ -1633,28 +1801,25 @@ function createBlankModel(options) {
       }
       if (state.phase === 'capture-await-parent-task') {
         assert.equal(lastTool?.tool_call_id, state.ownerExecution.delegationCallId);
-        const taskResult = toolMessageText(body, lastTool.tool_call_id);
-        // The Spec Lead reports JSON, so a Windows path arrives with escaped backslashes.
-        assert.ok(taskResult.includes(JSON.stringify(ownerFixture.stagePath).slice(1, -1)));
-        assert.ok(taskResult.includes(ownerFixture.revision));
+        // Parsing the JSON result preserves Windows backslashes and checks
+        // the complete staged-file binding, not only a substring.
+        const taskResult = toolDetails(body, lastTool.tool_call_id);
+        assert.deepEqual(taskResult, {
+          status: 'staged',
+          path: ownerFixture.stagePath,
+          revision: ownerFixture.revision,
+          writer: 'Spec Lead',
+        });
         const shell = requireToolSchema(body, SHELL_TOOL, ['command', 'description']);
-        const publisherCommand = shellCommand([
-          shellArg(process.execPath),
-          shellArg(ownerFixture.publisher),
-          '--root',
-          shellArg(options.root),
-          '--slug',
-          shellArg(options.slug),
-          '--stage',
-          shellArg(ownerFixture.stagePath),
-        ]);
-        state.ownerExecution.publisherCommand = publisherCommand;
+        const exactCommand = publisherCommand(ownerFixture, options.root);
+        state.ownerExecution.publisherTool = shell;
+        state.ownerExecution.publisherCommand = exactCommand;
         state.phase = 'capture-publish';
         answerModel(res, body, toolCall(
           state.ownerExecution.publisherCallId,
           shell,
           {
-            command: publisherCommand,
+            command: exactCommand,
             description: 'Publish staged idea with shipped helper',
             mode: 'sync',
             initial_wait: 30,
@@ -1683,6 +1848,7 @@ function createBlankModel(options) {
         const canonicalRead = toolMessageText(body, lastTool.tool_call_id);
         assert.ok(canonicalRead.includes(ownerText(options.intent)));
         assert.ok(canonicalRead.includes(`slug: ${options.slug}`));
+        assert.equal(canonicalRead, ownerFixture.bytes.toString('utf8'));
         requireToolSchema(body, offered.name, ['op']);
         state.ownerExecution.canonicalReadRevision = ownerFixture.revision;
         state.phase = 'acknowledging';
@@ -1717,7 +1883,7 @@ function createBlankModel(options) {
         content: 'T012_BLANK_HOST_IDLE',
       }, 'stop');
     } catch (error) {
-      state.modelError = safeError(error);
+      state.modelError ??= safeError(error);
       note('blank-model-refusal', { kind: options.kind, error: state.modelError });
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: { message: 'Bounded T012 blank fixture refused request' } }));
@@ -3671,11 +3837,15 @@ class Cdp {
     return promise;
   }
 
-  /** @param {string} method @param {(value:any)=>void} listener */
+  /** @param {string} method @param {(value:any)=>void} listener @returns {()=>void} */
   on(method, listener) {
     const listeners = this.listeners.get(method) ?? [];
     listeners.push(listener);
     this.listeners.set(method, listeners);
+    return () => {
+      const index = listeners.indexOf(listener);
+      if (index >= 0) listeners.splice(index, 1);
+    };
   }
 
   close() {
@@ -3783,6 +3953,28 @@ async function openReviewDetails(page) {
   );
 }
 
+/** Dismiss the real disclosure before pointer work on the palette/viewport.
+ * @param {Cdp} page
+ */
+async function closeReviewDetails(page) {
+  const snapshot = () => evaluate(page, `(() => {
+    const surface = document.querySelector('.fui-PopoverSurface[aria-label="Notes and more"]');
+    const select = document.querySelector('[data-review-tools] [aria-label="Select (V)"]');
+    const rect = select?.getBoundingClientRect();
+    const hit = rect && document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    return {open:Boolean(surface?.getClientRects().length),
+      selectExists:Boolean(select), selectDisabled:select?.disabled ?? null,
+      selectHit:Boolean(hit && (hit === select || select.contains(hit))),
+      hitLabel:hit?.closest('[aria-label]')?.getAttribute('aria-label') ?? null};
+  })()`);
+  const before = await snapshot();
+  if (before.open) {
+    await click(page, button('Notes and more'));
+    await until(async () => !(await snapshot()).open, 'installed Notes and more disclosure exit');
+  }
+  return { before, after: await snapshot() };
+}
+
 /** @param {Cdp} page @param {string} expression */
 async function click(page, expression) {
   await until(() => evaluate(page, `Boolean(${expression})`), `rendered target ${expression}`);
@@ -3836,7 +4028,7 @@ function settle(page) {
 /** @param {Cdp} page @param {string} key @param {string} [code] @param {number} [modifiers] */
 async function pressKey(page, key, code = key, modifiers = 0) {
   const virtual = {
-    Enter: 13, Tab: 9, Escape: 27, Home: 36, PageDown: 34,
+    Enter: 13, Tab: 9, Escape: 27, Home: 36, End: 35, PageDown: 34,
     ArrowDown: 40, ArrowUp: 38, ArrowLeft: 37, ArrowRight: 39,
   }[key] ?? 0;
   await page.send('Input.dispatchKeyEvent', {
@@ -4414,6 +4606,429 @@ async function screenshot(page, name) {
   return { path: target, bytes: bytes.length, sha256: sha256(bytes) };
 }
 
+/** @param {Cdp} page @param {number} width @param {'light'|'dark'} theme @param {number} [scale] */
+async function workspaceViewport(page, width, theme, scale = 1) {
+  await page.send('Emulation.setDeviceMetricsOverride', {
+    width, height: 900, deviceScaleFactor: scale, mobile: false,
+  });
+  await page.send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-color-scheme', value: theme }],
+  });
+  await until(() => evaluate(page, `getComputedStyle(document.querySelector('.fui-FluentProvider'))
+    .getPropertyValue('--colorNeutralForeground1').trim() === ${JSON.stringify(theme === 'dark' ? '#ffffff' : '#242424')}`),
+  `installed ${theme} theme`);
+  await settle(page);
+}
+
+/**
+ * Same rendered geometry, AX-name and WCAG sRGB checks as the existing browser
+ * acceptance, scoped here to the installed workspace. Its test-local helpers
+ * cannot be imported without running that suite.
+ * @param {Cdp} page @param {string} name
+ */
+async function auditWorkspace(page, name) {
+  await until(() => evaluate(page, `document.getAnimations()
+    .filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+    .every(animation => ['finished','idle'].includes(animation.playState))`), `${name} settled paint`);
+  const image = await screenshot(page, name);
+  const tree = await page.send('Accessibility.getFullAXTree');
+  write(RUN, `${name}.ax.json`, `${JSON.stringify(tree, null, 2)}\n`);
+  const namedRoles = new Set(['button', 'checkbox', 'combobox', 'listbox', 'option', 'radio',
+    'radiogroup', 'tab', 'tabpanel', 'textbox', 'toolbar']);
+  assert.deepEqual(tree.nodes.filter((node) => !node.ignored && namedRoles.has(node.role?.value)
+    && !node.name?.value), [], `${name}: named interactive AX widgets`);
+  const geometry = await evaluate(page, `(() => {
+    const rect = node => node?.getBoundingClientRect().toJSON() ?? null;
+    return {width:innerWidth,clientWidth:document.documentElement.clientWidth,
+      scrollWidth:document.documentElement.scrollWidth,bodyWidth:document.body.scrollWidth,
+      frame:rect(document.querySelector('.fui-FluentProvider > div')),
+      rail:rect(document.querySelector('[data-navigation-pane]')),
+      detail:rect(document.querySelector('[data-task-detail]')),
+      dock:rect(document.querySelector('[data-task-detail]')?.closest('aside')),
+      active:document.activeElement?.getAttribute('data-task-detail')
+        || document.activeElement?.getAttribute('aria-label') || document.activeElement?.tagName,
+      controls:[...document.querySelectorAll('button,input,textarea,[role=combobox],[role=radio],[data-work-path]')]
+        .filter(node => node.getClientRects().length).map(node => ({
+          name:node.getAttribute('aria-label') || node.textContent.trim().slice(0,100) || node.tagName,
+          ...rect(node),
+        }))};
+  })()`);
+  write(RUN, `${name}.geometry.json`, `${JSON.stringify(geometry, null, 2)}\n`);
+  assert.ok(geometry.scrollWidth <= geometry.clientWidth + 1 && geometry.bodyWidth <= geometry.clientWidth + 1,
+    `${name}: no page horizontal overflow`);
+  assert.ok(Math.abs(geometry.frame.x) <= 1 && geometry.frame.right <= geometry.clientWidth + 1);
+  assert.deepEqual(geometry.controls.filter((control) => control.width < 24 || control.height < 24
+    || control.x < -1 || control.right > geometry.clientWidth + 1), [], `${name}: usable, unclipped controls`);
+  const contrast = await evaluate(page, `(() => {
+    const channels = value => (value.match(/[\\d.]+/g) || []).slice(0,4).map(Number);
+    const composite = (top,bottom) => top.slice(0,3).map((value,index) =>
+      value*(top[3] ?? 1) + bottom[index]*(1-(top[3] ?? 1)));
+    const background = element => {
+      const layers = [];
+      for (let node=element;node;node=node.parentElement) {
+        const color=channels(getComputedStyle(node).backgroundColor);
+        if (color.length>=3 && (color[3] ?? 1)>0) layers.push(color);
+      }
+      return layers.reverse().reduce((result,layer) => composite(layer,result),[255,255,255]);
+    };
+    const luminance = rgb => rgb.slice(0,3).map(value => value/255)
+      .map(value => value<=.04045 ? value/12.92 : ((value+.055)/1.055)**2.4)
+      .reduce((sum,value,index) => sum+value*[.2126,.7152,.0722][index],0);
+    return [...document.querySelectorAll('h1,h2,h3,p,label,button:not(:disabled),[role=tab],[data-work-number]')]
+      .filter(node => node.getClientRects().length && node.textContent.trim()).map(node => {
+        const style=getComputedStyle(node),bg=background(node),fg=channels(style.color);
+        const values=[luminance(fg),luminance(bg)].sort((a,b)=>b-a);
+        const size=parseFloat(style.fontSize),weight=parseInt(style.fontWeight,10)||400;
+        return {text:node.textContent.trim().slice(0,100),foreground:style.color,background:bg,
+          ratio:(values[0]+.05)/(values[1]+.05),threshold:size>=24||(size>=18.66&&weight>=700)?3:4.5,
+          exemption:node.tagName==='LABEL' && document.getElementById(node.htmlFor)?.disabled
+            ? 'inactive control (WCAG 1.4.3)' : null};
+      });
+  })()`);
+  write(RUN, `${name}.contrast.json`, `${JSON.stringify(contrast, null, 2)}\n`);
+  assert.ok(contrast.length);
+  assert.deepEqual(contrast.filter((sample) => !sample.exemption && sample.ratio + .001 < sample.threshold),
+    [], `${name}: computed text contrast`);
+  return { name, image, geometry, axNodes: tree.nodes.length, contrastSamples: contrast.length,
+    minimumApplicableContrast: Math.min(...contrast.filter((sample) => !sample.exemption).map((sample) => sample.ratio)) };
+}
+
+/** @param {Cdp} page */
+async function clearWork(page) {
+  await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
+  await until(() => evaluate(page, `${field('Search work')}?.value === ''
+    && ${field('Show')}?.innerText.trim() === 'All'
+    && document.activeElement === ${field('Search work')}`), 'installed Clear resets only work discovery');
+}
+
+/** @param {Cdp} page @param {string} ideaPath */
+async function selectWork(page, ideaPath) {
+  const number = path.posix.basename(ideaPath).slice(0, 3);
+  await fill(page, field('Search work'), number);
+  await until(() => evaluate(page, `Boolean(document.querySelector('[data-work-path="${ideaPath}"]')
+    ?.getClientRects().length)`), `installed ${number} discovery`);
+  assert.equal(await evaluate(page, `Boolean(document.querySelector('[aria-label="Clear work selection"]'))`), false,
+    'typing never selects work');
+  // A number may also occur in another title (the labelled 062-derived control
+  // is one such match). Traverse the real results to the exact path; never
+  // mistake the first textual match for the selected record.
+  const matches = await evaluate(page, `[...document.querySelectorAll('[data-work-path]')]
+    .filter(node => node.getClientRects().length).map(node => node.dataset.workPath)`);
+  const visited = [];
+  for (let index = 0; index < matches.length; index += 1) {
+    await pressKey(page, 'ArrowDown');
+    await settle(page);
+    const focused = await evaluate(page, `document.activeElement?.closest('[data-work-path]')?.dataset.workPath`);
+    visited.push(focused);
+    if (focused === ideaPath) break;
+  }
+  assert.equal(visited.at(-1), ideaPath, `keyboard discovery did not reach ${ideaPath}`);
+  note('walkthrough-selection', { query: number, matches, visited, selected: ideaPath });
+  await pressKey(page, 'Enter');
+  await until(() => evaluate(page, `document.querySelector('h1')?.textContent.trim().startsWith('${number} ')
+    && Boolean(document.querySelector('[aria-label="Clear work selection"]'))`), `installed ${number} selected Now`);
+}
+
+/** @param {Cdp} page @param {ReturnType<typeof fixtureTaskUnits>[number]} task */
+async function inspectTask(page, task) {
+  await click(page, `document.querySelector('[data-task-key="${task.taskKey}"]')`);
+  await until(() => evaluate(page, `document.activeElement === document.querySelector(
+    '[data-task-detail="${task.taskKey}"]')`), `installed ${task.taskKey} detail focus`);
+  const detail = await evaluate(page, `(() => {
+    const node=document.querySelector('[data-task-detail="${task.taskKey}"]');
+    const instruction=node.querySelector('[data-task-instruction]');
+    return {text:instruction.textContent,children:instruction.children.length,detail:node.innerText,
+      inDock:Boolean(node.closest('aside')),inRow:Boolean(node.closest('li')),
+      whiteSpace:getComputedStyle(instruction).whiteSpace};
+  })()`);
+  assert.equal(detail.text, task.text, `${task.taskKey}: exact full canonical unit, not a summary`);
+  assert.equal(detail.children, 0, 'instruction markup stays inert text');
+  assert.equal(detail.whiteSpace, 'pre-wrap');
+  assert.ok(detail.detail.includes('Not exposed by this source.'));
+  assert.ok(detail.detail.includes('Acceptance wording, Done, feature Activity, and design-review history are not task results.'));
+  return detail;
+}
+
+/** @param {Cdp} page */
+function phaseTotals(page) {
+  return evaluate(page, `[...document.querySelectorAll('[data-task-phase]')].map(section => ({
+    heading:section.dataset.taskPhase,total:[...section.querySelectorAll('*')]
+      .find(node => /^\\d+ of \\d+ tasks complete$/.test(node.textContent.trim()))?.textContent.trim()
+  }))`);
+}
+
+/**
+ * Real installed endpoints and rendered controls, no provider/SDK stand-ins.
+ * @param {Cdp} page @param {Awaited<ReturnType<typeof createInstalledHost>>} host
+ * @param {ReturnType<typeof seedTaskWalkthrough>} fixture @param {any} evidence
+ */
+async function driveTaskWalkthrough(page, host, fixture, evidence) {
+  const [planned, done, mixed] = fixture.records;
+  const indexResponse = await fetch(new URL('/api/work-index', host.canvas.url), { signal: AbortSignal.timeout(DEADLINE) });
+  assert.equal(indexResponse.status, 200);
+  const index = await indexResponse.json();
+  assert.equal(index.contexts.length, 62);
+  write(RUN, 'walkthrough-work-index.json', `${JSON.stringify(index, null, 2)}\n`);
+  // Compare like encodings. A raw multiline needle cannot detect a body leaked
+  // into JSON, where newlines and quotes are escaped.
+  const containsUnit = (value, text) => JSON.stringify(value).includes(JSON.stringify(text).slice(1, -1));
+  for (const record of fixture.records) {
+    for (const unit of record.units) {
+      assert.equal(containsUnit(index, unit.text), false, 'inventory contains no unselected full body');
+      assert.equal(containsUnit({ ...index, leakedInstruction: unit.text }, unit.text), true,
+        'the inventory oracle detects a literal multiline-body leak');
+    }
+    const row = index.items.find((item) => item.ideaPath === record.ideaPath);
+    assert.equal(Object.hasOwn(row, 'taskDetails') || Object.hasOwn(row, 'instruction'), false);
+    const selected = await postCanvas(host.canvas.url, '/api/refresh', { target: record.ideaPath });
+    assert.equal(selected.status, 200);
+    const projection = selected.body.projection;
+    assert.equal(projection.selected.ideaPath, record.ideaPath);
+    assert.equal(projection.taskDetails.coverage.state, 'available');
+    assert.equal(projection.taskDetails.resultCoverage, 'not-exposed');
+    const counts = { total: record.units.length, open: 0, inProgress: 0, blocked: 0, done: 0 };
+    for (const unit of record.units) counts[{ todo: 'open', 'in-progress': 'inProgress', blocked: 'blocked', done: 'done' }[unit.state]] += 1;
+    assert.deepEqual(projection.tasks, counts);
+    assert.deepEqual(index.items.find((item) => item.ideaPath === record.ideaPath).taskCounts, counts);
+    assert.deepEqual(projection.taskDetails.items.map((task) => ({
+      taskKey: task.taskKey, state: task.state, deps: task.deps ?? [], blockedBy: task.blockedBy,
+      phase: task.phase?.heading ?? null, text: task.instruction.text,
+    })), record.units);
+    assert.ok(projection.taskDetails.items.every((task) => task.source.contentIdentity === `sha256:${record.fixtureSha256}`));
+    const filename = `walkthrough-${record.name}-projection.json`;
+    write(RUN, filename, `${JSON.stringify(selected.body, null, 2)}\n`);
+    evidence.projections.push({ name: record.name, file: filename, counts, authority: projection.authority,
+      phases: projection.phases, resultCoverage: projection.taskDetails.resultCoverage });
+    if (record === planned) {
+      assert.equal(projection.authority, 'definition');
+      assert.equal(projection.next, null);
+      assert.deepEqual(projection.taskDetails.items.map((task) => task.readiness.state),
+        ['ready', 'waiting', 'waiting', 'waiting', 'waiting']);
+    } else if (record === mixed) {
+      assert.equal(projection.authority, 'lightweight');
+      assert.deepEqual(projection.taskDetails.items.map((task) => task.readiness.state),
+        ['not-applicable', 'not-applicable', 'not-applicable', 'ready', 'waiting']);
+      assert.equal(projection.blockers.length, 1);
+    }
+  }
+  evidence.inventory = { file: 'walkthrough-work-index.json', contexts: index.contexts.length,
+    completeUnitAbsenceAndInjectedLeakChecks: fixture.records.reduce((total, record) => total + record.units.length, 0) };
+  assert.equal(await evaluate(page, `document.querySelectorAll('input[type="search"]').length`), 1);
+  await selectWork(page, planned.ideaPath);
+  await visible(page, 'Planned task definitions; execution has not started.');
+  assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-task-key]')].map(node => node.dataset.taskKey)`),
+    planned.units.map((task) => task.taskKey));
+  const totals = await phaseTotals(page);
+  assert.deepEqual(totals.map((phase) => phase.total), Array(5).fill('0 of 1 tasks complete'));
+  assert.equal(await evaluate(page, `document.querySelectorAll('input[type="search"]').length`), 0);
+  await click(page, button('Overview'));
+  assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-work-path]')].map(node => node.dataset.workPath)`),
+    [planned.ideaPath]);
+  await click(page, button('Now'));
+  for (const task of planned.units) await inspectTask(page, task);
+  const nextBeforeFilter = await evaluate(page, `document.querySelector('[data-now-next]').innerText`);
+  await click(page, `document.querySelector('[data-task-filter="done"]')`);
+  await until(() => evaluate(page, `!document.querySelector('[data-task-detail]')
+    && !document.querySelector('[data-task-key]')`), 'installed planned Done filter is empty');
+  assert.equal(await evaluate(page, `document.activeElement?.dataset.taskFilter`), 'done');
+  assert.deepEqual(await phaseTotals(page), totals);
+  assert.equal(await evaluate(page, `document.querySelector('[data-now-next]').innerText`), nextBeforeFilter);
+  await click(page, `document.querySelector('[data-task-filter="all"]')`);
+  await inspectTask(page, planned.units[2]);
+  evidence.planned062 = { keys: planned.units.map((task) => task.taskKey), phaseTotals: totals,
+    fullUnitsCompared: 5, emptyDoneFilterPreservesNextAndPhases: true };
+
+  // Local input is unfiled and survives task selection, filtering and Clear.
+  evidence.newIdeaDraft = '  Installed independent unfiled draft.\n\nKeep *literal* whitespace.  ';
+  await click(page, button('New idea'));
+  await fill(page, field('Your idea'), evidence.newIdeaDraft);
+  await click(page, button('Cancel'));
+  await click(page, button('Now'));
+  await clearWork(page);
+  await selectWork(page, done.ideaPath);
+  await visible(page, 'All recorded tasks are complete in the authoritative lane.');
+  await click(page, `document.querySelector('[data-task-filter="done"]')`);
+  await until(() => evaluate(page, `document.querySelectorAll('[data-task-key]').length === 13`), 'installed 052 genuine Done rows');
+  const doneDetail = await inspectTask(page, done.units.find((task) => task.taskKey === 'T010@052now10'));
+  assert.ok(doneDetail.detail.includes('Done is recorded state, not a verification or review result.'));
+  assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-task-key="T004@052send4"]'))`), false);
+  evidence.done052 = { canonicalDone: 13, archivedT004Excluded: true, inspected: 'T010@052now10',
+    taskResults: 'not-exposed' };
+  evidence.visual.push(await auditWorkspace(page, 'installed-052-done-1440-light'));
+
+  await clearWork(page);
+  await selectWork(page, mixed.ideaPath);
+  const activeDetail = await inspectTask(page, mixed.units[1]);
+  assert.ok(activeDetail.detail.includes('In progress is recorded state, not evidence that an agent is working now.'));
+  assert.equal(await evaluate(page, 'globalThis.__t005TaskExecuted'), undefined);
+  assert.equal(await evaluate(page, `document.querySelectorAll('[data-task-key]').length`), 5);
+  assert.equal(await evaluate(page, `document.querySelectorAll('[data-task-instruction] script,[data-task-instruction] button').length`), 0);
+  const blockedDetail = await inspectTask(page, mixed.units[2]);
+  assert.ok(blockedDetail.detail.includes('Explicitly blocked is separate from waiting on dependencies.'));
+  assert.ok(blockedDetail.detail.includes('external-dependency: isolated acceptance fixture'));
+  assert.match(await evaluate(page, `document.querySelector('[data-task-key="${mixed.units[3].taskKey}"]').innerText`),
+    /Ready by recorded task dependencies/);
+  assert.match(await evaluate(page, `document.querySelector('[data-task-key="${mixed.units[4].taskKey}"]').innerText`),
+    /Waiting on dependencies/);
+  evidence.controlledStates = { explicitFixture: true, activeIsNotLive: true, inertFullSource: true,
+    dependenciesDistinctFromBlockers: true };
+  await inspectTask(page, mixed.units[1]);
+  for (const theme of ['light', 'dark']) {
+    for (const width of [360, 768, 1440, 1920]) {
+      await workspaceViewport(page, width, theme);
+      await until(() => evaluate(page, `Boolean(document.querySelector('[data-task-detail]')
+        ?.closest(${JSON.stringify(width >= 1080 ? 'aside' : 'li')}))`), 'installed responsive task inspector');
+      evidence.visual.push(await auditWorkspace(page, `installed-task-detail-${width}-${theme}`));
+    }
+  }
+  await workspaceViewport(page, 1440, 'light');
+  assert.equal(await evaluate(page, `document.querySelector('[data-navigation-pane]').getBoundingClientRect().width`), 48);
+  await click(page, `document.querySelector('[aria-label="Expand navigation pane"]')`);
+  await until(() => evaluate(page, `document.querySelector('[data-navigation-pane]').getBoundingClientRect().width === 208`),
+    'installed inline expanded rail');
+  assert.equal(await evaluate(page, `document.querySelector('main').inert`), false);
+  await evaluate(page, `document.querySelector('#dude-tab-new').focus()`);
+  await pressKey(page, 'Tab');
+  assert.equal(await evaluate(page, `document.querySelector('[data-navigation-pane]').contains(document.activeElement)`), false);
+  await click(page, `document.querySelector('[aria-label="Collapse navigation pane"]')`);
+  await workspaceViewport(page, 719, 'light');
+  await click(page, `document.querySelector('[aria-label="Expand navigation pane"]')`);
+  await until(() => evaluate(page, `Boolean(document.querySelector('[data-navigation-dialog]'))`), 'installed narrow rail dialog');
+  assert.equal(await evaluate(page, `Math.round(document.querySelector('[data-navigation-dialog]').getBoundingClientRect().width)`), 260);
+  assert.equal(await evaluate(page, `document.querySelector('header').inert && document.querySelector('main').inert
+    && document.querySelector('footer').inert`), true);
+  for (const modifiers of [0, 8]) {
+    await pressKey(page, 'Tab', 'Tab', modifiers);
+    assert.equal(await evaluate(page, `document.querySelector('[data-navigation-dialog]').contains(document.activeElement)`), true);
+  }
+  await pressKey(page, 'Escape');
+  await until(() => evaluate(page, `!document.querySelector('[data-navigation-dialog]')
+    && document.activeElement?.getAttribute('aria-label') === 'Expand navigation pane'`), 'installed narrow Escape return');
+  await workspaceViewport(page, 720, 'light', 2);
+  evidence.visual.push(await auditWorkspace(page, 'installed-task-detail-720-dpr2-light'));
+  evidence.rail = { collapsed: 48, expanded: 208, overlay: 260, breakpoint: [719, 720],
+    focusTrapBothDirections: true, escapeReturn: true, dpr2IsNotNativeZoom: true };
+  await workspaceViewport(page, 1440, 'light');
+  await clearWork(page);
+  await selectWork(page, planned.ideaPath);
+  await inspectTask(page, planned.units[2]);
+
+  // Fail only the requested selected read, not an unrelated or stale input.
+  // The next real Refresh repairs this transport failure without changing files.
+  let failedRefresh = null;
+  const interceptionErrors = [];
+  const failed = (event) => {
+    if (new URL(event.request.url).pathname === '/api/refresh'
+      && JSON.parse(event.request.postData || '{}').target === planned.ideaPath) {
+      failedRefresh = event;
+      page.send('Fetch.failRequest', { requestId: event.requestId, errorReason: 'ConnectionReset' })
+        .catch((error) => interceptionErrors.push(safeError(error)));
+    } else page.send('Fetch.continueRequest', { requestId: event.requestId })
+      .catch((error) => interceptionErrors.push(safeError(error)));
+  };
+  const stopIntercepting = page.on('Fetch.requestPaused', failed);
+  try {
+    await page.send('Fetch.enable', { patterns: [{ urlPattern: '*/api/refresh', requestStage: 'Request' }] });
+    await click(page, button('Refresh'));
+    await until(() => failedRefresh, 'installed selected refresh failure delivered');
+    await visible(page, 'Current instruction unavailable');
+    assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-task-detail]'))`), false);
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-task-key]').length`), 0);
+    evidence.selectedReadFailure = { target: planned.ideaPath, newerDetailWithheld: true,
+      requestBody: failedRefresh.request.postData, interceptionErrors };
+  } finally {
+    stopIntercepting();
+    await page.send('Fetch.disable');
+  }
+  assert.deepEqual(interceptionErrors, [], 'the selected-read failure must actually reach CDP');
+  await click(page, button('Refresh'));
+  await visible(page, 'Planned task definitions; execution has not started.');
+  await inspectTask(page, planned.units[2]);
+  await click(page, button('New idea'));
+  assert.equal(await evaluate(page, `${field('Your idea')}.value`), evidence.newIdeaDraft);
+  await click(page, button('Cancel'));
+  await click(page, button('Now'));
+  await visible(page, 'Respond to request');
+  evidence.visual.push(await auditWorkspace(page, 'installed-062-now-before-response'));
+  evidence.taskInspectionCompleted = true;
+}
+
+/** Keep one actual Review instance through work selection and unrelated input.
+ * @param {Cdp} page @param {ReturnType<typeof seedTaskWalkthrough>} fixture
+ * @param {string} draft @param {string} selectedTaskKey
+ */
+async function driveReviewContinuity(page, fixture, draft, selectedTaskKey) {
+  const [planned, done] = fixture.records;
+  const selectedTask = planned.units.find((task) => task.taskKey === selectedTaskKey);
+  assert.ok(selectedTask);
+  await click(page, button('Comments (2)'));
+  const comment = '  Installed A retained caret.\n\nLiteral local markup.  ';
+  await fill(page, field('Comment (optional)'), comment);
+  for (const modifiers of [0, 0, 8, 8, 8]) await pressKey(page, 'ArrowLeft', 'ArrowLeft', modifiers);
+  const caret = await evaluate(page, `({
+    value:${field('Comment (optional)')}.value,start:${field('Comment (optional)')}.selectionStart,
+    end:${field('Comment (optional)')}.selectionEnd
+  })`);
+  assert.deepEqual(caret, { value: comment, start: comment.length - 5, end: comment.length - 2 });
+  await click(page, `document.querySelector('[aria-label="Close comments"]')`);
+  await awaitSavedMarkup(page, 'installed caret-bearing markup saved');
+  const frame = () => evaluate(page, `({
+    width:document.querySelector('.dude-review-frame').clientWidth,
+    height:document.querySelector('.dude-review-frame').clientHeight
+  })`);
+  const pinned = await frame();
+  await evaluate(page, `window.__t005InstalledFrame = document.querySelector('.dude-review-frame'); true`);
+  await click(page, `document.querySelector('[aria-label="Expand navigation pane"]')`);
+  await until(() => evaluate(page, `document.querySelector('[data-navigation-pane]').getBoundingClientRect().width === 208`),
+    'installed Review inline rail expansion');
+  assert.deepEqual(await frame(), pinned, 'Review frame dimensions stay pinned through rail expansion');
+  const expandedScreenshot = await screenshot(page, 'installed-review-pinned-expanded-rail');
+  await click(page, `document.querySelector('[aria-label="Collapse navigation pane"]')`);
+  assert.deepEqual(await frame(), pinned);
+  await click(page, button('Now'));
+  await until(() => evaluate(page, `Boolean(document.querySelector('[data-task-detail="${selectedTask.taskKey}"]'))`),
+    'installed Now retains task inspection while Review is hidden');
+  assert.equal(await evaluate(page, `document.querySelector('[data-task-instruction="${selectedTask.taskKey}"]').textContent`),
+    selectedTask.text);
+  await clearWork(page);
+  await selectWork(page, done.ideaPath);
+  await click(page, button('Needs you'));
+  await visible(page, 'Annotate exact installed revision A');
+  assert.ok(await evaluate(page, `document.querySelector('[aria-label="Browsing"]')?.innerText.includes('052')`));
+  assert.ok(await evaluate(page, `document.querySelector('[aria-label="Request scope"]')?.innerText
+    .includes(${JSON.stringify(SPEC_PATH)})`));
+  await click(page, button('Open Review'));
+  await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay')?.getClientRects().length)`),
+    'installed same Review returns while browsing 052');
+  assert.equal(await evaluate(page, `window.__t005InstalledFrame === document.querySelector('.dude-review-frame')`), true);
+  assert.deepEqual(await frame(), pinned);
+  await click(page, button('Comments (2)'));
+  const restoredCaret = await until(() => evaluate(page, `(() => {
+    const node=${field('Comment (optional)')};
+    return node && !node.disabled ? {value:node.value,start:node.selectionStart,end:node.selectionEnd} : null;
+  })()`), 'installed restored comment field');
+  assert.deepEqual(restoredCaret, caret, 'request-local text and caret survive Clear and a different selected feature');
+  await click(page, `document.querySelector('[aria-label="Close comments"]')`);
+  await click(page, button('Back'));
+  await click(page, button('Now'));
+  await clearWork(page);
+  await selectWork(page, planned.ideaPath);
+  assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-task-detail]'))`), false,
+    'Clear does not restore stale task inspection');
+  // Clear intentionally drops detail. Select it again before checking the
+  // remaining A/B/C returns, rather than claiming Clear retained stale state.
+  await inspectTask(page, selectedTask);
+  await click(page, button('New idea'));
+  assert.equal(await evaluate(page, `${field('Your idea')}.value`), draft);
+  await click(page, button('Cancel'));
+  await click(page, button('Open Review'));
+  await visible(page, 'Comments (2)');
+  assert.equal(await evaluate(page, `window.__t005InstalledFrame === document.querySelector('.dude-review-frame')`), true);
+  assert.deepEqual(await frame(), pinned);
+  return { pinned, caret, restoredCaret, expandedScreenshot, differentBrowsingScope: done.ideaPath,
+    requestScopeUnchanged: SPEC_PATH, unfiledDraftPreserved: true, sameMountedFrame: true };
+}
+
 /** @param {http.Server} server */
 async function listen(server) {
   await new Promise((resolve, reject) => {
@@ -4508,7 +5123,7 @@ async function probeRealHostPackRead(root) {
  */
 async function probeRealHostPackStall() {
   const root = path.join(RUN, 'real-host-pack-stall');
-  buildRelease({ repoRoot: ROOT, outDir: root, ref: 'v0.0.0-t012' });
+  installRelease(root);
   assert.equal(fs.existsSync(path.join(root, 'library', 'packs')), false);
   // Git cannot create a checkout whose files exceed the Windows path limit, as
   // they would below this run's artifact root. Keep the host's temp root short.
@@ -4661,6 +5276,30 @@ async function createInstalledHost(options) {
     ...(WINDOWS ? windowsHostEnvironment(options.data) : {}),
     ...(WINDOWS ? { COPILOT_CLI_DIST_DIR: CLI_DIST_DIR } : {}),
   };
+  if (process.platform === 'win32') {
+    // The SDK replaces, rather than merges, the child environment. Keep the
+    // Windows OS/shell inputs, but isolate every home/config/temp root. Do not
+    // inherit credentials, the caller's Copilot session, or the user's profile.
+    for (const name of ['SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432']) {
+      if (process.env[name]) env[name] = process.env[name];
+    }
+    const home = path.join(options.data, 'home');
+    Object.assign(env, {
+      HOME: home,
+      USERPROFILE: home,
+      HOMEDRIVE: path.parse(home).root.replace(/[\\/]$/, ''),
+      HOMEPATH: home.slice(path.parse(home).root.length - 1),
+      APPDATA: path.join(options.data, 'config', 'Roaming'),
+      LOCALAPPDATA: path.join(options.data, 'cache', 'Local'),
+      XDG_CONFIG_HOME: path.join(options.data, 'config'),
+      XDG_CACHE_HOME: path.join(options.data, 'cache'),
+      TEMP: path.join(options.data, 'tmp'),
+      TMP: path.join(options.data, 'tmp'),
+      TMPDIR: path.join(options.data, 'tmp'),
+    });
+    fs.mkdirSync(env.APPDATA, { recursive: true });
+    fs.mkdirSync(env.LOCALAPPDATA, { recursive: true });
+  }
   const record = {
     caseName: options.caseName,
     root: options.root,
@@ -4684,6 +5323,7 @@ async function createInstalledHost(options) {
     })
     : null;
   record.rawProfiles = rawProfiles;
+  record.childEnvironment = env;
   const client = new CopilotClient({
     connection: RuntimeConnection.forStdio({ path: SESSION_RUNTIME }),
     workingDirectory: options.root,
@@ -4692,6 +5332,7 @@ async function createInstalledHost(options) {
     useLoggedInUser: false,
     logLevel: 'debug',
   });
+  try {
   await bounded(`${options.caseName} client.start`, () => client.start(), 45_000);
   record.hostStatus = await client.getStatus();
   const session = await bounded(`${options.caseName} createSession`, () => client.createSession({
@@ -4757,15 +5398,7 @@ async function createInstalledHost(options) {
         && /^call_t012_spec_(?:view_[ab]_for_[bc]|read_[bc])$/.test(String(request.toolCallId));
       const exactPublisher = request.kind === 'shell'
         && blankPlan
-        && typeof request.fullCommandText === 'string'
-        && request.fullCommandText.startsWith(`${SHELL_INVOKE}${shellArg(process.execPath)} ${shellArg(path.join(
-          options.root,
-          '.github/skills/dude-feature-definition/publish-first-capture.mjs',
-        ))} `)
-        && request.fullCommandText.includes(`--root ${shellArg(options.root)} `)
-        && request.fullCommandText.endsWith(
-          `--slug ${shellArg(blankPlan.slug)} --stage ${shellArg(blankPlan.stagePath)}`,
-        )
+        && request.fullCommandText === publisherCommand(blankPlan, options.root)
         && !/[\n\r`;]|&&|\|\||\$\(/.test(request.fullCommandText)
         && request.toolCallId === `call_${options.caseName}_publish_capture`;
       const installedPack = packFixture(options.root);
@@ -4807,7 +5440,7 @@ async function createInstalledHost(options) {
               ? revision(request.newFileContents) : null,
           }
           : request.kind === 'shell'
-            ? { kind: request.kind, fullCommandText: request.fullCommandText }
+            ? { ...request }
             : {
               kind: request.kind,
               toolName,
@@ -4925,6 +5558,20 @@ async function createInstalledHost(options) {
   assert.equal(new URL(canvas.url).hostname, '127.0.0.1');
   record.canvas = { ...canvas, url: new URL(canvas.url).origin + '/' };
   return { client, session, canvas, instanceId, record };
+  } catch (error) {
+    record.startupError = safeError(error);
+    try {
+      record.cleanup.stopErrors = (await bounded('failed host client.stop', () => client.stop(), 15_000))
+        .map(safeError);
+    } catch (stopError) {
+      record.cleanup.stopError = safeError(stopError);
+      await bounded('failed host forceStop', () => client.forceStop(), 8_000);
+    } finally {
+      fs.writeFileSync(path.join(RUN, `${options.caseName}-startup-failure.json`),
+        `${JSON.stringify(record, null, 2)}\n`);
+    }
+    throw error;
+  }
 }
 
 /** @param {Awaited<ReturnType<typeof createInstalledHost>>} host */
@@ -5265,6 +5912,27 @@ function installedParity(root) {
   return { pairs, skills, forbidden };
 }
 
+/** Reuse a byte-checked disposable release when supplied; never build in ROOT.
+ * @param {string} root
+ */
+function installRelease(root) {
+  if (!RELEASE_DIR) return buildRelease({ repoRoot: ROOT, outDir: root, ref: 'v0.0.0-t012' });
+  installedParity(RELEASE_DIR);
+  const files = [];
+  const collect = (directory, prefix = '') => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      assert.equal(entry.isSymbolicLink(), false, `prebuilt release contains a link: ${relative}`);
+      if (entry.isDirectory()) collect(path.join(directory, entry.name), relative);
+      else if (entry.isFile()) files.push(relative);
+    }
+  };
+  collect(RELEASE_DIR);
+  assert.equal(fs.existsSync(root), false, 'fixture install must not replace an existing directory');
+  fs.cpSync(RELEASE_DIR, root, { recursive: true, errorOnExist: true, force: false });
+  return { files: files.sort(), reused: RELEASE_DIR };
+}
+
 /** @param {string} root @param {'blank-non-git'|'blank-git'} kind */
 function assertBlankInstall(root, kind) {
   for (const relative of ['.dude/ideas', '.dude/specs', '.beads']) {
@@ -5280,9 +5948,10 @@ function assertBlankInstall(root, kind) {
  * unsent idea first waits through one installed Settings > About visit that
  * reads the pre-seeded development base, and must return unchanged.
  * @param {Cdp} page @param {string} canvasUrl @param {string} intent
+ * @param {{modelError:string|null}} modelState
  * @param {{root:string,name:string,cliVersions:string[]}|null} [development]
  */
-async function driveBlankCapture(page, canvasUrl, intent, development = null) {
+async function driveBlankCapture(page, canvasUrl, intent, modelState, development = null) {
   const runtimeErrors = [];
   const network = [], foreignNetwork = [];
   page.on('Runtime.exceptionThrown', (event) => runtimeErrors.push(event));
@@ -5312,7 +5981,9 @@ async function driveBlankCapture(page, canvasUrl, intent, development = null) {
   }
   await click(page, button('Save'));
   await visible(page, 'Awaiting acknowledgment');
-  await visible(page, 'Idea saved');
+  await until(async () => modelState.modelError
+    || await evaluate(page, `document.body.innerText.includes('Idea saved')`), 'installed blank capture');
+  if (modelState.modelError) throw new Error(modelState.modelError);
   await click(page, button('Overview'));
   assert.deepEqual(runtimeErrors, []);
   assert.equal(network.filter((entry) => entry.path === '/api/needs-you/capture').length, 1);
@@ -6723,13 +7394,13 @@ async function driveInstalledSourceRoundTrip(page, canvasUrl, fixture, ownerMode
  * @param {Cdp} page
  * @param {string} canvasUrl
  * @param {ReturnType<typeof seedWorkspaceTaskFixtures>} fixture
+ * @param {string} draft
  */
-async function driveInstalledTaskWalkthrough(page, canvasUrl, fixture) {
+async function driveInstalledTaskWalkthrough(page, canvasUrl, fixture, draft) {
   const inputSequence = [];
   const audits = [];
   const bodyMarker = 'Build frontend assets and project generated core using the plan\'s existing commands.';
   const acceptanceMarker = 'Acceptance: SC-001–007 and VSC-001–003 have fresh evidence';
-  const draft = '  Installed task walkthrough draft\n\nRemains independent and unfiled.  ';
   const expected062 = fixture.records['062'].selectedTaskInstruction;
   const expected052 = fixture.records['052'].selectedTaskInstruction;
   assert.ok(expected062.includes(bodyMarker));
@@ -6937,16 +7608,16 @@ async function driveInstalledTaskWalkthrough(page, canvasUrl, fixture) {
   await click(page, `document.querySelector('[data-task-key="${WORKSPACE_062.selectedTaskKey}"]')`);
 
   let pausedIndex = null;
-  page.on('Fetch.requestPaused', (event) => {
+  const stopIntercepting = page.on('Fetch.requestPaused', (event) => {
     if (new URL(event.request.url).pathname === '/api/work-index') pausedIndex = event;
   });
-  await page.send('Fetch.enable', {
-    patterns: [{ urlPattern: '*/api/work-index', requestStage: 'Response' }],
-  });
-  await click(page, button('Refresh'));
-  inputSequence.push('pointer: Refresh with mismatched task source identity');
-  const paused = await until(() => pausedIndex, 'installed mismatched work-index response');
   try {
+    await page.send('Fetch.enable', {
+      patterns: [{ urlPattern: '*/api/work-index', requestStage: 'Response' }],
+    });
+    await click(page, button('Refresh'));
+    inputSequence.push('pointer: Refresh with mismatched task source identity');
+    const paused = await until(() => pausedIndex, 'installed mismatched work-index response');
     const responseBody = await page.send('Fetch.getResponseBody', { requestId: paused.requestId });
     const value = JSON.parse(responseBody.base64Encoded
       ? Buffer.from(responseBody.body, 'base64').toString('utf8')
@@ -6964,6 +7635,7 @@ async function driveInstalledTaskWalkthrough(page, canvasUrl, fixture) {
       body: Buffer.from(JSON.stringify(value)).toString('base64'),
     });
   } finally {
+    stopIntercepting();
     await page.send('Fetch.disable');
   }
   await visible(page, 'Current instruction unavailable');
@@ -7491,6 +8163,7 @@ async function driveArmedManipulation(page, root, version) {
  * @param {string} prompt
  * @param {string|null} [gestureRoot]
  * @param {string|null} [expectedBrowsingNumber]
+ * @param {{fixture:ReturnType<typeof seedTaskWalkthrough>,draft:string,selectedTaskKey:string}|null} [walkthrough]
  */
 async function driveReviewRound(
   page,
@@ -7498,10 +8171,15 @@ async function driveReviewRound(
   prompt,
   gestureRoot = null,
   expectedBrowsingNumber = null,
+  walkthrough = null,
 ) {
+  if (walkthrough) await click(page, button('Respond to request'));
+  else {
+    await visible(page, prompt);
+    await click(page, `[...document.querySelectorAll('button')].find((node) =>
+      node.innerText.includes(${JSON.stringify(prompt)}) && node.getClientRects().length)`);
+  }
   await visible(page, prompt);
-  await click(page, `[...document.querySelectorAll('button')].find((node) =>
-    node.innerText.includes(${JSON.stringify(prompt)}) && node.getClientRects().length)`);
   if (expectedBrowsingNumber) {
     assert.equal(await evaluate(page, `document.querySelector('[aria-label="Browsing"]')
       ?.innerText.includes(${JSON.stringify(expectedBrowsingNumber)})`), true,
@@ -7510,6 +8188,8 @@ async function driveReviewRound(
       ?.innerText.includes(${JSON.stringify(SPEC_PATH)})`), true,
     `installed Review ${version} names its actual request scope`);
   }
+  assert.equal(await evaluate(page, `Boolean(document.querySelector('.dude-review-overlay')?.getClientRects().length)`), false,
+    'opening a response never enters Review automatically');
   await click(page, button('Open Review'));
   await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
     && !document.querySelector('[aria-label="Box (B)"]').disabled`),
@@ -7582,9 +8262,18 @@ async function driveReviewRound(
       return ids.length > 0 && ids.every(id => !document.getElementById(id)?.getClientRects().length);
     })()`), `installed Review ${version} Save markup tip closed`);
   }
+  const detailsDismissal = await closeReviewDetails(page);
+  // Save is disabled-focusable after autosave. Its focused ScreenTip can
+  // overlap Select; use the user's Escape dismissal, not a forced DOM click.
+  const tooltipBefore = await evaluate(page, `[...document.querySelectorAll('[role="tooltip"]')]
+    .filter(node => node.getClientRects().length).map(node => node.textContent)`);
+  await pressKey(page, 'Escape');
+  note('review-palette-entry', { version, detailsDismissal, tooltipBefore });
   const armedManipulation = gestureRoot
     ? await driveArmedManipulation(page, gestureRoot, version)
     : null;
+  const workspaceReturn = walkthrough
+    ? await driveReviewContinuity(page, walkthrough.fixture, walkthrough.draft, walkthrough.selectedTaskKey) : null;
   const beforeReturn = {
     comments: await evaluate(page, `[...document.querySelectorAll('button')]
       .find((node) => /^Comments \\(2\\)$/.test(node.innerText.trim()))?.innerText.trim()`),
@@ -7633,7 +8322,9 @@ async function driveReviewRound(
   return {
     version,
     comment,
+    detailsDismissal,
     armedManipulation,
+    workspaceReturn,
     beforeReturn,
     afterReturn,
     returnFocus,
@@ -7673,7 +8364,8 @@ async function driveApproval(page, expectedBrowsingNumber = null) {
 
 const workspaceSourcePreimages = workspaceSourceHashes();
 const manifest = {
-  task: 'T012@a57c1212',
+  task: 'T005@e062a5b8',
+  retainedAcceptance: 'T012@a57c1212',
   startedAt: new Date().toISOString(),
   command: `node ${fileURLToPath(import.meta.url)}`,
   run: RUN,
@@ -7686,6 +8378,8 @@ const manifest = {
   cliDistDir: WINDOWS ? CLI_DIST_DIR : null,
   extensionHost: null,
   sdk: SDK,
+  sdkSelection: process.env.DUDE_COPILOT_SDK ? 'DUDE_COPILOT_SDK' : `${process.platform} desktop app`,
+  releaseSource: RELEASE_DIR ?? 'current source via buildRelease into owned fixtures',
   browser: BROWSER,
   installedCliVersion: null,
   identities: null,
@@ -7697,8 +8391,8 @@ const manifest = {
   packCase: null,
   importCase: null,
   sourceCase: null,
-  reviewCase: null,
   taskWalkthrough: null,
+  reviewCase: null,
   installedControls: null,
   desktopPanelCapability: null,
   cleanup: {},
@@ -7712,6 +8406,16 @@ const hosts = [];
 const modelServers = [];
 
 try {
+  assert.ok(SDK, 'Set DUDE_COPILOT_SDK to an existing SDK directory with real invocation cancellation.');
+  ({ CopilotClient, RuntimeConnection } = await import(pathToFileURL(path.join(SDK, 'index.js'))));
+  manifest.installedIdentities = {
+    cli: await fileIdentity(CLI),
+    runtime: await fileIdentity(CLI_RUNTIME),
+    sdk: await fileIdentity(path.join(SDK, 'index.js')),
+    sdkExtension: await fileIdentity(path.join(SDK, 'extension.js')),
+    sdkTypes: await fileIdentity(path.join(SDK, 'types.d.ts')),
+    browser: await fileIdentity(BROWSER),
+  };
   const cliVersion = command(CLI, ['--version']);
   assert.equal(cliVersion.exitCode, 0, cliVersion.stderr);
   const bundledLauncherVersion = command(CLI, ['--no-auto-update', '--version']);
@@ -7745,18 +8449,20 @@ try {
     appHelp: appHelp.stdout.trim(),
     scriptingDictionary: appScripting
       ? {
+        attempted: true,
         exitCode: appScripting.exitCode,
         available: appScripting.exitCode === 0,
-        diagnostic: appScripting.exitCode === 0 ? null : appScripting.stderr.trim(),
+        diagnostic: appScripting.exitCode === 0 ? null : appScripting.error ?? appScripting.stderr.trim(),
       }
       : {
+        attempted: false,
         applicable: false,
         exitCode: null,
         available: null,
         diagnostic: `Not applicable on ${process.platform}: /usr/bin/sdef and the macOS app bundle are Darwin-only; no scripting-dictionary probe ran and no evidence was recorded.`,
       },
     supportedIsolatedPanelAutomation: false,
-    reason: 'The SDK control host reports ui.canvases=false and canvas.open returns provider metadata plus a URL, not a desktop panel handle. The installed app command accepts no session/canvas argument, so no CLI selector reaches one panel, and native embedding stays unverified here. A nonzero scriptingDictionary exit records only that the probe did not complete, with its diagnostic, and is not evidence that the app lacks a dictionary. Attaching to the foreground app could change the active parent session.',
+    reason: 'This driver exercises the SDK canvas URL in owned Edge/CDP, not a native desktop panel. Actual SDK capabilities, canvas.open fields, and installed app help are recorded below; no isolated native-panel control has been established. An unavailable or failed scripting probe is not evidence that GUI support is absent. Attaching to the foreground app could disrupt the active parent session and is not attempted.',
     remainingSmoke: [
       'Open the Dude panel in the disposable installed workspace.',
       'Confirm usable current panel sizing, current light/dark theme, and keyboard focus entry.',
@@ -7777,15 +8483,13 @@ try {
   // On Windows, read the executable's version resource instead of starting a
   // second browser instance for --version; CDP reports the running build below.
   manifest.browserVersionCommand = WINDOWS
-    ? windowsPowerShell(
-      "$item = Get-Item -LiteralPath $env:DUDE_T012_BROWSER; '{0} {1}' -f "
-        + '$item.VersionInfo.ProductName, $item.VersionInfo.ProductVersion',
-      { ...process.env, DUDE_T012_BROWSER: BROWSER },
-    )
+    ? windowsQuery(`(Get-Item -LiteralPath '${BROWSER.replaceAll("'", "''")}').VersionInfo `
+      + '| Select-Object ProductName,ProductVersion,FileVersion | ConvertTo-Json -Compress')
     : command(BROWSER, ['--version']);
   assert.equal(manifest.browserVersionCommand.exitCode, 0, manifest.browserVersionCommand.stderr);
   if (WINDOWS) {
-    assert.match(manifest.browserVersionCommand.stdout.trim(), /\s\d+(?:\.\d+){3}$/,
+    const browserVersions = JSON.parse(manifest.browserVersionCommand.stdout);
+    assert.match(browserVersions.ProductVersion, /^\d+(?:\.\d+){3}$/,
       `browser executable has no version resource: ${BROWSER}`);
   }
   for (const [relative, expected] of Object.entries(APPROVED_HASHES)) {
@@ -7818,7 +8522,7 @@ try {
     const data = path.join(RUN, `${kind}-runtime`);
     const evidence = path.join(RUN, `${kind}-evidence`);
     fs.mkdirSync(evidence, { recursive: true });
-    const release = buildRelease({ repoRoot: ROOT, outDir: root, ref: 'v0.0.0-t012' });
+    const release = installRelease(root);
     if (kind === 'blank-git') {
       const init = command('git', ['init', '--quiet', root]);
       assert.equal(init.exitCode, 0, init.stderr);
@@ -7835,12 +8539,13 @@ try {
     const modelUrl = await listen(model.server);
     const host = await createInstalledHost({ root, data, modelUrl, caseName: kind });
     hosts.push(host);
+    manifest.activeCase = { kind, host: host.record, model: model.state };
     const idle = await host.session.sendAndWait({
       prompt: `T012 ${kind} bootstrap: return the deterministic idle marker.`,
     }, 30_000);
     assert.equal(idle?.data.content, 'T012_BLANK_HOST_IDLE');
     assert.equal(model.state.phase, 'idle');
-    const browser = await driveBlankCapture(browserState.page, host.canvas.url, intent, development && {
+    const browser = await driveBlankCapture(browserState.page, host.canvas.url, intent, model.state, development && {
       root,
       name: kind,
       cliVersions: Object.values(manifest.installedCliVersion),
@@ -7893,7 +8598,8 @@ try {
       browser,
       noSpecOrTasks: true,
       realModelReasoning: false,
-      ownerRoute: `selected installed Dude session projection delegated exact staging to the installed Spec Lead, invoked the shipped publisher through ${SHELL_TOOL}, reread the canonical draft through view, then acknowledged; the model fixture made no file write`,
+      ownerRoute: `raw selected Dude delegated staging to the installed Spec Lead, invoked the shipped publisher through ${model.state.ownerExecution.publisherTool}, reread the canonical draft through view, then acknowledged; the model fixture made no file write`,
+      fileLineEndings: process.platform === 'win32' ? 'CRLF from the installed create tool; receipt intent stays LF' : 'LF',
     });
     note('blank-case-passed', {
       kind,
@@ -7907,11 +8613,7 @@ try {
 
   const packRoot = path.join(RUN, 'pack-roundtrip');
   const packData = path.join(RUN, 'pack-roundtrip-runtime');
-  const packRelease = buildRelease({
-    repoRoot: ROOT,
-    outDir: packRoot,
-    ref: 'v0.0.0-t012',
-  });
+  const packRelease = installRelease(packRoot);
   const packParity = installedParity(packRoot);
   const installedPack = seedPackFixture(packRoot);
   const realHostPackProbe = WINDOWS ? await probeRealHostPackRead(packRoot) : null;
@@ -8214,7 +8916,7 @@ try {
   const data = path.join(RUN, 'review-git-runtime');
   const evidence = path.join(RUN, 'review-evidence');
   fs.mkdirSync(evidence, { recursive: true });
-  const release = buildRelease({ repoRoot: ROOT, outDir: root, ref: 'v0.0.0-t012' });
+  const release = installRelease(root);
   const init = command('git', ['init', '--quiet', root]);
   assert.equal(init.exitCode, 0, init.stderr);
   const parity = installedParity(root);
@@ -8227,6 +8929,9 @@ try {
     runStartedAt: manifest.startedAt,
     sourceAcquisition,
   })}`);
+  const taskFixture = seedTaskWalkthrough(root, workspaceFixture);
+  const taskEvidence = { fixture: taskFixture, projections: [], visual: [], taskInspectionCompleted: false };
+  manifest.taskWalkthrough = { fixture: workspaceFixture, integrated: taskEvidence };
   const ownerModule = await import(pathToFileURL(path.join(
     root,
     '.github/skills/dude-engine/lib/feature.mjs',
@@ -8239,6 +8944,7 @@ try {
   const modelUrl = await listen(model.server);
   const host = await createInstalledHost({ root, data, modelUrl, caseName: 'review-git' });
   hosts.push(host);
+  manifest.activeCase = { kind: 'review-git', host: host.record, model: model.state };
   manifest.desktopPanelCapability.sdkUiCanvases = host.record.capabilities.ui?.canvases ?? false;
   manifest.desktopPanelCapability.canvasOpenFields = Object.keys(host.canvas).sort();
   manifest.desktopPanelCapability.automatedRenderer = 'owned Edge/CDP URL renderer, not desktop app chrome';
@@ -8259,18 +8965,21 @@ try {
   await until(() => model.state.phase === 'waiting-a' || model.state.modelError,
     'revision A installed waiter');
   if (model.state.modelError) throw new Error(model.state.modelError);
+  await driveTaskWalkthrough(browserState.page, host, taskFixture, taskEvidence);
+  await clearWork(browserState.page);
   const taskWalkthrough = await driveInstalledTaskWalkthrough(
     browserState.page,
     host.canvas.url,
     workspaceFixture,
+    taskEvidence.newIdeaDraft,
   );
-  await click(browserState.page, button('Needs you'));
   const roundA = await driveReviewRound(
     browserState.page,
     'A',
     'Annotate exact installed revision A',
     root,
     '062',
+    { fixture: taskFixture, draft: taskEvidence.newIdeaDraft, selectedTaskKey: taskWalkthrough.selectedTaskKey },
   );
   await until(() => model.state.phase === 'waiting-b' || model.state.modelError,
     'same owner revision B request', 45_000);
@@ -8377,16 +9086,18 @@ try {
     '062': workspaceFixture.records['062'].fixtureTasksRevision,
     '052': workspaceFixture.records['052'].fixtureTasksRevision,
     controlled: workspaceFixture.records.controlled.fixtureTasksRevision,
-    ideas: [
-      path.posix.basename(IDEA_PATH),
-      path.posix.basename(WORKSPACE_052.ideaPath),
-      path.posix.basename(WORKSPACE_062.ideaPath),
-      path.posix.basename(TASK_CONTROL.ideaPath),
-    ].sort(),
+    ideas: taskFixture.ideaFiles,
   }, 'installed task walkthrough changed no fixture task state or captured a draft');
+  for (const expected of taskFixture.preserved) {
+    assert.equal(sha256(fs.readFileSync(path.join(root, expected.path))), expected.sha256,
+      `read-only walkthrough changed fixture ${expected.path}`);
+  }
+  taskEvidence.reviewReturn = roundA.workspaceReturn;
+  taskEvidence.fixtureCanonicalTasksUnchanged = true;
+  taskEvidence.completed = true;
   const finalScreenshot = await screenshot(browserState.page, 'installed-review-final');
   manifest.taskWalkthrough = {
-    fixture: workspaceFixture,
+    ...manifest.taskWalkthrough,
     browser: taskWalkthrough,
     returnAfterReview: taskReturn,
     fixtureRecheck,
@@ -8443,11 +9154,7 @@ try {
   // same-provider Canvas reopen, provider replacement, cancellation, outside
   // input, and uncertain capture without replay.
   const controlsRoot = path.join(RUN, 'installed-controls');
-  const controlsRelease = buildRelease({
-    repoRoot: ROOT,
-    outDir: controlsRoot,
-    ref: 'v0.0.0-t012',
-  });
+  const controlsRelease = installRelease(controlsRoot);
   const controlsParity = installedParity(controlsRoot);
   const controlsModel = createControlsModel();
   modelServers.push(controlsModel.server);
@@ -8606,11 +9313,7 @@ try {
   await closeServer(controlsModel.server);
 
   const uncertainRoot = path.join(RUN, 'installed-uncertain-capture');
-  const uncertainRelease = buildRelease({
-    repoRoot: ROOT,
-    outDir: uncertainRoot,
-    ref: 'v0.0.0-t012',
-  });
+  const uncertainRelease = installRelease(uncertainRoot);
   const uncertainParity = installedParity(uncertainRoot);
   const uncertainModel = createUncertainCaptureModel();
   modelServers.push(uncertainModel.server);
@@ -8758,9 +9461,27 @@ try {
   manifest.exitCode = 1;
   manifest.error = safeError(error);
   note('acceptance-failed', { error: manifest.error });
+  if (browserState) {
+    try {
+      manifest.failurePage = await bounded('failure page evidence', async () => ({
+        screenshot: await screenshot(browserState.page, 'failure'),
+        snapshot: await evaluate(browserState.page, `({
+          text:document.body.innerText,
+          active:document.activeElement?.outerHTML,
+          reviewControls:[...document.querySelectorAll('[data-review-tools] button')].map(node => {
+            const box=node.getBoundingClientRect(), hit=document.elementFromPoint(box.x+box.width/2,box.y+box.height/2);
+            return {label:node.getAttribute('aria-label'),disabled:node.disabled,
+              box:box.toJSON(),hit:hit?.outerHTML};
+          })
+        })`),
+      }), 8_000);
+    } catch (evidenceError) {
+      manifest.failurePageError = safeError(evidenceError);
+    }
+  }
   process.exitCode = 1;
 } finally {
-  for (const host of hosts.reverse()) {
+  for (const host of [...hosts].reverse()) {
     if (!host.record.cleanup.sessionDisconnected) {
       await closeInstalledHost(host);
     }
@@ -8784,6 +9505,7 @@ try {
     }
   }
   manifest.endedAt = new Date().toISOString();
+  manifest.hosts = hosts.map((host) => host.record);
   try {
     manifest.cleanup.approvedMockRechecked = Object.entries(APPROVED_HASHES).every(
       ([relative, expected]) => sha256(sourceBytes(relative)) === expected,

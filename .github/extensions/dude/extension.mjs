@@ -6,19 +6,26 @@
  * authoritative projection, serves the work and Needs You workspace, and
  * closes cleanly. The joined provider owns bounded human and pack handoffs;
  * its existing tool also receives correlated owner results, never pack writes.
+ * Agent2Agent communication is off by default: it observes this one session's
+ * events and registers its propose, ask, receive, reply, and verify tools. Proposal
+ * preparation returns the complete native tool result, but starts no
+ * listener, loads no SDK runtime, runs no command, and sends nothing. Only
+ * the owner's exact next eligible local chat approval can activate it.
  *
  * Wiring only; the loopback server lives in ./lib/canvas-server.mjs and the
  * browser entry in ./ui/index.html. `stdout` is reserved for JSON-RPC, so
- * everything user-visible goes through `session.log`.
+ * user-visible content uses native tool results or `session.log`.
  */
 
 import { createCanvas, joinSession } from '@github/copilot-sdk/extension';
+import { createA2a } from './lib/a2a.mjs';
 import { closeInstance, openInstance } from './lib/canvas-server.mjs';
 import { createNeedsYou } from './lib/needs-you.mjs';
 import { createReview } from './lib/review.mjs';
 
 const root = process.cwd();
 const needsYou = createNeedsYou({ root, reviewAdapter: createReview({ root }) });
+const a2a = createA2a({ root });
 
 /** @param {unknown} context */
 function exactTarget(context) {
@@ -41,9 +48,23 @@ async function logToSession(message) {
   }
 }
 
+/**
+ * Needs You handles every event first, exactly as before, and its errors still
+ * propagate. A2A then observes the same event; its handler never throws, so it
+ * can neither suppress nor replace a Needs You result or error.
+ * @param {import('@github/copilot-sdk').SessionEvent} event
+ */
+function onEvent(event) {
+  try {
+    needsYou.onEvent(event);
+  } finally {
+    a2a.onEvent(event);
+  }
+}
+
 const session = await joinSession({
-  tools: [needsYou.tool],
-  onEvent: needsYou.onEvent,
+  tools: [needsYou.tool, ...a2a.tools],
+  onEvent,
   canvases: [
     createCanvas({
       id: 'dude',
@@ -71,3 +92,4 @@ const session = await joinSession({
   ],
 });
 needsYou.bindSession(session);
+a2a.bindSession(session);
