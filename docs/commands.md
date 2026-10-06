@@ -48,8 +48,10 @@ node .github/skills/dude-compose/compose.mjs list --use-case ui --json
 
 `--use-case <id>` matches one declared value exactly. List JSON keeps its
 existing pack fields and adds `use_cases`; a pack without a declaration returns
-`[]`. Canvas Settings applies the same exact match to the complete catalog; see
-[Settings: optional packs](#settings-optional-packs).
+`[]`. Canvas Settings applies the same exact match to every catalog it has read;
+see [Settings: optional packs](#settings-optional-packs). Without `--source`,
+`list` reads only the default catalog, and no Compose command reads the sources
+saved in Canvas Settings (see [Settings: pack sources](#settings-pack-sources)).
 
 ### GitHub Issue Input
 
@@ -1070,45 +1072,132 @@ That Windows path was not exercised in the documented Darwin acceptance.
 
 Settings is the cog at the bottom of the left navigation rail. It has two
 sections, Packs and About, chosen with the tabs beside the Settings heading.
-Packs manages the current workspace's optional packs, and About identifies the
-installation (see [Settings: About](#settings-about)). Settings has no other
-configuration. It opens on Packs each time you enter it. Switching to About and
-back keeps the Packs tab, use case, page, selection, and open details. Entering
-or leaving Settings keeps the selected work, task inspection, unsent answers and
-idea text, and retained Review work. Canvas still opens in Overview.
+Packs manages the current workspace's optional packs and the sources they come
+from, and About identifies the installation (see
+[Settings: About](#settings-about)). Settings has no other sections. It opens on
+Packs each time you enter it. Switching to About and back keeps the Packs view,
+use case, source, page, selection, and open details. Entering or leaving
+Settings keeps the selected work, task inspection, unsent answers and idea text,
+and retained Review work. Canvas still opens in Overview.
 
-While Settings is open, it reads the same authorities as `compose.mjs status`
-and `list`: the installed map in `.dude/metadata/profile.md` and the catalog.
-The catalog is the local `library/packs/` when present; otherwise it is the
-upstream source pinned in the bundle manifest. Settings has no source, ref, or
-path control. Its command-bar Refresh becomes Reload packs, which rereads pack
-information only. Reading or reloading never requests a pack change, and a
-failed or slow catalog read is reported rather than replaced with cached data.
+Packs has four views, chosen with the tabs under the section tabs: Installed,
+Available, Add/import, and Sources, in that order. Add/import is described in
+[Settings: importing an agent or skill](#settings-importing-an-agent-or-skill)
+and Sources in [Settings: pack sources](#settings-pack-sources). When the Packs
+panel is 300 px wide or less, a labeled View dropdown replaces the tabs and
+offers the same four views.
+
+Settings reads the same authorities as `compose.mjs status` and `list`: the
+installed map in `.dude/metadata/profile.md` and the catalogs. It also reads the
+saved pack sources and the project's own agents and skills. The installed map,
+the saved sources, and the project's agents and skills are read when you enter
+Settings, when the workspace changes, and when the window regains focus. Those
+reads acquire no catalog and contact no remote repository.
+
+A catalog is read only when you choose Reload packs, which replaces Refresh in
+the command bar on Installed, Available, and Sources, and once after you add or
+remove a source. Opening a view, filtering, paging, Show packs in Available,
+Show in Installed, and answering a permission read no catalog. A Reload reads
+the default catalog and each added source once, at most four at a time, and
+stops each read at 5 seconds. The default catalog is the local `library/packs/`
+when present; otherwise it is the upstream source pinned in the bundle manifest.
+Reading or reloading never requests a pack change. If a Reload fails or is slow,
+Settings reports it and does not show that read as current.
+
+Until the first Reload, Available shows `?` and lists nothing, with the heading
+`Catalog not read yet` and a Reload packs button, and the Use case filter is
+disabled. Installed still lists the recorded packs and project agents and
+skills, with `Not read` for use cases, and no source shows a pack count. Canvas
+treats an unread catalog as unknown.
 
 Installed and Available are separate tabs. Settings opens on Installed, All use
-cases, and page 1, with no pack selected. Tab counts are full totals: Available
-counts only catalog packs outside installed membership, and an unknown count
-shows `?`. Use case filters the complete active tab by exact declared value
-before paging, so a match on a later page is still found. Results show five
-rows per page. Changing the tab, reloading, choosing a use case, or Clear
-returns to page 1; changing the tab or reloading also resets All use cases.
-There is no free-text pack search.
+cases, All sources, and page 1, with no pack selected. Tab counts are full
+totals: Available counts only catalog packs outside installed membership, and an
+unknown count shows `?`. Installed counts packs plus project agents and skills
+once both reads are current. Each list has a Use case filter, which matches one
+exact declared value, and a Source filter. The two filters combine, both run
+over the complete list before paging, and Clear resets both, so a match on a
+later page is still found. Each page shows at most 25 rows. Previous and Next
+sit below the rows on either side of the pager text, which states the row range
+and the page, such as `Page 1 of 2`. Changing the tab starts that list again at
+All use cases, All sources, and page 1. A filter change or Clear returns to
+page 1. There is no free-text pack search.
 
 Choose a row, or press Enter on it, to open its details in a right-hand pane on
 wide layouts or an overlay on narrow ones. Close, Escape, or Back to results
-returns to that row. Details show the full description, use cases, and current
-catalog origin, plus an installed pack's recorded source and exact recorded
-files. A recorded source says where the files came from; it does not verify
-installed bytes. Settings does not read required tools or projected files; Dude
-shows them in its impact preview. Changing the tab or page, or reloading,
-closes the detail. A use-case change keeps it only while that pack is still
-visible.
+returns to that row. Details show the full description, use cases, and source,
+with the location and tracked ref of an Available pack's source, plus an
+installed pack's recorded source and exact recorded files. A recorded source
+says where the files came from; it does not verify installed bytes. Settings
+does not read required tools or projected files; Dude shows them in its impact
+preview. Changing the tab or page closes the detail. A filter change keeps it
+only while that pack is still on the first page of the results.
+
+Pack, project, and source details keep one order: the heading, a coverage notice
+when there is one, the description, the actions with their reason or a
+read-only note, and then the facts. The body scrolls as one region while the
+heading, Close, and Back to results stay in view. Settings shows no
+documentation for a pack, its members, or a project agent or skill. That display
+belongs to feature 080 (Dude Canvas Pack Documentation), and the details leave
+no section, control, or placeholder for it.
 
 If the catalog cannot be read, Installed remains inspectable from its recorded
 names, files, and source. Available and use-case filtering are unavailable, not
 empty. An installed pack that is missing from the catalog has unknown use
 cases: it appears under All use cases, and a specific use case reports
 incomplete tag coverage instead of treating it as a nonmatch.
+
+When some sources fail and others are read, the catalog status reads, for
+example, `partial (1 of 4 sources unavailable)`. Available lists what the
+readable sources found, the counts say `known`, and an empty result is not a
+confirmed empty list. A failed source stays in the Source filter marked
+`(unavailable)`, so you can select it and read why.
+
+Installed and Available have a Source column that names each row's source in
+words, never by an icon or color alone. Installed shows Name, Type, Source, and
+Use cases; Available shows Name, Source, and Use cases.
+
+| Source shows | Meaning |
+| --- | --- |
+| `Local library - Local folder` | The workspace's `library/packs`. |
+| `Bundle upstream - GitHub E-G-C/dude` | The repository in the bundle manifest, with its actual name. |
+| `owner/repo - GitHub` or `folder - Local folder` | A source this project added, named from its repository or folder. |
+| `Unlisted - Local folder` or `Unlisted - GitHub` | An installed pack whose recorded source matches no current source, with the recorded type. |
+| `Unknown` | The recorded source or the saved source list could not be read. |
+| `This project` | A project agent or skill, with no claim about its origin. |
+
+The Source filter lists every source, built-ins first. Unlisted, Unknown, and
+`This project` appear as options only while a row in that list carries them. An
+Available row shows the catalog it was read from. An installed pack shows the
+source recorded when it was installed, matched to a current source by repository
+or folder and never by pack name. Its description and use cases come from that
+source. An `Unlisted` pack falls back to the default catalog by name, and its
+details say so.
+
+The same pack name in two sources is two Available rows, and each row's details
+name both the pack and the source, such as `rust - acme/dude-packs`. Installed
+membership is by name, so installing a name removes every Available row with
+that name, from every source.
+
+A reread, whether a Reload or an automatic one, keeps the filters, page, and
+selection while the selected row is still listed, so it does not close the
+details you are reading or undo Show in Installed. If the row moved to another
+page, the page follows it. With no row selected, or when the selected row is
+gone, the reread returns to All use cases, All sources, and page 1 on the same
+tab. While a reread is pending, the counts show `?` and Installed keeps its last
+rows for inspection, marked `last read`.
+
+After a successful Reload, the Canvas tab keeps that catalog snapshot in memory.
+Automatic rereads and a return to Settings list the same Available rows, source
+statuses, and counts again, minus any pack that is now installed, with each
+source's not-installed count recomputed. Only a later successful Reload replaces
+the snapshot. A Reload that fails leaves it in place, and a later automatic
+reread can list it again. Reloading the page, closing the tab, or changing
+workspace discards the snapshot, and nothing is written to disk. The snapshot
+keeps the coverage it had when it was read, such as `current`, and Settings
+shows no age or staleness cue for it, so choose Reload packs to read the sources
+again after a long time away. Each install or refresh request still checks its
+chosen source again before it goes to Dude.
 
 Installed details offer Refresh pack and Remove; Available details offer
 Install. Each action is a request to Dude, not an operation. Canvas checks the
@@ -1119,6 +1208,16 @@ or an earlier capture or pack request is unreconciled. It never queues,
 retries, or resends a pack request, including after a reload or reconnect.
 Closing the request dialog or navigating away does not cancel an admitted
 request; View pack request reopens its status.
+
+An install from a source this project added is bound to that exact source. The
+request names the source row you chose, never a repository, folder, or ref typed
+anywhere else, and the status line reads, for example,
+`Install rust from acme/dude-packs: Request prepared`. Refresh takes no source
+from you: Dude uses the added source whose repository or folder matches the
+pack's recorded source, and the default catalog when none matches. Remove takes
+no source and depends on no catalog, only on the pack's recorded safe files. An
+install from the default catalog, a refresh of a pack recorded from it, and a
+removal use the same request, permission, and result as before.
 
 Dude then follows the ordinary `dude-compose` flow. Its impact preview shows the
 install source, namespaced artifacts, destination conflicts, and required
@@ -1132,6 +1231,23 @@ confirmation consents. A decline changes nothing, and a changed source,
 installed state, or target requires a fresh preview and confirmation. Missing
 tools refuse an install; Settings never installs prerequisites.
 
+For an install or refresh, Dude's permission lists the source first, before the
+files. It gives the source's type, its repository or folder, the configured ref
+for a GitHub source, and a revision. A GitHub source's revision is
+`commit:<hash>`, the commit the preview resolved. A local folder has no commit,
+so its revision is `sha256:<hash>`, a digest of the pack's files in that folder.
+A source this project added is labeled `Third-party source`: it is not part of
+the Dude bundle, and its packs can add agents and instructions. The two built-in
+sources carry no such label. Canvas refuses a permission for an added-source
+request unless it names that source first.
+
+When a refresh would use a different source than the one recorded, Dude's
+permission begins with `Source changes: A -> B`, where A is the recorded source
+and B the selected one, before you consent. The same repository at a new commit
+or ref is not a source change. A GitHub source is applied at the reviewed
+commit, so a branch that moves after the preview is not followed, while the
+saved ref keeps tracking the branch for the next refresh.
+
 The request status separates prepared, admitted (delivery unconfirmed),
 delivered, permission requested, and waiting for the owner result. A click, a
 delivery, or an acknowledged permission reply is not Applied. Settings shows
@@ -1142,6 +1258,243 @@ pack. After a caught failure, the result states whether Dude verified
 restoration or the state is uncertain; neither is recovery from process or
 machine failure. After provider replacement, a reread shows current membership
 but cannot establish whether the earlier request succeeded.
+
+A request bound to an added source needs more before Settings shows Applied.
+Dude's result must echo the exact source the request was bound to, and the fresh
+installed profile must record the pack from it: the same repository at the
+reviewed commit, or the same real folder. A matching pack name or an echoed
+source key alone is not enough, and a result that names another source is never
+joined to the request.
+
+Permission, the result, the listed files, and host loading are four separate
+facts. Permission is your literal consent in Needs you, and replying changes no
+file. The result is Dude's report of what it did and verified at one moment, and
+Applied describes that moment, not later file integrity. The listed files are
+what Installed shows now: a pack's recorded files, or the files found in the
+project folders. A listing proves no operation, and a recorded source does not
+verify installed bytes. Whether the host has loaded a new agent, skill, or
+instruction is a fourth question. Canvas does not observe it, and new items may
+not be available until you start a new session.
+
+#### Settings: importing an agent or skill
+
+Packs also has an Add/import tab for bringing one agent or skill into this
+project. Enter one source, on a single line of at most 2,048 UTF-8 bytes, and
+choose Request import. A source is a local file or directory, a public GitHub
+`blob/` or `tree/` URL, or a raw GitHub file URL. Imported agents and skills are
+project files named `dude-local-*`. They are not packs: they appear in
+Installed, and packs are still added from Available. A catalog of packs is added
+under [Sources](#settings-pack-sources).
+
+Request import only asks Dude to run the ordinary `dude-bundle-import` workflow
+(see [Importing agents and skills](#importing-agents-and-skills)). Canvas does
+not read the source, choose between a single file and a directory, or execute the
+import. Dude chooses from the source you entered and previews the whole import
+before anything changes. The request is sent once to the joined session and is
+never queued, retried, or resent, including after a reload or reconnect. It uses
+the same checks and refusals as a pack request, and an unreconciled import blocks
+other capture, pack, and import requests until Dude reports a result.
+
+Dude then asks for permission in Needs you. A file import lists each destination
+file, including a reviewed license or notice file, and whether it is created or
+replaced. A directory import lists each agent or skill with its destination, new
+and replaced file counts, and every replaced file. A Warned directory also lists
+every flagged file with its risk category and counts the files that were not
+reviewed. Canvas imports use only the default adaptations; to choose others,
+decline and continue in chat. A Blocked, unsupported, or unsafe import, or one
+that does not fit in a permission (more than 12 agents, skills, or destination
+files), gets no permission and changes nothing. Dude's result says why, and an
+over-capacity import points you to chat.
+
+Consent needs the checkbox and the exact typed phrase the request shows:
+`IMPORT AGENT <name>`, `IMPORT SKILL <name>`, `IMPORT DIRECTORY <n> ARTIFACTS`,
+or `IMPORT WITH WARNINGS <n> ARTIFACTS`. The permission offers only Send
+permission and Decline. If the source, a destination, or the reviewed plan
+changes first, the permission no longer applies and you request the import
+again. Open Needs you goes to the permission, and Back to Add/import returns to
+the same request.
+
+The permission reply is not the result. After consent, Dude applies the import,
+verifies it, and reports a separate result. Add/import shows Applied only when
+that result reports success and every written path checked out, at that moment,
+as an existing regular file in a project-local `dude-local-*` destination. A
+click, a delivery, or consent alone never shows Applied. Declined, Failed,
+Unavailable, Stale, and Uncertain results keep their meaning. A partial write, a
+verified restoration after a caught failure, and an uncertain recovery are each
+reported as what they are, never as success, and every result lists its written
+and uncertain paths as plain text. Nothing imported is executed, no runtime is
+installed, and dependencies are not imported; Dude lists missing ones, and each
+needs its own request. A result describes verification at that time. It does not
+promise later file integrity, and new agents or skills may not be available until
+you start a new session.
+
+Installed also lists every project agent and skill (`dude-local-*`) in the
+workspace after the packs, whether or not it was imported through Canvas. The
+Type column reads Pack, Agent, or Skill, and the Source column reads
+`This project`. These rows are read-only: they offer no Remove or other action,
+claim no origin, and are not packs. Their Use cases read `Not applicable`, which
+matches no use-case filter and does not count as incomplete tag coverage. They
+never affect pack membership, Available, pack requests, or source removal.
+Details show the description, type, location, declared name, file count, and
+exact files, including an agent's `.support/` companions. The read is local and
+follows no links. It lists at most 256 artifacts, reads at most 8 KiB of each
+entrypoint, and lists at most 128 files per artifact, to a depth of 12. A
+linked, unreadable, or over-limit entry shows its reason: more than 256
+artifacts withholds the whole project list, and a per-artifact limit withholds
+only that row's files. An unavailable read is never shown as an empty list.
+Installed rereads after an import result, so you do not need Reload packs.
+
+Only an Applied result offers Show in Installed. It is a local view change, not a
+request: it opens Installed with the filters cleared, selects the first imported
+artifact on the page that holds it, and moves focus to its details. It reads no
+catalog. It stays disabled with a reason while Installed is still reading, when
+project agents and skills could not be read, or when that artifact is not in the
+list now. A row in Installed never proves that an import succeeded.
+
+Add/import keeps the Source you typed and its request status while you switch
+between Packs views or to About. Leaving Settings through the navigation rail
+clears the typed Source and keeps the request status, and Settings reopens on
+Installed.
+
+#### Settings: pack sources
+
+Sources is the last Packs view. It lists where Dude finds packs: the built-in
+sources first, then the sources this project added, at most eight. Each row
+shows the source with its type written out, its location and ref, its status,
+and its scope, `Built in` or `This project`. Choose a row, or press Enter on it,
+to open its details beside the table or, on narrow layouts, in an overlay.
+Sources has no filters or pager. Add source sits at the top, and Reload packs
+reads every source again.
+
+Two built-in sources are derived from the installation each time they are read,
+and they are never saved. Local library is `library/packs` in the workspace, and
+it is listed only while that folder exists. Bundle upstream is the repository
+and ref in `.dude/metadata/bundle-manifest.md`. Its details say
+`Managed by bundle upgrade`, because only a bundle upgrade changes it. The local
+library is the default catalog when it exists. Otherwise Bundle upstream is the
+default, and Reload reads it. A development checkout has a local library, so its
+Bundle upstream shows `Not read while library/packs exists` and Canvas does not
+read it. Built-in rows have no Remove and cannot be edited.
+
+Apart from that development upstream, a source's status is `Not read` until a
+Reload. After one it shows its pack count, such as `Read - 3 packs`, or
+`Unavailable` and the reason. A source that cannot be read stays listed and
+selectable, and Canvas does not treat its missing packs as an empty catalog.
+Before the first Reload, no source shows a count.
+
+Choose Add source to open a dialog with focus on Location and an optional Ref. A
+location takes one of two forms:
+
+- `https://github.com/<owner>/<repo>`, a public GitHub repository. The ref is a
+  branch or tag and defaults to `main`.
+- A folder on this computer whose root contains `library/packs`, the layout Dude
+  reads. Give an absolute path or a path relative to the workspace. A folder has
+  no ref.
+
+Unlike Add/import, Add source takes only a repository address, never a `blob/`
+or `tree/` URL. Canvas checks the text before it reads anything, and it
+refuses:
+
+- a location that is empty, spans more than one line, contains control
+  characters, or is longer than 2,048 UTF-8 bytes;
+- a GitHub address with a user name or password, a port (even `:443`), a query
+  or fragment, a backslash or encoded slash, a branch, file, or folder path, a
+  host other than `github.com`, or a scheme other than `https`, including SSH,
+  `git@github.com:`, `http:`, and `file:` forms;
+- a ref longer than 128 characters, one that does not start with a letter or
+  digit, one with a character other than letters, digits, periods,
+  underscores, slashes, and hyphens, or one that contains `..`, and any ref for
+  a local folder;
+- a folder that does not exist, has no real `library/packs` folder (a link does
+  not count), is the workspace's own library, or is `library/packs` itself, for
+  which Canvas asks you to choose the folder that contains it;
+- a source that is already listed, which Canvas decides by repository (ignoring
+  letter case, a trailing `/`, `.git`, and the ref) or by the folder's real
+  location, so a second ref is not a second source;
+- a ninth added source.
+
+Canvas never asks for credentials. It runs Git without prompts, credential
+helpers, or a `.netrc` login, so a private repository fails as unreachable. A
+credential you wrote into your own Git configuration, such as an
+`http.extraHeader` value, still applies. A source is third-party content: its
+packs can add agents and instructions, so add only sources you trust. Every
+install still asks for your permission first.
+
+Add source reads the source's catalog once before it saves anything, and it
+stops the read at 5 seconds. Every pack's `pack.md` must parse. A valid catalog
+with no packs is accepted and reports 0 packs. If any check fails, nothing is
+saved, and the refusal stays in the dialog with what you typed. While Canvas
+reads, Cancel, Close, Escape, and the backdrop do nothing. Otherwise Cancel,
+Close, Escape, or a press and release on the backdrop closes the dialog and
+returns focus to Add source. A drag that starts inside the dialog and ends on the
+backdrop does not close it.
+
+When the source is saved, the dialog closes, Canvas announces `Added` with the
+pack count, and one read of the catalogs follows, so the new source's packs
+appear under Available. When that read finishes, and only while Sources is still
+open, the new row opens in details. Adding a source installs and runs nothing,
+and it asks for no permission.
+
+Two refusals offer a fresh read in place of a retry. If another tab or person
+changed the saved list after Canvas read it, Reload packs reads the current list.
+If the response is lost, Canvas cannot tell whether the source was saved, and
+Read again checks the saved list. Neither replays the save.
+
+Added sources are saved in `.dude/metadata/pack-sources.md`, a project file meant
+to be committed and shared with your team. Saving or removing a source is a
+direct save, the one exception to the rule that Settings only asks Dude to make
+changes: it needs no Needs you request or permission. Canvas rewrites the whole
+file on each change, so text outside its one JSON block is not kept, and it
+refuses to save over bytes that changed after it read them. It never merges and
+never retries. A relative folder is kept as typed and resolves against the
+workspace. A saved folder that does not exist on another machine shows as
+`Unavailable` there.
+
+Canvas reports a saved list it cannot read as unavailable, never as an empty
+list, and it never resets the file. The list is unreadable when the file does
+not parse as exactly one JSON block that holds only a `sources` list of at most
+eight valid, distinct entries, or when it is larger than 64 KiB. Add source
+stays off until the file can be read. Releases ship no such file and upgrades
+never plan it, so an upgrade leaves yours alone. `dude-lint` fails a file that
+does not parse, and it does not check that any saved folder or repository
+exists.
+
+Compose commands never read the saved list. `compose.mjs list` shows only the
+default catalog, and an added source is used from the command line only when you
+pass it with `--source`. An explicit `--source` is the only source Compose then
+consults, so a missing pack or an unreachable source is a refusal, never a
+fallback to another catalog.
+
+Source details show a notice when the source is not read or unavailable, a
+description, the actions with their reason, and four facts in this order. Status
+repeats the row. Packs found gives the source's pack count and how many are not
+installed, for example `2 (1 not installed)`; the count includes names you
+already have installed. Installed from this source lists the installed packs
+whose recorded source matches this source, by repository or folder and never by
+pack name, and says how many installed packs record an unlisted source or one
+Canvas could not match. A fact Canvas cannot establish reads `Unknown` or
+`Unavailable`, never 0. Saved in names `.dude/metadata/pack-sources.md` for an
+added source and says a built-in is not saved.
+
+Show packs in Available changes the view and nothing else. It selects that
+source in Available's Source filter, resets Use case to All use cases and the
+page to 1, and moves focus to the Available tab, or to the View dropdown at 300
+px or less. It reads no catalog and requests nothing. It is enabled only for a
+source that was read and still has a pack that is not installed. Otherwise the
+details say why: the source is not read yet, is not read by design, is
+unavailable, has no packs, or has all its packs installed.
+
+Remove appears only for an added source and asks for confirmation. It deletes
+that source's entry and nothing else: no pack is uninstalled, no file is
+deleted, and the source's packs stop appearing under Available. Canvas refuses
+the removal while an installed pack records the source or a live pack request,
+including one still being prepared, is bound to it, and it names every blocker.
+The disabled button shows the blockers this tab already knows. That reason is
+advice, because a request from another tab can appear later; the final check at
+the write decides, and a refusal stays inside the confirmation with all blockers
+named. Catalog status never blocks Remove, so it works before the first Reload
+and for an unavailable source when no pack or request uses it. A successful
+removal shows `Removed`, and one read of the catalogs follows.
 
 #### Settings: About
 
@@ -1412,6 +1765,10 @@ bounded clean directory of Dude artifacts. Focused import produces an adaptation
 report and waits for per-category confirmation. Directory import preserves the
 complete selected subtree, uses deterministic analysis plus a reviewed plan,
 and rejects sources that need focused adaptation.
+
+Canvas Packs > Add/import requests the same workflows for one literal source,
+with default adaptations only. See
+[Settings: importing an agent or skill](#settings-importing-an-agent-or-skill).
 
 No runtime is installed and no remote state is modified. Python or Bash
 siblings are refused by default; the user must confirm them per file.
@@ -1768,6 +2125,48 @@ optional mode, without fallback or download. Launches are headless with
 isolated profiles. Required mode fails missing browser, global WebSocket, or
 scoped dependency prerequisites, including build parity.
 
+In PowerShell, set the same variables with `$env:`. On Windows, also put Git for
+Windows first on `PATH`:
+
+```powershell
+$env:PATH = 'C:\Program Files\Git\cmd;C:\Program Files\Git\usr\bin;' + $env:PATH
+$env:DUDE_CANVAS_BROWSER = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+$env:DUDE_CANVAS_BROWSER_REQUIRED = '1'
+```
+
+On the recorded Windows 11 host, the Git that Copilot bundles came first on
+`PATH`. Starting it took about 1.4 s, against about 0.17 s for Git for Windows,
+and a small local clone with it took 3.8 to 4.1 s against the catalog reader's
+5-second deadline. Under CPU load, reads of a source timed out. That is one
+host's measurement. It explains the `PATH` order and does not promise a
+failure-free Windows run.
+
+Source, Compose, lint, and provider changes also run the next three commands,
+each on its own and in the same environment. The importer files stay unchanged
+by Canvas work, so run them as they are.
+
+```bash
+node --test --test-concurrency=1 \
+  src/skills/dude-compose/compose.test.mjs \
+  src/skills/dude-lint/lint.test.mjs \
+  src/extensions/dude/needs-you.test.mjs \
+  src/extensions/dude/canvas-server.test.mjs
+
+node --test \
+  src/skills/dude-bundle-import/import.test.mjs \
+  src/skills/dude-bundle-import/lib/import-frontmatter.test.mjs \
+  src/skills/dude-bundle-import/lib/directory-source.test.mjs \
+  src/skills/dude-bundle-import/lib/directory-risk.test.mjs \
+  src/skills/dude-bundle-import/lib/directory-import.test.mjs
+
+node --test --test-concurrency=1 \
+  scripts/build-dev.test.mjs scripts/current-format-contract.test.mjs
+```
+
+On the recorded Windows 11 host, the named nine-file run takes about 31 to 32
+minutes and the first command above takes about 6 minutes. In a
+`node:22-bookworm` Linux container, the first command takes about 3.4 minutes.
+
 Check TAP for the named T010, T011, and T012 cases registered in these suites,
 with a nonzero executed count, zero exit status, and no required browser skips.
 A successful file wrapper or screenshots alone do not establish execution.
@@ -1816,14 +2215,20 @@ or desktop-app behavior.
 
 Settings coverage uses the same stand-ins. `browser.test.mjs` reads local and
 configured-remote catalogs; the remote case clones a disposable `file://` Git
-source, not a network host. `t011-browser.test.mjs` drives Install, Remove, and
-Refresh through the real provider, HTTP routes, and Compose commands in
-disposable bundles, while test code acts as the owner that previews, confirms,
-and acknowledges. These suites do not exercise a model-driven coordinator. The
-installed-host driver below adds one deterministic local-pack install round trip
-through the installed selected-Dude owner, exact permission, Compose, result
-acknowledgment, and authoritative provider reread. The recorded Windows run
-below executed it; macOS behavior of the current driver is unverified.
+source, not a network host. Its Sources cases add, read, and remove saved
+sources through the real provider and HTTP routes. They reach public GitHub
+sources only through a Git configuration that rewrites each GitHub address to a
+local repository, so no case needs a network. `t011-browser.test.mjs` drives
+Install, Remove, and Refresh through the real provider, HTTP routes, and Compose
+commands in disposable bundles, including installs and refreshes from an added
+source, while test code acts as the owner that previews, confirms, and
+acknowledges. These suites do not exercise a model-driven coordinator. The
+installed-host driver below adds deterministic round trips through the
+installed selected-Dude owner, exact permission, Compose or the importer, result
+acknowledgment, and authoritative provider reread: one for a local pack, two
+for local imports, and one for a pack from an added local folder. The recorded
+Windows runs below executed them; macOS behavior of the current driver is
+unverified.
 
 ##### Installed Copilot host
 
@@ -1867,9 +2272,9 @@ sets the launcher's `COPILOT_CLI_DIST_DIR` to the directory that contains the
 runtime `index.js`, so the launcher loads that runtime package instead of
 extracting another copy into each isolated profile. macOS sessions still run
 the runtime `index.js` under Node. The driver does not install Copilot, an SDK,
-or a browser. Its evidence parent, the optional
-`DUDE_CANVAS_ARTIFACTS_DIR` or the OS temporary directory, receives a unique
-`installed-host-*` directory with a manifest.
+or a browser. Its evidence parent is `DUDE_CANVAS_ARTIFACTS_DIR` when set and
+`dude-canvas-t012-installed-host` under the OS temporary directory otherwise. It
+receives a unique `installed-host-*` directory with a manifest.
 
 Use a short, uniquely owned temporary root. Its ancestors must not contain an
 unrelated `.beads` database: task projection respects that authority boundary
@@ -1877,7 +2282,8 @@ and refuses to infer Lightweight status through it. If the normal Windows
 `TEMP` is below such a directory, set `TEMP`, `TMP`, and
 `DUDE_CANVAS_ARTIFACTS_DIR` to one other short owned temporary root for this
 command. After reading the manifest, confirm that every owned host and browser
-process stopped before removing that exact root.
+process stopped before removing that exact root. A complete pass takes about 3
+minutes and uses about 550 MB of scratch space under that root.
 
 The driver builds the current release into owned blank Git/non-Git fixtures,
 uses installed CLI/SDK stdio and discovered Dude extension code, and drives the
@@ -1947,11 +2353,14 @@ remote catalog.
 
 On Windows, every host also checks that the extension process and its parent
 run the configured launcher. Before Settings drives the pack case, the driver
-reads `GET /api/packs` from the installed extension on every platform. The read
-must return status 200 within 15 seconds with a current local catalog that
-contains the fixture pack, and the manifest records its elapsed time. That bound
-exceeds the reader's 5-second deadline plus its stop window, so a hung read
-fails the run instead of stalling it.
+reads two pack routes from the installed extension on every platform, each
+within 15 seconds. A plain `GET /api/packs` must return status 200 with the
+catalog not read, no pack list, and every source row `Not read` with no count:
+it reads installed state and the saved sources and acquires no catalog.
+`GET /api/packs?discover=1` must return status 200 with a current local catalog
+that contains the fixture pack. The manifest records both elapsed times. That
+bound exceeds the reader's 5-second deadline plus its stop window, so a hung
+read fails the run instead of stalling it.
 
 Two bounded real-host probes run only on Windows. Each starts the launcher
 through the CLI's own extension launch contract (the
@@ -1975,6 +2384,40 @@ contract (the bootstrap's basename in `process.argv`, plus `EXTENSION_PATH` and
 `COPILOT_EXTENSION_PARENT_PID`), so re-run this driver, including its real-host
 probes, whenever the Copilot CLI version changes. A changed contract shows up in
 Settings as an ordinary `Catalog: unavailable`.
+
+Two further disposable workspaces drive Settings. The first drives Add/import.
+The shipped route hands one local skill file and one local directory (an agent
+with `.support/` companions, and a skill with its companion) to the installed
+Dude. Its scripted owner loads `dude-bundle-import`, previews each source with
+the unchanged importer, publishes the literal permission, rechecks the reviewed
+basis, applies once, verifies, and acknowledges the separate import result. The
+browser only requests and consents, and the test writes nothing after seeding.
+Show in Installed then follows each Applied result without a Reload.
+
+The second drives Sources. The browser adds a local folder that contains
+`library/packs/<name>/pack.md` through Settings > Packs > Sources and observes
+the validated pack count and the save. It then uses Show packs in Available,
+selects the source-qualified pack, and requests the install. The scripted owner
+previews that source, publishes the permission with the source first and labeled
+`Third-party source`, recognizes consent, rechecks the saved sources, runs
+Compose with exactly the bound `--source`, and acknowledges the result with the
+exact `catalogSource` echoed. The test saves, installs, and applies nothing
+after seeding, and it contacts no network source. The driver then observes what
+landed: the saved sources file, the recorded profile source, the installed
+bytes, the removal of both same-named Available rows after the install, the
+source facts, and the refusal to remove the source while the installed pack uses
+it (`409`, `source_in_use`). In the pack, import, and source cases, entering
+Settings acquires no catalog, and only an explicit read does: a Reload, or the
+one read that follows a source save.
+
+This case adds a local folder only. Public GitHub sources run in the provider
+and browser suites, through a Git configuration that rewrites each GitHub
+address to a local repository, and are not exercised in the installed host.
+Every fixture also compares the installed runtime modules, including the project
+reader (`lib/project-artifacts.mjs`) and the pack reader and provider, and the
+installed saved-sources parser, Compose, lint, upgrade, and import skill files
+with `src/` byte for byte. It checks that a fresh install holds no
+`.dude/metadata/pack-sources.md`.
 
 The recorded 2026-09-08 run used Darwin arm64, Node 26.8.1, CLI 1.0.83-5
 (protocol 3), and Edge 133.0.3065.69. It predates the pack case and the Windows
@@ -2015,19 +2458,42 @@ task revision, and owned process cleanup. As in earlier runs, SDK
 `ui.canvases: false` means this is installed-host URL evidence, not embedded
 desktop-panel evidence.
 
+The recorded 2026-10-04 run for the source and import work repeated the driver
+three times on one set of bytes, and each pass ended `PASS` after 171 to 177
+seconds. It used Windows 11 (win32 x64), Node 24.21.0 for the driver, CLI 1.0.91
+hosted by `copilot.exe`, whose extension runtime reported Node v24.20.0, the
+installed Copilot app's SDK, and Edge 155.0.4283.33, with Git for Windows first
+on `PATH`. Each pass completed both blank captures, the pack round trip, the two
+imports with Show in Installed, the source round trip, the task walkthrough, two
+Review submissions, and the installed controls. The plain pack read reported no
+catalog and the discovery read a current one. The source round trip reached
+Applied, and the refusal to remove its source named the installed pack.
+
 These runs establish normal installed tool execution and Spec Lead delegation
 with scripted model choices, not unscripted remote-model reasoning. In each, the
 SDK reported `ui.canvases: false`, and Edge rendered the returned URL
 separately. Desktop panel chrome, embedding/sizing, theme/focus, Settings
-presentation in the embedded panel, and reload/Review-entry behavior still
-require host-only smoke after automatable coverage. This evidence does not
-verify other operating systems or browser versions.
+presentation in the embedded panel (including Add/import, Show in Installed,
+and Sources), whether the host loads an imported agent or skill or an installed
+pack without a new session, and reload/Review-entry behavior still require
+host-only smoke after automatable coverage. This evidence does not verify other
+operating systems or browser versions.
 
 In each recorded run, the installed failure control received a matching
 `user.message` receipt before transport failure. It stayed awaiting
 acknowledgment without duplicate submission. Pre-receipt uncertainty could not
 be induced in any run; the provider/browser negative controls cover that
 case, not a fresh installed occurrence.
+
+The recorded source and import runs are Windows only. macOS behavior of the
+current driver is unverified, including the POSIX file-digest command
+(`shasum -a 256`) that the scripted owner uses there to read the saved sources'
+revision. No CI job runs this driver, which needs an installed Copilot CLI. A
+Linux container without a browser, such as the `node:22-bookworm` image used for
+the recorded Linux runs, runs only the checks that need no browser. The
+`canvas-browser` job described under [Releases and CI](#releases-and-ci) is the
+Linux path for the browser suites, and no Linux run of those suites is recorded
+for the source and import work.
 
 ### Releases and CI
 

@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import childProcess, { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
+import { createServer as createTcpServer } from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -54,6 +55,15 @@ function sha256(value) {
  */
 function approvedDesignSha256(bytes) {
   return sha256(Buffer.from(bytes.toString('latin1').replace(/\r?\n/g, '\r\n'), 'latin1'));
+}
+
+/**
+ * The 073 spec binds its approved mock to its LF bytes. Bind that exact
+ * content, not whichever line-ending form a checkout leaves.
+ * @param {Buffer} bytes
+ */
+function approvedLfDesignSha256(bytes) {
+  return sha256(Buffer.from(bytes.toString('latin1').replace(/\r\n/g, '\n'), 'latin1'));
 }
 
 /** @param {string} slug @param {string} number */
@@ -333,11 +343,16 @@ function createReviewWorkspaceFixture() {
 
 // Extend the existing disposable workspace, without applying any packs. The
 // profile is deliberately not alphabetized: its order is part of the read UI.
-function addSettingsPackFixture(workspace, source) {
-  const installedNames = ['zulu', 'alpha', 'retired', 'delta', 'golf', 'juliet', 'mike', 'papa'];
+// `bulkInstalled`/`bulkAvailable` add that many known-use-case packs (tagged
+// `bulk`) after the named ones, so a list can fill and pass one 25-row page.
+function addSettingsPackFixture(workspace, source, { bulkInstalled = 0, bulkAvailable = 0 } = {}) {
+  const bulk = (prefix, count) => Array.from({ length: count }, (_, index) => `${prefix}-${String(index + 1).padStart(2, '0')}`);
+  const bulkInstalledNames = bulk('bulk-i', bulkInstalled), bulkAvailableNames = bulk('bulk-a', bulkAvailable);
+  const installedNames = ['zulu', 'alpha', 'retired', 'delta', 'golf', 'juliet', 'mike', 'papa', ...bulkInstalledNames];
   const names = ['alpha', 'bravo', 'charlie', 'constructor', 'delta', 'echo', 'foxtrot',
-    'golf', 'hotel', 'india', 'juliet', 'kilo', 'lima', 'mike', 'november', 'oscar', 'papa', 'zulu'];
-  const tags = name => name === 'alpha' ? ['bundle-authoring']
+    'golf', 'hotel', 'india', 'juliet', 'kilo', 'lima', 'mike', 'november', 'oscar', 'papa', 'zulu',
+    ...bulkInstalledNames, ...bulkAvailableNames].sort();
+  const tags = name => name.startsWith('bulk-') ? ['bulk'] : name === 'alpha' ? ['bundle-authoring']
     : name === 'bravo' ? ['writing']
     : ['papa', 'zulu', 'foxtrot', 'oscar'].includes(name) ? ['ui', 'visual-design']
       : ['charlie', 'lima'].includes(name) ? [] : ['ui-tools'];
@@ -386,7 +401,122 @@ function addSettingsPackFixture(workspace, source) {
       `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify({ source_repo: repository, source_ref: 'main' })}\n\`\`\`\n`);
   }
   return { installed, installedNames, names, tags, description, profile, catalogRoot, origin,
-    availableNames: names.filter(name => !Object.hasOwn(installed, name)) };
+    bulkInstalledNames, bulkAvailableNames, availableNames: names.filter(name => !Object.hasOwn(installed, name)) };
+}
+
+/**
+ * Real project agents and skills in a disposable workspace. An agent is
+ * `.github/agents/<name>.agent.md` plus its `<name>.support/` companions; a
+ * skill is `.github/skills/<name>/SKILL.md` plus its other files. `frontmatter`
+ * replaces the text between the delimiters, so a case can break its own metadata.
+ * @param {ReturnType<typeof createReviewWorkspaceFixture>} workspace
+ * @param {Array<{type:'agent'|'skill',name:string,frontmatter?:string,description?:string,declared?:string,files?:string[]}>} artifacts
+ */
+function addProjectArtifacts(workspace, artifacts) {
+  for (const { type, name, frontmatter, description = `Description of ${name}.`, declared = name, files = [] } of artifacts) {
+    const text = `---\n${frontmatter ?? `name: ${declared}\ndescription: ${description}`}\n---\n\n# ${name}\n`;
+    if (type === 'agent') {
+      workspace.write(`.github/agents/${name}.agent.md`, text);
+      for (const file of files) workspace.write(`.github/agents/${name}.support/${file}`, `Companion ${file}.\n`);
+    } else {
+      workspace.write(`.github/skills/${name}/SKILL.md`, text);
+      for (const file of files) workspace.write(`.github/skills/${name}/${file}`, `File ${file}.\n`);
+    }
+  }
+}
+
+/** The opaque row key of a pack row; project rows carry the server's own key. @param {string} name */
+const packKey = name => `pack:${name}`;
+/** @param {string[]} names */
+const packKeys = names => names.map(packKey);
+/** An Available row's key carries its source; the pack name is what the older cases compare. @param {string[]} keys */
+const bareKeys = keys => keys.map(key => key.replace(/@src_[0-9a-f]{32}$/, ''));
+
+/**
+ * A folder in the supported source layout, outside the workspace: the packs of
+ * a source are `<folder>/library/packs/<name>/pack.md`. Each pack is a name or
+ * `{ name, description, tags }`.
+ * @param {ReturnType<typeof createReviewWorkspaceFixture>} workspace
+ * @param {string} folder
+ * @param {Array<string | { name: string, description?: string, tags?: string[] }>} packs
+ */
+function addLocalSource(workspace, folder, packs) {
+  const directory = path.join(workspace.directory, folder);
+  fs.mkdirSync(path.join(directory, 'library', 'packs'), { recursive: true });
+  for (const entry of packs) {
+    const { name, description = `${folder} ${typeof entry === 'string' ? entry : entry.name} description`, tags = ['ui'] }
+      = typeof entry === 'string' ? { name: entry } : entry;
+    const pack = path.join(directory, 'library', 'packs', name);
+    fs.mkdirSync(pack, { recursive: true });
+    fs.writeFileSync(path.join(pack, 'pack.md'), ['---', `name: ${name}`, `description: ${JSON.stringify(description)}`,
+      `use-cases: ${JSON.stringify(tags)}`, '---', '', `# ${name}`, ''].join('\n'));
+  }
+  return directory;
+}
+
+/**
+ * The project's saved source list, written with the shared module's own
+ * serializer so no fixture can drift from the format the route reads.
+ * @param {ReturnType<typeof createReviewWorkspaceFixture>} workspace
+ * @param {Array<{ type: 'remote', repository: string, ref: string } | { type: 'local', location: string }>} entries
+ */
+async function saveSources(workspace, entries) {
+  const { serializePackSourcesDocument } = await import('../../src/skills/dude-engine/lib/pack-sources.mjs');
+  workspace.write('.dude/metadata/pack-sources.md', serializePackSourcesDocument(entries));
+}
+/** @param {string} repository `owner/repo` @param {string} [ref] */
+const remoteSource = (repository, ref = 'main') => ({ type: /** @type {const} */ ('remote'), repository: `https://github.com/${repository}`, ref });
+/** @param {string} location */
+const localSource = location => ({ type: /** @type {const} */ ('local'), location });
+
+/**
+ * Offline GitHub: Git itself rewrites a public repository URL to a local
+ * repository through a fixture global config, so the real reader, real Git and
+ * the real URL checks run and no case reaches a network. A catch-all rewrite
+ * sends every unpublished GitHub URL to a folder that does not exist, so a
+ * missed fixture fails offline instead of connecting out. `restore()` puts the
+ * process environment back.
+ * @param {ReturnType<typeof createReviewWorkspaceFixture>} workspace
+ */
+function offlineGitHub(workspace) {
+  const base = path.join(workspace.directory, 'github');
+  fs.mkdirSync(base, { recursive: true });
+  const config = path.join(base, 'gitconfig');
+  const rewrites = new Map([['https://github.com/', `${pathToFileURL(path.join(base, 'unpublished')).href}/`]]);
+  const write = () => fs.writeFileSync(config, [...rewrites].map(([from, to]) => `[url ${JSON.stringify(to)}]\n\tinsteadOf = ${from}\n`).join(''));
+  write();
+  const saved = { GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM };
+  process.env.GIT_CONFIG_GLOBAL = config;
+  process.env.GIT_CONFIG_NOSYSTEM = '1';
+  let sequence = 0;
+  return {
+    /** Publish a repository whose catalog holds `packs`; it is what https://github.com/<repository> clones. */
+    publish(/** @type {string} */ repository, /** @type {Parameters<typeof addLocalSource>[2]} */ packs) {
+      const directory = addLocalSource({ ...workspace, directory: path.join(base, `repository-${++sequence}`) }, '.', packs);
+      const git = (/** @type {string[]} */ ...args) => {
+        const result = spawnSync('git', ['--no-pager', '-c', 'commit.gpgsign=false', ...args], { cwd: directory, encoding: 'utf8', windowsHide: true });
+        assert.equal(result.status, 0, result.stderr || result.stdout);
+        return result.stdout.trim();
+      };
+      git('init', '-q', '-b', 'main');
+      git('add', '-A');
+      git('-c', 'user.email=fixture@example.test', '-c', 'user.name=Canvas Fixture', 'commit', '-qm', 'catalog fixture');
+      rewrites.set(`https://github.com/${repository}`, pathToFileURL(directory).href);
+      write();
+      return { url: `https://github.com/${repository}`, directory };
+    },
+    /** Send a repository somewhere else, such as a Git peer that never answers. */
+    redirect(/** @type {string} */ repository, /** @type {string} */ target) {
+      rewrites.set(`https://github.com/${repository}`, target);
+      write();
+    },
+    restore() {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    },
+  };
 }
 
 // Same owned Node-child boundary used by canvas-server.test.mjs. These work
@@ -3064,7 +3194,7 @@ test('T012 anchoring regression: nested-scroll Open comment clips then recovers 
         )));
         assert.equal(
           productAppSha256,
-          '46360200ec0d5ee2864e7ee6162e23e2e3839e90b238d3b059c3a1b560b39531',
+          '465e6a2bcb763621a676aac6be1839e301d2ce2d0fc8d233b1d48e87c342cf7e',
           'the exact-source regression executes the current published product UI',
         );
         const exactHarnessOptions = {
@@ -11534,7 +11664,7 @@ test('T002 Settings reads real local and configured-remote pack authorities only
   for (const source of ['local', 'remote']) await context.test(source, async currentCase => {
     const workspace = createReviewWorkspaceFixture();
     currentCase.after(() => workspace.close());
-    const packs = addSettingsPackFixture(workspace, source);
+    const packs = addSettingsPackFixture(workspace, source, { bulkInstalled: 18, bulkAvailable: 30 });
     const output = createT010Evidence(currentCase, `t002-settings-${source}`);
     const releaseTracking = emptyTrackedBoardFixture(workspace);
     const sends = [], network = [], runtimeErrors = [];
@@ -11611,12 +11741,24 @@ test('T002 Settings reads real local and configured-remote pack authorities only
         .map(node => node.getAttribute('data-pack-row'))`);
       const totals = () => evaluate(page, `[...document.querySelectorAll('[data-pack-total]')]
         .filter(node => getComputedStyle(node).visibility === 'visible').map(node => node.textContent)`);
+      // An Available row's key carries its source; the pack name is what these assertions compare.
+      const names = keys => keys.map(key => key.replace(/@src_[0-9a-f]{32}$/, ''));
       const ready = () => until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
         ?.getAttribute('aria-busy') === 'false' && window.packReadProbe.snapshots.length > 0`), 'settled pack snapshot');
       const selectTag = async tag => {
         await click('[data-pack-toolbar] [role="combobox"]');
         await clickSettingsControl(page, `[...document.querySelectorAll('[role="option"]')]
           .find(node => node.textContent.trim() === ${JSON.stringify(tag || 'All use cases')})`);
+      };
+      // The Packs views are tabs, or the labeled View Dropdown at 300px of width or less.
+      const chooseContext = async value => {
+        if (await evaluate(page, `document.querySelector('[data-pack-context="installed"]').getClientRects().length > 0`)) {
+          await click(`[data-pack-context="${value}"]`);
+          return;
+        }
+        await click('[data-pack-view] [role="combobox"]');
+        await clickSettingsControl(page, `[...document.querySelectorAll('[role="option"]')]
+          .find(node => node.textContent.trim().startsWith(${JSON.stringify(value === 'installed' ? 'Installed' : 'Available')}))`);
       };
       const screenshot = async name => {
         const result = await page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
@@ -11657,18 +11799,19 @@ test('T002 Settings reads real local and configured-remote pack authorities only
       await screenshot('initial-loading');
       await evaluate(page, `window.packReadProbe.hold = false; window.packReadProbe.held.splice(0).forEach(resolve => resolve())`);
       await until(() => evaluate(page, `document.querySelector('[data-pack-context="installed"]')
-        ?.getAttribute('aria-selected') === 'true' && document.querySelectorAll('[data-pack-row]').length === 5`),
+        ?.getAttribute('aria-selected') === 'true' && document.querySelectorAll('[data-pack-row]').length === 25`),
       'Installed page one from the real pack GET');
       assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-pack-row]')]
-        .map(node => node.getAttribute('data-pack-row'))`), packs.installedNames.slice(0, 5));
+        .map(node => node.getAttribute('data-pack-row'))`), packKeys(packs.installedNames.slice(0, 25)));
       await ready();
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-toolbar] [role="combobox"]').textContent.trim()`), 'All use cases');
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-page]').textContent`), 'Page 1 of 2');
       assert.equal(await evaluate(page, `document.querySelectorAll('[data-pack-detail]').length`), 0);
       assert.equal(await evaluate(page, `document.querySelectorAll('[data-settings] [role="grid"]').length`), 1);
       assert.equal(await evaluate(page, `document.querySelectorAll('[data-settings] input[type="search"]').length`), 0);
-      assert.deepEqual(await totals(), ['8', '11']);
-      assert.equal(await evaluate(page, `window.packReadProbe.snapshots.at(-1).catalog.origin`), packs.origin);
+      assert.deepEqual(await totals(), ['26', '?'], 'entry reads installed packs and the saved sources only: Available is unknown until an explicit Reload');
+      assert.equal(await evaluate(page, `window.packReadProbe.snapshots.at(-1).coverage.catalog.state`), 'not_read');
+      assert.equal(await evaluate(page, `window.packReadProbe.snapshots.at(-1).catalog`), null, 'the entry read acquired no catalog');
 
       // Query, selected work, task inspection, and both kinds of unsent input
       // are independent of the workspace Settings destination.
@@ -11700,24 +11843,36 @@ test('T002 Settings reads real local and configured-remote pack authorities only
       await ready();
       assert.equal(await evaluate(page, `document.querySelector('[data-work-selector] [aria-label="Working on"]').textContent.includes('701')`), true);
 
+      // Use case needs a catalog, so it stays off until the one explicit discovery.
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-toolbar] [role="combobox"]').disabled`), true);
+      const entryReads = network.filter(entry => entry.path === '/api/packs').length;
+      await click('[aria-label="Reload packs"]');
+      await until(() => network.filter(entry => entry.path === '/api/packs').length > entryReads, 'the explicit discovery read');
+      await ready();
+      assert.deepEqual(await totals(), ['26', '41']);
+      assert.equal(await evaluate(page, `window.packReadProbe.snapshots.at(-1).catalog.origin`), packs.origin);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-toolbar] [role="combobox"]').disabled`), false);
       const discoveryReadCount = network.filter(entry => entry.path === '/api/packs').length;
-      // Walk the full profile order, then filter from page two. The selected
-      // papa survives only because it also belongs to the new visible page.
+      // Walk the full profile order in 25-row pages (26 packs: 25, then 1), then
+      // filter after returning to page one. The selected papa survives the filter
+      // only because it also belongs to the filtered first page.
       const installedTraversal = await packRows();
+      assert.equal(installedTraversal.length, 25);
       await click('[aria-label="Next pack page"]');
       installedTraversal.push(...await packRows());
-      assert.deepEqual(installedTraversal, packs.installedNames);
-      assert.equal(await evaluate(page, `document.querySelector('[data-pack-count]').textContent`), '6–8 of 8');
+      assert.deepEqual(installedTraversal, packKeys(packs.installedNames));
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-count]').textContent`), '26–26 of 26');
       assert.equal(await evaluate(page, `document.querySelector('[aria-label="Next pack page"]').disabled`), true);
       assert.equal(await evaluate(page, `document.activeElement === document.querySelector('[data-settings] h1')`), true);
-      await click('[data-pack-row="papa"]');
+      await click('[aria-label="Previous pack page"]');
+      await click('[data-pack-row="pack:papa"]');
       await selectTag('ui');
-      assert.deepEqual(await packRows(), ['zulu', 'papa']);
-      assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]')?.getAttribute('data-pack-detail')`), 'papa');
+      assert.deepEqual(await packRows(), packKeys(['zulu', 'papa']));
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]')?.getAttribute('data-pack-detail')`), 'pack:papa');
       assert.match(await evaluate(page, `document.querySelector('[data-pack-tag-coverage]').textContent`), /1 installed pack has unavailable use cases/);
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-count]').textContent`), '1–2 of 2 known matches');
       await selectTag('bundle-authoring');
-      assert.deepEqual(await packRows(), ['alpha']);
+      assert.deepEqual(await packRows(), packKeys(['alpha']));
       assert.equal(await evaluate(page, `document.querySelectorAll('[data-pack-detail]').length`), 0);
       assert.equal(await evaluate(page, `document.activeElement === document.querySelector('[data-pack-toolbar] [role="combobox"]')`), true,
         'filter invalidation does not steal focus back to a removed row');
@@ -11727,52 +11882,61 @@ test('T002 Settings reads real local and configured-remote pack authorities only
         'zero known installed matches does not claim complete tag coverage');
       assert.match(await evaluate(page, `document.querySelector('[data-pack-tag-coverage]').textContent`), /1 installed pack/);
       await click('[data-pack-toolbar] > button');
-      assert.deepEqual(await packRows(), packs.installedNames.slice(0, 5));
+      assert.deepEqual(await packRows(), packKeys(packs.installedNames.slice(0, 25)));
       assert.equal(await evaluate(page, `document.activeElement === document.querySelector('[data-pack-toolbar] [role="combobox"]')`), true);
-      await focus(page, '[data-pack-row="zulu"]');
+      await focus(page, '[data-pack-row="pack:zulu"]');
       await key(page, 'Enter');
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-description]').textContent`), packs.description('zulu'));
       assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-pack-detail] li code')].map(node => node.textContent)`), packs.installed.zulu.files);
-      assert.equal(await evaluate(page, `document.querySelector('[data-pack-origin]').textContent`), packs.origin);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-source]').textContent`), 'Unlisted - Git repository');
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').textContent.includes('https://example.test/recorded-packs')`), true);
       assert.equal(await evaluate(page, `window.packMetadataExecuted === undefined`), true);
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').matches(':modal')`), false);
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').getBoundingClientRect().width`), 320);
       await screenshot('wide-installed-detail');
       await key(page, 'Escape');
-      assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-pack-row')`), 'zulu');
-      await click('[data-pack-row="retired"]');
+      assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-pack-row')`), 'pack:zulu');
+      await click('[data-pack-row="pack:retired"]');
       assert.match(await evaluate(page, `document.querySelector('[data-pack-description]').textContent`), /unavailable/);
       assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-pack-detail] li code')].map(node => node.textContent)`), packs.installed.retired.files);
       await click('[aria-label="Next pack page"]');
       assert.equal(await evaluate(page, `document.querySelectorAll('[data-pack-detail]').length`), 0,
         'paging cannot retain detail for a now-hidden pack');
       await click('[data-pack-context="available"]');
-      assert.equal(await evaluate(page, `document.querySelector('[data-pack-page]').textContent`), 'Page 1 of 3');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-page]').textContent`), 'Page 1 of 2');
       const availableTraversal = [];
-      for (let pageNumber = 1; pageNumber <= 3; pageNumber += 1) {
+      for (let pageNumber = 1; pageNumber <= 2; pageNumber += 1) {
         const rows = await packRows();
-        assert.ok(rows.length <= 5 && rows.length > 0);
+        assert.ok(rows.length <= 25 && rows.length > 0);
         availableTraversal.push(...rows);
-        if (rows.includes('lima')) {
-          await click('[data-pack-row="lima"]');
+        if (names(rows).includes('pack:lima')) {
+          await click('[data-pack-row^="pack:lima@"]');
           assert.equal(await evaluate(page, `document.querySelector('[data-pack-description]').textContent`), 'No description declared.');
           assert.match(await evaluate(page, `document.querySelector('[data-pack-detail]').textContent`), /No use cases declared/);
           await key(page, 'Escape');
         }
-        if (pageNumber < 3) await click('[aria-label="Next pack page"]');
+        if (pageNumber < 2) await click('[aria-label="Next pack page"]');
       }
-      assert.deepEqual(availableTraversal, packs.availableNames);
+      assert.deepEqual(names(availableTraversal), packKeys(packs.availableNames));
+      assert.equal(availableTraversal.length, 41);
       await selectTag('ui');
-      assert.deepEqual(await packRows(), ['foxtrot', 'oscar'], 'exact tag matching excludes ui-tools and reaches past page one');
+      assert.deepEqual(names(await packRows()), packKeys(['foxtrot', 'oscar']), 'exact tag matching excludes ui-tools');
       await screenshot('available-full-context-ui-filter');
+      // The filter runs over the whole list before paging: thirty bulk packs make
+      // a second filtered page that no first-page slice could show.
+      await selectTag('bulk');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-count]').textContent`), '1–25 of 30 matches');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-page]').textContent`), 'Page 1 of 2');
+      await click('[aria-label="Next pack page"]');
+      assert.deepEqual(names(await packRows()), packKeys(packs.bulkAvailableNames.slice(25)), 'matches continue past page one');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-count]').textContent`), '26–30 of 30 matches');
       await selectTag('bundle-authoring');
       assert.deepEqual(await packRows(), []);
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-count]').textContent`), '0 matches');
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-page]').textContent`), 'No pages');
       assert.equal(await evaluate(page, `[...document.querySelectorAll('[data-pack-pager] button')].every(node => node.disabled)`), true);
-      await click('[data-pack-toolbar] > button');
-      await click('[data-pack-row="constructor"]');
+      await selectTag('ui-tools');
+      await click('[data-pack-row^="pack:constructor@"]');
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').textContent.includes('Recorded installed source')`), false,
         'prototype names and leftover files never create membership');
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').textContent.includes('Not acquired in this snapshot.')`), true);
@@ -11783,7 +11947,7 @@ test('T002 Settings reads real local and configured-remote pack authorities only
       assert.equal(network.filter(entry => entry.path === '/api/packs/request').length, 0,
         'read-only browsing never prepares or submits a pack operation');
       await click('[aria-label="Close pack details"]');
-      assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-pack-row')`), 'constructor');
+      assert.match(await evaluate(page, `document.activeElement?.getAttribute('data-pack-row')`), /^pack:constructor@src_[0-9a-f]{32}$/);
       await selectTag('ui-tools');
       assert.equal((await packRows()).includes('charlie'), false, 'known untagged records match All only');
       await focus(page, '[data-pack-context="available"]');
@@ -11796,8 +11960,11 @@ test('T002 Settings reads real local and configured-remote pack authorities only
         'native context arrow selection');
       await key(page, 'ArrowLeft');
       await key(page, 'End');
-      await until(() => evaluate(page, `document.querySelector('[data-pack-context="available"]').getAttribute('aria-selected') === 'true'`),
-        'native context End selection');
+      await until(() => evaluate(page, `document.querySelector('[data-pack-context="sources"]').getAttribute('aria-selected') === 'true'`),
+        'native context End selection reaches Sources, the last view');
+      await key(page, 'ArrowLeft');
+      await until(() => evaluate(page, `document.querySelector('[data-pack-context="import"]').getAttribute('aria-selected') === 'true'`),
+        'native context arrow selection reaches Add/import');
       await click('[data-pack-context="installed"]');
       assert.equal(network.filter(entry => entry.path === '/api/packs').length, discoveryReadCount,
         'context, tag, Clear, page, and disclosure changes acquire no new catalog');
@@ -11810,9 +11977,11 @@ test('T002 Settings reads real local and configured-remote pack authorities only
             const r = document.querySelector(selector).getBoundingClientRect();
             return { x: r.x, y: r.y, width: r.width, height: r.height, right: r.right, bottom: r.bottom };
           };
-          const targets = ['#dude-tab-settings', '[data-pack-context="installed"]', '[data-pack-context="available"]',
-            '[data-pack-toolbar] [role="combobox"]', '[data-pack-toolbar] > button',
-            '[aria-label="Previous pack page"]', '[aria-label="Next pack page"]'];
+          // At 300px of Packs width or less the labeled View Dropdown replaces the tab strip.
+          const stripHidden = document.querySelector('[data-pack-context="installed"]').getClientRects().length === 0;
+          const targets = ['#dude-tab-settings',
+            ...(stripHidden ? ['[data-pack-view] [role="combobox"]'] : ['[data-pack-context="installed"]', '[data-pack-context="available"]']),
+            '[data-pack-toolbar] [role="combobox"]', '[data-pack-toolbar] > button'];
           return {
             width: innerWidth, documentWidth: document.documentElement.scrollWidth,
             rail: rect('[data-navigation-pane]'), main: rect('main'), command: rect('header'),
@@ -11862,18 +12031,41 @@ test('T002 Settings reads real local and configured-remote pack authorities only
         })()`);
         for (const sample of colors) assert.ok(contrast(sample.color, sample.background) >= 4.5, JSON.stringify({ width, theme, sample }));
         const image = await screenshot(`installed-entry-${width}x${height}-${theme}`);
-        await evaluate(page, `document.querySelector('[data-pack-scroll]').scrollTop = 10000`);
+        // The rows scroll beside a pinned pager, except where the whole panel
+        // scrolls as one column (300px of Packs width or less, or 479px or less
+        // in a short window) and the pager follows the rows.
+        await evaluate(page, `window.packScroller = (() => {
+          const rows = document.querySelector('[data-pack-scroll]');
+          return getComputedStyle(rows).overflowY === 'visible' ? rows.closest('[role="tabpanel"]') : rows;
+        })(); window.packScroller.scrollTop = 10000`);
         const afterScroll = await evaluate(page, `({
           cog: document.querySelector('#dude-tab-settings').getBoundingClientRect().bottom,
           pager: document.querySelector('[data-pack-pager]').getBoundingClientRect().y,
+          pagerBottom: document.querySelector('[data-pack-pager]').getBoundingClientRect().bottom,
+          panelBottom: document.querySelector('[data-pack-pager]').parentElement.getBoundingClientRect().bottom,
+          panelTop: document.querySelector('[data-pack-pager]').parentElement.getBoundingClientRect().top,
           toolbar: document.querySelector('[data-pack-toolbar]').getBoundingClientRect().bottom,
-          scroll: document.querySelector('[data-pack-scroll]').scrollTop
+          scroll: window.packScroller.scrollTop,
+          wholePanel: window.packScroller !== document.querySelector('[data-pack-scroll]')
         })`);
         assert.equal(afterScroll.cog, geometry.settings.bottom);
-        assert.equal(afterScroll.pager, geometry.pager.y);
-        if (width === 180) assert.ok(afterScroll.scroll > 0, 'short viewport exercises actual result scrolling');
-        await evaluate(page, `document.querySelector('[data-pack-scroll]').scrollTop = 0`);
-        await click('[data-pack-row="zulu"]');
+        if (afterScroll.wholePanel) {
+          assert.ok(afterScroll.pagerBottom <= afterScroll.panelBottom + 1, 'a scrolled whole panel ends on the pager');
+          assert.ok(afterScroll.toolbar <= afterScroll.panelTop + 1, 'the toolbar scrolls away with the rows');
+        } else assert.equal(afterScroll.pager, geometry.pager.y, 'rows scroll beside a pinned pager');
+        if (width === 180) assert.ok(afterScroll.wholePanel && afterScroll.scroll > 0, 'short viewport exercises actual whole-panel scrolling');
+        // Scrolled to the end, the pager controls are on screen and reachable in either scroll mode.
+        const pagerTargets = await evaluate(page, `['[aria-label="Previous pack page"]', '[aria-label="Next pack page"]'].map(selector => {
+          const node = document.querySelector(selector), r = node.getBoundingClientRect();
+          const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          return { selector, width: r.width, height: r.height, visible: r.x >= 0 && r.y >= 0
+            && r.right <= innerWidth && r.bottom <= innerHeight, hit: hit === node || node.contains(hit) };
+        })`);
+        for (const target of pagerTargets) {
+          assert.ok(target.visible && target.hit && target.width >= 24 && target.height >= 24, JSON.stringify({ width, theme, target }));
+        }
+        await evaluate(page, `window.packScroller.scrollTop = 0`);
+        await click('[data-pack-row="pack:zulu"]');
         const modal = width < 1100;
         assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').matches(':modal')`), modal);
         const detailGeometry = await evaluate(page, `(() => {
@@ -11913,19 +12105,22 @@ test('T002 Settings reads real local and configured-remote pack authorities only
             'normal reverse Tab returns to the nonmodal pane before its scoped Escape');
         }
         await key(page, 'Escape');
-        assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-pack-row')`), 'zulu');
+        assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-pack-row')`), 'pack:zulu');
         const rowFocus = await evaluate(page, `(() => {
           const style = getComputedStyle(document.activeElement);
           return { style: style.outlineStyle, width: style.outlineWidth, color: style.outlineColor };
         })()`);
         assert.notEqual(rowFocus.style, 'none', 'keyboard-returned row has a visible focus indicator');
         assert.ok(Number.parseFloat(rowFocus.width) >= 2);
-        await click('[data-pack-context="available"]');
-        assert.deepEqual(await packRows(), packs.availableNames.slice(0, 5));
+        await chooseContext('available');
+        assert.deepEqual(names(await packRows()), packKeys(packs.availableNames.slice(0, 25)));
         const availableImage = await screenshot(`available-entry-${width}x${height}-${theme}`);
         await selectTag('bundle-authoring');
         assert.deepEqual(await packRows(), []);
         const emptyGeometry = await evaluate(page, `(() => {
+          // Where the whole panel scrolls its pager follows the (here empty) rows, so reach it by scrolling.
+          const rows = document.querySelector('[data-pack-scroll]');
+          if (getComputedStyle(rows).overflowY === 'visible') rows.closest('[role="tabpanel"]').scrollTop = 10000;
           const toolbar = document.querySelector('[data-pack-toolbar]').getBoundingClientRect();
           const pager = document.querySelector('[data-pack-pager]').getBoundingClientRect();
           const clear = document.querySelector('[data-pack-toolbar] > button').getBoundingClientRect();
@@ -11934,10 +12129,17 @@ test('T002 Settings reads real local and configured-remote pack authorities only
             pagerTop: pager.top, pagerBottom: pager.bottom, clearHit: hit?.closest('button')?.textContent === 'Clear' };
         })()`);
         assert.equal(emptyGeometry.width, width);
-        assert.ok(emptyGeometry.toolbarBottom < emptyGeometry.pagerTop && emptyGeometry.pagerBottom <= height && emptyGeometry.clearHit,
-          'zero matches keeps visible, hit-testable Clear and the pinned pager');
+        assert.ok(emptyGeometry.pagerBottom <= height && emptyGeometry.pagerTop > 0,
+          'zero matches keeps the pager reachable and on screen');
+        await evaluate(page, `document.querySelector('[data-pack-scroll]').closest('[role="tabpanel"]').scrollTop = 0`);
+        const clearGeometry = await evaluate(page, `(() => {
+          const clear = document.querySelector('[data-pack-toolbar] > button').getBoundingClientRect();
+          const hit = document.elementFromPoint(clear.x + clear.width / 2, clear.y + clear.height / 2);
+          return { hit: hit?.closest('button')?.textContent === 'Clear', visible: clear.top >= 0 && clear.bottom <= innerHeight };
+        })()`);
+        assert.deepEqual(clearGeometry, { hit: true, visible: true }, 'zero matches keeps a visible, hit-testable Clear');
         await click('[data-pack-toolbar] > button');
-        await click('[data-pack-context="installed"]');
+        await chooseContext('installed');
         await click('[aria-label="Expand navigation pane"]');
         const navGeometry = await evaluate(page, `(() => {
           const pane = document.querySelector('[data-navigation-dialog]') || document.querySelector('[data-navigation-pane]');
@@ -11964,7 +12166,7 @@ test('T002 Settings reads real local and configured-remote pack authorities only
           navGeometry, axNodes: tree.nodes.length, image, detailImage, availableImage, navigationImage });
       }
       await viewport(1440, 'light');
-      await click('[data-pack-row="zulu"]');
+      await click('[data-pack-row="pack:zulu"]');
       await viewport(768, 'light');
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').matches(':modal')`), true);
       await viewport(1440, 'light');
@@ -12041,7 +12243,13 @@ test('T002 Settings reads real local and configured-remote pack authorities only
         assert.equal(proxy.visualScale, 1);
         assert.equal(proxy.documentWidth, 384);
         assert.equal(proxy.railWidth, 48);
-        assert.ok(proxy.toolbarBottom < proxy.pagerBottom && proxy.pagerBottom <= proxy.viewportHeight);
+        // 336px of Packs width in a 450px window: the whole panel scrolls as one
+        // column, so the pager follows the rows and is reached by scrolling.
+        assert.ok(proxy.toolbarBottom < proxy.pagerBottom);
+        await evaluate(page, `document.querySelector('[data-pack-scroll]').closest('[role="tabpanel"]').scrollTop = 10000`);
+        assert.ok(await evaluate(page, `document.querySelector('[data-pack-pager]').getBoundingClientRect().bottom <= innerHeight`),
+          'the scrolled whole panel ends on its pager');
+        await evaluate(page, `document.querySelector('[data-pack-scroll]').closest('[role="tabpanel"]').scrollTop = 0`);
         assert.ok(proxy.rowHeight >= 24);
         assert.ok(proxy.settingsBottom <= proxy.viewportHeight);
         await click('[aria-label="Expand navigation pane"]');
@@ -12063,26 +12271,39 @@ test('T002 Settings reads real local and configured-remote pack authorities only
       await ready();
       await viewport(1440, 'light');
 
-      // Explicit reload keeps the context but resets all view values. Holding
-      // the real response also proves independently retained stale inspection.
+      // An explicit reload keeps the context. A selected row that survives it
+      // keeps the filter, page, and selection (FR-090); with nothing selected the
+      // existing reset applies. Holding the real response also proves
+      // independently retained stale inspection.
       await click('[data-pack-context="available"]');
       await selectTag('ui');
-      await click('[data-pack-row="oscar"]');
+      await click('[data-pack-row^="pack:oscar@"]');
+      const oscarKey = await evaluate(page, `document.querySelector('[data-pack-detail]').getAttribute('data-pack-detail')`);
       await click('[aria-label="Reload packs"]');
       await ready();
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-context="available"]').getAttribute('aria-selected')`), 'true');
-      assert.equal(await evaluate(page, `document.querySelector('[data-pack-toolbar] [role="combobox"]').textContent.trim()`), 'All use cases');
-      assert.equal(await evaluate(page, `document.querySelector('[data-pack-page]').textContent`), 'Page 1 of 3');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-toolbar] [role="combobox"]').textContent.trim()`), 'ui',
+        'the surviving selection keeps its filter through the reload');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-page]').textContent`), 'Page 1 of 1');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]')?.getAttribute('data-pack-detail')`), oscarKey);
+      assert.match(oscarKey, /^pack:oscar@src_[0-9a-f]{32}$/);
+      await click('[aria-label="Close pack details"]');
+      await click('[aria-label="Reload packs"]');
+      await ready();
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-context="available"]').getAttribute('aria-selected')`), 'true');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-toolbar] [role="combobox"]').textContent.trim()`), 'All use cases',
+        'with nothing selected a reload resets the filter');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-page]').textContent`), 'Page 1 of 2');
       assert.equal(await evaluate(page, `document.querySelectorAll('[data-pack-detail]').length`), 0);
       await click('[data-pack-context="installed"]');
       await evaluate(page, `window.packReadProbe.hold = true`);
       await click('[aria-label="Reload packs"]');
       await until(() => evaluate(page, `window.packReadProbe.held.length === 1`), 'held real pack response');
-      assert.deepEqual(await packRows(), packs.installedNames.slice(0, 5));
+      assert.deepEqual(await packRows(), packKeys(packs.installedNames.slice(0, 25)));
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-toolbar] [role="combobox"]').disabled`), true);
       assert.deepEqual(await totals(), ['?', '?']);
       assert.match(await evaluate(page, `document.querySelector('[data-pack-count]').textContent`), /last read/);
-      await click('[data-pack-row="zulu"]');
+      await click('[data-pack-row="pack:zulu"]');
       assert.match(await evaluate(page, `document.querySelector('[data-pack-detail]').textContent`), /stale.*inspection only/s);
       await screenshot('stale-installed-inspection');
       await click('[aria-label="Close pack details"]');
@@ -12101,10 +12322,10 @@ test('T002 Settings reads real local and configured-remote pack authorities only
         window.packReadProbe.held.splice(0).forEach(resolve => resolve());
       })()`);
       await ready();
-      assert.equal(await evaluate(page, `document.querySelector('[data-pack-total="installed"]').textContent`), '7');
-      assert.equal(await evaluate(page, `window.packReadProbe.adoptions.includes('8')`), false,
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-total="installed"]').textContent`), '25');
+      assert.equal(await evaluate(page, `window.packReadProbe.adoptions.includes('26')`), false,
         'an old completed read is not adopted after Settings deactivation/reactivation');
-      assert.deepEqual(await packRows(), packs.installedNames.filter(name => name !== 'alpha').slice(0, 5));
+      assert.deepEqual(await packRows(), packKeys(packs.installedNames.filter(name => name !== 'alpha').slice(0, 25)));
       await evaluate(page, `window.packReadProbe.observer.disconnect()`);
       workspace.write('.dude/metadata/profile.md', packs.profile);
       await click('[aria-label="Reload packs"]');
@@ -12113,7 +12334,7 @@ test('T002 Settings reads real local and configured-remote pack authorities only
       await click('[aria-label="Reload packs"]');
       await ready();
       assert.deepEqual(await totals(), ['?', '?']);
-      assert.deepEqual(await packRows(), packs.installedNames.slice(0, 5));
+      assert.deepEqual(await packRows(), packKeys(packs.installedNames.slice(0, 25)));
       assert.match(await evaluate(page, `document.querySelector('[data-pack-coverage]').textContent`),
         /Pack information could not be read\. No pack change was requested/);
       await screenshot('transport-failure-stale-inspection');
@@ -12129,12 +12350,12 @@ test('T002 Settings reads real local and configured-remote pack authorities only
         `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify({ source_repo: pathToFileURL(path.join(workspace.directory, 'absent-remote')).href, source_ref: 'main' })}\n\`\`\`\n`);
       await click('[aria-label="Reload packs"]');
       await ready();
-      assert.deepEqual(await packRows(), packs.installedNames.slice(0, 5));
-      assert.deepEqual(await totals(), ['8', '?']);
-      await click('[data-pack-row="zulu"]');
+      assert.deepEqual(await packRows(), packKeys(packs.installedNames.slice(0, 25)));
+      assert.deepEqual(await totals(), ['26', '?']);
+      await click('[data-pack-row="pack:zulu"]');
       assert.match(await evaluate(page, `document.querySelector('[data-pack-description]').textContent`), /unavailable/);
       assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-pack-detail] li code')].map(node => node.textContent)`), packs.installed.zulu.files);
-      assert.equal(await evaluate(page, `document.querySelector('[data-pack-origin]').textContent`), 'Unavailable',
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail-body] dl dd').textContent`), 'Use cases unavailable',
         'failed metadata is not borrowed from the previous source');
       await click('[aria-label="Close pack details"]');
       await click('[data-pack-context="available"]');
@@ -12142,12 +12363,15 @@ test('T002 Settings reads real local and configured-remote pack authorities only
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-page]').textContent`), 'Unavailable');
       await viewport(180, 'light', 450);
       await screenshot('catalog-unavailable-180x450');
+      // At 180px the whole panel scrolls and the pager follows the rows: reach it.
+      await evaluate(page, `document.querySelector('[data-pack-scroll]').closest('[role="tabpanel"]').scrollTop = 10000`);
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-pager]').getBoundingClientRect().bottom <= innerHeight`), true);
+      await evaluate(page, `document.querySelector('[data-pack-scroll]').closest('[role="tabpanel"]').scrollTop = 0`);
       if (source === 'local') fs.writeFileSync(catalogPath, originalCatalog);
       else fs.writeFileSync(manifestPath, originalManifest);
       await click('[aria-label="Reload packs"]');
       await ready();
-      assert.deepEqual(await packRows(), packs.availableNames.slice(0, 5));
+      assert.deepEqual(names(await packRows()), packKeys(packs.availableNames.slice(0, 25)));
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-context="available"]').getAttribute('aria-selected')`), 'true');
       await viewport(1440, 'light');
 
@@ -12207,8 +12431,11 @@ test('T002 Settings reads real local and configured-remote pack authorities only
         'root replacement releases the old Settings and work selection');
         await click('#dude-tab-settings');
         await ready();
-        assert.deepEqual(await packRows(), ['fresh']);
-        assert.deepEqual(await totals(), ['1', '0']);
+        assert.deepEqual(await packRows(), packKeys(['fresh']));
+        assert.deepEqual(await totals(), ['1', '?'], 'the new root\'s entry read acquires no catalog');
+        await click('[aria-label="Reload packs"]');
+        await ready();
+        assert.deepEqual(await totals(), ['1', '0'], 'its one explicit read finds the replacement root\'s empty catalog');
         assert.notEqual(await evaluate(page, `window.packReadProbe.snapshots.at(-1).rootIdentity`), oldRootIdentity);
         assert.equal(await evaluate(page, `document.querySelectorAll('[data-pack-detail]').length`), 0);
         await screenshot('replacement-root-current-read');
@@ -12834,6 +13061,9 @@ const ABOUT_APPROVED = '.dude/specs/074-dude-canvas-about/design/about.html';
 const ABOUT_APPROVED_SHA256 = '46c7e0d7c96885b19c4bd5453fe7cf8b81968d7f2ceb36ae262a6addbc91df9e';
 const ABOUT_075_APPROVED = '.dude/specs/075-dude-development-base-release/design/about.html';
 const ABOUT_075_APPROVED_SHA256 = '61a1f0dcf31195ef3094cb3c08181125a8c1466cb6efb91370bc402fdcda284d';
+/** The approved 073 Packs mock: the reference for the three-view Packs strip, which the 074 mock predates. */
+const PACKS_073_APPROVED = '.dude/specs/073-dude-canvas-artifact-import/design/artifact-import.html';
+const PACKS_073_APPROVED_SHA256 = '58cffc7a8be6699726c87508e8524a866e55435f53293a712b664ad49840c4f9';
 const ABOUT_BASE_RECORD = '.dude/metadata/development-base-release.md';
 const ABOUT_KNOWN_BASE = 'Development (main), based on v1.3.0';
 
@@ -12861,16 +13091,19 @@ async function writeAboutBase(workspace, baseRelease, sourceRepo = ABOUT_RECORDE
  * also record the development base release for that installation.
  * @param {import('node:test').TestContext} context
  * @param {string} slug
- * @param {{ review?: boolean, deviceScale?: number|null, baseRelease?: string|null }} [options]
+ * @param {{ review?: boolean, deviceScale?: number|null, baseRelease?: string|null, packs?: Parameters<typeof addSettingsPackFixture>[2], prepare?: (workspace: ReturnType<typeof createReviewWorkspaceFixture>) => void | (() => void) | Promise<void | (() => void)> }} [options]
  */
-async function openAboutCanvas(context, slug, { review = false, deviceScale = null, baseRelease = null } = {}) {
+async function openAboutCanvas(context, slug, { review = false, deviceScale = null, baseRelease = null, packs: packOptions = {}, prepare = () => {} } = {}) {
   const [{ createNeedsYou }, { createReview }, { openInstance, closeInstance }] = await Promise.all([
     import('../../src/extensions/dude/lib/needs-you.mjs'),
     import('../../src/extensions/dude/lib/review.mjs'),
     import('../../src/extensions/dude/lib/canvas-server.mjs'),
   ]);
   const workspace = createReviewWorkspaceFixture();
-  const packs = addSettingsPackFixture(workspace, 'local');
+  const packs = addSettingsPackFixture(workspace, 'local', packOptions);
+  // A case may return a cleanup, such as the offline GitHub environment's restore.
+  const prepared = await prepare(workspace);
+  const restore = typeof prepared === 'function' ? prepared : () => {};
   workspace.write('.dude/metadata/bundle-manifest.md', aboutManifest({
     source_repo: ABOUT_RECORDED_REPO, source_ref: 'main', installed_ref: 'main' }));
   if (baseRelease !== null) await writeAboutBase(workspace, baseRelease);
@@ -12907,6 +13140,7 @@ async function openAboutCanvas(context, slug, { review = false, deviceScale = nu
       try { if (instance) await closeInstance(id); } finally {
         provider.dispose();
         await releaseTracking();
+        restore();
         workspace.close();
       }
     }
@@ -12921,16 +13155,19 @@ async function openAboutCanvas(context, slug, { review = false, deviceScale = nu
   const { page } = driver, origin = new URL(instance.url).origin;
   page.on('Runtime.exceptionThrown', event => runtimeErrors.push(event.exceptionDetails));
   page.on('Network.requestWillBeSent', event => requests.push({
-    id: event.requestId, method: event.request.method, url: event.request.url }));
+    id: event.requestId, method: event.request.method, url: event.request.url, body: event.request.postData }));
   page.on('Network.loadingFailed', event => { if (event.canceled) cancelled.add(event.requestId); });
   page.on('Page.windowOpen', event => windows.push(event));
   page.on('Page.frameNavigated', event => { if (!event.frame.parentId) navigations.push(event.frame.url); });
   const reads = route => requests.filter(entry => entry.url === `${origin}${route}`);
   return {
-    workspace, packs, provider, instance, driver, page, output, origin, sends, runtimeErrors, requests,
+    workspace, packs, provider, session, instance, driver, page, output, origin, sends, runtimeErrors, requests,
     cancelled, windows, navigations, ask, close, releaseTracking,
     aboutReads: () => reads('/api/about'),
     packReads: () => reads('/api/packs'),
+    // The only read that acquires catalogs: the default plus each saved source, once.
+    discoveryReads: () => reads('/api/packs?discover=1'),
+    sourceWrites: () => requests.filter(entry => entry.url === `${origin}/api/packs/sources`),
     // Every request that left the Canvas origin, such as a repository prefetch.
     foreign: () => requests.filter(entry => !entry.url.startsWith(origin) && !/^(?:data|about):/.test(entry.url)),
   };
@@ -13010,6 +13247,20 @@ function packsSettled(page) {
   return until(() => evaluate(page, `document.querySelector('[data-settings-section="packs"]')?.getAttribute('aria-selected') === 'true'
     && document.querySelector('[aria-label="Reload packs"]')?.getAttribute('aria-busy') === 'false'
     && document.querySelectorAll('[data-pack-row]').length > 0`), 'settled Packs section');
+}
+
+/**
+ * The one explicit catalog discovery: choose Reload packs and wait for the read it starts to
+ * commit. Entering Settings reads installed packs and the saved sources only, so a case that
+ * needs Available or Use case reads once here, as a person would.
+ * @param {{ page: Cdp, discoveryReads: () => unknown[] }} canvas
+ */
+async function discoverCatalog({ page, discoveryReads }) {
+  const reads = discoveryReads().length;
+  await clickSettingsControl(page, `document.querySelector('[aria-label="Reload packs"]')`);
+  await until(() => discoveryReads().length > reads, 'the discovery read starts');
+  await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')?.getAttribute('aria-busy') === 'false'`), 'the discovery read commits');
+  await settleBrowserWork(page);
 }
 
 /** Paint frames, then every finite animation such as Fluent's tab indicator slide. @param {Cdp} page */
@@ -13115,8 +13366,8 @@ test('074 About: Settings then About shows the recorded development install in a
     })`);
     assert.deepEqual(packsEntry, {
       heading: 'Settings', sections: [['Packs', 'true'], ['About', 'false']],
-      context: 'installed', filter: 'All use cases', page: 'Page 1 of 2', details: 0,
-      toolbar: ['Reload packs'], footer: 'Installed: current · Catalog: current',
+      context: 'installed', filter: 'All use cases', page: 'Page 1 of 1', details: 0,
+      toolbar: ['Reload packs'], footer: 'Installed: current · Catalog: not read',
     }, 'Settings opens on Packs with the existing initial view');
     assert.equal(canvas.aboutReads().length, 0, 'Packs does not prefetch About');
     const packReads = canvas.packReads().length;
@@ -13175,7 +13426,7 @@ test('074 About: Settings then About shows the recorded development install in a
       const about = entry.focused === 'about';
       assert.equal(entry.surface.shown, about, JSON.stringify(entry));
       assert.deepEqual(entry.surface.toolbar, about ? [] : ['Reload packs'], JSON.stringify(entry));
-      assert.equal(entry.surface.footer, about ? 'About · Read only' : 'Installed: current · Catalog: current');
+      assert.equal(entry.surface.footer, about ? 'About · Read only' : 'Installed: current · Catalog: not read');
       if (about) assert.deepEqual(entry.surface.rows, ABOUT_MAIN_ROWS);
     }
     assert.deepEqual(keyed.map(entry => entry.focused), ['packs', 'about', 'packs', 'about', 'packs', 'about', 'about']);
@@ -13512,8 +13763,8 @@ test('074 About: local sections keep the Packs view, dialogs, focus, and unsent 
   concurrency: false,
 }, async context => {
   if (!t010BrowserReady(context)) return;
-  await runAboutCase(context, '074-about-continuity', {}, async canvas => {
-    const { page, output, workspace, provider } = canvas;
+  await runAboutCase(context, '074-about-continuity', { packs: { bulkAvailable: 30 } }, async canvas => {
+    const { page, output, workspace, provider, packs } = canvas;
     const click = selector => clickSettingsControl(page, `document.querySelector(${JSON.stringify(selector)})`);
     const request = {
       owner: 'dude', requestRef: randomUUID(), revision: randomUUID(), class: 'fact', scope: workspace.stable.scope,
@@ -13530,8 +13781,9 @@ test('074 About: local sections keep the Packs view, dialogs, focus, and unsent 
         context: document.querySelector('[data-pack-context][aria-selected="true"]')?.getAttribute('data-pack-context'),
         filter: document.querySelector('[data-pack-toolbar] [role="combobox"]')?.textContent.trim(),
         page: document.querySelector('[data-pack-page]')?.textContent,
-        rows: [...document.querySelectorAll('[data-pack-row]')].map(node => node.getAttribute('data-pack-row')),
-        detail: detail?.getAttribute('data-pack-detail') ?? null,
+        // An Available row's key carries its source; the pack name is what this case compares.
+        rows: [...document.querySelectorAll('[data-pack-row]')].map(node => node.getAttribute('data-pack-row').replace(/@src_[0-9a-f]{32}$/, '')),
+        detail: detail?.getAttribute('data-pack-detail')?.replace(/@src_[0-9a-f]{32}$/, '') ?? null,
         open: Boolean(detail?.open), modal: Boolean(detail?.matches(':modal')),
         width: detail?.open ? detail.getBoundingClientRect().width : null,
         scroll: document.querySelector('[data-pack-scroll]').scrollTop,
@@ -13584,14 +13836,15 @@ test('074 About: local sections keep the Packs view, dialogs, focus, and unsent 
     // Filter, page, and selection round trip with the wide detail pane.
     await click('#dude-tab-settings');
     await packsSettled(page);
+    await discoverCatalog(canvas);
     await click('[data-pack-context="available"]');
-    await selectTag('ui-tools');
+    await selectTag('bulk');
     await click('[aria-label="Next pack page"]');
-    await click('[data-pack-row="november"]');
+    await click('[data-pack-row^="pack:bulk-a-30@"]');
     const before = await packView();
     assert.deepEqual({ ...before, focus: undefined, scroll: undefined }, {
-      context: 'available', filter: 'ui-tools', page: 'Page 2 of 2', rows: ['november'], detail: 'november',
-      open: true, modal: false, width: 320, focus: undefined, scroll: undefined });
+      context: 'available', filter: 'bulk', page: 'Page 2 of 2', rows: packKeys(packs.bulkAvailableNames.slice(25)),
+      detail: 'pack:bulk-a-30', open: true, modal: false, width: 320, focus: undefined, scroll: undefined });
     const packReads = canvas.packReads().length;
     await chooseSettingsSection(page, 'about');
     assert.deepEqual(await hiddenPacks(), { openDialogs: 0, rendered: 0 }, 'no hidden pane covers or keeps About focus');
@@ -13628,26 +13881,26 @@ test('074 About: local sections keep the Packs view, dialogs, focus, and unsent 
 
     // A pane retained on About reopens as the narrow modal after a resize.
     await page.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
-    await click('[data-pack-row="zulu"]');
+    await click('[data-pack-row="pack:zulu"]');
     await chooseSettingsSection(page, 'about');
     await page.send('Emulation.setDeviceMetricsOverride', { width: 768, height: 900, deviceScaleFactor: 1, mobile: false });
     await settleAboutAnimations(page);
     assert.deepEqual(await hiddenPacks(), { openDialogs: 0, rendered: 0 });
     await chooseSettingsSection(page, 'packs');
     const narrow = await packView();
-    assert.equal(narrow.detail, 'zulu');
+    assert.equal(narrow.detail, 'pack:zulu');
     assert.equal(narrow.modal, true, 'the retained selection returns under the existing narrow modal rule');
     assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').contains(document.activeElement)`), true);
     const modalImage = await aboutScreenshot(page, output, 'packs-detail-modal-restored-768x900-light');
     await key(page, 'Escape');
-    assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-pack-row')`), 'zulu',
+    assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-pack-row')`), 'pack:zulu',
       'closing the restored modal returns focus to its row');
     await page.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
     assert.equal(canvas.packReads().length, packReads, 'no section change reloads packs');
 
     // Ordinary re-entry still starts from the existing initial view.
     await click('[data-pack-context="available"]');
-    await click('[data-pack-row="bravo"]');
+    await click('[data-pack-row^="pack:bravo@"]');
     await chooseSettingsSection(page, 'about');
     await click('#dude-tab-context');
     await until(() => evaluate(page, `document.querySelector('[data-task-filter="todo"]')?.getAttribute('aria-pressed') === 'true'
@@ -13661,7 +13914,7 @@ test('074 About: local sections keep the Packs view, dialogs, focus, and unsent 
     await packsSettled(page);
     const reentry = await packView();
     assert.deepEqual({ context: reentry.context, filter: reentry.filter, page: reentry.page, detail: reentry.detail }, {
-      context: 'installed', filter: 'All use cases', page: 'Page 1 of 2', detail: null }, 'Packs/Installed/All/page 1/no selection');
+      context: 'installed', filter: 'All use cases', page: 'Page 1 of 1', detail: null }, 'Packs/Installed/All/page 1/no selection');
     assert.equal((await aboutSurface(page)).shown, false);
     assert.equal(await evaluate(page, `document.querySelector('[data-work-selector] [aria-label="Working on"]')?.textContent.includes('701')`), true,
       'the selected work is unchanged');
@@ -13953,12 +14206,33 @@ function aboutGeometryDelta(product, mock) {
   }
   put('footer.height', product.footer.height, mock.footer.height);
   if (product.packTabs.length && mock.packTabs.length) {
-    product.packTabs.forEach((tab, index) => {
-      for (const key of ['x', 'width', 'height']) put(`packTab${index}.${key}`, tab[key], mock.packTabs[index][key]);
+    // The approved 073 strip gives each of its views 140px, where this older mock showed two at 180px.
+    // Their x and width are pinned against the 073 mock by packsStripDelta.
+    product.packTabs.slice(0, mock.packTabs.length).forEach((tab, index) => {
+      put(`packTab${index}.height`, tab.height, mock.packTabs[index].height);
       vertical(`packTab${index}`, 'packTabs', index);
     });
     vertical('toolbar', 'toolbar');
   }
+  return delta;
+}
+
+/**
+ * Product-minus-approved-073 differences in CSS px for the Packs views strip:
+ * each view's x, width, height, and top below the command bar. The caller
+ * proves both strips show the same views first, so a missing view is a failure,
+ * never a skipped comparison.
+ * @param {any} product @param {any} mock
+ */
+function packsStripDelta(product, mock) {
+  const top = { product: product.command.y, mock: mock.command.y };
+  const delta = {};
+  const round = value => Math.round(value * 100) / 100;
+  product.packTabs.forEach((tab, index) => {
+    const approved = mock.packTabs[index];
+    for (const key of ['x', 'width', 'height']) delta[`packTab${index}.${key}`] = round(tab[key] - approved[key]);
+    delta[`packTab${index}.top`] = round((tab.y - top.product) - (approved.y - top.mock));
+  });
   return delta;
 }
 
@@ -14164,16 +14438,42 @@ test('074 About: rendered geometry, contrast, reflow, and keyboard scrolling fol
       comparisons.push({ kind: entry.kind ?? 'about', state: entry.state ?? 'current', theme: entry.theme, size: entry.size.name,
         delta, productImage: entry.image, mockImage: mock.image, mockFooter: mock.geometry.footerText });
     }
+    // The Packs views strip against the approved 073 mock, which the 074 mock predates: four views of 140px, 560px at
+    // most. Wherever the strip shows (1440x900, both themes), each view's x, width, height, and top must follow it.
+    assert.equal(approvedLfDesignSha256(fs.readFileSync(path.join(ROOT, PACKS_073_APPROVED))), PACKS_073_APPROVED_SHA256,
+      'the strip comparison uses the exact approved 073 mock');
+    const stripUrl = pathToFileURL(path.join(ROOT, PACKS_073_APPROVED)).href;
+    const strips = [];
+    for (const entry of product.filter(item => item.kind === 'packs' && item.size === sizes[0])) {
+      await setViewport(entry.size, entry.theme, false);
+      await page.send('Page.navigate', { url: `${stripUrl}?phase=b&theme=${entry.theme}&placement=off` });
+      await until(() => evaluate(page, `document.querySelectorAll('.pack-tab').length > 0 && document.querySelector('.command-bar') !== null`),
+        'approved 073 Packs mock');
+      await settleAboutAnimations(page);
+      const mock = await aboutGeometry(page, ABOUT_GEOMETRY.mock);
+      assert.deepEqual([entry.geometry.packTabs.length, mock.packTabs.length], [4, 4],
+        `the product and the approved 073 mock both show Installed, Available, Add/import, and Sources in ${entry.theme}`);
+      const views = tabs => tabs.map(tab => [tab.x, tab.width, tab.height].map(value => Math.round(value * 100) / 100));
+      strips.push({ theme: entry.theme, size: entry.size.name, delta: packsStripDelta(entry.geometry, mock),
+        product: views(entry.geometry.packTabs), approved: views(mock.packTabs),
+        image: await aboutScreenshot(page, output, `approved-073-mock-packs-${entry.size.name}-${entry.theme}`) });
+    }
+    assert.deepEqual(strips.map(strip => `${strip.theme} ${strip.size}`), ['light 1440x900', 'dark 1440x900'],
+      'the strip is compared in both themes at the size where it shows');
     // The approved composition, within one CSS px of rounding and font
     // rasterization: rail, main frame, header, tabs, facts, link, and note.
     const tolerance = 1;
     const offenders = comparisons.flatMap(entry => Object.entries(entry.delta)
       .filter(([name, value]) => !name.startsWith('command.') && Math.abs(value) > tolerance)
       .map(([name, value]) => ({ size: entry.size, theme: entry.theme, kind: entry.kind, state: entry.state, name, value })));
+    const stripOffenders = strips.flatMap(strip => Object.entries(strip.delta).filter(([, value]) => Math.abs(value) > tolerance)
+      .map(([name, value]) => ({ size: strip.size, theme: strip.theme, name, value })));
     output.json('visual-result.json', { browser: canvas.driver.info.Browser, node: process.version,
       reflow: 'Effective-viewport reflow: 200% means half the CSS viewport at device scale 2. Not native browser zoom.',
-      product, states, comparisons, offenders, tolerance });
+      product, states, comparisons, offenders, strips, stripOffenders, tolerance });
     assert.deepEqual(offenders, [], 'product geometry follows the approved mock');
+    assert.deepEqual(stripOffenders, [], `the Packs strip follows the approved 073 mock; [x, width, height] per view: ${
+      JSON.stringify(strips.map(({ theme, product: views, approved }) => ({ theme, product: views, approved })))}`);
     for (const entry of comparisons) {
       if (entry.kind === 'about') assert.equal(entry.mockFooter, 'About · Read only');
     }
@@ -14660,6 +14960,3676 @@ test('075 About: the recorded base follows the approved 075 mock across sizes, r
       product, states, scrollbarCases, keyboardReached, comparisons, offenders, tolerance });
     assert.deepEqual(offenders, [], 'product geometry follows the approved 075 mock');
     for (const entry of comparisons) assert.equal(entry.mockFooter, 'About · Read only');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 073 Packs foundations: typed Installed rows with read-only project agents and
+// skills, 25-row pages by opaque key, retained refresh context, and the narrow
+// layouts. Each case runs the real Canvas server and Needs You provider over a
+// disposable workspace with real project files and a real pack catalog.
+// ---------------------------------------------------------------------------
+
+/** The project agents and skills the 073 cases share. A skill and an agent share one name. */
+const T073_PROJECT = Object.freeze([
+  { type: 'agent', name: 'dude-local-alpha', declared: 'Alpha Agent', description: 'The alpha agent.',
+    files: ['LICENSE', 'templates/changelog.md'] },
+  { type: 'skill', name: 'dude-local-alpha', description: 'The alpha skill, which shares its name with the agent.',
+    files: ['notes/rollback.md'] },
+  { type: 'skill', name: 'dude-local-handmade',
+    description: 'Inert <script>window.projectExecuted = true</script> text and <b>markup</b>.' },
+  { type: 'agent', name: 'dude-local-block', frontmatter: 'name: Block\ndescription: |\n  A block value that is not read.' },
+  { type: 'agent', name: 'dude-local-quiet', frontmatter: 'name: Quiet' },
+]);
+const T073_CAVEAT = 'New agents or skills may not be available until you start a new session.';
+const T073_READ_ONLY = 'Read only. Project agents and skills are project files, not packs: Canvas offers no install, refresh, or remove for them here.';
+/** @param {number} count @param {string} [prefix] */
+const t073Fill = (count, prefix = 'dude-local-fill') => Array.from({ length: count }, (_, index) => (
+  { type: /** @type {const} */ ('skill'), name: `${prefix}-${String(index + 1).padStart(2, '0')}` }));
+/** The active scroller: the rows, or the whole panel where the panel scrolls as one column. */
+const T073_SCROLLER = `(() => { const rows = document.querySelector('[data-pack-scroll]');
+  return getComputedStyle(rows).overflowY === 'visible' ? rows.closest('[role="tabpanel"]') : rows; })()`;
+
+/**
+ * Observation and control for the 073 Packs cases over one Canvas of the About
+ * harness. A fetch probe lets a case hold a real pack response before adoption.
+ * @param {Awaited<ReturnType<typeof openAboutCanvas>>} canvas
+ */
+async function t073Driver(canvas) {
+  const { page } = canvas;
+  await page.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+    const original = window.fetch;
+    window.t073 = { hold: false, held: [], drop: false };
+    window.fetch = async (...args) => {
+      const pathname = new URL(args[0], location.href).pathname;
+      // A saved source whose response never arrives. Before: the request never left. After: it reached the server and may have been saved.
+      if (pathname === '/api/packs/sources' && window.t073.drop === 'before') { window.t073.drop = false; throw new TypeError('Failed to fetch'); }
+      const response = await original(...args);
+      if (pathname === '/api/packs/sources' && window.t073.drop === 'after') { window.t073.drop = false; throw new TypeError('Failed to fetch'); }
+      if (pathname === '/api/packs') {
+        const read = response.json.bind(response);
+        response.json = async () => {
+          const value = await read();
+          if (window.t073.hold) await new Promise(resolve => window.t073.held.push(resolve));
+          return value;
+        };
+      }
+      return response;
+    };
+  })()` });
+  const q = expression => evaluate(page, expression);
+  const click = selector => clickSettingsControl(page, `document.querySelector(${JSON.stringify(selector)})`);
+  const busy = () => q(`document.querySelector('[aria-label="Reload packs"]')?.getAttribute('aria-busy') === 'true'`);
+  const driver = {
+    q, click, busy,
+    /** @param {number} [width] @param {number} [height] @param {'light'|'dark'} [theme] */
+    async enter(width = 1440, height = 900, theme = 'light') {
+      await navigate(page, null, width, theme, canvas.origin, height);
+      await until(() => q(`document.body.innerText.includes('Connected')`), 'connected Canvas');
+      await click('#dude-tab-settings');
+      await packsSettled(page);
+      await settleAboutAnimations(page);
+    },
+    state: () => q(`(() => {
+      const detail = document.querySelector('[data-pack-detail]');
+      return {
+        context: document.querySelector('[data-pack-context][aria-selected="true"]')?.getAttribute('data-pack-context'),
+        filter: document.querySelector('[data-pack-toolbar] [role="combobox"]')?.textContent.trim(),
+        count: document.querySelector('[data-pack-count]')?.textContent, page: document.querySelector('[data-pack-page]')?.textContent,
+        keys: [...document.querySelectorAll('[data-pack-row]')].map(node => node.getAttribute('data-pack-row')),
+        selected: [...document.querySelectorAll('[data-pack-row][aria-selected="true"]')].map(node => node.getAttribute('data-pack-row')),
+        detail: detail?.getAttribute('data-pack-detail') || null, open: Boolean(detail?.open),
+        previous: document.querySelector('[aria-label="Previous pack page"]').disabled,
+        next: document.querySelector('[aria-label="Next pack page"]').disabled,
+        totals: [...document.querySelectorAll('[data-pack-total]')].filter(node => getComputedStyle(node).visibility === 'visible')
+          .map(node => node.textContent),
+        projectNotice: document.querySelector('[data-pack-project-coverage]')?.innerText ?? null,
+      };
+    })()`),
+    stripShown: () => q(`document.querySelector('[data-pack-context="installed"]').getClientRects().length > 0`),
+    /** The Packs views are tabs, or the labeled View Dropdown at 300px of width or less. @param {'installed'|'available'} value */
+    async chooseContext(value) {
+      if (await driver.stripShown()) { await click(`[data-pack-context="${value}"]`); return; }
+      await click('[data-pack-view] [role="combobox"]');
+      await clickSettingsControl(page, `[...document.querySelectorAll('[role="option"]')]
+        .find(node => node.textContent.trim().startsWith(${JSON.stringify(value === 'installed' ? 'Installed' : 'Available')}))`);
+    },
+    /** Any Packs view, by tab or by the labeled View Dropdown at 300px of width or less. @param {'installed'|'available'|'import'|'sources'} value */
+    async chooseSub(value) {
+      if (await driver.stripShown()) { await click(`[data-pack-context="${value}"]`); return; }
+      await click('[data-pack-view] [role="combobox"]');
+      const label = { installed: 'Installed', available: 'Available', import: 'Add/import', sources: 'Sources' }[value];
+      await clickSettingsControl(page, `[...document.querySelectorAll('[role="option"]')].find(node => node.textContent.trim().startsWith(${JSON.stringify(label)}))`);
+    },
+    /** @param {string} tag */
+    async chooseTag(tag) {
+      await click('[data-pack-toolbar] [role="combobox"]');
+      await clickSettingsControl(page, `[...document.querySelectorAll('[role="option"]')]
+        .find(node => node.textContent.trim() === ${JSON.stringify(tag || 'All use cases')})`);
+    },
+    /** Choose a Source filter option by its exact label. @param {string} label */
+    async chooseSource(label) {
+      await click('[data-pack-source-filter]');
+      await clickSettingsControl(page, `[...document.querySelectorAll('[role="option"]')].find(node => node.textContent.trim() === ${JSON.stringify(label)})`);
+    },
+    /** The Clear button: resets Use case and Source. */
+    clear: () => clickSettingsControl(page, `[...document.querySelectorAll('[data-pack-toolbar] button')].find(node => node.textContent.trim() === 'Clear')`),
+    /** The Source filter's options, read by opening it and closing it again. */
+    async sourceOptions() {
+      await click('[data-pack-source-filter]');
+      const options = await q(`[...document.querySelectorAll('[role="option"]')].map(node => node.textContent.trim())`);
+      await key(page, 'Escape');
+      return options;
+    },
+    /** The rows now listed: key, then each cell's text. */
+    rows: () => q(`[...document.querySelectorAll('[data-pack-row]')].map(row => [row.getAttribute('data-pack-row'),
+      ...[...row.querySelectorAll('[role="gridcell"]')].map(cell => cell.innerText.replace(/\\s+/g, ' ').trim())])`),    /** An explicit Reload packs that completes: the one read that acquires catalogs. */
+    async reload() {
+      const reads = canvas.discoveryReads().length;
+      await click('[aria-label="Reload packs"]');
+      await until(() => canvas.discoveryReads().length > reads, 'a discovery read starts');
+      await until(async () => !(await busy()), 'the discovery read settles');
+      await settleBrowserWork(page);
+    },
+    /** Start a Reload packs whose real response is held before adoption. */
+    async hold() {
+      await q(`window.t073.hold = true`);
+      await click('[aria-label="Reload packs"]');
+      await until(() => q(`window.t073.held.length === 1`), 'one held pack response');
+    },
+    async release() {
+      await q(`window.t073.hold = false; window.t073.held.splice(0).forEach(resolve => resolve())`);
+      await until(async () => !(await busy()), 'the held read is adopted');
+      await settleBrowserWork(page);
+    },
+    /** Fixed geometry of the list at this moment. */
+    geometry: () => q(`(() => {
+      const rect = selector => { const node = document.querySelector(selector); if (!node) return null;
+        const r = node.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, width: r.width, height: r.height }; };
+      const rows = document.querySelector('[data-pack-scroll]');
+      return { innerWidth, innerHeight, documentWidth: document.documentElement.scrollWidth,
+        scroll: rect('[data-pack-scroll]'), panel: rect('[role="tabpanel"][id$="-results"]'), pager: rect('[data-pack-pager]'),
+        toolbar: rect('[data-pack-toolbar]'), header: rect('[data-pack-scroll] [role="row"]'),
+        rowsOverflow: getComputedStyle(rows).overflowY, panelOverflow: getComputedStyle(rows.closest('[role="tabpanel"]')).overflowY };
+    })()`),
+    /** The scroll offset of the active scroller. */
+    scrollTop: () => q(`${T073_SCROLLER}.scrollTop`),
+    /** @param {number} value */
+    setScrollTop: value => q(`${T073_SCROLLER}.scrollTop = ${value}`),
+  };
+  return driver;
+}
+
+/** The sections of the open details body, in DOM order. @param {Awaited<ReturnType<typeof t073Driver>>} p */
+const t073Outline = p => p.q(`[...document.querySelector('[data-pack-detail-body]').children].map(node => {
+  if (node.hasAttribute('data-pack-project-notice')) return 'coverage notice';
+  if (node.hasAttribute('data-pack-project-files-notice')) return 'files notice';
+  if (node.hasAttribute('data-pack-description')) return 'description';
+  if (node.hasAttribute('data-pack-readonly')) return 'read-only note';
+  if (node.querySelector('[data-pack-actions]')) return 'actions';
+  if (node.tagName === 'DL') return 'facts: ' + [...node.querySelectorAll('dt')].map(dt => dt.textContent).join(' | ');
+  if (node.tagName === 'DETAILS') return 'files: ' + node.querySelector('summary').textContent;
+  if (node.tagName === 'H3') return 'heading: ' + node.textContent;
+  return 'text: ' + node.textContent.trim();
+})`);
+
+test('073 Packs: Installed lists Name, Type, and Use cases with read-only project rows by opaque key', {
+  timeout: 240_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '073-installed-rows', { packs: {}, prepare: workspace => addProjectArtifacts(workspace, T073_PROJECT) },
+    async canvas => {
+      const { page, output, packs } = canvas;
+      const p = await t073Driver(canvas);
+      await p.enter();
+      const labels = await p.q(`[...document.querySelectorAll('[data-pack-context]')].map(node => [node.getAttribute('data-pack-context'), node.getAttribute('aria-label')])`);
+      assert.deepEqual(labels, [['installed', 'Installed (13)'], ['available', 'Available (unknown)'], ['import', null], ['sources', null]],
+        'the tabs are Installed, Available, Add/import, and Sources; Installed counts packs plus project rows, and Available is unknown until a Reload');
+      assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-scroll] [role="columnheader"]')].map(node => node.textContent)`),
+        ['Name', 'Type', 'Source', 'Use cases']);
+
+      // Packs first, in profile order; then project rows by name and type. Keys are opaque.
+      const projectKeys = ['project:agent:dude-local-alpha', 'project:skill:dude-local-alpha', 'project:agent:dude-local-block',
+        'project:skill:dude-local-handmade', 'project:agent:dude-local-quiet'];
+      const rows = await p.q(`[...document.querySelectorAll('[data-pack-row]')].map(row =>
+        [row.getAttribute('data-pack-row'), ...[...row.querySelectorAll('[role="gridcell"]')].map(cell => cell.innerText.trim())])`);
+      assert.deepEqual(rows.map(row => row[0]), [...packKeys(packs.installedNames), ...projectKeys]);
+      for (const [key, name, type, source, useCases] of rows) {
+        if (key.startsWith('project:')) {
+          assert.deepEqual([name, type, source, useCases], [key.split(':')[2], key.split(':')[1] === 'agent' ? 'Agent' : 'Skill', 'This project', 'Not applicable']);
+        } else assert.deepEqual([name, type, source], [key.slice('pack:'.length), 'Pack', name === 'zulu' ? 'Unlisted - Git repository' : 'Unlisted - Local folder']);
+      }
+      assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-toolbar] label')].map(node => node.textContent)`), ['Use case', 'Source'], 'only the Use case and Source filters: no Type, origin, or operation filter');
+      const surface = await p.q(`document.querySelector('[data-settings]').innerText`);
+      assert.match(surface, /Sources/, 'Phase B appends Sources to the same strip');
+      assert.equal(await p.q(`document.querySelectorAll('[data-settings] [role="tab"]').length`), 6, 'two section tabs and four Packs views');
+      await aboutScreenshot(page, output, 'installed-typed-rows-1440x900-light');
+
+      // A same-name skill and agent have distinct keys and never share selection or focus.
+      await p.click('[data-pack-row="project:skill:dude-local-alpha"]');
+      let state = await p.state();
+      assert.deepEqual([state.detail, state.selected], ['project:skill:dude-local-alpha', ['project:skill:dude-local-alpha']]);
+      assert.equal(await p.q(`document.querySelector('[data-pack-detail] h2').textContent`), 'dude-local-alpha');
+      await p.click('[data-pack-row="project:agent:dude-local-alpha"]');
+      state = await p.state();
+      assert.deepEqual([state.detail, state.selected], ['project:agent:dude-local-alpha', ['project:agent:dude-local-alpha']]);
+      assert.equal(await p.q(`document.activeElement === document.querySelector('[aria-label="Close project details"]')`), true,
+        'opening project details focuses its Close control');
+      assert.deepEqual(await t073Outline(p), ['description', 'read-only note',
+        'facts: Type | Location | Declared name | File count', 'files: Files (3)', `text: ${T073_CAVEAT}`],
+      'description, read-only note, facts, then Files and the caveat; nothing at the reserved Documentation position');
+      assert.equal(await p.q(`document.querySelector('[data-pack-detail] header span').textContent`), 'Installed · This project');
+      assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-detail-body] dl > *')].map(node => node.textContent)`),
+        ['Type', 'Agent', 'Location', '.github/agents/dude-local-alpha.agent.md', 'Declared name', 'Alpha Agent', 'File count', '3 files']);
+      assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-detail] li code')].map(node => node.textContent)`),
+        ['.github/agents/dude-local-alpha.agent.md', '.github/agents/dude-local-alpha.support/LICENSE',
+          '.github/agents/dude-local-alpha.support/templates/changelog.md'], 'the agent files include its companion folder');
+      assert.equal(await p.q(`document.querySelector('[data-pack-description]').textContent`), 'The alpha agent.');
+      assert.equal(await p.q(`document.querySelector('[data-pack-readonly]').textContent`), T073_READ_ONLY);
+      assert.deepEqual(await p.q(`({ links: document.querySelectorAll('[data-pack-detail] a, [data-pack-detail] [href]').length,
+        buttons: [...document.querySelectorAll('[data-pack-detail-body] button')].length,
+        operations: document.querySelectorAll('[data-pack-operation], [data-pack-actions]').length,
+        text: /Remove|Open file|Documentation/.test(document.querySelector('[data-pack-detail]').textContent) })`),
+      { links: 0, buttons: 0, operations: 0, text: false }, 'inert text only: no link, action, Remove, Open file, or documentation');
+      await key(page, 'Escape');
+      assert.equal(await p.q(`document.activeElement?.getAttribute('data-pack-row')`), 'project:agent:dude-local-alpha',
+        'focus returns to the agent row, not its same-name skill');
+      await p.click('[data-pack-row="project:skill:dude-local-alpha"]');
+      assert.deepEqual(await t073Outline(p), ['description', 'read-only note',
+        'facts: Type | Location | Declared name | File count', 'files: Files (2)', `text: ${T073_CAVEAT}`]);
+      await key(page, 'Escape');
+
+      // Unreadable metadata keeps its own reason; markup is never interpreted.
+      await p.click('[data-pack-row="project:agent:dude-local-block"]');
+      assert.equal(await p.q(`document.querySelector('[data-pack-description]').textContent`),
+        'Description unavailable: The description is a block value, which is not read.');
+      await key(page, 'Escape');
+      await p.click('[data-pack-row="project:agent:dude-local-quiet"]');
+      assert.equal(await p.q(`document.querySelector('[data-pack-description]').textContent`),
+        'Description unavailable: The frontmatter does not declare a description.');
+      assert.equal(await p.q(`document.querySelector('[data-pack-detail-body] dl dd:nth-of-type(3)').textContent`), 'Quiet');
+      await key(page, 'Escape');
+      await p.click('[data-pack-row="project:skill:dude-local-handmade"]');
+      assert.equal(await p.q(`document.querySelector('[data-pack-description]').textContent`),
+        'Inert <script>window.projectExecuted = true</script> text and <b>markup</b>.');
+      assert.deepEqual(await p.q(`({ executed: window.projectExecuted === undefined,
+        markup: document.querySelectorAll('[data-pack-detail] script, [data-pack-detail] b').length })`), { executed: true, markup: 0 });
+      await aboutScreenshot(page, output, 'project-details-handmade-1440x900-light');
+      await key(page, 'Escape');
+
+      // Pack details keep their own order and provenance.
+      await p.click('[data-pack-row="pack:zulu"]');
+      assert.deepEqual(await t073Outline(p), ['description', 'actions', 'facts: Use cases | Source | Declared tools',
+        'heading: Recorded installed source', 'facts: Type | Repository | Requested ref | Resolved commit',
+        'text: The recorded repository matches no current source on this computer, so Source shows Unlisted. Description and use cases come from the default catalog (Local library) by pack name. A confirmed refresh records a current source.',
+        'files: Recorded files (18)', 'text: Membership and files: .dude/metadata/profile.md. Recorded source does not verify installed bytes.']);
+      assert.equal(await p.q(`document.querySelector('[data-pack-detail] header span').textContent`), 'Installed · Workspace scope');
+      assert.equal(await p.q(`document.querySelector('[data-pack-detail]').textContent.includes('Documentation')`), false);
+      await key(page, 'Escape');
+
+      // Project rows match no use-case filter and add no incomplete-tag coverage. Use case needs a catalog, so read once first.
+      await discoverCatalog(canvas);
+      await p.chooseTag('ui');
+      state = await p.state();
+      assert.deepEqual(state.keys, packKeys(['zulu', 'papa']));
+      assert.match(await p.q(`document.querySelector('[data-pack-tag-coverage]').textContent`), /1 installed pack has unavailable use cases/);
+      assert.equal(state.count, '1–2 of 2 known matches');
+      await p.chooseTag('');
+
+      // Available stays pack-only with Name first, no Type, and no project rows.
+      await p.chooseContext('available');
+      assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-scroll] [role="columnheader"]')].map(node => node.textContent)`),
+        ['Name', 'Source', 'Use cases']);
+      state = await p.state();
+      assert.deepEqual(bareKeys(state.keys), packKeys(packs.availableNames));
+      assert.equal(state.keys.some(key => key.startsWith('project:')), false);
+      assert.deepEqual(await p.q(`[...new Set([...document.querySelectorAll('[data-pack-row]')].map(row => row.querySelectorAll('[role="gridcell"]').length))]`), [3],
+        'Available rows have only Name, Source and Use cases cells');
+      await aboutScreenshot(page, output, 'available-pack-only-1440x900-light');
+    });
+});
+
+/** The 25-row page cases: [name, extra Available packs, project rows, Installed rows, Available rows]. */
+const T073_PAGING = Object.freeze([
+  ['exactly 25 rows', 14, 17, 25, 25],
+  ['26 rows', 15, 18, 26, 26],
+]);
+
+test('073 Packs: Installed and Available page 25 rows at a time through exact and 26-row fixtures', {
+  timeout: 360_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  for (const [name, bulkAvailable, projects, installedTotal, availableTotal] of T073_PAGING) {
+    await context.test(name, async () => {
+      await runAboutCase(context, `073-paging-${installedTotal}`,
+        { packs: { bulkAvailable }, prepare: workspace => addProjectArtifacts(workspace, t073Fill(projects)) },
+        async canvas => {
+          const { page, output, packs } = canvas;
+          const p = await t073Driver(canvas);
+          await p.enter();
+          // Available lists nothing until the one explicit read of the catalogs.
+          await discoverCatalog(canvas);
+          const fill = t073Fill(projects).map(item => `project:skill:${item.name}`);
+          const expected = { installed: [...packKeys(packs.installedNames), ...fill], available: packKeys(packs.availableNames) };
+          assert.equal(expected.installed.length, installedTotal);
+          assert.equal(expected.available.length, availableTotal);
+          for (const list of ['installed', 'available']) {
+            await p.chooseContext(list);
+            const total = expected[list].length, seen = [];
+            for (let number = 1; ; number += 1) {
+              const state = await p.state();
+              assert.ok(state.keys.length > 0 && state.keys.length <= 25, `${list} page ${number} holds at most 25 rows`);
+              seen.push(...state.keys);
+              assert.equal(state.page, `Page ${number} of ${Math.ceil(total / 25)}`);
+              assert.equal(state.count, `${(number - 1) * 25 + 1}–${(number - 1) * 25 + state.keys.length} of ${total}`);
+              assert.deepEqual([state.previous, state.next], [number === 1, number * 25 >= total],
+                'Previous and Next are disabled where no page exists');
+              if (number === 1 && state.keys.length === 25) {
+                // A full page fills the results: no empty area above the pinned pager.
+                const g = await p.geometry();
+                assert.equal(g.rowsOverflow, 'auto');
+                assert.ok(await p.q(`${T073_SCROLLER}.scrollHeight > ${T073_SCROLLER}.clientHeight`), 'a full page overflows its scroller');
+                assert.ok(g.pager.bottom <= g.innerHeight && Math.abs(g.pager.top - g.scroll.bottom) <= 1, 'the pager is pinned below the rows');
+                await p.setScrollTop(100000);
+                const last = await p.q(`[...document.querySelectorAll('[data-pack-row]')].at(-1).getBoundingClientRect().bottom`);
+                assert.ok(Math.abs(g.pager.top - last) <= 1.5, `the last row meets the pager (${g.pager.top} vs ${last})`);
+                await p.setScrollTop(0);
+                if (list === 'installed') await aboutScreenshot(page, output, `${list}-full-page-${installedTotal}-1440x900-light`);
+              }
+              if (state.next) break;
+              await p.setScrollTop(120);
+              await p.click('[aria-label="Next pack page"]');
+              assert.equal(await p.q(`document.activeElement === document.querySelector('[data-settings] h1')`), true,
+                'paging returns focus to the Settings heading');
+              assert.equal(await p.scrollTop(), 0, 'paging resets the scroller');
+            }
+            assert.deepEqual(list === 'available' ? bareKeys(seen) : seen, expected[list], `${list}: every row once, in order`);
+            assert.equal(new Set(seen).size, total);
+            if (total > 25) {
+              await p.click('[aria-label="Previous pack page"]');
+              assert.equal((await p.state()).page, `Page 1 of ${Math.ceil(total / 25)}`);
+            }
+          }
+
+          // The filter runs over the whole list before paging.
+          if (installedTotal === 26) {
+            await p.chooseContext('available');
+            await p.chooseTag('bulk');
+            assert.equal((await p.state()).count, '1–15 of 15 matches');
+          }
+        });
+    });
+  }
+});
+
+test('073 Packs: a reload keeps filters, page, and selection while the selected row survives', {
+  timeout: 360_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '073-retention', { packs: { bulkAvailable: 15 }, prepare: workspace => addProjectArtifacts(workspace, t073Fill(18)) },
+    async canvas => {
+      const { page, output, workspace, packs } = canvas;
+      const p = await t073Driver(canvas);
+      await p.enter();
+      const lastProject = 'project:skill:dude-local-fill-18';
+
+      // Installed has 26 rows: the last is alone on page 2.
+      await p.click('[aria-label="Next pack page"]');
+      await p.click(`[data-pack-row="${lastProject}"]`);
+      let state = await p.state();
+      assert.deepEqual([state.page, state.detail, state.keys], ['Page 2 of 2', lastProject, [lastProject]]);
+
+      // A pending reload keeps the retained rows, page, and selection, and says so.
+      await p.hold();
+      state = await p.state();
+      assert.deepEqual([state.page, state.detail, state.open, state.keys], ['Page 2 of 2', lastProject, true, [lastProject]]);
+      assert.equal(state.count, '26–26 of 26 last read');
+      assert.deepEqual(state.totals, ['?', '?'], 'counts are unknown while either read is pending');
+      assert.match(state.projectNotice, /Reading Installed\.\.\.[\s\S]*rows from the last read stay for inspection only/i);
+      assert.match(await p.q(`document.querySelector('[data-pack-detail]').textContent`), /stale.*inspection only/s);
+      await aboutScreenshot(page, output, 'pending-retained-1440x900-light');
+      await p.release();
+      state = await p.state();
+      assert.deepEqual([state.page, state.detail, state.open, state.count, state.projectNotice], ['Page 2 of 2', lastProject, true, '26–26 of 26', null]);
+      assert.deepEqual(state.totals, ['26', '26']);
+
+      // A row that moves to another page takes its page with it.
+      fs.rmSync(path.join(workspace.root, '.github/skills/dude-local-fill-01'), { recursive: true });
+      await p.reload();
+      state = await p.state();
+      assert.deepEqual([state.page, state.count, state.detail, state.keys.length, state.selected], ['Page 1 of 1', '1–25 of 25', lastProject, 25, [lastProject]]);
+      // A refresh never steals focus into a row.
+      assert.equal(await p.q(`document.activeElement?.getAttribute('data-pack-row')`), null);
+
+      // A removed selection resets the view, keeping the context.
+      fs.rmSync(path.join(workspace.root, '.github/skills/dude-local-fill-18'), { recursive: true });
+      await p.reload();
+      state = await p.state();
+      assert.deepEqual([state.context, state.filter, state.page, state.detail, state.open], ['installed', 'All use cases', 'Page 1 of 1', null, false]);
+
+      // With nothing selected, a refresh resets the filter and page.
+      await p.chooseTag('ui');
+      assert.equal((await p.state()).filter, 'ui');
+      await p.reload();
+      state = await p.state();
+      assert.deepEqual([state.filter, state.page], ['All use cases', 'Page 1 of 1']);
+
+      // Available keeps a selected row's filter and selection through pending and adopted reads too.
+      await p.chooseContext('available');
+      await p.chooseTag('bulk');
+      await p.click('[data-pack-row^="pack:bulk-a-15@"]');
+      state = await p.state();
+      const selectedKey = state.detail;
+      assert.match(selectedKey, /^pack:bulk-a-15@src_[0-9a-f]{32}$/);
+      assert.deepEqual([state.filter, state.page], ['bulk', 'Page 1 of 1']);
+      await p.hold();
+      state = await p.state();
+      assert.deepEqual([state.context, state.detail, state.open], ['available', selectedKey, true], 'the pending read keeps the selection');
+      await p.release();
+      state = await p.state();
+      assert.deepEqual([state.filter, state.page, state.detail, state.keys.length], ['bulk', 'Page 1 of 1', selectedKey, 15]);
+      assert.deepEqual(state.totals, ['24', '26'], 'counts settle after the read');
+      assert.ok(packs.bulkAvailableNames.includes('bulk-a-15'));
+    });
+});
+
+/** Project rows with values that must wrap: unbroken name and file segments, and a long description. */
+const T073_LONG = Object.freeze({ type: /** @type {const} */ ('skill'), name: `dude-local-aaa-${'x'.repeat(55)}`,
+  description: `${'A long description whose words must wrap inside the narrow details body rather than widen it. '.repeat(4)}end`,
+  files: [`deep/${'y'.repeat(60)}.md`] });
+const T073_LONG_TAG = 'a-use-case-name-long-enough-to-need-wrapping-in-a-narrow-dropdown';
+
+/** Text and graphic colors on the Packs surface, with their painted backgrounds. @param {Awaited<ReturnType<typeof t073Driver>>} p */
+const t073Colors = p => p.q(`(() => {
+  const background = node => {
+    for (let n = node; n; n = n.parentElement) {
+      const color = getComputedStyle(n).backgroundColor;
+      if (color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') return color;
+    }
+    throw new Error('No painted background');
+  };
+  const view = document.querySelector('[data-pack-view]');
+  const label = [...document.querySelectorAll('[data-pack-row] span')].find(node => node.textContent === 'Type' || node.textContent === 'Use cases');
+  const selectors = ['[data-settings] h1', '[data-pack-toolbar] label', '[data-pack-toolbar] [role="combobox"]', '[data-pack-source-filter]', '[data-pack-toolbar] > button',
+    '[data-pack-row] span', '[data-pack-count]', '[data-pack-page]', '[data-pack-scroll] [role="columnheader"]',
+    ...(view.getClientRects().length ? ['[data-pack-view] label', '[data-pack-view] [role="combobox"]']
+      : ['[data-pack-context][aria-selected="true"]', '[data-pack-context][aria-selected="false"]'])];
+  const nodes = selectors.map(selector => [selector, document.querySelector(selector)]);
+  if (label && getComputedStyle(label).display !== 'none') nodes.push(['stacked label', label]);
+  return nodes.map(([selector, node]) => ({ selector, color: getComputedStyle(node).color, background: background(node) }));
+})()`);
+
+/** Whether each control is on screen, at least 24px, and hit-testable. @param {Awaited<ReturnType<typeof t073Driver>>} p @param {string[]} selectors */
+const t073Targets = (p, selectors) => p.q(`${JSON.stringify(selectors)}.map(selector => {
+  const node = document.querySelector(selector), r = node.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+  return { selector, width: r.width, height: r.height, visible: r.x >= 0 && r.y >= 0 && r.right <= innerWidth && r.bottom <= innerHeight,
+    hit: hit === node || node.contains(hit) };
+})`);
+
+test('073 Packs: both themes at four sizes and the 200% reflow variants keep every list and details state usable', {
+  timeout: 600_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '073-visual-matrix', { packs: { bulkAvailable: 15 }, prepare: workspace => {
+    addProjectArtifacts(workspace, [...T073_PROJECT, T073_LONG, ...t073Fill(14)]);
+    workspace.write('library/packs/zzz-long-tag/pack.md',
+      `---\nname: zzz-long-tag\ndescription: "Long use-case fixture."\nuse-cases: ${JSON.stringify([T073_LONG_TAG])}\n---\n# zzz\n`);
+  } }, async canvas => {
+    const { page, output } = canvas;
+    const p = await t073Driver(canvas);
+    await p.enter();
+    // Use case and Available need a catalog: one explicit read, as a person would make.
+    await discoverCatalog(canvas);
+    const inventory = [];
+    const rowOf = key => `[data-pack-row="${key}"]`;
+    for (const theme of ['light', 'dark']) for (const size of ABOUT_VISUAL_SIZES) {
+      const label = `${size.name}-${theme}`;
+      await aboutViewport(page, size, theme);
+      await p.chooseContext('installed');
+      await p.q(`window.scrollTo(0, 0)`);
+      const packsWidth = await p.q(`document.querySelector('[data-pack-toolbar]').closest('section').getBoundingClientRect().width`);
+      const stripShown = await p.stripShown();
+
+      // The Installed list: typed rows, labeled where stacked, with every control reachable.
+      const list = await p.q(`(() => ({ documentWidth: document.documentElement.scrollWidth, innerWidth,
+        wide: [...document.querySelectorAll('[data-pack-row]')].filter(row => row.scrollWidth > row.clientWidth + 1).length,
+        stacked: document.querySelector('[data-pack-row]').innerText.includes('Type'),
+        headerShown: document.querySelector('[data-pack-scroll] [role="row"]').getBoundingClientRect().width > 2 }))()`);
+      assert.equal(list.documentWidth, list.innerWidth, `no horizontal page scroll at ${label}`);
+      assert.equal(list.wide, 0, `no row overflows sideways at ${label}`);
+      assert.deepEqual([list.stacked, list.headerShown], packsWidth <= 479 ? [true, false] : [false, true],
+        `Type and Use cases are labeled exactly where the rows stack (${label})`);
+      for (const target of await t073Targets(p, ['#dude-tab-settings', '[aria-label="Reload packs"]',
+        stripShown ? '[data-pack-context="installed"]' : '[data-pack-view] [role="combobox"]',
+        '[data-pack-toolbar] [role="combobox"]', '[data-pack-source-filter]', '[data-pack-toolbar] > button'])) {
+        assert.ok(target.visible && target.hit && target.width >= 24 && target.height >= 24, JSON.stringify({ label, target }));
+      }
+      for (const sample of await t073Colors(p)) {
+        assert.ok(contrast(sample.color, sample.background) >= 4.5, JSON.stringify({ label, sample }));
+      }
+      const tree = await aboutAccessibility(page);
+      assert.deepEqual(tree.unnamed, [], `every control is named at ${label}`);
+      assert.deepEqual(tree.grids, ['Installed']);
+      const listImage = await aboutScreenshot(page, output, `installed-list-${label}`);
+      await p.setScrollTop(100000);
+      for (const target of await t073Targets(p, ['[aria-label="Previous pack page"]', '[aria-label="Next pack page"]'])) {
+        assert.ok(target.visible && target.hit && target.width >= 24 && target.height >= 24, JSON.stringify({ label, target }));
+      }
+      await p.setScrollTop(0);
+
+      // Project details, including long values: one scroller, pinned heading and Back to results.
+      const details = [];
+      for (const [key, name] of [['project:agent:dude-local-alpha', 'agent'], [`project:skill:${T073_LONG.name}`, 'long']]) {
+        await p.click(rowOf(key));
+        const open = await p.q(`(() => {
+          const dialog = document.querySelector('[data-pack-detail]'), body = dialog.querySelector('[data-pack-detail-body]');
+          const scrollers = [...dialog.querySelectorAll('*')].filter(node => node !== body && /auto|scroll/.test(getComputedStyle(node).overflowY)
+            && node.scrollHeight > node.clientHeight + 1);
+          const r = dialog.getBoundingClientRect();
+          return { modal: dialog.matches(':modal'), bodyWide: body.scrollWidth > body.clientWidth + 1, scrollers: scrollers.length,
+            overflowing: body.scrollHeight > body.clientHeight, dialogRight: r.right, dialogBottom: r.bottom, innerHeight, innerWidth };
+        })()`);
+        assert.equal(open.modal, size.width < 1100, `details are a modal exactly below 1100px (${label})`);
+        assert.equal(open.bodyWide, false, `${name} details never scroll sideways at ${label}`);
+        assert.equal(open.scrollers, 0, `only the details body scrolls (${label})`);
+        await p.q(`document.querySelector('[data-pack-detail-body]').scrollTop = 100000`);
+        const pinned = await p.q(`(() => {
+          const dialog = document.querySelector('[data-pack-detail]').getBoundingClientRect();
+          const header = document.querySelector('[data-pack-detail] header').getBoundingClientRect();
+          const footer = document.querySelector('[data-pack-detail] footer').getBoundingClientRect();
+          const targets = ['[aria-label="Close project details"]', '[data-pack-detail] footer button'].map(selector => {
+            const node = document.querySelector(selector), r = node.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+            return { selector, width: r.width, height: r.height, hit: hit === node || node.contains(hit) };
+          });
+          return { headerTop: header.top - dialog.top, footerBottom: dialog.bottom - footer.bottom, targets };
+        })()`);
+        assert.ok(Math.abs(pinned.headerTop) <= 1 && Math.abs(pinned.footerBottom) <= 1, `heading and Back to results stay pinned (${label})`);
+        for (const target of pinned.targets) assert.ok(target.hit && target.width >= 24 && target.height >= 24, JSON.stringify({ label, target }));
+        if (name === 'long') {
+          assert.match(await p.q(`document.querySelector('[data-pack-detail] h2').textContent`), /^dude-local-aaa-x{55}$/);
+          assert.equal(await p.q(`document.querySelector('[data-pack-detail] h2').scrollWidth <= document.querySelector('[data-pack-detail] h2').clientWidth + 1`), true);
+          assert.equal(await p.q(`[...document.querySelectorAll('[data-pack-detail] li code')].every(node => node.scrollWidth <= node.clientWidth + 1)`), true,
+            'a long unbroken path wraps instead of scrolling');
+        }
+        details.push({ name, image: await aboutScreenshot(page, output, `details-${name}-${label}`) });
+        await p.q(`document.querySelector('[data-pack-detail-body]').scrollTop = 0`);
+        await p.click('[data-pack-detail] footer button');
+      }
+      const detailTree = await aboutAccessibility(page);
+      assert.deepEqual(detailTree.unnamed, []);
+
+      // Available: pack-only, Name first.
+      await p.chooseContext('available');
+      assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-scroll] [role="columnheader"]')].map(node => node.textContent)`),
+        ['Name', 'Source', 'Use cases'], `Available is Name first with Source and no Type (${label})`);
+      assert.equal((await p.state()).keys.some(key => key.startsWith('project:')), false);
+      const availableImage = await aboutScreenshot(page, output, `available-list-${label}`);
+      await p.chooseContext('installed');
+      inventory.push({ label, size, theme, packsWidth, listImage, details, availableImage });
+    }
+
+    // Forced colors keep Dropdown values whole: a long value wraps instead of truncating.
+    for (const theme of ['light', 'dark']) for (const size of [ABOUT_VISUAL_SIZES[3], ABOUT_VISUAL_SIZES[2]]) {
+      await aboutViewport(page, size, theme);
+      await page.send('Emulation.setEmulatedMedia', { media: '', features: [
+        { name: 'prefers-color-scheme', value: theme }, { name: 'forced-colors', value: 'active' }] });
+      await settleAboutAnimations(page);
+      await p.chooseContext('installed');
+      // The long value sorts first among the use cases (the options are sorted, as the approved mock lists them);
+      // choose it by keyboard, as a user of a short window can.
+      await p.click('[data-pack-toolbar] [role="combobox"]');
+      await key(page, 'Home');
+      await key(page, 'ArrowDown');
+      await key(page, 'Enter');
+      await settleAboutAnimations(page);
+      const dropdown = await p.q(`(() => {
+        const button = document.querySelector('[data-pack-toolbar] [role="combobox"]'), r = button.getBoundingClientRect();
+        return { text: button.textContent.trim(), height: r.height, wide: button.scrollWidth > button.clientWidth + 1,
+          forced: matchMedia('(forced-colors: active)').matches, lineHeight: parseFloat(getComputedStyle(button).lineHeight) };
+      })()`);
+      assert.equal(dropdown.forced, true);
+      assert.equal(dropdown.text, T073_LONG_TAG);
+      assert.equal(dropdown.wide, false, `forced colors do not clip the Dropdown value at ${size.name} ${theme}`);
+      if (size.width < 300) assert.ok(dropdown.height > dropdown.lineHeight * 2, `the long value wraps at ${size.name}: ${JSON.stringify(dropdown)}`);
+      inventory.push({ label: `forced-colors-${size.name}-${theme}`, dropdown,
+        image: await aboutScreenshot(page, output, `forced-colors-use-case-${size.name}-${theme}`) });
+      await p.chooseTag('');
+      await page.send('Emulation.setEmulatedMedia', { media: '', features: [
+        { name: 'prefers-color-scheme', value: theme }, { name: 'forced-colors', value: 'none' }] });
+    }
+    output.json('073-visual-inventory.json', {
+      case: 'Packs foundations: list, details, and Available at four sizes and three reflow variants in both themes',
+      distinction: 'Reflow variants halve the CSS viewport at device scale 2; they are effective-viewport reflow, not native browser zoom. Standalone Edge, not the embedded host.',
+      inventory });
+  });
+});
+
+/**
+ * Whether the focused row is wholly visible in its scroller, below the sticky
+ * header where one is drawn, and not covered by another element.
+ * @param {Awaited<ReturnType<typeof t073Driver>>} p @param {string} key
+ */
+const t073FocusedRow = (p, key) => p.q(`(() => {
+  const node = document.activeElement, r = node.getBoundingClientRect(), scroller = ${T073_SCROLLER};
+  const s = scroller.getBoundingClientRect(), header = document.querySelector('[data-pack-scroll] [role="row"]').getBoundingClientRect();
+  const floor = header.width > 2 ? Math.max(s.top, header.bottom) : s.top;
+  const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  return { focused: node.getAttribute('data-pack-row') === ${JSON.stringify(key)}, top: r.top, bottom: r.bottom, floor, ceiling: s.bottom,
+    visible: r.top >= floor - 0.5 && r.bottom <= s.bottom + 0.5, uncovered: hit === node || node.contains(hit),
+    outline: getComputedStyle(node).outlineStyle, scrolled: scroller.scrollTop };
+})()`);
+
+test('073 Packs: focus returns to a visible row, and views and scrolling follow the Packs width and window height', {
+  timeout: 360_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '073-focus-layout', { packs: { bulkAvailable: 15 }, prepare: workspace => addProjectArtifacts(workspace, t073Fill(18)) },
+    async canvas => {
+      const { page, output } = canvas;
+      const p = await t073Driver(canvas);
+      const size = (width, height, scale = 1) => ({ width, height, scale });
+      await p.enter();
+      // Available's count and Use case need a catalog: one explicit read.
+      await discoverCatalog(canvas);
+
+      // Closing details returns focus to a row that is on screen, below the sticky header, wherever it was.
+      const deep = (await p.state()).keys[17];
+      await p.click(`[data-pack-row="${deep}"]`);
+      await p.setScrollTop(0);
+      assert.equal(await p.q(`document.querySelector('[data-pack-row="${deep}"]').getBoundingClientRect().top
+        > document.querySelector('[data-pack-scroll]').getBoundingClientRect().bottom`), true, 'the selected row is scrolled out of view');
+      await key(page, 'Escape');
+      let focused = await t073FocusedRow(p, deep);
+      assert.deepEqual([focused.focused, focused.visible, focused.uncovered], [true, true, true], JSON.stringify(focused));
+      assert.notEqual(focused.outline, 'none', 'the returned row shows a focus indicator');
+      assert.ok(focused.scrolled > 0, 'the rows scrolled to reveal the row');
+      await aboutScreenshot(page, output, 'focus-return-below-first-screenful-1440x900-light');
+
+      // The same through the narrow modal's Back to results.
+      await aboutViewport(page, size(768, 900), 'light');
+      await p.click(`[data-pack-row="${deep}"]`);
+      assert.equal(await p.q(`document.querySelector('[data-pack-detail]').matches(':modal')`), true);
+      await p.click('[data-pack-detail] footer button');
+      focused = await t073FocusedRow(p, deep);
+      assert.deepEqual([focused.focused, focused.visible, focused.uncovered], [true, true, true], JSON.stringify(focused));
+
+      // And where the whole panel scrolls (300px or less, any height).
+      await aboutViewport(page, size(180, 450), 'light');
+      const far = (await p.state()).keys[20];
+      await p.click(`[data-pack-row="${far}"]`);
+      await p.setScrollTop(0);
+      await p.click('[data-pack-detail] footer button');
+      focused = await t073FocusedRow(p, far);
+      assert.deepEqual([focused.focused, focused.visible, focused.uncovered], [true, true, true], JSON.stringify(focused));
+      assert.ok(focused.scrolled > 0, 'the whole panel scrolled to reveal the row');
+
+      // The Packs views and scrolling follow the Packs column width and window height.
+      const layout = () => p.q(`(() => {
+        const strip = document.querySelector('[aria-label="Pack context"]'), view = document.querySelector('[data-pack-view]');
+        const rows = document.querySelector('[data-pack-scroll]'), panel = rows.closest('[role="tabpanel"]');
+        const tabs = [...document.querySelectorAll('[data-pack-context]')].map(tab => tab.getBoundingClientRect());
+        return { packsWidth: strip.closest('section').getBoundingClientRect().width, strip: strip.getClientRects().length > 0,
+          view: view.getClientRects().length > 0, flow: getComputedStyle(strip).gridAutoFlow.split(' ')[0],
+          sameRow: tabs.every(tab => Math.abs(tab.y - tabs[0].y) < 1) && tabs[0].width > 0,
+          // Two columns hold Installed and Available on one row, with Add/import and Sources on the next.
+          pairedRow: Math.abs(tabs[1].y - tabs[0].y) < 1 && tabs[2].y > tabs[0].y + 1 && Math.abs(tabs[3].y - tabs[2].y) < 1 && tabs[0].width > 0,
+          rows: getComputedStyle(rows).overflowY, panel: getComputedStyle(panel).overflowY,
+          documentWidth: document.documentElement.scrollWidth, innerWidth };
+      })()`);
+      const modes = [
+        // [width, height, scale, label, packs width, tabs shown, tab flow, rows scroll]
+        [1440, 900, 1, 'one row, rows scroll', 1392, true, 'column', true],
+        [528, 700, 1, 'one row from 480px', 480, true, 'column', true],
+        [527, 700, 1, 'two columns up to 479px', 479, true, 'row', true],
+        [349, 700, 1, 'two columns at 301px', 301, true, 'row', true],
+        [348, 700, 1, 'View Dropdown at 300px', 300, false, null, false],
+        [180, 900, 1, 'View Dropdown, whole panel at a tall height', 132, false, null, false],
+        [360, 560, 1, 'rows scroll from 560px of height', 312, true, 'row', true],
+        [360, 559, 1, 'whole panel below 560px of height', 312, true, 'row', false],
+        [720, 450, 2, 'rows scroll above 479px at a short height', 672, true, 'column', true],
+        [384, 450, 2, '200% reflow of 768x900', 336, true, 'row', false],
+        [180, 450, 2, '200% reflow of 360x900', 132, false, null, false],
+      ];
+      for (const [width, height, scale, label, packsWidth, strip, flow, rowsScroll] of modes) {
+        await aboutViewport(page, size(width, height, scale), 'light');
+        const found = await layout();
+        assert.equal(found.packsWidth, packsWidth, `${label}: Packs width`);
+        assert.deepEqual([found.strip, found.view], [strip, !strip], `${label}: tabs or the View Dropdown`);
+        if (strip) {
+          assert.equal(found.flow, flow, `${label}: tab flow`);
+          assert.equal(flow === 'column' ? found.sameRow : found.pairedRow, true,
+            flow === 'column' ? `${label}: the views share one row` : `${label}: two columns, with Add/import and Sources on the next row`);
+        }
+        assert.deepEqual([found.rows, found.panel], rowsScroll ? ['auto', 'visible'] : ['visible', 'auto'],
+          `${label}: ${rowsScroll ? 'rows scroll beside a pinned pager' : 'the whole panel scrolls and the pager follows the rows'}`);
+        assert.equal(found.documentWidth, found.innerWidth, `${label}: no horizontal page scroll`);
+      }
+
+      // At 300px or less a labeled Fluent Dropdown drives the same views by keyboard and pointer.
+      await aboutViewport(page, size(180, 450), 'light');
+      assert.equal(await p.q(`document.querySelector('[data-pack-view] label').textContent`), 'View');
+      assert.equal(await p.q(`document.querySelector('[data-pack-view] [role="combobox"]').textContent.trim()`), 'Installed 26');
+      const tree = await aboutAccessibility(page);
+      assert.deepEqual(tree.unnamed, []);
+      assert.ok((await page.send('Accessibility.getFullAXTree')).nodes.some(node => !node.ignored && node.role?.value === 'combobox'
+        && node.name?.value === 'View'), 'the View Dropdown is named View');
+      await focus(page, '[data-pack-view] [role="combobox"]');
+      await key(page, 'Enter');
+      assert.deepEqual(await p.q(`[...document.querySelectorAll('[role="option"]')].map(node => node.textContent.trim())`),
+        ['Installed 26', 'Available 26', 'Add/import', 'Sources']);
+      await key(page, 'ArrowDown');
+      await key(page, 'Enter');
+      await until(async () => (await p.state()).context === 'available', 'the Dropdown selects Available');
+      assert.equal(await p.q(`document.querySelector('[data-pack-view] [role="combobox"]').textContent.trim()`), 'Available 26');
+      await p.chooseContext('installed');
+      assert.equal((await p.state()).context, 'installed');
+
+      // Paging and filtering reset whichever scroller the user is scrolling.
+      await p.setScrollTop(300);
+      assert.ok(await p.scrollTop() > 0);
+      const panelScroll = await p.q(`document.querySelector('[data-pack-scroll]').closest('[role="tabpanel"]').scrollTop`);
+      assert.ok(panelScroll > 0, 'the whole panel is the scroller at 180px');
+      await p.setScrollTop(10000);
+      await p.click('[aria-label="Next pack page"]');
+      assert.equal(await p.scrollTop(), 0, 'paging resets the whole panel');
+      assert.equal(await p.q(`document.activeElement === document.querySelector('[data-settings] h1')`), true);
+      await p.click('[aria-label="Previous pack page"]');
+      await p.setScrollTop(200);
+      await p.chooseTag('bulk');
+      assert.equal(await p.scrollTop(), 0, 'filtering resets the whole panel');
+      await p.chooseTag('');
+      await aboutViewport(page, size(1440, 900), 'light');
+    });
+});
+
+test('073 Packs: focus returns below the sticky header when the closed row is above the visible rows', {
+  timeout: 240_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '073-focus-above', { packs: { bulkAvailable: 15 }, prepare: workspace => addProjectArtifacts(workspace, t073Fill(18)) },
+    async canvas => {
+      const { page, output } = canvas;
+      const p = await t073Driver(canvas);
+      await p.enter();
+      const early = (await p.state()).keys[2];
+
+      // Closing details returns focus to the row and scrolls it into view. A row above the visible rows lands at the
+      // scroller's top, where the sticky header covers it unless the row's scroll margin holds it below. Open
+      // details for an early row, then scroll the rows to their end so that row lies above them.
+      const openThenScrollPast = async () => {
+        await p.setScrollTop(0);
+        await p.click(`[data-pack-row="${early}"]`);
+        assert.equal((await p.state()).detail, early, 'details are open for the early row');
+        await p.setScrollTop(100000);
+        const above = await p.q(`(() => ({ rowBottom: document.querySelector('[data-pack-row="${early}"]').getBoundingClientRect().bottom,
+          scrollerTop: ${T073_SCROLLER}.getBoundingClientRect().top, scrolled: ${T073_SCROLLER}.scrollTop }))()`);
+        assert.ok(above.rowBottom <= above.scrollerTop, `the selected row is scrolled above the visible rows: ${JSON.stringify(above)}`);
+        return above.scrolled;
+      };
+      // The row returns wholly below the sticky header that the scroller draws over its top, not under it.
+      const assertBelowStickyHeader = async (label, scrolledPast) => {
+        assert.equal((await p.state()).detail, null, `${label}: the details closed`);
+        const focused = await t073FocusedRow(p, early);
+        const { header, scroll } = await p.geometry();
+        assert.ok(header.width > 2 && header.bottom > scroll.top, `${label}: the sticky header is drawn over the top of the rows`);
+        assert.deepEqual([focused.focused, focused.visible, focused.uncovered], [true, true, true], `${label}: ${JSON.stringify(focused)}`);
+        assert.ok(focused.top >= header.bottom - 0.5, `${label}: the row starts below the sticky header (${focused.top} vs ${header.bottom})`);
+        assert.ok(focused.scrolled < scrolledPast, `${label}: the rows scrolled back up to reveal the row (${focused.scrolled} from ${scrolledPast})`);
+      };
+
+      // The details beside the rows close with Escape.
+      let scrolledPast = await openThenScrollPast();
+      await key(page, 'Escape');
+      await assertBelowStickyHeader('1440x900 Escape', scrolledPast);
+      await aboutScreenshot(page, output, 'focus-return-above-visible-rows-1440x900-light');
+
+      // The same through the narrow modal's Back to results.
+      await aboutViewport(page, { width: 768, height: 900, scale: 1 }, 'light');
+      scrolledPast = await openThenScrollPast();
+      assert.equal(await p.q(`document.querySelector('[data-pack-detail]').matches(':modal')`), true, 'the details are a modal at 768px');
+      await p.click('[data-pack-detail] footer button');
+      await assertBelowStickyHeader('768x900 Back to results', scrolledPast);
+      await aboutScreenshot(page, output, 'focus-return-above-visible-rows-768x900-light');
+    });
+});
+
+test('073 Packs: a failed project read keeps the packs listed with a known count and its exact reason', {
+  timeout: 240_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  // 257 artifacts is one over the limit: the whole project list is withheld, never a partial one.
+  await runAboutCase(context, '073-project-failure', { packs: {}, prepare: workspace => addProjectArtifacts(workspace, t073Fill(257)) },
+    async canvas => {
+      const { page, output, packs, workspace } = canvas;
+      const p = await t073Driver(canvas);
+      await p.enter();
+      let state = await p.state();
+      assert.deepEqual(state.keys, packKeys(packs.installedNames), 'the installed packs remain; no project row is listed');
+      assert.deepEqual(state.totals, ['?', '?'], 'Installed is unknown while the project read is unavailable, and Available until a Reload');
+      assert.equal(state.count, '1–8 of 8 known');
+      assert.equal(await p.q(`document.querySelector('[data-pack-context="installed"]').getAttribute('aria-label')`), 'Installed (unknown)');
+      assert.match(state.projectNotice, /Project agents and skills: unavailable/);
+      assert.match(state.projectNotice, /More than 256 project agents and skills are present, so none are listed rather than a partial list\./);
+      assert.match(state.projectNotice, /Installed packs are listed and unchanged\. Counts are known counts, not totals, and this is not a confirmed empty list/);
+      assert.equal(await p.q(`document.querySelector('footer[aria-label="Workspace status"]').textContent`),
+        'Installed: current · Catalog: not read · Project agents and skills: unavailable');
+      await aboutScreenshot(page, output, 'project-read-unavailable-1440x900-light');
+      await p.click(`[data-pack-row="${packKey('zulu')}"]`);
+      assert.deepEqual(await t073Outline(p), ['description', 'actions', 'facts: Use cases | Source | Declared tools',
+        'heading: Recorded installed source', 'facts: Type | Repository | Requested ref | Resolved commit',
+        'text: The recorded repository matches no current source on this computer, so Source shows Unlisted. Description and use cases come from the default catalog (Local library) by pack name. A confirmed refresh records a current source.',
+        'files: Recorded files (18)', 'text: Membership and files: .dude/metadata/profile.md. Recorded source does not verify installed bytes.'],
+      'a pack remains inspectable while the project read is unavailable');
+      await key(page, 'Escape');
+      // One explicit read makes Available known and enables Use case; Installed stays unknown while the project read fails.
+      await discoverCatalog(canvas);
+      assert.deepEqual((await p.state()).totals, ['?', '11']);
+      await p.chooseTag('ui');
+      assert.equal((await p.state()).count, '1–2 of 2 known matches');
+      await p.chooseTag('');
+
+      // Fix the limit: the next read lists the 16 that remain, and the count is known again.
+      for (const item of t073Fill(257).slice(16)) fs.rmSync(path.join(workspace.root, '.github/skills', item.name), { recursive: true });
+      await p.reload();
+      state = await p.state();
+      assert.deepEqual(state.totals, ['24', '11']);
+      assert.equal(state.keys.length, 24);
+      assert.equal(state.projectNotice, null);
+      assert.equal(state.count, '1–24 of 24');
+      assert.equal(await p.q(`document.querySelector('footer[aria-label="Workspace status"]').textContent`), 'Installed: current · Catalog: current');
+    });
+});
+
+test('073 Packs: a retained project selection leaves no hidden stop in About and returns with its view', {
+  timeout: 240_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '073-about-continuity', { packs: {}, prepare: workspace => addProjectArtifacts(workspace, T073_PROJECT) },
+    async canvas => {
+      const { page, output } = canvas;
+      const p = await t073Driver(canvas);
+      await p.enter();
+      await p.click('[data-pack-row="project:agent:dude-local-alpha"]');
+      const before = await p.state();
+      assert.deepEqual([before.detail, before.open], ['project:agent:dude-local-alpha', true]);
+      const reads = canvas.packReads().length;
+      await chooseSettingsSection(page, 'about');
+      const hidden = await p.q(`({ openDialogs: document.querySelectorAll('dialog[open]').length,
+        rendered: [...document.querySelector('[data-settings] [role="tabpanel"][aria-labelledby$="-section-packs"]')
+          .querySelectorAll('button, [tabindex], dialog, summary, a')].filter(node => node.getClientRects().length).length })`);
+      assert.deepEqual(hidden, { openDialogs: 0, rendered: 0 }, 'no hidden dialog or control keeps focus or covers About');
+      const aboutTree = await aboutAccessibility(page);
+      assert.equal(aboutTree.buttons.some(name => /Close (pack|project) details|Back to results|Install/.test(name)), false, JSON.stringify(aboutTree.buttons));
+      await aboutScreenshot(page, output, 'about-over-retained-project-details-1440x900-light');
+      await chooseSettingsSection(page, 'packs');
+      const after = await p.state();
+      assert.deepEqual([after.detail, after.open, after.page, after.filter], [before.detail, true, before.page, before.filter]);
+      assert.equal(canvas.packReads().length, reads, 'a section change never reads packs');
+
+      // While About is shown a narrow resize opens nothing; the retained selection reopens as the modal on return.
+      await chooseSettingsSection(page, 'about');
+      await aboutViewport(page, { width: 360, height: 900, scale: 1 }, 'light');
+      assert.deepEqual(await p.q(`document.querySelectorAll('dialog[open]').length`), 0);
+      await chooseSettingsSection(page, 'packs');
+      assert.equal(await p.q(`document.querySelector('[data-pack-detail]').matches(':modal')`), true);
+      assert.equal(await p.q(`document.querySelector('[data-pack-detail]').contains(document.activeElement)`), true);
+      await key(page, 'Escape');
+      assert.equal(await p.q(`document.activeElement?.getAttribute('data-pack-row')`), 'project:agent:dude-local-alpha');
+
+      // Ordinary navigation away from Settings resets Packs to its initial view.
+      await aboutViewport(page, { width: 1440, height: 900, scale: 1 }, 'light');
+      await p.click('[data-pack-row="project:skill:dude-local-handmade"]');
+      await p.click('#dude-tab-overview');
+      await p.click('#dude-tab-settings');
+      await packsSettled(page);
+      const reentry = await p.state();
+      assert.deepEqual([reentry.context, reentry.filter, reentry.page, reentry.detail], ['installed', 'All use cases', 'Page 1 of 1', null]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// 073 Phase B (T009): Sources, multi-source discovery, the Source column and
+// filter, and source-bound pack requests. Every case runs the production
+// provider, HTTP routes and bundle over disposable workspaces. Local folders and
+// offline GitHub (Git rewrites a public URL to a local repository) are the only
+// sources, so no case reaches a network.
+// ---------------------------------------------------------------------------
+
+/**
+ * A loopback Git peer that accepts connections and never answers, so a read of
+ * it runs to its 5,000 ms deadline. Nothing leaves the machine.
+ */
+async function silentGitPeer() {
+  const sockets = new Set();
+  let connections = 0;
+  const server = createTcpServer(socket => { connections += 1; sockets.add(socket); socket.on('close', () => sockets.delete(socket)); socket.on('error', () => {}); });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { port } = /** @type {import('node:net').AddressInfo} */ (server.address());
+  return {
+    url: `git://127.0.0.1:${port}/slow.git`,
+    get connections() { return connections; },
+    async close() { for (const socket of sockets) socket.destroy(); await new Promise(resolve => server.close(resolve)); },
+  };
+}
+
+/** The sources every Phase B case shares: a team folder, an offline public repository, and a saved folder that is gone. @param {ReturnType<typeof createReviewWorkspaceFixture>} workspace @param {(offline: ReturnType<typeof offlineGitHub>) => void} [more] */
+async function t073SourcesWorkspace(workspace, more = () => {}) {
+  const github = offlineGitHub(workspace);
+  github.publish('acme/dude-packs', [{ name: 'bravo', tags: ['writing'] }, { name: 'rust', tags: ['software-development'] },
+    { name: 'delta', tags: ['ui'] }]);
+  const team = addLocalSource(workspace, 'team-packs', [{ name: 'bravo', tags: ['writing'] }, { name: 'onboarding', tags: ['documentation'] }]);
+  const vanished = addLocalSource(workspace, 'vanished', ['gone']);
+  await saveSources(workspace, [remoteSource('acme/dude-packs'), localSource(team), localSource(vanished)]);
+  fs.rmSync(vanished, { recursive: true });
+  more(github);
+  return github.restore;
+}
+
+/** Everything the Sources view shows at this moment, by the opaque keys it was given. @param {Awaited<ReturnType<typeof t073Driver>>} p */
+const t073SourcesState = p => p.q(`(() => {
+  const detail = document.querySelector('[data-pack-detail]');
+  const text = node => node?.innerText.replace(/\\s+/g, ' ').trim() ?? null;
+  return {
+    rows: [...document.querySelectorAll('[data-source-row]')].map(row => ({ key: row.getAttribute('data-source-row'),
+      cells: [...row.querySelectorAll('[role="gridcell"]')].map(cell => text(cell)), label: row.getAttribute('aria-label') })),
+    headers: [...document.querySelectorAll('[data-sources-panel] [role="columnheader"]')].map(node => node.textContent),
+    selected: [...document.querySelectorAll('[data-source-row][aria-selected="true"]')].map(row => row.getAttribute('data-source-row')),
+    detail: detail?.getAttribute('data-pack-detail') ?? null, open: Boolean(detail?.open), modal: Boolean(detail?.open && detail.matches(':modal')),
+    count: text(document.querySelector('[data-sources-count]')), intro: text(document.querySelector('[data-sources-note]')),
+    coverage: text(document.querySelector('[data-sources-coverage]')), status: text(document.querySelector('[data-source-status]')),
+    addDisabled: document.querySelector('[data-sources-add]')?.disabled ?? null,
+    footer: text(document.querySelector('footer[aria-label="Workspace status"]')),
+  };
+})()`);
+
+/** The sections of the open source details body, in DOM order. @param {Awaited<ReturnType<typeof t073Driver>>} p */
+const t073SourceOutline = p => p.q(`[...document.querySelector('[data-pack-detail-body]').children].map(node => {
+  if (node.hasAttribute('data-source-notice')) return 'coverage notice';
+  if (node.hasAttribute('data-source-description')) return 'description';
+  if (node.querySelector('[data-source-actions]')) return 'actions' + (node.querySelector('[data-source-readonly]') ? ' + read-only note' : '');
+  if (node.tagName === 'DL') return 'facts: ' + [...node.querySelectorAll('dt')].map(dt => dt.textContent).join(' | ');
+  return 'other: ' + node.tagName;
+})`);
+
+/** The opaque key a source row was given, by the name it shows. @param {Awaited<ReturnType<typeof t073SourcesState>>} state @param {string} name */
+const t073SourceKey = (state, name) => state.rows.find(row => row.cells[0].startsWith(`${name} `))?.key ?? assert.fail(`no source row named ${name}`);
+const T073_SOURCE_KEY = /^src_[0-9a-f]{32}$/;
+
+test('073 Sources: built-ins then added sources show every status before and after Reload, by opaque key, with no catalog read until Reload', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '073-sources-states', { packs: {}, prepare: t073SourcesWorkspace },
+    async canvas => {
+      const { page, output } = canvas;
+      const p = await t073Driver(canvas);
+      await p.enter();
+      // Entering Settings reads installed packs, project rows and the saved sources, and no catalog.
+      assert.equal(canvas.discoveryReads().length, 0, 'Settings entry performs no catalog discovery');
+      assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-context]')].map(node => [node.getAttribute('data-pack-context'), node.getAttribute('aria-label')])`),
+        [['installed', 'Installed (8)'], ['available', 'Available (unknown)'], ['import', null], ['sources', null]],
+        'the Sources view joins the same strip, after Add/import; Available is unknown, not zero, before Reload');
+      assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-settings] [role="tab"]')].map(node => node.innerText.replace(/\\s+/g, ' ').trim())`),
+        ['Packs', 'About', 'Installed 8', 'Available ?', 'Add/import', 'Sources']);
+      await p.click('[data-pack-context="sources"]');
+      await settleAboutAnimations(page);
+      let state = await t073SourcesState(p);
+      assert.deepEqual(state.headers, ['Source', 'Location and ref', 'Status', 'Scope']);
+      assert.equal(state.rows.length, 5);
+      assert.ok(state.rows.every(row => T073_SOURCE_KEY.test(row.key)), 'every source, built-ins included, has a bounded opaque server key');
+      assert.equal(new Set(state.rows.map(row => row.key)).size, 5);
+      assert.deepEqual(state.rows.map(row => [row.cells[0], row.cells[2], row.cells[3]]), [
+        ['Local library Local folder', 'Not read', 'Built in'],
+        ['Bundle upstream GitHub', 'Not read while library/packs exists', 'Built in'],
+        ['acme/dude-packs GitHub', 'Not read', 'This project'],
+        ['team-packs Local folder', 'Not read', 'This project'],
+        ['vanished Local folder', 'Not read', 'This project']], 'built-ins first, then the added sources in saved order, with no count before Reload');
+      assert.equal(state.rows[0].cells[1], 'library/packs');
+      assert.equal(state.rows[2].cells[1], 'https://github.com/acme/dude-packs Ref main');
+      assert.deepEqual([state.count, state.footer, state.addDisabled], ['5 sources · 2 built in · 3 of 8 added', 'Sources · Catalog: not read', false],
+        'Add and Remove are governed by their normal guards, not by an unread catalog');
+      assert.match(state.coverage, /Catalog: not read Nothing is read until you choose Reload packs, so no source shows a pack count yet\./);
+      assert.equal(state.intro, 'Sources are where Dude finds packs. Adding one installs nothing.');
+      assert.equal(await p.q(`[...document.querySelectorAll('[data-settings] [role="grid"]')].filter(node => node.getClientRects().length).length`), 1,
+        'only the open view owns a rendered table');
+      assert.equal(await p.q(`[...document.querySelectorAll('[data-pack-toolbar] [role="combobox"], [data-pack-pager]')].filter(node => node.getClientRects().length).length`), 0,
+        'Sources has no filters and no pager, only its own toolbar');
+      await aboutScreenshot(page, output, 'sources-not-read-1440x900-light');
+
+      // Details before Reload: Show packs says why it is unavailable; the unavailable status is not a count.
+      await p.click(`[data-source-row="${t073SourceKey(state, 'acme/dude-packs')}"]`);
+      assert.deepEqual(await t073SourceOutline(p), ['coverage notice', 'description', 'actions',
+        'facts: Status | Packs found | Installed from this source | Saved in']);
+      assert.equal(await p.q(`document.querySelector('[data-source-show]').disabled`), true);
+      assert.equal(await p.q(`document.querySelector('[data-source-reason]').textContent`), 'Not read yet - choose Reload packs.',
+        'the disabled Show packs says exactly why, and Remove stays under its own guards');
+      assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-detail-body] dl > *')].map(node => node.innerText.replace(/\\s+/g, ' ').trim())`),
+        ['Status', 'Not read', 'Packs found', 'Unknown', 'Installed from this source', '0 8 installed packs record an unlisted source.',
+          'Saved in', '.dude/metadata/pack-sources.md']);
+      assert.equal(await p.q(`document.activeElement === document.querySelector('[aria-label="Close source details"]')`), true,
+        'opening source details focuses its Close control');
+      assert.equal(await p.q(`document.querySelector('[data-pack-detail] header span').textContent`), 'Pack source · This project');
+      await key(page, 'Escape');
+      assert.equal(await p.q(`document.activeElement?.getAttribute('data-source-row')`), t073SourceKey(state, 'acme/dude-packs'));
+      assert.equal(canvas.discoveryReads().length, 0, 'selecting a source reads nothing');
+
+      // Reload is the one explicit discovery: each source is read once and keeps its own status and count.
+      await p.reload();
+      assert.equal(canvas.discoveryReads().length, 1);
+      state = await t073SourcesState(p);
+      assert.deepEqual(state.rows.map(row => [row.cells[0], row.cells[2]]), [
+        ['Local library Local folder', 'Read - 18 packs'],
+        ['Bundle upstream GitHub', 'Not read while library/packs exists'],
+        ['acme/dude-packs GitHub', 'Read - 3 packs'],
+        ['team-packs Local folder', 'Read - 2 packs'],
+        ['vanished Local folder', 'Unavailable - The saved folder is not available.']]);
+      assert.equal(state.footer, 'Sources · Catalog: partial (1 of 4 sources unavailable)');
+      assert.equal(state.coverage, null, 'the not-read notice is gone');
+      assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-context]')].map(node => node.getAttribute('data-pack-context') + ':' + (node.getAttribute('aria-label') ?? ''))`),
+        ['installed:Installed (8)', 'available:Available (15 known)', 'import:', 'sources:']);
+      await aboutScreenshot(page, output, 'sources-read-1440x900-light');
+
+      // Every source's details, in the one fixed order, ending at the facts.
+      const detailsFor = async name => {
+        await p.click(`[data-source-row="${t073SourceKey(state, name)}"]`);
+        const body = await p.q(`({ outline: [...document.querySelector('[data-pack-detail-body]').children].map(node => node.hasAttribute('data-source-notice') ? 'coverage notice'
+            : node.hasAttribute('data-source-description') ? 'description' : node.querySelector('[data-source-actions]') ? 'actions' : node.tagName === 'DL' ? 'facts' : node.tagName),
+          description: document.querySelector('[data-source-description]').textContent,
+          facts: [...document.querySelectorAll('[data-pack-detail-body] dl > *')].map(node => node.innerText.replace(/\\s+/g, ' ').trim()),
+          reason: document.querySelector('[data-source-reason]').textContent, remove: Boolean(document.querySelector('[data-source-remove]')),
+          readOnly: document.querySelector('[data-source-readonly]')?.textContent ?? null,
+          show: document.querySelector('[data-source-show]').disabled, scope: document.querySelector('[data-pack-detail] header span').textContent,
+          links: document.querySelectorAll('[data-pack-detail] a, [data-pack-detail] [href]').length })`);
+        await key(page, 'Escape');
+        return body;
+      };
+      const library = await detailsFor('Local library');
+      assert.deepEqual(library.outline, ['description', 'actions', 'facts']);
+      assert.match(library.description, /^The folder library\/packs in this development bundle\. It is derived from this installation each time, so it cannot be edited here\.$/);
+      assert.deepEqual(library.facts, ['Status', 'Read - 18 packs', 'Packs found', '18 (11 not installed) Counts include names you already have installed. Available lists only names that are not installed.',
+        'Installed from this source', '0 8 installed packs record an unlisted source.',
+        'Saved in', 'Not saved. Derived from this installation each time. Default catalog.']);
+      assert.deepEqual([library.remove, library.show, library.scope, library.links], [false, false, 'Pack source · Built in', 0], 'a built-in has no Remove and no repository link');
+      assert.equal(library.readOnly, 'Read only. Built-in sources are derived from this installation and cannot be removed or edited here.');
+      const upstream = await detailsFor('Bundle upstream');
+      assert.deepEqual(upstream.outline, ['description', 'actions', 'facts'], 'the development upstream explains its non-read in the description, not a coverage notice');
+      assert.match(upstream.description, /This development bundle has a local library, so Bundle upstream is not read\.$/);
+      assert.deepEqual([upstream.show, upstream.remove], [true, false]);
+      assert.match(upstream.reason, /^Not read while library\/packs exists\./);
+      assert.deepEqual(upstream.facts.slice(0, 4), ['Status', 'Not read while library/packs exists', 'Packs found', 'Unknown']);
+      assert.equal(upstream.facts.at(-1), 'Not saved. Derived from this installation each time. Managed by bundle upgrade.');
+      const acme = await detailsFor('acme/dude-packs');
+      assert.deepEqual(acme.outline, ['description', 'actions', 'facts']);
+      assert.deepEqual([acme.show, acme.remove, acme.scope], [false, true, 'Pack source · This project']);
+      assert.deepEqual(acme.facts.slice(0, 4), ['Status', 'Read - 3 packs', 'Packs found', '3 (2 not installed) Counts include names you already have installed. Available lists only names that are not installed.']);
+      assert.equal(acme.reason, "Show packs in Available lists this source's packs that are not installed. Remove takes this entry out of the saved list. It installs and uninstalls nothing.");
+      const vanished = await detailsFor('vanished');
+      assert.deepEqual(vanished.outline, ['coverage notice', 'description', 'actions', 'facts']);
+      assert.equal(vanished.show, true);
+      assert.match(vanished.reason, /^Unavailable - its packs are not listed\./);
+      assert.deepEqual(vanished.facts.slice(0, 4), ['Status', 'Unavailable - The saved folder is not available.', 'Packs found', 'Unknown'],
+        'unreadable facts are unavailable, not zero');
+      assert.equal(canvas.discoveryReads().length, 1, 'inspecting sources reads nothing more');
+      assert.deepEqual(await p.q(`window.projectExecuted === undefined && window.packMetadataExecuted === undefined`), true);
+
+      // Rows are operable from the keyboard: Enter opens details on Close, and Escape returns to the same row.
+      const acmeKey = t073SourceKey(state, 'acme/dude-packs');
+      await focus(page, `[data-source-row="${acmeKey}"]`);
+      await key(page, 'Enter');
+      assert.deepEqual(await p.q(`({ detail: document.querySelector('[data-pack-detail]').getAttribute('data-pack-detail'),
+        closeFocused: document.activeElement === document.querySelector('[aria-label="Close source details"]') })`), { detail: acmeKey, closeFocused: true });
+      await key(page, 'Escape');
+      assert.equal(await p.q(`document.activeElement?.getAttribute('data-source-row')`), acmeKey, 'Escape returns focus to the row that was opened');
+    });
+});
+
+/**
+ * Native pointer steps at fixed points: a press at one point and a release at
+ * another, which is how a text-selection drag that ends on the backdrop arrives.
+ * @param {Cdp} page @param {{x:number,y:number}} from @param {{x:number,y:number}} [to]
+ */
+async function t073Pointer(page, from, to = from) {
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x, y: from.y, buttons: 0 });
+  await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1 });
+  if (to !== from) await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: to.x, y: to.y, button: 'left', buttons: 1 });
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to.x, y: to.y, button: 'left', buttons: 0, clickCount: 1 });
+  await settleBrowserWork(page);
+}
+
+/** The Add source dialog's observable state. @param {Awaited<ReturnType<typeof t073Driver>>} p */
+const t073Add = p => p.q(`(() => {
+  const dialog = document.querySelector('[data-source-add-dialog]');
+  const text = node => node?.innerText.replace(/\\s+/g, ' ').trim() ?? null;
+  const box = dialog.getBoundingClientRect();
+  return {
+    open: dialog.open, modal: dialog.open && dialog.matches(':modal'),
+    location: document.querySelector('[data-source-location]')?.value ?? null, ref: document.querySelector('[data-source-ref]')?.value ?? null,
+    readOnly: document.querySelector('[data-source-location]')?.readOnly ?? null,
+    focus: (a => !a ? null : a.hasAttribute('data-source-location') ? 'location' : a.hasAttribute('data-source-ref') ? 'ref'
+      : a.hasAttribute('data-source-add-status') ? 'status' : a.hasAttribute('data-sources-add') ? 'trigger'
+      : a.hasAttribute('data-source-add-submit') ? 'submit' : a.hasAttribute('data-source-add-cancel') ? 'cancel'
+      : a.tagName.toLowerCase() + (a.getAttribute('aria-label') ? ':' + a.getAttribute('aria-label') : ''))(document.activeElement),
+    status: document.querySelector('[data-source-add-status]') ? { phase: document.querySelector('[data-source-add-status]').getAttribute('data-source-add-phase'),
+      text: text(document.querySelector('[data-source-add-status]')), actions: [...document.querySelectorAll('[data-source-add-status] button')].map(node => node.textContent) } : null,
+    errors: [...dialog.querySelectorAll('[role="alert"], [id$="__validationMessage"]')].map(node => text(node)),
+    cancelDisabled: document.querySelector('[data-source-add-cancel]')?.disabled ?? null, closeDisabled: document.querySelector('[data-source-add-close]')?.disabled ?? null,
+    submitDisabled: document.querySelector('[data-source-add-submit]')?.disabled ?? null,
+    box: { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: box.width, height: box.height },
+    viewport: { width: innerWidth, height: innerHeight },
+  };
+})()`);
+const T073_SOURCES_FILE = '.dude/metadata/pack-sources.md';
+/** The saved source entries, read from the project file the way a person would. @param {{ root: string }} workspace */
+const t073SavedEntries = workspace => JSON.parse(/```json\s*([\s\S]*?)```/.exec(fs.readFileSync(path.join(workspace.root, T073_SOURCES_FILE), 'utf8'))?.[1] ?? 'null').sources;
+
+test('073 Sources: Add opens on Location, validates inline, and dismisses only by Cancel, Close, Esc, or a full backdrop press and release', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '073-sources-add-dialog', { packs: {}, prepare: t073SourcesWorkspace },
+    async canvas => {
+      const { page, output, workspace } = canvas;
+      const p = await t073Driver(canvas);
+      await p.enter();
+      await p.click('[data-pack-context="sources"]');
+      const file = path.join(workspace.root, T073_SOURCES_FILE);
+      const before = fs.readFileSync(file);
+      await p.click('[data-sources-add]');
+      let add = await t073Add(p);
+      assert.deepEqual([add.open, add.modal, add.focus, add.location, add.ref], [true, true, 'location', '', ''], 'Add opens on an empty Location');
+      assert.equal(await p.q(`document.querySelector('[data-source-add-dialog] h2').textContent`), 'Add source');
+      assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-source-add-dialog] label')].map(node => node.textContent)`), ['Location', 'Ref (optional)']);
+      assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-source-add-dialog] dl dt, [data-source-add-dialog] dl dd')].map(node => node.textContent)`),
+        ['GitHub repository', 'https://github.com/<owner>/<repo>', 'Local folder', '<path to a folder that contains library/packs>']);
+      const dialogText = await p.q(`document.querySelector('[data-source-add-dialog]').innerText.replace(/\\s+/g, ' ')`);
+      for (const note of ['A public GitHub repository, or a folder on this computer, whose root contains library/packs.',
+        'A branch or tag of a GitHub repository. Defaults to main. A local folder has no ref.',
+        'Public GitHub repositories only. Canvas never asks for credentials.',
+        'Adding a source installs nothing. Installed packs can add agents and instructions, so add only sources you trust; every install asks for your permission first.',
+        'Sources are saved with the project in .dude/metadata/pack-sources.md, so they can be committed and shared.',
+        'You can add up to 8 sources. 3 added.',
+        'Canvas reads the source once to check its pack catalog before saving it. Nothing is installed.']) {
+        assert.ok(dialogText.includes(note), `Add shows: ${note}`);
+      }
+      assert.equal(await p.q(`document.querySelectorAll('[data-source-add-dialog] [data-source-add-status]').length`), 0);
+      await aboutScreenshot(page, output, 'sources-add-dialog-empty-1440x900-light');
+
+      // Cancel returns focus to its trigger and discards nothing but the dialog.
+      await p.click('[data-source-add-cancel]');
+      add = await t073Add(p);
+      assert.deepEqual([add.open, add.focus], [false, 'trigger']);
+      assert.equal(await p.q(`document.querySelector('[data-source-add-dialog]').children.length`), 0, 'a closed Add dialog holds no markup, focus stop, or accessible content');
+      for (const dismiss of ['close', 'escape', 'backdrop']) {
+        await p.click('[data-sources-add]');
+        assert.equal((await t073Add(p)).focus, 'location');
+        await focus(page, '[data-source-location]');
+        await page.send('Input.insertText', { text: 'kept text' });
+        if (dismiss === 'close') await p.click('[data-source-add-close]');
+        else if (dismiss === 'escape') await key(page, 'Escape');
+        else await t073Pointer(page, { x: 8, y: 8 });
+        add = await t073Add(p);
+        assert.deepEqual([add.open, add.focus], [false, 'trigger'], `${dismiss} dismisses the idle dialog and returns focus to Add source`);
+        await p.click('[data-sources-add]');
+        assert.equal((await t073Add(p)).location, '', 'a dismissed dialog keeps no typed text');
+        await p.click('[data-source-add-cancel]');
+      }
+
+      // A1: a press that began inside the dialog never dismisses it, whatever the pointer releases over.
+      await p.click('[data-sources-add]');
+      await focus(page, '[data-source-location]');
+      await page.send('Input.insertText', { text: 'https://github.com/acme/dude-packs-selected' });
+      add = await t073Add(p);
+      const field = await p.q(`(() => { const r = document.querySelector('[data-source-location]').getBoundingClientRect(); return { x: r.left + 20, y: r.top + r.height / 2 }; })()`);
+      await t073Pointer(page, field, { x: 8, y: 8 });
+      let kept = await t073Add(p);
+      assert.deepEqual([kept.open, kept.location], [true, 'https://github.com/acme/dude-packs-selected'], 'a text-selection drag that ends on the backdrop keeps the dialog and its input');
+      const selected = await p.q(`(() => { const input = document.querySelector('[data-source-location]'); return input.selectionEnd - input.selectionStart; })()`);
+      assert.ok(selected > 0, 'the drag selected text in the input, as a person would');
+      await t073Pointer(page, { x: add.box.left + 30, y: add.box.top + 30 }, { x: 8, y: 8 });
+      assert.equal((await t073Add(p)).open, true, 'a press on the dialog released on the backdrop keeps it');
+      await t073Pointer(page, { x: 8, y: 8 }, { x: add.box.left + 30, y: add.box.top + 30 });
+      assert.equal((await t073Add(p)).open, true, 'a press on the backdrop released inside the dialog keeps it');
+      assert.equal(await p.q(`document.querySelector('[data-source-add-dialog]').click(), document.querySelector('[data-source-add-dialog]').open`), true,
+        'a click with no press at all, such as a synthesized one, never dismisses');
+      assert.equal(canvas.sourceWrites().length, 0, 'nothing has been sent');
+
+      // The modal keeps Tab and Shift+Tab inside it, wrapping at both ends, and never loses its typed text to a key.
+      for (const shift of [false, true]) for (let step = 0; step < 12; step += 1) {
+        await key(page, 'Tab', 'Tab', { shift });
+        assert.equal(await p.q(`document.querySelector('[data-source-add-dialog]').contains(document.activeElement)`), true, 'every Tab transition stays in Add');
+      }
+      assert.equal((await t073Add(p)).location, 'https://github.com/acme/dude-packs-selected');
+
+      // Inline input refusals keep the typed text and send nothing.
+      const refuse = async (location, ref, message, field = 'location') => {
+        await p.q(`(() => { const set = (selector, value) => { const input = document.querySelector(selector);
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value);
+          input.dispatchEvent(new Event('input', { bubbles: true })); };
+          set('[data-source-location]', ${JSON.stringify(location)}); set('[data-source-ref]', ${JSON.stringify(ref)}); })()`);
+        await p.click('[data-source-add-submit]');
+        const state = await t073Add(p);
+        assert.deepEqual([state.errors, state.focus, state.location, state.ref, state.open], [[message], field, location, ref, true], `${location} ${ref}`);
+      };
+      await refuse('', '', 'Enter a GitHub repository URL or a local folder.');
+      await refuse('https://user@github.com/acme/dude-packs', '', 'Remove the user name or password from the URL. Canvas never sends credentials.');
+      await refuse('git@github.com:acme/dude-packs.git', '', 'SSH addresses are not supported. Use an https://github.com/<owner>/<repo> URL.');
+      await refuse('https://gitlab.com/acme/dude-packs', '', 'Use a github.com repository URL. Other hosts are not supported.');
+      await refuse('http://github.com/acme/dude-packs', '', 'Use an https:// URL. http:// is not supported.');
+      await refuse('https://github.com:443/acme/dude-packs', '', 'Remove the port number from the URL.');
+      await refuse('https://github.com/acme/dude-packs/tree/main/docs', '', 'Use the repository address only: https://github.com/<owner>/<repo>. A branch, file, or folder is not part of it.');
+      await refuse('file:///C:/team-packs', '', 'Enter the folder path itself, without file://.');
+      await refuse('https://github.com/acme/dude-packs', 'a..b', 'A ref cannot contain two periods in a row (..).', 'ref');
+      await refuse('https://github.com/acme/dude-packs', '-main', 'Start the ref with a letter or digit, and use only letters, digits, periods, underscores, slashes, and hyphens.', 'ref');
+      await refuse('C:\\\\somewhere\\\\team-packs', 'main', 'A local folder has no ref. Clear this field.', 'ref');
+      await refuse(`C:/${'x'.repeat(2046)}`, '', 'This location is 2,049 UTF-8 bytes. The limit is 2,048, and nothing was shortened.');
+      assert.equal(canvas.sourceWrites().length, 0, 'every input refusal happens before anything is sent');
+      assert.deepEqual(fs.readFileSync(file), before, 'the saved list is byte-identical');
+      assert.equal(await p.q(`getComputedStyle(document.querySelector('[data-source-add-dialog]')).display`), 'flex');
+      await aboutScreenshot(page, output, 'sources-add-refused-input-1440x900-light');
+      await p.click('[data-source-add-cancel]');
+      assert.equal(canvas.discoveryReads().length, 0, 'the dialog reads no catalog by itself');
+    });
+});
+
+/** Fill Add source's two fields as a person would and choose Add source. @param {Awaited<ReturnType<typeof t073Driver>>} p @param {string} location @param {string} [ref] */
+async function t073Submit(p, location, ref = '') {
+  await p.q(`(() => { const set = (selector, value) => { const input = document.querySelector(selector);
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true })); };
+    set('[data-source-location]', ${JSON.stringify(location)}); set('[data-source-ref]', ${JSON.stringify(ref)}); })()`);
+  await p.click('[data-source-add-submit]');
+}
+/** Wait until the open Add dialog settles on a refusal or a recovery message. @param {Awaited<ReturnType<typeof t073Driver>>} p */
+const t073Refused = async p => {
+  await until(async () => (await t073Add(p)).status?.phase === 'refused', 'a refusal inside Add');
+  return t073Add(p);
+};
+
+test('073 Sources: every server refusal stays inside Add with the typed text, and reading blocks every dismissal through its deadline', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  let peer = null;
+  try {
+    await runAboutCase(context, '073-sources-add-refusals', { packs: {}, prepare: async workspace => {
+      peer = await silentGitPeer();
+      const restore = await t073SourcesWorkspace(workspace, github => github.redirect('acme/slow', peer.url));
+      addLocalSource(workspace, 'no-catalog-folder', []);
+      fs.rmSync(path.join(workspace.directory, 'no-catalog-folder', 'library'), { recursive: true });
+      fs.mkdirSync(path.join(workspace.directory, 'no-catalog-folder', 'docs'));
+      addLocalSource(workspace, 'broken-packs', []);
+      fs.mkdirSync(path.join(workspace.directory, 'broken-packs', 'library', 'packs', 'broken'), { recursive: true });
+      fs.writeFileSync(path.join(workspace.directory, 'broken-packs', 'library', 'packs', 'broken', 'pack.md'), '---\nuse-cases: ui\n---\n');
+      return restore;
+    } },
+    async canvas => {
+      const { page, output, workspace } = canvas;
+      const p = await t073Driver(canvas);
+      await p.enter();
+      await p.click('[data-pack-context="sources"]');
+      const file = path.join(workspace.root, T073_SOURCES_FILE);
+      const before = fs.readFileSync(file);
+      const team = path.join(workspace.directory, 'team-packs');
+      await p.click('[data-sources-add]');
+      /** @type {Array<[string, string, string, string, string[]?]>} location, ref, title, text fragment */
+      const cases = [
+        ['https://github.com/nobody/never-published', '', 'Could not read the repository', 'It may be private, may not exist, or could not be reached. Canvas reads public GitHub repositories only and never asks for credentials. Nothing was saved.'],
+        [path.join(workspace.directory, 'does-not-exist'), '', 'Folder not found', 'No folder was found at this location. Check the path, and choose the folder that contains library/packs. Nothing was saved.'],
+        [path.join(workspace.directory, 'no-catalog-folder'), '', 'No pack catalog found', 'This source has no library/packs folder. Choose a repository or folder whose root contains library/packs. Nothing was saved.'],
+        [path.join(team, 'library', 'packs'), '', 'No pack catalog found', 'Choose the folder that contains library/packs. This location is the packs folder itself, so choose its parent. Nothing was saved.'],
+        [path.join(workspace.directory, 'broken-packs'), '', 'A pack\'s metadata could not be read', 'Nothing was saved.'],
+        [team, '', 'Already listed', 'team-packs is already added to this project. A source is identified by its repository or folder, so a different ref is not a second source. Nothing was saved.'],
+        ['https://github.com/ACME/Dude-Packs/', 'dev', 'Already listed', 'acme/dude-packs is already added to this project. A source is identified by its repository or folder, so a different ref is not a second source. Nothing was saved.'],
+        [workspace.root, '', 'Already listed', 'This is this workspace\'s own library, already listed as Local library. Built-in sources are not added twice.'],
+      ];
+      for (const [location, ref, title, fragment] of cases) {
+        await t073Submit(p, location, ref);
+        const refused = await t073Refused(p);
+        assert.equal(await p.q(`document.querySelector('[data-source-add-status] .fui-MessageBarTitle').textContent`), title, location);
+        assert.ok(refused.status.text.includes(fragment), `${location}: ${refused.status.text}`);
+        assert.deepEqual([refused.open, refused.focus, refused.location, refused.ref, refused.status.actions], [true, 'status', location, ref, []],
+          'the refusal stays inside Add, keeps what was typed, and takes focus without a replay action');
+        assert.deepEqual(fs.readFileSync(file), before, `the saved list is untouched: ${location}`);
+      }
+      assert.equal(canvas.sourceWrites().length, cases.length, 'each submit is exactly one write attempt, never replayed');
+      assert.equal(canvas.discoveryReads().length, 0, 'a refused add reads no catalog for the lists');
+      await aboutScreenshot(page, output, 'sources-add-refused-duplicate-1440x900-light');
+
+      // Reading: nothing dismisses the dialog until the 5,000 ms deadline and cleanup have finished.
+      await t073Submit(p, 'https://github.com/acme/slow');
+      await until(async () => (await t073Add(p)).status?.phase === 'reading', 'a source being read');
+      const reading = await t073Add(p);
+      assert.deepEqual([reading.cancelDisabled, reading.closeDisabled, reading.readOnly, reading.submitDisabled, reading.focus],
+        [true, true, true, true, 'status'], 'Cancel, Close, the inputs and Add source are blocked while reading');
+      assert.match(reading.status.text, /^Reading the source Checking that its pack catalog can be read\. Nothing is installed, and nothing is saved until the read succeeds\. Reading stops after 5 seconds\.$/);
+      await aboutScreenshot(page, output, 'sources-add-reading-1440x900-light');
+      await key(page, 'Escape');
+      await t073Pointer(page, { x: 8, y: 8 });
+      assert.equal((await t073Add(p)).open, true, 'Esc and a full backdrop press and release do nothing while reading');
+      assert.equal(await p.q(`document.querySelector('[data-sources-add]').disabled`), false, 'the trigger behind the modal is not what blocks it');
+      const waited = Date.now();
+      const timedOut = await t073Refused(p);
+      context.diagnostic(`reading ended after ${Date.now() - waited} ms more: ${timedOut.status.text}`);
+      assert.match(await p.q(`document.querySelector('[data-source-add-status] .fui-MessageBarTitle').textContent`), /^(Reading timed out|Reading could not be stopped cleanly)$/,
+        'a stalled source ends at its deadline (or, if the platform could not confirm the stop, says so)');
+      assert.deepEqual([timedOut.open, timedOut.location, timedOut.cancelDisabled, timedOut.closeDisabled, timedOut.readOnly, timedOut.focus],
+        [true, 'https://github.com/acme/slow', false, false, false, 'status']);
+      assert.deepEqual(fs.readFileSync(file), before, 'a timed-out read saves nothing');
+      assert.ok(peer.connections >= 1, 'the offline peer was the only thing contacted');
+      await p.click('[data-source-add-cancel]');
+      assert.deepEqual([(await t073Add(p)).open, (await t073Add(p)).focus], [false, 'trigger']);
+    });
+  } finally { await peer?.close(); }
+});
+
+/** The state of the details pane and the focus, whichever view owns it. @param {Awaited<ReturnType<typeof t073Driver>>} p */
+const t073Pane = p => p.q(`(() => {
+  const detail = document.querySelector('[data-pack-detail]'), a = document.activeElement;
+  return { key: detail?.getAttribute('data-pack-detail') ?? null, open: Boolean(detail?.open), modal: Boolean(detail?.open && detail.matches(':modal')),
+    focus: !a ? null : a.getAttribute('aria-label') ?? a.getAttribute('data-source-row') ?? a.getAttribute('data-pack-row') ?? a.tagName,
+    inside: Boolean(detail?.contains(a)), openDialogs: document.querySelectorAll('dialog[open]').length };
+})()`);
+
+test('073 Sources: a saved source closes Add, announces Added outside, reads once, and only then opens its row, wide or narrow', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  for (const [name, width, height] of [['wide', 1440, 900], ['narrow', 360, 900]]) await context.test(name, async () => {
+    await runAboutCase(context, `073-sources-add-saved-${name}`, { packs: {}, prepare: workspace => t073SourcesWorkspace(workspace, github => {
+      github.publish('acme/second-packs', [{ name: 'sql-review', tags: ['database'] }]);
+      addLocalSource(workspace, 'new-team', [{ name: 'ci-review', tags: ['release-management'] }, { name: 'shell-helpers', tags: ['software-development'] }]);
+      addLocalSource(workspace, 'other/team-packs', [{ name: 'ops-handbook', tags: ['documentation'] }]);
+      addLocalSource(workspace, 'late-team', ['late-pack']);
+    }) }, async canvas => {
+      const { page, output, workspace } = canvas;
+      const p = await t073Driver(canvas);
+      await p.enter(width, height);
+      const original = t073SavedEntries(workspace);
+      const profile = fs.readFileSync(path.join(workspace.root, '.dude/metadata/profile.md'));
+      await p.chooseSub('sources');
+      await p.reload();
+      const added = async (location, ref = '') => {
+        const reads = canvas.discoveryReads().length, writes = canvas.sourceWrites().length;
+        await p.q(`window.t073.hold = true`);
+        await p.click('[data-sources-add]');
+        await t073Submit(p, location, ref);
+        await until(() => p.q(`window.t073.held.length === 1`), 'the one read that follows the save, held before adoption');
+        const between = { add: await t073Add(p), pane: await t073Pane(p), state: await t073SourcesState(p) };
+        assert.equal(canvas.sourceWrites().length, writes + 1, 'one write');
+        assert.equal(canvas.discoveryReads().length, reads + 1, 'one read follows the save');
+        assert.deepEqual([between.add.open, between.add.focus], [false, 'trigger'], 'Add closed and returned focus to its trigger');
+        assert.deepEqual([between.pane.open, between.pane.openDialogs], [false, 0], 'no details, and no overlay of any kind, before the post-add snapshot commits');
+        await p.q(`window.t073.hold = false; window.t073.held.splice(0).forEach(resolve => resolve())`);
+        await until(async () => !(await p.busy()), 'the post-add read commits');
+        return between;
+      };
+
+      // A local folder: saved, announced outside the dialog, then selected with details Close focused.
+      const first = await added(path.join(workspace.directory, 'new-team'));
+      assert.equal(first.state.status, 'Added new-team was saved with this project. Found 2 packs. Nothing was installed; its packs now appear under Available.');
+      assert.deepEqual(t073SavedEntries(workspace), [...original, localSource(path.join(workspace.directory, 'new-team'))],
+        'only the one entry was appended, after the saved ones');
+      assert.equal(first.state.rows.length, 5, 'the table still lists the old rows until the snapshot commits');
+      let state = await t073SourcesState(p);
+      const newKey = t073SourceKey(state, 'new-team');
+      assert.deepEqual([state.rows.length, state.selected, state.count], [6, [newKey], '6 sources · 2 built in · 4 of 8 added']);
+      let pane = await t073Pane(p);
+      assert.deepEqual([pane.key, pane.open, pane.modal, pane.focus, pane.inside], [newKey, true, width < 1100, 'Close source details', true]);
+      assert.equal(state.rows.find(row => row.key === newKey).cells[2], width < 480 ? 'Status Read - 2 packs' : 'Read - 2 packs', 'the stacked rows label the status the headers no longer do');
+      await aboutScreenshot(page, output, `sources-added-${width}x${height}-light`);
+      await key(page, 'Escape');
+      assert.equal(await p.q(`document.activeElement?.getAttribute('data-source-row')`), newKey, 'closing returns focus to the new row');
+
+      // A public GitHub repository, with the default ref.
+      await added('https://github.com/acme/second-packs');
+      assert.deepEqual(t073SavedEntries(workspace).at(-1), remoteSource('acme/second-packs'), 'the omitted ref is saved as main');
+      state = await t073SourcesState(p);
+      assert.equal(state.rows.find(row => row.key === state.selected[0]).cells[0], 'acme/second-packs GitHub');
+      await key(page, 'Escape');
+
+      // Two folders with one name are two rows with two keys, each opening on its own.
+      await added(path.join(workspace.directory, 'other', 'team-packs'));
+      state = await t073SourcesState(p);
+      const twins = state.rows.filter(row => row.cells[0] === 'team-packs Local folder');
+      assert.equal(twins.length, 2);
+      assert.notEqual(twins[0].key, twins[1].key);
+      assert.deepEqual(state.selected, [twins[1].key], 'the new same-named folder is the selected row, not its namesake');
+      await key(page, 'Escape');
+      assert.equal(await p.q(`document.activeElement?.getAttribute('data-source-row')`), twins[1].key);
+      await p.click(`[data-source-row="${twins[0].key}"]`);
+      assert.deepEqual([(await t073SourcesState(p)).selected, (await t073Pane(p)).key], [[twins[0].key], twins[0].key]);
+      assert.match(await p.q(`document.querySelector('[data-source-description]').textContent`), /team-packs on this computer/);
+      await key(page, 'Escape');
+      assert.equal(await p.q(`document.activeElement?.getAttribute('data-source-row')`), twins[0].key, 'focus returns to the row that was opened');
+      assert.equal(canvas.discoveryReads().length, 4, 'one explicit Reload and exactly one read after each of the three saves');
+      assert.equal(canvas.sourceWrites().length, 3);
+      assert.deepEqual(fs.readFileSync(path.join(workspace.root, '.dude/metadata/profile.md')), profile, 'adding sources changes no pack');
+      assert.equal(canvas.sends.length, 0, 'adding a source asks Dude nothing');
+
+      // Leaving Sources before the post-add read commits opens nothing: no hidden or overlapping overlay.
+      await p.q(`window.t073.hold = true`);
+      await p.click('[data-sources-add]');
+      await t073Submit(p, path.join(workspace.directory, 'late-team'));
+      await until(() => p.q(`window.t073.held.length === 1`), 'the late read, held before adoption');
+      await p.chooseContext('installed');
+      await p.q(`window.t073.hold = false; window.t073.held.splice(0).forEach(resolve => resolve())`);
+      await until(async () => !(await p.busy()), 'the late read commits');
+      await settleBrowserWork(page);
+      pane = await t073Pane(p);
+      assert.deepEqual([pane.open, pane.openDialogs], [false, 0], 'a source saved while another view is open selects nothing and opens no overlay');
+      assert.equal(await p.q(`document.activeElement?.getAttribute('data-pack-context')`), 'installed', 'and takes no focus from where the person is');
+      await p.chooseSub('sources');
+      state = await t073SourcesState(p);
+      assert.deepEqual([state.rows.length, state.selected, state.open], [9, [], false], 'the late source is listed and unselected');
+      assert.equal(canvas.discoveryReads().length, 5);
+    });
+  });
+});
+
+/** Wait for the Add dialog's status to reach a phase. @param {Awaited<ReturnType<typeof t073Driver>>} p @param {string} phase */
+const t073AddPhase = async (p, phase) => {
+  await until(async () => (await t073Add(p)).status?.phase === phase, `Add reaches ${phase}`);
+  return t073Add(p);
+};
+
+test('073 Sources: a changed saved list and a lost response each offer one explicit read, never a replay, and keep what was typed', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '073-sources-add-recovery', { packs: {}, prepare: workspace => t073SourcesWorkspace(workspace, () => {
+    addLocalSource(workspace, 'new-team', ['ci-review']);
+    addLocalSource(workspace, 'external-team', ['ext-pack']);
+  }) }, async canvas => {
+    const { page, output, workspace } = canvas;
+    const p = await t073Driver(canvas);
+    await p.enter();
+    await p.chooseSub('sources');
+    await p.reload();
+    const file = path.join(workspace.root, T073_SOURCES_FILE);
+    const original = t073SavedEntries(workspace);
+    const fresh = path.join(workspace.directory, 'new-team');
+
+    // Another editor saved a source after Canvas last read the list: nothing is saved, and the reload is the person's choice.
+    const external = localSource(path.join(workspace.directory, 'external-team'));
+    await saveSources(workspace, [...original, external]);
+    const changedFile = fs.readFileSync(file);
+    await p.click('[data-sources-add]');
+    await t073Submit(p, fresh);
+    let add = await t073Refused(p);
+    assert.equal(await p.q(`document.querySelector('[data-source-add-status] .fui-MessageBarTitle').textContent`), 'The source list changed');
+    assert.equal(add.status.text, 'The source list changed Another tab or person changed the saved source list after Canvas last read it. Nothing was saved. '
+      + 'Choose Reload packs to read the current list, then add the source again. Reload packs');
+    assert.deepEqual([add.open, add.focus, add.location, add.status.actions], [true, 'status', fresh, ['Reload packs']]);
+    assert.deepEqual(fs.readFileSync(file), changedFile, 'the other editor\'s list is untouched');
+    assert.deepEqual([canvas.sourceWrites().length, canvas.discoveryReads().length], [1, 1], 'one write attempt; the refusal read nothing');
+    await aboutScreenshot(page, output, 'sources-add-changed-1440x900-light');
+    await p.click('[data-source-add-status] button');
+    add = await t073AddPhase(p, 'info');
+    assert.equal(add.status.text, 'Reloaded Pack sources were read again. Add the source again if it is still missing.');
+    assert.deepEqual([add.open, add.focus, add.location, add.status.actions], [true, 'status', fresh, []], 'the reload keeps the dialog and the typed source');
+    assert.equal(canvas.discoveryReads().length, 2, 'the Reload packs action is exactly one read');
+    assert.equal(canvas.sourceWrites().length, 1, 'and replays nothing');
+    assert.equal((await t073SourcesState(p)).rows.length, 6, 'the other editor\'s source is listed after the read');
+    await p.click('[data-source-add-submit]');
+    await until(async () => !(await t073Add(p)).open, 'the added source closes Add');
+    await until(async () => !(await p.busy()), 'the post-add read commits');
+    assert.deepEqual(t073SavedEntries(workspace), [...original, external, localSource(fresh)], 'the other editor\'s entry is preserved, and the new one follows it');
+    assert.equal(canvas.sourceWrites().length, 2);
+
+    // A lost response whose request never left: the list is unchanged, and the person is told so only after a read.
+    const second = addLocalSource(workspace, 'second-team', ['second-pack']);
+    const beforeLost = fs.readFileSync(file);
+    await p.q(`window.t073.drop = 'before'`);
+    await p.click('[data-sources-add]');
+    await t073Submit(p, second);
+    add = await t073Refused(p);
+    assert.equal(await p.q(`document.querySelector('[data-source-add-status] .fui-MessageBarTitle').textContent`), 'The response was lost');
+    assert.equal(add.status.text, 'The response was lost Canvas cannot tell whether the source was saved. Read again to check the saved list before adding it again. '
+      + 'Nothing is retried automatically. Read again');
+    assert.deepEqual([add.open, add.focus, add.location, add.status.actions], [true, 'status', second, ['Read again']]);
+    assert.equal(canvas.sourceWrites().length, 2, 'the request never reached the server, and Canvas does not send it again');
+    const readsBefore = canvas.discoveryReads().length;
+    await p.click('[data-source-add-status] button');
+    add = await t073AddPhase(p, 'info');
+    assert.equal(add.status.text, 'Read again The saved source list was read again and has not changed, so this source was not added. You can add it again.');
+    assert.equal(canvas.discoveryReads().length, readsBefore + 1, 'Read again is exactly one read');
+    assert.deepEqual(fs.readFileSync(file), beforeLost);
+
+    // A lost response whose request did arrive: the server saved it, and only a read can say so.
+    await p.q(`window.t073.drop = 'after'`);
+    await p.click('[data-source-add-submit]');
+    add = await t073AddPhase(p, 'refused');
+    assert.equal(add.status.actions[0], 'Read again');
+    assert.equal(canvas.sourceWrites().length, 3, 'one more write attempt, sent once');
+    assert.deepEqual(t073SavedEntries(workspace).at(-1), localSource(second), 'the lost response had been saved');
+    assert.equal(t073SavedEntries(workspace).length, original.length + 3);
+    await p.click('[data-source-add-status] button');
+    add = await t073AddPhase(p, 'info');
+    assert.equal(add.status.text, 'Read again The saved source list was read again, and it has changed since this request. Check the Sources table for this source before adding it again. '
+      + 'Nothing is retried automatically.');
+    assert.deepEqual([add.open, add.location], [true, second], 'the dialog stays open with the typed source until the person closes it');
+    assert.equal(canvas.sourceWrites().length, 3, 'nothing was replayed');
+    assert.ok((await t073SourcesState(p)).rows.some(row => row.cells[0] === 'second-team Local folder'), 'the table now lists the source');
+    assert.equal(fs.readFileSync(file, 'utf8').split(second.replaceAll('\\', '\\\\')).length - 1, 1, 'the source is saved exactly once');
+    await aboutScreenshot(page, output, 'sources-add-lost-after-1440x900-light');
+    await p.click('[data-source-add-cancel]');
+    assert.deepEqual([(await t073Add(p)).open, (await t073Add(p)).focus], [false, 'trigger']);
+  });
+});
+
+/** Record an installed pack as installed from a saved folder (a path) or from an explicit recorded source, as the installer does. @param {{ root: string, write: Function }} workspace @param {string} name @param {string | Record<string, string>} source */
+function t073InstallFrom(workspace, name, source) {
+  const file = path.join(workspace.root, '.dude/metadata/profile.md');
+  const document = JSON.parse(/```json\s*([\s\S]*?)```/.exec(fs.readFileSync(file, 'utf8'))?.[1] ?? 'null');
+  document.installed[name] = { files: [`.github/agents/dude-pack-${name}-recorded-1-worker.agent.md`],
+    source: typeof source === 'string' ? { type: 'local', location: source } : source };
+  workspace.write('.dude/metadata/profile.md', `# Install Profile\n\n\`\`\`json\n${JSON.stringify(document, null, 2)}\n\`\`\`\n`);
+}
+/** Forget an installed record. @param {{ root: string, write: Function }} workspace @param {string} name */
+function t073Uninstall(workspace, name) {
+  const file = path.join(workspace.root, '.dude/metadata/profile.md');
+  const document = JSON.parse(/```json\s*([\s\S]*?)```/.exec(fs.readFileSync(file, 'utf8'))?.[1] ?? 'null');
+  delete document.installed[name];
+  workspace.write('.dude/metadata/profile.md', `# Install Profile\n\n\`\`\`json\n${JSON.stringify(document, null, 2)}\n\`\`\`\n`);
+}
+
+/** The open source details and where focus is. @param {Awaited<ReturnType<typeof t073Driver>>} p */
+const t073SourceDetails = p => p.q(`(() => {
+  const text = node => node?.innerText.replace(/\\s+/g, ' ').trim() ?? null;
+  const remove = document.querySelector('[data-source-remove]'), show = document.querySelector('[data-source-show]');
+  const a = document.activeElement;
+  return {
+    title: text(document.querySelector('[data-pack-detail] h2')),
+    show: show ? { disabled: show.disabled, label: show.textContent } : null,
+    remove: remove ? { disabled: remove.disabled, label: remove.getAttribute('aria-label'), describedBy: remove.getAttribute('aria-describedby') } : null,
+    reason: text(document.querySelector('[data-source-reason]')), readonly: text(document.querySelector('[data-source-readonly]')),
+    facts: Object.fromEntries([...document.querySelectorAll('[data-pack-detail-body] dl dt')].map(dt => [dt.textContent, text(dt.nextElementSibling)])),
+    note: document.querySelector('[data-source-status]') ? { title: document.querySelector('[data-source-status]').getAttribute('data-source-status-title'), text: text(document.querySelector('[data-source-status]')) } : null,
+    focus: !a ? null : a.hasAttribute('data-source-remove-cancel') ? 'dialog:cancel' : a.hasAttribute('data-source-remove-confirm') ? 'dialog:confirm'
+      : a.hasAttribute('data-source-remove-status') ? 'dialog:status' : a.hasAttribute('data-source-remove') ? 'remove' : a.hasAttribute('data-source-reason') ? 'reason'
+      : a.hasAttribute('data-source-status') ? 'note' : a.hasAttribute('data-source-row') ? 'row:' + a.getAttribute('data-source-row')
+      : a.closest('[data-sources-panel]') && a.tagName === 'H2' ? 'heading' : a.tagName.toLowerCase() + ':' + (a.getAttribute('aria-label') ?? a.textContent.trim().slice(0, 30)),
+  };
+})()`);
+/** The Remove confirmation. @param {Awaited<ReturnType<typeof t073Driver>>} p */
+const t073Removal = p => p.q(`(() => {
+  const dialog = document.querySelector('[data-source-remove-dialog]');
+  const text = node => node?.innerText.replace(/\\s+/g, ' ').trim() ?? null;
+  const box = dialog.getBoundingClientRect();
+  return { open: dialog.open, modal: dialog.open && dialog.matches(':modal'), title: text(dialog.querySelector('h2')),
+    body: text(dialog.querySelector('[role="region"]')), status: text(dialog.querySelector('[data-source-remove-status]')),
+    statusButtons: [...dialog.querySelectorAll('[data-source-remove-status] button')].map(node => node.textContent),
+    cancel: dialog.querySelector('[data-source-remove-cancel]')?.textContent ?? null, cancelDisabled: dialog.querySelector('[data-source-remove-cancel]')?.disabled ?? null,
+    confirm: dialog.querySelector('[data-source-remove-confirm]')?.textContent ?? null, confirmDisabled: dialog.querySelector('[data-source-remove-confirm]')?.disabled ?? null,
+    focus: (a => !a ? null : a.hasAttribute('data-source-remove-cancel') ? 'cancel' : a.hasAttribute('data-source-remove-confirm') ? 'confirm'
+      : a.hasAttribute('data-source-remove-status') ? 'status' : a.tagName.toLowerCase() + ':' + (a.getAttribute('aria-label') ?? ''))(document.activeElement),
+    box: { left: box.left, top: box.top, right: box.right, bottom: box.bottom }, viewport: { width: innerWidth, height: innerHeight } };
+})()`);
+/** A point on the backdrop of a dialog, or null where it fills the viewport. @param {{ box: { left: number, top: number, right: number, bottom: number }, viewport: { width: number, height: number } }} dialog */
+const t073Backdrop = ({ box, viewport }) => box.left > 3 ? { x: box.left / 2, y: box.top + 20 } : box.top > 3 ? { x: box.left + 20, y: box.top / 2 }
+  : viewport.width - box.right > 3 ? { x: (box.right + viewport.width) / 2, y: box.top + 20 } : null;
+
+test('073 Sources: Remove is advisory when a source is in use, confirms in a dialog, refuses late inside it, and removes only the entry', {
+  timeout: 480_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  for (const [name, width, height] of [['wide', 1440, 900], ['narrow', 360, 900]]) await context.test(name, async () => {
+    await runAboutCase(context, `073-sources-remove-${name}`, { packs: {}, prepare: async workspace => {
+      const restore = await t073SourcesWorkspace(workspace);
+      const removable = addLocalSource(workspace, 'removable', [{ name: 'rm-pack', tags: ['ui'] }]);
+      const keeper = addLocalSource(workspace, 'keeper', [{ name: 'keep-pack', tags: ['ui'] }]);
+      await saveSources(workspace, [...t073SavedEntries(workspace), localSource(removable), localSource(keeper)]);
+      t073InstallFrom(workspace, 'onboarding', path.join(workspace.directory, 'team-packs'));
+      return restore;
+    } }, async canvas => {
+      const { page, output, workspace } = canvas;
+      const p = await t073Driver(canvas);
+      await p.enter(width, height);
+      await p.chooseSub('sources');
+      await p.reload();
+      const file = path.join(workspace.root, T073_SOURCES_FILE);
+      const original = t073SavedEntries(workspace);
+      let state = await t073SourcesState(p);
+      const [teamKey, removableKey, keeperKey] = ['team-packs', 'removable', 'keeper'].map(source => t073SourceKey(state, source));
+      const select = async key => { await p.click(`[data-source-row="${key}"]`); };
+      const closeDetails = async () => { if (width < 1100 && (await t073Pane(p)).open) await key(page, 'Escape'); };
+
+      // Built-in sources have no Remove at all, only the read-only note.
+      await select(t073SourceKey(state, 'Local library'));
+      let details = await t073SourceDetails(p);
+      assert.deepEqual([details.remove, details.readonly], [null, 'Read only. Built-in sources are derived from this installation and cannot be removed or edited here.']);
+      await closeDetails();
+
+      // In use: Remove is disabled, and the reason names the installed pack.
+      await select(teamKey);
+      details = await t073SourceDetails(p);
+      assert.deepEqual([details.remove.disabled, details.remove.label], [true, 'Remove team-packs']);
+      assert.equal(details.reason, 'Cannot remove while in use. Installed from it: onboarding. Remove those installed packs first.');
+      assert.equal(details.facts['Installed from this source'].startsWith('1: onboarding'), true, details.facts['Installed from this source']);
+      assert.equal(await p.q(`document.getElementById(document.querySelector('[data-source-remove]').getAttribute('aria-describedby')).textContent`), details.reason,
+        'the disabled Remove is described by the reason, not a dead end');
+      await closeDetails();
+
+      // Remove opens a modal confirmation on Cancel; every dismissal returns focus to Remove and changes nothing.
+      await select(removableKey);
+      details = await t073SourceDetails(p);
+      assert.deepEqual([details.remove.disabled, details.reason],
+        [false, 'Show packs in Available lists this source\'s packs that are not installed. Remove takes this entry out of the saved list. It installs and uninstalls nothing.']);
+      const before = fs.readFileSync(file);
+      for (const dismiss of ['cancel', 'escape', 'close', 'backdrop']) {
+        await p.click('[data-source-remove]');
+        const dialog = await t073Removal(p);
+        assert.deepEqual([dialog.open, dialog.modal, dialog.focus, dialog.title, dialog.cancel, dialog.confirm, dialog.confirmDisabled],
+          [true, true, 'cancel', 'Remove removable?', 'Cancel', 'Remove source', false], 'Remove asks first and opens on Cancel');
+        assert.ok(dialog.body.includes('This removes the source from this project\'s saved source list. Packs already installed from it stay installed, no files are deleted, '
+          + 'and its packs no longer appear under Available. You can add it again later.'), dialog.body);
+        assert.ok(/Type Local folder\s*Location .*removable/.test(dialog.body), dialog.body);
+        if (dismiss === 'cancel') await p.click('[data-source-remove-cancel]');
+        else if (dismiss === 'escape') await key(page, 'Escape');
+        else if (dismiss === 'close') await p.click('[aria-label="Close without removing"]');
+        else {
+          const point = t073Backdrop(dialog);
+          if (!point) { await key(page, 'Escape'); }
+          else await t073Pointer(page, point);
+        }
+        const after = await t073Removal(p);
+        details = await t073SourceDetails(p);
+        assert.deepEqual([after.open, details.focus], [false, 'remove'], `${dismiss} returns focus to Remove`);
+        assert.deepEqual(fs.readFileSync(file), before, `${dismiss} changes nothing`);
+      }
+      assert.equal(canvas.sourceWrites().length, 0, 'no dismissal sent anything');
+      await p.click('[data-source-remove]');
+      for (const shift of [false, true]) for (let step = 0; step < 8; step += 1) {
+        await key(page, 'Tab', 'Tab', { shift });
+        assert.equal(await p.q(`document.querySelector('[data-source-remove-dialog]').contains(document.activeElement)`), true, 'every Tab transition stays in the confirmation');
+      }
+      await key(page, 'Escape');
+      assert.equal((await t073SourceDetails(p)).focus, 'remove', 'Escape returns focus to Remove');
+      await aboutScreenshot(page, output, `sources-remove-confirm-${width}x${height}-light`);
+
+      // The server decides again at the write: a pack installed after the last read refuses inside the dialog.
+      await p.click('[data-source-remove]');
+      t073InstallFrom(workspace, 'rm-pack', path.join(workspace.directory, 'removable'));
+      await p.click('[data-source-remove-confirm]');
+      await until(async () => (await t073Removal(p)).status !== null, 'a late refusal inside the confirmation');
+      let dialog = await t073Removal(p);
+      assert.equal(dialog.status, 'Not removed: this source is in use Nothing was changed. A source stays while an installed pack records it or a pack request uses it. '
+        + 'Installed packs recorded from this source (1) rm-pack');
+      assert.deepEqual([dialog.open, dialog.focus, dialog.cancel, dialog.confirmDisabled, dialog.statusButtons], [true, 'status', 'Close', true, []],
+        'the refusal stays in the dialog, takes focus, and leaves only Close');
+      assert.deepEqual(fs.readFileSync(file), before, 'the saved list is untouched');
+      assert.equal(canvas.sourceWrites().length, 1);
+      await aboutScreenshot(page, output, `sources-remove-refused-${width}x${height}-light`);
+      await p.click('[data-source-remove-cancel]');
+      details = await t073SourceDetails(p);
+      assert.deepEqual([details.remove.disabled, details.focus, details.reason],
+        [true, 'reason', 'Cannot remove while in use. Installed from it: rm-pack. Remove those installed packs first.'],
+        'focus moves to the reason that now explains the disabled Remove');
+
+      // A fresh read is the better authority: once the pack is gone and the list is read again, Remove is available.
+      t073Uninstall(workspace, 'rm-pack');
+      await closeDetails();
+      await p.reload();
+      await select(removableKey);
+      details = await t073SourceDetails(p);
+      assert.equal(details.remove.disabled, false, 'the blockers an earlier refusal named do not outlive the next read');
+      assert.equal(details.facts['Installed from this source'].startsWith('0'), true);
+
+      // A list changed elsewhere refuses a removal too, with a read the person chooses.
+      const extra = localSource(addLocalSource(workspace, 'extra', ['extra-pack']));
+      await saveSources(workspace, [...t073SavedEntries(workspace), extra]);
+      const changed = fs.readFileSync(file);
+      await p.click('[data-source-remove]');
+      await p.click('[data-source-remove-confirm]');
+      await until(async () => (await t073Removal(p)).status !== null, 'a refusal for a changed list');
+      dialog = await t073Removal(p);
+      assert.ok(dialog.status.startsWith('The source was not removed'), dialog.status);
+      assert.ok(dialog.status.includes('Nothing was changed.'), dialog.status);
+      assert.deepEqual([dialog.statusButtons, dialog.focus], [['Reload packs'], 'status']);
+      assert.deepEqual(fs.readFileSync(file), changed, 'the other editor\'s list is untouched');
+      assert.equal(canvas.sourceWrites().length, 2);
+      const reads = canvas.discoveryReads().length;
+      await p.click('[data-source-remove-status] button');
+      await until(() => canvas.discoveryReads().length === reads + 1, 'the one read the person chose');
+      await until(async () => !(await p.busy()), 'the read commits');
+      assert.deepEqual([(await t073Removal(p)).open, canvas.sourceWrites().length], [false, 2], 'the dialog closes, and the removal is not replayed');
+      state = await t073SourcesState(p);
+      assert.ok(state.rows.some(row => row.cells[0].startsWith('extra ')), 'the other editor\'s source is now listed');
+
+      // A removal whose response is lost is unconfirmed until a read, which is again the person's choice.
+      await closeDetails();
+      await select(removableKey);
+      await p.q(`window.t073.drop = 'before'`);
+      await p.click('[data-source-remove]');
+      await p.click('[data-source-remove-confirm]');
+      await until(async () => (await t073Removal(p)).status !== null, 'a lost response');
+      dialog = await t073Removal(p);
+      assert.equal(dialog.status, 'The response was lost Canvas cannot tell whether the source was removed. Read again to check the saved list. Nothing is retried automatically. Read again');
+      assert.equal(canvas.sourceWrites().length, 2, 'the request never reached the server');
+      await p.click('[data-source-remove-cancel]');
+
+      // The removal itself: only the entry goes, one read follows, and the note holds focus.
+      await closeDetails();
+      await select(removableKey);
+      const entries = t073SavedEntries(workspace);
+      const readsBefore = canvas.discoveryReads().length, writesBefore = canvas.sourceWrites().length;
+      const profile = fs.readFileSync(path.join(workspace.root, '.dude/metadata/profile.md'));
+      await p.click('[data-source-remove]');
+      await p.click('[data-source-remove-confirm]');
+      await until(async () => (await t073SourceDetails(p)).note?.title === 'Removed', 'the removal');
+      await until(async () => !(await p.busy()), 'the read that follows commits');
+      details = await t073SourceDetails(p);
+      assert.equal(details.note.text, 'Removed removable was removed from this project\'s source list. Installed packs and files were not changed.');
+      assert.equal(details.focus, 'note', 'the status takes focus');
+      assert.deepEqual(t073SavedEntries(workspace), entries.filter(entry => entry.location !== path.join(workspace.directory, 'removable')),
+        'only the one entry is gone, and the others keep their order');
+      assert.deepEqual([canvas.sourceWrites().length, canvas.discoveryReads().length], [writesBefore + 1, readsBefore + 1], 'one write and exactly one read');
+      assert.deepEqual(fs.readFileSync(path.join(workspace.root, '.dude/metadata/profile.md')), profile, 'no installed pack or file changed');
+      state = await t073SourcesState(p);
+      assert.deepEqual([state.selected, state.open, state.rows.some(row => row.key === removableKey)], [[], false, false], 'the details close with their row');
+      assert.equal(state.count, '7 sources · 2 built in · 5 of 8 added');
+      assert.equal(canvas.sends.length, 0, 'removing a source asks Dude nothing');
+      await aboutScreenshot(page, output, `sources-removed-${width}x${height}-light`);
+    });
+  });
+});
+
+test('073 Sources: an unreadable saved list is never treated as empty or reset, and Add stays off until it can be read', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  const broken = '# Pack Sources\n\n```json\n{ "sources": [ not json\n```\n';
+  await runAboutCase(context, '073-sources-unreadable', { packs: {}, prepare: workspace => { workspace.write('.dude/metadata/pack-sources.md', broken); } },
+    async canvas => {
+      const { page, output, workspace } = canvas;
+      const p = await t073Driver(canvas);
+      await p.enter();
+      const file = path.join(workspace.root, T073_SOURCES_FILE);
+      const bytes = fs.readFileSync(file);
+      await p.chooseSub('sources');
+      let state = await t073SourcesState(p);
+      assert.deepEqual(state.rows.map(row => row.cells[0]), ['Local library Local folder', 'Bundle upstream GitHub'], 'the built-in sources are still listed');
+      assert.deepEqual([state.addDisabled, state.intro], [true, 'The saved source list could not be read, so it cannot be changed here. Nothing was reset.']);
+      assert.equal(state.coverage.startsWith('Added sources are unavailable The saved source list, .dude/metadata/pack-sources.md, could not be read. It is not treated as empty, and nothing was reset.'), true, state.coverage);
+      assert.ok(state.coverage.endsWith('Fix or restore the file, then choose Reload packs.'), state.coverage);
+      assert.equal(state.count, '2 sources · 2 built in · added sources unavailable');
+      assert.equal(await p.q(`document.querySelectorAll('[data-sources-no-added]').length`), 0, 'an unreadable list is never presented as having no added sources');
+      await aboutScreenshot(page, output, 'sources-unreadable-1440x900-light');
+
+      // Installed rows do not claim a source they cannot know, and Reload keeps the file exactly as it was.
+      await p.chooseSub('installed');
+      const installed = await p.q(`[...document.querySelectorAll('[data-pack-row]')].map(row => [...row.querySelectorAll('[role="gridcell"]')].map(cell => cell.innerText.trim()))`);
+      assert.deepEqual([...new Set(installed.map(row => row[2]))], ['Unknown'], 'every installed pack\'s source is Unknown, not Unlisted');
+      assert.deepEqual(await p.sourceOptions(), ['All sources', 'Local library - Local folder', 'Bundle upstream - GitHub', 'Unknown'],
+        'Unknown is offered because rows carry it, and Unlisted and This project are not because no row does');
+      await p.chooseSub('sources');
+      await p.reload();
+      state = await t073SourcesState(p);
+      assert.deepEqual([state.rows.length, state.addDisabled, state.footer.endsWith('Catalog: partial (added sources unavailable)')], [2, true, true], state.footer);
+      assert.deepEqual(fs.readFileSync(file), bytes, 'Canvas never reset or rewrote the unreadable list');
+      assert.equal(canvas.sourceWrites().length, 0, 'and sent no write');
+      await p.click('[data-source-row]');
+      const details = await t073SourceDetails(p);
+      assert.deepEqual([details.facts['Installed from this source'], details.remove],
+        ['0 8 installed packs have a source record that could not be matched.', null],
+        'a built-in source is matched without the saved list, and the packs that could not be placed are named as unknown, not unlisted');
+
+      // Once the file is repaired, a read makes the list current and Add available.
+      await saveSources(workspace, [localSource(path.join(workspace.directory, 'repaired'))]);
+      addLocalSource(workspace, 'repaired', ['fixed-pack']);
+      await p.reload();
+      state = await t073SourcesState(p);
+      assert.deepEqual([state.rows.length, state.addDisabled, state.coverage, state.count], [3, false, null, '3 sources · 2 built in · 1 of 8 added']);
+    });
+});
+
+test('073 Sources: eight added sources list every row without paging and refuse a ninth inside Add', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '073-sources-limit', { packs: {}, prepare: async workspace => {
+    const folders = Array.from({ length: 8 }, (_, index) => addLocalSource(workspace, `team-${index + 1}`, [{ name: `pack-${index + 1}`, tags: ['ui'] }]));
+    addLocalSource(workspace, 'ninth', ['ninth-pack']);
+    await saveSources(workspace, folders.map(localSource));
+  } }, async canvas => {
+    const { page, output, workspace } = canvas;
+    const p = await t073Driver(canvas);
+    await p.enter();
+    await p.chooseSub('sources');
+    await p.reload();
+    const state = await t073SourcesState(p);
+    assert.equal(state.rows.length, 10, 'two built-ins and eight added sources, with no pager');
+    assert.equal(state.count, '10 sources · 2 built in · 8 of 8 added');
+    assert.equal(await p.q(`document.querySelectorAll('[data-sources-panel] [data-pack-pager], [data-sources-panel] [aria-label="Next pack page"]').length`), 0, 'Sources has no pager');
+    assert.deepEqual(state.rows.slice(2).map(row => row.cells[0]), Array.from({ length: 8 }, (_, index) => `team-${index + 1} Local folder`), 'saved order');
+    assert.equal(state.addDisabled, false, 'Add stays enabled at the limit: the server is the one that refuses');
+    await aboutScreenshot(page, output, 'sources-eight-1440x900-light');
+    const before = fs.readFileSync(path.join(workspace.root, T073_SOURCES_FILE));
+    await p.click('[data-sources-add]');
+    await t073Submit(p, path.join(workspace.directory, 'ninth'));
+    const refused = await t073Refused(p);
+    assert.equal(await p.q(`document.querySelector('[data-source-add-status] .fui-MessageBarTitle').textContent`), 'Source limit reached');
+    assert.ok(refused.status.text.includes('This project has 8 of 8 sources. Remove one before adding another. Nothing was saved.'), refused.status.text);
+    assert.deepEqual([refused.open, refused.location, refused.focus], [true, path.join(workspace.directory, 'ninth'), 'status']);
+    assert.deepEqual(fs.readFileSync(path.join(workspace.root, T073_SOURCES_FILE)), before, 'nothing was saved');
+    await p.click('[data-source-add-cancel]');
+  });
+});
+
+test('073 Packs: Source labels, the Source filter, and paging run over the complete context, with distinct same-name keys', {
+  timeout: 420_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  const recordedRust = { type: 'remote', repository: 'https://github.com/acme/dude-packs', requested_ref: 'main', resolved_commit: 'a'.repeat(40) };
+  await runAboutCase(context, '073-source-filter', { packs: { bulkAvailable: 14 }, prepare: async workspace => {
+    const restore = await t073SourcesWorkspace(workspace);
+    const big = addLocalSource(workspace, 'big-26', Array.from({ length: 26 }, (_, index) => ({ name: `big-${String(index + 1).padStart(2, '0')}`, tags: ['bulk'] })));
+    const tail = addLocalSource(workspace, 'tail', [{ name: 'zz-tail', tags: ['tail-tag'] }]);
+    await saveSources(workspace, [...t073SavedEntries(workspace), localSource(big), localSource(tail)]);
+    t073InstallFrom(workspace, 'onboarding', path.join(workspace.directory, 'team-packs'));
+    t073InstallFrom(workspace, 'rust', recordedRust);
+    addProjectArtifacts(workspace, T073_PROJECT);
+    return restore;
+  } }, async canvas => {
+    const { page, output, workspace } = canvas;
+    const p = await t073Driver(canvas);
+    await p.enter();
+    const SOURCES = ['Local library - Local folder', 'Bundle upstream - GitHub', 'acme/dude-packs - GitHub', 'team-packs - Local folder',
+      'vanished - Local folder', 'big-26 - Local folder', 'tail - Local folder'];
+    const readout = async () => ({ ...(await p.state()), rows: await p.rows() });
+
+    // Installed names its source before any catalog is read, and never claims one it cannot know.
+    assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-scroll] [role="columnheader"]')].map(node => node.textContent)`), ['Name', 'Type', 'Source', 'Use cases']);
+    let state = await readout();
+    assert.deepEqual(Object.fromEntries(state.rows.map(row => [row[0], row[3]])), {
+      'pack:zulu': 'Unlisted - Git repository', 'pack:alpha': 'Unlisted - Local folder', 'pack:retired': 'Unlisted - Local folder', 'pack:delta': 'Unlisted - Local folder',
+      'pack:golf': 'Unlisted - Local folder', 'pack:juliet': 'Unlisted - Local folder', 'pack:mike': 'Unlisted - Local folder', 'pack:papa': 'Unlisted - Local folder',
+      'pack:onboarding': 'team-packs - Local folder', 'pack:rust': 'acme/dude-packs - GitHub',
+      'project:agent:dude-local-alpha': 'This project', 'project:skill:dude-local-alpha': 'This project', 'project:agent:dude-local-block': 'This project',
+      'project:skill:dude-local-handmade': 'This project', 'project:agent:dude-local-quiet': 'This project',
+    });
+    assert.deepEqual([state.count, state.page, state.totals], ['1–15 of 15', 'Page 1 of 1', ['15', '?']], 'Installed counts packs plus project rows; Available is unknown, not zero');
+    assert.deepEqual(await p.sourceOptions(), ['All sources', ...SOURCES, 'Unlisted - Git repository', 'Unlisted - Local folder', 'This project'],
+      'every source, then Unlisted and This project because rows carry them, and no Unknown or Unlisted - GitHub because none does');
+    assert.equal(await p.q(`document.querySelector('[data-pack-toolbar] [role="combobox"]').disabled`), true, 'Use case is off while no catalog has been read');
+    await aboutScreenshot(page, output, 'installed-source-column-1440x900-light');
+
+    // Source filters the whole context, so a selection in one list never reaches into the other's rows.
+    await p.chooseSource('team-packs - Local folder');
+    state = await readout();
+    assert.deepEqual([state.keys, state.count, state.page], [['pack:onboarding'], '1–1 of 1 matches', 'Page 1 of 1']);
+    await p.chooseSource('Unlisted - Local folder');
+    state = await readout();
+    assert.deepEqual(state.keys, ['pack:alpha', 'pack:retired', 'pack:delta', 'pack:golf', 'pack:juliet', 'pack:mike', 'pack:papa']);
+    await p.chooseSource('This project');
+    state = await readout();
+    assert.deepEqual(state.keys, ['project:agent:dude-local-alpha', 'project:skill:dude-local-alpha', 'project:agent:dude-local-block',
+      'project:skill:dude-local-handmade', 'project:agent:dude-local-quiet']);
+    await p.chooseSource('Local library - Local folder');
+    state = await readout();
+    assert.deepEqual([state.keys, state.count], [[], '0 matches'], 'a source nothing installed came from lists no installed row');
+    assert.equal(canvas.discoveryReads().length, 0, 'filtering reads no catalog');
+
+    // One Reload reads every source; Available then lists each source's packs, same-named ones side by side.
+    await p.reload();
+    await p.chooseContext('available');
+    state = await readout();
+    assert.deepEqual([state.totals, state.count, state.page], [['15', '54'], '1–25 of 54 known', 'Page 1 of 3']);
+    assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-scroll] [role="columnheader"]')].map(node => node.textContent)`), ['Name', 'Source', 'Use cases']);
+    assert.deepEqual(await p.sourceOptions(), ['All sources', ...SOURCES.map(label => label.startsWith('vanished') ? `${label} (unavailable)` : label)],
+      'Available offers sources only, with the failed one marked, and never Unlisted, Unknown, or This project');
+    const order = new Map(SOURCES.map((label, index) => [label, index]));
+    const expected = [
+      ...['bravo', ...Array.from({ length: 14 }, (_, index) => `bulk-a-${String(index + 1).padStart(2, '0')}`), 'charlie', 'constructor', 'echo', 'foxtrot', 'hotel', 'india', 'kilo', 'lima', 'november', 'oscar']
+        .map(name => [name, 'Local library - Local folder']),
+      ['bravo', 'acme/dude-packs - GitHub'], ['bravo', 'team-packs - Local folder'],
+      ...Array.from({ length: 26 }, (_, index) => [`big-${String(index + 1).padStart(2, '0')}`, 'big-26 - Local folder']),
+      ['zz-tail', 'tail - Local folder'],
+    ].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : order.get(a[1]) - order.get(b[1])));
+    assert.equal(expected.length, 54);
+    const listed = async () => (await p.rows()).map(row => [row[1], row[2]]);
+    assert.deepEqual(await listed(), expected.slice(0, 25), 'page 1 is the first 25 of the whole ordered context');
+    await p.click('[aria-label="Next pack page"]');
+    assert.deepEqual(await listed(), expected.slice(25, 50));
+    await p.click('[aria-label="Next pack page"]');
+    assert.deepEqual([await listed(), (await p.state()).page], [expected.slice(50), 'Page 3 of 3']);
+    assert.deepEqual(expected.slice(50).map(row => row[0]), ['lima', 'november', 'oscar', 'zz-tail'], 'the last page holds zz-tail, beyond page 1');
+
+    // AND filtering is over the complete context, so a match beyond page 1 is found and paged on its own.
+    await p.chooseSource('tail - Local folder');
+    state = await readout();
+    assert.deepEqual([state.keys.length, state.rows[0].slice(1), state.count, state.page], [1, ['zz-tail', 'tail - Local folder', 'tail-tag'], '1–1 of 1 known matches', 'Page 1 of 1'],
+      'zz-tail is on page 3 unfiltered and on page 1 filtered');
+    await p.chooseTag('tail-tag');
+    assert.equal((await readout()).keys.length, 1);
+    await p.chooseSource('big-26 - Local folder');
+    state = await readout();
+    assert.deepEqual([state.keys, state.rows.length, state.page], [[], 0, 'No pages'], 'Use case and Source combine with AND');
+    assert.match(await p.q(`document.querySelector('[data-pack-empty]').innerText`), /^No known matching packs\nThis is not a confirmed empty list: some sources could not be read\./);
+    await p.chooseTag('');
+    state = await readout();
+    assert.deepEqual([state.keys.length, state.count, state.page, state.next], [25, '1–25 of 26 known matches', 'Page 1 of 2', false], '26 rows is two pages');
+    await p.click('[aria-label="Next pack page"]');
+    assert.deepEqual([(await p.rows()).map(row => row[1]), (await p.state()).page], [['big-26'], 'Page 2 of 2']);
+    await p.chooseSource('Local library - Local folder');
+    state = await readout();
+    assert.deepEqual([state.keys.length, state.count, state.page, state.previous, state.next], [25, '1–25 of 25 known matches', 'Page 1 of 1', true, true], 'exactly 25 rows is one page');
+    await p.chooseTag('bulk');
+    state = await readout();
+    assert.deepEqual([state.keys.length, state.count, state.page], [14, '1–14 of 14 known matches', 'Page 1 of 1']);
+    await p.chooseSource('All sources');
+    state = await readout();
+    assert.deepEqual([state.keys.length, state.count, state.page], [25, '1–25 of 40 known matches', 'Page 1 of 2'], '14 + 26 bulk packs, across both sources');
+
+    // Same-named packs from three sources are three rows with three keys, and selecting one selects only it.
+    await p.chooseTag('writing');
+    state = await readout();
+    const keys = state.keys;
+    assert.equal(keys.length, 3);
+    assert.deepEqual(keys.map(key => key.split('@')[0]), ['pack:bravo', 'pack:bravo', 'pack:bravo']);
+    assert.equal(new Set(keys).size, 3, 'each source\'s bravo has its own key');
+    assert.deepEqual(state.rows.map(row => row[2]), ['Local library - Local folder', 'acme/dude-packs - GitHub', 'team-packs - Local folder']);
+    for (const [index, source] of ['Local library', 'acme/dude-packs', 'team-packs'].entries()) {
+      await p.click(`[data-pack-row="${keys[index]}"]`);
+      state = await p.state();
+      assert.deepEqual([state.selected, state.detail], [[keys[index]], keys[index]]);
+      assert.equal(await p.q(`document.querySelector('[data-pack-detail] h2').textContent`), `bravo - ${source}`);
+      const facts = (await t073SourceDetails(p)).facts;
+      assert.deepEqual([facts.Source, facts.Location, facts['Tracked ref'] ?? null], [['Local library - Local folder', 'library/packs', null],
+        ['acme/dude-packs - GitHub', 'https://github.com/acme/dude-packs', 'main'], ['team-packs - Local folder', path.join(workspace.directory, 'team-packs'), null]][index],
+        'each same-named pack says which source it comes from, and where');
+    }
+    await p.chooseSource('team-packs - Local folder');
+    state = await readout();
+    assert.deepEqual([state.keys, state.selected], [[keys[2]], [keys[2]]], 'the selection survives a filter that still lists its row');
+
+    // Clear resets both filters, and the page, to the whole context.
+    await p.clear();
+    state = await readout();
+    assert.deepEqual([state.filter, state.count, state.page], ['All use cases', '1–25 of 54 known', 'Page 1 of 3']);
+    assert.equal(await p.q(`document.querySelector('[data-pack-source-filter]').textContent.trim()`), 'All sources');
+
+    // A failed source stays selectable, and an empty result says it is not a confirmed empty list.
+    await p.chooseSource('vanished - Local folder (unavailable)');
+    assert.equal(await p.q(`document.querySelector('[data-pack-empty]').innerText`),
+      'No known matching packs\nvanished - Local folder: Unavailable - The saved folder is not available. Its packs are not listed, so this is not a confirmed empty list.');
+
+    // Installed keeps project rows out of use-case coverage and out of Available.
+    await p.chooseContext('installed');
+    state = await readout();
+    assert.deepEqual([state.keys.length, state.filter], [15, 'All use cases']);
+    await p.chooseTag('ui-tools');
+    assert.equal(await p.q(`document.querySelector('[data-pack-tag-coverage]').textContent.replace(/\\s+/g, ' ').trim()`),
+      'Incomplete tag coverage: 1 installed pack has unavailable use cases. Only known matches are shown; All use cases includes them.',
+      'only the installed pack with no catalog entry is counted: project rows are Not applicable, never a coverage failure');
+    await p.chooseSource('Unlisted - Local folder');
+    assert.deepEqual((await p.state()).keys, ['pack:delta', 'pack:golf', 'pack:juliet', 'pack:mike'], 'an unlisted pack takes its use cases from the default catalog by name');
+    await p.chooseSource('This project');
+    assert.equal(await p.q(`document.querySelector('[data-pack-empty]').innerText.split('\\n')[0]`), 'No matching packs', 'project rows match no use case');
+    await p.chooseContext('available');
+    assert.equal((await p.state()).keys.every(key => key.startsWith('pack:')), true, 'project rows never enter Available');
+    assert.equal(canvas.discoveryReads().length, 1, 'filtering, paging and selection read no catalog; only the one Reload did');
+    await p.chooseContext('installed');
+    await aboutScreenshot(page, output, 'installed-source-filtered-1440x900-light');
+  });
+});
+
+test('073 Sources: Show packs in Available selects only that Source, resets Use case and page, reads nothing, and says why it cannot', {
+  timeout: 420_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  for (const [name, width, height] of [['wide', 1440, 900], ['narrow', 280, 700]]) await context.test(name, async () => {
+    await runAboutCase(context, `073-sources-show-packs-${name}`, { packs: { bulkAvailable: 14 }, prepare: async workspace => {
+      const restore = await t073SourcesWorkspace(workspace);
+      const empty = addLocalSource(workspace, 'empty-source', []);
+      const full = addLocalSource(workspace, 'full-source', ['inst-1']);
+      await saveSources(workspace, [...t073SavedEntries(workspace), localSource(empty), localSource(full)]);
+      t073InstallFrom(workspace, 'inst-1', full);
+      return restore;
+    } }, async canvas => {
+      const { page, output } = canvas;
+      const p = await t073Driver(canvas);
+      await p.enter(width, height);
+      await p.chooseSub('available');
+      await p.reload();
+      // A Use case or a page that Show packs must not carry over.
+      if (width > 300) {
+        await p.click('[aria-label="Next pack page"]');
+        assert.equal((await p.state()).page, 'Page 2 of 2');
+      } else await p.chooseTag('bulk');
+      await p.chooseSub('sources');
+      let state = await t073SourcesState(p);
+      const keyOf = source => t073SourceKey(state, source);
+      const reads = { discovery: canvas.discoveryReads().length, plain: canvas.packReads().length };
+      const reason = async source => {
+        await p.click(`[data-source-row="${keyOf(source)}"]`);
+        const details = await t073SourceDetails(p);
+        if (width < 1100) await key(page, 'Escape');
+        return details;
+      };
+
+      // Every state that cannot show packs says exactly why, and the control stays disabled.
+      const expectations = [
+        ['Bundle upstream', 'Not read while library/packs exists.'],
+        ['vanished', 'Unavailable - its packs are not listed.'],
+        ['empty-source', 'This source has no packs.'],
+        ['full-source', 'All packs from this source are installed.'],
+      ];
+      for (const [source, why] of expectations) {
+        const details = await reason(source);
+        assert.deepEqual([details.show.disabled, details.reason.startsWith(why)], [true, true], `${source}: ${details.reason}`);
+      }
+      assert.deepEqual([canvas.discoveryReads().length, canvas.packReads().length], [reads.discovery, reads.plain], 'inspecting sources reads nothing');
+
+      // A Read source with an uninstalled pack opens its packs in Available: a local view change only.
+      await p.click(`[data-source-row="${keyOf('acme/dude-packs')}"]`);
+      const details = await t073SourceDetails(p);
+      assert.deepEqual([details.show, details.facts['Packs found'].startsWith('3 (2 not installed)')], [{ disabled: false, label: 'Show packs in Available' }, true]);
+      await p.click('[data-source-show]');
+      await settleBrowserWork(page);
+      state = await p.state();
+      assert.deepEqual([state.context, state.detail, state.open, state.selected, state.filter, state.page], ['available', null, false, [], 'All use cases', 'Page 1 of 1'],
+        'the details close, Available opens with nothing selected, and Use case and page start over');
+      assert.equal(await p.q(`document.querySelector('[data-pack-source-filter]').textContent.trim()`), 'acme/dude-packs - GitHub');
+      assert.deepEqual((await p.rows()).map(row => [row[1], row[2].replace(/^Source /, '')]), [['bravo', 'acme/dude-packs - GitHub'], ['rust', 'acme/dude-packs - GitHub']],
+        'only that source\'s uninstalled packs are listed');
+      assert.equal(await p.q(`(() => { const a = document.activeElement; return a?.hasAttribute('data-pack-context') ? 'tab:' + a.getAttribute('data-pack-context')
+        : a?.closest('[data-pack-view]') ? 'view' : a?.tagName; })()`), width > 300 ? 'tab:available' : 'view',
+      'focus lands on the Available tab, or on the View Dropdown where the tabs give way to it');
+      assert.deepEqual([canvas.discoveryReads().length, canvas.packReads().length], [reads.discovery, reads.plain], 'Show packs acquires nothing');
+      assert.equal(canvas.sends.length, 0, 'and requests nothing from Dude');
+      await aboutScreenshot(page, output, `sources-show-packs-${width}x${height}-light`);
+
+      // The filter is the same one a person sets by hand: clearing it lists every source again.
+      await p.clear();
+      assert.equal((await p.state()).count.startsWith('1–25 of'), true);
+    });
+  });
+});
+
+test('073 Sources: an automatic read keeps the retained catalog, the surviving selection, and every source status, and reads no catalog', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '073-sources-retained', { packs: {}, prepare: t073SourcesWorkspace }, async canvas => {
+    const { page, output, workspace } = canvas;
+    const p = await t073Driver(canvas);
+    await p.enter();
+    await p.chooseSub('available');
+    assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-empty] *')].map(node => node.textContent)`).then(list => list.slice(0, 2)),
+      ['Catalog not read yet', 'Available packs come from your sources, so this list is empty and its count is unknown until they are read.'],
+      'before the first Reload, Available is unknown rather than empty, and says how to read it');
+    await p.reload();
+    const bravo = (await p.rows()).find(row => row[2] === 'team-packs - Local folder' && row[1] === 'bravo')[0];
+    const onboarding = (await p.rows()).find(row => row[1] === 'onboarding')[0];
+    await p.click(`[data-pack-row="${bravo}"]`);
+    let state = await p.state();
+    assert.deepEqual([state.totals, state.detail, state.selected], [['8', '15'], bravo, [bravo]]);
+    const before = { discovery: canvas.discoveryReads().length, plain: canvas.packReads().length };
+    const status = () => p.q(`document.querySelector('footer[aria-label="Workspace status"]').innerText.replace(/\\s+/g, ' ').trim()`);
+    const footer = await status();
+    assert.match(footer, /^Installed: current · Catalog: partial \(1 of 4 sources unavailable\)/);
+
+    // Another tool installs onboarding from team-packs; the next automatic read sees it and nothing re-reads a catalog.
+    t073InstallFrom(workspace, 'onboarding', path.join(workspace.directory, 'team-packs'));
+    await p.q(`window.dispatchEvent(new Event('focus'))`);
+    await until(() => canvas.packReads().length > before.plain, 'an automatic installed read');
+    await until(async () => (await p.state()).totals[0] === '9', 'the new installed pack is listed');
+    await settleBrowserWork(page);
+    state = await p.state();
+    assert.deepEqual([state.totals, state.detail, state.selected, state.open], [['9', '14'], bravo, [bravo], true],
+      'Installed gains the pack, Available loses its row by installed name, and the surviving selection stays open');
+    assert.equal((await p.rows()).some(row => row[0] === onboarding), false, 'an installed name leaves Available');
+    assert.equal(canvas.discoveryReads().length, before.discovery, 'an automatic read acquires no catalog');
+    assert.equal(await status(), footer, 'the retained catalog keeps its honest coverage');
+    assert.equal(await p.q(`document.querySelector('[data-pack-detail] h2').textContent`), 'bravo - team-packs');
+
+    // Sources still shows each source's read status and count, with the installed facts now current.
+    await p.chooseSub('sources');
+    state = await t073SourcesState(p);
+    assert.deepEqual(state.rows.map(row => row.cells[2]), ['Read - 18 packs', 'Not read while library/packs exists', 'Read - 3 packs', 'Read - 2 packs',
+      'Unavailable - The saved folder is not available.']);
+    await p.click(`[data-source-row="${t073SourceKey(state, 'team-packs')}"]`);
+    const details = await t073SourceDetails(p);
+    assert.deepEqual([details.facts['Installed from this source'].startsWith('1: onboarding'), details.facts['Packs found'].startsWith('2 (1 not installed)')], [true, true],
+      'the retained count is recomputed against the new installed membership, not left stale');
+    assert.deepEqual([canvas.discoveryReads().length, canvas.runtimeErrors.length], [before.discovery, 0]);
+    await aboutScreenshot(page, output, 'sources-retained-after-automatic-read-1440x900-light');
+  });
+});
+
+const T073_LONG_SOURCE = 'a-source-folder-name-long-enough-to-need-wrapping-in-a-narrow-dropdown';
+
+test('073 Sources: both themes at four sizes and the 200% reflow variants keep Sources, its details, Add, Remove, and the Source filter usable', {
+  timeout: 900_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '073-sources-visual-matrix', { packs: { bulkAvailable: 15 }, prepare: async workspace => {
+    const restore = await t073SourcesWorkspace(workspace);
+    addProjectArtifacts(workspace, T073_PROJECT);
+    const removable = addLocalSource(workspace, 'removable', [{ name: 'rm-pack', tags: ['ui'] }]);
+    const long = addLocalSource(workspace, T073_LONG_SOURCE, [{ name: 'long-source-pack', tags: ['ui'] }]);
+    await saveSources(workspace, [...t073SavedEntries(workspace), localSource(removable), localSource(long)]);
+    t073InstallFrom(workspace, 'onboarding', path.join(workspace.directory, 'team-packs'));
+    return restore;
+  } }, async canvas => {
+    const { page, output } = canvas;
+    const p = await t073Driver(canvas);
+    await p.enter();
+    await discoverCatalog(canvas);
+    const inventory = [];
+    const sourceColors = () => p.q(`(() => {
+      const background = node => {
+        for (let n = node; n; n = n.parentElement) {
+          const color = getComputedStyle(n).backgroundColor;
+          if (color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') return color;
+        }
+        throw new Error('No painted background');
+      };
+      const first = document.querySelector('[data-source-row]');
+      const header = [...document.querySelectorAll('[data-sources-panel] [role="columnheader"]')].find(node => node.getClientRects().length);
+      const selectors = [['intro', '[data-sources-note]'], ['count', '[data-sources-count]'], ['add', '[data-sources-add]'],
+        ['name', '[data-source-row] .fui-Text'], ['where', '[data-source-row] code'], ['footer', 'footer[aria-label="Workspace status"] span']];
+      const cells = first.querySelectorAll('[role="gridcell"]');
+      const samples = [...selectors.map(([name, selector]) => [name, document.querySelector(selector)]), ['status', cells[2]], ['scope', cells[3]]]
+        .map(([name, node]) => ({ name, color: getComputedStyle(node).color, background: background(node) }));
+      if (header) samples.push({ name: 'header', color: getComputedStyle(header).color, background: background(header) });
+      return samples;
+    })()`);
+    for (const theme of ['light', 'dark']) for (const size of ABOUT_VISUAL_SIZES) {
+      const label = `${size.name}-${theme}`;
+      await aboutViewport(page, size, theme);
+      await p.chooseSub('sources');
+      await p.q(`window.scrollTo(0, 0)`);
+      const stripShown = await p.stripShown();
+      const packsWidth = await p.q(`document.querySelector('[data-sources-panel]').closest('section').getBoundingClientRect().width`);
+
+      // The Sources table: stacked and labeled where the rows stack, with every control reachable.
+      const table = await p.q(`(() => ({ documentWidth: document.documentElement.scrollWidth, innerWidth,
+        wide: [...document.querySelectorAll('[data-source-row]')].filter(row => row.scrollWidth > row.clientWidth + 1).length,
+        stacked: document.querySelector('[data-source-row]').innerText.includes('Status'),
+        headerShown: document.querySelector('[data-sources-panel] [role="row"]').getBoundingClientRect().width > 2 }))()`);
+      assert.equal(table.documentWidth, table.innerWidth, `no horizontal page scroll at ${label}`);
+      assert.equal(table.wide, 0, `no source row overflows sideways at ${label}`);
+      assert.deepEqual([table.stacked, table.headerShown], packsWidth <= 479 ? [true, false] : [false, true],
+        `labels appear exactly where the rows stack, and the headers hide there (${label})`);
+      for (const target of await t073Targets(p, ['#dude-tab-settings', '[aria-label="Reload packs"]', '[data-sources-add]',
+        stripShown ? '[data-pack-context="sources"]' : '[data-pack-view] [role="combobox"]'])) {
+        assert.ok(target.visible && target.hit && target.width >= 24 && target.height >= 24, JSON.stringify({ label, target }));
+      }
+      // A row is reached by scrolling, then hit-tested where it lands.
+      await p.q(`document.querySelector('[data-source-row]').scrollIntoView({ block: 'nearest' })`);
+      for (const target of await t073Targets(p, ['[data-source-row]'])) {
+        assert.ok(target.visible && target.hit && target.width >= 24 && target.height >= 24, JSON.stringify({ label, target }));
+      }
+      await p.q(`window.scrollTo(0, 0); document.querySelector('[data-sources-scroll]').closest('[role="tabpanel"]').scrollTop = 0; document.querySelector('[data-sources-scroll]').scrollTop = 0`);
+      for (const sample of await sourceColors()) assert.ok(contrast(sample.color, sample.background) >= 4.5, JSON.stringify({ label, sample }));
+      const tree = await aboutAccessibility(page);
+      assert.deepEqual(tree.unnamed, [], `every control is named at ${label}`);
+      assert.deepEqual(tree.grids, ['Pack sources'], `only the Sources table is exposed (${label})`);
+      assert.equal(await p.q(`document.querySelectorAll('dialog[open]').length`), 0, `no overlay is open over the table (${label})`);
+      const tableImage = await aboutScreenshot(page, output, `sources-table-${label}`);
+
+      // Details: one scroller, pinned heading and Back to results, and Remove reachable.
+      const removable = await p.q(`[...document.querySelectorAll('[data-source-row]')].find(row => row.getAttribute('aria-label').startsWith('removable. ')).getAttribute('data-source-row')`);
+      await p.click(`[data-source-row="${removable}"]`);
+      const open = await p.q(`(() => {
+        const dialog = document.querySelector('[data-pack-detail]'), body = dialog.querySelector('[data-pack-detail-body]');
+        const scrollers = [...dialog.querySelectorAll('*')].filter(node => node !== body && /auto|scroll/.test(getComputedStyle(node).overflowY)
+          && node.scrollHeight > node.clientHeight + 1);
+        const r = dialog.getBoundingClientRect();
+        return { modal: dialog.matches(':modal'), bodyWide: body.scrollWidth > body.clientWidth + 1, scrollers: scrollers.length,
+          right: r.right, width: r.width, links: dialog.querySelectorAll('a, [href]').length, documentation: /Documentation/.test(dialog.textContent) };
+      })()`);
+      assert.equal(open.modal, size.width < 1100, `details are a modal exactly below 1100px (${label})`);
+      assert.deepEqual([open.bodyWide, open.scrollers, open.links, open.documentation], [false, 0, 0, false], `one scroller, no link, no Documentation (${label})`);
+      assert.equal(open.right, size.width, `the pane sits on the right edge (${label})`);
+      assert.equal(open.width, size.width < 1100 ? Math.min(420, size.width - 16) : 320, `pane geometry (${label})`);
+      await p.q(`document.querySelector('[data-pack-detail-body]').scrollTop = 100000`);
+      const pinned = await p.q(`(() => {
+        const dialog = document.querySelector('[data-pack-detail]').getBoundingClientRect();
+        const header = document.querySelector('[data-pack-detail] header').getBoundingClientRect();
+        const footer = document.querySelector('[data-pack-detail] footer').getBoundingClientRect();
+        const targets = ['[aria-label="Close source details"]', '[data-pack-detail] footer button', '[data-source-remove]'].map(selector => {
+          const node = document.querySelector(selector), r = node.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          return { selector, width: r.width, height: r.height, hit: hit === node || node.contains(hit) };
+        });
+        return { headerTop: header.top - dialog.top, footerBottom: dialog.bottom - footer.bottom, targets };
+      })()`);
+      assert.ok(Math.abs(pinned.headerTop) <= 1 && Math.abs(pinned.footerBottom) <= 1, `heading and Back to results stay pinned (${label})`);
+      await p.q(`document.querySelector('[data-pack-detail-body]').scrollTop = 0`);
+      for (const target of pinned.targets) {
+        if (target.selector === '[data-source-remove]') continue;
+        assert.ok(target.hit && target.width >= 24 && target.height >= 24, JSON.stringify({ label, target }));
+      }
+      const detailsImage = await aboutScreenshot(page, output, `source-details-${label}`);
+
+      // Remove: a modal inside the viewport with its buttons reachable.
+      await p.click('[data-source-remove]');
+      const remove = await t073Removal(p);
+      assert.deepEqual([remove.open, remove.modal, remove.focus], [true, true, 'cancel'], `Remove opens on Cancel (${label})`);
+      const geometry = await p.q(`(() => { const r = document.querySelector('[data-source-remove-dialog]').getBoundingClientRect();
+        const targets = ['[data-source-remove-cancel]', '[data-source-remove-confirm]', '[aria-label="Close without removing"]'].map(selector => {
+          const node = document.querySelector(selector), t = node.getBoundingClientRect(), hit = document.elementFromPoint(t.x + t.width / 2, t.y + t.height / 2);
+          return { selector, width: t.width, height: t.height, visible: t.x >= 0 && t.y >= 0 && t.right <= innerWidth && t.bottom <= innerHeight, hit: hit === node || node.contains(hit) }; });
+        return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, innerWidth, innerHeight, targets }; })()`);
+      assert.ok(geometry.left >= 0 && geometry.top >= 0 && geometry.right <= geometry.innerWidth && geometry.bottom <= geometry.innerHeight, `Remove fits the window (${label}): ${JSON.stringify(geometry)}`);
+      for (const target of geometry.targets) assert.ok(target.visible && target.hit && target.width >= 24 && target.height >= 24, JSON.stringify({ label, target }));
+      const removeImage = await aboutScreenshot(page, output, `source-remove-${label}`);
+      await p.click('[data-source-remove-cancel]');
+      await key(page, 'Escape');
+
+      // Add: empty, then a refusal, inside the window with the form reachable.
+      await p.click('[data-sources-add]');
+      let add = await t073Add(p);
+      assert.ok(add.box.left >= 0 && add.box.top >= 0 && add.box.right <= add.viewport.width && add.box.bottom <= add.viewport.height, `Add fits the window (${label})`);
+      for (const target of await t073Targets(p, ['[data-source-location]', '[data-source-add-cancel]', '[data-source-add-submit]', '[data-source-add-close]'])) {
+        assert.ok(target.visible && target.hit && target.width >= 24 && target.height >= 24, JSON.stringify({ label, target }));
+      }
+      // The form scrolls inside the dialog where the window is short: Ref is reached by scrolling, then hit-tested where it lands.
+      await p.q(`document.querySelector('[data-source-ref]').scrollIntoView({ block: 'nearest' })`);
+      for (const target of await t073Targets(p, ['[data-source-ref]'])) {
+        assert.ok(target.visible && target.hit && target.width >= 24 && target.height >= 24, JSON.stringify({ label, target }));
+      }
+      await p.q(`document.querySelector('[data-source-add-dialog] [role="region"]').scrollTop = 0`);
+      const addImage = await aboutScreenshot(page, output, `source-add-${label}`);
+      await t073Submit(p, 'https://gitlab.com/acme/packs');
+      add = await t073Add(p);
+      assert.equal(add.errors.length, 1, `an input refusal stays inside Add (${label})`);
+      const addRefusedImage = await aboutScreenshot(page, output, `source-add-refused-${label}`);
+      const addTree = await aboutAccessibility(page);
+      assert.deepEqual(addTree.unnamed, [], `Add names every control (${label})`);
+      await p.click('[data-source-add-cancel]');
+
+      // The Source column and filter on both lists, in both themes at every size.
+      const lists = {};
+      for (const list of ['installed', 'available']) {
+        await p.chooseSub(list);
+        await p.q(`window.scrollTo(0, 0)`);
+        const columns = await p.q(`(() => { const row = document.querySelector('[data-pack-scroll] [role="row"]');
+          return row.getBoundingClientRect().width <= 2 ? [] : [...row.querySelectorAll('[role="columnheader"]')].map(node => node.textContent); })()`);
+        assert.deepEqual(columns, packsWidth <= 479 ? [] : list === 'installed' ? ['Name', 'Type', 'Source', 'Use cases'] : ['Name', 'Source', 'Use cases'], `${list} columns (${label})`);
+        for (const target of await t073Targets(p, ['[data-pack-toolbar] [role="combobox"]', '[data-pack-source-filter]', '[data-pack-toolbar] > button'])) {
+          assert.ok(target.visible && target.hit && target.width >= 24 && target.height >= 24, JSON.stringify({ label, list, target }));
+        }
+        for (const sample of await t073Colors(p)) assert.ok(contrast(sample.color, sample.background) >= 4.5, JSON.stringify({ label, list, sample }));
+        const listTree = await aboutAccessibility(page);
+        assert.deepEqual(listTree.unnamed, [], `${list} names every control (${label})`);
+        assert.deepEqual(listTree.grids, [list === 'installed' ? 'Installed' : 'Available packs']);
+        lists[list] = await aboutScreenshot(page, output, `${list}-source-${label}`);
+      }
+      inventory.push({ label, size, theme, packsWidth, tableImage, detailsImage, removeImage, addImage, addRefusedImage, lists });
+    }
+
+    // Forced colors keep a long Source value whole: it wraps in the Dropdown instead of truncating.
+    for (const theme of ['light', 'dark']) for (const size of [ABOUT_VISUAL_SIZES[3], ABOUT_VISUAL_SIZES[2]]) {
+      await aboutViewport(page, size, theme);
+      await page.send('Emulation.setEmulatedMedia', { media: '', features: [
+        { name: 'prefers-color-scheme', value: theme }, { name: 'forced-colors', value: 'active' }] });
+      await settleAboutAnimations(page);
+      await p.chooseSub('sources');
+      const forcedTable = await p.q(`(() => ({ forced: matchMedia('(forced-colors: active)').matches,
+        glyphs: [...document.querySelectorAll('[data-source-row] svg')].every(node => node.getAttribute('aria-hidden') === 'true'),
+        statuses: [...document.querySelectorAll('[data-source-row]')].map(row => row.querySelectorAll('[role="gridcell"]')[2].innerText.replace(/\\s+/g, ' ').trim()) }))()`);
+      assert.equal(forcedTable.forced, true);
+      assert.equal(forcedTable.glyphs, true, 'a status glyph is decoration; its words carry the meaning');
+      assert.ok(forcedTable.statuses.every(text => /^(Status )?(Read - \d+ packs?|Not read|Not read while library\/packs exists|Unavailable - .+)$/.test(text)), JSON.stringify(forcedTable.statuses));
+      await aboutScreenshot(page, output, `forced-colors-sources-${size.name}-${theme}`);
+      await p.chooseSub('available');
+      await p.click('[data-pack-source-filter]');
+      await key(page, 'End');
+      await key(page, 'Enter');
+      await settleAboutAnimations(page);
+      const dropdown = await p.q(`(() => {
+        const button = document.querySelector('[data-pack-source-filter]'), r = button.getBoundingClientRect();
+        return { text: button.textContent.trim(), height: r.height, wide: button.scrollWidth > button.clientWidth + 1,
+          forced: matchMedia('(forced-colors: active)').matches, lineHeight: parseFloat(getComputedStyle(button).lineHeight) };
+      })()`);
+      assert.equal(dropdown.forced, true);
+      assert.equal(dropdown.text, `${T073_LONG_SOURCE} - Local folder`);
+      assert.equal(dropdown.wide, false, `forced colors do not clip the Source value at ${size.name} ${theme}`);
+      if (size.width < 300) assert.ok(dropdown.height > dropdown.lineHeight * 2, `the long value wraps at ${size.name}: ${JSON.stringify(dropdown)}`);
+      inventory.push({ label: `forced-colors-source-${size.name}-${theme}`, dropdown,
+        image: await aboutScreenshot(page, output, `forced-colors-source-filter-${size.name}-${theme}`) });
+      await p.clear();
+      await page.send('Emulation.setEmulatedMedia', { media: '', features: [
+        { name: 'prefers-color-scheme', value: theme }, { name: 'forced-colors', value: 'none' }] });
+    }
+    output.json('073-sources-visual-inventory.json', {
+      case: 'Phase B: Sources table, details, Add, Remove, and the Source column and filter at four sizes and three reflow variants in both themes',
+      distinction: 'Reflow variants halve the CSS viewport at device scale 2; they are effective-viewport reflow, not native browser zoom. Standalone Edge, not the embedded host.',
+      inventory });
+  });
+});
+
+test('073 Sources: leaving Settings cancels a Reload in flight, the server stops its readers, and re-entry starts no discovery', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  let peer = null;
+  try {
+    await runAboutCase(context, '073-sources-cancel', { packs: {}, prepare: async workspace => {
+      peer = await silentGitPeer();
+      return t073SourcesWorkspace(workspace, github => github.redirect('acme/dude-packs', peer.url));
+    } }, async canvas => {
+      const { page } = canvas;
+      const p = await t073Driver(canvas);
+      await p.enter();
+      await p.chooseSub('sources');
+      await p.click('[aria-label="Reload packs"]');
+      await until(() => canvas.discoveryReads().length === 1 && peer.connections >= 1, 'the discovery is reading the stalled source');
+      assert.equal(await p.busy(), true, 'Reload reports it is reading');
+      const started = Date.now();
+      await p.click('#dude-tab-overview');
+      const id = canvas.requests.find(entry => entry.url.endsWith('/api/packs?discover=1')).id;
+      await until(() => canvas.cancelled.has(id), 'the browser cancelled the discovery request');
+      await until(() => canvas.releaseTracking.isIdle() && !canvas.instance.packRead, 'the server stopped the readers it started');
+      assert.ok(Date.now() - started < 4_000, 'the readers stopped with the request, well before the stalled source\'s own deadline');
+
+      // Coming back reads installed packs only: nothing started a discovery, and nothing was kept from the aborted one.
+      await p.click('#dude-tab-settings');
+      await packsSettled(page);
+      assert.equal(canvas.discoveryReads().length, 1, 're-entry starts no discovery');
+      assert.equal(await p.q(`document.querySelector('[data-pack-total="available"]').textContent`), '?', 'an aborted read left no catalog behind');
+    });
+  } finally { await peer?.close(); }
+});
+
+// ---------------------------------------------------------------------------
+// 073 Add/import (T005): the closed import request, its Needs you permission, and
+// its result, through the production provider, HTTP route, and bundle. The
+// installed Dude owner is a stand-in: it publishes the literal permission and
+// acknowledges the result over the real tool, and writes the files a verified
+// result names. It never runs the importer, and no test contacts a network source.
+// ---------------------------------------------------------------------------
+const T005_DIRECTORY_LINES = 'Nothing is executed.\nApply is all-or-nothing with rollback.\nReplaced files are overwritten.';
+const T005_PLAN = 'sha256:b05799084a5d41db45b11b92698e3a532d1df74099a539dc2311cc53e4f27337';
+/** Illustrative permissions in the approved mock's own words; none was observed from a real import. */
+const T005_SAMPLES = Object.freeze({
+  focused: {
+    source: 'C:\\Users\\you\\agent-kit\\skills\\review-checklist\\SKILL.md', operation: 'import:file',
+    prompt: 'Import the skill review-checklist as dude-local-review-checklist?',
+    targets: [
+      { target: '.github/skills/dude-local-review-checklist/SKILL.md\nAnalyzed state: missing\nDecision: create', revision: 'missing' },
+      { target: '.github/skills/dude-local-review-checklist/LICENSE\nAnalyzed state: missing\nDecision: create the reviewed MIT license sibling', revision: 'missing' },
+    ],
+    consequences: 'Creates both files with the default adaptations only: strips the model and compatibility frontmatter and names the skill dude-local-review-checklist.\nPreserves license: MIT in the new LICENSE file.\nUnresolved sibling references, not imported: scripts/check.sh, templates/report.md.\nFocused import is not transactional. If the second write fails, the first file stays written.',
+    eligibility: 'Source: C:\\Users\\you\\agent-kit\\skills\\review-checklist\\SKILL.md\nLocal file that parses as a Dude skill named review-checklist.',
+    confirmation: 'IMPORT SKILL dude-local-review-checklist',
+    written: ['.github/skills/dude-local-review-checklist/SKILL.md', '.github/skills/dude-local-review-checklist/LICENSE'],
+  },
+  clean: {
+    source: 'https://github.com/example-org/agent-kit/tree/main/kit', operation: 'import:directory',
+    prompt: 'Import 2 artifacts from the reviewed directory plan?',
+    targets: [
+      { target: 'agent dude-local-release-notes\nDestination: .github/agents/dude-local-release-notes.agent.md\n  and .github/agents/dude-local-release-notes.support/\n3 files: 3 new, 0 replaced', revision: T005_PLAN },
+      { target: 'skill dude-local-review-checklist\nDestination: .github/skills/dude-local-review-checklist/\n3 files: 2 new, 1 replaced\nReplaced: SKILL.md', revision: T005_PLAN },
+    ],
+    consequences: `Clean: no static or advisory warnings.\n${T005_DIRECTORY_LINES}`,
+    eligibility: 'Source: https://github.com/example-org/agent-kit/tree/main/kit\nResolved commit: bb413474e1ba9c3633aa7352d3b4572de6f15cce',
+    confirmation: 'IMPORT DIRECTORY 2 ARTIFACTS',
+    written: ['.github/agents/dude-local-release-notes.agent.md', '.github/agents/dude-local-release-notes.support/LICENSE',
+      '.github/agents/dude-local-release-notes.support/templates/changelog.md', '.github/skills/dude-local-review-checklist/LICENSE',
+      '.github/skills/dude-local-review-checklist/SKILL.md', '.github/skills/dude-local-review-checklist/checklists/security.md'],
+  },
+  warned: {
+    source: 'C:\\Users\\you\\agent-kit\\ops', operation: 'import:directory',
+    prompt: 'Import 3 artifacts from a directory with warnings?',
+    targets: [
+      { target: 'agent dude-local-deploy-review\nDestination: .github/agents/dude-local-deploy-review.agent.md\n  and .github/agents/dude-local-deploy-review.support/\n3 files: 3 new, 0 replaced', revision: 'sha256:e5e56600754924295821559884f67a16e5afbe435a604335f46a019edc5da9be' },
+      { target: 'skill dude-local-incident-notes\nDestination: .github/skills/dude-local-incident-notes/\n2 files: 2 new, 0 replaced', revision: 'sha256:e5e56600754924295821559884f67a16e5afbe435a604335f46a019edc5da9be' },
+      { target: 'skill dude-local-log-triage\nDestination: .github/skills/dude-local-log-triage/\n3 files: 1 new, 2 replaced\nReplaced: SKILL.md, scripts/collect.sh', revision: 'sha256:e5e56600754924295821559884f67a16e5afbe435a604335f46a019edc5da9be' },
+    ],
+    consequences: `Warned: 5 flagged files and 1 unreviewed or unbatched file.\ndeploy-review/deploy-review.agent.md: static network-exfiltration, advisory prompt-injection-authority-override\ndeploy-review/support/rollback.md: static privilege-boundary-bypass\nincident-notes/SKILL.md: static credential-data-access, advisory persistence-automatic-activation\nincident-notes/templates/postmortem.md: static obfuscation-evasion\nlog-triage/scripts/collect.sh: static dynamic-unsafe-execution, static destructive-action, advisory destructive-action\nUnreviewed or unbatched files: 1\n${T005_DIRECTORY_LINES}`,
+    eligibility: 'Source: C:\\Users\\you\\agent-kit\\ops\nLocal directory.',
+    confirmation: 'IMPORT WITH WARNINGS 3 ARTIFACTS',
+    written: ['.github/agents/dude-local-deploy-review.agent.md', '.github/skills/dude-local-incident-notes/SKILL.md', '.github/skills/dude-local-log-triage/SKILL.md'],
+  },
+});
+const T005_NO_WRITES = Object.freeze({ written: [], uncertain: [] });
+/** One owner result per outcome and mutation, with the mock's note, in the acknowledgment's own fields. */
+const T005_RESULTS = Object.freeze({
+  declined: { outcome: 'declined', mutation: 'none', ...T005_NO_WRITES, note: 'You declined this import. Nothing was applied.' },
+  blocked: { outcome: 'failed', mutation: 'none', ...T005_NO_WRITES,
+    note: 'The directory is Blocked, so Dude asked for no permission. legacy-sync/SKILL.md sets model, which needs focused adaptation. Use focused import in chat or prepare a clean source.' },
+  restored: { outcome: 'failed', mutation: 'restored', ...T005_NO_WRITES,
+    note: 'apply-directory could not write .github/agents/dude-local-release-notes.support/templates/changelog.md and rolled back. Dude verified that SKILL.md has its previous contents.' },
+  partial: { outcome: 'failed', mutation: 'applied', written: ['.github/skills/dude-local-handmade/SKILL.md'], uncertain: [],
+    note: 'Wrote SKILL.md, then writing LICENSE failed (access denied). The skill is incomplete. dude-lint was not run.' },
+  capacity: { outcome: 'unavailable', mutation: 'none', ...T005_NO_WRITES,
+    note: 'This directory contains 13 agents or skills. A Canvas permission can show at most 12, so Dude asked for no permission and changed nothing. Continue in chat.' },
+  stale: { outcome: 'stale', mutation: 'none', ...T005_NO_WRITES,
+    note: 'The destination changed after the preview, so its reviewed state no longer matches. Nothing was written. Request the import again for a fresh preview and permission.' },
+  uncertain: { outcome: 'uncertain', mutation: 'uncertain', written: [],
+    uncertain: ['.github/skills/dude-local-log-triage/SKILL.md', '.dude/state/import-transactions/c86a70f0-b0a9-4cae-921a-8d2295d05be5'],
+    note: 'apply-directory reported recovery-failed: after a write failure it could not verify the rollback. Check the uncertain paths before another import.' },
+});
+/** The exact words of each phase and file-change line. */
+const T005_PHASE_TITLES = Object.freeze({
+  preparing: 'Preparing request', prepared: 'Request prepared', submitting: 'Requesting owner action', admitted: 'Admitted; delivery unconfirmed',
+  delivered: 'Delivered to Dude', waiting_permission: 'Permission requested', waiting_owner: 'Waiting for owner result', applied: 'Applied',
+  declined: 'Declined', failed: 'Failed', unavailable: 'Unavailable', stale: 'Stale request or result', uncertain: 'Uncertain',
+});
+const T005_CHANGES = Object.freeze({
+  none: 'No change. Dude reports that no files changed.',
+  applied: 'Applied. The files below were written and then verified.',
+  partial: 'Partial change. Dude wrote the files below before the import failed. The import is incomplete.',
+  restored: 'Restored. Dude verified that changed files were restored after a caught failure. This is not a crash-recovery guarantee.',
+  uncertain: 'Uncertain. Dude could not establish the resulting files or their restoration.',
+});
+const T005_NOT_SENT = 'The joined agent must be idle, with no waiting request or queued input. This request was not sent.';
+const T005_IDEA_REASON = 'An artifact import is in progress or needs owner reconciliation. Your idea draft stays here.';
+
+/**
+ * The installed Dude owner's stand-in over one Canvas of the About harness.
+ * Delivery follows the real SDK contract: a send returns its message id, and
+ * the matching idle `user.message` event reconciles it unless a case withholds it.
+ * @param {Awaited<ReturnType<typeof openAboutCanvas>>} canvas
+ */
+function t005Owner(canvas) {
+  const { provider, session, workspace } = canvas;
+  const call = () => ({ sessionId: session.sessionId, toolName: 'dude_needs_you', toolCallId: randomUUID(), signal: new AbortController().signal });
+  const state = { deliver: true, queued: false, messages: [] };
+  session.rpc.queue.pendingItems = async () => ({ items: state.queued ? [{ queued: true }] : [], steeringMessages: [], inFlightSteeringCount: 0 });
+  session.send = async input => {
+    const messageId = randomUUID();
+    canvas.sends.push(input);
+    state.messages.push({ input, messageId });
+    if (state.deliver) provider.onEvent({ id: randomUUID(), type: 'user.message', data: { content: input.prompt, messageId, delivery: 'idle' } });
+    return messageId;
+  };
+  const owner = {
+    state, call,
+    latest: () => provider.read().importRequests.at(-1),
+    idle: () => provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } }),
+    /** Deliver the last send that was withheld, as the host's idle `user.message` event does. */
+    deliverLast() {
+      const { input, messageId } = state.messages.at(-1);
+      provider.onEvent({ id: randomUUID(), type: 'user.message', data: { content: input.prompt, messageId, delivery: 'idle' } });
+    },
+    /** The literal permission for this exact receipt, as dude-bundle-import publishes it. */
+    async permit(sample, record = owner.latest()) {
+      const request = {
+        owner: 'dude', requestRef: `import:${record.importReceipt}`, revision: randomUUID(), class: 'permission', scope: { kind: 'session' },
+        source: { kind: 'session', revision: record.receipt.providerGeneration }, prompt: sample.prompt,
+        whyHuman: 'Importing writes project files. Dude needs your literal permission for these exact targets.',
+        unblocks: 'Dude can apply this reviewed import and report the verified result in Settings > Packs > Add/import.', blocking: true,
+        fields: { operation: sample.operation, targets: sample.targets, consequences: sample.consequences,
+          eligibility: sample.eligibility, confirmation: sample.confirmation },
+      };
+      const result = provider.tool.handler({ op: 'request', request }, call());
+      const published = await until(() => provider.read().requests.find(item => item.request.requestRef === request.requestRef
+        && item.phase === 'pending'), 'the import permission is published');
+      return { request, record: published, result };
+    },
+    /** The ordinary acknowledgment of the human response: a permission receipt, never a result. */
+    async acknowledgePermission(permission, outcome = 'accepted') {
+      const live = provider.read().requests.find(item => item.requestHandle === permission.record.requestHandle);
+      const result = await provider.tool.handler({ op: 'acknowledge', acknowledgment: {
+        receiptId: live.receipt.receiptId, owner: live.receipt.owner, requestRef: live.receipt.requestRef, scope: live.receipt.scope,
+        previousRevision: live.receipt.previousRevision, recognizes: live.receipt.recognizes, outcome,
+        note: `Owner ${outcome} this exact response after rereading.`, source: permission.request.source } }, call());
+      assert.equal(result.resultType, 'success', result.textResultForLlm);
+      return JSON.parse(result.textResultForLlm);
+    },
+    /** The owner's import_result for the latest receipt. Written paths exist first, as a verified result requires. */
+    async result(result, record = owner.latest()) {
+      for (const file of result.written ?? []) workspace.write(file, `---\nname: ${path.basename(file)}\ndescription: Imported ${file}.\n---\nImported.\n`);
+      const accepted = await provider.tool.handler({ op: 'acknowledge', acknowledgment: {
+        recognizes: 'import_result', receiptId: record.importReceipt, owner: 'dude', importSource: record.importSource,
+        workspaceId: record.receipt.workspaceId, sessionId: record.receipt.sessionId, providerGeneration: record.receipt.providerGeneration,
+        ...result } }, call());
+      assert.equal(accepted.resultType, 'success', accepted.textResultForLlm);
+      return accepted;
+    },
+  };
+  return owner;
+}
+
+/**
+ * Observation and control of Add/import over a 073 Packs driver, with one more
+ * fetch probe that can hold a prepare or submit before it leaves the browser.
+ * @param {Awaited<ReturnType<typeof openAboutCanvas>>} canvas
+ */
+async function t005Driver(canvas) {
+  const { page } = canvas;
+  await page.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+    const original = window.fetch;
+    window.t005 = { hold: null, held: [] };
+    window.fetch = async (...args) => {
+      if (new URL(args[0], location.href).pathname === '/api/imports/request' && window.t005.hold
+        && JSON.parse(args[1].body).op === window.t005.hold) {
+        await new Promise(resolve => window.t005.held.push(resolve));
+      }
+      return original(...args);
+    };
+  })()` });
+  const p = await t073Driver(canvas);
+  const q = p.q;
+  const d = {
+    ...p,
+    /** The Packs views are tabs, or the labeled View Dropdown at 300px of width or less. @param {'installed'|'available'|'import'} value */
+    async chooseSub(value) {
+      if (await p.stripShown()) { await p.click(`[data-pack-context="${value}"]`); return; }
+      await p.click('[data-pack-view] [role="combobox"]');
+      await clickSettingsControl(page, `[...document.querySelectorAll('[role="option"]')]
+        .find(node => node.textContent.trim().startsWith(${JSON.stringify(value === 'import' ? 'Add/import' : value === 'installed' ? 'Installed' : 'Available')}))`);
+    },
+    /** Settings, then Add/import. */
+    async openImport() {
+      await p.click('#dude-tab-settings');
+      await packsSettled(page);
+      await d.chooseSub('import');
+      await until(() => q(`Boolean(document.querySelector('[data-import-panel]:not([hidden])'))`), 'Add/import is shown');
+      await settleAboutAnimations(page);
+    },
+    /** @param {string} text Typed into the labeled Source field, as native input. */
+    async type(text) {
+      await focus(page, '[data-import-source]');
+      await q(`document.querySelector('[data-import-source]').select()`);
+      if (text) await page.send('Input.insertText', { text });
+    },
+    request: () => p.click('[data-import-request]'),
+    /** What Add/import shows now. */
+    status: () => q(`(() => {
+      const bar = document.querySelector('[data-import-status]');
+      const request = document.querySelector('[data-import-request]');
+      const show = document.querySelector('[data-import-show-button]');
+      const sheet = [...document.querySelectorAll('[data-import-request-status] dl > div')].map(row =>
+        [row.querySelector('dt').textContent, row.querySelector('dd').innerText.replace(/\\s+/g, ' ').trim()]);
+      return {
+        phase: bar?.getAttribute('data-import-phase') ?? null, title: bar?.querySelector('.fui-MessageBarTitle')?.textContent ?? null,
+        text: bar?.querySelector('[role="status"]')?.innerText.replace(/\\s+/g, ' ').trim() ?? null,
+        focused: Boolean(bar) && document.activeElement === bar, sheet,
+        paths: Object.fromEntries([...document.querySelectorAll('[data-import-request-status] dl > div')]
+          .filter(row => /^(Written files|Uncertain paths)/.test(row.querySelector('dt').textContent))
+          .map(row => [row.querySelector('dt').textContent, [...row.querySelectorAll('li code')].map(code => code.textContent)])),
+        footnote: [...document.querySelectorAll('[data-import-request-status] > p, [data-import-request-status] > span')].map(node => node.textContent).join(' '),
+        permission: document.querySelector('[data-import-permission]')?.getAttribute('data-import-permission') ?? null,
+        request: request ? { disabled: request.disabled, note: document.querySelector('[data-import-note]')?.textContent } : null,
+        show: show ? { disabled: show.disabled, note: document.querySelector('[data-import-show-note]')?.textContent } : null,
+        source: document.querySelector('[data-import-source]')?.value ?? null,
+      };
+    })()`),
+    /** @param {string} phase @param {string} [message] */
+    waitPhase: (phase, message = `import phase ${phase}`) => until(() => q(
+      `document.querySelector('[data-import-status]')?.getAttribute('data-import-phase') === ${JSON.stringify(phase)}`), message),
+    /** Hold the next prepare or submit before it leaves the browser; null, or another op, releases what is held. @param {'prepare'|'submit'|null} op */
+    hold: op => q(`window.t005.hold = ${JSON.stringify(op)}; window.t005.held.splice(0).forEach(resolve => resolve())`),
+    importPosts: () => canvas.requests.filter(entry => entry.method === 'POST' && entry.url.endsWith('/api/imports/request')),
+    /** Everything Needs you shows for the open request. */
+    needs: () => q(`(() => {
+      const panel = document.querySelector('#dude-panel-needs');
+      const buttons = [...panel.querySelectorAll('button')].filter(node => node.getClientRects().length).map(node => node.innerText.trim());
+      return { text: panel.innerText, buttons, scrollWidth: panel.scrollWidth, clientWidth: panel.clientWidth,
+        paddingLeft: getComputedStyle(panel).paddingLeft, paddingRight: getComputedStyle(panel).paddingRight,
+        deferral: Boolean(panel.querySelector('section[aria-label="Deferral"]')), checkbox: Boolean(panel.querySelector('input[type="checkbox"]')) };
+    })()`),
+  };
+  return d;
+}
+
+/**
+ * One Canvas for an Add/import case: the About harness with a real local
+ * catalog, hand-made project rows, and the owner stand-in.
+ * @param {import('node:test').TestContext} context @param {string} slug
+ * @param {{ project?: Parameters<typeof addProjectArtifacts>[1], packs?: Parameters<typeof openAboutCanvas>[2]['packs'], prepare?: (workspace: any) => void }} [options]
+ */
+async function openImportCanvas(context, slug, { project = T073_PROJECT, packs = {}, prepare = () => {} } = {}) {
+  const canvas = await openAboutCanvas(context, slug, { packs, prepare: workspace => { addProjectArtifacts(workspace, project); prepare(workspace); } });
+  const owner = t005Owner(canvas);
+  let d;
+  try { d = await t005Driver(canvas); } catch (error) { await canvas.close(); throw error; }
+  return { canvas, owner, d };
+}
+
+/**
+ * Run one Add/import case. Every case must also end with no runtime exception.
+ * @param {import('node:test').TestContext} context @param {string} slug
+ * @param {Parameters<typeof openImportCanvas>[2]} options
+ * @param {(c: Awaited<ReturnType<typeof openImportCanvas>>) => Promise<void>} body
+ */
+async function runImportCase(context, slug, options, body) {
+  const opened = await openImportCanvas(context, slug, options);
+  const { canvas } = opened;
+  try {
+    await body(opened);
+    assert.deepEqual(canvas.runtimeErrors, [], 'the Canvas reports no runtime exception');
+  } catch (error) {
+    try {
+      const capture = await canvas.page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+      canvas.output.image('failure.png', Buffer.from(capture.data, 'base64'));
+      context.diagnostic(JSON.stringify({ runtimeErrors: canvas.runtimeErrors, imports: canvas.requests.filter(r => r.url.includes('/api/imports')).slice(-6),
+        dom: await evaluate(canvas.page, 'document.body.innerText.slice(0, 1800)') }));
+    } catch (diagnosticError) {
+      context.diagnostic(`Add/import failure evidence was incomplete: ${diagnosticError}`);
+    }
+    throw error;
+  } finally {
+    await canvas.close();
+  }
+}
+
+/** The Needs you steps of one permission response, as a person takes them, then the owner's ordinary acknowledgment of it. */
+async function t005Respond(canvas, owner, permission, { decline = false, acknowledgment = decline ? 'declined' : 'accepted', beforeAcknowledgment = null } = {}) {
+  const { page } = canvas;
+  const buttonNamed = name => `[...document.querySelectorAll('#dude-panel-needs button')].find(node => node.innerText.trim() === ${JSON.stringify(name)} && node.getClientRects().length)`;
+  const labelled = label => `(() => { const node = [...document.querySelectorAll('#dude-panel-needs label')].find(label => label.textContent.trim() === ${JSON.stringify(label)}); return node && document.getElementById(node.htmlFor); })()`;
+  if (decline) {
+    await clickSettingsControl(page, buttonNamed('Decline'));
+    await evaluate(page, `${labelled('Reason for declining')}.focus()`);
+    await page.send('Input.insertText', { text: 'Leave this unchanged.' });
+    await clickSettingsControl(page, buttonNamed('Send decline'));
+  } else {
+    await evaluate(page, `${labelled('Enter the exact confirmation')}.focus()`);
+    await page.send('Input.insertText', { text: permission.request.fields.confirmation });
+    await clickSettingsControl(page, labelled('I grant permission for this operation on these exact targets.'));
+    await clickSettingsControl(page, buttonNamed('Send permission'));
+  }
+  const answer = JSON.parse((await permission.result).textResultForLlm);
+  assert.equal(answer.status, 'awaiting_acknowledgment');
+  assert.equal(answer.acceptedAnswer, false, 'the response still needs the owner\'s recognition');
+  assert.equal(answer.response.action, decline ? 'decline' : 'consent');
+  if (!decline) {
+    assert.deepEqual(answer.response.targets, permission.request.fields.targets, 'consent names the complete targets exactly');
+    assert.equal(answer.response.confirmation, permission.request.fields.confirmation);
+  }
+  await beforeAcknowledgment?.();
+  await owner.acknowledgePermission(permission, acknowledgment);
+  return answer;
+}
+
+/** Every part of an owner-written permission, whole, in what Needs you shows. @param {{text:string,buttons:string[]}} needs */
+function t005AssertCard(needs, sample) {
+  const parts = [sample.prompt, sample.operation, ...sample.targets.flatMap(entry => [...entry.target.split('\n'), `Revision: ${entry.revision}`]),
+    ...sample.consequences.split('\n'), ...sample.eligibility.split('\n'), 'Required literal confirmation', sample.confirmation,
+    'I grant permission for this operation on these exact targets.'];
+  for (const part of parts) assert.ok(needs.text.includes(part), `Needs you shows ${JSON.stringify(part)} without truncation`);
+}
+
+/** A status row by its label. @param {{sheet:string[][]}} status @param {string} label */
+const t005Row = (status, label) => status.sheet.find(row => row[0] === label)?.[1];
+
+/** One owner result, whole: phase, note, file-change line, and complete path lists. */
+function t005AssertResult(status, result, { phase, change, source, receipt }) {
+  assert.equal(status.phase, phase);
+  assert.equal(status.title, T005_PHASE_TITLES[phase]);
+  assert.equal(t005Row(status, 'Requested source'), source, 'the submitted Source is retained, not the typed field');
+  assert.equal(t005Row(status, 'Receipt'), receipt);
+  assert.equal(t005Row(status, "Dude's note"), result.note);
+  assert.equal(t005Row(status, 'File changes'), T005_CHANGES[change]);
+  assert.deepEqual(status.paths[`Written files (${result.written.length})`] ?? [], result.written, 'every written path, in order, as plain text');
+  assert.deepEqual(status.paths[`Uncertain paths (${result.uncertain?.length ?? 0})`] ?? [], result.uncertain ?? []);
+  assert.match(status.footnote, /Checked when Dude reported this result\. Canvas does not watch these files afterward\./);
+  assert.equal(status.text.includes(T073_CAVEAT), phase === 'applied', 'only an applied result carries the new-session caveat');
+}
+
+const T005_REFUSALS = Object.freeze([
+  ['empty', '', 'Enter a local path or a GitHub URL.'],
+  ['whitespace only', '   ', 'Enter a local path or a GitHub URL.'],
+  ['control character', 'C:\\Users\\you\\agent-kit\\ops\tbackup', 'Remove line breaks, tabs, and other control characters. The source must be a single line.'],
+  ['2,049 UTF-8 bytes', `C:\\${'a'.repeat(2046)}`, 'This source is 2,049 UTF-8 bytes. The limit is 2,048, and nothing was shortened.'],
+  ['multibyte over the limit', `C:\\${'é'.repeat(1023)}`, 'This source is 2,049 UTF-8 bytes. The limit is 2,048, and nothing was shortened.'],
+  ['file URL', 'file:///C:/Users/you/agent-kit', 'Enter the local path itself, without file://.'],
+  ['http', 'http://github.com/example-org/agent-kit/blob/main/agents/security-reviewer.agent.md', 'Use an https:// URL. Canvas accepts public GitHub URLs only.'],
+  ['host', 'https://gitlab.com/example-org/agent-kit/-/blob/main/skills/review-checklist/SKILL.md', 'Use a github.com or raw.githubusercontent.com URL.'],
+  ['credentials', 'https://you@github.com/example-org/agent-kit/tree/main/kit', 'Remove the user name or password from the URL. Canvas never sends credentials.'],
+  ['explicit :443', 'https://github.com:443/example-org/agent-kit/tree/main/kit', 'Remove the port number from the URL.'],
+  ['query', 'https://github.com/example-org/agent-kit/tree/main/kit?tab=readme-ov-file', 'Remove the query, the part that starts with ?.'],
+  ['fragment', 'https://github.com/example-org/agent-kit/blob/main/skills/review-checklist/SKILL.md#L12', 'Remove the fragment, the part that starts with #.'],
+  ['encoded slash', 'https://github.com/example-org/agent-kit/blob/main/a%2Fb/SKILL.md', 'Remove backslashes and encoded slashes (%2F or %5C) from the URL.'],
+]);
+
+test('073 Add/import: the view, one labeled Source field, every refusal with its exact reason, and one exact trimmed request', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runImportCase(context, '073-import-view', {}, async ({ canvas, owner, d }) => {
+    const { page, output } = canvas;
+    await d.enter();
+    const reads = canvas.packReads().length;
+    await d.chooseSub('import');
+    await until(() => d.q(`Boolean(document.querySelector('[data-import-panel]:not([hidden])'))`), 'Add/import');
+    await settleAboutAnimations(page);
+
+    // The view: beside Installed, Available, and Sources, with no Browse, no pack controls, and nothing about sources in the panel.
+    const view = await d.q(`(() => {
+      const panel = document.querySelector('[data-import-panel]'), input = panel.querySelector('input');
+      const shown = node => Boolean(node && node.getClientRects().length);
+      return {
+        subs: [...document.querySelectorAll('[data-pack-context]')].map(node => node.getAttribute('data-pack-context')),
+        selected: document.querySelector('[data-pack-context][aria-selected="true"]').getAttribute('data-pack-context'),
+        heading: panel.querySelector('h2').textContent, intro: panel.querySelector('p').innerText.replace(/\\s+/g, ' '),
+        label: input.labels[0]?.textContent, inputs: panel.querySelectorAll('input').length, placeholder: input.placeholder,
+        described: (input.getAttribute('aria-describedby') || '').split(' ').map(id => document.getElementById(id)?.textContent).join(' '),
+        forms: [...panel.querySelectorAll('dl[aria-label="Accepted source forms"] > *')].map(node => node.textContent),
+        action: panel.querySelector('[data-import-request]').innerText, actionNote: document.getElementById(panel.querySelector('[data-import-request]').getAttribute('aria-describedby')).textContent,
+        extra: panel.querySelectorAll('select, [role="combobox"], input[type="checkbox"], input[type="radio"], input[type="file"], a[href], textarea').length,
+        words: /browse|adapt|license|mode|retry|history|percent|documentation|readme/i.test(panel.innerText),
+        sources: /Sources/.test(panel.innerText),
+        toolbar: shown(document.querySelector('[data-pack-toolbar]')), pager: shown(document.querySelector('[data-pack-pager]')),
+        reload: Boolean(document.querySelector('[aria-label="Reload packs"]')), refresh: Boolean(document.querySelector('header [role="toolbar"]')),
+        footer: document.querySelector('footer').textContent, request: shown(panel.querySelector('[data-import-request-status]')),
+      };
+    })()`);
+    assert.deepEqual(view.subs, ['installed', 'available', 'import', 'sources']);
+    assert.equal(view.selected, 'import');
+    assert.equal(view.heading, 'Import an agent or skill');
+    assert.equal(view.intro, 'Imported agents and skills become project files named dude-local-* in .github/agents and .github/skills. They belong to this project, appear in Installed, and are not packs. This tab adds no packs: packs are added from Available.');
+    assert.deepEqual([view.label, view.inputs, view.placeholder], ['Source', 1, 'Local path or GitHub URL']);
+    assert.equal(view.described, 'One local file or directory path, or a public GitHub file, directory, or raw file URL. Canvas never asks for credentials.');
+    assert.deepEqual(view.forms, ['Local file or directory', '<path to the file or directory>', 'GitHub file', 'https://github.com/<owner>/<repo>/blob/<ref>/<file>',
+      'GitHub directory', 'https://github.com/<owner>/<repo>/tree/<ref>/<directory>', 'Raw GitHub file', 'https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<file>']);
+    assert.deepEqual([view.action, view.actionNote], ['Request import', 'Dude previews the import and asks for your permission in Needs you before changing any file.']);
+    assert.deepEqual([view.extra, view.words, view.sources, view.request], [0, false, false, false], 'no Browse, mode, adaptation, license, inventory, history, Sources, or request yet');
+    assert.deepEqual([view.toolbar, view.pager, view.reload, view.refresh], [false, false, false, false], 'no pack filter, pager, Reload, or Refresh here');
+    assert.equal(view.footer, 'Add/import · Connected', 'no pack-coverage claim in the footer');
+    await aboutScreenshot(page, output, 'import-idle-1440x900-light');
+
+    // Every refusal: the exact reason, the typed text kept, focus on the field, and nothing prepared.
+    const refusals = [];
+    for (const [name, text, reason] of T005_REFUSALS) {
+      await d.q(`(() => { const node = document.querySelector('[data-import-source]'); node.focus(); node.select(); })()`);
+      if (text) await page.send('Input.insertText', { text });
+      await d.request();
+      const refused = await d.q(`(() => {
+        const input = document.querySelector('[data-import-source]');
+        return { value: input.value, invalid: input.getAttribute('aria-invalid'), focused: document.activeElement === input,
+          message: document.querySelector('[data-import-panel] .fui-Field__validationMessage')?.textContent ?? null,
+          described: (input.getAttribute('aria-describedby') || '').split(' ').map(id => document.getElementById(id)?.textContent).join(' ') };
+      })()`);
+      assert.deepEqual([refused.value, refused.invalid, refused.focused, refused.message], [text, 'true', true, reason], name);
+      assert.ok(refused.described.includes(reason), `${name}: the reason is associated with the field`);
+      refusals.push({ name, reason });
+    }
+    assert.equal(d.importPosts().length, 0, 'a refusal prepares nothing');
+    assert.equal(canvas.sends.length, 0);
+    await aboutScreenshot(page, output, 'import-validation-over-limit-1440x900-light');
+    await d.q(`(() => { const node = document.querySelector('[data-import-source]'); node.focus(); node.select(); })()`);
+    await page.send('Input.insertText', { text: 'C:' });
+    assert.equal(await d.q(`document.querySelector('[data-import-panel] .fui-Field__validationMessage')`), null, 'typing clears the reason');
+
+    // One accepted request: the exact trimmed text in both bodies and in the handoff, from the keyboard.
+    const source = T005_SAMPLES.focused.source;
+    await d.q(`(() => { const node = document.querySelector('[data-import-source]'); node.focus(); node.select(); })()`);
+    await page.send('Input.insertText', { text: `  ${source}  ` });
+    await key(page, 'Enter');
+    await d.waitPhase('delivered');
+    const record = owner.latest();
+    assert.deepEqual(d.importPosts().map(entry => JSON.parse(entry.body)), [
+      { op: 'prepare', importSource: source }, { op: 'submit', importSource: source, importReceipt: record.importReceipt }]);
+    assert.equal(canvas.sends.length, 1, 'one foreground send');
+    const lines = canvas.sends[0].prompt.split('\n');
+    assert.equal(lines[0], 'Dude Canvas explicit artifact import request in this joined workspace/session.');
+    assert.deepEqual(JSON.parse(lines.at(-1)), { receiptId: record.importReceipt, owner: 'dude', importSource: source,
+      workspaceId: record.receipt.workspaceId, sessionId: record.receipt.sessionId, providerGeneration: record.receipt.providerGeneration });
+    assert.equal(canvas.sends[0].mode, 'immediate');
+    const status = await d.status();
+    assert.equal(status.source, `  ${source}  `, 'the field keeps what was typed');
+    assert.equal(t005Row(status, 'Requested source'), source, 'the request keeps the exact submitted value');
+    assert.equal(status.focused, true, 'focus moves to the request status');
+    assert.equal(canvas.packReads().length, reads, 'requesting an import reads no pack or catalog');
+    assert.equal(canvas.foreign().length, 0, 'no source or network request leaves the Canvas origin');
+    output.json('import-view-and-refusals.json', { case: 'Add/import view, copy, controls, refusals, and one exact trimmed request', view, refusals });
+  });
+});
+
+test('073 Add/import: every phase from preparing to waiting for the owner, with one send and nothing replayed', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runImportCase(context, '073-import-phases', {}, async ({ canvas, owner, d }) => {
+    const { page, output } = canvas;
+    await d.enter();
+    await d.chooseSub('import');
+    const sample = T005_SAMPLES.clean;
+    const phase = async (name, text) => {
+      await d.waitPhase(name);
+      const status = await d.status();
+      assert.equal(status.title, T005_PHASE_TITLES[name]);
+      assert.equal(status.text, `${T005_PHASE_TITLES[name]} ${text}`);
+      await aboutScreenshot(page, output, `import-phase-${name}-1440x900-light`);
+      return status;
+    };
+
+    // Preparing is held before anything leaves the browser. Double activation still makes one request.
+    await d.hold('prepare');
+    await d.type(sample.source);
+    await d.q(`(() => { const button = document.querySelector('[data-import-request]'); button.click(); button.click(); })()`);
+    let status = await phase('preparing', 'Checking the source text and the joined session. Nothing is read from the source, and this does not grant permission.');
+    assert.equal(status.focused, true, 'focus moves to the status that replaces the pressed button');
+    assert.deepEqual(status.request, { disabled: true, note: 'This import request is still open. Wait for its result; nothing will be resent.' });
+    assert.equal(d.importPosts().length, 0);
+
+    // Submitting: prepared by the provider, and not sent.
+    await d.hold('submit');
+    status = await phase('submitting', 'Sending this request to Dude once. Delivery is not yet confirmed.');
+    assert.deepEqual([owner.latest().phase, owner.latest().sendStarted, canvas.sends.length], ['prepared', false, 0], 'nothing was sent yet');
+
+    // Admitted: sent once, delivery not yet reconciled by the host's own event.
+    owner.state.deliver = false;
+    await d.hold(null);
+    status = await phase('admitted', 'The provider accepted this request, but delivery to Dude is not confirmed. Nothing will be resent.');
+    assert.equal(canvas.sends.length, 1);
+    assert.equal(status.request.disabled, true);
+
+    owner.deliverLast();
+    await phase('delivered', 'Dude previews the import and asks for permission in Needs you before changing any file.');
+    assert.equal(d.importPosts().length, 2, 'double activation made exactly one prepare and one submit');
+    assert.equal(canvas.sends.length, 1);
+
+    // Permission requested: the one pending permission bound to this exact receipt.
+    const permission = await owner.permit(sample);
+    status = await phase('waiting_permission', 'Review the exact files and respond to this request in Needs you.');
+    assert.equal(status.permission, permission.record.requestHandle, 'Open Needs you binds the permission handle');
+    assert.equal(status.request.note, 'This import request is waiting for your permission response in Needs you.');
+    await d.click('[data-import-permission]');
+    const needs = await d.needs();
+    t005AssertCard(needs, sample);
+    assert.deepEqual(needs.buttons, ['Back to Add/import', 'All requests', 'Send permission', 'Decline'], 'only Send permission and Decline answer an import');
+    assert.deepEqual([needs.deferral, needs.checkbox], [false, true]);
+    await aboutScreenshot(page, output, 'import-needs-you-clean-1440x900-light');
+    // The owner's ordinary acknowledgment of the response says "applied": that is the permission, never the import.
+    const reads = () => ({ packs: canvas.packReads().length + canvas.discoveryReads().length, focus: canvas.requests.filter(entry => entry.url.endsWith('/api/freshness')).length,
+      needs: canvas.requests.filter(entry => entry.method === 'GET' && entry.url.endsWith('/api/needs-you')).length });
+    const readsBefore = reads();
+    await t005Respond(canvas, owner, permission, { acknowledgment: 'applied', beforeAcknowledgment: async () => {
+      // The reply refreshes the feed and, as the pack reply does, rereads no catalog. An ordinary window-focus read may.
+      await until(() => reads().needs > readsBefore.needs, 'the reply refreshes the feed');
+      if (reads().focus === readsBefore.focus) assert.equal(reads().packs, readsBefore.packs, 'a permission reply causes no catalog acquisition');
+    } });
+    // Waiting for the owner: a permission acknowledgment is not a result.
+    await until(() => d.q(`document.querySelector('#dude-panel-needs [aria-label="Response status"]')?.innerText.startsWith('Permission acknowledged')`), 'the permission acknowledgment, which is not a result');
+    assert.equal(await d.q(`document.activeElement.getAttribute('aria-label')`), 'Response status');
+    await clickSettingsControl(page, `[...document.querySelectorAll('#dude-panel-needs button')].find(node => node.innerText.trim() === 'Back to Add/import')`);
+    status = await phase('waiting_owner', 'Dude is working on this request. No file change is confirmed until Dude reports a verified result here.');
+    assert.equal(status.focused, true, 'Back to Add/import focuses the matching status');
+    assert.equal(status.show, null, 'no Show in Installed before an applied result');
+    assert.deepEqual([status.permission, status.source], [null, sample.source], 'the status needs no more input, and the Source survived the round trip');
+    assert.equal(canvas.sends.length, 1);
+    output.json('import-phases.json', { case: 'preparing, submitting, admitted, delivered, permission requested, and waiting for the owner', posts: d.importPosts().map(entry => JSON.parse(entry.body)) });
+
+    // A request prepared and never submitted is reported as prepared after a reload, and nothing is sent.
+    await owner.result({ outcome: 'failed', mutation: 'none', written: [], uncertain: [], note: 'Closed for the next case.' });
+    owner.idle();
+    await d.waitPhase('failed');
+    const prepared = await canvas.provider.requestImport({ op: 'prepare', importSource: T005_SAMPLES.warned.source });
+    await page.send('Page.reload');
+    await d.enter();
+    await d.chooseSub('import');
+    status = await phase('prepared', 'Nothing has been sent. This request will not be submitted automatically on reload or return.');
+    assert.equal(t005Row(status, 'Receipt'), prepared.importReceipt);
+    assert.equal(canvas.sends.length, 1, 'reload and return never submit a prepared request');
+    assert.equal(status.request.disabled, false, 'a tab that lost its receipt may ask again; the provider decides');
+  });
+});
+
+/** Open Add/import's request and read what the status shows, then the stand-in owner's whole result. */
+async function t005Request(canvas, owner, d, sample, { respond = 'consent', result = null } = {}) {
+  const { page } = canvas;
+  await d.type(sample.source);
+  await d.request();
+  await d.waitPhase('delivered');
+  const record = owner.latest();
+  let permission = null;
+  if (respond) {
+    permission = await owner.permit(sample, record);
+    await d.waitPhase('waiting_permission');
+    await d.click('[data-import-permission]');
+    await t005Respond(canvas, owner, permission, { decline: respond === 'decline' });
+    await clickSettingsControl(page, `[...document.querySelectorAll('#dude-panel-needs button')].find(node => node.innerText.trim() === 'Back to Add/import')`);
+  }
+  if (result) {
+    await owner.result(result, record);
+    owner.idle();
+  }
+  return { record, permission };
+}
+
+test('073 Add/import: every owner result is shown whole, and only Applied claims a change or offers Show in Installed', {
+  timeout: 420_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runImportCase(context, '073-import-results', { project: [...T073_PROJECT, { type: 'skill', name: 'dude-local-log-triage' }] }, async ({ canvas, owner, d }) => {
+    const { page, output } = canvas;
+    await d.enter();
+    await d.chooseSub('import');
+    const applied = { outcome: 'applied', mutation: 'applied', written: T005_SAMPLES.clean.written, uncertain: [],
+      note: 'Wrote 6 files and verified each. dude-lint passed.' };
+    // [name, result, phase, file-change line, sample, the person's response]
+    const cases = [
+      ['declined', T005_RESULTS.declined, 'declined', 'none', 'focused', 'decline'],
+      ['blocked', T005_RESULTS.blocked, 'failed', 'none', 'clean', null],
+      ['capacity', T005_RESULTS.capacity, 'unavailable', 'none', 'clean', null],
+      ['stale', T005_RESULTS.stale, 'stale', 'none', 'focused', 'consent'],
+      ['restored', T005_RESULTS.restored, 'failed', 'restored', 'clean', 'consent'],
+      ['partial', T005_RESULTS.partial, 'failed', 'partial', 'focused', 'consent'],
+      ['uncertain', T005_RESULTS.uncertain, 'uncertain', 'uncertain', 'warned', 'consent'],
+      ['applied', applied, 'applied', 'applied', 'clean', 'consent'],
+    ];
+    const results = [];
+    for (const [name, result, phase, change, sampleName, respond] of cases) {
+      const sample = T005_SAMPLES[sampleName];
+      const { record } = await t005Request(canvas, owner, d, sample, { respond, result });
+      await d.waitPhase(phase);
+      const status = await d.status();
+      t005AssertResult(status, result, { phase, change, source: sample.source, receipt: record.importReceipt });
+      assert.equal(status.permission, null, `${name}: the permission needs no more input`);
+      assert.equal(status.request.disabled, false, `${name}: a reconciled result releases Request import`);
+      assert.deepEqual(status.show === null, phase !== 'applied', `${name}: only Applied offers Show in Installed`);
+      await aboutScreenshot(page, output, `import-result-${name}-1440x900-light`);
+      results.push({ name, phase, change, title: status.title, paths: status.paths });
+    }
+    // A partial result's path names an existing project row, and an existing row is never an Applied claim.
+    assert.deepEqual(await d.state().then(state => [state.selected, state.detail]), [[], null], 'no result selected or opened a row');
+    assert.equal(canvas.sends.length, cases.length, 'one send per request and none replayed');
+    assert.equal(d.importPosts().length, cases.length * 2);
+    output.json('import-results.json', { case: 'every owner result with its exact words and complete paths', results });
+  });
+});
+
+test('073 Add/import: a repeated Source shows only its own request and receipt, never the earlier result for the same text', {
+  timeout: 420_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runImportCase(context, '073-import-repeat', {}, async ({ canvas, owner, d }) => {
+    const { page, output } = canvas;
+    const sample = T005_SAMPLES.focused;
+    const first = { outcome: 'applied', mutation: 'applied', written: ['.github/skills/dude-local-handmade/SKILL.md'], uncertain: [],
+      note: 'First result.' };
+    const secondResult = { outcome: 'failed', mutation: 'none', ...T005_NO_WRITES, note: 'Second result, for the same Source.' };
+    await d.enter();
+    await d.chooseSub('import');
+
+    // Request A for this Source reaches an acknowledged Applied result, and Show in Installed is offered for it.
+    const { record: earlier } = await t005Request(canvas, owner, d, sample, { result: first });
+    await d.waitPhase('applied');
+    await until(async () => (await d.status()).show?.disabled === false, 'Show in Installed is offered for the first result');
+    t005AssertResult(await d.status(), first, { phase: 'applied', change: 'applied', source: sample.source, receipt: earlier.importReceipt });
+
+    // The same Source again, with its prepare held before it leaves the browser. This request has no receipt yet, so nothing
+    // from the first result, the same text included, can be its status.
+    await d.hold('prepare');
+    await d.type(sample.source);
+    await d.request();
+    await until(() => d.q(`window.t005.held.length === 1`), 'the second prepare is held');
+    let status = await d.status();
+    assert.deepEqual([status.phase, status.title, status.show, status.paths], ['preparing', 'Preparing request', null, {}],
+      'a repeated Source shows its own preparing request, not the earlier result or its Show in Installed');
+    assert.deepEqual(status.sheet.map(([label]) => label), ['Requested source'],
+      `no earlier receipt, note, file-change line, or written path is shown: ${JSON.stringify(status.sheet)}`);
+    assert.equal(t005Row(status, 'Requested source'), sample.source);
+    assert.equal(d.importPosts().length, 2, 'only the first request has reached the provider');
+    await aboutScreenshot(page, output, 'import-repeat-preparing-1440x900-light');
+
+    // Prepared by the provider and held before submit: the receipt is the new one, and still nothing of the first result.
+    await d.hold('submit');
+    await d.waitPhase('submitting');
+    const second = owner.latest();
+    assert.notEqual(second.importReceipt, earlier.importReceipt, 'the provider allocated a new receipt for the repeated Source');
+    status = await d.status();
+    assert.equal(t005Row(status, 'Receipt'), second.importReceipt, 'the status names the new receipt');
+    assert.deepEqual([status.show, status.paths, status.sheet.map(([label]) => label)], [null, {}, ['Requested source', 'Receipt']]);
+    await d.hold(null);
+    await d.waitPhase('delivered');
+    status = await d.status();
+    assert.equal(t005Row(status, 'Receipt'), second.importReceipt);
+    assert.deepEqual([status.show, status.paths, status.sheet.map(([label]) => label)], [null, {}, ['Requested source', 'Receipt']]);
+
+    // Its own result is the one shown, with nothing carried over from the first.
+    await owner.result(secondResult, second);
+    owner.idle();
+    await d.waitPhase('failed');
+    status = await d.status();
+    t005AssertResult(status, secondResult, { phase: 'failed', change: 'none', source: sample.source, receipt: second.importReceipt });
+    assert.equal(status.show, null, 'no Show in Installed is left from the first result');
+    assert.deepEqual([canvas.sends.length, d.importPosts().length], [2, 4], 'one send and two bodies per request, and nothing replayed');
+    output.json('import-repeated-source.json', { case: 'a repeated Source binds each status to its own receipt', source: sample.source,
+      first: earlier.importReceipt, second: second.importReceipt });
+  });
+});
+
+test('073 Add/import: a newer request for the same Source from another tab is never adopted while this tab prepares, nor shown as its result', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runImportCase(context, '073-import-other-tab', {}, async ({ canvas, owner, d }) => {
+    const { page, output, provider } = canvas;
+    const sample = T005_SAMPLES.focused;
+    const refusal = 'Unavailable Another artifact import needs owner reconciliation. Nothing will be resent.';
+    // What the tab shows for its own request, with nothing from any other receipt.
+    const shown = status => [status.phase, status.title, status.show, status.paths, status.sheet.map(([label]) => label)];
+    const finished = new Set();
+    page.on('Network.loadingFinished', event => finished.add(event.requestId));
+    await d.enter();
+    await d.chooseSub('import');
+
+    // This tab's request is held in preparing, so it has no receipt yet and no record in the feed is its own.
+    await d.hold('prepare');
+    await d.type(sample.source);
+    await d.request();
+    await until(() => d.q(`window.t005.held.length === 1`), "this tab's prepare is held");
+
+    // Another tab asks for the very same Source and gets the provider's one open import: a newer record, another receipt.
+    const other = await provider.requestImport({ op: 'prepare', importSource: sample.source });
+    await provider.requestImport({ op: 'submit', importSource: sample.source, importReceipt: other.importReceipt });
+    assert.deepEqual([owner.latest().importReceipt, owner.latest().importSource, owner.latest().phase], [other.importReceipt, sample.source, 'delivered']);
+    // This tab holds that record once a feed read that began after the other tab's request has finished and painted.
+    const since = canvas.requests.length;
+    const read = await until(() => canvas.requests.slice(since).find(entry => entry.method === 'GET' && entry.url.endsWith('/api/needs-you')),
+      "a feed read after the other tab's request");
+    await until(() => finished.has(read.id), 'that feed read finishes');
+    await settleBrowserWork(page);
+    let status = await d.status();
+    assert.deepEqual(shown(status), ['preparing', 'Preparing request', null, {}, ['Requested source']],
+      "the other tab's newer record for the same Source is not this request's status");
+    assert.equal(t005Row(status, 'Requested source'), sample.source);
+    await aboutScreenshot(page, output, 'import-other-tab-preparing-1440x900-light');
+
+    // The held prepare then reaches the provider, which refuses it while the other tab's import is open. The page's own
+    // feed shows that open request, so Request import waits for it.
+    await d.hold(null);
+    const refused = await until(() => d.importPosts()[0], 'the held prepare is sent');
+    await until(() => finished.has(refused.id), 'the provider answers the held prepare');
+    await settleBrowserWork(page);
+    await until(async () => (await d.status()).request?.disabled === true, "the other tab's open request holds Request import");
+    status = await d.status();
+    assert.equal(status.text, refusal, "this tab shows its own refusal, not the other tab's request");
+    assert.deepEqual(shown(status), ['unavailable', 'Unavailable', null, {}, ['Requested source']]);
+    assert.equal(status.request.note, 'This import request is still open. Wait for its result; nothing will be resent.');
+    await aboutScreenshot(page, output, 'import-other-tab-refused-1440x900-light');
+
+    // The other tab's request is then Applied. Applied belongs to that receipt alone, so this tab keeps its own refusal and
+    // offers no Show in Installed. Request import is released only once the page has read the other tab's result.
+    await owner.result({ outcome: 'applied', mutation: 'applied', written: ['.github/skills/dude-local-handmade/SKILL.md'], uncertain: [],
+      note: "The other tab's result." }, other);
+    owner.idle();
+    await until(async () => (await d.status()).request?.disabled === false, "the other tab's result is read");
+    status = await d.status();
+    assert.equal(status.text, refusal, "the other tab's Applied result is not this tab's status");
+    assert.deepEqual(shown(status), ['unavailable', 'Unavailable', null, {}, ['Requested source']]);
+    assert.equal(t005Row(status, 'Requested source'), sample.source);
+    assert.deepEqual([canvas.sends.length, d.importPosts().length], [1, 1], "only the other tab's request was sent, and this tab's refused prepare was its only body");
+    output.json('import-other-tab.json', { case: "another tab's newer request for the same Source is never this tab's status", source: sample.source,
+      otherReceipt: other.importReceipt });
+  });
+});
+
+test('073 Add/import: a result stays bound to its own receipt when another tab then requests the same Source', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runImportCase(context, '073-import-frozen-result', {}, async ({ canvas, owner, d }) => {
+    const { page, output, provider } = canvas;
+    const sample = T005_SAMPLES.focused;
+    const mine = { outcome: 'failed', mutation: 'none', ...T005_NO_WRITES, note: "This tab's result." };
+    await d.enter();
+    await d.chooseSub('import');
+
+    // This tab's request reaches its own acknowledged result.
+    const { record } = await t005Request(canvas, owner, d, sample, { respond: null, result: mine });
+    await d.waitPhase('failed');
+    t005AssertResult(await d.status(), mine, { phase: 'failed', change: 'none', source: sample.source, receipt: record.importReceipt });
+
+    // Another tab then asks for the very same Source: a newer record, another receipt, still open. The page's own feed
+    // shows it, so Request import waits for it.
+    const other = await provider.requestImport({ op: 'prepare', importSource: sample.source });
+    await provider.requestImport({ op: 'submit', importSource: sample.source, importReceipt: other.importReceipt });
+    assert.notEqual(other.importReceipt, record.importReceipt);
+    await until(async () => (await d.status()).request?.disabled === true, "the other tab's open request holds Request import");
+    let status = await d.status();
+    t005AssertResult(status, mine, { phase: 'failed', change: 'none', source: sample.source, receipt: record.importReceipt });
+    assert.equal(status.show, null);
+    await aboutScreenshot(page, output, 'import-frozen-result-other-open-1440x900-light');
+
+    // That request is then Applied. Applied belongs to its own receipt, so this tab keeps the result it was given.
+    await owner.result({ outcome: 'applied', mutation: 'applied', written: ['.github/skills/dude-local-handmade/SKILL.md'], uncertain: [],
+      note: "The other tab's result." }, other);
+    owner.idle();
+    await until(async () => (await d.status()).request?.disabled === false, "the other tab's result is read");
+    status = await d.status();
+    t005AssertResult(status, mine, { phase: 'failed', change: 'none', source: sample.source, receipt: record.importReceipt });
+    assert.equal(status.show, null, "the other tab's Applied result offers this tab no Show in Installed");
+    assert.deepEqual([canvas.sends.length, d.importPosts().length], [2, 2], "one send per request, and this tab's two bodies were its only ones");
+    output.json('import-frozen-result.json', { case: "a result stays bound to its own receipt when another tab requests the same Source", source: sample.source,
+      receipt: record.importReceipt, otherReceipt: other.importReceipt });
+  });
+});
+
+/** New idea's controls and what each says, for the exclusion cases. @param {{q: (expression: string) => Promise<any>}} d */
+const t005Idea = d => d.q(`(() => {
+  const panel = document.querySelector('#dude-panel-new'), field = panel.querySelector('textarea');
+  const buttons = Object.fromEntries([...panel.querySelectorAll('button')].map(node => [node.innerText.trim(), node])
+    .filter(([name]) => ['Submit', 'Save', 'Cancel'].includes(name))
+    .map(([name, node]) => [name, { disabled: node.disabled,
+      described: (node.getAttribute('aria-describedby') || '').split(' ').filter(Boolean).map(id => document.getElementById(id)?.textContent ?? null) }]));
+  return { buttons, draft: field.value, editable: !field.disabled && !field.readOnly, text: panel.innerText };
+})()`);
+
+/** The open pack details' actions and the one reason that explains them. @param {{q: (expression: string) => Promise<any>}} d */
+const t005PackAction = d => d.q(`({ buttons: [...document.querySelectorAll('[data-pack-actions] button')].map(node => [node.textContent.trim(), node.disabled]),
+  reason: document.querySelector('[id$="-action-reason"]')?.textContent ?? null })`);
+
+/** What the accessibility tree exposes, by role and name. @param {Cdp} page */
+async function t005Accessibility(page) {
+  const tree = await page.send('Accessibility.getFullAXTree');
+  const live = tree.nodes.filter(node => !node.ignored);
+  const namedRoles = new Set(['button', 'tab', 'tablist', 'tabpanel', 'combobox', 'grid', 'toolbar', 'textbox', 'link', 'checkbox', 'dialog']);
+  return {
+    has: (role, name) => live.some(node => node.role?.value === role && node.name?.value === name),
+    names: role => live.filter(node => node.role?.value === role).map(node => node.name?.value ?? ''),
+    unnamed: live.filter(node => namedRoles.has(node.role?.value) && !node.name?.value).map(node => node.role.value),
+  };
+}
+
+test('073 Add/import: exact exclusion reasons, an editable idea draft, queued input refused after the click, and an unsent draft that never blocks', {
+  timeout: 420_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  const draft = 'A draft idea that was never sent.';
+  const readyNote = 'Dude previews the import and asks for your permission in Needs you before changing any file.';
+  await runImportCase(context, '073-import-exclusion', {}, async ({ canvas, owner, d }) => {
+    const { page, output, packs } = canvas;
+    const pack = packKeys(packs.availableNames)[0];
+    await d.enter();
+
+    // An unsent draft alone never blocks anything.
+    await d.click('#dude-tab-new');
+    await focus(page, '#dude-panel-new textarea');
+    await page.send('Input.insertText', { text: draft });
+    assert.deepEqual((await t005Idea(d)).buttons.Submit, { disabled: false, described: [] });
+    await d.openImport();
+    let status = await d.status();
+    assert.deepEqual(status.request, { disabled: false, note: readyNote }, 'an unsent draft does not block Request import');
+
+    // Queued input is only known to the provider: the click is refused as "not sent", and the field is kept.
+    owner.state.queued = true;
+    await d.type(T005_SAMPLES.focused.source);
+    await d.request();
+    await until(async () => (await d.status()).text?.includes(T005_NOT_SENT), 'the queued-input refusal');
+    status = await d.status();
+    assert.equal(canvas.sends.length, 0, 'a refused request sent nothing');
+    assert.deepEqual([status.request.disabled, status.source], [false, T005_SAMPLES.focused.source], 'a known-unsent refusal may be requested again');
+    owner.state.queued = false;
+    await aboutScreenshot(page, output, 'import-refused-queued-1440x900-light');
+
+    // In flight, the idea draft stays editable and both sends name the one reason.
+    await d.request();
+    await d.waitPhase('delivered');
+    const record = owner.latest();
+    await d.click('#dude-tab-new');
+    let idea = await t005Idea(d);
+    assert.deepEqual([idea.draft, idea.editable], [draft, true]);
+    for (const name of ['Submit', 'Save']) assert.deepEqual(idea.buttons[name], { disabled: true, described: [T005_IDEA_REASON] }, `${name} is disabled by the open import`);
+    assert.equal(idea.buttons.Cancel.disabled, false);
+    await focus(page, '#dude-panel-new textarea');
+    await page.send('Input.insertText', { text: ' More.' });
+    assert.ok((await t005Idea(d)).draft.includes('More.'), 'the draft stays editable while the sends are disabled');
+    await aboutScreenshot(page, output, 'import-new-idea-reason-1440x900-light');
+    await d.click('#dude-tab-settings');
+    await packsSettled(page);
+    await d.chooseSub('available');
+    // Available lists nothing until the one explicit read of the catalogs.
+    await discoverCatalog(canvas);
+    await d.click(`[data-pack-row^="${pack}@"]`);
+    let action = await t005PackAction(d);
+    assert.deepEqual([action.buttons.every(([, disabled]) => disabled), action.reason],
+      [true, 'An artifact import needs owner reconciliation before a pack request can be sent.']);
+    await key(page, 'Escape');
+
+    // A reconciled result releases every send.
+    await owner.result(T005_RESULTS.blocked, record);
+    owner.idle();
+    await d.click('#dude-tab-new');
+    await until(async () => !(await t005Idea(d)).buttons.Submit.disabled, 'New idea sends are released');
+    idea = await t005Idea(d);
+    assert.deepEqual([idea.buttons.Submit.described, idea.buttons.Save.described], [[], []]);
+
+    // A sent capture needs owner reconciliation: it excludes Request import and pack sends, with their own words.
+    await clickSettingsControl(page, `[...document.querySelectorAll('#dude-panel-new button')].find(node => node.innerText.trim() === 'Submit')`);
+    await until(() => canvas.sends.length === 2, 'the capture is sent');
+    await d.openImport();
+    await until(async () => (await d.status()).request?.disabled === true, 'Request import disabled by the capture');
+    status = await d.status();
+    assert.equal(status.request.note, 'An idea capture needs owner reconciliation before an import can be requested.');
+    await aboutScreenshot(page, output, 'import-disabled-capture-1440x900-light');
+    await d.chooseSub('available');
+    await d.click(`[data-pack-row^="${pack}@"]`);
+    action = await t005PackAction(d);
+    assert.deepEqual([action.buttons.every(([, disabled]) => disabled), action.reason],
+      [true, 'An idea capture needs owner reconciliation before a pack request can be sent.']);
+    assert.deepEqual(d.importPosts().map(entry => JSON.parse(entry.body).op), ['prepare', 'prepare', 'submit'], 'a refused prepare, then one accepted request, and nothing else');
+  });
+
+  // A sent pack request excludes an import in the other direction.
+  await runImportCase(context, '073-import-after-pack', {}, async ({ canvas, d }) => {
+    const { page, packs } = canvas;
+    await d.enter();
+    await d.chooseSub('available');
+    await discoverCatalog(canvas);
+    await d.click(`[data-pack-row^="${packKeys(packs.availableNames)[0]}@"]`);
+    await d.click('[data-pack-operation="install"]');
+    await until(() => canvas.sends.length === 1, 'the pack request is sent');
+    await key(page, 'Escape');
+    await key(page, 'Escape');
+    await d.openImport();
+    const status = await d.status();
+    assert.deepEqual(status.request, { disabled: true, note: 'A pack request needs owner reconciliation before an import can be requested.' });
+    await d.click('#dude-tab-new');
+    assert.ok((await t005Idea(d)).text.includes('A pack request is in progress or needs owner reconciliation. Your idea draft stays here.'));
+    assert.equal(d.importPosts().length, 0, 'a disabled Request import prepares nothing');
+  });
+});
+
+test('073 Add/import: an unconfirmed send is never repeated, and a reload still reports it as sent', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runImportCase(context, '073-import-uncertain', {}, async ({ canvas, owner, d }) => {
+    const { page, output, session } = canvas;
+    await d.enter();
+    await d.chooseSub('import');
+    session.send = async input => { canvas.sends.push(input); throw new Error('The connection to the session was lost.'); };
+    await d.type(T005_SAMPLES.clean.source);
+    await d.request();
+    await d.waitPhase('uncertain');
+    let status = await d.status();
+    assert.equal(status.title, 'Uncertain');
+    assert.ok(status.text.includes('Delivery could not be confirmed. Wait for Dude to reconcile this request, and do not repeat it.'), status.text);
+    assert.deepEqual(status.request, { disabled: true, note: 'Delivery of this import request is uncertain. Wait for Dude to reconcile it; nothing will be resent.' });
+    assert.deepEqual([owner.latest().phase, owner.latest().sendStarted, canvas.sends.length], ['uncertain', true, 1], 'the provider holds a sent, unacknowledged record');
+    await aboutScreenshot(page, output, 'import-uncertain-1440x900-light');
+
+    // A reload and a return resend nothing: the feed still reports the one request as sent and unconfirmed.
+    await page.send('Page.reload');
+    await d.enter();
+    await d.chooseSub('import');
+    status = await d.status();
+    assert.deepEqual([status.phase, status.request.disabled], ['uncertain', true]);
+    assert.deepEqual([canvas.sends.length, d.importPosts().length], [1, 2], 'nothing was submitted or sent again');
+  });
+});
+
+test('073 Add/import: Source and the exact request survive sub-tabs, About, Needs you, and Back; the rail clears only the typed Source', {
+  timeout: 360_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runImportCase(context, '073-import-continuity', {}, async ({ canvas, owner, d }) => {
+    const { page, output } = canvas;
+    const draft = 'An idea draft kept under the root lifetime.';
+    const sample = T005_SAMPLES.warned;
+    const exposed = async () => { const ax = await t005Accessibility(page);
+      return [ax.has('textbox', 'Source'), ax.has('button', 'Request import'), ax.names('grid').length]; };
+    await d.enter();
+    // Available shows a table only after the one explicit read of the catalogs.
+    await discoverCatalog(canvas);
+    await d.click('#dude-tab-new');
+    await focus(page, '#dude-panel-new textarea');
+    await page.send('Input.insertText', { text: draft });
+
+    // Typed Source survives the local sub-tabs and About; hidden views are out of focus and the accessibility tree.
+    await d.openImport();
+    await d.type(sample.source);
+    assert.deepEqual(await exposed(), [true, true, 0], 'Add/import alone is exposed');
+    for (const sub of ['installed', 'available']) {
+      await d.chooseSub(sub);
+      assert.deepEqual(await exposed(), [false, false, 1], `${sub} alone is exposed`);
+      assert.equal(await d.q(`[...document.querySelectorAll('[data-import-panel] :is(input, button, a, [tabindex])')]
+        .every(node => node.closest('[hidden]') && node.getClientRects().length === 0)`), true, 'the hidden Add/import holds no focus stop');
+    }
+    await d.chooseSub('import');
+    assert.equal((await d.status()).source, sample.source);
+    await chooseSettingsSection(page, 'about');
+    assert.deepEqual(await exposed(), [false, false, 0], 'About exposes neither list nor Add/import');
+    await clickSettingsControl(page, `document.querySelector('[data-settings-section="packs"]')`);
+    await until(() => d.q(`Boolean(document.querySelector('[data-import-panel]:not([hidden])'))`), 'Add/import is shown again');
+    await settleAboutAnimations(page);
+    assert.deepEqual([(await d.state()).context, (await d.status()).source], ['import', sample.source], 'returning from About finds Add/import and its Source');
+
+    // The exact request survives Open Needs you and Back, with focus on the matching status.
+    await d.request();
+    await d.waitPhase('delivered');
+    const record = owner.latest();
+    const permission = await owner.permit(sample, record);
+    await d.waitPhase('waiting_permission');
+    await d.click('[data-import-permission]');
+    t005AssertCard(await d.needs(), sample);
+    await clickSettingsControl(page, `[...document.querySelectorAll('#dude-panel-needs button')].find(node => node.innerText.trim() === 'Back to Add/import')`);
+    let status = await d.status();
+    assert.deepEqual([status.phase, status.focused, status.source, t005Row(status, 'Receipt')], ['waiting_permission', true, sample.source, record.importReceipt]);
+    assert.equal(status.permission, permission.record.requestHandle);
+    await aboutScreenshot(page, output, 'import-continuity-back-1440x900-light');
+
+    // Ordinary rail departure clears only the typed Source: Packs re-enters Installed with its defaults and the request stays.
+    await d.click('#dude-tab-overview');
+    await d.click('#dude-tab-settings');
+    await packsSettled(page);
+    const entry = await d.state();
+    assert.deepEqual([entry.context, entry.filter, entry.page, entry.detail], ['installed', 'All use cases', 'Page 1 of 1', null]);
+    await d.chooseSub('import');
+    status = await d.status();
+    assert.deepEqual([status.source, status.phase, status.permission, t005Row(status, 'Requested source')],
+      ['', 'waiting_permission', permission.record.requestHandle, sample.source], 'the typed Source is gone and the exact request is kept');
+    await d.click('#dude-tab-new');
+    assert.equal((await t005Idea(d)).draft, draft, 'the idea draft is retained under its own lifetime');
+    assert.equal(canvas.sends.length, 1);
+  });
+});
+
+/** One request through its permission to an Applied result that wrote `written`, as the owner reports it. */
+function t005Applied(canvas, owner, d, written) {
+  return t005Request(canvas, owner, d, T005_SAMPLES.clean, { result: { outcome: 'applied', mutation: 'applied', written, uncertain: [],
+    note: `Wrote ${written.length} file${written.length === 1 ? '' : 's'} and verified each.` } });
+}
+
+test('073 Add/import: Show in Installed maps the first written artifact to an existing row, resets browsing, and reads nothing', {
+  timeout: 480_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  const project = [...T073_PROJECT, ...t073Fill(30)];
+  await runImportCase(context, '073-import-show', { project }, async ({ canvas, owner, d }) => {
+    const { page, output, provider } = canvas;
+    await d.enter();
+    // Use case needs a catalog, so read once before any Installed filtering.
+    await discoverCatalog(canvas);
+    await d.chooseSub('import');
+    const offered = async name => { await d.waitPhase('applied', name); await until(async () => (await d.status()).show?.disabled === false, `${name}: Show in Installed is offered`); };
+    // [name, ordered written, the row it names, the Installed page it sits on, how Installed is left before the activation]
+    const mapping = [
+      ['a skill-directory file', ['.github/skills/dude-local-handmade/checklists/new.md'], 'project:skill:dude-local-handmade', 'Page 2 of 2', 'filter'],
+      ['an agent .support/ file', ['.github/agents/dude-local-alpha.support/notes/new.md'], 'project:agent:dude-local-alpha', 'Page 1 of 2', 'page'],
+      ['an agent entrypoint', ['.github/agents/dude-local-quiet.agent.md'], 'project:agent:dude-local-quiet', 'Page 2 of 2', 'filter'],
+      ['only the first written path', ['.github/agents/dude-local-alpha.agent.md', '.github/skills/dude-local-handmade/SKILL.md'], 'project:agent:dude-local-alpha', 'Page 1 of 2', 'page'],
+      ['a row on the second page', ['.github/skills/dude-local-fill-30/SKILL.md'], 'project:skill:dude-local-fill-30', 'Page 2 of 2', 'none'],
+    ];
+    const shown = [];
+    for (const [name, written, rowKey, pageText, leave] of mapping) {
+      await t005Applied(canvas, owner, d, written);
+      await offered(name);
+      // Leave Installed away from its defaults, so the activation has something to reset.
+      await d.chooseSub('installed');
+      if (leave === 'filter') await d.chooseTag('ui-tools');
+      if (leave === 'page' && !(await d.state()).next) await d.click('[aria-label="Next pack page"]');
+      await d.chooseSub('import');
+      const before = { packReads: canvas.packReads().length, discoveries: canvas.discoveryReads().length, posts: canvas.requests.filter(entry => entry.method === 'POST').length };
+      await d.click('[data-import-show-button]');
+      await settleBrowserWork(page);
+      const state = await d.state();
+      assert.deepEqual([state.context, state.filter, state.page, state.selected, state.detail, state.open],
+        ['installed', 'All use cases', pageText, [rowKey], rowKey, true], `${name}: filters reset, the target page, and the opaque key`);
+      assert.ok(state.keys.includes(rowKey), `${name}: the selected row is listed on its page`);
+      const reveal = await d.q(`(() => { const row = document.querySelector('[data-pack-row="${rowKey}"]'), scroller = ${T073_SCROLLER};
+        const r = row.getBoundingClientRect(), c = scroller.getBoundingClientRect();
+        return { row: [r.top, r.bottom], scroller: [c.top, c.bottom], scrollTop: scroller.scrollTop }; })()`);
+      assert.ok(reveal.row[0] >= reveal.scroller[0] - 1 && reveal.row[1] <= reveal.scroller[1] + 1, `${name}: the row is revealed ${JSON.stringify(reveal)}`);
+      assert.equal(await d.q(`document.activeElement === document.querySelector('[aria-label="Close project details"]')`), true, `${name}: details Close has focus`);
+      assert.deepEqual({ packReads: canvas.packReads().length, discoveries: canvas.discoveryReads().length, posts: canvas.requests.filter(entry => entry.method === 'POST').length }, before,
+        `${name}: the activation makes no read, no catalog discovery, and no operation`);
+      shown.push({ name, rowKey, page: state.page });
+      if (name === 'a row on the second page') await aboutScreenshot(page, output, 'import-show-in-installed-page-2-1440x900-light');
+      await key(page, 'Escape');
+      await d.chooseSub('import');
+    }
+
+    // Later idle and focus reads keep that selection.
+    await d.click('[data-import-show-button]');
+    await settleBrowserWork(page);
+    const reads = canvas.packReads().length;
+    provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+    await evaluate(page, `window.dispatchEvent(new Event('focus'))`);
+    await until(() => canvas.packReads().length > reads, 'a later focus read');
+    await settleBrowserWork(page);
+    const kept = await d.state();
+    assert.deepEqual([kept.detail, kept.selected, kept.open], ['project:skill:dude-local-fill-30', ['project:skill:dude-local-fill-30'], true], 'a later read keeps the selection');
+    await key(page, 'Escape');
+    await d.chooseSub('import');
+
+    // Reading Installed: a later read is held, so Show waits and says why.
+    await t005Applied(canvas, owner, d, ['.github/skills/dude-local-handmade/SKILL.md']);
+    await offered('a result read again');
+    await d.q(`window.t073.hold = true`);
+    await evaluate(page, `window.dispatchEvent(new Event('focus'))`);
+    await until(() => d.q(`window.t073.held.length >= 1`), 'the focus read is held');
+    let status = await d.status();
+    assert.deepEqual([status.phase, status.show], ['applied', { disabled: true, note: 'Reading Installed...' }]);
+    await aboutScreenshot(page, output, 'import-show-reading-1440x900-light');
+    await d.release();
+    await until(async () => (await d.status()).show?.disabled === false, 'Show is offered once Installed is read');
+
+    // Not in Installed now: a companion folder has no agent entrypoint, so no current row exists.
+    await t005Applied(canvas, owner, d, ['.github/agents/dude-local-ghost.support/LICENSE']);
+    await d.waitPhase('applied');
+    await until(async () => (await d.status()).show?.note === 'Not in Installed now', 'Not in Installed now');
+    status = await d.status();
+    assert.equal(status.show.disabled, true);
+    await aboutScreenshot(page, output, 'import-show-not-in-installed-1440x900-light');
+    assert.deepEqual((await d.state()).detail, null, 'no row is constructed from a result path');
+    output.json('import-show-in-installed.json', { case: 'first written artifact to an existing row, and the disabled reasons', shown });
+  });
+
+  // Project agents and skills could not be read: 257 is one over the limit, so no project list exists.
+  await runImportCase(context, '073-import-show-unreadable', { project: t073Fill(257) }, async ({ canvas, owner, d }) => {
+    await d.enter();
+    await d.chooseSub('import');
+    await t005Applied(canvas, owner, d, ['.github/skills/dude-local-fill-001/SKILL.md']);
+    await d.waitPhase('applied');
+    await until(async () => (await d.status()).show?.note === 'Project agents and skills could not be read', 'the unreadable-project reason');
+    assert.equal((await d.status()).show.disabled, true);
+    assert.deepEqual((await d.state()).detail, null);
+  });
+
+  // The installed pack read is unavailable, so Installed lists no project row either: Show says so and selects nothing.
+  await runImportCase(context, '073-import-show-profile', { prepare: workspace => workspace.write('.dude/metadata/profile.md', '{ not a profile') }, async ({ canvas, owner, d }) => {
+    await navigate(canvas.page, null, 1440, 'light', canvas.origin);
+    await until(() => d.q(`document.body.innerText.includes('Connected')`), 'connected Canvas');
+    await d.click('#dude-tab-settings');
+    await until(() => d.q(`document.querySelector('[aria-label="Reload packs"]')?.getAttribute('aria-busy') === 'false'`), 'the Packs read settles');
+    await d.chooseSub('import');
+    await until(() => d.q(`Boolean(document.querySelector('[data-import-panel]:not([hidden])'))`), 'Add/import');
+    await t005Applied(canvas, owner, d, ['.github/skills/dude-local-handmade/SKILL.md']);
+    await d.waitPhase('applied');
+    await until(async () => (await d.status()).show?.note === 'Not in Installed now', 'the not-listed reason');
+    assert.equal((await d.status()).show.disabled, true);
+    assert.deepEqual([(await d.state()).detail, (await d.state()).keys], [null, []], 'no unlisted row is selected');
+  });
+});
+
+/** Computed text and control colors across Add/import and Needs you, against their painted backgrounds. @param {{q: (expression: string) => Promise<any>}} d */
+const t005Colors = d => d.q(`(() => {
+  const background = node => {
+    for (let n = node; n; n = n.parentElement) {
+      const color = getComputedStyle(n).backgroundColor;
+      if (color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') return color;
+    }
+    return 'rgb(255, 255, 255)';
+  };
+  const picks = [['title', '[data-settings] h1'], ['intro', '[data-import-panel] p'], ['label', '[data-import-panel] label'],
+    ['status title', '[data-import-status] .fui-MessageBarTitle'], ['status text', '[data-import-status] [role="status"]'],
+    ['sheet label', '[data-import-request-status] dt'], ['sheet value', '[data-import-request-status] dd'], ['footer', 'footer span'],
+    ['needs heading', '#dude-panel-needs h1'], ['needs text', '#dude-panel-needs p'], ['needs scope', '#dude-panel-needs section li'],
+    ['request button', '[data-import-request]:not(:disabled)'], ['show button', '[data-import-show-button]:not(:disabled)']];
+  return picks.map(([name, selector]) => {
+    const node = [...document.querySelectorAll(selector)].find(item => item.getClientRects().length);
+    return node ? { name, color: getComputedStyle(node).color, background: background(node), size: getComputedStyle(node).fontSize } : null;
+  }).filter(Boolean);
+})()`);
+
+/** The no-overflow and target-size facts of what is shown now. @param {{q: (expression: string) => Promise<any>}} d */
+const t005Fit = d => d.q(`(() => {
+  const shown = node => node.getClientRects().length > 0;
+  const needs = document.querySelector('#dude-panel-needs'), panel = document.querySelector('[data-import-panel]');
+  const small = [...document.querySelectorAll('button, input, [role="combobox"], [role="tab"], [role="checkbox"]')]
+    .filter(node => shown(node) && !node.closest('[hidden]')).map(node => ({ node, rect: node.getBoundingClientRect() }))
+    .filter(({ rect }) => rect.width < 24 || rect.height < 24).map(({ node }) => node.getAttribute('aria-label') || node.innerText.trim() || node.tagName);
+  return { innerWidth, documentWidth: document.documentElement.scrollWidth,
+    needs: shown(needs) ? [needs.scrollWidth, needs.clientWidth, getComputedStyle(needs).paddingLeft, getComputedStyle(needs).paddingRight] : null,
+    panel: panel && shown(panel) ? [panel.scrollWidth, panel.clientWidth] : null,
+    wide: panel && shown(panel) ? [...panel.querySelectorAll('*')].filter(node => shown(node) && node.getBoundingClientRect().right > panel.getBoundingClientRect().right - (panel.offsetWidth - panel.clientWidth) + 0.5)
+      .slice(0, 6).map(node => [node.tagName, node.getAttribute('data-import-status') ?? node.className.toString().slice(0, 40), Math.round(node.getBoundingClientRect().right), Math.round(node.getBoundingClientRect().width)]) : [], small };
+})()`);
+
+/** One recorded keyboard or pointer step, with what it left behind. */
+const t005Step = (steps, input, target, extra = {}) => steps.push({ input, target, ...extra });
+
+test('073 Add/import: the complete permission, result, return, and Show in Installed script at every size and theme', {
+  timeout: 1_200_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  const draft = 'An idea draft that stays through every size and theme.';
+  await runImportCase(context, '073-import-journey', { project: [...T073_PROJECT, ...t073Fill(30)] }, async ({ canvas, owner, d }) => {
+    const { page, output } = canvas;
+    const samples = [T005_SAMPLES.focused, T005_SAMPLES.clean, T005_SAMPLES.warned];
+    const written = ['.github/skills/dude-local-handmade/SKILL.md'];
+    const applied = { outcome: 'applied', mutation: 'applied', written, uncertain: [], note: 'Wrote SKILL.md and verified it. dude-lint passed.' };
+    const space = async () => {
+      await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: ' ', code: 'Space', windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32, text: ' ', unmodifiedText: ' ' });
+      await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32 });
+    };
+    await d.enter();
+    await d.click('#dude-tab-new');
+    await focus(page, '#dude-panel-new textarea');
+    await page.send('Input.insertText', { text: draft });
+    const journeys = [];
+    let index = 0;
+    for (const theme of ['light', 'dark']) {
+      for (const size of ABOUT_VISUAL_SIZES) {
+        const sample = samples[index % samples.length];
+        const keyboard = index % 2 === 1;
+        index += 1;
+        const label = `${size.name}-${theme}`;
+        const steps = [];
+        const shot = name => aboutScreenshot(page, output, `journey-${name}-${label}`);
+        const audit = async (stage, { needs = false } = {}) => {
+          await settleAboutAnimations(page);
+          const fit = await t005Fit(d);
+          assert.equal(fit.documentWidth, size.width, `${label} ${stage}: no horizontal page scroll`);
+          if (fit.panel) assert.ok(fit.panel[0] <= fit.panel[1], `${label} ${stage}: Add/import never scrolls sideways ${JSON.stringify(fit)}`);
+          if (needs) {
+            assert.equal(fit.needs[0], fit.needs[1], `${label} ${stage}: Needs you has equal scroll and client widths`);
+            if (size.width <= 300) assert.deepEqual(fit.needs.slice(2), ['8px', '8px'], `${label}: Needs-you-only padding at 300px or less`);
+          }
+          assert.deepEqual(fit.small, [], `${label} ${stage}: every visible control is at least 24px`);
+          const ratios = [];
+          for (const colorSample of await t005Colors(d)) {
+            const ratio = contrast(colorSample.color, colorSample.background);
+            ratios.push({ name: colorSample.name, ratio: Math.round(ratio * 100) / 100 });
+            assert.ok(ratio >= 4.5, `${label} ${stage}: ${JSON.stringify(colorSample)}`);
+          }
+          const ax = await t005Accessibility(page);
+          assert.deepEqual(ax.unnamed, [], `${label} ${stage}: no unnamed control in the accessibility tree`);
+          return { stage, fit, contrast: ratios, ax: { unnamed: ax.unnamed, buttons: ax.names('button'), textboxes: ax.names('textbox') } };
+        };
+        const audits = [];
+        await aboutViewport(page, size, theme);
+
+        // Add/import: pointer to reach it, keyboard to type the Source and request it.
+        await d.openImport();
+        t005Step(steps, 'pointer', 'Settings, then Add/import');
+        audits.push(await audit('idle'));
+        await shot('add-import');
+        await d.type(sample.source);
+        await key(page, 'Enter');
+        t005Step(steps, 'keyboard', 'Source field', { typed: sample.source, keys: ['Enter'] });
+        await d.waitPhase('delivered');
+        const record = owner.latest();
+        const permission = await owner.permit(sample, record);
+        await d.waitPhase('waiting_permission');
+        assert.equal((await d.status()).focused, true, `${label}: focus is on the request status`);
+        audits.push(await audit('waiting-permission'));
+        await shot('waiting-permission');
+
+        // Open Needs you from the keyboard; the whole literal permission is shown and fits.
+        await focus(page, '[data-import-permission]');
+        await key(page, 'Enter');
+        t005Step(steps, 'keyboard', 'Open Needs you', { keys: ['Enter'] });
+        await until(() => d.q(`document.querySelector('#dude-panel-needs')?.getClientRects().length > 0`), `${label}: Needs you is shown`);
+        await settleAboutAnimations(page);
+        const needs = await d.needs();
+        t005AssertCard(needs, sample);
+        assert.deepEqual(needs.buttons.slice(-2), ['Send permission', 'Decline'], `${label}: only Send permission and Decline answer an import`);
+        assert.equal(needs.deferral, false);
+        audits.push(await audit('needs-you', { needs: true }));
+        await shot('needs-you');
+        if (size.width <= 450) {
+          // Keep reading to the end of the card: every part is reachable by scrolling alone.
+          await d.q(`document.querySelector('#dude-panel-needs').scrollTop = document.querySelector('#dude-panel-needs').scrollHeight`);
+          await settleAboutAnimations(page);
+          await shot('needs-you-end');
+        }
+
+        // Consent: typed confirmation, then the checkbox and Send permission by keyboard or by pointer.
+        const labelled = text => `(() => { const node = [...document.querySelectorAll('#dude-panel-needs label')].find(item => item.textContent.trim() === ${JSON.stringify(text)}); return node && document.getElementById(node.htmlFor); })()`;
+        const sendButton = `[...document.querySelectorAll('#dude-panel-needs button')].find(node => node.innerText.trim() === 'Send permission' && node.getClientRects().length)`;
+        await evaluate(page, `${labelled('Enter the exact confirmation')}.focus()`);
+        await page.send('Input.insertText', { text: sample.confirmation });
+        t005Step(steps, 'keyboard', 'Enter the exact confirmation', { typed: sample.confirmation });
+        if (keyboard) {
+          await evaluate(page, `${labelled('I grant permission for this operation on these exact targets.')}.focus()`);
+          await space();
+          await evaluate(page, `${sendButton}.focus()`);
+          await key(page, 'Enter');
+          t005Step(steps, 'keyboard', 'consent checkbox, then Send permission', { keys: ['Space', 'Enter'] });
+        } else {
+          await clickSettingsControl(page, labelled('I grant permission for this operation on these exact targets.'));
+          await clickSettingsControl(page, sendButton);
+          t005Step(steps, 'pointer', 'consent checkbox, then Send permission');
+        }
+        const answer = JSON.parse((await permission.result).textResultForLlm);
+        assert.deepEqual([answer.status, answer.response.action, answer.response.confirmation], ['awaiting_acknowledgment', 'consent', sample.confirmation]);
+        assert.deepEqual(answer.response.targets, sample.targets, `${label}: consent names the complete targets exactly`);
+        await owner.acknowledgePermission(permission, 'applied');
+        await until(() => d.q(`document.querySelector('#dude-panel-needs [aria-label="Response status"]')?.innerText.startsWith('Permission acknowledged')`),
+          `${label}: the permission acknowledgment`);
+        assert.equal(await d.q(`document.activeElement.getAttribute('aria-label')`), 'Response status', `${label}: focus follows the response status`);
+        audits.push(await audit('permission-acknowledged', { needs: true }));
+        await shot('permission-acknowledged');
+
+        // Back to Add/import: the matching status, the Source, and no result yet.
+        if (keyboard) {
+          await evaluate(page, `[...document.querySelectorAll('#dude-panel-needs button')].find(node => node.innerText.trim() === 'Back to Add/import').focus()`);
+          await key(page, 'Enter');
+          t005Step(steps, 'keyboard', 'Back to Add/import', { keys: ['Enter'] });
+        } else {
+          await clickSettingsControl(page, `[...document.querySelectorAll('#dude-panel-needs button')].find(node => node.innerText.trim() === 'Back to Add/import')`);
+          t005Step(steps, 'pointer', 'Back to Add/import');
+        }
+        await d.waitPhase('waiting_owner');
+        let status = await d.status();
+        assert.deepEqual([status.focused, status.show, status.source], [true, null, sample.source], `${label}: focus, no Show yet, and the Source`);
+        audits.push(await audit('waiting-owner'));
+        await shot('waiting-owner');
+
+        // The owner's verified result: complete, inert, and with the new-session caveat.
+        await owner.result(applied, record);
+        owner.idle();
+        await d.waitPhase('applied');
+        await until(async () => (await d.status()).show?.disabled === false, `${label}: Show in Installed is offered`);
+        status = await d.status();
+        t005AssertResult(status, applied, { phase: 'applied', change: 'applied', source: sample.source, receipt: record.importReceipt });
+        audits.push(await audit('applied'));
+        await shot('applied');
+
+        // Show in Installed by pointer: the existing row, its page, and details Close.
+        await clickSettingsControl(page, `document.querySelector('[data-import-show-button]')`);
+        t005Step(steps, 'pointer', 'Show in Installed');
+        await settleAboutAnimations(page);
+        const state = await d.state();
+        assert.deepEqual([state.context, state.page, state.selected, state.detail, state.open],
+          ['installed', 'Page 2 of 2', ['project:skill:dude-local-handmade'], 'project:skill:dude-local-handmade', true], `${label}: Show in Installed`);
+        assert.equal(await d.q(`document.activeElement === document.querySelector('[aria-label="Close project details"]')`), true, `${label}: details Close has focus`);
+        const details = await d.q(`(() => { const dialog = document.querySelector('[data-pack-detail]'), r = dialog.getBoundingClientRect(),
+          row = document.querySelector('[data-pack-row="project:skill:dude-local-handmade"]').getBoundingClientRect();
+          return { modal: dialog.matches(':modal'), rect: [r.left, r.top, r.right, r.bottom], row: [row.top, row.bottom], width: innerWidth, height: innerHeight }; })()`);
+        assert.ok(details.rect[0] >= 0 && details.rect[2] <= details.width + 0.5 && details.rect[1] >= 0 && details.rect[3] <= details.height + 0.5,
+          `${label}: the details stay inside the window ${JSON.stringify(details)}`);
+        audits.push(await audit('show-in-installed'));
+        await shot('show-in-installed');
+        await key(page, 'Escape');
+        t005Step(steps, 'keyboard', 'details', { keys: ['Escape'] });
+        assert.equal(await d.q(`document.activeElement?.getAttribute('data-pack-row')`), 'project:skill:dude-local-handmade', `${label}: Escape returns focus to the row`);
+        assert.equal(canvas.runtimeErrors.length, 0, `${label}: no runtime error`);
+        journeys.push({ label, size, theme, sample: sample.operation, keyboard, steps, audits, details });
+      }
+    }
+    // The idea draft was typed once and every request, return, and result kept it.
+    await d.click('#dude-tab-new');
+    assert.equal((await t005Idea(d)).draft, draft, 'the New idea draft survived every journey');
+    assert.equal(canvas.sends.length, journeys.length, 'one send per journey, none replayed');
+    assert.equal(canvas.foreign().length, 0, 'no source or network request leaves the Canvas origin');
+    output.json('import-journey.json', { case: 'permission, result, return, and Show in Installed at every size and theme', journeys });
   });
 });
 

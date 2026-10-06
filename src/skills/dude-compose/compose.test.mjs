@@ -18,6 +18,19 @@ import {
   cmdVerify,
   readProfile,
 } from './compose.mjs';
+import {
+  MAX_ADDED_SOURCES,
+  PACK_SOURCES_PATH,
+  PackSourceError,
+  describeBuiltinSources,
+  describePackSources,
+  matchesRecordedSource,
+  parsePackSourcesDocument,
+  readPackSources,
+  serializePackSourcesDocument,
+  validateNewSource,
+  writePackSources,
+} from '../dude-engine/lib/pack-sources.mjs';
 
 const ENGINE_LIB = fileURLToPath(new URL('../dude-engine/lib/', import.meta.url));
 const MODEL_CONFIG_SOURCE = fileURLToPath(new URL('../../config/agent-models.json', import.meta.url));
@@ -1223,8 +1236,10 @@ test('remote source selection preserves local authority, explicit inputs, manife
     assert.equal(localList.result?.packs.some((pack) => pack.name === 'remote-only'), false);
     assert.equal(localList.result?.origin, 'local');
 
-    // The requested local target also wins over an explicit unusable source.
-    const localAdded = await cmdAdd({
+    // An explicit source is exclusive: the local target does not preempt it, and
+    // a source that cannot be fetched is a refusal, never a fallback to the library.
+    const explicitBefore = mutationSnapshot(root);
+    const explicitAdd = await cmdAdd({
       root,
       library,
       name: 'local',
@@ -1232,6 +1247,12 @@ test('remote source selection preserves local authority, explicit inputs, manife
       source: 'file:///definitely-missing-local-precedence',
       ref: 'main',
     });
+    assert.equal(explicitAdd.ok, false);
+    assert.match(explicitAdd.error || '', /failed to fetch source/);
+    assertMutationUnchanged(root, explicitBefore);
+
+    // Without a source, the requested local target is still used.
+    const localAdded = await cmdAdd({ root, library, name: 'local', force: false });
     assert.equal(localAdded.ok, true, localAdded.error);
     assert.deepEqual(readProfile(root).installed.local.source, {
       type: 'local',
@@ -1242,13 +1263,18 @@ test('remote source selection preserves local authority, explicit inputs, manife
       localSource,
       fs.readFileSync(localSource, 'utf8').replace('You are Local Worker.', 'You are Local Worker refreshed.'),
     );
-    const localRefreshed = await cmdRefresh({
+    const refreshBefore = mutationSnapshot(root);
+    const explicitRefresh = await cmdRefresh({
       root,
       library,
       name: 'local',
       source: 'file:///definitely-missing-local-precedence',
       ref: 'main',
     });
+    assert.equal(explicitRefresh.ok, false);
+    assert.match(explicitRefresh.error || '', /failed to fetch source/);
+    assertMutationUnchanged(root, refreshBefore);
+    const localRefreshed = await cmdRefresh({ root, library, name: 'local' });
     assert.equal(localRefreshed.ok, true, localRefreshed.error);
     assert.match(
       fs.readFileSync(path.join(root, '.github', 'agents', 'dude-pack-local-worker.agent.md'), 'utf8'),
@@ -2674,4 +2700,1294 @@ test('T003 source Compose guidance owns Canvas permission, exact-source rechecks
   ].sort());
   assert.equal(example.acknowledgment.recognizes, 'pack_result');
   assert.deepEqual(Object.keys(example.acknowledgment.result.result).sort(), ['added', 'files', 'origin']);
+});
+
+/* ------------------------------------------------------ T007 saved pack sources */
+
+/**
+ * A workspace with a library and a metadata folder, beside which other folders
+ * can serve as sources.
+ */
+function createSourcesWorkspace() {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-sources-'));
+  const root = path.join(parent, 'workspace');
+  fs.mkdirSync(path.join(root, '.dude', 'metadata'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'library', 'packs'), { recursive: true });
+  return { parent, root, file: path.join(root, ...PACK_SOURCES_PATH.split('/')) };
+}
+
+/**
+ * A folder in the supported source layout, with one metadata-only pack per name.
+ * @param {string} parent
+ * @param {string} name
+ * @param {string[]} [packs]
+ */
+function createSourceFolder(parent, name, packs = ['one']) {
+  const folder = path.join(parent, name);
+  fs.mkdirSync(path.join(folder, 'library', 'packs'), { recursive: true });
+  for (const pack of packs) {
+    fs.mkdirSync(path.join(folder, 'library', 'packs', pack), { recursive: true });
+    fs.writeFileSync(
+      path.join(folder, 'library', 'packs', pack, 'pack.md'),
+      `---\nname: ${pack}\ndescription: "${pack}"\n---\n`,
+    );
+  }
+  return folder;
+}
+
+const UPSTREAM = { source_repo: 'https://github.com/E-G-C/dude', source_ref: 'main' };
+
+/** @param {number} n @param {string} [ref] */
+function remoteEntry(n, ref = 'main') {
+  return { type: 'remote', repository: `https://github.com/acme/pack-${n}`, ref };
+}
+
+/** @param {string | Buffer} bytes */
+function sha256Revision(bytes) {
+  return `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
+}
+
+/** @param {string} code a predicate for `assert.throws` */
+function refusal(code) {
+  return (/** @type {unknown} */ error) => error instanceof PackSourceError && error.code === code;
+}
+
+/** @param {string} json */
+function sourcesBlock(json) {
+  return `# Pack Sources\n\n\`\`\`json\n${json}\n\`\`\`\n`;
+}
+
+/**
+ * A valid sources document of exactly `size` bytes: the JSON block between
+ * Markdown prose, padded with three-byte characters so its character count is
+ * lower than its byte count.
+ * @param {number} size
+ * @param {string} [json]
+ */
+function sourcesDocumentOfSize(size, json = '{"sources":[]}') {
+  const head = '# Pack Sources\n\nNotes kept beside the list, \u00e9\u00e8\u00ea included.\n\n';
+  const block = `\`\`\`json\n${json}\n\`\`\`\n`;
+  const padding = size - Buffer.byteLength(head) - Buffer.byteLength(block) - 1;
+  assert.ok(padding >= 0, 'the size must leave room for the document');
+  return `${head}${block}\n${'\u20ac'.repeat(Math.floor(padding / 3))}${'x'.repeat(padding % 3)}`;
+}
+
+test('T007 saved sources: a missing file is empty at revision absent, and the canonical document round-trips', () => {
+  const { parent, root, file } = createSourcesWorkspace();
+  try {
+    assert.deepEqual(readPackSources(root), { ok: true, sources: [], revision: 'absent' });
+
+    const planExample = '{"sources":[{"type":"remote","repository":"https://github.com/acme/dude-packs","ref":"main"},{"type":"local","location":"../team-packs"}]}';
+    const entries = parsePackSourcesDocument(
+      `# Pack Sources\n\nProse may surround the block.\n\n\`\`\`json\n${planExample}\n\`\`\`\n\nMore prose.\n`,
+    );
+    assert.deepEqual(entries, JSON.parse(planExample).sources);
+
+    // The saved block holds only the specified fields, in one stable form.
+    const document = serializePackSourcesDocument(entries);
+    const blocks = [...document.matchAll(/```json\n([\s\S]*?)\n```/g)];
+    assert.equal(blocks.length, 1);
+    assert.deepEqual(JSON.parse(blocks[0][1]), JSON.parse(planExample));
+    assert.deepEqual(parsePackSourcesDocument(document), entries);
+    assert.equal(serializePackSourcesDocument(parsePackSourcesDocument(document)), document);
+    assert.deepEqual(
+      JSON.parse(/```json\n([\s\S]*?)\n```/.exec(serializePackSourcesDocument([]))?.[1] ?? 'null'),
+      { sources: [] },
+    );
+
+    // The same document with CRLF line endings, or a byte-order mark, parses to the same entries.
+    assert.deepEqual(parsePackSourcesDocument(document.replace(/\n/g, '\r\n')), entries);
+    assert.deepEqual(parsePackSourcesDocument(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(document)])), entries);
+
+    // The revision is the SHA-256 of the raw bytes, surrounding Markdown included.
+    const written = writePackSources(root, entries, 'absent');
+    assert.equal(written.revision, sha256Revision(fs.readFileSync(file)));
+    assert.deepEqual(readPackSources(root), { ok: true, sources: entries, revision: written.revision });
+    fs.appendFileSync(file, '\nA note outside the block.\n');
+    const annotated = readPackSources(root);
+    assert.equal(annotated.ok, true);
+    assert.deepEqual(annotated.ok && annotated.sources, entries);
+    assert.equal(annotated.ok && annotated.revision, sha256Revision(fs.readFileSync(file)));
+    assert.notEqual(annotated.ok && annotated.revision, written.revision);
+
+    // A save regenerates the whole file, as its header says, so prose outside the block is not kept.
+    const resaved = writePackSources(root, entries, annotated.ok ? annotated.revision : '');
+    assert.equal(fs.readFileSync(file, 'utf8'), document);
+    assert.equal(resaved.revision, written.revision);
+    const header = document.replace(/\s+/g, ' ');
+    assert.ok(header.includes('regenerates the whole file'), 'the header names what a save does');
+    assert.ok(header.includes('text outside the JSON block is not kept'));
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test('T007 saved sources: built-ins, keys, counts, and every field beyond the two entry shapes are refused, never saved', () => {
+  const { parent, root, file } = createSourcesWorkspace();
+  try {
+    const builtins = describeBuiltinSources({ root, upstream: UPSTREAM });
+    const described = describePackSources({ root, sources: [remoteEntry(1)], builtins });
+    assert.equal(described.ok, true);
+    const attempts = [
+      described.ok ? described.sources : [],
+      builtins,
+      [{ ...remoteEntry(1), count: 3 }],
+      [{ ...remoteEntry(1), addedAt: '2026-10-03T00:00:00Z' }],
+      [{ type: 'local', location: '../x', alias: 'x', priority: 1 }],
+      [{ type: 'remote', repository: 'https://github.com/acme/x' }],
+    ];
+    for (const attempt of attempts) {
+      assert.throws(() => serializePackSourcesDocument(attempt), refusal('unavailable'));
+      assert.throws(() => writePackSources(root, attempt, 'absent'), refusal('unavailable'));
+    }
+    assert.equal(exists(file), false, 'a refused list must not create the file');
+    assert.deepEqual(fs.readdirSync(path.dirname(file)), []);
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test('T007 saved sources: malformed, unsafe, multiple-block, unknown-field, repeated, and over-limit documents are unavailable, never empty', () => {
+  const { parent, root, file } = createSourcesWorkspace();
+  try {
+    const entries = (...sources) => sourcesBlock(JSON.stringify({ sources }));
+    const empty = sourcesBlock('{"sources":[]}');
+    const cases = [
+      { name: 'no JSON block', content: '# Pack Sources\n', expected: /exactly one fenced JSON block \(found 0\)/ },
+      { name: 'two JSON blocks', content: `${empty}\n${empty}`, expected: /exactly one fenced JSON block \(found 2\)/ },
+      { name: 'malformed JSON', content: sourcesBlock('{nope}'), expected: /malformed JSON/ },
+      { name: 'array root', content: sourcesBlock('[]'), expected: /JSON must contain only sources/ },
+      { name: 'unknown root field', content: sourcesBlock('{"sources":[],"version":1}'), expected: /JSON must contain only sources/ },
+      { name: 'missing sources', content: sourcesBlock('{}'), expected: /JSON must contain only sources/ },
+      { name: 'sources that is not a list', content: sourcesBlock('{"sources":{}}'), expected: /sources must be a list/ },
+      { name: 'entry that is not an object', content: sourcesBlock('{"sources":["x"]}'), expected: /sources\[0\] must be an object/ },
+      { name: 'unknown entry field', content: entries({ ...remoteEntry(1), alias: 'a' }), expected: /sources\[0\] has unsupported or missing fields/ },
+      { name: 'persisted key', content: entries({ ...remoteEntry(1), key: 'src_1' }), expected: /unsupported or missing fields/ },
+      { name: 'remote without a ref', content: entries({ type: 'remote', repository: 'https://github.com/acme/x' }), expected: /unsupported or missing fields/ },
+      { name: 'unknown type', content: entries({ type: 'ssh', location: 'x' }), expected: /sources\[0\]\.type must be "remote" or "local"/ },
+      { name: 'credentials in a repository', content: entries({ ...remoteEntry(1), repository: 'https://user:s3cr3t@github.com/acme/x' }), expected: /sources\[0\]\.repository must be a public https:\/\/github\.com\/<owner>\/<repo> repository/ },
+      { name: 'explicit port', content: entries({ ...remoteEntry(1), repository: 'https://github.com:443/acme/x' }), expected: /sources\[0\]\.repository must be a public/ },
+      { name: 'non-canonical repository', content: entries({ ...remoteEntry(1), repository: 'https://github.com/acme/x.git' }), expected: /must be written https:\/\/github\.com\/acme\/x/ },
+      { name: 'leading-dash ref', content: entries(remoteEntry(1, '--upload-pack=x')), expected: /sources\[0\]\.ref is not a valid ref/ },
+      { name: 'ref with two periods', content: entries(remoteEntry(1, 'a..b')), expected: /not a valid ref/ },
+      { name: 'overlong ref', content: entries(remoteEntry(1, 'a'.repeat(129))), expected: /not a valid ref/ },
+      { name: 'URL as a local location', content: entries({ type: 'local', location: 'file:///tmp/x' }), expected: /sources\[0\]\.location must be one trimmed line .* not a URL/ },
+      { name: 'untrimmed local location', content: entries({ type: 'local', location: ' ../x' }), expected: /one trimmed line/ },
+      { name: 'overlong local location', content: entries({ type: 'local', location: 'x'.repeat(2049) }), expected: /one trimmed line/ },
+      { name: 'a ninth source', content: entries(...Array.from({ length: 9 }, (_, index) => remoteEntry(index))), expected: /lists 9 sources; at most 8 can be added/ },
+      { name: 'the same repository at another ref', content: entries(remoteEntry(1, 'main'), remoteEntry(1, 'v2')), expected: /sources\[1\] repeats sources\[0\]/ },
+      { name: 'the same repository in another case', content: entries(remoteEntry(1), { ...remoteEntry(1), repository: 'https://github.com/ACME/Pack-1' }), expected: /sources\[1\] repeats sources\[0\]/ },
+      { name: 'the same folder with a trailing separator', content: entries({ type: 'local', location: '../a' }, { type: 'local', location: '../a/' }), expected: /sources\[1\] repeats sources\[0\]/ },
+      { name: 'a document over its size limit', content: `${empty}${' '.repeat(65_536)}`, expected: /larger than 65536 bytes/ },
+      { name: 'invalid UTF-8', content: Buffer.concat([Buffer.from(empty), Buffer.from([0xff, 0xfe])]), expected: /not valid UTF-8/ },
+    ];
+    for (const { name, content, expected } of cases) {
+      assert.throws(
+        () => parsePackSourcesDocument(content),
+        (error) => refusal('unavailable')(error) && expected.test(error.message) && !error.message.includes('s3cr3t'),
+        name,
+      );
+      fs.writeFileSync(file, content);
+      const bytes = fs.readFileSync(file);
+      const read = readPackSources(root);
+      assert.equal(read.ok, false, name);
+      assert.match(read.ok ? '' : read.error, expected, name);
+      assert.equal('sources' in read, false, `${name}: unavailable is never an empty list`);
+      assert.deepEqual(fs.readFileSync(file), bytes, `${name}: reading must not change the file`);
+    }
+
+    // The bounds themselves are valid.
+    assert.equal(
+      parsePackSourcesDocument(entries(...Array.from({ length: MAX_ADDED_SOURCES }, (_, index) => remoteEntry(index)))).length,
+      8,
+    );
+    const padded = `${empty}${' '.repeat(65_536 - Buffer.byteLength(empty))}`;
+    assert.equal(Buffer.byteLength(padded), 65_536);
+    assert.deepEqual(parsePackSourcesDocument(padded), []);
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test('T007 saved sources: the 64 KiB cap counts every byte of the file, is exact at 65,536 and 65,537, and a refusal never truncates or resets', () => {
+  const { parent, root, file } = createSourcesWorkspace();
+  try {
+    const entries = [remoteEntry(1), { type: 'local', location: '../team-packs' }];
+    const json = JSON.stringify({ sources: entries });
+    const atLimit = sourcesDocumentOfSize(65_536, json);
+    const overLimit = sourcesDocumentOfSize(65_537, json);
+    assert.equal(Buffer.byteLength(atLimit), 65_536);
+    assert.equal(Buffer.byteLength(overLimit), 65_537);
+    assert.ok(overLimit.length < 65_536, 'the cap counts bytes, not characters');
+
+    // Exactly 64 KiB, surrounding Markdown included, is a complete document.
+    assert.deepEqual(parsePackSourcesDocument(atLimit), entries);
+    assert.deepEqual(parsePackSourcesDocument(Buffer.from(atLimit)), entries);
+    fs.writeFileSync(file, atLimit);
+    assert.deepEqual(readPackSources(root), { ok: true, sources: entries, revision: sha256Revision(atLimit) });
+
+    // One more byte makes it unavailable, never an empty list, and the file is never cut down to fit.
+    for (const bytes of [overLimit, Buffer.from(overLimit)]) {
+      assert.throws(
+        () => parsePackSourcesDocument(bytes),
+        (error) => refusal('unavailable')(error) && /larger than 65536 bytes/.test(error.message),
+      );
+    }
+    fs.writeFileSync(file, overLimit);
+    const unreadable = readPackSources(root);
+    assert.equal(unreadable.ok, false);
+    assert.match(unreadable.ok ? '' : unreadable.error, /larger than 65536 bytes/);
+    assert.equal('sources' in unreadable, false, 'unavailable is never an empty list');
+    assert.equal(fs.readFileSync(file, 'utf8'), overLimit, 'reading never truncates');
+
+    // A save cannot reset a list it cannot read, even when handed that file's own hash.
+    assert.throws(() => writePackSources(root, [], sha256Revision(overLimit)), refusal('unavailable'));
+    assert.equal(fs.readFileSync(file, 'utf8'), overLimit);
+    assert.deepEqual(fs.readdirSync(path.dirname(file)), ['pack-sources.md'], 'no temporary or backup residue');
+
+    // A document at the cap is fully usable: a save regenerates it as the canonical, much smaller one.
+    fs.writeFileSync(file, atLimit);
+    const grown = [...entries, remoteEntry(2)];
+    const saved = writePackSources(root, grown, sha256Revision(atLimit));
+    assert.deepEqual(readPackSources(root), { ok: true, sources: grown, revision: saved.revision });
+    assert.ok(fs.statSync(file).size < 1_024);
+
+    // The longest list a save can write still fits the cap, so a valid save is never refused or cut.
+    const widest = Array.from({ length: MAX_ADDED_SOURCES }, (_, index) => ({ type: 'local', location: `${'\\'.repeat(2046)}${index}x` }));
+    const longest = serializePackSourcesDocument(widest);
+    assert.ok(Buffer.byteLength(longest) <= 65_536, `${Buffer.byteLength(longest)} bytes`);
+    assert.deepEqual(parsePackSourcesDocument(longest), widest);
+    fs.rmSync(file);
+    const widestSaved = writePackSources(root, widest, 'absent');
+    assert.equal(fs.readFileSync(file, 'utf8'), longest);
+    assert.deepEqual(readPackSources(root), { ok: true, sources: widest, revision: widestSaved.revision });
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test('T007 saved sources: a saved local location is accepted at 2,048 UTF-8 bytes and refused at 2,049, by bytes not characters, without truncation', () => {
+  const { parent, root, file } = createSourcesWorkspace();
+  try {
+    const widths = [
+      ['one-byte', 'x'.repeat(2048), 'x'.repeat(2049)],
+      ['two-byte', '\u00e9'.repeat(1024), `${'\u00e9'.repeat(1024)}x`],
+      ['three-byte', `${'\u20ac'.repeat(682)}ab`, '\u20ac'.repeat(683)],
+      ['four-byte', '\u{1F600}'.repeat(512), `${'\u{1F600}'.repeat(512)}x`],
+    ];
+    // The same JSON plainly, and with every non-ASCII code unit written as a \u escape: the bound is on the decoded text.
+    const plain = (/** @type {string} */ text) => text;
+    const escaped = (/** @type {string} */ text) => text.replace(/[^\x00-\x7f]/g, (unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, '0')}`);
+    for (const [kind, atLimit, overLimit] of widths) {
+      assert.equal(Buffer.byteLength(atLimit), 2048, kind);
+      assert.equal(Buffer.byteLength(overLimit), 2049, kind);
+
+      // A hand-edited document.
+      for (const spell of [plain, escaped]) {
+        const documentFor = (/** @type {string} */ location) => sourcesBlock(spell(JSON.stringify({ sources: [{ type: 'local', location }] })));
+        assert.deepEqual(parsePackSourcesDocument(documentFor(atLimit)), [{ type: 'local', location: atLimit }], kind);
+        assert.throws(
+          () => parsePackSourcesDocument(documentFor(overLimit)),
+          (error) => refusal('unavailable')(error) && /sources\[0\]\.location must be one trimmed line of at most 2048 bytes/.test(error.message),
+          kind,
+        );
+        fs.writeFileSync(file, documentFor(overLimit));
+        const unreadable = readPackSources(root);
+        assert.equal(unreadable.ok, false, kind);
+        assert.equal('sources' in unreadable, false, `${kind}: unavailable is never an empty list`);
+        assert.equal(fs.readFileSync(file, 'utf8'), documentFor(overLimit), `${kind}: reading never truncates`);
+      }
+
+      // A save keeps the whole accepted location, and refuses the longer one before writing anything.
+      fs.rmSync(file, { force: true });
+      const saved = writePackSources(root, [{ type: 'local', location: atLimit }], 'absent');
+      const savedBytes = fs.readFileSync(file);
+      assert.deepEqual(readPackSources(root), { ok: true, sources: [{ type: 'local', location: atLimit }], revision: saved.revision }, kind);
+      assert.throws(() => serializePackSourcesDocument([{ type: 'local', location: overLimit }]), refusal('unavailable'), kind);
+      assert.throws(() => writePackSources(root, [{ type: 'local', location: overLimit }], saved.revision), refusal('unavailable'), kind);
+      assert.deepEqual(fs.readFileSync(file), savedBytes, `${kind}: a refused save leaves the saved list as it was`);
+      assert.deepEqual(fs.readdirSync(path.dirname(file)), ['pack-sources.md'], kind);
+    }
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test('T007 source validation: only a public https://github.com/<owner>/<repo> remote is accepted, rebuilt from validated parts', () => {
+  const { parent, root } = createSourcesWorkspace();
+  try {
+    const builtins = describeBuiltinSources({ root, upstream: UPSTREAM });
+    const validate = (/** @type {unknown} */ location, /** @type {unknown} */ ref) => validateNewSource({ root, sources: [], builtins, location, ref });
+
+    // Letter case, `.git`, a trailing slash, and the scheme's case never change the key.
+    const canonical = validate('https://github.com/Acme/Dude-Packs');
+    assert.deepEqual(canonical.entry, { type: 'remote', repository: 'https://github.com/Acme/Dude-Packs', ref: 'main' });
+    for (const spelling of [
+      'https://github.com/acme/dude-packs',
+      'https://github.com/Acme/Dude-Packs.git',
+      'https://github.com/Acme/Dude-Packs/',
+      'HTTPS://github.com/Acme/Dude-Packs',
+    ]) {
+      const accepted = validate(spelling);
+      assert.equal(accepted.entry.type === 'remote' && accepted.entry.repository.toLowerCase(), 'https://github.com/acme/dude-packs', spelling);
+      assert.equal(accepted.source.key, canonical.source.key, spelling);
+    }
+
+    const refused = [
+      ['https://user:s3cr3t@github.com/acme/x', 'credentials'],
+      ['https://s3cr3t@github.com/acme/x', 'credentials'],
+      ['https://github.com@evil.example/acme/x', 'credentials'],
+      ['https://github.com:443/acme/x', 'invalid_location', /port number/],
+      ['https://github.com:8443/acme/x', 'invalid_location', /port number/],
+      ['http://github.com/acme/x', 'invalid_location', /Other transports are not supported/],
+      ['git://github.com/acme/x', 'invalid_location', /Other transports are not supported/],
+      ['ssh://git@github.com/acme/x', 'invalid_location', /Other transports are not supported/],
+      ['git@github.com:acme/x.git', 'invalid_location', /SSH addresses are not supported/],
+      ['file:///tmp/x', 'invalid_location', /Other transports are not supported/],
+      ['ext::sh -c touch% /tmp/pwned', 'invalid_location', /Other transports are not supported/],
+      ['https://gitlab.com/acme/x', 'invalid_location', /Other hosts are not supported/],
+      ['https://gist.github.com/acme/x', 'invalid_location', /Other hosts are not supported/],
+      ['https://github.com.evil.example/acme/x', 'invalid_location', /Other hosts are not supported/],
+      ['https://evil.example/github.com/acme/x', 'invalid_location', /Other hosts are not supported/],
+      ['https://github.com./acme/x', 'invalid_location', /Other hosts are not supported/],
+      ['https://GitHub.com/acme/x', 'invalid_location', /Other hosts are not supported/],
+      ['https:github.com/acme/x', 'invalid_location', /complete https:\/\/ URL/],
+      ['https://github.com\\acme\\x', 'invalid_location', /backslashes and encoded slashes/],
+      ['https://github.com/acme%2Fx', 'invalid_location', /backslashes and encoded slashes/],
+      ['https://github.com/acme%5Cx', 'invalid_location', /backslashes and encoded slashes/],
+      ['https://github.com/acme/x?tab=readme', 'invalid_location', /query or fragment/],
+      ['https://github.com/acme/x#readme', 'invalid_location', /query or fragment/],
+      ['https://github.com/acme/x/tree/main', 'invalid_location', /repository address only/],
+      ['https://github.com/acme', 'invalid_location', /repository address only/],
+      ['https://github.com/', 'invalid_location', /repository address only/],
+      ['https://github.com', 'invalid_location', /repository address only/],
+      ['https://github.com/acme/x//', 'invalid_location', /repository address only/],
+      ['https://github.com/acme/..', 'invalid_location', /repository address only/],
+      ['https://github.com/ac me/x', 'invalid_location', /repository address only/],
+      ['https://github.com/acme/x.git.git', 'invalid_location', /repository address only/],
+      [' https://github.com/acme/x', 'invalid_location', /one line, without surrounding spaces/],
+      ['https://github.com/acme/x\n', 'invalid_location', /one line, without surrounding spaces/],
+      ['https://github.com/acme/x\u0000', 'invalid_location', /one line, without surrounding spaces/],
+      ['https://github.com/acme/x\u2028', 'invalid_location', /one line, without surrounding spaces/],
+      ['   ', 'invalid_location', /Enter a GitHub repository URL or a local folder/],
+      ['', 'invalid_location', /Enter a GitHub repository URL or a local folder/],
+      [undefined, 'invalid_location', /Enter a GitHub repository URL or a local folder/],
+      [5, 'invalid_location', /Enter a GitHub repository URL or a local folder/],
+    ];
+    for (const [location, code = 'invalid_location', message] of refused) {
+      assert.throws(
+        () => validate(location),
+        (error) => refusal(code)(error)
+          && (!message || message.test(error.message))
+          && !error.message.includes('s3cr3t')
+          && !error.message.includes('evil.example'),
+        String(location),
+      );
+    }
+
+    // A URL-shaped value is judged as a URL, so it is never retried as a folder.
+    for (const location of ['https://github.com/acme/folder-name/x/y', 'file:///tmp', 'ext::x']) {
+      assert.throws(
+        () => validate(location),
+        (error) => error instanceof PackSourceError && !error.code.startsWith('local_'),
+        location,
+      );
+    }
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test('T007 source validation: a ref is 1-128 safe characters without a leading dash or two periods, and only a remote has one', () => {
+  const { parent, root } = createSourcesWorkspace();
+  try {
+    const builtins = describeBuiltinSources({ root, upstream: UPSTREAM });
+    const location = 'https://github.com/acme/dude-packs';
+    const validate = (/** @type {string} */ place, /** @type {unknown} */ ref) => validateNewSource({ root, sources: [], builtins, location: place, ref });
+
+    for (const omitted of [undefined, null, '']) assert.equal(validate(location, omitted).entry.type === 'remote' && validate(location, omitted).entry.ref, 'main');
+    for (const ref of ['main', 'v1.0.0', 'release/1.2', 'feature_x.y-z', 'a'.repeat(128), '7'.repeat(40)]) {
+      const entry = validate(location, ref).entry;
+      assert.equal(entry.type === 'remote' && entry.ref, ref);
+    }
+    for (const ref of ['-x', '--upload-pack=touch', 'a'.repeat(129), 'a..b', '..', '.hidden', '/main', 'main ', ' main', 'a b', 'a:b', 'a\\b', 'caf\u00e9', 5, {}]) {
+      assert.throws(() => validate(location, ref), refusal('invalid_ref'), JSON.stringify(ref));
+    }
+
+    // A local folder has no ref, and a supplied one is refused rather than ignored.
+    const team = createSourceFolder(parent, 'team-packs');
+    assert.throws(() => validate(team, 'main'), refusal('ref_not_applicable'));
+    assert.deepEqual(validate(team, '').entry, { type: 'local', location: team });
+    assert.deepEqual(validate(team, undefined).entry, { type: 'local', location: team });
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test('T007 source validation: a location is one trimmed line of at most 2,048 UTF-8 bytes', () => {
+  const { parent, root } = createSourcesWorkspace();
+  try {
+    const builtins = describeBuiltinSources({ root, upstream: UPSTREAM });
+    const validate = (/** @type {string} */ location) => validateNewSource({ root, sources: [], builtins, location });
+    const atLimit = ['x'.repeat(2048), `${'\u20ac'.repeat(682)}ab`];
+    const overLimit = ['x'.repeat(2049), '\u20ac'.repeat(683), `${'\u20ac'.repeat(682)}abc`];
+    for (const location of atLimit) {
+      assert.equal(Buffer.byteLength(location), 2048);
+      // Within the bound the value is judged as a folder, which does not exist.
+      assert.throws(() => validate(location), refusal('local_missing'));
+    }
+    for (const location of overLimit) {
+      assert.ok(Buffer.byteLength(location) > 2048);
+      assert.throws(() => validate(location), refusal('invalid_location'));
+    }
+    for (const location of ['two\nlines', 'tab\there', 'bell\u0007', ' leading', 'trailing ', '\ud800lone-surrogate']) {
+      assert.throws(() => validate(location), refusal('invalid_location'), JSON.stringify(location));
+    }
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test('T007 source validation: a local source is an existing folder that contains library/packs, never the workspace library', () => {
+  const { parent, root } = createSourcesWorkspace();
+  try {
+    const builtins = describeBuiltinSources({ root, upstream: UPSTREAM });
+    const validate = (/** @type {string} */ location) => validateNewSource({ root, sources: [], builtins, location });
+    const team = createSourceFolder(parent, 'team-packs');
+    createSourceFolder(parent, 'empty-packs', []);
+
+    // Absolute and workspace-relative spellings are saved as typed and share one identity.
+    const absolute = validate(team);
+    const relative = validate('../team-packs');
+    assert.deepEqual(absolute.entry, { type: 'local', location: team });
+    assert.deepEqual(relative.entry, { type: 'local', location: '../team-packs' });
+    assert.equal(absolute.source.type === 'local' && absolute.source.root, fs.realpathSync(team));
+    assert.equal(relative.source.key, absolute.source.key);
+    assert.equal(validate('../empty-packs').entry.type, 'local', 'a valid empty catalog is accepted');
+
+    assert.throws(() => validate('../does-not-exist'), refusal('local_missing'));
+    assert.throws(() => validate(path.join(team, 'library', 'packs', 'one', 'pack.md')), refusal('local_missing'), 'a file is not a folder');
+    assert.throws(() => validate('C:\\definitely\\missing\\packs'), refusal('local_missing'), 'a Windows drive path is a folder, not a URL');
+    assert.throws(() => validate(parent), refusal('local_layout'), 'a folder without library/packs');
+    assert.throws(
+      () => validate(path.join(team, 'library', 'packs')),
+      (error) => refusal('bare_packs_folder')(error) && error.message === 'Choose the folder that contains library/packs.',
+    );
+    for (const own of ['.', root, '../workspace', `${root}${path.sep}`, path.join(root, 'library', '..')]) {
+      assert.throws(() => validate(own), refusal('own_library'), own);
+    }
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test('T007 source validation: a linked library folder is refused and a link to the workspace is still its own library', { skip: process.platform === 'win32' }, () => {
+  const { parent, root } = createSourcesWorkspace();
+  try {
+    const builtins = describeBuiltinSources({ root, upstream: UPSTREAM });
+    const validate = (/** @type {string} */ location) => validateNewSource({ root, sources: [], builtins, location });
+    const team = createSourceFolder(parent, 'team-packs');
+    const linkedLibrary = path.join(parent, 'linked-library');
+    fs.mkdirSync(linkedLibrary);
+    fs.symlinkSync(path.join(team, 'library'), path.join(linkedLibrary, 'library'), 'dir');
+    assert.throws(() => validate(linkedLibrary), refusal('local_layout'));
+    const alias = path.join(parent, 'workspace-alias');
+    fs.symlinkSync(root, alias, 'dir');
+    assert.throws(() => validate(alias), refusal('own_library'));
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test('T007 source validation: a repeated identity, even at another ref, and a ninth source are refused', () => {
+  const { parent, root } = createSourcesWorkspace();
+  try {
+    const builtins = describeBuiltinSources({ root, upstream: UPSTREAM });
+    const upstream = builtins.find((builtin) => builtin.builtin === 'bundle-upstream');
+    const first = validateNewSource({ root, sources: [], builtins, location: 'https://github.com/acme/dude-packs' });
+    const saved = [first.entry];
+    for (const [location, ref] of [
+      ['https://github.com/acme/dude-packs'],
+      ['https://github.com/acme/dude-packs', 'v2'],
+      ['https://github.com/ACME/Dude-Packs.git/', 'main'],
+    ]) {
+      assert.throws(
+        () => validateNewSource({ root, sources: saved, builtins, location, ref }),
+        (error) => refusal('duplicate')(error) && error.key === first.source.key,
+        location,
+      );
+    }
+    // The bundle upstream is already a source.
+    for (const [location, ref] of [['https://github.com/E-G-C/dude'], ['https://github.com/e-g-c/DUDE.git', 'v9']]) {
+      assert.throws(
+        () => validateNewSource({ root, sources: saved, builtins, location, ref }),
+        (error) => refusal('duplicate')(error) && error.key === upstream?.key,
+        location,
+      );
+    }
+
+    // One folder spelled several ways is one source.
+    const team = createSourceFolder(parent, 'team-packs');
+    const local = validateNewSource({ root, sources: [], builtins, location: team });
+    const spellings = [`${team}${path.sep}`, '../team-packs', path.join(team, '..', 'team-packs'), path.join(team, 'library', '..')];
+    if (process.platform === 'win32') spellings.push(team.toUpperCase());
+    for (const location of spellings) {
+      assert.throws(
+        () => validateNewSource({ root, sources: [local.entry], builtins, location }),
+        (error) => refusal('duplicate')(error) && error.key === local.source.key,
+        location,
+      );
+    }
+
+    // Eight sources are accepted. The ninth is refused before its own checks.
+    assert.equal(MAX_ADDED_SOURCES, 8);
+    let list = [];
+    for (let index = 0; index < MAX_ADDED_SOURCES; index += 1) {
+      list = [...list, validateNewSource({ root, sources: list, builtins, location: `https://github.com/acme/pack-${index}` }).entry];
+    }
+    assert.equal(list.length, 8);
+    assert.deepEqual(parsePackSourcesDocument(serializePackSourcesDocument(list)), list);
+    for (const location of ['https://github.com/acme/pack-8', 'not even a location\n']) {
+      assert.throws(() => validateNewSource({ root, sources: list, builtins, location }), refusal('limit'));
+    }
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test('T007 source identity: keys are opaque, ignore the ref, cover the built-ins, and keep an unresolvable folder', () => {
+  const { parent, root } = createSourcesWorkspace();
+  try {
+    const builtins = describeBuiltinSources({ root, upstream: UPSTREAM });
+    assert.deepEqual(builtins.map((builtin) => builtin.builtin), ['local-library', 'bundle-upstream']);
+    const [library, upstream] = builtins;
+    assert.equal(library.type === 'local' && library.root, fs.realpathSync(path.join(root, 'library', 'packs')));
+    assert.deepEqual(upstream.type === 'remote' && [upstream.repository, upstream.ref], [UPSTREAM.source_repo, 'main']);
+    assert.deepEqual(
+      describeBuiltinSources({ root, upstream: UPSTREAM }).map((builtin) => builtin.key),
+      builtins.map((builtin) => builtin.key),
+      'keys are derived the same way on every read',
+    );
+    const team = createSourceFolder(parent, 'team-packs');
+    const described = (/** @type {import('../dude-engine/lib/pack-sources.mjs').PackSource[]} */ sources) => {
+      const result = describePackSources({ root, sources, builtins });
+      assert.equal(result.ok, true, JSON.stringify(result));
+      return result.ok ? result.sources : [];
+    };
+
+    const [one] = described([remoteEntry(1, 'main')]);
+    const [otherRef] = described([{ ...remoteEntry(1, 'v2'), repository: 'https://github.com/ACME/Pack-1' }]);
+    assert.equal(one.key, otherRef.key, 'neither the ref nor letter case is identity');
+    const [byRelative] = described([{ type: 'local', location: '../team-packs' }]);
+    const [byAbsolute] = described([{ type: 'local', location: team }]);
+    assert.equal(byRelative.key, byAbsolute.key);
+    const keys = [library.key, upstream.key, one.key, byAbsolute.key];
+    assert.equal(new Set(keys).size, 4, 'every source, built-in or added, has its own key');
+    for (const key of keys) assert.match(key, /^src_[0-9a-f]{32}$/);
+
+    // A folder that cannot be resolved still has a key, so a saved entry is never dropped.
+    const [gone] = described([{ type: 'local', location: '../gone' }]);
+    assert.equal(gone.type === 'local' && gone.root, null);
+    assert.match(gone.key, /^src_[0-9a-f]{32}$/);
+    assert.equal(described([{ type: 'local', location: '../gone/' }])[0].key, gone.key);
+
+    // Two entries that are one source, or an entry that is a built-in, make the list unavailable.
+    for (const sources of [
+      [{ type: 'local', location: team }, { type: 'local', location: '../team-packs' }],
+      [{ type: 'remote', repository: 'https://github.com/E-G-C/dude', ref: 'v2' }],
+    ]) {
+      const result = describePackSources({ root, sources: /** @type {any} */ (sources), builtins });
+      assert.equal(result.ok, false);
+      assert.match(result.ok ? '' : result.error, /sources\[\d\] repeats another source/);
+      assert.throws(
+        () => validateNewSource({ root, sources: /** @type {any} */ (sources), builtins, location: 'https://github.com/acme/other' }),
+        refusal('unavailable'),
+      );
+    }
+
+    // The library exists only while library/packs does, and the upstream only while the manifest names one.
+    assert.deepEqual(describeBuiltinSources({ root, upstream: null }).map((builtin) => builtin.builtin), ['local-library']);
+    fs.rmSync(path.join(root, 'library'), { recursive: true });
+    assert.deepEqual(describeBuiltinSources({ root, upstream: { source_repo: 'https://github.com/E-G-C/dude' } }).map((builtin) => [builtin.builtin, builtin.type === 'remote' && builtin.ref]), [['bundle-upstream', 'main']]);
+    assert.deepEqual(describeBuiltinSources({ root, upstream: null }), []);
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test('T007 source matching: recorded provenance matches by repository ignoring ref, or by real folder, never by pack name', () => {
+  const { parent, root } = createSourcesWorkspace();
+  try {
+    const team = createSourceFolder(parent, 'team-packs');
+    const builtins = describeBuiltinSources({ root, upstream: UPSTREAM });
+    const [library, upstream] = builtins;
+    const result = describePackSources({
+      root,
+      builtins,
+      sources: [
+        { type: 'remote', repository: 'https://github.com/acme/dude-packs', ref: 'main' },
+        { type: 'local', location: '../team-packs' },
+        { type: 'local', location: '../gone' },
+      ],
+    });
+    assert.equal(result.ok, true);
+    const [acme, folder, gone] = result.ok ? result.sources : [];
+    const realTeam = fs.realpathSync(team);
+
+    // What Compose records: the library's real library/packs, an added local source's containing root.
+    const recorded = {
+      library: { type: 'local', location: fs.realpathSync(path.join(root, 'library', 'packs')) },
+      folder: { type: 'local', location: realTeam },
+      insideFolder: { type: 'local', location: path.join(realTeam, 'library', 'packs') },
+      acme: { type: 'remote', repository: 'https://github.com/ACME/Dude-Packs.git', requested_ref: 'a'.repeat(40), resolved_commit: 'a'.repeat(40) },
+      upstream: { type: 'remote', repository: 'https://github.com/E-G-C/dude', requested_ref: 'latest', resolved_commit: 'b'.repeat(40) },
+    };
+    for (const [name, source] of [['library', library], ['folder', folder], ['acme', acme], ['upstream', upstream]]) {
+      const matched = Object.entries(recorded)
+        .filter(([, record]) => matchesRecordedSource(source, record))
+        .map(([recordName]) => recordName);
+      assert.deepEqual(matched, [name], `${name} matches only its own record; library/packs inside an added root is not that source`);
+    }
+    assert.equal(matchesRecordedSource(gone, recorded.folder), false, 'an unresolvable folder matches nothing');
+
+    for (const garbage of [
+      null, undefined, 'x', 5, {}, { type: 'local' }, { type: 'remote' },
+      { type: 'local', location: '../team-packs' }, { type: 'local', location: 5 }, { type: 'remote', repository: 5 },
+    ]) {
+      for (const source of [library, folder, acme, upstream]) {
+        assert.equal(matchesRecordedSource(source, garbage), false, JSON.stringify(garbage));
+      }
+    }
+
+    // A bundle upstream that is not public GitHub compares as exact text.
+    const odd = describeBuiltinSources({ root, upstream: { source_repo: 'file:///srv/dude.git', source_ref: 'main' } })
+      .find((builtin) => builtin.builtin === 'bundle-upstream');
+    assert.ok(odd);
+    assert.equal(matchesRecordedSource(odd, { type: 'remote', repository: 'file:///srv/dude.git', requested_ref: 'main', resolved_commit: null }), true);
+    assert.equal(matchesRecordedSource(odd, { type: 'remote', repository: 'file:///srv/other.git', requested_ref: 'main', resolved_commit: null }), false);
+
+    // Windows folders compare without regard to letter case.
+    if (process.platform === 'win32') {
+      assert.equal(matchesRecordedSource(folder, { type: 'local', location: realTeam.toUpperCase() }), true);
+    }
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test('T007 saved sources: the writer swaps one file against the exact revision and refuses a stale or unreadable preimage', () => {
+  const { parent, root, file } = createSourcesWorkspace();
+  const metadata = path.dirname(file);
+  try {
+    const one = [remoteEntry(1)];
+    const two = [remoteEntry(1), remoteEntry(2)];
+
+    // Expected-missing creation, and a revision that expects a file that is not there.
+    assert.throws(() => writePackSources(root, one, sha256Revision('x')), refusal('stale'));
+    assert.equal(exists(file), false);
+    const created = writePackSources(root, one, 'absent');
+    assert.deepEqual(fs.readdirSync(metadata), ['pack-sources.md'], 'one file, no temporary or backup residue');
+    const createdBytes = fs.readFileSync(file);
+    assert.throws(() => writePackSources(root, two, 'absent'), refusal('stale'));
+    assert.deepEqual(fs.readFileSync(file), createdBytes);
+
+    // Replacement against the exact revision, then a stale one that is neither merged nor retried.
+    const replaced = writePackSources(root, two, created.revision);
+    assert.notEqual(replaced.revision, created.revision);
+    assert.deepEqual(readPackSources(root), { ok: true, sources: two, revision: replaced.revision });
+    assert.throws(() => writePackSources(root, [remoteEntry(3)], created.revision), refusal('stale'));
+    assert.deepEqual(readPackSources(root).ok && readPackSources(root).sources, two);
+
+    // Two writers that read the same revision: the first lands, the second is refused.
+    const read = readPackSources(root);
+    assert.equal(read.ok, true);
+    const base = read.ok ? read.sources : [];
+    const revision = read.ok ? read.revision : '';
+    writePackSources(root, [...base, remoteEntry(3)], revision);
+    assert.throws(() => writePackSources(root, [...base, remoteEntry(4)], revision), refusal('stale'));
+    assert.deepEqual(readPackSources(root).ok && readPackSources(root).sources, [...two, remoteEntry(3)]);
+
+    // An unreadable list is never replaced, even when the caller presents its own hash.
+    const garbage = 'not a sources document';
+    fs.writeFileSync(file, garbage);
+    assert.throws(() => writePackSources(root, [], sha256Revision(garbage)), refusal('unavailable'));
+    assert.equal(fs.readFileSync(file, 'utf8'), garbage);
+
+    // Removing the last source leaves a valid empty list.
+    fs.writeFileSync(file, serializePackSourcesDocument(one));
+    const current = readPackSources(root);
+    writePackSources(root, [], current.ok ? current.revision : '');
+    assert.deepEqual(readPackSources(root).ok && readPackSources(root).sources, []);
+    assert.deepEqual(fs.readdirSync(metadata), ['pack-sources.md']);
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test('T007 saved sources: a caught write failure keeps or restores the previous bytes and leaves no residue', () => {
+  const { parent, root, file } = createSourcesWorkspace();
+  const metadata = path.dirname(file);
+  const originalWriteFileSync = fs.writeFileSync;
+  const originalRenameSync = fs.renameSync;
+  try {
+    const one = [remoteEntry(1)];
+    const two = [remoteEntry(1), remoteEntry(2)];
+    const isTemporary = (/** @type {unknown} */ target) => typeof target === 'string' && path.basename(target).startsWith('pack-sources.md.tmp-');
+    const isBackup = (/** @type {unknown} */ target) => typeof target === 'string' && path.basename(target).startsWith('pack-sources.md.backup-');
+
+    // A failed temporary write: nothing is created, and nothing is left behind.
+    fs.writeFileSync = (target, ...rest) => {
+      if (isTemporary(target)) throw new Error('injected write failure');
+      return originalWriteFileSync(target, ...rest);
+    };
+    assert.throws(() => writePackSources(root, one, 'absent'), /injected write failure/);
+    fs.writeFileSync = originalWriteFileSync;
+    assert.equal(exists(file), false);
+    assert.deepEqual(fs.readdirSync(metadata), []);
+
+    // A failed swap after the previous file was moved aside: the previous bytes return.
+    const created = writePackSources(root, one, 'absent');
+    const before = fs.readFileSync(file);
+    fs.renameSync = (from, to) => {
+      if (isTemporary(from)) throw new Error('injected rename failure');
+      return originalRenameSync(from, to);
+    };
+    assert.throws(() => writePackSources(root, two, created.revision), /injected rename failure/);
+    fs.renameSync = originalRenameSync;
+    assert.deepEqual(fs.readFileSync(file), before);
+    assert.deepEqual(fs.readdirSync(metadata), ['pack-sources.md']);
+
+    // A failed creation swap leaves no file at all.
+    fs.rmSync(file);
+    fs.renameSync = (from, to) => {
+      if (isTemporary(from)) throw new Error('injected rename failure');
+      return originalRenameSync(from, to);
+    };
+    assert.throws(() => writePackSources(root, one, 'absent'), /injected rename failure/);
+    fs.renameSync = originalRenameSync;
+    assert.deepEqual(fs.readdirSync(metadata), []);
+
+    // If even the restore fails, the error names where the previous bytes remain.
+    writePackSources(root, one, 'absent');
+    fs.renameSync = (from, to) => {
+      if (isTemporary(from)) throw new Error('injected rename failure');
+      if (isBackup(from)) throw new Error('injected restore failure');
+      return originalRenameSync(from, to);
+    };
+    assert.throws(
+      () => writePackSources(root, two, sha256Revision(before)),
+      /previous bytes remain in pack-sources\.md\.backup-/,
+    );
+    fs.renameSync = originalRenameSync;
+    const residue = fs.readdirSync(metadata);
+    assert.equal(residue.length, 1);
+    assert.deepEqual(fs.readFileSync(path.join(metadata, residue[0])), before);
+  } finally {
+    fs.writeFileSync = originalWriteFileSync;
+    fs.renameSync = originalRenameSync;
+    cleanup(parent);
+  }
+});
+
+test('T007 saved sources: the add and remove sequence a Canvas caller uses works end to end through the shared API', () => {
+  const { parent, root, file } = createSourcesWorkspace();
+  try {
+    const team = createSourceFolder(parent, 'team-packs');
+    const builtins = describeBuiltinSources({ root, upstream: UPSTREAM });
+    const add = (/** @type {string} */ location) => {
+      const read = readPackSources(root);
+      assert.equal(read.ok, true);
+      assert.ok(read.ok);
+      const added = validateNewSource({ root, sources: read.sources, builtins, location });
+      const saved = writePackSources(root, [...read.sources, added.entry], read.revision);
+      return { key: added.source.key, revision: saved.revision };
+    };
+    const acme = add('https://github.com/acme/dude-packs');
+    const folder = add(team);
+
+    // The keys the adds returned are the keys every later read derives.
+    const read = readPackSources(root);
+    assert.ok(read.ok);
+    assert.equal(read.revision, folder.revision);
+    const described = describePackSources({ root, sources: read.sources, builtins });
+    assert.ok(described.ok);
+    assert.deepEqual(described.sources.map((source) => source.key), [acme.key, folder.key]);
+
+    // A removal names the current key and revision, and deletes only that entry.
+    const remaining = read.sources.filter((_, index) => described.sources[index].key !== acme.key);
+    const removed = writePackSources(root, remaining, read.revision);
+    const after = readPackSources(root);
+    assert.ok(after.ok);
+    assert.equal(after.revision, removed.revision);
+    assert.deepEqual(after.sources, [{ type: 'local', location: team }]);
+    assert.deepEqual(
+      describePackSources({ root, sources: after.sources, builtins }).ok && describePackSources({ root, sources: after.sources, builtins }).sources.map((source) => source.key),
+      [folder.key],
+    );
+    assert.throws(() => writePackSources(root, [], read.revision), refusal('stale'), 'the removed-from revision is stale');
+    assert.deepEqual(fs.readdirSync(path.dirname(file)), ['pack-sources.md']);
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test('T007 saved sources: an unusable sources path is unavailable and is never written through', () => {
+  const { parent, root, file } = createSourcesWorkspace();
+  const metadata = path.dirname(file);
+  try {
+    // The sources path is a folder.
+    fs.mkdirSync(file);
+    const asFolder = readPackSources(root);
+    assert.equal(asFolder.ok, false);
+    assert.match(asFolder.ok ? '' : asFolder.error, /must be a regular file/);
+    assert.throws(() => writePackSources(root, [remoteEntry(1)], 'absent'), refusal('unavailable'));
+    assert.equal(fs.statSync(file).isDirectory(), true);
+    assert.deepEqual(fs.readdirSync(metadata), ['pack-sources.md']);
+    assert.deepEqual(fs.readdirSync(file), []);
+
+    // Its metadata folder is a file.
+    fs.rmSync(metadata, { recursive: true });
+    fs.writeFileSync(metadata, 'not a folder');
+    assert.equal(readPackSources(root).ok, false);
+    assert.throws(() => writePackSources(root, [remoteEntry(1)], 'absent'), /non-directory parent/);
+    assert.equal(fs.readFileSync(metadata, 'utf8'), 'not a folder');
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test('T007 saved sources: a linked sources file or metadata folder is refused without touching its target', { skip: process.platform === 'win32' }, () => {
+  const { parent, root, file } = createSourcesWorkspace();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-sources-outside-'));
+  try {
+    const external = path.join(outside, 'pack-sources.md');
+    fs.writeFileSync(external, serializePackSourcesDocument([remoteEntry(9)]));
+    const externalBytes = fs.readFileSync(external);
+    fs.symlinkSync(external, file);
+    assert.equal(readPackSources(root).ok, false);
+    assert.throws(() => writePackSources(root, [remoteEntry(1)], sha256Revision(externalBytes)), /symbolic link/);
+    assert.deepEqual(fs.readFileSync(external), externalBytes);
+
+    fs.rmSync(file);
+    fs.rmSync(path.dirname(file), { recursive: true });
+    fs.symlinkSync(outside, path.dirname(file), 'dir');
+    assert.equal(readPackSources(root).ok, false);
+    assert.throws(() => writePackSources(root, [remoteEntry(1)], sha256Revision(externalBytes)), /symbolic link/);
+    assert.deepEqual(fs.readdirSync(outside), ['pack-sources.md']);
+    assert.deepEqual(fs.readFileSync(external), externalBytes);
+  } finally {
+    cleanup(parent);
+    cleanup(outside);
+  }
+});
+
+/* ------------------------------------------- T007 explicit source resolution */
+
+test('T007 an explicit remote source is exclusive for list, add, and refresh, and never falls back', async () => {
+  const remote = createRemoteCatalog();
+  const manifestRemote = createRemoteCatalog();
+  const root = createRoot();
+  try {
+    writePack(root, 'shared', [packAgent('shared', 'worker', { name: 'shared local' })], { skill: false });
+    writePack(root, 'local-only', [packAgent('local-only', 'worker', { name: 'local-only local' })], { skill: false });
+    writeRemotePack(remote.repo, 'shared', 'remote');
+    writeRemotePack(remote.repo, 'remote-only', 'remote');
+    const firstCommit = commitRemote(remote.repo, 'publish the explicit catalog');
+    writeRemotePack(manifestRemote.repo, 'manifest-only', 'manifest');
+    commitRemote(manifestRemote.repo, 'publish the manifest catalog');
+    writeManifestSource(root, manifestRemote.source, 'main');
+    const library = path.join(root, 'library', 'packs');
+    const explicit = { root, library, source: remote.source, ref: 'main' };
+    const unusable = { root, library, source: 'file:///definitely-missing-explicit-source', ref: 'main' };
+
+    // list: only the explicit source's packs, though the library and the manifest have others.
+    const listed = cmdList(explicit);
+    assert.equal(listed.ok, true, listed.error);
+    assert.deepEqual(listed.result?.packs.map((pack) => pack.name), ['remote-only', 'shared']);
+    assert.equal(listed.result?.origin, `${remote.source} @ main`);
+    assertListedDescription(listed, 'shared', 'shared catalog remote');
+    assert.deepEqual(
+      cmdList({ root, library }).result?.packs.map((pack) => pack.name),
+      ['local-only', 'shared'],
+      'without a source the whole local catalog still wins',
+    );
+
+    // add: a pack the library also has is installed from the explicit source.
+    const added = await cmdAdd({ ...explicit, name: 'shared', force: false });
+    assert.equal(added.ok, true, added.error);
+    assertInstalledVersion(root, 'shared', 'remote');
+    assert.deepEqual(readProfile(root).installed.shared.source, {
+      type: 'remote',
+      repository: remote.source,
+      requested_ref: 'main',
+      resolved_commit: firstCommit,
+    });
+
+    // A pack only the library or only the manifest's upstream has is not found, and not taken from there.
+    for (const name of ['local-only', 'manifest-only']) {
+      const before = mutationSnapshot(root);
+      const missing = await cmdAdd({ ...explicit, name, force: false });
+      assert.equal(missing.ok, false, name);
+      assert.match(missing.error || '', new RegExp(`pack "${name}" not found in source`));
+      assertMutationUnchanged(root, before);
+      assert.equal(readProfile(root).installed[name], undefined);
+    }
+
+    // refresh: the same source, at its new commit, though the library has a same-named pack.
+    writeRemotePack(remote.repo, 'shared', 'remote-b');
+    const secondCommit = commitRemote(remote.repo, 'publish the second revision');
+    const preview = await cmdPreviewRefresh({ ...explicit, name: 'shared' });
+    assert.equal(preview.ok, true, preview.error);
+    assert.equal(preview.result.source.resolved_commit, secondCommit);
+    const refreshed = await cmdRefresh({ ...explicit, name: 'shared' });
+    assert.equal(refreshed.ok, true, refreshed.error);
+    assertInstalledVersion(root, 'shared', 'remote-b');
+    assert.equal(readProfile(root).installed.shared.source.resolved_commit, secondCommit);
+
+    // A source that cannot be fetched is a refusal, not a reason to use the library or the manifest.
+    const listFailure = cmdList(unusable);
+    assert.equal(listFailure.ok, false);
+    assert.match(listFailure.error || '', /failed to fetch source/);
+    const before = mutationSnapshot(root);
+    const addFailure = await cmdAdd({ ...unusable, name: 'local-only', force: false });
+    assert.equal(addFailure.ok, false);
+    assert.match(addFailure.error || '', /failed to fetch source/);
+    const refreshFailure = await cmdRefresh({ ...unusable, name: 'shared' });
+    assert.equal(refreshFailure.ok, false);
+    assert.match(refreshFailure.error || '', /failed to fetch source/);
+    assert.equal(refreshFailure.mutation, 'none');
+    assertMutationUnchanged(root, before);
+  } finally {
+    cleanup(root);
+    cleanup(remote.parent);
+    cleanup(manifestRemote.parent);
+  }
+});
+
+test('T007 an explicit source without the catalog or pack, or under --no-fetch, is a refusal that ignores --library', async () => {
+  const remote = createRemoteCatalog();
+  const bare = createRemoteCatalog();
+  const root = createRoot();
+  const elsewhere = createRoot();
+  try {
+    writePack(root, 'shared', [packAgent('shared', 'worker', { name: 'shared local' })], { skill: false });
+    writePack(elsewhere, 'elsewhere', [packAgent('elsewhere', 'worker')], { skill: false });
+    writeRemotePack(remote.repo, 'shared', 'remote');
+    commitRemote(remote.repo, 'publish the explicit catalog');
+    fs.writeFileSync(path.join(bare.repo, 'README.md'), '# A repository with no pack catalog\n');
+    commitRemote(bare.repo, 'publish without a catalog');
+    const library = path.join(root, 'library', 'packs');
+    const before = mutationSnapshot(root);
+
+    // No catalog in the explicit source: nothing is answered from the library.
+    const noCatalog = cmdList({ root, library, source: bare.source, ref: 'main' });
+    assert.equal(noCatalog.ok, false);
+    assert.match(noCatalog.error || '', /no pack catalog found in/);
+    const noPack = await cmdAdd({ root, library, name: 'shared', force: false, source: bare.source, ref: 'main' });
+    assert.equal(noPack.ok, false);
+    assert.match(noPack.error || '', /pack "shared" not found in source/);
+    assertMutationUnchanged(root, before);
+
+    // --no-fetch never fetches an explicit remote, and the library is not a fallback.
+    const noFetchList = cmdList({ root, library, fetch: false, source: remote.source });
+    assert.equal(noFetchList.ok, false);
+    assert.match(noFetchList.error || '', /--no-fetch does not fetch it/);
+    const noFetchAdd = await cmdAdd({ root, library, name: 'shared', force: false, fetch: false, source: remote.source });
+    assert.equal(noFetchAdd.ok, false);
+    assert.match(noFetchAdd.error || '', /--no-fetch does not fetch it/);
+    assertMutationUnchanged(root, before);
+    assert.equal((await addPack(root, 'shared')).ok, true, 'without a source the library still installs it');
+    assertInstalledVersion(root, 'shared', 'local');
+    const installed = mutationSnapshot(root);
+    const noFetchRefresh = await cmdRefresh({ root, library, name: 'shared', fetch: false, source: remote.source });
+    assert.equal(noFetchRefresh.ok, false);
+    assert.match(noFetchRefresh.error || '', /--no-fetch does not fetch it/);
+    assert.equal(noFetchRefresh.mutation, 'none');
+    assertMutationUnchanged(root, installed);
+
+    // --library is not consulted when a source is explicit.
+    const ignored = cmdList({ root, library: path.join(elsewhere, 'library', 'packs'), source: remote.source, ref: 'main' });
+    assert.equal(ignored.ok, true, ignored.error);
+    assert.deepEqual(ignored.result?.packs.map((pack) => pack.name), ['shared']);
+  } finally {
+    cleanup(root);
+    cleanup(elsewhere);
+    cleanup(remote.parent);
+    cleanup(bare.parent);
+  }
+});
+
+test('T007 an explicit local source is read in place, records its containing root, and has no fallback', async () => {
+  const root = createRoot();
+  const folder = createRoot();
+  const noLayout = createRoot();
+  try {
+    writePack(root, 'shared', [packAgent('shared', 'worker', { name: 'shared local' })], { skill: false });
+    writePack(root, 'local-only', [packAgent('local-only', 'worker', { name: 'local-only local' })], { skill: false });
+    writePack(folder, 'shared', [packAgent('shared', 'worker', { name: 'shared folder' })], { skill: false });
+    writePack(folder, 'folder-only', [packAgent('folder-only', 'worker', { name: 'folder-only folder' })], { skill: false });
+    fs.rmSync(path.join(noLayout, 'library'), { recursive: true });
+    const library = path.join(root, 'library', 'packs');
+
+    const listed = cmdList({ root, library, source: folder });
+    assert.equal(listed.ok, true, listed.error);
+    assert.deepEqual(listed.result?.packs.map((pack) => pack.name), ['folder-only', 'shared']);
+    assert.equal(listed.result?.origin, `source ${folder}`);
+
+    // The folder's pack is installed, not the same-named library pack, and its containing root is recorded.
+    const added = await cmdAdd({ root, library, name: 'shared', force: false, source: folder });
+    assert.equal(added.ok, true, added.error);
+    assertInstalledVersion(root, 'shared', 'folder');
+    assert.deepEqual(readProfile(root).installed.shared.source, { type: 'local', location: fs.realpathSync(folder) });
+
+    // A local folder needs no fetch, so --no-fetch still reads it.
+    const noFetch = await cmdAdd({ root, library, name: 'folder-only', force: false, fetch: false, source: folder });
+    assert.equal(noFetch.ok, true, noFetch.error);
+
+    // A pack only the library has, or a folder with no library/packs, is a refusal.
+    const before = mutationSnapshot(root);
+    const missing = await cmdAdd({ root, library, name: 'local-only', force: false, source: folder });
+    assert.equal(missing.ok, false);
+    assert.match(missing.error || '', /pack "local-only" not found in source/);
+    const noCatalog = cmdList({ root, library, source: noLayout });
+    assert.equal(noCatalog.ok, false);
+    assert.match(noCatalog.error || '', /no pack catalog found in/);
+    assertMutationUnchanged(root, before);
+
+    // refresh reads the same folder.
+    const packAgentFile = path.join(folder, 'library', 'packs', 'shared', 'agents', 'dude-pack-shared-worker.agent.md');
+    fs.writeFileSync(packAgentFile, fs.readFileSync(packAgentFile, 'utf8').replace('You are shared folder.', 'You are shared folder refreshed.'));
+    const refreshed = await cmdRefresh({ root, library, name: 'shared', source: folder });
+    assert.equal(refreshed.ok, true, refreshed.error);
+    assertInstalledVersion(root, 'shared', 'folder refreshed');
+    assert.deepEqual(readProfile(root).installed.shared.source, { type: 'local', location: fs.realpathSync(folder) });
+
+    // The CLI passes --source straight through, with the same exclusivity.
+    const cliList = runCompose(root, 'list', '--source', folder, '--json');
+    assert.equal(cliList.status, 0, cliList.stderr);
+    assert.deepEqual(JSON.parse(cliList.stdout).packs.map((pack) => pack.name), ['folder-only', 'shared']);
+    const cliMissing = runCompose(root, 'add', 'local-only', '--source', folder);
+    assert.equal(cliMissing.status, 2);
+    assert.match(cliMissing.stderr, /\[FAIL\] pack "local-only" not found in source/);
+  } finally {
+    cleanup(root);
+    cleanup(folder);
+    cleanup(noLayout);
+  }
+});
+
+test('T007 ordinary Compose calls neither read nor enumerate the saved sources', async () => {
+  const root = scaffold();
+  try {
+    // A file any reader would refuse, naming a source that must never be contacted.
+    const sourcesFile = path.join(root, ...PACK_SOURCES_PATH.split('/'));
+    fs.writeFileSync(
+      sourcesFile,
+      sourcesBlock('{"sources":[{"type":"remote","repository":"https://github.com/acme/never-contacted","ref":"main"},{"type":"x"}'),
+    );
+    const bytes = fs.readFileSync(sourcesFile);
+    for (const args of [['list', '--json'], ['status', '--json'], ['add', 'demo', '--json'], ['refresh', 'demo', '--json'], ['remove', 'demo', '--json']]) {
+      const result = runCompose(root, ...args);
+      assert.equal(result.status, 0, `${args.join(' ')}: ${result.stderr}`);
+    }
+    assert.deepEqual(fs.readFileSync(sourcesFile), bytes);
+    assert.doesNotMatch(fs.readFileSync(COMPOSE_SOURCE, 'utf8'), /pack-sources/);
+  } finally {
+    cleanup(root);
+  }
+});
+
+/* ---------------------------------------------- T007 Compose owner guidance */
+
+test('T007 Compose guidance documents the exclusive source, the catalogSource binding, pinning, freshness, and the result echo', () => {
+  const text = fs.readFileSync(new URL('./SKILL.md', import.meta.url), 'utf8');
+  const unwrap = (/** @type {string} */ value) => value.replace(/\s+/g, ' ');
+  const flags = unwrap(text.split('\n## Engine\n')[1]?.split('\n## Discovery metadata')[0] ?? '');
+  const catalog = unwrap(text.split('\n## Catalog Resolution\n')[1]?.split('\n## Verify')[0] ?? '');
+  const section = text.split('## Canvas Pack Requests And Results\n')[1]?.split('\n## Add Flow')[0] ?? '';
+  const sources = unwrap(section.split('### Sources In Pack Requests\n')[1]?.split('The pack acknowledgment has exactly these fields')[0] ?? '');
+  assert.ok(flags && catalog && section && sources, 'the shipped skill must contain each owner section');
+
+  for (const requirement of [
+    'an explicit `--source` is exclusive, see Catalog Resolution',
+    'a remote repository, or a local folder that contains `library/packs`',
+  ]) assert.ok(flags.includes(requirement), `missing --source documentation: ${requirement}`);
+  for (const requirement of [
+    'An explicit `--source` replaces that order.',
+    'The local catalog is skipped, the manifest is not consulted, `--library` is ignored',
+    'a missing pack, a missing catalog, or a fetch failure is a refusal, never a reason to try another catalog',
+    'With `--no-fetch`, an explicit remote source is refused rather than fetched',
+    'no Compose call reads or lists `.dude/metadata/pack-sources.md`',
+  ]) assert.ok(catalog.includes(requirement), `missing catalog resolution rule: ${requirement}`);
+  for (const requirement of [
+    'Make the source the first permission target',
+    'the configured ref for a remote source, and the resolved commit',
+    'say that a remote commit is not applicable and do not invent one',
+    'target revision is `commit:<40 hex>`',
+    'Label a source the project added "Third-party source"',
+    'begin that target with `Source changes: A -> B` whenever they differ',
+    'including an unlisted local path moving to the local library',
+    '`catalogSource`',
+    'It is absent, never `null`',
+    'Retain `catalogSource` exactly as received',
+    '`--source <repository>` and the configured `--ref <ref>` for a remote source',
+    'or `--source <location>` for a local folder, and add no other source and no `--library` or `--force`',
+    'a refresh preview reports it as `source.resolved_commit`',
+    'for example with `git ls-remote <repository> <ref>`',
+    'never a reason to use another source or catalog',
+    'The raw-bytes revision of `.dude/metadata/pack-sources.md`',
+    'must still equal `sourcesRevision`',
+    'Apply with `--ref <resolved_commit>`',
+    'Put the same `catalogSource`, unchanged, in the acknowledgment as `catalogSource`, and only when the request was bound to one',
+    'A matching pack name or an echoed key alone is not enough.',
+    'Removal is source-free',
+  ]) assert.ok(sources.includes(requirement), `missing source-bound owner rule: ${requirement}`);
+
+  // The default-only bodies and acknowledgment keep their exact bytes: no field, never null.
+  assert.ok(section.includes(
+    '{"op":"prepare","operation":"install","name":"<exact pack name>"}\n'
+    + '{"op":"submit","operation":"install","name":"<exact pack name>","packReceipt":"<provider UUID>"}\n',
+  ));
+  const acknowledgment = JSON.parse(section.match(/```json\n(\{\n[\s\S]*?)\n```/)[1]).acknowledgment;
+  assert.equal(Object.hasOwn(acknowledgment, 'catalogSource'), false);
+
+  // The source-bound bodies and the closed binding are exactly the contract.
+  assert.ok(section.includes(
+    '{"op":"prepare","operation":"install","name":"<exact pack name>","source":"<configured source key>"}\n'
+    + '{"op":"submit","operation":"install","name":"<exact pack name>","source":"<same source key>","packReceipt":"<provider UUID>"}\n',
+  ));
+  const binding = JSON.parse(/```json\n(\{"catalogSource":[^\n]*\})\n```/.exec(section)?.[1] ?? 'null');
+  assert.deepEqual(Object.keys(binding.catalogSource), ['key', 'sourcesRevision', 'source']);
+  assert.deepEqual(Object.keys(binding.catalogSource.source), ['type', 'repository', 'ref']);
+});
+
+/* ----------------------------------------- T007 upgrade --all Compose calls */
+
+// `upgrade --all` gives Compose the plan's resolved commit as `ref` and never a `source`: an explicit
+// source is exclusive and would skip a local target's catalog. Behaviour tests cannot see a `source`
+// that resolves to the catalog Compose would have read anyway, so this reads the two call sites. The
+// scan is lexical: it blanks comments and string or template literals and matches brackets, and it
+// does not understand regular-expression literals or nested templates. If `cmdPacks` gains one and
+// this test stops finding the calls, extend the scan rather than the expectations.
+// Alternatives: block comment, line comment, 'string', "string", template (substitutions included).
+const UPGRADE_NON_CODE = /\/\*[\s\S]*?\*\/|\/\/[^\n]*|'(?:\\[\s\S]|[^'\\\n])*'|"(?:\\[\s\S]|[^"\\\n])*"|`(?:\\[\s\S]|[^`\\])*`/g;
+
+/**
+ * The index of the bracket that closes the one at `open`.
+ * @param {string} code source with comments and literals blanked
+ * @param {number} open
+ * @returns {number}
+ */
+function closingBracket(code, open) {
+  let depth = 0;
+  for (let at = open; at < code.length; at += 1) {
+    if ('([{'.includes(code[at])) depth += 1;
+    if (')]}'.includes(code[at])) {
+      depth -= 1;
+      if (depth === 0) return at;
+    }
+  }
+  return assert.fail(`nothing closes the bracket at offset ${open}; the scan may have misread a regular-expression literal or a nested template`);
+}
+
+/**
+ * The non-empty ranges between the top-level commas of `code.slice(from, to)`.
+ * @param {string} code source with comments and literals blanked
+ * @param {number} from
+ * @param {number} to
+ * @returns {Array<[number, number]>}
+ */
+function splitTopLevel(code, from, to) {
+  const cuts = [from - 1];
+  let depth = 0;
+  for (let at = from; at < to; at += 1) {
+    if ('([{'.includes(code[at])) depth += 1;
+    else if (')]}'.includes(code[at])) depth -= 1;
+    else if (code[at] === ',' && depth === 0) cuts.push(at);
+  }
+  cuts.push(to);
+  return cuts
+    .slice(1)
+    .map((end, index) => /** @type {[number, number]} */ ([cuts[index] + 1, end]))
+    .filter(([start, end]) => code.slice(start, end).trim() !== '');
+}
+
+/**
+ * Read `async function cmdPacks` of the upgrade source without running it: its body with comments and
+ * literals blanked, and each `compose.cmdPreviewRefresh(` / `compose.cmdRefresh(` call in it with the
+ * properties of its one object-literal argument (`null` when the argument is anything else).
+ * @param {string} source
+ */
+function readCmdPacks(source) {
+  const heads = [...source.matchAll(/\basync\s+function\s+cmdPacks\s*\(/g)];
+  assert.equal(heads.length, 1, 'upgrade.mjs must declare `async function cmdPacks(` exactly once');
+  const written = source.slice(heads[0].index);
+  const blanked = written.replace(UPGRADE_NON_CODE, (token) => token.replace(/[^\n]/g, ' '));
+  const bodyStart = blanked.indexOf('{', closingBracket(blanked, heads[0][0].length - 1));
+  const bodyEnd = closingBracket(blanked, bodyStart);
+  const text = written.slice(bodyStart + 1, bodyEnd);
+  const code = blanked.slice(bodyStart + 1, bodyEnd);
+  // Once literals are blanked no quote or backtick is left, unless the scan misread something.
+  assert.doesNotMatch(code, /['"`]/, 'cmdPacks holds a quote or backtick outside any string, template, or comment, most likely in a regular-expression literal that the scan does not understand');
+
+  const calls = [...code.matchAll(/\bcompose\s*\.\s*(cmdPreviewRefresh|cmdRefresh)\s*\(/g)].map((match) => {
+    const at = /** @type {number} */ (match.index);
+    const paren = at + match[0].length - 1;
+    const [argument, ...others] = splitTopLevel(code, paren + 1, closingBracket(code, paren));
+    /** @type {Array<{ key: string, value: string | null, written: string }> | null} */
+    let properties = null;
+    if (argument && others.length === 0) {
+      const open = argument[0] + code.slice(...argument).search(/\S/);
+      const close = argument[0] + code.slice(...argument).trimEnd().length - 1;
+      if (code[open] === '{' && closingBracket(code, open) === close) {
+        properties = splitTopLevel(code, open + 1, close).map(([start, end]) => {
+          const written = text.slice(start, end).replace(/\s+/g, ' ').trim();
+          // Only `name` and `name: value` have a key; spreads, quoted or computed keys, and methods do not.
+          const plain = /^([A-Za-z_$][\w$]*)\s*(?::\s*([\s\S]+))?$/.exec(code.slice(start, end).trim());
+          return plain
+            ? { key: plain[1], value: plain[2] ?? plain[1], written }
+            : { key: `<${written}>`, value: null, written };
+        });
+      }
+    }
+    return { method: match[1], at, properties };
+  });
+  return { code, calls };
+}
+
+test('T007 upgrade --all: the Compose preview and refresh calls pass exactly root, library, name, and the resolved-commit ref, never a source', () => {
+  const { code, calls } = readCmdPacks(fs.readFileSync(new URL('../dude-bundle-upgrade/upgrade.mjs', import.meta.url), 'utf8'));
+
+  // One `ref`, bound at the top level of cmdPacks to the plan's resolved commit, before either call.
+  const declarations = [...code.matchAll(/\b(?:const|let|var)\s+ref\b/g)];
+  assert.equal(declarations.length, 1, `cmdPacks must declare \`ref\` exactly once, found ${declarations.length}`);
+  const declared = /** @type {number} */ (declarations[0].index);
+  const binding = /const\s+ref\s*=\s*plan\s*\.\s*source\s*\.\s*resolved_commit\s*;/y;
+  binding.lastIndex = declared;
+  assert.ok(binding.test(code), 'cmdPacks must bind `const ref = plan.source.resolved_commit;`');
+  const before = code.slice(0, declared);
+  assert.equal(
+    (before.match(/[([{]/g) ?? []).length,
+    (before.match(/[)\]}]/g) ?? []).length,
+    'the `ref` binding must sit at the top level of cmdPacks so that both calls see it',
+  );
+
+  for (const method of ['cmdPreviewRefresh', 'cmdRefresh']) {
+    const found = calls.filter((call) => call.method === method);
+    assert.equal(found.length, 1, `cmdPacks must call compose.${method}( exactly once, found ${found.length}`);
+    const [{ at, properties }] = found;
+    assert.ok(properties, `compose.${method} must be passed one object literal`);
+    const shown = properties.map((property) => property.written).join(', ');
+    assert.deepEqual(
+      properties.map((property) => property.key).sort(),
+      ['library', 'name', 'ref', 'root'],
+      `compose.${method} must pass exactly root, library, name, and ref, never a source: { ${shown} }`,
+    );
+    assert.equal(
+      properties.find((property) => property.key === 'ref')?.value,
+      'ref',
+      `compose.${method} must pass the bound commit as ref: { ${shown} }`,
+    );
+    assert.ok(declared < at, `ref must be bound before compose.${method}(`);
+  }
 });

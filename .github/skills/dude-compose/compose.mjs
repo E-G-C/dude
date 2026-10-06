@@ -32,7 +32,9 @@
  *   --root <dir>      bundle root (default: cwd). `.github` lives at <root>/.github
  *   --library <dir>   pack catalog dir (default: <root>/library/packs)
  *   --source <repo>   upstream source for add/list/refresh (default: the
- *                     bundle manifest's source_repo)
+ *                     bundle manifest's source_repo). An explicit source is
+ *                     exclusive: the local catalog is skipped, and nothing else
+ *                     is tried if it lacks the pack or cannot be fetched
  *   --ref <ref>       upstream ref for source resolution (default: manifest / main)
  *   --no-fetch        never fetch; require the pack in the local catalog
  *   --json            machine-readable output
@@ -371,23 +373,31 @@ function resolveSourceTree(source, ref) {
 }
 
 /**
- * Resolve a pack's source directory. Prefers the local catalog, then falls back
- * to the bundle's configured upstream source (or an explicit override), so a
- * pack can be installed even when `library/packs/` is not vendored locally.
+ * Resolve a pack's source directory. An explicit `source` is exclusive: only
+ * that root and ref are consulted, so the local catalog never preempts it, and
+ * nothing else is tried when it lacks the pack or cannot be fetched. Without
+ * one, prefer the local catalog, then fall back to the bundle's configured
+ * upstream source, so a pack can be installed even when `library/packs/` is not
+ * vendored locally.
  * @param {{ root: string, library: string, name: string, fetch: boolean, source?: string, ref?: string }} a
  * @returns {{ packDir: string, origin: string, sourceIdentity: SourceIdentity } | { error: string }}
  */
 function resolvePackDir({ root, library, name, fetch, source, ref }) {
-  const localDir = path.join(library, name);
-  if (isDir(localDir) && exists(path.join(localDir, 'pack.md'))) {
-    return {
-      packDir: localDir,
-      origin: 'local',
-      sourceIdentity: { type: 'local', location: fs.realpathSync(library) },
-    };
-  }
-  if (fetch === false) {
-    return { error: `pack not found in catalog: ${rel(localDir)}` };
+  if (!source) {
+    const localDir = path.join(library, name);
+    if (isDir(localDir) && exists(path.join(localDir, 'pack.md'))) {
+      return {
+        packDir: localDir,
+        origin: 'local',
+        sourceIdentity: { type: 'local', location: fs.realpathSync(library) },
+      };
+    }
+    if (fetch === false) {
+      return { error: `pack not found in catalog: ${rel(localDir)}` };
+    }
+  } else if (fetch === false && !isDir(source)) {
+    // --no-fetch never authorizes reaching a remote, even an explicit one.
+    return { error: `pack "${name}" cannot be read from explicit source ${source}: --no-fetch does not fetch it` };
   }
   let src = source || '';
   let sref = ref || '';
@@ -418,17 +428,23 @@ function resolvePackDir({ root, library, name, fetch, source, ref }) {
 }
 
 /**
- * Resolve the catalog directory to enumerate for `list`. Prefers a local
- * `library/packs/` when the repo vendors one; otherwise (a released core ships
- * no local catalog) falls back to the bundle's configured upstream source so
- * `list` can still show installable packs. A selected remote source must resolve
- * successfully; its fetch or missing-catalog failure is returned to the caller.
+ * Resolve the catalog directory to enumerate for `list`. An explicit `source`
+ * is exclusive: the local catalog is skipped, and a fetch or missing-catalog
+ * failure is returned to the caller rather than answered from anywhere else.
+ * Without one, prefer a local `library/packs/` when the repo vendors one;
+ * otherwise (a released core ships no local catalog) fall back to the bundle's
+ * configured upstream source so `list` can still show installable packs.
  * @param {{ root: string, library: string, fetch: boolean, source?: string, ref?: string }} a
  * @returns {{ dir: string, origin: string } | { error: string }}
  */
 function resolveCatalogDir({ root, library, fetch, source, ref }) {
-  if (isDir(library)) return { dir: library, origin: 'local' };
-  if (fetch === false) return { dir: library, origin: 'local' };
+  if (!source) {
+    if (isDir(library)) return { dir: library, origin: 'local' };
+    if (fetch === false) return { dir: library, origin: 'local' };
+  } else if (fetch === false && !isDir(source)) {
+    // --no-fetch never authorizes reaching a remote, even an explicit one.
+    return { error: `explicit source ${source} cannot be listed: --no-fetch does not fetch it` };
+  }
   let src = source || '';
   let sref = ref || '';
   if (!src) {
@@ -1429,7 +1445,8 @@ Usage:
 Flags:
   --root <dir>      bundle root (default: cwd)
   --library <dir>   pack catalog (default: <root>/library/packs)
-  --source <repo>   upstream source for add/list/refresh (default: manifest)
+  --source <repo>   exclusive source for add/list/refresh: skips the local catalog
+                    and never falls back (default: manifest)
   --ref <ref>       upstream ref for source resolution (default: manifest / main)
   --no-fetch        never fetch; require the pack in the local catalog
   --json            machine-readable output
