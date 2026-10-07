@@ -4959,8 +4959,8 @@ async function driveTaskWalkthrough(page, host, fixture, evidence) {
  * @param {string} draft @param {string} selectedTaskKey
  */
 async function driveReviewContinuity(page, fixture, draft, selectedTaskKey) {
-  const [planned, done] = fixture.records;
-  const selectedTask = planned.units.find((task) => task.taskKey === selectedTaskKey);
+  const [, done, independent] = fixture.records;
+  const selectedTask = independent.units.find((task) => task.taskKey === selectedTaskKey);
   assert.ok(selectedTask);
   await click(page, button('Comments (2)'));
   const comment = '  Installed A retained caret.\n\nLiteral local markup.  ';
@@ -5013,7 +5013,7 @@ async function driveReviewContinuity(page, fixture, draft, selectedTaskKey) {
   await click(page, button('Back'));
   await click(page, button('Now'));
   await clearWork(page);
-  await selectWork(page, planned.ideaPath);
+  await selectWork(page, independent.ideaPath);
   assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-task-detail]'))`), false,
     'Clear does not restore stale task inspection');
   // Clear intentionally drops detail. Select it again before checking the
@@ -5022,6 +5022,7 @@ async function driveReviewContinuity(page, fixture, draft, selectedTaskKey) {
   await click(page, button('New idea'));
   assert.equal(await evaluate(page, `${field('Your idea')}.value`), draft);
   await click(page, button('Cancel'));
+  await click(page, button('Needs you'));
   await click(page, button('Open Review'));
   await visible(page, 'Comments (2)');
   assert.equal(await evaluate(page, `window.__t005InstalledFrame === document.querySelector('.dude-review-frame')`), true);
@@ -8171,8 +8172,7 @@ async function driveReviewRound(
   expectedBrowsingNumber = null,
   walkthrough = null,
 ) {
-  if (walkthrough) await click(page, button('Respond to request'));
-  else {
+  if (!walkthrough) {
     await visible(page, prompt);
     await click(page, `[...document.querySelectorAll('button')].find((node) =>
       node.innerText.includes(${JSON.stringify(prompt)}) && node.getClientRects().length)`);
@@ -8971,14 +8971,23 @@ try {
     workspaceFixture,
     taskEvidence.newIdeaDraft,
   );
+  await click(browserState.page, button('Respond to request'));
+  await clearWork(browserState.page);
+  await selectWork(browserState.page, MIXED_IDEA_PATH);
+  await awaitSelectedProjection(host.canvas.url, MIXED_IDEA_PATH, 'Review A independent browsing read');
+  await inspectTask(browserState.page, taskFixture.records
+    .find((record) => record.ideaPath === MIXED_IDEA_PATH).units
+    .find((task) => task.taskKey === taskWalkthrough.selectedTaskKey));
+  await click(browserState.page, button('Needs you'));
   const roundA = await driveReviewRound(
     browserState.page,
     'A',
     'Annotate exact installed revision A',
     root,
-    '062',
+    '061',
     { fixture: taskFixture, draft: taskEvidence.newIdeaDraft, selectedTaskKey: taskWalkthrough.selectedTaskKey },
   );
+  await awaitSelectedProjection(host.canvas.url, MIXED_IDEA_PATH, 'Review A independent browsing return');
   await until(() => model.state.phase === 'waiting-b' || model.state.modelError,
     'same owner revision B request', 45_000);
   if (model.state.modelError) throw new Error(model.state.modelError);
@@ -8989,19 +8998,27 @@ try {
     'B',
     'Annotate exact installed revision B',
     null,
-    '062',
+    '061',
   );
+  await awaitSelectedProjection(host.canvas.url, MIXED_IDEA_PATH, 'Review B independent browsing return');
   await until(() => model.state.phase === 'waiting-c' || model.state.modelError,
     'same owner revision C request', 45_000);
   if (model.state.modelError) throw new Error(model.state.modelError);
   await click(browserState.page, button('Back'));
   await click(browserState.page, button('All requests'));
-  const approval = await driveApproval(browserState.page, '062');
+  const approval = await driveApproval(browserState.page, '061');
   await until(() => model.state.phase === 'complete' || model.state.modelError,
     'current revision C owner approval acknowledgment', 45_000);
   if (model.state.modelError) throw new Error(model.state.modelError);
   await until(async () => !(await host.session.rpc.metadata.isProcessing()).processing,
     'installed Review session idle', 30_000);
+  await click(browserState.page, button('Now'));
+  await clearWork(browserState.page);
+  await selectWork(browserState.page, WORKSPACE_062.ideaPath);
+  await awaitSelectedProjection(host.canvas.url, WORKSPACE_062.ideaPath, '062 task return restored read');
+  await inspectTask(browserState.page, taskFixture.records
+    .find((record) => record.ideaPath === WORKSPACE_062.ideaPath).units
+    .find((task) => task.taskKey === taskWalkthrough.selectedTaskKey));
   const taskReturn = await verifyInstalledTaskReturn(
     browserState.page,
     host.canvas.url,
