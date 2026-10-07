@@ -16756,6 +16756,7 @@ test('T004 browser: current capture failure keeps Review usable and save-only ac
   const runtimeErrors = [];
   const network = [];
   const baseCaptures = [];
+  const baseSaves = [];
   const sealCalls = [];
   try {
     const selectedCaptureBrowser = findBrowser();
@@ -16773,9 +16774,15 @@ test('T004 browser: current capture failure keeps Review usable and save-only ac
         const opened = await base.openReview(input);
         baseCaptures.push({
           requestRef:input.request.requestRef,
+          workingRevision:opened.workingRevision,
           capture:structuredClone(opened.capture),
         });
         return opened;
+      },
+      async saveReview(input) {
+        const saved = await base.saveReview(input);
+        baseSaves.push(structuredClone(saved));
+        return saved;
       },
       async sealReview(input) {
         sealCalls.push(input.request.requestRef);
@@ -16797,6 +16804,7 @@ test('T004 browser: current capture failure keeps Review usable and save-only ac
       if (!event.request.url.startsWith(fixture.instance.url)) return;
       network.push({
         order:network.length + 1,
+        url:event.request.url,
         method:event.request.method,
         path:new URL(event.request.url).pathname,
         body:event.request.postData ?? null,
@@ -16830,30 +16838,15 @@ test('T004 browser: current capture failure keeps Review usable and save-only ac
     const expectedWarning = `${failureWording} Review cannot send report-only feedback. Working annotations are retained.`;
     await openReviewNotice(page, 'Image capture unavailable');
     await visible(page, expectedWarning);
+    const warningProof = await saveRegressionProof(page, output, 'portable-capture-failure-notice', {
+      actualCapture, expectedWarning,
+    });
+    for (const explanation of [failureWording,
+      'Review cannot send report-only feedback. Working annotations are retained.']) {
+      assert.ok(warningProof.tree.nodes.some(node => !node.ignored && node.name?.value?.includes(explanation)),
+        `the capture-failure explanation reaches the accessibility tree: ${explanation}`);
+    }
     await closeReviewDetails(page);
-
-    // The actual engine remains available. Create native markup, explicitly
-    // save it, then edit its comment and let the normal working-file path keep
-    // that edit before returning through the product's Back control.
-    const savesBefore = network.filter(entry =>
-      entry.method === 'POST' && entry.path === '/api/needs-you/review/save').length;
-    await click(page, `document.querySelector('[aria-label="Box (B)"]')`);
-    await openReviewDetails(page);
-    await click(page, button('Add at center'));
-    await visible(page, 'Comments (1)');
-    await until(() => evaluate(page, `!${button('Save markup')}.disabled`),
-      'capture-failed explicit Save markup enabled');
-    await click(page, button('Save markup'));
-    await until(() => network.filter(entry =>
-      entry.method === 'POST' && entry.path === '/api/needs-you/review/save').length === savesBefore + 1,
-    'capture-failed explicit working save');
-    await openReviewDetails(page);
-    await visible(page, 'Working markup matches the saved revision');
-    await closeReviewDetails(page);
-    await click(page, button('Comments (1)'));
-    const workingComment = '  Capture failed; keep this\u00a0working edit.\nSecond line.  ';
-    await fill(page, field('Comment (optional)'), workingComment);
-    assert.equal(await evaluate(page, `${field('Comment (optional)')}.value`), workingComment);
 
     const current = fixture.provider.read().requests.find(
       ({ requestHandle }) => requestHandle === publication.record.requestHandle,
@@ -16865,12 +16858,99 @@ test('T004 browser: current capture failure keeps Review usable and save-only ac
       current.reviewSubmissionId,
     );
     const workingFile = path.join(reviewDirectory, 'working.json');
+    const saveRequests = () => network.filter(entry =>
+      entry.method === 'POST' && entry.path === '/api/needs-you/review/save');
+
+    // Tool selection is itself a persisted edit. Let that autosave finish
+    // before measuring the one annotation save, which Save markup can force
+    // or the ordinary autosave can finish before the control is reached.
+    await click(page, `document.querySelector('[aria-label="Box (B)"]')`);
+    await openReviewDetails(page);
+    await until(() => baseSaves.length === 1, 'capture-failed Box tool autosave');
+    await visible(page, 'Working markup matches the saved revision');
+    const savesBefore = saveRequests().length;
+    assert.equal(savesBefore, 1, 'only the tool-selection save precedes the annotation');
+    const toolSave = JSON.parse(saveRequests()[0].body);
+    assert.deepEqual({
+      requestHandle:toolSave.requestHandle,
+      revision:toolSave.revision,
+      submissionId:toolSave.submissionId,
+      workingRevision:toolSave.workingRevision,
+      tool:toolSave.working.tool,
+      annotations:toolSave.working.annotations,
+    }, {
+      requestHandle:publication.record.requestHandle,
+      revision:request.revision,
+      submissionId:current.reviewSubmissionId,
+      workingRevision:baseCaptures[0].workingRevision,
+      tool:'box',
+      annotations:[],
+    });
+    const toolWorkingBytes = fs.readFileSync(workingFile);
+    const toolWorking = JSON.parse(toolWorkingBytes).state;
+    assert.deepEqual(toolWorking, toolSave.working);
+    assert.deepEqual(baseSaves[0], {
+      status:'saved', submissionId:current.reviewSubmissionId,
+      workingRevision:hash(toolWorkingBytes),
+    }, 'the tool autosave completes at the actual working-file revision');
+
+    await click(page, button('Add at center'));
+    await visible(page, 'Comments (1)');
+    const annotationId = await evaluate(page,
+      `document.querySelector('.dude-review-overlay [data-annotation]')?.getAttribute('data-annotation')`);
+    assert.ok(annotationId, 'the native Add at center action draws a box');
+    const workingSave = await saveWorkingMarkup(page, network, output);
+    await until(() => baseSaves.length === savesBefore + 1, 'capture-failed annotation working save');
+    assert.equal(saveRequests().length, savesBefore + 1,
+      'exactly one annotation save follows the completed tool autosave');
+    const v = toolWorking.view.viewport;
+    const expectedBox = {
+      id:annotationId, tool:'box',
+      x1:v.scrollX + v.width / 4, y1:v.scrollY + v.height / 3,
+      x2:v.scrollX + v.width * 3 / 4, y2:v.scrollY + v.height * 0.6,
+      comment:'', replacement:'', styleNote:'', element:null,
+    };
+    const expectedState = {
+      ...toolWorking, annotations:[expectedBox], selectedId:annotationId, caret:null,
+    };
+    const annotationSave = JSON.parse(saveRequests()[savesBefore].body);
+    assert.deepEqual(annotationSave, {
+      requestHandle:publication.record.requestHandle,
+      revision:request.revision,
+      submissionId:current.reviewSubmissionId,
+      workingRevision:baseSaves[0].workingRevision,
+      working:expectedState,
+    }, 'the annotation request saves the exact drawn box and selected tool in the same working submission');
+    const annotationWorkingBytes = fs.readFileSync(workingFile);
+    const annotationWorking = JSON.parse(annotationWorkingBytes);
+    assert.deepEqual(annotationWorking, {
+      version:1, submissionId:current.reviewSubmissionId, scope, preview,
+      requestRef:request.requestRef, requestRevision:request.revision, state:expectedState,
+    }, 'working.json echoes the exact annotation state and current artifact/request binding');
+    assert.deepEqual(baseSaves[savesBefore], {
+      status:'saved', submissionId:current.reviewSubmissionId,
+      workingRevision:hash(annotationWorkingBytes),
+    }, 'the annotation save response binds the actual persisted bytes');
+    assert.notEqual(baseSaves[savesBefore].workingRevision, baseSaves[0].workingRevision,
+      'the annotation advances the tool-only working revision');
+    await openReviewDetails(page);
+    await visible(page, 'Working markup matches the saved revision');
+    await closeReviewDetails(page);
+    await click(page, button('Comments (1)'));
+    const workingComment = '  Capture failed; keep this\u00a0working edit.\nSecond line.  ';
+    await fill(page, field('Comment (optional)'), workingComment);
+    assert.equal(await evaluate(page, `${field('Comment (optional)')}.value`), workingComment);
+
     const working = await until(() => {
       if (!fs.existsSync(workingFile)) return null;
       const value = JSON.parse(fs.readFileSync(workingFile, 'utf8'));
       return value.state.annotations.length === 1
         && value.state.annotations[0].comment === workingComment ? value : null;
     }, 'capture-failed edited working.json');
+    assert.deepEqual(working.state.annotations, [{ ...expectedBox, comment:workingComment }],
+      'comment autosave preserves the exact drawn box');
+    assert.equal(working.state.tool, 'box');
+    assert.equal(working.state.selectedId, annotationId);
     assert.deepEqual(fs.readdirSync(reviewDirectory), ['working.json'],
       'capture failure retains only mutable working markup');
     await click(page, `document.querySelector('[data-review-comments-done]')`);
@@ -16937,6 +17017,7 @@ test('T004 browser: current capture failure keeps Review usable and save-only ac
     assert.deepEqual(runtimeErrors, []);
     const proof = {
       browser:browserState.version.Browser,
+      fixtureRoot:root,
       selectedCaptureBrowser,
       incompatibleExecutableSha256:incompatibleBrowser.executableSha256,
       nodeExecutableSha256:incompatibleBrowser.nodeSha256,
@@ -16944,6 +17025,12 @@ test('T004 browser: current capture failure keeps Review usable and save-only ac
       reviewOpens:baseCaptures.length,
       workingSaves:network.filter(entry =>
         entry.method === 'POST' && entry.path === '/api/needs-you/review/save').length,
+      workingSave,
+      savesBeforeAnnotation:savesBefore,
+      toolSave:{ request:toolSave, response:baseSaves[0] },
+      annotationSave:{
+        request:annotationSave, response:baseSaves[savesBefore], working:annotationWorking,
+      },
       workingAnnotations:working.state.annotations.length,
       reopenedComment:working.state.annotations[0].comment,
       requestPhase:finalRequest.phase,

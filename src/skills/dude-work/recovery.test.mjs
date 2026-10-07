@@ -3744,7 +3744,8 @@ test('material targets reject empty and relative segments without excluding cano
 });
 
 for (const count of [0, 17]) {
-  test(`material-input contract: autonomous admission rejects ${count} targets before charging`, () => {
+  const name = count === 0 ? 'rejects 0 targets before charging' : 'accepts 17 canonical targets without truncation';
+  test(`material-input contract: autonomous admission ${name}`, () => {
     for (const mode of ['ordinary', 'recovery']) {
       const state = emptyState({ mode: 'autonomous', recover: true });
       const raw = withPolicyPlan(TARGET, transitionRaw(TARGET), 'autonomous');
@@ -3754,16 +3755,35 @@ for (const count of [0, 17]) {
       ), undefined, 'autonomous');
       const inspection = buildInspection(TARGET, collectEvidence(TARGET, raw, undefined, 'autonomous'));
       const before = canonicalJson(state);
+      const candidateBytes = canonicalJson(candidate);
       const captures = [raw.directIdeas[0].bytes, raw.tasks.bytes, raw.definitionPlan.bytes];
       const captureBytes = captures.map(bytes => Buffer.from(bytes));
 
       assert.doesNotThrow(() => validateAssessment(TARGET, inspection, candidate));
-      assert.throws(
-        () => authorizeRuntimeAttempt(state, TARGET, raw, candidate, mode),
-        /Assessment\.materialInputs\.targets must contain 1 through 16 rows/,
-        mode,
-      );
+      if (count === 0) {
+        assert.throws(
+          () => authorizeRuntimeAttempt(state, TARGET, raw, candidate, mode),
+          /^TypeError: Assessment\.materialInputs\.targets must contain at least 1 row$/,
+          mode,
+        );
+      } else {
+        const authorized = authorizeRuntimeAttempt(state, TARGET, raw, candidate, mode);
+        assert.equal(authorized.authorized, true, mode);
+        assert.equal(authorized.state.overallUsed, 1, mode);
+        assert.deepEqual(authorized.state.recoveryUsed, mode === 'recovery'
+          ? [{ targetKey: targetKey(TARGET), targetHash: targetHash(TARGET), count: 1 }] : [], mode);
+        assert.deepEqual(authorized.state.pending, [{
+          target: TARGET,
+          evidenceHash: inspection.evidenceHash,
+          approachHash: assessmentApproach(candidate),
+          action: candidate.action,
+          materialInputs: candidate.materialInputs,
+          mode,
+        }], mode);
+        assert.deepEqual(authorized.state.completed, [], mode);
+      }
       assert.equal(canonicalJson(state), before, mode);
+      assert.equal(canonicalJson(candidate), candidateBytes, mode);
       assert.equal(state.overallUsed, 0);
       assert.deepEqual(state.recoveryUsed, []);
       assert.deepEqual(state.pending, []);
@@ -3773,9 +3793,19 @@ for (const count of [0, 17]) {
   });
 }
 
-test('material-input contract: trusted consumer sets retain their exact 1 through 16 bounds', () => {
+test('material-input contract: targets are nonempty and other trusted sets retain their exact 1 through 16 bounds', () => {
   const inputs = { targets: ['src/read.mjs'], operations: ['execute-task'], checks: ['verification'] };
-  for (const field of ['targets', 'operations', 'checks']) {
+  assert.throws(
+    () => validateMaterialInputsV1({ ...inputs, targets: [] }),
+    /^TypeError: MaterialInputsV1\.targets must contain at least 1 row$/,
+  );
+  const completeTargets = {
+    ...inputs,
+    targets: Array.from({ length: 17 }, (_, index) => `src/read-${String(index).padStart(2, '0')}.mjs`),
+  };
+  assert.strictEqual(validateMaterialInputsV1(completeTargets), completeTargets);
+  assert.equal(completeTargets.targets.length, 17);
+  for (const field of ['operations', 'checks']) {
     for (const count of [0, 1, 16, 17]) {
       const candidate = {
         ...inputs,

@@ -4894,6 +4894,7 @@ async function driveTaskWalkthrough(page, host, fixture, evidence) {
   await workspaceViewport(page, 719, 'light');
   await click(page, `document.querySelector('[aria-label="Expand navigation pane"]')`);
   await until(() => evaluate(page, `Boolean(document.querySelector('[data-navigation-dialog]'))`), 'installed narrow rail dialog');
+  await settle(page);
   assert.equal(await evaluate(page, `Math.round(document.querySelector('[data-navigation-dialog]').getBoundingClientRect().width)`), 260);
   assert.equal(await evaluate(page, `document.querySelector('header').inert && document.querySelector('main').inert
     && document.querySelector('footer').inert`), true);
@@ -7406,7 +7407,7 @@ async function driveInstalledTaskWalkthrough(page, canvasUrl, fixture, draft) {
   assert.ok(expected062.includes(bodyMarker));
   assert.ok(expected062.includes(acceptanceMarker));
 
-  const selectWork = async (query, heading, ideaPath) => {
+  const selectProjectedWork = async (query, heading, ideaPath) => {
     if (await evaluate(page, `Boolean(document.querySelector('[aria-label="Clear work selection"]'))`)) {
       await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
       inputSequence.push('pointer: Clear work selection');
@@ -7414,11 +7415,8 @@ async function driveInstalledTaskWalkthrough(page, canvasUrl, fixture, draft) {
       assert.equal(await evaluate(page, `${field('Search work')}.value`), '');
       assert.equal(await evaluate(page, `${field('Show')}.innerText.trim()`), 'All');
     }
-    await fill(page, field('Search work'), query);
-    await evaluate(page, `${field('Search work')}.focus()`);
-    await pressKey(page, 'ArrowDown');
-    await pressKey(page, 'Enter');
-    inputSequence.push(`keyboard: Search work ${query}, ArrowDown, Enter`);
+    await selectWork(page, ideaPath);
+    inputSequence.push(`keyboard: Search work ${query}, ArrowDown to ${ideaPath}, Enter`);
     await until(() => evaluate(page, `document.querySelector('h1')?.textContent
       .replace(/\\s+/g, ' ').trim() === ${JSON.stringify(heading)}`), `${heading} selected`);
     const selected = (await awaitSelectedProjection(
@@ -7446,7 +7444,7 @@ async function driveInstalledTaskWalkthrough(page, canvasUrl, fixture, draft) {
   assert.equal(await evaluate(page, `Boolean(${field('Search work')})`), true);
   assert.equal(await evaluate(page, `document.querySelectorAll('[aria-label="Working on"]').length`), 0);
 
-  let projection062 = await selectWork(
+  let projection062 = await selectProjectedWork(
     '062',
     '062 Dude Canvas Workspace Integration',
     WORKSPACE_062.ideaPath,
@@ -7541,7 +7539,7 @@ async function driveInstalledTaskWalkthrough(page, canvasUrl, fixture, draft) {
   assert.equal(await evaluate(page, `document.querySelector('h1')?.textContent
     .replace(/\\s+/g, ' ').trim()`), '062 Dude Canvas Workspace Integration');
 
-  const controlProjection = await selectWork(
+  const controlProjection = await selectProjectedWork(
     '063',
     '063 Installed task coverage controls',
     TASK_CONTROL.ideaPath,
@@ -7570,7 +7568,7 @@ async function driveInstalledTaskWalkthrough(page, canvasUrl, fixture, draft) {
   ).textContent`), fixture.records.controlled.instructions[TASK_CONTROL.blockedTaskKey]);
   assert.equal(blockedDetail.includes('agent is working now'), false);
 
-  const projection052 = await selectWork('052', '052 Dude Canvas UI', WORKSPACE_052.ideaPath);
+  const projection052 = await selectProjectedWork('052', '052 Dude Canvas UI', WORKSPACE_052.ideaPath);
   assert.deepEqual(projection052.tasks, {
     total: 13,
     open: 0,
@@ -7598,7 +7596,7 @@ async function driveInstalledTaskWalkthrough(page, canvasUrl, fixture, draft) {
     '[data-task-detail="${WORKSPACE_052.selectedTaskKey}"]'
   ).innerText.includes('Not exposed by this source.')`), true);
 
-  projection062 = await selectWork(
+  projection062 = await selectProjectedWork(
     '062',
     '062 Dude Canvas Workspace Integration',
     WORKSPACE_062.ideaPath,
