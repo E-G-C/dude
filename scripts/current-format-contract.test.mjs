@@ -23,12 +23,14 @@ import {
   withReferenceWorkspace,
 } from './fixtures/064-work-receipt-overflow-handling/model-view-test-helpers.mjs';
 import {
+  buildRelease,
   isReleaseFile,
   listCoreOutputs,
   listCoreSourceFiles,
   writeCoreOutput,
 } from './build-release.mjs';
-import { TIER, classifyPath } from '../src/skills/dude-engine/lib/ownership.mjs';
+import { TIER, classifyPath, enumerateCorePaths } from '../src/skills/dude-engine/lib/ownership.mjs';
+import { classifyPlan, scanCoreInventoryPaths } from '../src/skills/dude-bundle-upgrade/upgrade.mjs';
 import { resolveMutationPath } from '../src/skills/dude-engine/lib/workspace-paths.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -10153,6 +10155,49 @@ test('T009 current runtime projection is exact, generated, and consumer-tooling-
     [],
     'release output exposes no frontend, test, source-map, package, build, registry, or installer path',
   );
+});
+
+test('T007 the saved sources file is project-owned: releases never seed it and upgrades never plan it', () => {
+  const relative = '.dude/metadata/pack-sources.md';
+
+  // Ownership: project-owned, so no release or upgrade inventory can include it.
+  assert.equal(classifyPath(relative), TIER.PROJECT);
+  assert.equal(isReleaseFile(relative), false);
+  assert.equal(listCoreOutputs(ROOT).some(({ relPath }) => relPath === relative), false);
+  assert.equal(listCoreSourceFiles(ROOT).some(({ deployRel }) => deployRel === relative), false);
+
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-t007-ownership-'));
+  try {
+    // Releases: a real build ships the shared parser, but seeds no sources file anywhere.
+    const release = path.join(sandbox, 'release');
+    const built = buildRelease({ repoRoot: ROOT, outDir: release, ref: 'v0.0.0-t007' });
+    assert.ok(built.files.includes('.github/skills/dude-engine/lib/pack-sources.mjs'), 'the shared parser ships with the engine');
+    assert.equal(built.files.some((file) => path.posix.basename(file) === 'pack-sources.md'), false);
+    assert.equal(fs.existsSync(path.join(release, ...relative.split('/'))), false);
+
+    // Upgrades: the planner and the local inventory list core files only, so a project's file
+    // is never added, replaced, or removed, and its bytes stay as the project left them.
+    const write = (root, file, content) => {
+      fs.mkdirSync(path.dirname(path.join(root, ...file.split('/'))), { recursive: true });
+      fs.writeFileSync(path.join(root, ...file.split('/')), content);
+    };
+    const upstream = path.join(sandbox, 'upstream');
+    const project = path.join(sandbox, 'project');
+    const core = '.github/skills/dude-fixture/SKILL.md';
+    write(upstream, core, 'upstream core bytes\n');
+    write(project, core, 'project core bytes\n');
+    const projectFile = '# Pack Sources\n\n```json\n{"sources":[{"type":"local","location":"../team-packs"}]}\n```\n';
+    write(project, relative, projectFile);
+    const plan = classifyPlan(upstream, project);
+    assert.deepEqual(plan.replace.map((entry) => entry.path), [core], 'the plan ran over the fixture');
+    const planned = [plan.replace, plan.add, plan.remove, plan.advisory, plan.upToDatePaths].flat().map((entry) => entry.path);
+    assert.deepEqual(planned.filter((file) => file.startsWith('.dude/')), []);
+    assert.deepEqual(enumerateCorePaths(project), [core]);
+    assert.deepEqual(scanCoreInventoryPaths(project, 'project'), [core]);
+    assert.equal(fs.readFileSync(path.join(project, ...relative.split('/')), 'utf8'), projectFile);
+  } finally {
+    fs.rmSync(sandbox, { recursive: true, force: true });
+  }
 });
 
 test('Canvas installed acceptance uses one keyboard helper for both walkthroughs', async () => {

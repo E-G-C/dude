@@ -23,6 +23,31 @@
  * that the installed extension serves. The pack fixture keeps the builder's
  * release metadata. This proves installed owner execution and waiter
  * correlation, not unscripted model reasoning or desktop-app rendering.
+ *
+ * A further disposable workspace drives 073 Add/import. The shipped route hands
+ * one local skill file and one local directory (an agent with `.support/`
+ * companions, and a skill with its companion) to the installed Dude, whose
+ * scripted owner loads dude-bundle-import, previews with the unchanged importer,
+ * publishes the literal permission, recognizes consent, rechecks the reviewed
+ * basis, applies once, verifies, and acknowledges the separate import_result.
+ * The browser only requests and consents, and the test writes nothing after
+ * seeding. Show in Installed then follows each Applied result without Reload.
+ * Phase B's Settings stay in the same journey: Available is unknown until the
+ * one explicit Reload, and no catalog is acquired by anything else.
+ *
+ * A third disposable workspace drives 073 Phase B, a pack source. The browser
+ * adds a local folder (library/packs/<name>/pack.md) through Settings > Packs >
+ * Sources, shows its packs in Available, selects its source-qualified pack, and
+ * requests the install. The scripted installed Dude previews that source,
+ * publishes the literal permission naming it first as a third-party source,
+ * recognizes consent, rechecks the saved sources, runs Compose with exactly the
+ * bound --source, verifies, and acknowledges the pack_result with the exact
+ * catalogSource echoed. The test saves, installs, and applies nothing after
+ * seeding, and contacts no network source. The recorded source, the installed
+ * bytes, the Available rows of both same-named packs, the source facts, and the
+ * installed-use removal blocker are then observed where they landed. Every
+ * fixture's installed core modules, including the saved-sources parser and the
+ * Compose, lint, and upgrade skills, are checked byte for byte against source.
  */
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -33,6 +58,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -176,6 +202,10 @@ const PACK_WORK_IDEA_PATH = '.dude/ideas/002-installed-pack-host.md';
 const PACK_WORK_SPEC_PATH = '.dude/specs/002-installed-pack-host/spec.md';
 const PACK_WORK_TASK_KEY = 'T001@c012ab01';
 const PROFILE_PATH = '.dude/metadata/profile.md';
+/** The project's saved pack sources: the one file the Sources route writes. */
+const SOURCES_PATH = '.dude/metadata/pack-sources.md';
+/** The second pack of the Phase B folder, which the default library does not have. */
+const SOURCE_EXTRA_PACK = 'team-extras';
 const BASE_RELEASE_PATH = '.dude/metadata/development-base-release.md';
 const INSTALLED_SOURCE_REPO = 'https://github.com/E-G-C/dude';
 /** @param {string} version @param {string} channel */
@@ -208,7 +238,7 @@ const DEVELOPMENT_ABOUT = Object.freeze({
   baseRelease: 'v1.3.0',
   rows: installedAboutRows('Development (main), based on v1.3.0', 'Development (main)'),
 });
-const SOURCE_APP_SHA256 = '46360200ec0d5ee2864e7ee6162e23e2e3839e90b238d3b059c3a1b560b39531';
+const SOURCE_APP_SHA256 = '465e6a2bcb763621a676aac6be1839e301d2ce2d0fc8d233b1d48e87c342cf7e';
 const TASKS_PATH = path.posix.join(path.posix.dirname(SPEC_PATH), 'tasks.md');
 const DONE_IDEA_PATH = '.dude/ideas/052-dude-canvas-ui.md';
 const DONE_SPEC_PATH = '.dude/specs/052-dude-canvas-ui/spec.md';
@@ -282,6 +312,37 @@ function safeError(error) {
 /** @param {string} relative */
 function sourceBytes(relative) {
   return fs.readFileSync(path.join(ROOT, ...relative.split('/')));
+}
+
+/** Streaming SHA-256 of a file, so a large installed executable is never held in memory. @param {string} file */
+function hashFile(file) {
+  const hash = createHash('sha256');
+  const descriptor = fs.openSync(file, 'r');
+  try {
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    for (let read = fs.readSync(descriptor, buffer, 0, buffer.length, null); read > 0;
+      read = fs.readSync(descriptor, buffer, 0, buffer.length, null)) {
+      hash.update(buffer.subarray(0, read));
+    }
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  return hash.digest('hex');
+}
+
+/** Every regular file below a root, by relative path with its SHA-256. @param {string} root */
+function workspaceFiles(root) {
+  /** @type {Record<string,string>} */
+  const files = {};
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(absolute);
+      else if (entry.isFile()) files[path.relative(root, absolute).split(path.sep).join('/')] = hashFile(absolute);
+    }
+  };
+  visit(root);
+  return files;
 }
 
 /** @param {string} root @param {string} relative @param {string|Buffer} value */
@@ -1262,6 +1323,233 @@ function seedPackFixture(root) {
 }
 
 /**
+ * The Add/import case: two local sources the installed owner imports, and the
+ * bytes the unchanged importer must leave. Sources live outside the workspace,
+ * and every expectation is authored here, never read back from the importer.
+ * The hand-made fills sort before both imports, so each imported artifact lands
+ * on Installed's second 25-row page.
+ * @param {string} root
+ */
+function importFixture(root) {
+  const sources = path.join(RUN, 'import-sources');
+  const rows = (...lines) => `${lines.join('\n')}\n`;
+  const coordinator = '**Coordinator-only artifacts:** do not edit `## Coordinator Log`, task-state glyphs in '
+    + '`tasks.md`, fenced regions (`<!-- dude:managed:* -->`, `<!-- dude:board:* -->`), or `status:` / '
+    + '`spec_path:` frontmatter. Report changes back to `@dude` instead.';
+  const skillSource = rows(
+    '---', 'name: dude-local-status-review', 'description: "Summarize project status from local notes."',
+    'license: MIT', '---', '', '# Status review', '',
+    'Read the notes the user names and summarize their status in five lines.',
+  );
+  const agentSource = rows(
+    '---', 'name: "Release Notes"', 'description: "Drafts release notes from a changelog."', '---', '',
+    '# Release notes', '', '## Scope', '', 'Draft release notes from the changelog the user names.', '', coordinator,
+  );
+  const changelog = rows('# Changelog template', '', '- Added', '- Changed', '- Fixed');
+  const entry = rows('# Entry example', '', '- Added: one line per change.');
+  const triageSource = rows(
+    '---', 'name: log-triage', 'description: "Triage a log excerpt the user pastes."', '---', '',
+    '# Log triage', '', 'Read the excerpt and group the lines by severity. See references/severity.md.',
+  );
+  const severity = rows('# Severity', '', 'Error, warning, info.');
+  const fileDestination = '.github/skills/dude-local-status-review';
+  const agentDestination = '.github/agents/dude-local-release-notes';
+  const triageDestination = '.github/skills/dude-local-log-triage';
+  // Only the license line and, in the skill the directory renames, the name differ from the sources.
+  const file = {
+    source: path.join(sources, 'file', 'SKILL.md'),
+    bytes: Buffer.from(skillSource),
+    files: new Map([['file/SKILL.md', skillSource]]),
+    operation: 'import:file',
+    // How the owner recognizes the permission reply. Neither word is an import result.
+    permissionAck: 'accepted',
+    confirmation: 'IMPORT SKILL dude-local-status-review',
+    written: [`${fileDestination}/SKILL.md`, `${fileDestination}/LICENSE`],
+    expected: new Map([
+      [`${fileDestination}/SKILL.md`, Buffer.from(skillSource.replace('license: MIT\n', ''))],
+      [`${fileDestination}/LICENSE`, Buffer.from('MIT\n')],
+    ]),
+    targets: [
+      { target: `${fileDestination}/SKILL.md\nAnalyzed state: missing\nDecision: create`, revision: 'missing' },
+      {
+        target: `${fileDestination}/LICENSE\nAnalyzed state: missing\nDecision: create the reviewed MIT license sibling`,
+        revision: 'missing',
+      },
+    ],
+  };
+  const directory = {
+    source: path.join(sources, 'kit'),
+    files: new Map([
+      ['kit/release-notes/release-notes.agent.md', agentSource],
+      ['kit/release-notes/templates/changelog.md', changelog],
+      ['kit/release-notes/examples/entry.md', entry],
+      ['kit/log-triage/SKILL.md', triageSource],
+      ['kit/log-triage/references/severity.md', severity],
+    ]),
+    operation: 'import:directory',
+    permissionAck: 'applied',
+    confirmation: 'IMPORT DIRECTORY 2 ARTIFACTS',
+    // Raw destination order, which is also the importer's written_paths order.
+    written: [
+      `${agentDestination}.agent.md`,
+      `${agentDestination}.support/examples/entry.md`,
+      `${agentDestination}.support/templates/changelog.md`,
+      `${triageDestination}/SKILL.md`,
+      `${triageDestination}/references/severity.md`,
+    ],
+    expected: new Map([
+      [`${agentDestination}.agent.md`, Buffer.from(agentSource)],
+      [`${agentDestination}.support/examples/entry.md`, Buffer.from(entry)],
+      [`${agentDestination}.support/templates/changelog.md`, Buffer.from(changelog)],
+      [`${triageDestination}/SKILL.md`, Buffer.from(triageSource.replace('name: log-triage', 'name: dude-local-log-triage'))],
+      [`${triageDestination}/references/severity.md`, Buffer.from(severity)],
+    ]),
+    // Plan order: groups sort by entrypoint, so the skill group precedes the agent group.
+    targets: [
+      `skill dude-local-log-triage\nDestination: ${triageDestination}/\n2 files: 2 new, 0 replaced`,
+      `agent dude-local-release-notes\nDestination: ${agentDestination}.agent.md\n  and ${agentDestination}.support/\n3 files: 3 new, 0 replaced`,
+    ],
+  };
+  return {
+    root,
+    sources,
+    evidence: path.join(RUN, 'import-evidence'),
+    fillNames: Array.from({ length: 30 }, (_, index) => `dude-local-fill-${String(index + 1).padStart(2, '0')}`),
+    file,
+    directory,
+  };
+}
+
+/**
+ * Seed the Add/import workspace, before its host starts. One local catalog
+ * record keeps the pack read local, so no remote catalog is contacted and
+ * Available has a pack for the shared-exclusion check. The hand-made fills are
+ * ordinary project skills. Nothing here writes an import destination.
+ * @param {string} root
+ */
+function seedImportFixture(root) {
+  const fixture = importFixture(root);
+  const pack = packFixture(root);
+  write(root, PACK_MANIFEST_PATH, pack.manifest);
+  write(root, PACK_SOURCE_PATH, pack.instruction);
+  for (const name of fixture.fillNames) {
+    write(root, `.github/skills/${name}/SKILL.md`,
+      `---\nname: ${name}\ndescription: "Hand-made ${name}."\n---\n# ${name}\n`);
+  }
+  for (const imported of [fixture.file, fixture.directory]) {
+    for (const [relative, text] of imported.files) write(fixture.sources, relative, text);
+  }
+  fs.mkdirSync(fixture.evidence, { recursive: true });
+  for (const destination of [...fixture.file.written, ...fixture.directory.written]) {
+    assert.equal(fs.existsSync(path.join(root, ...destination.split('/'))), false,
+      `no import destination exists before the owner acts: ${destination}`);
+  }
+  return fixture;
+}
+
+/**
+ * The import skill and its importer exactly as installed: byte-identical to the
+ * authored source, so the owner runs the unchanged importer.
+ * @param {string} root
+ */
+function importerParity(root) {
+  const pairs = {};
+  for (const relative of [
+    'SKILL.md', 'import.mjs', 'lib/directory-import.mjs', 'lib/directory-risk.mjs',
+    'lib/directory-source.mjs', 'lib/import-frontmatter.mjs',
+  ]) {
+    const installed = fs.readFileSync(path.join(root, '.github/skills/dude-bundle-import', ...relative.split('/')));
+    assert.equal(installed.equals(sourceBytes(`src/skills/dude-bundle-import/${relative}`)), true,
+      `installed importer drift: ${relative}`);
+    pairs[relative] = sha256(installed);
+  }
+  return pairs;
+}
+
+/**
+ * The 073 Phase B case: a folder the project adds as a pack source, outside the workspace. It offers the
+ * default library's own pack by name with different bytes, so installing it can only have come from the
+ * folder, and one pack only it has, so the name exclusion after an install leaves a real row behind. Every
+ * expectation is authored here, never read back from Compose or the provider. The default library is the
+ * installed-host pack fixture's.
+ * @param {string} root
+ */
+function sourceFixture(root) {
+  const defaults = packFixture(root);
+  const team = path.join(RUN, 'team-packs');
+  const lines = (...rows) => Buffer.from(`${rows.join('\n')}\n`);
+  const manifest = lines(
+    '---', `name: ${PACK_NAME}`, 'description: "Added-source variant of the installed-host pack round trip."',
+    'use-cases: [testing]', 'requires:', '  tools: [node]', '---', `# ${PACK_NAME}`,
+  );
+  const instruction = lines(
+    '---', 'applyTo: "**"', 'description: "Disposable installed-host added-source pack acceptance artifact."', '---', '',
+    '# Installed host added-source pack acceptance', '',
+    'This inert fixture proves the pack came from the folder the project added, not from the default library.',
+  );
+  const extraManifest = lines(
+    '---', `name: ${SOURCE_EXTRA_PACK}`, 'description: "A second pack only the added source offers."',
+    'use-cases: [testing]', '---', `# ${SOURCE_EXTRA_PACK}`,
+  );
+  const extraInstruction = lines(
+    '---', 'applyTo: "**"', 'description: "Disposable second pack of the added source."', '---', '', '# Second pack',
+  );
+  const catalog = 'library/packs';
+  const files = new Map([
+    [`${catalog}/${PACK_NAME}/pack.md`, manifest],
+    [`${catalog}/${PACK_NAME}/instructions/dude-pack-${PACK_NAME}-owner.instructions.md`, instruction],
+    [`${catalog}/${SOURCE_EXTRA_PACK}/pack.md`, extraManifest],
+    [`${catalog}/${SOURCE_EXTRA_PACK}/instructions/dude-pack-${SOURCE_EXTRA_PACK}-notes.instructions.md`, extraInstruction],
+  ]);
+  assert.equal(instruction.equals(defaults.instruction), false, 'the added source offers different bytes than the default library');
+  const compose = path.join(root, '.github/skills/dude-compose/compose.mjs');
+  return {
+    root,
+    team,
+    label: 'team-packs',
+    files,
+    manifest,
+    instruction,
+    defaults,
+    compose,
+    destination: path.join(root, ...PACK_DESTINATION.split('/')),
+    sourcesFile: path.join(root, ...SOURCES_PATH.split('/')),
+    // The pack's own files as one source revision: a local folder has no commit.
+    packRevision: revision(Buffer.concat([manifest, instruction])),
+    /** Compose in the joined workspace, bound to the folder the request names and to nothing else. @param {string} location */
+    listCommand: (location) => shellCommand([
+      shellArg(process.execPath), shellArg(compose), 'list', '--root', shellArg(root), '--source', shellArg(location), '--json',
+    ]),
+    /** @param {string} location */
+    addCommand: (location) => shellCommand([
+      shellArg(process.execPath), shellArg(compose), 'add', PACK_NAME, '--root', shellArg(root), '--source', shellArg(location), '--envelope',
+    ]),
+    lintCommand: lintCommand(root),
+    /** The raw-bytes SHA-256 of a file, as the platform's own shell reports it. @param {string} file */
+    digestCommand: (file) => (WINDOWS
+      ? `(Get-FileHash -Algorithm SHA256 -LiteralPath ${shellArg(file)}).Hash.ToLower()`
+      : `shasum -a 256 ${shellArg(file)} | cut -d ' ' -f 1`),
+    written: [PACK_DESTINATION],
+  };
+}
+
+/**
+ * Seed the Phase B workspace before its host starts: the default library's one pack, and the folder the
+ * project will add through Settings. Nothing here saves the source, installs a pack, or writes the sources
+ * file; the browser adds the source and the installed owner installs the pack.
+ * @param {string} root
+ */
+function seedSourceFixture(root) {
+  const fixture = sourceFixture(root);
+  write(root, PACK_MANIFEST_PATH, fixture.defaults.manifest);
+  write(root, PACK_SOURCE_PATH, fixture.defaults.instruction);
+  for (const [relative, bytes] of fixture.files) write(fixture.team, relative, bytes);
+  assert.equal(fs.existsSync(fixture.sourcesFile), false, 'no saved sources before the browser adds one');
+  assert.equal(fs.existsSync(fixture.destination), false, 'no pack destination before the owner acts');
+  return { ...fixture, realTeam: fs.realpathSync(fixture.team) };
+}
+
+/**
  * Pre-seed a disposable release fixture, before its host starts, as the
  * development install a confirmed `main` upgrade leaves: the manifest's fenced
  * refs become `main` with its prose and source unchanged, and the base record
@@ -1303,6 +1591,18 @@ function installedProfile(root) {
   assert.ok(value && typeof value === 'object' && value.installed
     && typeof value.installed === 'object' && !Array.isArray(value.installed));
   return { bytes, value };
+}
+
+/**
+ * A gate holds the scripted owner's next model response until the browser has
+ * observed the state that exists between two owner steps. A gate nobody
+ * releases opens after a minute, so a failed run cannot hang the host.
+ */
+function createGate() {
+  /** @type {()=>void} */
+  let release = () => {};
+  const open = new Promise((resolve) => { release = resolve; });
+  return { reached: false, open, release: () => release(), wait: () => Promise.race([open, delay(60_000)]) };
 }
 
 /**
@@ -1675,6 +1975,12 @@ function createPackModel(root) {
         assert.equal(binding.owner, 'dude');
         assert.equal(binding.operation, 'install');
         assert.equal(binding.name, PACK_NAME);
+        // The default catalog's handoff is the contract from before sources existed: no bound-source line, and a
+        // binding of exactly seven keys with no catalogSource.
+        assert.deepEqual(Object.keys(binding),
+          ['receiptId', 'owner', 'operation', 'name', 'workspaceId', 'sessionId', 'providerGeneration']);
+        assert.equal(prompt.split(/\r?\n/).some((line) => /catalogSource|bound to one source/.test(line)), false,
+          'a default-catalog handoff mentions no bound source');
         state.packPromptRequests += 1;
         assert.equal(state.packPromptRequests, 1, 'the installed request is sent exactly once');
         state.binding = binding;
@@ -1961,6 +2267,832 @@ function createPackModel(root) {
   server.requestTimeout = 10_000;
   server.headersTimeout = 10_000;
   return { server, state, fixture };
+}
+
+/**
+ * An importer command, run from the joined workspace root as its procedure
+ * requires: the directory commands read the workspace from the working directory.
+ * @param {string} root
+ * @param {string[]} args literal or already quoted words after the script
+ */
+function importerCommand(root, args) {
+  const importer = path.join(root, '.github/skills/dude-bundle-import/import.mjs');
+  const run = shellCommand([shellArg(process.execPath), shellArg(importer), ...args]);
+  return WINDOWS ? `Set-Location -LiteralPath ${shellArg(root)}; ${run}` : `cd ${shellArg(root)} && ${run}`;
+}
+
+/** The shipped lint over the whole workspace. @param {string} root */
+function lintCommand(root) {
+  return shellCommand([
+    shellArg(process.execPath),
+    shellArg(path.join(root, '.github/skills/dude-lint/lint.mjs')),
+    shellArg(root),
+  ]);
+}
+
+/**
+ * One line per path: a regular file, and no link. The provider repeats this
+ * check once, when it records the result.
+ * @param {string} root
+ * @param {string[]} paths
+ */
+function regularFilesCommand(root, paths) {
+  return WINDOWS
+    ? `Set-Location -LiteralPath ${shellArg(root)}; foreach ($p in @(${paths.map(shellArg).join(', ')})) { `
+      + "$i = Get-Item -LiteralPath $p -Force; '{0} file={1} link={2}' -f $p, (-not $i.PSIsContainer), [bool]$i.LinkType }"
+    : `cd ${shellArg(root)} && for p in ${paths.map(shellArg).join(' ')}; do `
+      + 'if [ -f "$p" ] && [ ! -L "$p" ]; then echo "$p file=True link=False"; else echo "$p file=False link=True"; fi; done';
+}
+
+/**
+ * The permission targets Dude derives from a reviewed directory plan: one for
+ * each group, in plan order, each naming its artifact, destination, and counts.
+ * @param {any} plan
+ */
+function directoryTargets(plan) {
+  return plan.groups.map((group) => {
+    const entry = plan.outputs.find((output) => output.source_path === group.entrypoint);
+    assert.ok(entry, `the plan has an output for ${group.entrypoint}`);
+    const agent = group.kind === 'agent';
+    const base = agent ? entry.destination_path.replace(/\.agent\.md$/, '') : path.posix.dirname(entry.destination_path);
+    const owned = plan.outputs.filter((output) => (agent
+      ? output.destination_path === entry.destination_path || output.destination_path.startsWith(`${base}.support/`)
+      : output.destination_path.startsWith(`${base}/`)));
+    assert.ok(owned.every((output) => output.destination_state.type === 'missing'), 'this fixture replaces nothing');
+    const destination = agent
+      ? `${entry.destination_path}${owned.length > 1 ? `\n  and ${base}.support/` : ''}` : `${base}/`;
+    return {
+      target: `${group.kind} ${path.posix.basename(base)}\nDestination: ${destination}\n${owned.length} files: ${owned.length} new, 0 replaced`,
+      revision: `sha256:${plan.plan_sha256}`,
+    };
+  });
+}
+
+/**
+ * Deterministic selected-Dude model for the Add/import case. It scripts what the
+ * installed owner does for each handoff, one tool call at a time, through the
+ * tools the CLI actually offers: load dude-bundle-import, preview with the
+ * unchanged importer, publish the literal permission, recognize consent,
+ * recheck freshness, apply with the importer, verify, and acknowledge the
+ * separate import_result. The model writes nothing in the workspace; the
+ * importer does. The only files it creates are its own analysis, review, and
+ * plan artifacts, outside the workspace. Each owner script is a generator that
+ * yields its next tool call and receives that tool's actual result.
+ * @param {ReturnType<typeof importFixture>} fixture
+ * @param {{validateDirectoryImportResult:(value:unknown)=>unknown}} importer the installed module's own validator
+ */
+function createImportModel(fixture, importer) {
+  const { root } = fixture;
+  const state = {
+    phase: 'bootstrap',
+    requests: 0,
+    toolName: null,
+    offeredTools: [],
+    /** @type {any[]} */
+    imports: [],
+    /** @type {any[]} */
+    ownerToolCalls: [],
+    modelError: null,
+  };
+  /** The calls the owner made, by id. The host approves exactly these, as made. @type {Map<string, any>} */
+  const calls = new Map();
+  /** @type {{generator:Generator<any, string, any>, callId:string|null}|null} */
+  let active = null;
+  /** Armed gates by name: the owner's call that names one waits for the browser to release it. @type {Map<string, ReturnType<typeof createGate>>} */
+  const gates = new Map();
+  const hold = (name) => {
+    const gate = createGate();
+    gates.set(name, gate);
+    return gate;
+  };
+  const required = {
+    skill: ['skill'], view: ['path'], create: ['path', 'file_text'], shell: ['command', 'description'], needs: ['op'],
+  };
+  const skill = (id, name) => ({ tool: 'skill', id, args: { skill: name } });
+  const view = (id, file) => ({ tool: 'view', id, args: { path: file } });
+  const create = (id, file, text) => ({
+    tool: 'create', id, args: { path: file, file_text: text }, writes: 'owner artifact outside the workspace',
+  });
+  const shell = (id, command, description, writes = null) => ({
+    tool: 'shell', id, args: { command, description, mode: 'sync', initial_wait: 30 }, writes,
+  });
+  const needs = (id, args) => ({ tool: 'needs', id, args });
+  /** A shell result's stdout, which must have exited zero. */
+  const stdoutOf = (text, label) => {
+    const output = shellToolOutput(text);
+    assert.ok(output.exitCode === null || output.exitCode === 0,
+      `${label} exited ${output.exitCode}: ${text.slice(0, 2_000)}`);
+    return output.stdout.trim();
+  };
+  const destinationExists = (relative) => fs.existsSync(path.join(root, ...relative.split('/')));
+  /** The skill tool answers only that it loaded; the skill's own text reaches the model in the context it adds. */
+  const assertProcedure = (loaded) => {
+    assert.ok(loaded.text.includes('loaded successfully'), `dude-bundle-import did not load: ${loaded.text.slice(0, 600)}`);
+    assert.ok((loaded.body.messages ?? []).some((message) => contentText(message?.content)
+      .includes('Canvas Import Requests And Results')), 'the installed skill context carries the Canvas import procedure');
+  };
+  /** The procedure's fit check: a permission that does not fit is never published. */
+  const assertFits = (fields) => {
+    assert.ok(fields.targets.length >= 1 && fields.targets.length <= 12, 'one to twelve targets');
+    for (const { target } of fields.targets) assert.ok(Buffer.byteLength(target) <= 2_048, 'target text fits');
+    for (const key of ['consequences', 'eligibility', 'confirmation']) {
+      assert.ok(Buffer.byteLength(fields[key]) <= 4_096, `${key} fits`);
+    }
+  };
+  const permissionRequest = (binding, prompt, fields) => ({
+    owner: 'dude',
+    requestRef: `import:${binding.receiptId}`,
+    scope: { kind: 'session' },
+    source: { kind: 'session', revision: binding.providerGeneration },
+    revision: `t012-import-permission-${sha256(JSON.stringify(fields)).slice(0, 16)}`,
+    class: 'permission',
+    prompt,
+    whyHuman: 'Importing writes project files. Dude needs your literal permission for these exact targets.',
+    unblocks: 'Dude can apply this reviewed import and report the verified result in Settings > Packs > Add/import.',
+    blocking: true,
+    fields,
+  });
+
+  /** Publish the literal permission, wait for the human's consent, and recognize it as the permission response. */
+  function* consent(id, record, imported, request) {
+    assertFits(request.fields);
+    record.permission = { request, response: null, acknowledgment: null };
+    record.stage = 'permission-waiting';
+    const answered = yield needs(id('permission'), { op: 'request', request });
+    const details = toolDetails(answered.body, answered.callId);
+    assert.equal(details.status, 'awaiting_acknowledgment');
+    assert.equal(details.acceptedAnswer, false);
+    assert.deepEqual(
+      [details.response.class, details.response.action, details.response.operation, details.response.confirmation],
+      ['permission', 'consent', request.fields.operation, request.fields.confirmation],
+    );
+    assert.deepEqual(details.response.targets, request.fields.targets);
+    assert.deepEqual(imported.written.filter(destinationExists), [], 'accepted permission alone writes nothing');
+    record.permission.response = details;
+    record.stage = 'permission-consented';
+    const receipt = details.receipt;
+    const recognized = yield needs(id('permission-ack'), {
+      op: 'acknowledge',
+      acknowledgment: {
+        receiptId: receipt.receiptId,
+        owner: receipt.owner,
+        requestRef: receipt.requestRef,
+        scope: receipt.scope,
+        previousRevision: receipt.previousRevision,
+        recognizes: receipt.recognizes,
+        outcome: imported.permissionAck,
+        note: 'The owner recognized the exact installed-host import permission response.',
+        source: receipt.source,
+      },
+    });
+    const acknowledged = toolDetails(recognized.body, recognized.callId);
+    assert.equal(acknowledged.status, imported.permissionAck);
+    record.permission.acknowledgment = acknowledged;
+  }
+
+  /** Ordinary verification before the result: lint, then every reported path a regular, unlinked file. */
+  function* verify(id, record, written) {
+    const linted = yield shell(id('lint'), lintCommand(root), 'Verify the imported files with the shipped lint');
+    assert.match(linted.text, /\b0 failure\(s\)/, 'post-import installed lint reports zero failures');
+    const checked = yield shell(id('paths'), regularFilesCommand(root, written),
+      'Check that every imported path is a regular, unlinked file');
+    const lines = stdoutOf(checked.text, 'regular-file check').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    assert.deepEqual(lines, written.map((relative) => `${relative} file=True link=False`));
+    record.verification = { lint: linted.text, regularFiles: lines };
+  }
+
+  /** The separate import_result, with the exact verified paths. */
+  function* acknowledgeResult(id, record, binding, written, note) {
+    record.stage = 'result-ready';
+    const accepted = yield {
+      ...needs(id('result'), {
+        op: 'acknowledge',
+        acknowledgment: {
+          recognizes: 'import_result', ...binding, outcome: 'applied', mutation: 'applied', written, uncertain: [], note,
+        },
+      }),
+      gate: `${record.kind}-before-result`,
+    };
+    record.stage = 'result-acknowledged';
+    const details = toolDetails(accepted.body, accepted.callId);
+    assert.equal(details.phase, 'applied', `the provider refused the import result: ${JSON.stringify(details)}`);
+    assert.equal(details.applied, true);
+    assert.equal(details.receipt.current, true);
+    assert.deepEqual(details.receipt.acknowledgment.written, written);
+    record.result = details;
+    record.stage = 'complete';
+  }
+
+  /** The bytes the importer left, compared with the bytes authored in the fixture. */
+  const observeDestinations = (record, imported) => {
+    const observed = {};
+    for (const [relative, expected] of imported.expected) {
+      const actual = fs.readFileSync(path.join(root, ...relative.split('/')));
+      assert.equal(actual.equals(expected), true, `the importer left the exact reviewed bytes at ${relative}`);
+      observed[relative] = { bytes: actual.length, sha256: sha256(actual) };
+    }
+    record.destinations = observed;
+  };
+
+  function* fileImport(binding, record) {
+    const imported = fixture.file;
+    const id = (name) => `call_t012_import_file_${name}`;
+    const analyzeCommand = importerCommand(root, ['analyze', shellArg(imported.source), '--json']);
+    const procedure = yield skill(id('skill'), 'dude-bundle-import');
+    assertProcedure(procedure);
+    record.procedureSha256 = sha256(procedure.text);
+    const previewed = yield shell(id('analyze'), analyzeCommand, 'Preview the local file import (read only)');
+    const analysis = JSON.parse(stdoutOf(previewed.text, 'focused analyze'));
+    assert.deepEqual({
+      source: analysis.source, sourceIdentity: analysis.sourceIdentity, sourceSha256: analysis.sourceSha256,
+      kind: analysis.kind, destRel: analysis.destRel, destinationState: analysis.destinationState,
+      licenseSiblingStates: analysis.licenseSiblingStates, license: analysis.frontmatter.license,
+      strip: analysis.frontmatter.strip, stripTools: analysis.strip_tools,
+    }, {
+      source: imported.source, sourceIdentity: imported.source, sourceSha256: sha256(imported.bytes),
+      kind: 'skill', destRel: imported.written[0], destinationState: { type: 'missing' },
+      licenseSiblingStates: { LICENSE: { type: 'missing' }, NOTICE: { type: 'missing' } },
+      license: 'MIT', strip: [], stripTools: false,
+    });
+    assert.deepEqual(imported.written.filter(destinationExists), [], 'owner preview writes nothing');
+    record.analysis = analysis;
+    const read = yield view(id('source'), imported.source);
+    assert.ok(read.text.includes('Read the notes the user names'), 'the owner read the exact source');
+    const folder = path.posix.dirname(analysis.destRel);
+    const targets = [
+      { target: `${analysis.destRel}\nAnalyzed state: missing\nDecision: create`, revision: 'missing' },
+      {
+        target: `${folder}/LICENSE\nAnalyzed state: missing\nDecision: create the reviewed ${analysis.frontmatter.license} license sibling`,
+        revision: 'missing',
+      },
+    ];
+    assert.deepEqual(targets, imported.targets);
+    yield* consent(id, record, imported, permissionRequest(
+      binding,
+      'Import the skill dude-local-status-review and its LICENSE from a local file?',
+      {
+        operation: imported.operation,
+        targets,
+        consequences: [
+          'Creates 2 new files with the default adaptations only: the license line leaves the SKILL.md frontmatter and is preserved in the new LICENSE file (license: MIT). The source has no compatibility, model, or tools metadata to strip.',
+          'No existing file is replaced.',
+          'Unresolved sibling or dependency references: none.',
+          'Focused import is not transactional. If the second write fails, the first file stays written.',
+          'New agents or skills may not be available until you start a new session.',
+        ].join('\n'),
+        eligibility: `Source: ${imported.source}\nSource identity: ${analysis.sourceIdentity}\nLocal file that parses as a Dude skill named ${analysis.frontmatter.name}.`,
+        confirmation: imported.confirmation,
+      },
+    ));
+    // Freshness: any difference from the reviewed basis is changed impact.
+    const basis = (value) => ({
+      sourceIdentity: value.sourceIdentity, sourceSha256: value.sourceSha256,
+      destinationState: value.destinationState, licenseSiblingStates: value.licenseSiblingStates,
+    });
+    const rechecked = yield shell(id('recheck'), analyzeCommand, 'Recheck the reviewed source and destinations (read only)');
+    assert.deepEqual(basis(JSON.parse(stdoutOf(rechecked.text, 'focused recheck'))), basis(analysis));
+    const plan = {
+      ...analysis,
+      destinationDecision: { action: 'create', state: analysis.destinationState },
+      license_disposition: {
+        license: analysis.frontmatter.license,
+        materialization: 'skill-license-sibling',
+        sibling: { filename: 'LICENSE', decision: { action: 'create', state: analysis.licenseSiblingStates.LICENSE } },
+      },
+    };
+    const planFile = path.join(fixture.evidence, 'file-plan.json');
+    yield create(id('plan'), planFile, JSON.stringify(plan));
+    assert.equal(fs.readFileSync(planFile, 'utf8'), JSON.stringify(plan));
+    record.plan = { path: planFile, sha256: sha256(JSON.stringify(plan)) };
+    assert.deepEqual(imported.written.filter(destinationExists), [], 'the plan file writes nothing');
+    const applyCommand = importerCommand(root, ['apply', shellArg(imported.source), '--plan', shellArg(planFile)]);
+    const applied = yield shell(id('apply'), applyCommand, 'Apply the exactly reviewed focused import', 'workspace, by the importer');
+    const stdout = stdoutOf(applied.text, 'focused apply');
+    const written = [...stdout.matchAll(/^\[OK\] wrote (.+)\r?$/gm)].map((match) => match[1]);
+    assert.deepEqual(written, imported.written);
+    observeDestinations(record, imported);
+    record.apply = { command: applyCommand, stdout, written };
+    yield* verify(id, record, written);
+    yield* acknowledgeResult(id, record, binding, written,
+      'Installed Dude previewed the local file, published the exact permission, recognized consent, rechecked the reviewed basis, applied the reviewed import once, verified zero lint failures and that each written path is a regular file, and reports the two written paths.');
+    return 'T012_IMPORT_FILE_COMPLETE';
+  }
+
+  function* directoryImport(binding, record) {
+    const imported = fixture.directory;
+    const id = (name) => `call_t012_import_directory_${name}`;
+    const analyzeCommand = importerCommand(root, ['analyze-directory', shellArg(imported.source)]);
+    const procedure = yield skill(id('skill'), 'dude-bundle-import');
+    assertProcedure(procedure);
+    record.procedureSha256 = sha256(procedure.text);
+    const previewed = yield shell(id('analyze'), analyzeCommand, 'Analyze the local directory import (read only)');
+    const analysisText = stdoutOf(previewed.text, 'analyze-directory');
+    const analysis = JSON.parse(analysisText);
+    assert.deepEqual(analysis.blocking_diagnostics, []);
+    assert.equal(analysis.static_decision, 'clean');
+    assert.deepEqual(analysis.outputs.map((output) => output.destination_path), imported.written);
+    // The review claim is backed by the exact reviewed batch bytes, which equal the authored sources.
+    assert.deepEqual(analysis.review_batches.map((batch) => batch.batch_id), ['batch-001']);
+    for (const file of analysis.review_batches.flatMap((batch) => batch.files)) {
+      assert.equal(file.content, imported.files.get(`kit/${file.path}`), `reviewed batch bytes for ${file.path}`);
+    }
+    assert.deepEqual(imported.written.filter(destinationExists), [], 'owner analysis writes nothing');
+    const analysisFile = path.join(fixture.evidence, 'directory-analysis.json');
+    yield create(id('analysis-file'), analysisFile, analysisText);
+    const review = JSON.stringify({
+      analysis_sha256: analysis.analysis_sha256,
+      findings: [],
+      kind: 'dude-directory-review',
+      reviewed_batch_ids: analysis.review_batches.map((batch) => batch.batch_id),
+      schema_version: 1,
+    });
+    const reviewFile = path.join(fixture.evidence, 'directory-review.json');
+    yield create(id('review-file'), reviewFile, review);
+    const planCommand = importerCommand(root, [
+      'plan-directory', '--analysis', shellArg(analysisFile), '--review', shellArg(reviewFile),
+    ]);
+    const planned = yield shell(id('plan'), planCommand, 'Plan the reviewed directory import (read only)');
+    const planText = stdoutOf(planned.text, 'plan-directory');
+    const plan = JSON.parse(planText);
+    assert.equal(plan.decision, 'clean');
+    assert.deepEqual(plan.replace_paths, []);
+    assert.deepEqual(plan.outputs.map((output) => output.destination_path), imported.written);
+    const planFile = path.join(fixture.evidence, 'directory-plan.json');
+    yield create(id('plan-file'), planFile, planText);
+    record.analysis = { analysis_sha256: analysis.analysis_sha256, outputs: analysis.outputs.length };
+    record.plan = { path: planFile, plan_sha256: plan.plan_sha256, decision: plan.decision, groups: plan.groups };
+    const targets = directoryTargets(plan);
+    assert.deepEqual(targets.map((entry) => entry.target), imported.targets);
+    yield* consent(id, record, imported, permissionRequest(
+      binding,
+      'Import 2 artifacts from a reviewed local directory plan?',
+      {
+        operation: imported.operation,
+        targets,
+        consequences: [
+          'Clean: no static or advisory warnings.',
+          'New agents or skills may not be available until you start a new session.',
+          'Nothing is executed.',
+          'Apply is all-or-nothing with rollback.',
+          'Replaced files are overwritten.',
+        ].join('\n'),
+        eligibility: `Source: ${imported.source}\nLocal directory.`,
+        confirmation: imported.confirmation,
+      },
+    ));
+    // Freshness: the analysis and the reviewed plan must both come out exactly as reviewed.
+    const rechecked = yield shell(id('recheck'), analyzeCommand, 'Recheck the reviewed source and destinations (read only)');
+    assert.equal(stdoutOf(rechecked.text, 'directory recheck'), analysisText, 'the analysis is unchanged since the preview');
+    const replanned = yield shell(id('replan'), planCommand, 'Recheck the reviewed plan (read only)');
+    assert.equal(JSON.parse(stdoutOf(replanned.text, 'directory replan')).plan_sha256, plan.plan_sha256);
+    const applyCommand = importerCommand(root, [
+      'apply-directory', shellArg(imported.source), '--plan', shellArg(planFile), '--confirm', shellArg('confirm-import'),
+    ]);
+    const applied = yield shell(id('apply'), applyCommand, 'Apply the exactly reviewed clean directory import', 'workspace, by the importer');
+    const stdout = stdoutOf(applied.text, 'apply-directory');
+    const result = JSON.parse(stdout);
+    importer.validateDirectoryImportResult(result);
+    assert.equal(result.status, 'installed');
+    assert.equal(result.plan_sha256, plan.plan_sha256);
+    assert.deepEqual(result.written_paths, imported.written);
+    observeDestinations(record, imported);
+    record.apply = { command: applyCommand, stdout, written: result.written_paths };
+    yield* verify(id, record, result.written_paths);
+    yield* acknowledgeResult(id, record, binding, result.written_paths,
+      'Installed Dude analyzed the local directory, reviewed its one batch, published the exact permission, recognized consent, rechecked the analysis and plan, ran apply-directory once (installed), verified zero lint failures and that each written path is a regular file, and reports the five written paths.');
+    return 'T012_IMPORT_DIRECTORY_COMPLETE';
+  }
+
+  /** The host's decision for one permission request: only the calls made above, exactly as made. */
+  const approve = (request) => {
+    const call = calls.get(String(request.toolCallId));
+    if (!call) return false;
+    switch (call.tool) {
+      case 'view': return request.kind === 'read' && request.path === call.args.path;
+      case 'create': return request.kind === 'write' && request.fileName === call.args.path
+        && request.newFileContents === call.args.file_text;
+      case 'shell': return request.kind === 'shell' && request.fullCommandText === call.args.command;
+      case 'needs': return request.kind === 'custom-tool' && request.toolName === 'dude_needs_you'
+        && isDeepStrictEqual(request.args, call.args);
+      default: return false;
+    }
+  };
+
+  const server = http.createServer(async (req, res) => {
+    try {
+      assert.equal(req.socket.remoteAddress, '127.0.0.1');
+      assert.equal(req.method, 'POST');
+      assert.equal(req.url, '/v1/chat/completions');
+      let raw = '';
+      for await (const chunk of req) {
+        raw += chunk;
+        assert.ok(Buffer.byteLength(raw) <= MAX_MODEL_BODY);
+      }
+      const body = JSON.parse(raw);
+      state.requests += 1;
+      assert.ok(state.requests <= 120, 'installed import model request bound exceeded');
+      assert.equal(isSpecLeadTurn(body), false, 'the selected Dude owns the import workflow');
+      recordToolSchemas('selected-dude-import', body);
+      const offered = offeredDudeTool(body);
+      state.toolName = offered.name;
+      state.offeredTools = offered.offered;
+      if (state.phase === 'bootstrap') {
+        state.phase = 'idle';
+        answerModel(res, body, { role: 'assistant', content: 'T012_IMPORT_HOST_IDLE' }, 'stop');
+        return;
+      }
+      let step;
+      if (active) {
+        step = active.generator.next({
+          body, callId: active.callId, text: toolMessageText(body, /** @type {string} */ (active.callId)),
+        });
+      } else {
+        assert.equal(state.phase, 'idle', 'a handoff arrives only while the owner is idle');
+        const lastUser = [...(body.messages ?? [])].reverse().find((message) => message?.role === 'user');
+        const prompt = contentText(lastUser?.content);
+        assert.ok(prompt.includes('Dude Canvas explicit artifact import request in this joined workspace/session.'));
+        const jsonLine = prompt.split(/\r?\n/).reverse().find((line) => line.trim().startsWith('{'));
+        assert.ok(jsonLine, 'the import handoff omitted its exact receipt binding');
+        const binding = JSON.parse(jsonLine);
+        const imported = [fixture.file, fixture.directory][state.imports.length];
+        assert.ok(imported, 'only the two scripted imports are requested');
+        assert.deepEqual(Object.keys(binding),
+          ['receiptId', 'owner', 'importSource', 'workspaceId', 'sessionId', 'providerGeneration']);
+        assert.equal(binding.owner, 'dude');
+        assert.equal(binding.importSource, imported.source, 'the handoff carries the exact literal source');
+        const record = {
+          kind: imported === fixture.file ? 'file' : 'directory', binding, stage: 'started', promptSha256: sha256(prompt),
+          analysis: null, plan: null, permission: null, apply: null, verification: null, destinations: null,
+          result: null, procedureSha256: null,
+        };
+        state.imports.push(record);
+        state.phase = 'importing';
+        active = { generator: imported === fixture.file ? fileImport(binding, record) : directoryImport(binding, record), callId: null };
+        step = active.generator.next();
+      }
+      if (step.done) {
+        active = null;
+        state.phase = state.imports.length === 2 ? 'complete' : 'idle';
+        answerModel(res, body, { role: 'assistant', content: step.value }, 'stop');
+        return;
+      }
+      const call = step.value;
+      const tool = requireToolSchema(body,
+        call.tool === 'needs' ? offered.name : call.tool === 'shell' ? SHELL_TOOL : call.tool, required[call.tool]);
+      const gate = call.gate ? gates.get(call.gate) : undefined;
+      if (gate) {
+        gate.reached = true;
+        await gate.wait();
+      }
+      assert.equal(calls.has(call.id), false, `owner call ids are unique: ${call.id}`);
+      calls.set(call.id, call);
+      state.ownerToolCalls.push({ callId: call.id, tool, writes: call.writes ?? null, args: call.args });
+      /** @type {NonNullable<typeof active>} */ (active).callId = call.id;
+      answerModel(res, body, toolCall(call.id, tool, call.args), 'tool_calls');
+    } catch (error) {
+      state.modelError = safeError(error);
+      note('import-model-refusal', { error: state.modelError });
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'Bounded T012 import fixture refused request' } }));
+    }
+  });
+  server.requestTimeout = 10_000;
+  server.headersTimeout = 10_000;
+  return { server, state, approve, hold };
+}
+
+/**
+ * Deterministic selected-Dude model for the Phase B case. It scripts what the installed owner does with one
+ * source-bound install handoff, one tool call at a time, through the tools the CLI actually offers: load
+ * dude-compose and its Sources procedure, preview the bound folder with Compose, read its pack and the saved
+ * sources and their raw-bytes revision, publish the literal permission naming the third-party source first,
+ * recognize consent, check source freshness again, run Compose with exactly the bound `--source`, verify with
+ * the shipped lint, reread the profile, and acknowledge the pack_result with the exact binding echoed. The
+ * model writes nothing in the workspace; Compose does. Each owner script is a generator that yields its next
+ * tool call and receives that tool's actual result.
+ * @param {ReturnType<typeof seedSourceFixture>} fixture
+ * @param {{parsePackSourcesDocument:(value:Buffer)=>unknown[]}} sources the installed module's own parser
+ */
+function createSourceModel(fixture, sources) {
+  const { root } = fixture;
+  const beforeProfile = installedProfile(root);
+  const state = {
+    phase: 'bootstrap',
+    requests: 0,
+    toolName: null,
+    offeredTools: [],
+    /** @type {any} */
+    record: null,
+    /** @type {any[]} */
+    ownerToolCalls: [],
+    modelError: null,
+  };
+  /** The calls the owner made, by id. The host approves exactly these, as made. @type {Map<string, any>} */
+  const calls = new Map();
+  /** @type {{generator:Generator<any, string, any>, callId:string|null}|null} */
+  let active = null;
+  /** Armed gates by name: the owner's call that names one waits for the browser to release it. @type {Map<string, ReturnType<typeof createGate>>} */
+  const gates = new Map();
+  const hold = (name) => {
+    const gate = createGate();
+    gates.set(name, gate);
+    return gate;
+  };
+  const required = { skill: ['skill'], view: ['path'], shell: ['command', 'description'], needs: ['op'] };
+  const skill = (id, name) => ({ tool: 'skill', id, args: { skill: name } });
+  const view = (id, file) => ({ tool: 'view', id, args: { path: file } });
+  const shell = (id, command, description, writes = null) => ({
+    tool: 'shell', id, args: { command, description, mode: 'sync', initial_wait: 30 }, writes,
+  });
+  const needs = (id, args) => ({ tool: 'needs', id, args });
+  /** A shell result's stdout, which must have exited zero. */
+  const stdoutOf = (text, label) => {
+    const output = shellToolOutput(text);
+    assert.ok(output.exitCode === null || output.exitCode === 0,
+      `${label} exited ${output.exitCode}: ${text.slice(0, 2_000)}`);
+    return output.stdout.trim();
+  };
+  /** Nothing the owner does before applying changes the workspace: no pack file, profile, or saved sources. */
+  const assertUntouched = (label, sourcesBytes) => {
+    assert.equal(fs.existsSync(fixture.destination), false, `${label} performed no projected write`);
+    assert.deepEqual(installedProfile(root).value, beforeProfile.value, `${label} performed no profile write`);
+    assert.equal(fs.readFileSync(fixture.sourcesFile).equals(sourcesBytes), true, `${label} performed no saved-sources write`);
+  };
+
+  function* install(binding, record) {
+    const id = (name) => `call_t012_source_${name}`;
+    const bound = binding.catalogSource;
+    const location = bound.source.location;
+    const sourcesBytes = fs.readFileSync(fixture.sourcesFile);
+    const inSource = (relative) => path.join(location, 'library', 'packs', PACK_NAME, ...relative.split('/'));
+    // 1. The installed skill's Canvas procedure, including how a source-bound request is handled.
+    const procedure = yield skill(id('skill'), 'dude-compose');
+    assert.ok(procedure.text.includes('loaded successfully'), `dude-compose did not load: ${procedure.text.slice(0, 600)}`);
+    const context = (procedure.body.messages ?? []).map((message) => contentText(message?.content)).join('\n');
+    for (const heading of ['Canvas Pack Requests And Results', 'Sources In Pack Requests']) {
+      assert.ok(context.includes(heading), `the installed skill context carries ${heading}`);
+    }
+    record.procedureSha256 = sha256(procedure.text);
+    // 2. The actual preview: Compose lists exactly the bound folder, never the default library or a fallback.
+    const listed = yield shell(id('list'), fixture.listCommand(location), 'Read installed pack eligibility from the bound source (read only)');
+    const listing = JSON.parse(stdoutOf(listed.text, 'compose list --source'));
+    assert.equal(listing.ok, true);
+    assert.equal(listing.origin, `source ${location}`, 'Compose listed the bound source');
+    assert.deepEqual(listing.packs.map((pack) => [pack.name, pack.installed, pack.description]), [
+      [PACK_NAME, false, 'Added-source variant of the installed-host pack round trip.'],
+      [SOURCE_EXTRA_PACK, false, 'A second pack only the added source offers.'],
+    ], 'the bound source offers its own pack, uninstalled');
+    assertUntouched('owner preview', sourcesBytes);
+    // 3. The pack as the install would project it, read from the bound folder.
+    const manifest = yield view(id('manifest'), inSource('pack.md'));
+    assert.ok(manifest.text.includes('Added-source variant') && manifest.text.includes('tools: [node]'), 'the owner read the bound pack manifest');
+    const instruction = yield view(id('instruction'), inSource(`instructions/dude-pack-${PACK_NAME}-owner.instructions.md`));
+    assert.ok(instruction.text.includes('not from the default library'), 'the owner read the bound pack source file');
+    // 4. The saved source this request is bound to, and the raw-bytes revision of the file that holds it.
+    const saved = yield view(id('sources'), fixture.sourcesFile);
+    assert.ok(saved.text.includes('"type": "local"') && saved.text.includes(fixture.label), 'the owner read the saved source entry');
+    const digest = yield shell(id('sources-digest'), fixture.digestCommand(fixture.sourcesFile), 'Read the raw-bytes revision of the saved sources (read only)');
+    assert.equal(`sha256:${stdoutOf(digest.text, 'sources digest').toLowerCase()}`, bound.sourcesRevision,
+      'the saved sources are still the revision this request was bound to');
+    assertUntouched('reading the saved sources', sourcesBytes);
+    const preview = {
+      operation: 'install',
+      name: PACK_NAME,
+      source: bound,
+      files: fixture.written,
+      tools: [{ name: 'node', available: true, version: process.version }],
+      profileRevision: revision(beforeProfile.bytes),
+      packRevision: fixture.packRevision,
+      targetRevision: 'absent',
+    };
+    record.preview = preview;
+    // 5. The literal permission names the third-party source first, pinned by the digest of its pack files.
+    const request = {
+      owner: 'dude',
+      requestRef: `pack:${binding.receiptId}`,
+      scope: { kind: 'session' },
+      source: { kind: 'session', revision: binding.providerGeneration },
+      revision: `t012-source-permission-${sha256(JSON.stringify(preview)).slice(0, 16)}`,
+      class: 'permission',
+      prompt: `Install ${PACK_NAME} from the third-party source ${location} into this disposable workspace.`,
+      whyHuman: 'The actual Compose projection writes the named installed pack artifact and profile membership from the source this project added.',
+      unblocks: 'The owner can recheck the reviewed basis, apply Compose once with the bound source, and report the correlated result.',
+      blocking: true,
+      fields: {
+        operation: 'pack:install',
+        targets: [
+          {
+            target: `Third-party source ${location}\nSource type: local folder (a remote commit is not applicable)\nSaved in ${SOURCES_PATH}`,
+            revision: fixture.packRevision,
+          },
+          { target: PROFILE_PATH, revision: preview.profileRevision },
+          { target: `pack:${PACK_NAME} source`, revision: fixture.packRevision },
+          { target: PACK_DESTINATION, revision: preview.targetRevision },
+        ],
+        consequences: `Install ${PACK_DESTINATION} from the third-party source ${location}, which is not part of the Dude bundle: its packs can add agents and instructions. Required tool: node (${process.version}); no prerequisite is installed.`,
+        eligibility: 'Compose reported the exact pack available and not installed from the bound source; the owner will recheck the profile, the saved sources revision, the source, and the destination before applying.',
+        confirmation: `INSTALL PACK ${PACK_NAME}`,
+      },
+    };
+    record.permission = { request, response: null, acknowledgment: null };
+    record.stage = 'permission-waiting';
+    const answered = yield needs(id('permission'), { op: 'request', request });
+    const details = toolDetails(answered.body, answered.callId);
+    assert.equal(details.status, 'awaiting_acknowledgment');
+    assert.equal(details.acceptedAnswer, false);
+    assert.deepEqual(
+      [details.response.class, details.response.action, details.response.operation, details.response.confirmation],
+      ['permission', 'consent', 'pack:install', `INSTALL PACK ${PACK_NAME}`],
+    );
+    assert.deepEqual(details.response.targets, request.fields.targets);
+    assertUntouched('accepted permission alone', sourcesBytes);
+    record.permission.response = details;
+    record.stage = 'permission-consented';
+    const receipt = details.receipt;
+    const recognized = yield needs(id('permission-ack'), {
+      op: 'acknowledge',
+      acknowledgment: {
+        receiptId: receipt.receiptId,
+        owner: receipt.owner,
+        requestRef: receipt.requestRef,
+        scope: receipt.scope,
+        previousRevision: receipt.previousRevision,
+        recognizes: receipt.recognizes,
+        outcome: 'accepted',
+        note: 'The owner recognized the exact installed-host source-bound pack permission response.',
+        source: receipt.source,
+      },
+    });
+    const acknowledged = toolDetails(recognized.body, recognized.callId);
+    assert.equal(acknowledged.status, 'accepted');
+    record.permission.acknowledgment = acknowledged;
+    assertUntouched('owner recognition alone', sourcesBytes);
+    // 6. Freshness again before writing: the saved sources, the bound source, and the reviewed pack bytes.
+    const again = yield shell(id('sources-digest-again'), fixture.digestCommand(fixture.sourcesFile), 'Recheck the raw-bytes revision of the saved sources (read only)');
+    assert.equal(`sha256:${stdoutOf(again.text, 'sources digest recheck').toLowerCase()}`, bound.sourcesRevision);
+    const relisted = yield shell(id('list-again'), fixture.listCommand(location), 'Recheck the bound source before applying (read only)');
+    assert.deepEqual(JSON.parse(stdoutOf(relisted.text, 'compose list recheck')).packs.map((pack) => pack.name), [PACK_NAME, SOURCE_EXTRA_PACK]);
+    assert.equal(revision(Buffer.concat([fs.readFileSync(inSource('pack.md')), fs.readFileSync(inSource(`instructions/dude-pack-${PACK_NAME}-owner.instructions.md`))])),
+      fixture.packRevision, 'the reviewed pack bytes are unchanged');
+    assert.deepEqual(sources.parsePackSourcesDocument(sourcesBytes), [bound.source], 'the saved entry for the key is still the bound source');
+    record.freshness = { sourcesRevision: bound.sourcesRevision, packRevision: fixture.packRevision };
+    // 7. Apply with exactly the bound source, and nothing else.
+    const addCommand = fixture.addCommand(location);
+    const applied = yield shell(id('add'), addCommand, 'Apply the exact consented pack with Compose from the bound source', 'workspace, by Compose');
+    const stdout = stdoutOf(applied.text, 'compose add --source');
+    const envelope = JSON.parse(stdout);
+    assert.deepEqual(envelope, { ok: true, code: 0, result: { added: PACK_NAME, files: fixture.written, origin: `source ${location}` } },
+      'Compose add --envelope printed the exact engine result envelope for the bound source');
+    const destination = fs.readFileSync(fixture.destination);
+    assert.equal(destination.equals(fixture.instruction), true, 'Compose projected the bound folder\'s exact pack bytes');
+    assert.equal(destination.equals(fixture.defaults.instruction), false, 'and not the default library\'s same-named pack');
+    const profile = installedProfile(root);
+    assert.deepEqual(profile.value.installed[PACK_NAME], { files: fixture.written, source: { type: 'local', location: fixture.realTeam } });
+    record.compose = {
+      command: addCommand, toolResult: applied.text, stdout, result: envelope,
+      destination: { bytes: destination.length, sha256: sha256(destination) },
+    };
+    // 8. Ordinary verification, then the profile as the provider will reread it.
+    const linted = yield shell(id('lint'), fixture.lintCommand, 'Verify the installed pack projection with the shipped lint');
+    assert.match(linted.text, /\b0 failure\(s\)/, 'post-Compose installed verification reports zero failures');
+    record.verification = { command: fixture.lintCommand, toolResult: linted.text };
+    const reread = yield view(id('profile'), path.join(root, ...PROFILE_PATH.split('/')));
+    assert.ok(reread.text.includes(PACK_NAME) && reread.text.includes(PACK_DESTINATION));
+    // 9. The result, with the exact bound selection echoed. The owner reports what its own command printed.
+    record.stage = 'result-ready';
+    const accepted = yield {
+      ...needs(id('result'), {
+        op: 'acknowledge',
+        acknowledgment: {
+          recognizes: 'pack_result',
+          ...binding,
+          outcome: 'applied',
+          mutation: 'applied',
+          result: envelope,
+          profileRevision: revision(profile.bytes),
+          source: profile.value.installed[PACK_NAME].source,
+          note: 'Installed Dude previewed the bound folder, published the third-party permission, recognized consent, rechecked the saved sources revision, ran Compose once with exactly the bound source, verified zero lint failures, reread the profile, and reports the recorded folder and file.',
+        },
+      }),
+      gate: 'source-before-result',
+    };
+    record.stage = 'result-acknowledged';
+    const result = toolDetails(accepted.body, accepted.callId);
+    assert.equal(result.phase, 'applied', `the provider refused the pack result: ${JSON.stringify(result)}`);
+    assert.equal(result.applied, true);
+    assert.equal(result.receipt.freshness, 'current');
+    assert.deepEqual(result.receipt.catalogSource, bound, 'the provider kept the exact binding');
+    assert.deepEqual(result.receipt.reread.entry, { files: fixture.written, source: { type: 'local', location: fixture.realTeam } });
+    assert.equal(result.receipt.reread.profileRevision, revision(installedProfile(root).bytes));
+    assert.deepEqual(result.receipt.acknowledgment.result, envelope, 'the provider accepted the observed Compose stdout as the pack result');
+    record.result = result;
+    record.stage = 'complete';
+    return 'T012_SOURCE_PACK_COMPLETE';
+  }
+
+  /** The host's decision for one permission request: only the calls made above, exactly as made. */
+  const approve = (request) => {
+    const call = calls.get(String(request.toolCallId));
+    if (!call) return false;
+    switch (call.tool) {
+      case 'view': return request.kind === 'read' && request.path === call.args.path;
+      case 'shell': return request.kind === 'shell' && request.fullCommandText === call.args.command;
+      case 'needs': return request.kind === 'custom-tool' && request.toolName === 'dude_needs_you'
+        && isDeepStrictEqual(request.args, call.args);
+      default: return false;
+    }
+  };
+
+  const server = http.createServer(async (req, res) => {
+    try {
+      assert.equal(req.socket.remoteAddress, '127.0.0.1');
+      assert.equal(req.method, 'POST');
+      assert.equal(req.url, '/v1/chat/completions');
+      let raw = '';
+      for await (const chunk of req) {
+        raw += chunk;
+        assert.ok(Buffer.byteLength(raw) <= MAX_MODEL_BODY);
+      }
+      const body = JSON.parse(raw);
+      state.requests += 1;
+      assert.ok(state.requests <= 48, 'installed source model request bound exceeded');
+      assert.equal(isSpecLeadTurn(body), false, 'the selected Dude owns the pack workflow');
+      recordToolSchemas('selected-dude-source', body);
+      const offered = offeredDudeTool(body);
+      state.toolName = offered.name;
+      state.offeredTools = offered.offered;
+      if (state.phase === 'bootstrap') {
+        state.phase = 'idle';
+        answerModel(res, body, { role: 'assistant', content: 'T012_SOURCE_HOST_IDLE' }, 'stop');
+        return;
+      }
+      let step;
+      if (active) {
+        step = active.generator.next({
+          body, callId: active.callId, text: toolMessageText(body, /** @type {string} */ (active.callId)),
+        });
+      } else {
+        assert.equal(state.phase, 'idle', 'a handoff arrives only while the owner is idle');
+        assert.equal(state.record, null, 'the one source-bound request is sent exactly once');
+        const lastUser = [...(body.messages ?? [])].reverse().find((message) => message?.role === 'user');
+        const prompt = contentText(lastUser?.content);
+        const lines = prompt.split(/\r?\n/);
+        // The installed CLI may put its own timestamp tag ahead of the message; nothing else precedes the handoff.
+        const headerAt = lines.indexOf('Dude Canvas explicit pack request in this joined workspace/session.');
+        assert.ok(headerAt >= 0, 'the foreground message is the pack handoff');
+        assert.deepEqual(lines.slice(0, headerAt).map((line) => line.trim()).filter((line) => line && !/^<current_datetime>[^<>]*<\/current_datetime>$/.test(line)), [],
+          'only the CLI timestamp tag precedes the handoff');
+        lines.splice(0, headerAt);
+        assert.equal(lines.filter((line) => /^This request is bound to one source the project added \(catalogSource in the final JSON\)\./.test(line)).length, 1,
+          'the handoff tells the owner to use exactly the bound source');
+        const jsonLine = lines.reverse().find((line) => line.trim().startsWith('{'));
+        assert.ok(jsonLine, 'the pack handoff omitted its exact receipt binding');
+        const binding = JSON.parse(jsonLine);
+        assert.deepEqual(Object.keys(binding),
+          ['receiptId', 'owner', 'operation', 'name', 'workspaceId', 'sessionId', 'providerGeneration', 'catalogSource']);
+        assert.deepEqual([binding.owner, binding.operation, binding.name], ['dude', 'install', PACK_NAME]);
+        assert.deepEqual(Object.keys(binding.catalogSource), ['key', 'sourcesRevision', 'source']);
+        assert.deepEqual(binding.catalogSource.source, { type: 'local', location: fixture.realTeam },
+          'the binding names the real folder the project added');
+        assert.equal(binding.catalogSource.sourcesRevision, revision(fs.readFileSync(fixture.sourcesFile)),
+          'the binding carries the raw-bytes revision of the saved sources');
+        state.record = {
+          binding, promptSha256: sha256(prompt), stage: 'started', preview: null, permission: null, freshness: null,
+          compose: null, verification: null, result: null, procedureSha256: null,
+        };
+        state.phase = 'installing';
+        active = { generator: install(binding, state.record), callId: null };
+        step = active.generator.next();
+      }
+      if (step.done) {
+        active = null;
+        state.phase = 'complete';
+        answerModel(res, body, { role: 'assistant', content: step.value }, 'stop');
+        return;
+      }
+      const call = step.value;
+      const tool = requireToolSchema(body,
+        call.tool === 'needs' ? offered.name : call.tool === 'shell' ? SHELL_TOOL : call.tool, required[call.tool]);
+      const gate = call.gate ? gates.get(call.gate) : undefined;
+      if (gate) {
+        gate.reached = true;
+        await gate.wait();
+      }
+      assert.equal(calls.has(call.id), false, `owner call ids are unique: ${call.id}`);
+      calls.set(call.id, call);
+      state.ownerToolCalls.push({ callId: call.id, tool, writes: call.writes ?? null, args: call.args });
+      /** @type {NonNullable<typeof active>} */ (active).callId = call.id;
+      answerModel(res, body, toolCall(call.id, tool, call.args), 'tool_calls');
+    } catch (error) {
+      state.modelError = safeError(error);
+      note('source-model-refusal', { error: state.modelError });
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'Bounded T012 source fixture refused request' } }));
+    }
+  });
+  server.requestTimeout = 10_000;
+  server.headersTimeout = 10_000;
+  return { server, state, approve, hold };
 }
 
 /**
@@ -3762,6 +4894,7 @@ async function driveTaskWalkthrough(page, host, fixture, evidence) {
   await workspaceViewport(page, 719, 'light');
   await click(page, `document.querySelector('[aria-label="Expand navigation pane"]')`);
   await until(() => evaluate(page, `Boolean(document.querySelector('[data-navigation-dialog]'))`), 'installed narrow rail dialog');
+  await settle(page);
   assert.equal(await evaluate(page, `Math.round(document.querySelector('[data-navigation-dialog]').getBoundingClientRect().width)`), 260);
   assert.equal(await evaluate(page, `document.querySelector('header').inert && document.querySelector('main').inert
     && document.querySelector('footer').inert`), true);
@@ -3826,8 +4959,8 @@ async function driveTaskWalkthrough(page, host, fixture, evidence) {
  * @param {string} draft @param {string} selectedTaskKey
  */
 async function driveReviewContinuity(page, fixture, draft, selectedTaskKey) {
-  const [planned, done] = fixture.records;
-  const selectedTask = planned.units.find((task) => task.taskKey === selectedTaskKey);
+  const [, done, independent] = fixture.records;
+  const selectedTask = independent.units.find((task) => task.taskKey === selectedTaskKey);
   assert.ok(selectedTask);
   await click(page, button('Comments (2)'));
   const comment = '  Installed A retained caret.\n\nLiteral local markup.  ';
@@ -3880,7 +5013,7 @@ async function driveReviewContinuity(page, fixture, draft, selectedTaskKey) {
   await click(page, button('Back'));
   await click(page, button('Now'));
   await clearWork(page);
-  await selectWork(page, planned.ideaPath);
+  await selectWork(page, independent.ideaPath);
   assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-task-detail]'))`), false,
     'Clear does not restore stale task inspection');
   // Clear intentionally drops detail. Select it again before checking the
@@ -3889,6 +5022,7 @@ async function driveReviewContinuity(page, fixture, draft, selectedTaskKey) {
   await click(page, button('New idea'));
   assert.equal(await evaluate(page, `${field('Your idea')}.value`), draft);
   await click(page, button('Cancel'));
+  await click(page, button('Needs you'));
   await click(page, button('Open Review'));
   await visible(page, 'Comments (2)');
   assert.equal(await evaluate(page, `window.__t005InstalledFrame === document.querySelector('.dude-review-frame')`), true);
@@ -4109,11 +5243,15 @@ async function runRealHostPackProbe(name, root, data = path.join(RUN, name, 'dat
 }
 
 /**
+ * `approve` is the one case-specific permission decision: a case that scripts
+ * its own owner tool calls approves exactly those, by call and content. The
+ * session is checked here, and every other request is still rejected.
  * @param {{
  *   root:string,
  *   data:string,
  *   modelUrl:string,
  *   caseName:string,
+ *   approve?:(request:any)=>boolean,
  * }} options
  */
 async function createInstalledHost(options) {
@@ -4290,7 +5428,8 @@ async function createInstalledHost(options) {
         && /^(?:call_blank-(?:non-git|git)_capture_ack|call_t012_(?:review_[abc]|ack_[abc]|permission|cancel|outside|pack_(?:permission|permission_ack|result)))$/
           .test(String(request.toolCallId));
       const accepted = (exactSession
-        && (exactHandoff || exactPublisher || exactPackRead || exactPackShell))
+        && (exactHandoff || exactPublisher || exactPackRead || exactPackShell
+          || Boolean(options.approve?.(request))))
         || exactStageCreate || exactStageRead || exactCanonicalRead
         || exactSkillRead || exactMockEdit || exactMockRead;
       const permissionInput = request.kind === 'read'
@@ -4714,6 +5853,7 @@ function installedParity(root) {
     'lib/packs.mjs',
     'lib/catalog-reader.mjs',
     'lib/needs-you.mjs',
+    'lib/project-artifacts.mjs',
     'lib/review.mjs',
     'lib/review/browser.mjs',
     'lib/review/data.mjs',
@@ -4743,6 +5883,23 @@ function installedParity(root) {
   for (const [relative, expected] of Object.entries(SOURCE_REVIEW_MODULES)) {
     assert.equal(pairs[relative], expected, `installed Review module is not the current source: ${relative}`);
   }
+  // The 073 core modules outside the extension: the saved-sources parser and writer Canvas and Compose share,
+  // Compose and its Sources procedure, the lint that checks the sources document, and bundle upgrade's two
+  // Compose calls. Each is the installed owner's own tool, so each must be the authored bytes.
+  const skills = {};
+  for (const relative of [
+    'dude-engine/lib/pack-sources.mjs',
+    'dude-compose/compose.mjs',
+    'dude-compose/SKILL.md',
+    'dude-lint/lint.mjs',
+    'dude-bundle-upgrade/upgrade.mjs',
+    'dude-bundle-import/SKILL.md',
+  ]) {
+    const authored = sourceBytes(`src/skills/${relative}`);
+    const installed = fs.readFileSync(path.join(root, '.github/skills', ...relative.split('/')));
+    assert.equal(installed.equals(authored), true, `installed core skill drift: ${relative}`);
+    skills[relative] = sha256(installed);
+  }
   const forbidden = [
     '.github/extensions/dude/frontend',
     '.github/extensions/dude/needs-you.test.mjs',
@@ -4751,7 +5908,10 @@ function installedParity(root) {
     'scripts/dude-canvas-ui',
   ].filter((relative) => fs.existsSync(path.join(root, ...relative.split('/'))));
   assert.deepEqual(forbidden, []);
-  return { pairs, forbidden };
+  // A release ships no saved sources: that file belongs to the project, and a fresh install has none.
+  assert.equal(fs.existsSync(path.join(root, ...SOURCES_PATH.split('/'))), false,
+    'a release ships no .dude/metadata/pack-sources.md');
+  return { pairs, skills, forbidden };
 }
 
 /** Reuse a byte-checked disposable release when supplied; never build in ROOT.
@@ -4897,11 +6057,19 @@ async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, model, cliV
     ?.getAttribute('aria-busy') === 'false'`), 'installed Settings pack read');
   assert.equal(await evaluate(page, `document.querySelector('[data-pack-context="installed"]')
     ?.getAttribute('aria-selected')`), 'true');
+  // Entering Settings reads installed packs and the saved sources, and no catalog: one explicit
+  // Reload reads the catalogs, so Available lists the pack (its row key names its source).
+  await evaluate(page, `performance.setResourceTimingBufferSize(1000); performance.clearResourceTimings()`);
+  await click(page, `document.querySelector('[aria-label="Reload packs"]')`);
+  await until(() => evaluate(page, `performance.getEntriesByType('resource').some(entry => {
+    const url = new URL(entry.name); return url.pathname === '/api/packs' && url.search === '?discover=1'; })`), 'installed-host explicit catalog read');
+  await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+    ?.getAttribute('aria-busy') === 'false'`), 'installed-host catalog read commits');
   await click(page, `document.querySelector('[data-pack-context="available"]')`);
   await until(() => evaluate(page, `Boolean(document.querySelector(
-    '[data-pack-row="${PACK_NAME}"]'
+    '[data-pack-row^="pack:${PACK_NAME}@"]'
   ))`), 'installed-host available pack row');
-  await click(page, `document.querySelector('[data-pack-row="${PACK_NAME}"]')`);
+  await click(page, `document.querySelector('[data-pack-row^="pack:${PACK_NAME}@"]')`);
   assert.equal(await evaluate(page, `document.querySelector('[data-pack-description]')
     ?.textContent.trim()`), 'Deterministic installed-host pack round trip.');
   const packsBeforeAbout = await evaluate(page, `({
@@ -4938,9 +6106,9 @@ async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, model, cliV
     ?.getAttribute('aria-selected')`), 'true');
   await click(page, `document.querySelector('[data-pack-context="available"]')`);
   await until(() => evaluate(page, `Boolean(document.querySelector(
-    '[data-pack-row="${PACK_NAME}"]'
+    '[data-pack-row^="pack:${PACK_NAME}@"]'
   ))`), 'installed-host available pack row after About');
-  await click(page, `document.querySelector('[data-pack-row="${PACK_NAME}"]')`);
+  await click(page, `document.querySelector('[data-pack-row^="pack:${PACK_NAME}@"]')`);
 
   const action = `document.querySelector('[data-pack-operation="install"]')`;
   assert.equal(await evaluate(page, `${action}.disabled`), false);
@@ -5040,8 +6208,17 @@ async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, model, cliV
   });
   assert.equal(model.ownerToolCalls.filter(entry => entry.callId === 'call_t012_pack_add').length, 1);
   assert.equal(network.filter(entry => entry.path === '/api/packs/request').length, 2);
-  assert.deepEqual(network.filter(entry => entry.path === '/api/packs/request').map(entry => entry.body.op),
-    ['prepare', 'submit']);
+  // Default-only evidence, unchanged by sources: neither body names a source, the receipt binds none, and
+  // the owner's handoff carried the seven-key binding and nothing else (checked as it arrived).
+  assert.deepEqual(network.filter(entry => entry.path === '/api/packs/request').map(entry => entry.body), [
+    { op: 'prepare', operation: 'install', name: PACK_NAME },
+    { op: 'submit', operation: 'install', name: PACK_NAME, packReceipt: permissionAuthority.packReceipt },
+  ], 'a default-catalog request names no source in either body');
+  assert.equal(Object.hasOwn(result.receipt, 'catalogSource'), false, 'and its receipt binds no source');
+  assert.deepEqual(Object.keys(model.binding),
+    ['receiptId', 'owner', 'operation', 'name', 'workspaceId', 'sessionId', 'providerGeneration']);
+  assert.equal(model.permissionRequest.fields.targets.some((entry) => /Third-party source/.test(entry.target)), false,
+    'a default-catalog permission names no third-party source');
   await click(page, button('Return to packs'));
   const aboutApplied = await observeInstalledAbout(
     page,
@@ -5090,6 +6267,1129 @@ async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, model, cliV
   };
 }
 
+const IMPORT_READY_NOTE = 'Dude previews the import and asks for your permission in Needs you before changing any file.';
+const IMPORT_NEW_SESSION = 'New agents or skills may not be available until you start a new session.';
+const IMPORT_REASON_PERMISSION = 'This import request is waiting for your permission response in Needs you.';
+const IMPORT_IDEA_REASON = 'An artifact import is in progress or needs owner reconciliation. Your idea draft stays here.';
+const IMPORT_PACK_REASON = 'An artifact import needs owner reconciliation before a pack request can be sent.';
+const PROJECT_READ_ONLY = 'Read only. Project agents and skills are project files, not packs: Canvas offers no install, refresh, or remove for them here.';
+
+/**
+ * What the Add/import panel shows now: the request status, the written paths,
+ * Request import with its reason, and Show in Installed with its note.
+ * @param {Cdp} page
+ */
+function importStatusView(page) {
+  return evaluate(page, `(() => {
+    const bar = document.querySelector('[data-import-status]'), show = document.querySelector('[data-import-show-button]');
+    const rows = [...document.querySelectorAll('[data-import-request-status] dl > div')];
+    const label = row => row.querySelector('dt').textContent;
+    return {
+      phase: bar?.getAttribute('data-import-phase') ?? null,
+      title: bar?.querySelector('.fui-MessageBarTitle')?.textContent ?? null,
+      text: bar?.querySelector('[role="status"]')?.innerText.replace(/\\s+/g, ' ').trim() ?? null,
+      focused: Boolean(bar) && document.activeElement === bar,
+      sheet: Object.fromEntries(rows.map(row => [label(row), row.querySelector('dd').innerText.replace(/\\s+/g, ' ').trim()])),
+      paths: Object.fromEntries(rows.filter(row => /^(Written files|Uncertain paths)/.test(label(row)))
+        .map(row => [label(row), [...row.querySelectorAll('li code')].map(code => code.textContent)])),
+      permission: document.querySelector('[data-import-permission]')?.getAttribute('data-import-permission') ?? null,
+      request: {
+        disabled: document.querySelector('[data-import-request]')?.disabled ?? null,
+        note: document.querySelector('[data-import-note]')?.textContent ?? null,
+      },
+      show: show ? { disabled: show.disabled, note: document.querySelector('[data-import-show-note]')?.textContent } : null,
+      source: document.querySelector('[data-import-source]')?.value ?? null,
+    };
+  })()`);
+}
+
+/**
+ * Which Packs view is open, its page and count text, the selection, and every
+ * row key shown. Row identity is the opaque key, never the name.
+ * @param {Cdp} page
+ */
+function packListView(page) {
+  return evaluate(page, `({
+    context: document.querySelector('[data-pack-context][aria-selected="true"]')?.getAttribute('data-pack-context') ?? null,
+    filter: document.querySelector('[data-pack-toolbar] [role="combobox"]')?.textContent.trim() ?? null,
+    sourceFilter: document.querySelector('[data-pack-source-filter]')?.textContent.trim() ?? null,
+    count: document.querySelector('[data-pack-count]')?.textContent ?? null,
+    page: document.querySelector('[data-pack-page]')?.textContent ?? null,
+    totals: Object.fromEntries([...document.querySelectorAll('[data-pack-total]')]
+      .map(node => [node.getAttribute('data-pack-total'), node.textContent])),
+    selected: [...document.querySelectorAll('[data-pack-row][aria-selected="true"]')].map(node => node.getAttribute('data-pack-row')),
+    detail: document.querySelector('[data-pack-detail]')?.getAttribute('data-pack-detail') || null,
+    open: Boolean(document.querySelector('[data-pack-detail]')?.open),
+    keys: [...document.querySelectorAll('[data-pack-row]')].map(node => node.getAttribute('data-pack-row')),
+    activeRow: document.activeElement?.getAttribute('data-pack-row') ?? null,
+    activeTab: document.activeElement?.getAttribute('data-pack-context') ?? null,
+    closeFocused: document.activeElement?.getAttribute('aria-label') === 'Close project details',
+    empty: document.querySelector('[data-pack-empty]')?.innerText.replace(/\\s+/g, ' ').trim() ?? null,
+  })`);
+}
+
+/**
+ * The open project details, in the order the page shows them, and whether the
+ * selected row is visible below the table's sticky header.
+ * @param {Cdp} page
+ */
+function projectDetailView(page) {
+  return evaluate(page, `(() => {
+    const dialog = document.querySelector('[data-pack-detail]');
+    const body = dialog?.querySelector('[data-pack-detail-body]');
+    if (!body) return null;
+    const text = node => node.textContent.replace(/\\s+/g, ' ').trim();
+    const facts = [...body.querySelectorAll('dl > dt')].map(term => [text(term), text(term.nextElementSibling)]);
+    const files = body.querySelector('details');
+    const row = document.querySelector('[data-pack-row="' + dialog.getAttribute('data-pack-detail') + '"]');
+    const scroller = document.querySelector('[data-pack-scroll]');
+    const header = scroller?.querySelector('[role="row"]')?.getBoundingClientRect();
+    const rect = row?.getBoundingClientRect(), view = scroller?.getBoundingClientRect();
+    return {
+      heading: dialog.querySelector('h2')?.textContent,
+      scope: text(dialog.querySelector('header .fui-Text')),
+      description: body.querySelector('[data-pack-description]')?.textContent,
+      readOnly: body.querySelector('[data-pack-readonly]')?.textContent,
+      facts,
+      filesSummary: files ? text(files.querySelector('summary')) : null,
+      files: files ? [...files.querySelectorAll('li code')].map(code => code.textContent) : [],
+      caveat: [...body.querySelectorAll('.fui-Text')].some(node => text(node) === ${JSON.stringify(IMPORT_NEW_SESSION)}),
+      operations: body.querySelectorAll('[data-pack-operation]').length,
+      links: body.querySelectorAll('a, [href]').length,
+      close: dialog.querySelector('header button')?.getAttribute('aria-label') ?? null,
+      modal: dialog.matches(':modal'),
+      rowVisible: Boolean(rect && view && header && rect.top >= header.bottom - 1 && rect.bottom <= view.bottom + 1),
+    };
+  })()`);
+}
+
+/** Space on the focused control, as a keyboard user presses it. @param {Cdp} page */
+async function pressSpace(page) {
+  for (const type of ['keyDown', 'keyUp']) {
+    await page.send('Input.dispatchKeyEvent', {
+      type, key: ' ', code: 'Space', windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32,
+      ...(type === 'keyDown' ? { text: ' ', unmodifiedText: ' ' } : {}),
+    });
+  }
+}
+
+/** The details' content without how they are presented: overlay or docked, and where the row sits. */
+const projectContent = ({ modal, rowVisible, ...content }) => content;
+
+/**
+ * The Sources view as a person reads it: every row's opaque key, accessible label and selection, the count
+ * line, the empty and coverage notes, the outside status, and Add source.
+ * @param {Cdp} page
+ */
+function sourcesView(page) {
+  return evaluate(page, `(() => {
+    const text = node => node ? node.innerText.replace(/\\s+/g, ' ').trim() : null;
+    const note = document.querySelector('[data-source-status]');
+    return {
+      rows: [...document.querySelectorAll('[data-source-row]')].map(row => ({
+        key: row.getAttribute('data-source-row'), label: row.getAttribute('aria-label'),
+        selected: row.getAttribute('aria-selected') === 'true',
+      })),
+      count: document.querySelector('[data-sources-count]')?.textContent ?? null,
+      noAdded: text(document.querySelector('[data-sources-no-added]')),
+      coverage: text(document.querySelector('[data-sources-coverage]')),
+      note: note ? { title: note.getAttribute('data-source-status-title'), text: text(note.querySelector('[role="status"]')) } : null,
+      add: { disabled: document.querySelector('[data-sources-add]')?.disabled ?? null },
+      dialogOpen: Boolean(document.querySelector('[data-source-add-dialog][open]')),
+    };
+  })()`);
+}
+
+/**
+ * The open source details, in the order the page shows them: the heading and scope, any coverage notice,
+ * the description, the actions with their reason, the read-only note, and the facts.
+ * @param {Cdp} page
+ */
+function sourceDetailView(page) {
+  return evaluate(page, `(() => {
+    const dialog = document.querySelector('[data-pack-detail]');
+    const body = dialog?.querySelector('[data-source-description]') ? dialog.querySelector('[data-pack-detail-body]') : null;
+    if (!body) return null;
+    const text = node => node ? node.innerText.replace(/\\s+/g, ' ').trim() : null;
+    const remove = body.querySelector('[data-source-remove]');
+    return {
+      key: dialog.getAttribute('data-pack-detail'),
+      heading: dialog.querySelector('h2')?.textContent,
+      scope: text(dialog.querySelector('header .fui-Text')),
+      notice: text(body.querySelector('[data-source-notice]')),
+      description: text(body.querySelector('[data-source-description]')),
+      show: { disabled: body.querySelector('[data-source-show]')?.disabled ?? null },
+      remove: remove ? { disabled: remove.disabled, label: remove.getAttribute('aria-label') } : null,
+      reason: text(body.querySelector('[data-source-reason]')),
+      readOnly: text(body.querySelector('[data-source-readonly]')),
+      facts: Object.fromEntries([...body.querySelectorAll('dl > dt')].map(term => [text(term), text(term.nextElementSibling)])),
+      links: body.querySelectorAll('a, [href]').length,
+      close: dialog.querySelector('header button')?.getAttribute('aria-label') ?? null,
+      closeFocused: document.activeElement?.getAttribute('aria-label') === 'Close source details',
+      open: dialog.open,
+      modal: dialog.matches(':modal'),
+    };
+  })()`);
+}
+
+/**
+ * The details of the open pack row: its heading, description, source label and location, and the one
+ * operation each action offers, as the Available and Installed lists show them.
+ * @param {Cdp} page
+ */
+function packDetailView(page) {
+  return evaluate(page, `(() => {
+    const dialog = document.querySelector('[data-pack-detail]');
+    const body = dialog?.querySelector('[data-pack-description]') ? dialog.querySelector('[data-pack-detail-body]') : null;
+    if (!body) return null;
+    const text = node => node ? node.innerText.replace(/\\s+/g, ' ').trim() : null;
+    return {
+      key: dialog.getAttribute('data-pack-detail'),
+      heading: dialog.querySelector('h2')?.textContent,
+      description: text(body.querySelector('[data-pack-description]')),
+      source: text(body.querySelector('[data-pack-source]')),
+      location: text(body.querySelector('[data-pack-origin]')),
+      operations: [...body.querySelectorAll('[data-pack-operation]')].map(node => [node.getAttribute('data-pack-operation'), node.disabled]),
+      text: text(body),
+    };
+  })()`);
+}
+
+/**
+ * Drive the shipped Add/import route in the owned Edge while the installed owner
+ * model above previews, publishes the literal permission, applies with the
+ * unchanged importer, verifies, and acknowledges, for one local file and one
+ * local directory. The browser only requests, consents through Needs you, and
+ * observes; it applies nothing. Each Applied result is followed, without
+ * Reload, by Show in Installed. The same journey exercises the standalone
+ * Phase A surface, return, draft retention, shared exclusion, and a refresh
+ * that keeps the surviving selection against the real installed provider.
+ * @param {Cdp} page
+ * @param {string} canvasUrl
+ * @param {ReturnType<typeof importFixture>} fixture
+ * @param {ReturnType<typeof createImportModel>} ownerModel
+ */
+async function driveInstalledImportRoundTrip(page, canvasUrl, fixture, ownerModel) {
+  const model = ownerModel.state;
+  const network = [], foreignNetwork = [], runtimeErrors = [];
+  page.on('Runtime.exceptionThrown', (event) => runtimeErrors.push(event));
+  page.on('Network.requestWillBeSent', (event) => {
+    if (event.request.url.startsWith(canvasUrl)) {
+      const url = new URL(event.request.url);
+      network.push({
+        method: event.request.method,
+        path: url.pathname,
+        query: url.search,
+        body: event.request.postData ? JSON.parse(event.request.postData) : null,
+      });
+    } else if (/^https?:/.test(event.request.url)
+      && !['127.0.0.1', 'localhost'].includes(new URL(event.request.url).hostname)) {
+      foreignNetwork.push(event.request.url);
+    }
+  });
+  const packReads = () => network.filter((entry) => entry.method === 'GET' && entry.path === '/api/packs').length;
+  // Phase B reads a catalog only when it is asked to: `?discover=1` is the explicit discovery, and every
+  // other read of this journey (Settings entry, a result's hint, window focus) is installed state and the
+  // local project read.
+  const discoveries = () => network.filter((entry) => entry.method === 'GET' && entry.path === '/api/packs'
+    && entry.query === '?discover=1').length;
+  const steps = [], audits = [], journeys = [];
+  const step = (input, target, details = {}) => steps.push({ input, target, ...details });
+  const draft = 'An idea draft that stays through both imports, every return, and every refresh.';
+  const failed = () => { if (model.modelError) throw new Error(model.modelError); };
+  const settled = async (label, ready) => {
+    await until(async () => { failed(); return ready(); }, label, 60_000);
+  };
+
+  await navigate(page, canvasUrl, 1440);
+  await click(page, button('New idea'));
+  await fill(page, field('Your idea'), draft);
+  step('pointer', 'New idea, typed an unsent draft', { draftSha256: sha256(draft) });
+  await click(page, `document.querySelector('#dude-tab-settings')`);
+  await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+    ?.getAttribute('aria-busy') === 'false' && Boolean(document.querySelector('[data-settings]'))`),
+  'installed Settings pack read');
+  // Thirty hand-made skills: Installed already needs two 25-row pages before any import.
+  await settled('installed count of the seeded project rows',
+    async () => (await packListView(page)).totals.installed === String(fixture.fillNames.length));
+
+  // The complete Phase B surface in a workspace that has not asked for a catalog: Packs and About, then the
+  // four views with Sources last. Installed is already useful (the project rows), Available is unknown,
+  // and nothing has acquired a catalog.
+  const surface = await evaluate(page, `(() => {
+    const settings = document.querySelector('[data-settings]');
+    const text = node => node.innerText.replace(/\\s+/g, ' ').trim();
+    return {
+      sections: [...settings.querySelectorAll('[data-settings-section]')].map(node => node.getAttribute('data-settings-section')),
+      tabs: [...settings.querySelectorAll('[role="tab"]')].map(text),
+      contexts: [...settings.querySelectorAll('[data-pack-context]')].map(node => node.getAttribute('data-pack-context')),
+      text: settings.innerText,
+      controls: [...settings.querySelectorAll('button, [role="tab"]')].map(text),
+    };
+  })()`);
+  assert.deepEqual(surface.sections, ['packs', 'about']);
+  assert.deepEqual(surface.contexts, ['installed', 'available', 'import', 'sources']);
+  assert.deepEqual(surface.tabs, ['Packs', 'About', `Installed ${fixture.fillNames.length}`, 'Available ?', 'Add/import', 'Sources']);
+  assert.equal(discoveries(), 0, 'entering Settings reads installed packs and project rows, never a catalog');
+  let list = await packListView(page);
+  assert.deepEqual(
+    [list.context, list.filter, list.count, list.page, list.selected, list.detail, list.open],
+    ['installed', 'All use cases', `1–25 of ${fixture.fillNames.length}`, 'Page 1 of 2', [], null, false],
+  );
+  assert.deepEqual(list.keys, fixture.fillNames.slice(0, 25).map((name) => `project:skill:${name}`));
+
+  // A hand-made row: listed as a read-only project file, with no provenance and no action.
+  const handMade = fixture.fillNames[2];
+  await click(page, `document.querySelector('[data-pack-row="project:skill:${handMade}"]')`);
+  await settled('hand-made details', async () => (await packListView(page)).detail === `project:skill:${handMade}`);
+  let details = await projectDetailView(page);
+  assert.deepEqual(projectContent(details), {
+    heading: handMade,
+    scope: 'Installed · This project',
+    description: `Hand-made ${handMade}.`,
+    readOnly: PROJECT_READ_ONLY,
+    facts: [
+      ['Type', 'Skill'], ['Location', `.github/skills/${handMade}`],
+      ['Declared name', handMade], ['File count', '1 file'],
+    ],
+    filesSummary: 'Files (1)',
+    files: [`.github/skills/${handMade}/SKILL.md`],
+    caveat: true,
+    operations: 0,
+    links: 0,
+    close: 'Close project details',
+  });
+  assert.equal(/import/i.test(details.description + details.readOnly), false,
+    'a hand-made row claims no import provenance');
+  await pressKey(page, 'Escape');
+  await settled('hand-made details closed', async () => (await packListView(page)).detail === null);
+  step('pointer+keyboard', 'hand-made project row opened, Escape closed it', { key: `project:skill:${handMade}` });
+  await click(page, `document.querySelector('[data-pack-context="available"]')`);
+  // Phase B: entering Settings read no catalog, so Available is unknown and empty, and offers the read.
+  await settled('Available waits for a read', async () => (await packListView(page)).empty?.startsWith('Catalog not read yet'));
+  list = await packListView(page);
+  assert.deepEqual([list.totals.available, list.keys, discoveries()], ['?', [], 0], 'Available is unknown before any catalog read');
+  // The one explicit Reload is the only catalog discovery of this journey until its last step, and it lists
+  // the one pack by its source-qualified key.
+  await click(page, `document.querySelector('[aria-label="Reload packs"]')`);
+  await settled('the explicit catalog read commits', async () => discoveries() === 1 && (await evaluate(page,
+    `document.querySelector('[aria-label="Reload packs"]')?.getAttribute('aria-busy') === 'false'`)));
+  await settled('available pack row', async () => (await packListView(page)).keys.length === 1);
+  const packKey = (await packListView(page)).keys[0];
+  assert.match(packKey, new RegExp(`^pack:${PACK_NAME}@[^@]+$`), 'an Available row is keyed by its pack and its source');
+  assert.equal((await packListView(page)).totals.available, '1', 'Available lists packs only');
+  step('pointer', 'Reload packs: the explicit catalog read', { discoveries: discoveries(), key: packKey });
+
+  // Add/import: one labeled Source, Request import ready, and no request yet.
+  await click(page, `document.querySelector('[data-pack-context="import"]')`);
+  await settled('Add/import panel', () => evaluate(page,
+    `Boolean(document.querySelector('[data-import-panel]:not([hidden])'))`));
+  let status = await importStatusView(page);
+  assert.deepEqual(
+    [status.phase, status.source, status.request],
+    [null, '', { disabled: false, note: IMPORT_READY_NOTE }],
+  );
+  assert.equal(await evaluate(page, `document.querySelector('[data-import-heading]').textContent`),
+    'Import an agent or skill');
+  audits.push(await auditInstalledWorkspace(page, 'import-idle'));
+
+  /**
+   * One request through the shipped route: the UI prepares and submits once, the
+   * owner publishes the literal permission, and the person consents in Needs you.
+   * @param {number} index @param {typeof fixture.file} imported @param {boolean} keyboard
+   */
+  const requestAndConsent = async (index, imported, keyboard) => {
+    await fill(page, `document.querySelector('[data-import-source]')`, imported.source);
+    if (keyboard) await pressKey(page, 'Enter');
+    else await click(page, `document.querySelector('[data-import-request]')`);
+    step(keyboard ? 'keyboard' : 'pointer', `Add/import: Request import (${index === 0 ? 'file' : 'directory'})`,
+      { source: imported.source, keys: keyboard ? ['Enter'] : [] });
+    await settled(`owner permission ${index}`, () => model.imports[index]?.stage === 'permission-waiting');
+    await settled(`import ${index} waits for permission`, async () => (await importStatusView(page)).phase === 'waiting_permission');
+    return model.imports[index];
+  };
+
+  /**
+   * Hold the owner after the importer applied and verified, before it reports. The files exist and
+   * a fresh project read lists them, yet Canvas shows no result: a permission reply, a delivery, and
+   * the files themselves are not an Applied import. Only the owner's verified result is.
+   * @param {number} index @param {typeof fixture.file} imported @param {{reached:boolean,release:()=>void}} gate
+   */
+  const observeBeforeResult = async (index, imported, gate) => {
+    await settled(`owner ready to report import ${index}`, () => gate.reached);
+    const view = await importStatusView(page);
+    assert.deepEqual(
+      [view.phase, view.title, view.show, view.paths, view.sheet['File changes'], view.permission],
+      ['waiting_owner', 'Waiting for owner result', null, {}, undefined, null],
+      'the applied files alone are not an Applied import',
+    );
+    const destinations = {};
+    for (const [relative, expected] of imported.expected) {
+      const actual = fs.readFileSync(path.join(fixture.root, ...relative.split('/')));
+      assert.equal(actual.equals(expected), true, `the importer left the exact reviewed bytes at ${relative}`);
+      destinations[relative] = { bytes: actual.length, sha256: sha256(actual) };
+    }
+    const read = await (await fetch(new URL('/api/packs', canvasUrl), { signal: AbortSignal.timeout(15_000) })).json();
+    assert.equal(read.project.coverage.state, 'current');
+    const listed = read.project.items.map((item) => item.key);
+    const record = (await readNeedsYou(canvasUrl)).importRequests[index];
+    assert.deepEqual([record.phase, record.receipt.acknowledgment, record.applied], ['waiting_owner', null, false]);
+    gate.release();
+    return { destinations, listed, phase: view.phase };
+  };
+
+  // ----- Import 1: the local skill file, with the shared-exclusion, return, and draft checks.
+  const fileGate = ownerModel.hold('file-before-result');
+  let owner = await requestAndConsent(0, fixture.file, false);
+  const fileReceipt = owner.binding.receiptId;
+  status = await importStatusView(page);
+  assert.equal(status.focused, true, 'focus is on the request status');
+  assert.equal(status.sheet['Requested source'], fixture.file.source);
+  assert.equal(status.sheet.Receipt, fileReceipt);
+  assert.deepEqual(status.request, { disabled: true, note: IMPORT_REASON_PERMISSION });
+  assert.equal(status.show, null, 'no Show in Installed before an Applied result');
+  const pending = await readNeedsYou(canvasUrl);
+  assert.equal(pending.importRequests.length, 1);
+  assert.deepEqual(
+    [pending.importRequests[0].phase, pending.importRequests[0].importReceipt, pending.importRequests[0].importSource,
+      pending.importRequests[0].sendStarted],
+    ['waiting_permission', fileReceipt, fixture.file.source, true],
+  );
+  assert.equal(pending.importRequests[0].receipt.acknowledgment, null);
+  assert.deepEqual(fixture.file.written.filter((relative) => fs.existsSync(path.join(fixture.root, ...relative.split('/')))), [],
+    'nothing is written while the permission is outstanding');
+  audits.push(await auditInstalledWorkspace(page, 'import-waiting-permission'));
+
+  // Shared exclusion: the real provider refuses every other send while this import is unreconciled.
+  const exclusion = {
+    import: await postCanvas(canvasUrl, '/api/imports/request', { op: 'prepare', importSource: fixture.directory.source }),
+    pack: await postCanvas(canvasUrl, '/api/packs/request', { op: 'prepare', operation: 'install', name: PACK_NAME }),
+    capture: await postCanvas(canvasUrl, '/api/needs-you/capture-receipt', { requestHandle: null }),
+  };
+  for (const [kind, response] of Object.entries(exclusion)) {
+    assert.deepEqual([kind, response.status, response.body?.error], [kind, 409, 'import_unreconciled']);
+  }
+  assert.equal(model.imports.length, 1, 'no second handoff was sent');
+  // The same exclusion in the UI: New idea keeps its draft and names why it cannot send; leaving Settings
+  // clears the typed Source, keeps this request, and returns to Installed.
+  await click(page, button('New idea'));
+  assert.equal(await evaluate(page, `${field('Your idea')}.value`), draft, 'the idea draft survives the open import');
+  assert.deepEqual(await evaluate(page, `({
+    submit: ${button('Submit')}.disabled, save: ${button('Save')}.disabled,
+    editable: !${field('Your idea')}.disabled,
+    reason: [...document.querySelectorAll('[role="group"], .fui-MessageBar')].some(node => node.innerText.includes(${JSON.stringify(IMPORT_IDEA_REASON)})),
+    described: ${button('Save')}.getAttribute('aria-describedby') !== null,
+  })`), { submit: true, save: true, editable: true, reason: true, described: true });
+  step('pointer', 'New idea while the import waits: draft kept, Submit and Save disabled with the import reason');
+  await click(page, `document.querySelector('#dude-tab-settings')`);
+  await settled('Settings re-entry pack read',
+    async () => (await packListView(page)).totals.installed === String(fixture.fillNames.length));
+  list = await packListView(page);
+  assert.deepEqual([list.context, list.page, list.selected, list.detail], ['installed', 'Page 1 of 2', [], null],
+    'leaving Settings resets entry to Installed');
+  await click(page, `document.querySelector('[data-pack-context="import"]')`);
+  status = await importStatusView(page);
+  assert.deepEqual([status.phase, status.source, status.sheet.Receipt], ['waiting_permission', '', fileReceipt],
+    'the request status survives the departure; the typed Source does not');
+  assert.equal(status.request.disabled, true);
+  // The pack Install control carries the same reason.
+  await click(page, `document.querySelector('[data-pack-context="available"]')`);
+  await click(page, `document.querySelector('[data-pack-row="${packKey}"]')`);
+  assert.deepEqual(await evaluate(page, `({
+    install: document.querySelector('[data-pack-operation="install"]').disabled,
+    reason: [...document.querySelectorAll('[data-pack-detail] .fui-Text')].map(node => node.textContent)
+      .includes(${JSON.stringify(IMPORT_PACK_REASON)}),
+  })`), { install: true, reason: true });
+  await pressKey(page, 'Escape');
+  await click(page, `document.querySelector('[data-pack-context="import"]')`);
+  step('pointer', 'Available pack Install while the import waits: disabled with the import reason');
+
+  // Consent through the real Needs you view, then return to Add/import.
+  await click(page, `document.querySelector('[data-import-permission]')`);
+  const permission = owner.permission.request;
+  await visible(page, permission.prompt);
+  for (const part of [
+    permission.fields.operation,
+    ...permission.fields.targets.flatMap((entry) => [...entry.target.split('\n'), `Revision: ${entry.revision}`]),
+    ...permission.fields.consequences.split('\n'),
+    ...permission.fields.eligibility.split('\n'),
+    'Required literal confirmation',
+    permission.fields.confirmation,
+  ]) {
+    assert.equal(await evaluate(page, `document.querySelector('#dude-panel-needs').innerText.includes(${JSON.stringify(part)})`),
+      true, `Needs you shows ${JSON.stringify(part)} without truncation`);
+  }
+  assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('#dude-panel-needs button')]
+    .filter(node => node.getClientRects().length).map(node => node.innerText.trim()).slice(-2)`),
+  ['Send permission', 'Decline']);
+  assert.equal(await evaluate(page, `Boolean(document.querySelector('#dude-panel-needs section[aria-label="Deferral"]'))`),
+    false, 'a bound import offers no Defer or Save as idea');
+  audits.push(await auditInstalledWorkspace(page, 'import-needs-you-file'));
+  await fill(page, field('Enter the exact confirmation'), permission.fields.confirmation);
+  await click(page, field('I grant permission for this operation on these exact targets.'));
+  await click(page, button('Send permission'));
+  step('pointer', 'Needs you: confirmation typed, consent checked, Send permission', { confirmation: permission.fields.confirmation });
+  // A permission reply is acknowledged in either word, and is never the import: Add/import keeps waiting.
+  const replyTitle = { accepted: 'Accepted', applied: 'Permission acknowledged' };
+  await settled('permission acknowledged', () => evaluate(page,
+    `document.querySelector('#dude-panel-needs [aria-label="Response status"]')?.innerText.startsWith(${JSON.stringify(replyTitle[fixture.file.permissionAck])})`));
+  await click(page, button('Back to Add/import'));
+  step('pointer', 'Back to Add/import');
+  status = await importStatusView(page);
+  assert.equal(status.focused, true, 'the return lands on the request status');
+  assert.equal(status.sheet.Receipt, fileReceipt);
+
+  // The owner applies with the importer and verifies; then it acknowledges the separate result.
+  const readsBeforeResult = packReads();
+  const fileBeforeResult = await observeBeforeResult(0, fixture.file, fileGate);
+  await settled('file import acknowledged', () => model.imports[0].stage === 'complete');
+  await settled('file import Applied', async () => (await importStatusView(page)).phase === 'applied');
+  status = await importStatusView(page);
+  const fileAck = model.imports[0].result.receipt.acknowledgment;
+  assert.deepEqual(
+    [status.title, status.sheet['Requested source'], status.sheet['Dude\'s note'], status.sheet['File changes']],
+    ['Applied', fixture.file.source, fileAck.note, 'Applied. The files below were written and then verified.'],
+  );
+  assert.deepEqual(status.paths['Written files (2)'], fixture.file.written);
+  assert.equal(status.text.includes(IMPORT_NEW_SESSION), true, 'an Applied result carries the new-session caveat');
+  // No Reload: the result's own hint rereads Installed, and Show waits for it.
+  await settled('Show in Installed offered without Reload', async () => (await importStatusView(page)).show?.disabled === false);
+  assert.ok(packReads() > readsBeforeResult, 'the result alone caused a fresh pack and project read');
+  assert.equal(discoveries(), 1, 'the result\'s hint reread installed state and the project and acquired no catalog');
+  assert.equal(network.some((entry) => entry.path === '/api/packs/sources'), false);
+  status = await importStatusView(page);
+  assert.equal(status.show.note.startsWith('Opens Installed on the first imported agent or skill.'), true);
+  audits.push(await auditInstalledWorkspace(page, 'import-applied-file'));
+
+  /** Show in Installed, then everything the details must say about the artifact. */
+  const showAndInspect = async (key, expected, total) => {
+    await click(page, `document.querySelector('[data-import-show-button]')`);
+    step('pointer', 'Show in Installed', { key });
+    await settled('Installed details', async () => (await packListView(page)).detail === key);
+    list = await packListView(page);
+    assert.deepEqual(
+      [list.context, list.filter, list.page, list.count, list.selected, list.detail, list.open, list.closeFocused, list.totals.installed],
+      ['installed', 'All use cases', 'Page 2 of 2', `26–${total} of ${total}`, [key], key, true, true, String(total)],
+    );
+    assert.equal(list.keys.includes(key), true, 'the target page lists the artifact');
+    details = await projectDetailView(page);
+    assert.deepEqual(projectContent(details), expected);
+    assert.equal(details.rowVisible, true, 'the selected row is visible below the sticky header');
+    return { list, details };
+  };
+  const fileKey = 'project:skill:dude-local-status-review';
+  const fileRow = {
+    heading: 'dude-local-status-review',
+    scope: 'Installed · This project',
+    description: 'Summarize project status from local notes.',
+    readOnly: PROJECT_READ_ONLY,
+    facts: [
+      ['Type', 'Skill'], ['Location', '.github/skills/dude-local-status-review'],
+      ['Declared name', 'dude-local-status-review'], ['File count', '2 files'],
+    ],
+    filesSummary: 'Files (2)',
+    files: [...fixture.file.written].sort(),
+    caveat: true,
+    operations: 0,
+    links: 0,
+    close: 'Close project details',
+  };
+  const shownFile = await showAndInspect(fileKey, fileRow, fixture.fillNames.length + 1);
+  audits.push(await auditInstalledWorkspace(page, 'import-show-installed-file'));
+  // A refresh that keeps the surviving selection: window focus (Close keeps its focus), then an
+  // explicit Reload, whose own click takes focus.
+  for (const [label, refresh, keepsFocus] of [
+    ['window focus', () => evaluate(page, `window.dispatchEvent(new Event('focus'))`), true],
+    ['Reload packs', () => click(page, `document.querySelector('[aria-label="Reload packs"]')`), false],
+  ]) {
+    const reads = packReads();
+    await refresh();
+    await settled(`${label} pack read`, async () => packReads() > reads && (await evaluate(page,
+      `document.querySelector('[aria-label="Reload packs"]')?.getAttribute('aria-busy') === 'false'`)));
+    // Window focus reads installed state and the project; only the explicit Reload discovers a catalog.
+    assert.equal(discoveries(), label === 'Reload packs' ? 2 : 1, `${label} acquires a catalog only when it is the explicit Reload`);
+    const after = await packListView(page);
+    assert.deepEqual(
+      [after.context, after.page, after.count, after.selected, after.detail, after.open, after.closeFocused || !keepsFocus],
+      [shownFile.list.context, shownFile.list.page, shownFile.list.count, shownFile.list.selected, shownFile.list.detail, true, true],
+      `${label} keeps the surviving selection, its page, and its details`,
+    );
+    step('refresh', `${label} after Show in Installed`, { key: fileKey });
+  }
+  await click(page, `document.querySelector('[aria-label="Close project details"]')`);
+  await settled('details closed', async () => (await packListView(page)).detail === null);
+  assert.equal((await packListView(page)).activeRow, fileKey, 'closing the details returns focus to the row');
+  step('pointer', 'Close in details returns to the row', { returnedTo: fileKey });
+  journeys.push({ source: 'file', receipt: fileReceipt, key: fileKey, beforeResult: fileBeforeResult });
+
+  // ----- Import 2: the local directory (skill and agent groups), by keyboard.
+  await click(page, `document.querySelector('[data-pack-context="import"]')`);
+  await settled('Add/import ready for the second import', async () => {
+    const view = await importStatusView(page);
+    return view.request.disabled === false && view.phase === 'applied';
+  });
+  const directoryGate = ownerModel.hold('directory-before-result');
+  owner = await requestAndConsent(1, fixture.directory, true);
+  const directoryReceipt = owner.binding.receiptId;
+  assert.notEqual(directoryReceipt, fileReceipt);
+  status = await importStatusView(page);
+  assert.equal(status.sheet['Requested source'], fixture.directory.source);
+  assert.equal(status.sheet.Receipt, directoryReceipt);
+  await click(page, `document.querySelector('[data-import-permission]')`);
+  const directoryPermission = owner.permission.request;
+  await visible(page, directoryPermission.prompt);
+  for (const part of [
+    directoryPermission.fields.operation,
+    ...directoryPermission.fields.targets.flatMap((entry) => [...entry.target.split('\n'), `Revision: ${entry.revision}`]),
+    ...directoryPermission.fields.consequences.split('\n'),
+    ...directoryPermission.fields.eligibility.split('\n'),
+    'Required literal confirmation',
+    directoryPermission.fields.confirmation,
+  ]) {
+    assert.equal(await evaluate(page, `document.querySelector('#dude-panel-needs').innerText.includes(${JSON.stringify(part)})`),
+      true, `Needs you shows ${JSON.stringify(part)} without truncation`);
+  }
+  audits.push(await auditInstalledWorkspace(page, 'import-needs-you-directory'));
+  await evaluate(page, `${field('Enter the exact confirmation')}.focus()`);
+  await page.send('Input.insertText', { text: directoryPermission.fields.confirmation });
+  await evaluate(page, `${field('I grant permission for this operation on these exact targets.')}.focus()`);
+  await pressSpace(page);
+  await evaluate(page, `${button('Send permission')}.focus()`);
+  await pressKey(page, 'Enter');
+  step('keyboard', 'Needs you: confirmation, Space on the consent checkbox, Enter on Send permission',
+    { keys: ['Space', 'Enter'], confirmation: directoryPermission.fields.confirmation });
+  await settled('directory permission acknowledged', () => evaluate(page,
+    `document.querySelector('#dude-panel-needs [aria-label="Response status"]')?.innerText.startsWith(${JSON.stringify(replyTitle[fixture.directory.permissionAck])})`));
+  await click(page, button('Back to Add/import'));
+  status = await importStatusView(page);
+  assert.deepEqual([status.focused, status.source, status.sheet.Receipt], [true, fixture.directory.source, directoryReceipt],
+    'the permission round trip keeps its local destination, text, and receipt, unlike an ordinary departure');
+  const readsBeforeDirectoryResult = packReads();
+  const directoryBeforeResult = await observeBeforeResult(1, fixture.directory, directoryGate);
+  await settled('directory import acknowledged', () => model.imports[1].stage === 'complete');
+  await settled('directory import Applied', async () => (await importStatusView(page)).phase === 'applied');
+  status = await importStatusView(page);
+  const directoryAck = model.imports[1].result.receipt.acknowledgment;
+  assert.deepEqual(
+    [status.title, status.sheet['Requested source'], status.sheet['Dude\'s note'], status.sheet['File changes']],
+    ['Applied', fixture.directory.source, directoryAck.note, 'Applied. The files below were written and then verified.'],
+  );
+  assert.deepEqual(status.paths['Written files (5)'], fixture.directory.written);
+  assert.equal(status.text.includes(IMPORT_NEW_SESSION), true);
+  await settled('Show in Installed offered for the directory', async () => (await importStatusView(page)).show?.disabled === false);
+  assert.ok(packReads() > readsBeforeDirectoryResult, 'the directory result alone caused a fresh pack and project read');
+  audits.push(await auditInstalledWorkspace(page, 'import-applied-directory'));
+  const directoryKey = 'project:agent:dude-local-release-notes';
+  const agentRow = {
+    heading: 'dude-local-release-notes',
+    scope: 'Installed · This project',
+    description: 'Drafts release notes from a changelog.',
+    readOnly: PROJECT_READ_ONLY,
+    facts: [
+      ['Type', 'Agent'], ['Location', '.github/agents/dude-local-release-notes.agent.md'],
+      ['Declared name', 'Release Notes'], ['File count', '3 files'],
+    ],
+    filesSummary: 'Files (3)',
+    files: fixture.directory.written.filter((relative) => relative.startsWith('.github/agents/')).sort(),
+    caveat: true,
+    operations: 0,
+    links: 0,
+    close: 'Close project details',
+  };
+  const shownDirectory = await showAndInspect(directoryKey, agentRow, fixture.fillNames.length + 3);
+  assert.equal(agentRow.files.some((relative) => relative.includes('.support/')), true, 'the agent .support/ companions are listed');
+  audits.push(await auditInstalledWorkspace(page, 'import-show-installed-directory'));
+  await pressKey(page, 'Escape');
+  await settled('agent details closed', async () => (await packListView(page)).activeRow === directoryKey);
+  step('keyboard', 'Escape closes the details', { returnedTo: directoryKey });
+  // The directory's skill, with its companion, is a row in the same listing.
+  const skillKey = 'project:skill:dude-local-log-triage';
+  await click(page, `document.querySelector('[data-pack-row="${skillKey}"]')`);
+  await settled('directory skill details', async () => (await packListView(page)).detail === skillKey);
+  details = await projectDetailView(page);
+  assert.deepEqual(projectContent(details), {
+    heading: 'dude-local-log-triage',
+    scope: 'Installed · This project',
+    description: 'Triage a log excerpt the user pastes.',
+    readOnly: PROJECT_READ_ONLY,
+    facts: [
+      ['Type', 'Skill'], ['Location', '.github/skills/dude-local-log-triage'],
+      ['Declared name', 'dude-local-log-triage'], ['File count', '2 files'],
+    ],
+    filesSummary: 'Files (2)',
+    files: fixture.directory.written.filter((relative) => relative.startsWith('.github/skills/')).sort(),
+    caveat: true,
+    operations: 0,
+    links: 0,
+    close: 'Close project details',
+  });
+  await pressKey(page, 'Escape');
+  await settled('directory skill details closed', async () => (await packListView(page)).detail === null);
+  journeys.push({
+    source: 'directory', receipt: directoryReceipt, key: directoryKey, skill: skillKey, beforeResult: directoryBeforeResult,
+  });
+
+  // The same Show in Installed on a narrow screen, in both themes: below 1100px the details are a modal
+  // overlay, and Close still takes focus on the same artifact, on its page.
+  const narrowViews = [];
+  for (const theme of /** @type {const} */ (['light', 'dark'])) {
+    await installedViewport(page, 360, theme, 900);
+    await click(page, `document.querySelector('[data-pack-context="import"]')`);
+    await settled(`Show in Installed offered at 360px ${theme}`,
+      async () => (await importStatusView(page)).show?.disabled === false);
+    await click(page, `document.querySelector('[data-import-show-button]')`);
+    step('pointer', `Show in Installed at 360px, ${theme}`, { key: directoryKey });
+    await settled(`narrow details ${theme}`, async () => (await packListView(page)).detail === directoryKey);
+    list = await packListView(page);
+    details = await projectDetailView(page);
+    assert.deepEqual(
+      [list.context, list.page, list.selected, list.open, list.closeFocused, details.modal, details.heading],
+      ['installed', 'Page 2 of 2', [directoryKey], true, true, true, 'dude-local-release-notes'],
+      `the narrow overlay opens on the same artifact with Close focused (${theme})`,
+    );
+    assert.deepEqual(details.files, agentRow.files);
+    audits.push(await auditInstalledWorkspace(page, `import-show-installed-360-${theme}`));
+    await pressKey(page, 'Escape');
+    await settled(`narrow details closed ${theme}`, async () => (await packListView(page)).detail === null);
+    assert.equal((await packListView(page)).activeRow, directoryKey, 'closing the overlay returns focus to the row');
+    narrowViews.push({ theme, width: 360, key: directoryKey });
+  }
+  await installedViewport(page, 1440, 'light', 900);
+
+  // The shipped route admitted exactly the two prepare/submit pairs; the draft survived everything.
+  const importRequests = network.filter((entry) => entry.path === '/api/imports/request');
+  assert.deepEqual(importRequests.map((entry) => entry.body), [
+    { op: 'prepare', importSource: fixture.file.source },
+    { op: 'submit', importSource: fixture.file.source, importReceipt: fileReceipt },
+    { op: 'prepare', importSource: fixture.directory.source },
+    { op: 'submit', importSource: fixture.directory.source, importReceipt: directoryReceipt },
+  ]);
+  await click(page, button('New idea'));
+  assert.equal(await evaluate(page, `${field('Your idea')}.value`), draft, 'the New idea draft survived both imports');
+  assert.deepEqual(foreignNetwork, [], 'no source or network request leaves the Canvas origin');
+  assert.deepEqual(runtimeErrors, []);
+  assert.equal(discoveries(), 2, 'only the two explicit Reloads acquired a catalog: no Settings entry, result, Show in Installed, or focus did');
+  assert.equal(network.some((entry) => entry.path === '/api/packs/sources'), false, 'no source was added or removed');
+  const provider = await readNeedsYou(canvasUrl);
+  assert.deepEqual(
+    provider.importRequests.map((entry) => [entry.phase, entry.applied, entry.receipt.current, entry.sendStarted]),
+    [['applied', true, true, true], ['applied', true, true, true]],
+  );
+  return {
+    network,
+    foreignNetwork,
+    steps,
+    audits,
+    journeys,
+    narrowViews,
+    surface,
+    exclusion,
+    provider,
+    shown: { file: shownFile, directory: shownDirectory },
+    results: model.imports.map((entry) => ({
+      kind: entry.kind,
+      receipt: entry.binding.receiptId,
+      written: entry.result.receipt.acknowledgment.written,
+    })),
+    draftSha256: sha256(draft),
+    screenshot: await screenshot(page, 'installed-import-final'),
+  };
+}
+
+/**
+ * Drive the 073 Phase B journey in the owned Edge while the installed owner model above previews, publishes
+ * the literal permission, applies with Compose, verifies, and acknowledges. The browser adds the folder as a
+ * pack source through Settings, shows that source's packs in Available, selects its source-qualified pack,
+ * requests the install, and consents through Needs you; it applies nothing. The source and its pack are
+ * then observed where they landed: the saved sources file, the recorded profile source, the installed bytes,
+ * the Available rows of both same-named packs, the source facts, and the installed-use removal blocker.
+ * Catalogs are acquired only by the explicit read that follows the save.
+ * @param {Cdp} page
+ * @param {string} canvasUrl
+ * @param {ReturnType<typeof seedSourceFixture>} fixture
+ * @param {ReturnType<typeof createSourceModel>} ownerModel
+ * @param {{parsePackSourcesDocument:(value:Buffer)=>unknown[], serializePackSourcesDocument:(value:unknown[])=>string}} sources
+ *   the installed module, which is also what Compose and lint ran
+ */
+async function driveInstalledSourceRoundTrip(page, canvasUrl, fixture, ownerModel, sources) {
+  const model = ownerModel.state;
+  const network = [], foreignNetwork = [], runtimeErrors = [];
+  /** The saved-sources route's own answers, as the browser received them. */
+  const sourceResponses = [];
+  const routeStatus = new Map();
+  page.on('Runtime.exceptionThrown', (event) => runtimeErrors.push(event));
+  page.on('Network.requestWillBeSent', (event) => {
+    if (event.request.url.startsWith(canvasUrl)) {
+      const url = new URL(event.request.url);
+      network.push({
+        method: event.request.method,
+        path: url.pathname,
+        query: url.search,
+        body: event.request.postData ? JSON.parse(event.request.postData) : null,
+      });
+    } else if (/^https?:/.test(event.request.url)
+      && !['127.0.0.1', 'localhost'].includes(new URL(event.request.url).hostname)) {
+      foreignNetwork.push(event.request.url);
+    }
+  });
+  page.on('Network.responseReceived', (event) => {
+    if (new URL(event.response.url).pathname === '/api/packs/sources') routeStatus.set(event.requestId, event.response.status);
+  });
+  page.on('Network.loadingFinished', (event) => {
+    if (!routeStatus.has(event.requestId)) return;
+    const status = routeStatus.get(event.requestId);
+    void page.send('Network.getResponseBody', { requestId: event.requestId })
+      .then((result) => sourceResponses.push({ status, body: JSON.parse(result.body) }))
+      .catch((error) => sourceResponses.push({ status, error: safeError(error) }));
+  });
+  const discoveries = () => network.filter((entry) => entry.method === 'GET' && entry.path === '/api/packs'
+    && entry.query === '?discover=1').length;
+  const steps = [], audits = [];
+  const step = (input, target, details = {}) => steps.push({ input, target, ...details });
+  const failed = () => { if (model.modelError) throw new Error(model.modelError); };
+  const settled = async (label, ready, ms = 60_000) => {
+    await until(async () => { failed(); return ready(); }, label, ms);
+  };
+  const phaseOf = () => evaluate(page, `document.querySelector('[data-pack-request-dialog][open] [data-pack-request-phase]')
+    ?.getAttribute('data-pack-request-phase') ?? null`);
+  /** Each row of a list as a person reads it: its opaque key, then its cells. @param {string} selector */
+  const rowsOf = (selector) => evaluate(page, `[...document.querySelectorAll(${JSON.stringify(selector)})].map(row =>
+    [row.getAttribute('data-pack-row'), ...[...row.querySelectorAll('[role="gridcell"]')].map(cell => cell.innerText.replace(/\\s+/g, ' ').trim())])`);
+  // The built-in Local library names its folder relative to the workspace.
+  const libraryLocation = 'library/packs';
+  const sourceLabel = `${fixture.label} - Local folder`;
+  const before = workspaceFiles(fixture.root);
+  const defaultBytes = {
+    manifest: fs.readFileSync(path.join(fixture.root, ...PACK_MANIFEST_PATH.split('/'))),
+    instruction: fs.readFileSync(path.join(fixture.root, ...PACK_SOURCE_PATH.split('/'))),
+  };
+
+  // ----- Settings entry: installed state and the saved sources are read, and no catalog is.
+  await navigate(page, canvasUrl, 1440);
+  await click(page, `document.querySelector('#dude-tab-settings')`);
+  await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+    ?.getAttribute('aria-busy') === 'false' && Boolean(document.querySelector('[data-settings]'))`),
+  'installed Settings pack read');
+  assert.equal(discoveries(), 0, 'entering Settings acquires no catalog');
+  const surface = await evaluate(page, `(() => {
+    const settings = document.querySelector('[data-settings]');
+    const text = node => node.innerText.replace(/\\s+/g, ' ').trim();
+    return {
+      sections: [...settings.querySelectorAll('[data-settings-section]')].map(node => node.getAttribute('data-settings-section')),
+      tabs: [...settings.querySelectorAll('[role="tab"]')].map(text),
+      contexts: [...settings.querySelectorAll('[data-pack-context]')].map(node => node.getAttribute('data-pack-context')),
+    };
+  })()`);
+  assert.deepEqual(surface.sections, ['packs', 'about']);
+  assert.deepEqual(surface.contexts, ['installed', 'available', 'import', 'sources'], 'Sources is the last of the four Packs views');
+  assert.deepEqual(surface.tabs, ['Packs', 'About', 'Installed 0', 'Available ?', 'Add/import', 'Sources'],
+    'before the first Reload Available is unknown');
+  await click(page, `document.querySelector('[data-pack-context="sources"]')`);
+  await settled('Sources lists the built-in sources', async () => (await sourcesView(page)).rows.length === 2);
+  let view = await sourcesView(page);
+  assert.deepEqual(view.rows.map((row) => row.label), [
+    `Local library. Local folder. ${libraryLocation}. Not read. Built in.`,
+    `Bundle upstream. GitHub. ${INSTALLED_SOURCE_REPO}, ref latest. Not read while library/packs exists. Built in.`,
+  ]);
+  assert.deepEqual([view.count, view.add.disabled, view.dialogOpen],
+    ['2 sources · 2 built in · 0 of 8 added', false, false]);
+  assert.equal(view.noAdded.startsWith('No sources added yet'), true);
+  assert.equal(view.coverage.startsWith('Catalog: not read'), true, 'before Reload no source shows a pack count');
+  const libraryKey = view.rows[0].key;
+  audits.push(await auditInstalledWorkspace(page, 'source-sources-before-add'));
+
+  // ----- Add the folder through the dialog: one read validates it, one save records it.
+  await click(page, `document.querySelector('[data-sources-add]')`);
+  await settled('Add source dialog', async () => (await sourcesView(page)).dialogOpen);
+  assert.equal(await evaluate(page, `document.activeElement?.hasAttribute('data-source-location')`), true,
+    'Add opens on Location');
+  audits.push(await auditInstalledWorkspace(page, 'source-add-dialog'));
+  await fill(page, `document.querySelector('[data-source-location]')`, fixture.team);
+  await click(page, `document.querySelector('[data-source-add-submit]')`);
+  step('pointer', 'Sources: Add source, Location typed, Add source', { location: fixture.team });
+  await settled('the source was saved', () => sourceResponses.length === 1);
+  assert.equal(sourceResponses[0].status, 200, JSON.stringify(sourceResponses[0]));
+  const saved = sourceResponses[0].body;
+  assert.deepEqual(Object.keys(saved).sort(), ['count', 'key', 'sourcesRevision']);
+  assert.deepEqual(network.filter((entry) => entry.path === '/api/packs/sources').map((entry) => entry.body),
+    [{ op: 'add', location: fixture.team, sourcesRevision: 'absent' }], 'one closed add body against an absent file');
+  const savedBytes = fs.readFileSync(fixture.sourcesFile);
+  const teamKey = saved.key;
+  assert.equal(typeof teamKey, 'string');
+  assert.equal(saved.count, 2, 'the validated catalog holds the folder\'s two packs');
+  assert.equal(saved.sourcesRevision, revision(savedBytes), 'the returned revision is the raw bytes just saved');
+  // The save: the one file the route writes, holding exactly the one added entry and no built-in.
+  assert.deepEqual(sources.parsePackSourcesDocument(savedBytes), [{ type: 'local', location: fixture.realTeam }]);
+  assert.equal(savedBytes.toString('utf8'), sources.serializePackSourcesDocument([{ type: 'local', location: fixture.realTeam }]));
+  const block = /```json\s*\r?\n([\s\S]*?)\r?\n```/.exec(savedBytes.toString('utf8'));
+  assert.deepEqual(JSON.parse(block[1]), { sources: [{ type: 'local', location: fixture.realTeam }] });
+  await settled('Added is announced outside the dialog', async () => {
+    const now = await sourcesView(page);
+    return now.note?.title === 'Added' && !now.dialogOpen;
+  });
+  view = await sourcesView(page);
+  assert.equal(view.note.text, `Added ${fixture.label} was saved with this project. Found 2 packs. Nothing was installed; its packs now appear under Available.`);
+  // Only after the one read that follows the save does the new row open in details, with Close focused.
+  await settled('post-add details', async () => (await sourceDetailView(page))?.key === teamKey);
+  assert.equal(discoveries(), 1, 'exactly one catalog read follows the save');
+  view = await sourcesView(page);
+  assert.deepEqual(view.rows.map((row) => [row.label, row.selected]), [
+    [`Local library. Local folder. ${libraryLocation}. Read - 1 pack. Built in.`, false],
+    [`Bundle upstream. GitHub. ${INSTALLED_SOURCE_REPO}, ref latest. Not read while library/packs exists. Built in.`, false],
+    [`${fixture.label}. Local folder. ${fixture.realTeam}. Read - 2 packs. This project.`, true],
+  ]);
+  assert.equal(view.rows[2].key, teamKey, 'the row carries the key the save returned');
+  assert.equal(view.count, '3 sources · 2 built in · 1 of 8 added');
+  let details = await sourceDetailView(page);
+  assert.deepEqual(details, {
+    key: teamKey,
+    heading: fixture.label,
+    scope: 'Pack source · This project',
+    notice: null,
+    description: `The folder ${fixture.realTeam} on this computer, whose root contains library/packs. Added to this project, so it is saved with the project and can be committed and shared.`,
+    show: { disabled: false },
+    remove: { disabled: false, label: `Remove ${fixture.label}` },
+    reason: 'Show packs in Available lists this source\'s packs that are not installed. Remove takes this entry out of the saved list. It installs and uninstalls nothing.',
+    readOnly: null,
+    facts: {
+      Status: 'Read - 2 packs',
+      'Packs found': '2 (none installed) Counts include names you already have installed. Available lists only names that are not installed.',
+      'Installed from this source': '0',
+      'Saved in': SOURCES_PATH,
+    },
+    links: 0,
+    close: 'Close source details',
+    closeFocused: true,
+    open: true,
+    modal: false,
+  });
+  audits.push(await auditInstalledWorkspace(page, 'source-added-details'));
+  const addedDetails = details;
+
+  // ----- Both packs of one name are listed, each saying where it comes from; Show packs narrows to one source.
+  await click(page, `document.querySelector('[data-pack-context="available"]')`);
+  await settled('Available lists the packs read', async () => (await packListView(page)).keys.length === 3);
+  assert.equal((await packListView(page)).totals.available, '3');
+  assert.deepEqual(await rowsOf('[data-pack-row]'), [
+    [`pack:${PACK_NAME}@${libraryKey}`, PACK_NAME, 'Local library - Local folder', 'testing'],
+    [`pack:${PACK_NAME}@${teamKey}`, PACK_NAME, sourceLabel, 'testing'],
+    [`pack:${SOURCE_EXTRA_PACK}@${teamKey}`, SOURCE_EXTRA_PACK, sourceLabel, 'testing'],
+  ], 'two rows share one name, with distinct keys and sources');
+  await click(page, `document.querySelector('[data-pack-context="sources"]')`);
+  await click(page, `document.querySelector('[data-source-row="${teamKey}"]')`);
+  await settled('source details', async () => (await sourceDetailView(page))?.key === teamKey);
+  await click(page, `document.querySelector('[data-source-show]')`);
+  step('pointer', 'Sources: Show packs in Available', { key: teamKey });
+  await settled('Show packs opens Available on that source', async () => {
+    const now = await packListView(page);
+    return now.context === 'available' && now.sourceFilter === sourceLabel;
+  });
+  let list = await packListView(page);
+  assert.deepEqual(
+    [list.context, list.filter, list.sourceFilter, list.page, list.selected, list.detail, list.open, list.activeTab, list.keys],
+    ['available', 'All use cases', sourceLabel, 'Page 1 of 1', [], null, false, 'available',
+      [`pack:${PACK_NAME}@${teamKey}`, `pack:${SOURCE_EXTRA_PACK}@${teamKey}`]],
+    'Show packs is a local view change: that Source, All use cases, page 1, nothing selected, focus on Available',
+  );
+  assert.equal(discoveries(), 1, 'Show packs acquires nothing');
+  audits.push(await auditInstalledWorkspace(page, 'source-available-filtered'));
+
+  // ----- Select the source-qualified pack and request its installation.
+  const packKey = `pack:${PACK_NAME}@${teamKey}`;
+  await click(page, `document.querySelector('[data-pack-row="${packKey}"]')`);
+  await settled('pack details', async () => (await packListView(page)).detail === packKey);
+  const pack = await packDetailView(page);
+  assert.deepEqual(
+    [pack.heading, pack.description, pack.source, pack.location, pack.operations],
+    [`${PACK_NAME} - ${fixture.label}`, 'Added-source variant of the installed-host pack round trip.', sourceLabel,
+      fixture.realTeam, [['install', false]]],
+    'the details name the pack and the source it is read from, and offer only Install',
+  );
+  const gate = ownerModel.hold('source-before-result');
+  await click(page, `document.querySelector('[data-pack-operation="install"]')`);
+  step('pointer', 'Available: Install on the source-qualified pack', { key: packKey });
+  await settled('owner permission', () => model.record?.stage === 'permission-waiting');
+  await settled('the request waits for exact permission', async () => (await phaseOf()) === 'waiting_permission');
+  const pending = await readNeedsYou(canvasUrl);
+  assert.equal(pending.packRequests.length, 1);
+  const waiting = pending.packRequests[0];
+  assert.deepEqual([waiting.operation, waiting.name, waiting.phase], ['install', PACK_NAME, 'waiting_permission']);
+  const binding = { key: teamKey, sourcesRevision: revision(savedBytes), source: { type: 'local', location: fixture.realTeam } };
+  assert.deepEqual(waiting.receipt.catalogSource, binding, 'the provider bound the added source, its saved revision, and its real folder');
+  assert.deepEqual(model.record.binding.catalogSource, binding, 'and handed the owner exactly that binding');
+  assert.deepEqual(network.filter((entry) => entry.path === '/api/packs/request').map((entry) => entry.body), [
+    { op: 'prepare', operation: 'install', name: PACK_NAME, source: teamKey },
+    { op: 'submit', operation: 'install', name: PACK_NAME, source: teamKey, packReceipt: waiting.packReceipt },
+  ], 'both bodies name the configured source key, never a path, repository, or ref');
+  assert.equal(await evaluate(page, `document.querySelector('[data-pack-request-dialog] [data-pack-request-source]')
+    ?.innerText.replace(/\\s+/g, ' ').trim()`), `Requested from ${sourceLabel}`);
+  assert.equal(fs.existsSync(fixture.destination), false, 'no projected artifact exists before exact consent');
+  assert.deepEqual(model.record.preview.source, binding);
+  audits.push(await auditInstalledWorkspace(page, 'source-request-waiting-permission'));
+
+  // ----- Consent through the real Needs you view: the source is the first target, as a third-party source.
+  const permission = model.record.permission.request;
+  await click(page, button('Open Needs you'));
+  await visible(page, permission.prompt);
+  const card = await evaluate(page, `document.querySelector('#dude-panel-needs').innerText`);
+  for (const part of [
+    permission.fields.operation,
+    ...permission.fields.targets.flatMap((entry) => [...entry.target.split('\n'), `Revision: ${entry.revision}`]),
+    ...permission.fields.consequences.split('\n'),
+    ...permission.fields.eligibility.split('\n'),
+    'Required literal confirmation',
+    permission.fields.confirmation,
+  ]) assert.equal(card.includes(part), true, `Needs you shows ${JSON.stringify(part)} without truncation`);
+  assert.equal(card.indexOf(`Third-party source ${fixture.realTeam}`) >= 0, true, 'Needs you names the third-party source');
+  assert.equal(card.indexOf('Third-party source') < card.indexOf(PROFILE_PATH), true, 'and names it first');
+  assert.equal(permission.fields.targets[0].revision, fixture.packRevision, 'a local folder is pinned by its files\' digest, not a commit');
+  assert.match(permission.fields.targets[0].revision, /^sha256:[0-9a-f]{64}$/);
+  audits.push(await auditInstalledWorkspace(page, 'source-needs-you-permission'));
+  await fill(page, field('Enter the exact confirmation'), permission.fields.confirmation);
+  await click(page, field('I grant permission for this operation on these exact targets.'));
+  await click(page, button('Send permission'));
+  step('pointer', 'Needs you: confirmation typed, consent checked, Send permission', { confirmation: permission.fields.confirmation });
+  await visible(page, 'Awaiting acknowledgment');
+  await settled('owner recognizes the consent', () => Boolean(model.record.permission.acknowledgment));
+  assert.equal(fs.existsSync(fixture.destination), false, 'consent alone writes nothing');
+  await click(page, button('Back to pack request'));
+  await settled('the request waits for the owner', async () => (await phaseOf()) === 'waiting_owner');
+
+  // ----- The owner applies and verifies; Canvas shows no Applied until the owner's verified result arrives.
+  await settled('owner ready to report', () => gate.reached);
+  const installedBytes = fs.readFileSync(fixture.destination);
+  assert.equal(installedBytes.equals(fixture.instruction), true, 'the installed bytes are the added folder\'s');
+  assert.equal(installedBytes.equals(defaultBytes.instruction), false, 'not the default library\'s same-named pack');
+  const unreported = (await readNeedsYou(canvasUrl)).packRequests[0];
+  assert.deepEqual([unreported.phase, unreported.applied, unreported.receipt.acknowledgment], ['waiting_owner', false, null],
+    'the applied files alone are not an Applied pack');
+  assert.equal(await phaseOf(), 'waiting_owner');
+  gate.release();
+  await settled('owner result acknowledged', () => model.record.stage === 'complete');
+  await settled('authoritative reread of the installed state', async () => !(await evaluate(page,
+    `document.body.innerText.includes('Reading repository state')`)) && (await readNeedsYou(canvasUrl)).packRequests[0]?.phase === 'applied');
+  await settled('the dialog shows the correlated Applied', async () => (await phaseOf()) === 'applied');
+  const provider = await readNeedsYou(canvasUrl);
+  assert.equal(provider.packRequests.length, 1);
+  const result = provider.packRequests[0];
+  assert.deepEqual([result.applied, result.receipt.freshness, result.receipt.current], [true, 'current', true]);
+  assert.deepEqual(result.receipt.catalogSource, binding, 'the Applied receipt keeps the exact binding');
+  assert.deepEqual(result.receipt.acknowledgment.catalogSource, binding, 'and the owner echoed it whole');
+  assert.deepEqual(result.receipt.reread.entry, { files: fixture.written, source: { type: 'local', location: fixture.realTeam } });
+  assert.deepEqual(result.receipt.acknowledgment.result, JSON.parse(model.record.compose.stdout),
+    'the receipt carries the observed Compose --envelope stdout, not a predetermined result');
+  audits.push(await auditInstalledWorkspace(page, 'source-request-applied'));
+  await click(page, button('Return to packs'));
+
+  // ----- What landed: the recorded source, the installed bytes, and every same-name Available row gone.
+  const profile = installedProfile(fixture.root);
+  assert.deepEqual(profile.value.installed[PACK_NAME], { files: fixture.written, source: { type: 'local', location: fixture.realTeam } },
+    'the profile records the added folder as the source');
+  assert.deepEqual(Object.keys(profile.value.installed), [PACK_NAME]);
+  assert.equal(fs.readFileSync(fixture.destination).equals(fixture.instruction), true);
+  assert.equal(fs.readFileSync(fixture.sourcesFile).equals(savedBytes), true, 'installing changed no saved source');
+  await click(page, `document.querySelector('[data-pack-context="installed"]')`);
+  await settled('Installed lists the pack', async () => (await packListView(page)).totals.installed === '1');
+  assert.deepEqual(await rowsOf('[data-pack-row]'), [[`pack:${PACK_NAME}`, PACK_NAME, 'Pack', sourceLabel, 'testing']],
+    'Installed names the added folder as the source it was recorded from');
+  await click(page, `document.querySelector('[data-pack-row="pack:${PACK_NAME}"]')`);
+  await settled('installed details', async () => (await packListView(page)).detail === `pack:${PACK_NAME}`);
+  const installedPack = await packDetailView(page);
+  assert.equal(installedPack.description, 'Added-source variant of the installed-host pack round trip.',
+    'its description comes from the source the record matches, not the default library');
+  assert.equal(installedPack.source, sourceLabel);
+  assert.equal(installedPack.text.includes(PACK_DESTINATION), true, 'the recorded file is listed');
+  await pressKey(page, 'Escape');
+  await click(page, `document.querySelector('[data-pack-context="available"]')`);
+  await settled('Available re-filtered by installed name', async () => (await packListView(page)).keys.length === 1);
+  assert.deepEqual(await rowsOf('[data-pack-row]'), [[`pack:${SOURCE_EXTRA_PACK}@${teamKey}`, SOURCE_EXTRA_PACK, sourceLabel, 'testing']],
+    'installing one name removes every Available row of that name, from both sources');
+  assert.equal((await packListView(page)).totals.available, '1');
+  audits.push(await auditInstalledWorkspace(page, 'source-available-after-install'));
+
+  // ----- Source facts, and the installed-use removal blocker both in the details and at the server.
+  await click(page, `document.querySelector('[data-pack-context="sources"]')`);
+  await click(page, `document.querySelector('[data-source-row="${teamKey}"]')`);
+  await settled('source details after install', async () => (await sourceDetailView(page))?.key === teamKey);
+  details = await sourceDetailView(page);
+  assert.deepEqual([details.facts.Status, details.facts['Packs found'].split(' Counts')[0], details.facts['Installed from this source'],
+    details.facts['Saved in']], ['Read - 2 packs', '2 (1 not installed)', `1: ${PACK_NAME}`, SOURCES_PATH]);
+  assert.deepEqual(details.remove, { disabled: true, label: `Remove ${fixture.label}` });
+  assert.equal(details.reason,
+    `Cannot remove while in use. Installed from it: ${PACK_NAME}. Remove those installed packs first.`);
+  assert.equal(details.show.disabled, false, 'its remaining uninstalled pack is still offered');
+  audits.push(await auditInstalledWorkspace(page, 'source-details-in-use'));
+  await click(page, `document.querySelector('[data-source-row="${libraryKey}"]')`);
+  await settled('Local library details', async () => (await sourceDetailView(page))?.key === libraryKey);
+  const libraryDetails = await sourceDetailView(page);
+  assert.deepEqual([libraryDetails.facts['Packs found'].split(' Counts')[0], libraryDetails.facts['Installed from this source'],
+    libraryDetails.remove, libraryDetails.show.disabled, libraryDetails.readOnly?.startsWith('Read only.')],
+  ['1 (all installed)', '0', null, true, true],
+  'a name installed from another source is not installed from this one, and a built-in cannot be removed');
+  // The server decides again at the write: the same blocker, named, with nothing saved.
+  const current = await (await fetch(new URL('/api/packs', canvasUrl), { signal: AbortSignal.timeout(15_000) })).json();
+  assert.equal(current.sources.sourcesRevision, revision(savedBytes));
+  const refused = await postCanvas(canvasUrl, '/api/packs/sources', { op: 'remove', key: teamKey, sourcesRevision: current.sources.sourcesRevision });
+  assert.equal(refused.status, 409);
+  assert.deepEqual([refused.body.error, refused.body.blockers], ['source_in_use', [{ kind: 'installed', name: PACK_NAME }]]);
+  assert.equal(fs.readFileSync(fixture.sourcesFile).equals(savedBytes), true, 'the refused removal saved nothing');
+  assert.equal(discoveries(), 1, 'permission, result, rereads, filtering and Show packs acquired no further catalog');
+
+  // ----- The same details below 1100px are a modal overlay, in both themes.
+  await click(page, `document.querySelector('[aria-label="Close source details"]')`);
+  await settled('details closed before resizing', async () => (await sourceDetailView(page)) === null);
+  const narrowViews = [];
+  for (const theme of /** @type {const} */ (['light', 'dark'])) {
+    await installedViewport(page, 360, theme, 900);
+    await click(page, `document.querySelector('[data-pack-context="sources"]')`);
+    await click(page, `document.querySelector('[data-source-row="${teamKey}"]')`);
+    await settled(`narrow source details ${theme}`, async () => (await sourceDetailView(page))?.key === teamKey);
+    details = await sourceDetailView(page);
+    assert.deepEqual([details.modal, details.open, details.remove.disabled], [true, true, true]);
+    audits.push(await auditInstalledWorkspace(page, `source-details-360-${theme}`));
+    await pressKey(page, 'Escape');
+    await settled(`narrow details closed ${theme}`, async () => (await sourceDetailView(page)) === null);
+    narrowViews.push({ theme, width: 360, key: teamKey });
+  }
+  await installedViewport(page, 1440, 'light', 900);
+
+  // ----- The browser saved exactly one source, requested exactly one install, and reached no other origin.
+  assert.deepEqual(network.filter((entry) => entry.path === '/api/packs/sources').length, 1);
+  assert.equal(network.filter((entry) => entry.path === '/api/packs/request').length, 2);
+  assert.deepEqual(foreignNetwork, [], 'no source or network request leaves the Canvas origin');
+  assert.deepEqual(runtimeErrors, []);
+  const after = workspaceFiles(fixture.root);
+  const delta = {
+    added: Object.keys(after).filter((relative) => before[relative] === undefined).sort(),
+    changed: Object.keys(before).filter((relative) => after[relative] !== undefined && after[relative] !== before[relative]).sort(),
+    removed: Object.keys(before).filter((relative) => after[relative] === undefined).sort(),
+  };
+  assert.deepEqual(delta, { added: [PACK_DESTINATION, SOURCES_PATH].sort(), changed: [PROFILE_PATH], removed: [] },
+    'the workspace gained the saved sources and the pack file, and only the profile changed');
+  assert.equal(fs.readFileSync(path.join(fixture.root, ...PACK_MANIFEST_PATH.split('/'))).equals(defaultBytes.manifest), true);
+  assert.equal(fs.readFileSync(path.join(fixture.root, ...PACK_SOURCE_PATH.split('/'))).equals(defaultBytes.instruction), true,
+    'the default library is untouched');
+  for (const [relative, bytes] of fixture.files) {
+    assert.equal(fs.readFileSync(path.join(fixture.team, ...relative.split('/'))).equals(bytes), true, `the added folder is untouched: ${relative}`);
+  }
+  return {
+    network,
+    foreignNetwork,
+    steps,
+    audits,
+    narrowViews,
+    surface,
+    saved: { response: sourceResponses[0], bytes: savedBytes.length, sha256: sha256(savedBytes), revision: revision(savedBytes) },
+    keys: { libraryKey, teamKey, packKey },
+    addedDetails,
+    libraryDetails,
+    removalRefusal: refused,
+    provider,
+    delta,
+    screenshot: await screenshot(page, 'installed-source-final'),
+  };
+}
+
 /**
  * Exercise the installed 062 task walkthrough against frozen source-backed
  * 062/052 fixture copies before entering the independently scoped Review.
@@ -5108,7 +7408,7 @@ async function driveInstalledTaskWalkthrough(page, canvasUrl, fixture, draft) {
   assert.ok(expected062.includes(bodyMarker));
   assert.ok(expected062.includes(acceptanceMarker));
 
-  const selectWork = async (query, heading, ideaPath) => {
+  const selectProjectedWork = async (query, heading, ideaPath) => {
     if (await evaluate(page, `Boolean(document.querySelector('[aria-label="Clear work selection"]'))`)) {
       await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
       inputSequence.push('pointer: Clear work selection');
@@ -5116,11 +7416,8 @@ async function driveInstalledTaskWalkthrough(page, canvasUrl, fixture, draft) {
       assert.equal(await evaluate(page, `${field('Search work')}.value`), '');
       assert.equal(await evaluate(page, `${field('Show')}.innerText.trim()`), 'All');
     }
-    await fill(page, field('Search work'), query);
-    await evaluate(page, `${field('Search work')}.focus()`);
-    await pressKey(page, 'ArrowDown');
-    await pressKey(page, 'Enter');
-    inputSequence.push(`keyboard: Search work ${query}, ArrowDown, Enter`);
+    await selectWork(page, ideaPath);
+    inputSequence.push(`keyboard: Search work ${query}, ArrowDown to ${ideaPath}, Enter`);
     await until(() => evaluate(page, `document.querySelector('h1')?.textContent
       .replace(/\\s+/g, ' ').trim() === ${JSON.stringify(heading)}`), `${heading} selected`);
     const selected = (await awaitSelectedProjection(
@@ -5148,7 +7445,7 @@ async function driveInstalledTaskWalkthrough(page, canvasUrl, fixture, draft) {
   assert.equal(await evaluate(page, `Boolean(${field('Search work')})`), true);
   assert.equal(await evaluate(page, `document.querySelectorAll('[aria-label="Working on"]').length`), 0);
 
-  let projection062 = await selectWork(
+  let projection062 = await selectProjectedWork(
     '062',
     '062 Dude Canvas Workspace Integration',
     WORKSPACE_062.ideaPath,
@@ -5243,7 +7540,7 @@ async function driveInstalledTaskWalkthrough(page, canvasUrl, fixture, draft) {
   assert.equal(await evaluate(page, `document.querySelector('h1')?.textContent
     .replace(/\\s+/g, ' ').trim()`), '062 Dude Canvas Workspace Integration');
 
-  const controlProjection = await selectWork(
+  const controlProjection = await selectProjectedWork(
     '063',
     '063 Installed task coverage controls',
     TASK_CONTROL.ideaPath,
@@ -5272,7 +7569,7 @@ async function driveInstalledTaskWalkthrough(page, canvasUrl, fixture, draft) {
   ).textContent`), fixture.records.controlled.instructions[TASK_CONTROL.blockedTaskKey]);
   assert.equal(blockedDetail.includes('agent is working now'), false);
 
-  const projection052 = await selectWork('052', '052 Dude Canvas UI', WORKSPACE_052.ideaPath);
+  const projection052 = await selectProjectedWork('052', '052 Dude Canvas UI', WORKSPACE_052.ideaPath);
   assert.deepEqual(projection052.tasks, {
     total: 13,
     open: 0,
@@ -5300,7 +7597,7 @@ async function driveInstalledTaskWalkthrough(page, canvasUrl, fixture, draft) {
     '[data-task-detail="${WORKSPACE_052.selectedTaskKey}"]'
   ).innerText.includes('Not exposed by this source.')`), true);
 
-  projection062 = await selectWork(
+  projection062 = await selectProjectedWork(
     '062',
     '062 Dude Canvas Workspace Integration',
     WORKSPACE_062.ideaPath,
@@ -5875,8 +8172,7 @@ async function driveReviewRound(
   expectedBrowsingNumber = null,
   walkthrough = null,
 ) {
-  if (walkthrough) await click(page, button('Respond to request'));
-  else {
+  if (!walkthrough) {
     await visible(page, prompt);
     await click(page, `[...document.querySelectorAll('button')].find((node) =>
       node.innerText.includes(${JSON.stringify(prompt)}) && node.getClientRects().length)`);
@@ -6084,12 +8380,15 @@ const manifest = {
   releaseSource: RELEASE_DIR ?? 'current source via buildRelease into owned fixtures',
   browser: BROWSER,
   installedCliVersion: null,
+  identities: null,
   browserVersionCommand: null,
   approvedMockHashes: {},
   workspaceSourcePreimages,
   source: {},
   blankCases: [],
   packCase: null,
+  importCase: null,
+  sourceCase: null,
   taskWalkthrough: null,
   reviewCase: null,
   installedControls: null,
@@ -6126,6 +8425,18 @@ try {
     launcherWithUpdateResolutionDisabled: bundledLauncherVersion.stdout.trim(),
     resolvedRuntime: runtimeVersion.stdout.trim(),
   };
+  // The actual installed artifacts this run used, by content and not only by path.
+  manifest.identities = {
+    sdk: {
+      directory: SDK,
+      indexJsSha256: hashFile(path.join(SDK, 'index.js')),
+      extensionJsSha256: hashFile(path.join(SDK, 'extension.js')),
+    },
+    cli: { path: CLI, sha256: hashFile(CLI), version: manifest.installedCliVersion },
+    runtime: { path: CLI_RUNTIME, sha256: hashFile(CLI_RUNTIME) },
+    browser: { path: BROWSER, sha256: hashFile(BROWSER) },
+    node: { path: process.execPath, version: process.version },
+  };
   const appHelp = command(CLI, ['app', '--help']);
   assert.equal(appHelp.exitCode, 0, appHelp.stderr);
   // sdef and the app bundle exist only on macOS; elsewhere record why no probe ran.
@@ -6155,6 +8466,8 @@ try {
       'Confirm usable current panel sizing, current light/dark theme, and keyboard focus entry.',
       'Open the visible bottom Settings destination; confirm the embedded panel keeps its left rail, toolbar, pager, and current-theme contrast without host-chrome clipping.',
       `Select ${PACK_NAME} under Available, activate Install once, inspect the exact preview, enter INSTALL PACK ${PACK_NAME}, and confirm the correlated Applied result after the authoritative installed-state refresh.`,
+      'Open Settings > Packs > Add/import, request one local skill import, consent in Needs you, and confirm Applied, then Show in Installed lists the new project skill; confirm the imported agent or skill needs a new session before the host loads it.',
+      'Open Settings > Packs > Sources, add one local folder that contains library/packs, choose Show packs in Available, install its pack, consent in Needs you, and confirm Applied; confirm the source row then shows the pack as installed from it and its Remove names that use.',
       'With the work finder set to Closed, enter Review design and return; confirm the Closed finder context remains.',
       'Reload once, then close and reopen the panel; confirm the current Canvas reconnects.',
     ],
@@ -6318,21 +8631,35 @@ try {
   }, 30_000);
   assert.equal(packIdle?.data.content, 'T012_PACK_HOST_IDLE');
   assert.equal(packModel.state.phase, 'idle');
-  // The installed extension's own pack read, before Settings drives it. The
-  // bound exceeds the reader's deadline plus stop window, so a hung read fails.
-  const hostPackStarted = Date.now();
-  const hostPackResponse = await fetch(new URL('/api/packs', packHost.canvas.url), {
-    signal: AbortSignal.timeout(15_000),
-  });
-  assert.equal(hostPackResponse.status, 200, 'installed-host pack read status');
-  const hostPackSnapshot = await hostPackResponse.json();
-  const hostPackRead = {
-    extensionExecutable: packHost.record.extensionProcess.executable,
-    elapsedMs: Date.now() - hostPackStarted,
-    coverage: hostPackSnapshot.coverage,
-    origin: hostPackSnapshot.catalog?.origin ?? null,
-    packs: hostPackSnapshot.catalog?.packs.map((pack) => pack.name) ?? null,
+  // The installed extension's own pack reads, before Settings drives it. Phase B reads a catalog only on
+  // explicit discovery (`?discover=1`): the plain read answers installed state and the saved sources and
+  // acquires no catalog, so it needs no reader process, and only the discovery read exercises the
+  // launcher's real extension runtime. The bound exceeds the reader's deadline plus stop window, so a
+  // hung read fails.
+  const hostPackReadOnce = async (query) => {
+    const started = Date.now();
+    const response = await fetch(new URL(`/api/packs${query}`, packHost.canvas.url), {
+      signal: AbortSignal.timeout(15_000),
+    });
+    assert.equal(response.status, 200, `installed-host pack read status${query}`);
+    const snapshot = await response.json();
+    return {
+      elapsedMs: Date.now() - started,
+      coverage: snapshot.coverage,
+      origin: snapshot.catalog?.origin ?? null,
+      packs: snapshot.catalog?.packs.map((pack) => pack.name) ?? null,
+      sources: snapshot.sources?.items.map((item) => ({ name: item.name, scope: item.scope, status: item.status, count: item.count })) ?? null,
+    };
   };
+  const hostPackPlain = await hostPackReadOnce('');
+  assert.deepEqual(hostPackPlain.coverage.catalog.state, 'not_read',
+    `the plain installed-host read acquires no catalog: ${JSON.stringify(hostPackPlain.coverage)}`);
+  assert.equal(hostPackPlain.origin, null);
+  assert.equal(hostPackPlain.packs, null);
+  assert.ok(hostPackPlain.sources.length >= 1, 'the plain read still lists the built-in sources');
+  assert.deepEqual(hostPackPlain.sources.filter((item) => item.status !== 'not_read' || item.count !== null), [],
+    'every source row says Not read, with no count');
+  const hostPackRead = { ...(await hostPackReadOnce('?discover=1')), extensionExecutable: packHost.record.extensionProcess.executable, plain: hostPackPlain };
   assert.deepEqual(hostPackRead.coverage.catalog, { state: 'current', reason: null, message: null },
     `installed-host catalog read: ${JSON.stringify(hostPackRead.coverage)}`);
   assert.equal(hostPackRead.origin, 'local');
@@ -6399,6 +8726,190 @@ try {
   await closeInstalledHost(packHost);
   await closeServer(packModel.server);
 
+  // 073 Add/import: the installed owner imports one local skill file and one local directory through
+  // the shipped route and import skill, and Installed lists each result without Reload. Its own
+  // release fixture and host start fresh, so the checked frontend and backend are the same bytes.
+  const importRoot = path.join(RUN, 'import-roundtrip');
+  const importData = path.join(RUN, 'import-roundtrip-runtime');
+  const importRelease = buildRelease({
+    repoRoot: ROOT,
+    outDir: importRoot,
+    ref: 'v0.0.0-t012',
+  });
+  const importParity = installedParity(importRoot);
+  const importerPairs = importerParity(importRoot);
+  const importSeed = seedImportFixture(importRoot);
+  const { validateDirectoryImportResult } = await import(pathToFileURL(path.join(
+    importRoot,
+    '.github/skills/dude-bundle-import/lib/directory-import.mjs',
+  )));
+  const importModel = createImportModel(importSeed, { validateDirectoryImportResult });
+  modelServers.push(importModel.server);
+  const importModelUrl = await listen(importModel.server);
+  const importHost = await createInstalledHost({
+    root: importRoot,
+    data: importData,
+    modelUrl: importModelUrl,
+    caseName: 'import-roundtrip',
+    approve: importModel.approve,
+  });
+  hosts.push(importHost);
+  const importIdle = await importHost.session.sendAndWait({
+    prompt: 'T012 installed import round trip bootstrap.',
+  }, 30_000);
+  assert.equal(importIdle?.data.content, 'T012_IMPORT_HOST_IDLE');
+  assert.equal(importModel.state.phase, 'idle');
+  const importServed = await servedIdentity(importHost.canvas.url);
+  const importBefore = workspaceFiles(importRoot);
+  const importBrowser = await driveInstalledImportRoundTrip(
+    browserState.page,
+    importHost.canvas.url,
+    importSeed,
+    importModel,
+  );
+  await until(async () => !(await importHost.session.rpc.metadata.isProcessing()).processing,
+    'installed import session idle', 30_000);
+  assert.equal(importModel.state.phase, 'complete');
+  assert.equal(importModel.state.imports.length, 2);
+  assert.equal(importHost.record.permissions.filter((entry) => entry.decision === 'reject').length, 0);
+  assert.equal(importHost.record.agentAfterSelectionCheck.agent?.name, 'Dude');
+  assert.equal(importHost.record.events['subagent.deselected'] ?? 0, 0);
+  // Every owner call that asks the host for permission was approved as made, and the workspace
+  // changed by exactly the files the importer reported, nothing else.
+  const approvedCalls = new Set(importHost.record.permissions.map((entry) => entry.toolCallId));
+  assert.deepEqual(
+    importModel.state.ownerToolCalls.filter((entry) => entry.tool !== 'skill' && !approvedCalls.has(entry.callId)),
+    [],
+  );
+  const importAfter = workspaceFiles(importRoot);
+  const importWritten = [...importSeed.file.written, ...importSeed.directory.written].sort();
+  assert.deepEqual(
+    Object.keys(importAfter).filter((relative) => importBefore[relative] === undefined).sort(),
+    importWritten,
+    'the workspace gained exactly the imported files',
+  );
+  assert.deepEqual(
+    Object.keys(importBefore).filter((relative) => importAfter[relative] !== importBefore[relative]),
+    [],
+    'no existing workspace file changed or disappeared',
+  );
+  manifest.importCase = {
+    root: importRoot,
+    data: importData,
+    releaseFiles: importRelease.files.length,
+    parity: importParity,
+    importerParity: importerPairs,
+    served: importServed,
+    sources: importSeed.sources,
+    evidence: importSeed.evidence,
+    handMadeRows: importSeed.fillNames.length,
+    host: importHost.record,
+    model: importModel.state,
+    browser: importBrowser,
+    workspaceDelta: {
+      added: importWritten,
+      destinations: Object.fromEntries(importWritten.map((relative) => [relative, importAfter[relative]])),
+    },
+    actualImporterApplication: true,
+    testPerformedNoApplication: true,
+    realModelReasoning: false,
+    desktopAppRendererObserved: false,
+    ownerRoute: 'selected installed Dude loaded dude-bundle-import, previewed each local source with the unchanged importer, published and had recognized the exact permission, rechecked the reviewed basis, ran apply or apply-directory once, verified lint and every written path, then acknowledged the separate import_result; the model fixture made no workspace write',
+  };
+  note('import-case-passed', {
+    sessionId: importHost.record.sessionId,
+    receipts: importBrowser.journeys.map((entry) => entry.receipt),
+    keys: importBrowser.journeys.map((entry) => entry.key),
+    written: importWritten.length,
+  });
+  await browserState.page.send('Page.navigate', { url: 'about:blank' });
+  await closeInstalledHost(importHost);
+  await closeServer(importModel.server);
+
+  // 073 Phase B: the installed owner installs a pack from a source added through Settings. The browser adds a
+  // local folder as a pack source, shows its packs in Available, selects the source-qualified pack, and
+  // requests the install; the installed Dude previews that source, obtains literal permission, runs Compose
+  // with exactly that source, and acknowledges the source-bound result. The test saves, installs, and applies
+  // nothing after seeding, and no network source is contacted. Its own release fixture and host start fresh.
+  const sourceRoot = path.join(RUN, 'source-roundtrip');
+  const sourceData = path.join(RUN, 'source-roundtrip-runtime');
+  const sourceRelease = buildRelease({
+    repoRoot: ROOT,
+    outDir: sourceRoot,
+    ref: 'v0.0.0-t012',
+  });
+  const sourceParity = installedParity(sourceRoot);
+  const sourceSeed = seedSourceFixture(sourceRoot);
+  const installedSources = await import(pathToFileURL(path.join(
+    sourceRoot,
+    '.github/skills/dude-engine/lib/pack-sources.mjs',
+  )));
+  const sourceModel = createSourceModel(sourceSeed, installedSources);
+  modelServers.push(sourceModel.server);
+  const sourceModelUrl = await listen(sourceModel.server);
+  const sourceHost = await createInstalledHost({
+    root: sourceRoot,
+    data: sourceData,
+    modelUrl: sourceModelUrl,
+    caseName: 'source-roundtrip',
+    approve: sourceModel.approve,
+  });
+  hosts.push(sourceHost);
+  const sourceIdle = await sourceHost.session.sendAndWait({
+    prompt: 'T012 installed source round trip bootstrap.',
+  }, 30_000);
+  assert.equal(sourceIdle?.data.content, 'T012_SOURCE_HOST_IDLE');
+  assert.equal(sourceModel.state.phase, 'idle');
+  const sourceServed = await servedIdentity(sourceHost.canvas.url);
+  const sourceBrowser = await driveInstalledSourceRoundTrip(
+    browserState.page,
+    sourceHost.canvas.url,
+    sourceSeed,
+    sourceModel,
+    installedSources,
+  );
+  await until(async () => !(await sourceHost.session.rpc.metadata.isProcessing()).processing,
+    'installed source session idle', 30_000);
+  assert.equal(sourceModel.state.phase, 'complete');
+  assert.equal(sourceHost.record.permissions.filter((entry) => entry.decision === 'reject').length, 0);
+  assert.equal(sourceHost.record.agentAfterSelectionCheck.agent?.name, 'Dude');
+  assert.equal(sourceHost.record.events['subagent.deselected'] ?? 0, 0);
+  // Every owner call that asks the host for permission was approved as made, and Compose was run exactly once.
+  const sourceApproved = new Set(sourceHost.record.permissions.map((entry) => entry.toolCallId));
+  assert.deepEqual(
+    sourceModel.state.ownerToolCalls.filter((entry) => entry.tool !== 'skill' && !sourceApproved.has(entry.callId)),
+    [],
+  );
+  assert.equal(sourceModel.state.ownerToolCalls.filter((entry) => entry.writes !== null).length, 1,
+    'one owner call wrote the workspace: Compose');
+  manifest.sourceCase = {
+    root: sourceRoot,
+    data: sourceData,
+    releaseFiles: sourceRelease.files.length,
+    parity: sourceParity,
+    served: sourceServed,
+    team: sourceSeed.team,
+    realTeam: sourceSeed.realTeam,
+    host: sourceHost.record,
+    model: sourceModel.state,
+    browser: sourceBrowser,
+    actualComposeApplication: true,
+    testPerformedNoApplication: true,
+    networkSourceContacted: false,
+    realModelReasoning: false,
+    desktopAppRendererObserved: false,
+    ownerRoute: 'selected installed Dude loaded dude-compose and its Sources procedure, previewed the bound local folder with Compose, read its pack and the saved sources revision, published and had recognized the exact third-party permission, rechecked the saved sources, ran Compose add --source --envelope once with exactly the bound folder, verified lint and the profile, then acknowledged the pack_result with the exact catalogSource echoed; the model fixture made no workspace write',
+  };
+  note('source-case-passed', {
+    sessionId: sourceHost.record.sessionId,
+    key: sourceBrowser.keys.teamKey,
+    receipt: sourceModel.state.record.binding.receiptId,
+    destination: sourceModel.state.record.compose.destination,
+  });
+  await browserState.page.send('Page.navigate', { url: 'about:blank' });
+  await closeInstalledHost(sourceHost);
+  await closeServer(sourceModel.server);
+
   const root = path.join(RUN, 'review-git');
   const data = path.join(RUN, 'review-git-runtime');
   const evidence = path.join(RUN, 'review-evidence');
@@ -6460,14 +8971,23 @@ try {
     workspaceFixture,
     taskEvidence.newIdeaDraft,
   );
+  await click(browserState.page, button('Respond to request'));
+  await clearWork(browserState.page);
+  await selectWork(browserState.page, MIXED_IDEA_PATH);
+  await awaitSelectedProjection(host.canvas.url, MIXED_IDEA_PATH, 'Review A independent browsing read');
+  await inspectTask(browserState.page, taskFixture.records
+    .find((record) => record.ideaPath === MIXED_IDEA_PATH).units
+    .find((task) => task.taskKey === taskWalkthrough.selectedTaskKey));
+  await click(browserState.page, button('Needs you'));
   const roundA = await driveReviewRound(
     browserState.page,
     'A',
     'Annotate exact installed revision A',
     root,
-    '062',
+    '061',
     { fixture: taskFixture, draft: taskEvidence.newIdeaDraft, selectedTaskKey: taskWalkthrough.selectedTaskKey },
   );
+  await awaitSelectedProjection(host.canvas.url, MIXED_IDEA_PATH, 'Review A independent browsing return');
   await until(() => model.state.phase === 'waiting-b' || model.state.modelError,
     'same owner revision B request', 45_000);
   if (model.state.modelError) throw new Error(model.state.modelError);
@@ -6478,19 +8998,27 @@ try {
     'B',
     'Annotate exact installed revision B',
     null,
-    '062',
+    '061',
   );
+  await awaitSelectedProjection(host.canvas.url, MIXED_IDEA_PATH, 'Review B independent browsing return');
   await until(() => model.state.phase === 'waiting-c' || model.state.modelError,
     'same owner revision C request', 45_000);
   if (model.state.modelError) throw new Error(model.state.modelError);
   await click(browserState.page, button('Back'));
   await click(browserState.page, button('All requests'));
-  const approval = await driveApproval(browserState.page, '062');
+  const approval = await driveApproval(browserState.page, '061');
   await until(() => model.state.phase === 'complete' || model.state.modelError,
     'current revision C owner approval acknowledgment', 45_000);
   if (model.state.modelError) throw new Error(model.state.modelError);
   await until(async () => !(await host.session.rpc.metadata.isProcessing()).processing,
     'installed Review session idle', 30_000);
+  await click(browserState.page, button('Now'));
+  await clearWork(browserState.page);
+  await selectWork(browserState.page, WORKSPACE_062.ideaPath);
+  await awaitSelectedProjection(host.canvas.url, WORKSPACE_062.ideaPath, '062 task return restored read');
+  await inspectTask(browserState.page, taskFixture.records
+    .find((record) => record.ideaPath === WORKSPACE_062.ideaPath).units
+    .find((task) => task.taskKey === taskWalkthrough.selectedTaskKey));
   const taskReturn = await verifyInstalledTaskReturn(
     browserState.page,
     host.canvas.url,
@@ -7039,6 +9567,8 @@ try {
     run: RUN,
     blankCases: manifest.blankCases.length,
     packRoundTrip: manifest.packCase?.browser?.provider?.packRequests?.[0]?.phase ?? null,
+    importRoundTrips: manifest.importCase?.browser?.provider?.importRequests?.map((entry) => entry.phase) ?? [],
+    sourceRoundTrip: manifest.sourceCase?.browser?.provider?.packRequests?.[0]?.phase ?? null,
     about: manifest.packCase?.about?.applied?.api?.body ?? null,
     developmentAbout: manifest.blankCases.find((entry) => entry.development)?.browser?.about?.api?.body ?? null,
     extensionHost: manifest.extensionHost,

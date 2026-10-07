@@ -17,6 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Duplex } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
+import { MessageChannel } from 'node:worker_threads';
 
 import { createA2a } from './lib/a2a.mjs';
 import {
@@ -51,6 +52,10 @@ const pin = (bytes) => createHash('sha256').update(bytes).digest('hex');
  * Two cross-wired in-memory stream ends. `written` counts bytes each end sent.
  */
 function duplexPair() {
+  // Model a live socket's native handle, not a longer deadline. The fixture
+  // must stay live while awaiting an unreferenced AbortSignal.timeout.
+  const { port1, port2 } = new MessageChannel();
+  port1.on('message', () => undefined);
   /** @type {Duplex[]} */
   const sides = [];
   const ended = [false, false];
@@ -75,6 +80,8 @@ function duplexPair() {
         callback();
       },
       destroy(error, callback) {
+        port1.close();
+        port2.close();
         finish(1 - index);
         callback(error);
       },

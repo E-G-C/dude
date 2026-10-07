@@ -42,7 +42,7 @@ const BROWSER = process.env.DUDE_CANVAS_BROWSER
   ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
 const REQUIRED = process.env.DUDE_CANVAS_BROWSER_REQUIRED === '1';
 const DEADLINE = 20_000;
-const PUBLISHED_APP_SHA256 = '46360200ec0d5ee2864e7ee6162e23e2e3839e90b238d3b059c3a1b560b39531';
+const PUBLISHED_APP_SHA256 = '465e6a2bcb763621a676aac6be1839e301d2ce2d0fc8d233b1d48e87c342cf7e';
 
 /** @param {string|Buffer} value */
 function hash(value) {
@@ -2429,6 +2429,7 @@ function evidence(context, slug) {
     'scripts/dude-canvas-ui/t011-browser.test.mjs',
     'src/extensions/dude/frontend/about.jsx',
     'src/extensions/dude/frontend/app.jsx',
+    'src/extensions/dude/frontend/artifact-import.jsx',
     'src/extensions/dude/frontend/needs-you.jsx',
     'src/extensions/dude/frontend/review.jsx',
     'src/extensions/dude/frontend/settings.jsx',
@@ -2831,6 +2832,7 @@ async function audit(page, output, name, deferredHorizontalFindings = null) {
       };
     });
     const frame = document.querySelector('.fui-FluentProvider > div')?.getBoundingClientRect();
+    const needs = document.querySelector('#dude-panel-needs');
     return {
       innerWidth,
       clientWidth,
@@ -2838,11 +2840,15 @@ async function audit(page, output, name, deferredHorizontalFindings = null) {
       bodyScrollWidth: document.body.scrollWidth,
       frame: frame?.toJSON(),
       controls,
+      needsPanel: needs?.getClientRects().length ? { scrollWidth: needs.scrollWidth, clientWidth: needs.clientWidth } : null,
     };
   })()`);
   fs.writeFileSync(path.join(output.directory, `${name}.geometry.json`), `${JSON.stringify(geometry, null, 2)}\n`);
   assert.ok(geometry.scrollWidth <= geometry.clientWidth + 1, `${name}: no page horizontal overflow`);
   assert.ok(geometry.bodyScrollWidth <= geometry.clientWidth + 1, `${name}: body fits usable client viewport`);
+  // A visible Needs you panel never scrolls sideways, at any size and in either theme.
+  if (geometry.needsPanel) assert.equal(geometry.needsPanel.scrollWidth, geometry.needsPanel.clientWidth,
+    `${name}: visible Needs you has equal scroll and client widths`);
   assert.ok(Math.abs(geometry.frame.x) <= 1 && geometry.frame.right <= geometry.clientWidth + 1,
     `${name}: full application frame fits the usable viewport`);
   assert.deepEqual(
@@ -3781,9 +3787,11 @@ async function packImpact(fixture) {
 }
 
 function packImpactBasis(fixture, impact) {
+  // A request bound to an added folder reads that folder's pack, not the default library's.
+  const catalog = fixture.args.source ? path.join(fixture.args.source, 'library', 'packs') : fixture.library;
   return {
     profile: hash(fs.readFileSync(fixture.profilePath)),
-    source: packTree(path.join(fixture.library, 'alpha')),
+    source: packTree(path.join(catalog, 'alpha')),
     targets: Object.fromEntries([...new Set([...impact.files, ...(impact.removed || [])])].sort()
       .map(file => [file, packTree(path.join(fixture.root, ...file.split('/')))])),
   };
@@ -3793,10 +3801,15 @@ async function publishPackPermission(fixture, receipt, impact, prefix = '') {
   await until(() => fixture.provider.read().packRequests.some(item => item.packReceipt === receipt.packReceipt
     && ['delivered', 'waiting_owner'].includes(item.phase)), 'owner receives the delivered pack request');
   const basis = packImpactBasis(fixture, impact);
+  // A request bound to a source the project added names that source first, as a third-party source.
+  const binding = receipt.receipt.catalogSource;
+  const sourceFirst = binding ? [{ target: `Third-party source ${binding.source.location}`,
+    revision: hash(fs.readFileSync(path.join(fixture.team, 'library', 'packs', 'alpha', 'pack.md'))) }] : [];
   const request = {
     ...requestFor(fixture, 'permission', {
       operation: `pack:${fixture.operation}`,
       targets: [
+        ...sourceFirst,
         { target: '.dude/metadata/profile.md', revision: basis.profile },
         { target: 'pack:alpha source', revision: hash(JSON.stringify(basis.source)) },
         ...Object.entries(basis.targets).map(([target, value]) => ({ target, revision: hash(JSON.stringify(value)) })),
@@ -3825,6 +3838,8 @@ function packOwnerAcknowledgment(fixture, receipt, result, outcome = 'applied', 
     outcome, mutation, result, note,
     profileRevision: status.ok ? hash(fs.readFileSync(fixture.profilePath)) : null,
     source: status.ok ? status.result.installed[name]?.source || null : null,
+    // The exact bound selection comes back whole, or is absent for a default-catalog request.
+    ...(receipt.receipt.catalogSource ? { catalogSource: receipt.receipt.catalogSource } : {}),
   };
 }
 
@@ -3842,12 +3857,31 @@ async function packPhase(page, phase) {
   )?.getAttribute('data-pack-request-phase') === ${JSON.stringify(phase)}`), `pack request phase ${phase}`);
 }
 
+/**
+ * The one explicit catalog discovery: choose Reload packs and wait for the read it starts to
+ * commit. Entering Settings reads installed packs and the saved sources only, so Available,
+ * Use case, and a pack's catalog entry are unknown until a person reloads once.
+ * @param {any} page
+ */
+async function reloadPacks(page) {
+  // The resource buffer is emptied first, so the entry waited for is this read's.
+  await evaluate(page, `performance.setResourceTimingBufferSize(1000); performance.clearResourceTimings()`);
+  await click(page, `document.querySelector('[aria-label="Reload packs"]')`);
+  await until(() => evaluate(page, `performance.getEntriesByType('resource').some(entry => {
+    const url = new URL(entry.name); return url.pathname === '/api/packs' && url.search === '?discover=1'; })`), 'the explicit catalog read starts');
+  await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')?.getAttribute('aria-busy') === 'false'`),
+    'the catalog read commits');
+}
+
 async function openPack(page, operation) {
   await click(page, `document.querySelector('#dude-tab-settings')`);
   await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
     ?.getAttribute('aria-busy') === 'false' && Boolean(document.querySelector('[data-settings]'))`), 'current Settings read');
+  await reloadPacks(page);
   if (operation === 'install') await click(page, `document.querySelector('[data-pack-context="available"]')`);
-  await click(page, `document.querySelector('[data-pack-row="alpha"]')`);
+  // An Available row's key carries its source: `pack:alpha@<source key>`. Installed rows are keyed by name alone.
+  await click(page, operation === 'install' ? `document.querySelector('[data-pack-row^="pack:alpha@"]')`
+    : `document.querySelector('[data-pack-row="pack:alpha"]')`);
 }
 
 async function requestPackFromUi(page, fixture, double = false) {
@@ -3921,7 +3955,10 @@ async function withPackJourney(context, operation, options, run) {
     write(root, 'library/packs/alpha/instructions/dude-pack-alpha-old.instructions.md', '# Old instruction\n');
     if (options.about) {
       seedAboutManifest(root, 'main', 'main', 'v1.3.0');
-      for (const name of ['bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel']) {
+      // Twenty more `ui` packs fill Available past one 25-row page: with the
+      // seven named ones and alpha, twenty-eight packs make a second page of three.
+      const bulk = Array.from({ length: 20 }, (_, index) => `bulk-${String(index + 1).padStart(2, '0')}`);
+      for (const name of ['bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel', ...bulk]) {
         write(root, `library/packs/${name}/pack.md`, [
           '---',
           `name: ${name}`,
@@ -3933,9 +3970,22 @@ async function withPackJourney(context, operation, options, run) {
         ].join('\n'));
       }
     }
+    // A folder the project added as a source: its own alpha, distinct from the default library's.
+    let team = null;
+    if (options.team) {
+      team = path.join(directory, 'team-packs');
+      write(team, 'library/packs/alpha/pack.md',
+        '---\nname: alpha\ndescription: "Added team source alpha"\nuse-cases: [ui]\nrequires:\n  tools: [node]\n---\n# Alpha\n');
+      write(team, 'library/packs/alpha/agents/dude-pack-alpha-worker.agent.md',
+        '---\nname: Alpha Worker\ndescription: "Team worker"\ntools: [read, search]\nmodel-class: balanced\n---\nTeam v1.\n');
+      write(team, 'library/packs/alpha/skills/dude-pack-alpha-helper/SKILL.md',
+        '---\nname: dude-pack-alpha-helper\ndescription: "Team helper"\n---\n# Helper\n');
+      const { serializePackSourcesDocument } = await import('../../src/skills/dude-engine/lib/pack-sources.mjs');
+      write(root, '.dude/metadata/pack-sources.md', serializePackSourcesDocument([{ type: 'local', location: team }]));
+    }
     write(root, '.github/agents/dude-local-unrelated.agent.md', 'Unrelated file; preserve it.\n');
     write(root, '.github/agents/dude-pack-alpha-residue.agent.md', 'Unrecorded residue; never removal authority.\n');
-    const args = { root, library, name: 'alpha', fetch: false };
+    const args = { root, library, name: 'alpha', fetch: false, ...(team ? { source: fs.realpathSync(team) } : {}) };
     assert.notEqual(fs.realpathSync(root), fs.realpathSync(ROOT));
     if (operation !== 'install') {
       const installed = await cmdAdd(args);
@@ -3957,7 +4007,13 @@ async function withPackJourney(context, operation, options, run) {
         + JSON.stringify({ source_repo: absentSource, source_ref: 'main' }) + '\n```\n');
     }
     const work = createIdea(root, 1, 'retained-work', 'defined');
-    fixture = { ...(await createFixture(root)), directory, library, profilePath, args, operation, work };
+    if (operation === 'refresh' && team && options.changed) {
+      // The team's alpha moved on after it was installed, and the installed copy was edited.
+      const worker = path.join(team, 'library', 'packs', 'alpha', 'agents', 'dude-pack-alpha-worker.agent.md');
+      fs.writeFileSync(worker, fs.readFileSync(worker, 'utf8').replace('Team v1.', 'Team v2.'));
+      fs.appendFileSync(path.join(root, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), '\nEdited generated destination.\n');
+    }
+    fixture = { ...(await createFixture(root)), directory, library, profilePath, args, operation, work, team };
     driver = await startBrowser(1, true);
     driver.page.on('Runtime.exceptionThrown', event => errors.push(event.exceptionDetails));
     driver.page.on('Network.requestWillBeSent', event => {
@@ -4132,6 +4188,16 @@ test('075 About: production provider shows the recorded base and retains work, d
     await click(page, `document.querySelector('#dude-tab-settings')`);
     await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
       ?.getAttribute('aria-busy') === 'false'`), 'quiescent production Settings read');
+
+    // Add/import keeps a typed Source through About, and a request waiting in
+    // Needs you withholds Request import in its own words.
+    await click(page, `document.querySelector('[data-pack-context="import"]')`);
+    const typedSource = 'C:\\Users\\you\\agent-kit\\ops';
+    await fill(page, `document.querySelector('[data-import-source]')`, typedSource);
+    assert.deepEqual(await evaluate(page, `({ disabled: document.querySelector('[data-import-request]').disabled,
+      note: document.querySelector('[data-import-note]').textContent })`),
+    { disabled: true, note: 'A request is waiting in Needs you. Respond to it before requesting an import.' },
+    'a waiting request withholds Request import');
     const about = await openAbout(page);
     assert.deepEqual(about, {
       heading: 'Dude',
@@ -4155,6 +4221,10 @@ test('075 About: production provider shows the recorded base and retains work, d
     await returnToPacks(page);
     assert.equal(await evaluate(page, `document.querySelector('[data-settings-section="packs"]')
       ?.getAttribute('aria-selected')`), 'true');
+    assert.deepEqual(await evaluate(page, `({
+      selected: document.querySelector('[data-pack-context][aria-selected="true"]')?.getAttribute('data-pack-context'),
+      source: document.querySelector('[data-import-source]')?.value })`), { selected: 'import', source: typedSource },
+    'About keeps Add/import and its typed Source');
 
     await click(page, button('Now'));
     assert.equal(await evaluate(page, `document.querySelector('[data-task-detail]')
@@ -4249,22 +4319,27 @@ test('075 About: production Packs view and one real request receipt survive reco
       await click(page, `document.querySelector('#dude-tab-settings')`);
       await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
         ?.getAttribute('aria-busy') === 'false'`), 'quiescent About pack catalog');
+      // Installed is the profile's packs (none yet) plus the workspace's one hand-made
+      // project agent, dude-local-unrelated, which the journey fixture preserves.
       assert.deepEqual(await evaluate(page, `({
         context: document.querySelector('[data-pack-context][aria-selected="true"]')?.dataset.packContext,
         installed: document.querySelector('[data-pack-total="installed"]')?.textContent,
         available: document.querySelector('[data-pack-total="available"]')?.textContent,
-      })`), { context: 'installed', installed: '0', available: '8' });
+      })`), { context: 'installed', installed: '1', available: '?' }, 'entry reads no catalog, so Available is unknown rather than empty');
+      // One explicit Reload reads the catalogs, as a person would.
+      await reloadPacks(page);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-total="available"]')?.textContent`), '28');
 
       await click(page, `document.querySelector('[data-pack-context="available"]')`);
       await choose(page, 'Use case', 'ui');
       assert.deepEqual(await evaluate(page, `({
         count: document.querySelector('[data-pack-count]')?.textContent,
         page: document.querySelector('[data-pack-page]')?.textContent,
-      })`), { count: '1–5 of 8 matches', page: 'Page 1 of 2' });
+      })`), { count: '1–25 of 28 matches', page: 'Page 1 of 2' });
       await click(page, `document.querySelector('[aria-label="Next pack page"]')`);
       assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-pack-row]')]
-        .map(node => node.getAttribute('data-pack-row'))`), ['foxtrot', 'golf', 'hotel']);
-      await click(page, `document.querySelector('[data-pack-row="hotel"]')`);
+        .map(node => node.getAttribute('data-pack-row').replace(/@src_[0-9a-f]{32}$/, ''))`), ['pack:foxtrot', 'pack:golf', 'pack:hotel']);
+      await click(page, `document.querySelector('[data-pack-row^="pack:hotel@"]')`);
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-description]')
         ?.textContent.trim()`), 'Quiescent hotel catalog fixture.');
       const retainedView = await evaluate(page, `({
@@ -4302,11 +4377,11 @@ test('075 About: production Packs view and one real request receipt survive reco
       await click(page, `document.querySelector('[aria-label="Reload packs"]')`);
       await until(async () => (await evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
         ?.getAttribute('aria-busy') === 'false'
-        && Boolean(document.querySelector('[data-pack-row="alpha"]'))`))
+        && Boolean(document.querySelector('[data-pack-row^="pack:alpha@"]'))`))
         && network.filter(item => item.method === 'GET' && item.path === '/api/packs').length > readsBeforeReload,
       'explicit pack reload completes');
-      assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-pack-row="alpha"]'))`), true);
-      await click(page, `document.querySelector('[data-pack-row="alpha"]')`);
+      assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-pack-row^="pack:alpha@"]'))`), true);
+      await click(page, `document.querySelector('[data-pack-row^="pack:alpha@"]')`);
 
       let sent;
       fixture.session.send = async input => {
@@ -4346,7 +4421,7 @@ test('075 About: production Packs view and one real request receipt survive reco
       assert.equal(result.ok, true, result.error);
       fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
       await until(() => evaluate(page, `document.querySelector('[data-pack-total="installed"]')
-        ?.textContent === '1'`), 'authoritative About fixture membership reread');
+        ?.textContent === '2'`), 'authoritative About fixture membership reread (the installed pack joins the project agent)');
       const owner = await packOwnerTool(
         fixture,
         packOwnerAcknowledgment(
@@ -4373,7 +4448,7 @@ test('075 About: production Packs view and one real request receipt survive reco
       await packPhase(page, 'applied');
       await click(page, button('Return to packs'));
       await click(page, `document.querySelector('[data-pack-context="installed"]')`);
-      assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-pack-row="alpha"]'))`), true);
+      assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-pack-row="pack:alpha"]'))`), true);
       assert.equal(fixture.sends.length, 1, 'About visits, Reload, and result reads never replay the request');
       assert.equal(network.filter(item => item.method === 'GET' && item.path === '/api/about').length, 3);
       assert.deepEqual(foreign, [], 'About rendering does not contact the repository URL');
@@ -4390,6 +4465,138 @@ test('075 About: production Packs view and one real request receipt survive reco
         installed: cmdStatus({ root: fixture.root }).result.installed.alpha,
         aboutRequests: network.filter(item => item.path === '/api/about'),
       });
+    });
+});
+
+/** Write disposable `dude-local-*` skills, as a real workspace holds them. @param {string} root @param {string[]} names */
+function writeProjectSkills(root, names) {
+  for (const name of names) {
+    write(root, `.github/skills/${name}/SKILL.md`, `---\nname: ${name}\ndescription: "Disposable ${name}."\n---\n# ${name}\n`);
+  }
+}
+
+test('073 Installed: the production provider pages exactly 25 and 26 rows by opaque key and keeps a selection across a real reload', {
+  timeout: 240_000,
+  concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  // Installed is the real installed pack alpha first, then project rows by name and type:
+  // the hand-made dude-local-unrelated agent, a same-name agent and skill, and the fills.
+  await withPackJourney(context, 'refresh', { name: '073-installed-paging', about: true },
+    async ({ fixture, page, output, network }) => {
+      const packReads = () => network.filter(item => item.method === 'GET' && item.path === '/api/packs').length;
+      const reload = async () => {
+        const reads = packReads();
+        await click(page, `document.querySelector('[aria-label="Reload packs"]')`);
+        await until(async () => packReads() > reads && await evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+          ?.getAttribute('aria-busy') === 'false'`), 'explicit pack reload completes');
+      };
+      const view = () => evaluate(page, `({
+        context: document.querySelector('[data-pack-context][aria-selected="true"]')?.dataset.packContext,
+        columns: [...document.querySelectorAll('[data-pack-scroll] [role="columnheader"]')].map(node => node.textContent),
+        count: document.querySelector('[data-pack-count]')?.textContent,
+        page: document.querySelector('[data-pack-page]')?.textContent,
+        keys: [...document.querySelectorAll('[data-pack-row]')].map(node => node.getAttribute('data-pack-row')),
+        selected: [...document.querySelectorAll('[data-pack-row][aria-selected="true"]')].map(node => node.getAttribute('data-pack-row')),
+        detail: document.querySelector('[data-pack-detail]')?.dataset.packDetail ?? null,
+        previous: document.querySelector('[aria-label="Previous pack page"]').disabled,
+        next: document.querySelector('[aria-label="Next pack page"]').disabled,
+        installed: document.querySelector('[data-pack-total="installed"]')?.textContent,
+        available: document.querySelector('[data-pack-total="available"]')?.textContent,
+      })`);
+      const geometry = () => evaluate(page, `(() => {
+        const rect = selector => document.querySelector(selector).getBoundingClientRect();
+        const rows = document.querySelector('[data-pack-scroll]');
+        return { innerHeight, scroll: rect('[data-pack-scroll]').toJSON(), pager: rect('[data-pack-pager]').toJSON(),
+          overflow: getComputedStyle(rows).overflowY, filled: rows.scrollHeight > rows.clientHeight };
+      })()`);
+      const fills = Array.from({ length: 22 }, (_, index) => `dude-local-fill-${String(index + 1).padStart(2, '0')}`);
+      const skillKey = name => `project:skill:${name}`;
+      write(fixture.root, '.github/agents/dude-local-twin.agent.md', '---\nname: Twin Agent\ndescription: "The twin agent."\n---\nTwin.\n');
+      writeProjectSkills(fixture.root, ['dude-local-twin', ...fills.slice(0, 21)]);
+
+      await click(page, `document.querySelector('#dude-tab-settings')`);
+      await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+        ?.getAttribute('aria-busy') === 'false'`), 'quiescent pack catalog');
+      await reload();
+
+      // Exactly 25 rows: one page, with Previous and Next both disabled.
+      const exact = ['pack:alpha', ...fills.slice(0, 21).map(skillKey), 'project:agent:dude-local-twin',
+        skillKey('dude-local-twin'), 'project:agent:dude-local-unrelated'];
+      assert.equal(exact.length, 25);
+      let state = await view();
+      assert.deepEqual(state.columns, ['Name', 'Type', 'Source', 'Use cases']);
+      assert.deepEqual([state.installed, state.keys, state.count, state.page, state.previous, state.next],
+        ['25', exact, '1–25 of 25', 'Page 1 of 1', true, true]);
+      let g = await geometry();
+      assert.ok(g.filled && g.overflow === 'auto' && Math.abs(g.pager.top - g.scroll.bottom) <= 1 && g.pager.bottom <= g.innerHeight,
+        `a full page fills its results above the pinned pager: ${JSON.stringify(g)}`);
+      const capture = await page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+      fs.writeFileSync(path.join(output.directory, 'production-installed-exact-25-1440x900-light.png'), Buffer.from(capture.data, 'base64'));
+
+      // One more project file makes 26: a second page of one row, every row exactly once.
+      writeProjectSkills(fixture.root, [fills[21]]);
+      await reload();
+      state = await view();
+      const first = ['pack:alpha', ...fills.map(skillKey), 'project:agent:dude-local-twin', skillKey('dude-local-twin')];
+      assert.equal(first.length, 25);
+      assert.deepEqual([state.installed, state.keys, state.count, state.page, state.previous, state.next],
+        ['26', first, '1–25 of 26', 'Page 1 of 2', true, false]);
+      await click(page, `document.querySelector('[aria-label="Next pack page"]')`);
+      state = await view();
+      assert.deepEqual([state.keys, state.count, state.page, state.previous, state.next],
+        [['project:agent:dude-local-unrelated'], '26–26 of 26', 'Page 2 of 2', false, true]);
+      assert.deepEqual([...first, ...state.keys].length, new Set([...first, ...state.keys]).size, 'no row repeats across the pages');
+
+      // A same-name agent and skill never share selection or focus; the server's exact message renders.
+      await click(page, `document.querySelector('[aria-label="Previous pack page"]')`);
+      await click(page, `document.querySelector('[data-pack-row="project:agent:dude-local-twin"]')`);
+      state = await view();
+      assert.deepEqual([state.detail, state.selected], ['project:agent:dude-local-twin', ['project:agent:dude-local-twin']]);
+      await press(page, 'Escape');
+      assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-pack-row')`), 'project:agent:dude-local-twin');
+      await click(page, `document.querySelector('[data-pack-row="${skillKey('dude-local-twin')}"]')`);
+      assert.deepEqual((await view()).selected, [skillKey('dude-local-twin')]);
+      await press(page, 'Escape');
+
+      // A selected row on page 2 survives a real reload, with its filters and page, while its file exists.
+      await click(page, `document.querySelector('[aria-label="Next pack page"]')`);
+      await click(page, `document.querySelector('[data-pack-row="project:agent:dude-local-unrelated"]')`);
+      const served = await (await fetch(new URL('/api/packs', fixture.instance.url), { signal: AbortSignal.timeout(DEADLINE) })).json();
+      const unrelated = served.project.items.find(item => item.key === 'project:agent:dude-local-unrelated');
+      assert.equal(unrelated.description.state, 'unavailable');
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-description]').textContent`), unrelated.description.message,
+        'the Canvas renders the server\'s exact description reason');
+      await reload();
+      state = await view();
+      assert.deepEqual([state.page, state.detail, state.selected], ['Page 2 of 2', 'project:agent:dude-local-unrelated', ['project:agent:dude-local-unrelated']]);
+
+      // Available stays pack-only: Name first, no Type, no project row, and its own paging.
+      await click(page, `document.querySelector('[data-pack-context="available"]')`);
+      state = await view();
+      assert.deepEqual(state.columns, ['Name', 'Source', 'Use cases']);
+      const available = Number(state.available);
+      assert.ok(available > 25, `Available spans two pages (${available})`);
+      const traversed = [...state.keys];
+      assert.deepEqual([state.keys.length, state.count, state.page, state.previous, state.next],
+        [25, `1–25 of ${available}`, `Page 1 of ${Math.ceil(available / 25)}`, true, false]);
+      await click(page, `document.querySelector('[aria-label="Next pack page"]')`);
+      state = await view();
+      traversed.push(...state.keys);
+      assert.equal(traversed.length, available);
+      assert.equal(new Set(traversed).size, available, 'every Available pack appears once across the pages');
+      assert.equal(traversed.every(key => key.startsWith('pack:')), true, 'Available lists no project row');
+      // Choosing a view starts it afresh. Removing the selected file leaves no row to follow: the existing reset applies.
+      await click(page, `document.querySelector('[data-pack-context="installed"]')`);
+      state = await view();
+      assert.deepEqual([state.page, state.detail], ['Page 1 of 2', null]);
+      await click(page, `document.querySelector('[aria-label="Next pack page"]')`);
+      await click(page, `document.querySelector('[data-pack-row="project:agent:dude-local-unrelated"]')`);
+      assert.equal((await view()).detail, 'project:agent:dude-local-unrelated');
+      fs.rmSync(path.join(fixture.root, '.github', 'agents', 'dude-local-unrelated.agent.md'));
+      await reload();
+      state = await view();
+      assert.deepEqual([state.installed, state.page, state.detail, state.selected, state.keys.length], ['25', 'Page 1 of 1', null, [], 25]);
     });
 });
 
@@ -4425,7 +4632,8 @@ test('T004 Settings install: exact one-send request, actual impact, literal cons
       await packPhase(page, 'delivered');
       const impact = await packImpact(fixture);
       assert.deepEqual(packTree(fixture.root), before, 'a real impact preview supplies no consent');
-      assert.equal(await evaluate(page, `document.querySelectorAll('[data-settings] form').length`), 0,
+      // Add/import's own Source form is a separate panel; the pack request layer and its details hold none.
+      assert.equal(await evaluate(page, `document.querySelectorAll('[data-pack-request-dialog] form, [data-pack-detail] form').length`), 0,
         'the request layer does not collect a second permission form');
 
       if (disposition === 'applied') {
@@ -4450,7 +4658,8 @@ test('T004 Settings install: exact one-send request, actual impact, literal cons
           'closing the request reconciles the retained wide detail to the current narrow width');
         assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').contains(document.activeElement)`), true);
         await press(page, 'Escape');
-        assert.equal(await evaluate(page, `document.activeElement.getAttribute('data-pack-row')`), 'alpha');
+        assert.match(await evaluate(page, `document.activeElement.getAttribute('data-pack-row')`), /^pack:alpha@src_[0-9a-f]{32}$/,
+          'focus returns to the Available row, whose key names its source');
         await click(page, button('View pack request'));
         await packPhase(page, 'delivered');
       }
@@ -4463,6 +4672,12 @@ test('T004 Settings install: exact one-send request, actual impact, literal cons
           .textContent.includes(${JSON.stringify(file)})`), true);
         await visible(page, 'Required tools: node');
         await visible(page, JSON.stringify(impact.source.location));
+        // The existing pack permission fits the Needs you panel at an effective 180x450, in both themes.
+        for (const theme of /** @type {const} */ (['light', 'dark'])) {
+          await viewport(page, 180, theme, 450);
+          await audit(page, output, `install-permission-180-${theme}`);
+        }
+        await viewport(page, 360, 'light');
         await click(page, button('Send permission'));
         await visible(page, 'Confirm the exact operation');
         await fill(page, field('Enter the exact confirmation'), 'INSTALL SOME OTHER PACK');
@@ -4488,8 +4703,8 @@ test('T004 Settings install: exact one-send request, actual impact, literal cons
         assert.equal(result.ok, true, result.error);
         assert.deepEqual(result.result.files, impact.files);
         fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
-        await until(() => evaluate(page, `document.querySelector('[data-pack-total="installed"]')?.textContent === '1'`),
-          'authoritative membership reread before owner acknowledgment');
+        await until(() => evaluate(page, `document.querySelector('[data-pack-total="installed"]')?.textContent === '2'`),
+          'authoritative membership reread before owner acknowledgment (the installed pack joins the project agent)');
         await packPhase(page, 'waiting_owner');
         assert.equal(fixture.provider.read().packRequests[0].applied, false);
         const mismatch = await packOwnerTool(fixture, {
@@ -4752,10 +4967,13 @@ test('T004 Settings boundaries: busy, queue, waiter, uncertainty, stale results,
           const action = `document.querySelector('[data-pack-operation="${fixture.operation}"]')`;
           if (boundary === 'waiter') {
             const waiting = await publish(fixture, requestFor(fixture, 'fact', { input: { kind: 'text' } }));
+            // The replacement read keeps the selected row's details (FR-090) while
+            // the waiting request withholds Install.
             await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
-              .getAttribute('aria-busy') === 'false' && !document.querySelector('[data-pack-detail]')`),
-            'replacement read invalidates the prior selection');
-            await click(page, `document.querySelector('[data-pack-row="alpha"]')`);
+              .getAttribute('aria-busy') === 'false'
+              && document.querySelector('[data-pack-detail]')?.getAttribute('data-pack-detail')?.startsWith('pack:alpha@') === true
+              && document.querySelector('[data-pack-operation="install"]')?.disabled === true`),
+            'replacement read keeps the selection and withholds Install');
             assert.equal(await evaluate(page, `${action}.disabled`), true);
             await evaluate(page, `${action}.click()`);
             assert.equal(network.filter(item => item.path === '/api/packs/request').length, 0);
@@ -5110,6 +5328,403 @@ test('T004 Settings caught Compose failures distinguish verified restoration fro
       assert.equal(fixture.sends.length, 1);
     });
   });
+});
+
+/** The Available or Installed rows of one pack, as a person reads them: key, then each cell. @param {any} page @param {string} selector */
+const t009Rows = (page, selector) => evaluate(page, `[...document.querySelectorAll(${JSON.stringify(selector)})]
+  .map(row => [row.getAttribute('data-pack-row'), ...[...row.querySelectorAll('[role="gridcell"]')].map(cell => cell.innerText.replace(/\\s+/g, ' ').trim())])`);
+
+/** The opaque key of one source, read from the Sources view by the name its row shows. @param {any} page @param {string} name */
+async function t009SourceKey(page, name) {
+  await click(page, `document.querySelector('[data-pack-context="sources"]')`);
+  const row = `[...document.querySelectorAll('[data-source-row]')].find(row => row.getAttribute('aria-label').startsWith(${JSON.stringify(`${name}. `)}))`;
+  await until(() => evaluate(page, `Boolean(${row})`), `the ${name} source row`);
+  return evaluate(page, `(${row}).getAttribute('data-source-row')`);
+}
+
+/** How many explicit catalog discoveries this tab has made since its resource buffer was last cleared. @param {any} page */
+const t009Discoveries = page => evaluate(page, `performance.getEntriesByType('resource').filter(entry => {
+  const url = new URL(entry.name); return url.pathname === '/api/packs' && url.search === '?discover=1'; }).length`);
+
+/** The Sources view's details for one source, by the name its row shows. @param {any} page @param {string} name */
+async function t009SourceDetails(page, name) {
+  await click(page, `document.querySelector('[data-pack-context="sources"]')`);
+  await click(page, `[...document.querySelectorAll('[data-source-row]')].find(row => row.getAttribute('aria-label').startsWith(${JSON.stringify(`${name}. `)}))`);
+  return evaluate(page, `({
+    reason: document.querySelector('[data-source-reason]').textContent,
+    remove: (button => button ? { disabled: button.disabled, label: button.getAttribute('aria-label') } : null)(document.querySelector('[data-source-remove]')),
+    facts: Object.fromEntries([...document.querySelectorAll('[data-pack-detail-body] dl dt')].map(dt => [dt.textContent, dt.nextElementSibling.innerText.replace(/\\s+/g, ' ').trim()])),
+  })`);
+}
+
+test('T009 source-bound install: the added folder\'s own row, its key in both bodies, the source first in the permission, and Applied only from that folder', {
+  timeout: 300_000, concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  await withPackJourney(context, 'install', { name: 'source-bound-install', team: true }, async ({ fixture, page, output, network }) => {
+    await click(page, `document.querySelector('#dude-tab-settings')`);
+    await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+      ?.getAttribute('aria-busy') === 'false' && Boolean(document.querySelector('[data-settings]'))`), 'current Settings read');
+    assert.equal(await evaluate(page, `document.querySelector('[data-pack-total="available"]').textContent`), '?',
+      'entering Settings read no catalog, so Available is unknown and the added source has no count');
+    await reloadPacks(page);
+    assert.equal(await t009Discoveries(page), 1, 'one explicit Reload is one discovery');
+    await click(page, `document.querySelector('[data-pack-context="available"]')`);
+
+    // Both sources offer alpha: two rows, two keys, each saying where it comes from.
+    const rows = await t009Rows(page, '[data-pack-row^="pack:alpha@"]');
+    assert.deepEqual(rows.map(([, ...cells]) => cells), [['alpha', 'Local library - Local folder', 'ui'], ['alpha', 'team-packs - Local folder', 'ui']]);
+    assert.equal(new Set(rows.map(([key]) => key)).size, 2);
+    const [defaultKey, teamKey] = rows.map(([key]) => key);
+    const sourceKey = teamKey.split('@')[1];
+    await click(page, `document.querySelector('[data-pack-row="${teamKey}"]')`);
+    assert.deepEqual(await evaluate(page, `({ title: document.querySelector('[data-pack-detail] h2').textContent,
+      selected: [...document.querySelectorAll('[data-pack-row][aria-selected="true"]')].map(row => row.getAttribute('data-pack-row')),
+      description: document.querySelector('[data-pack-description]').textContent,
+      source: document.querySelector('[data-pack-source]').textContent, location: document.querySelector('[data-pack-origin]').textContent })`),
+    { title: 'alpha - team-packs', selected: [teamKey], description: 'Added team source alpha', source: 'team-packs - Local folder', location: fixture.team },
+    'selecting the added folder\'s alpha selects only it, with its own description and location');
+    assert.notEqual(teamKey, defaultKey);
+
+    // One click names the saved source by its opaque key, in both bodies, and the provider binds it. The first body is held
+    // unsent: this tab's own attempt already holds its source, before the provider has any receipt to name it.
+    const before = packTree(fixture.root);
+    let paused = null;
+    const stopHolding = page.on('Fetch.requestPaused', event => {
+      if (!paused && event.request.postData && JSON.parse(event.request.postData).op === 'prepare') paused = event;
+      else void page.send('Fetch.continueRequest', { requestId: event.requestId });
+    });
+    await page.send('Fetch.enable', { patterns: [{ urlPattern: '*/api/packs/request', requestStage: 'Request' }] });
+    await click(page, `document.querySelector('[data-pack-operation="install"]')`);
+    await until(() => paused, 'the prepare request held before it is sent');
+    await click(page, button('Return to packs'));
+    const held = await t009SourceDetails(page, 'team-packs');
+    assert.deepEqual([held.remove, held.reason.replace(/\(.*?\)/, '(phase)')], [{ disabled: true, label: 'Remove team-packs' },
+      'Cannot remove while in use. Pack request in progress: Install alpha (phase). Finish the request first.']);
+    assert.match(held.reason, /Install alpha \(preparing request\)/, 'the attempt is named while it is still preparing');
+    assert.equal(fixture.provider.read().packRequests.length, 0, 'no receipt exists yet');
+    await click(page, `document.querySelector('[data-pack-context="available"]')`);
+    await page.send('Fetch.continueRequest', { requestId: paused.requestId });
+    await page.send('Fetch.disable');
+    stopHolding();
+    const receipt = await until(() => fixture.provider.read().packRequests.at(-1), 'real prepared pack receipt');
+    await click(page, button('View pack request'));
+    await packPhase(page, 'delivered');
+    assert.deepEqual(network.filter(item => item.path === '/api/packs/request').map(item => item.body), [
+      { op: 'prepare', operation: 'install', name: 'alpha', source: sourceKey },
+      { op: 'submit', operation: 'install', name: 'alpha', source: sourceKey, packReceipt: receipt.packReceipt }]);
+    const binding = receipt.receipt.catalogSource;
+    assert.deepEqual(Object.keys(binding), ['key', 'sourcesRevision', 'source']);
+    assert.equal(binding.key, sourceKey);
+    assert.match(binding.sourcesRevision, /^sha256:[0-9a-f]{64}$/);
+    assert.deepEqual(binding.source, { type: 'local', location: fs.realpathSync(fixture.team) });
+    const handoff = fixture.sends[0].prompt.split('\n');
+    assert.deepEqual(JSON.parse(handoff.at(-1)).catalogSource, binding, 'the handoff carries the exact binding');
+    assert.equal(handoff.filter(line => /bound to one source the project added/.test(line)).length, 1);
+    assert.equal(await evaluate(page, `document.querySelector('[data-pack-request-dialog] [data-pack-request-source]').innerText.replace(/\\s+/g, ' ')`),
+      'Requested from team-packs - Local folder');
+    assert.deepEqual(packTree(fixture.root), before, 'admission and delivery change no pack file');
+
+    // The permission names the source first, as a third-party source pinned by a digest, and fits every size.
+    const impact = await packImpact(fixture);
+    assert.deepEqual(impact.source, { type: 'local', location: fs.realpathSync(fixture.team) }, 'the preview reads the bound folder');
+    const permission = await publishPackPermission(fixture, receipt, impact);
+    assert.equal(permission.request.fields.targets[0].target, `Third-party source ${binding.source.location}`);
+    assert.match(permission.request.fields.targets[0].revision, /^sha256:[0-9a-f]{64}$/);
+    await packPhase(page, 'waiting_permission');
+
+    // While it waits, the source cannot be removed: the reason names the live request.
+    await click(page, button('Return to packs'));
+    let details = await t009SourceDetails(page, 'team-packs');
+    assert.deepEqual([details.remove, details.reason.replace(/\(.*?\)/, '(phase)')], [{ disabled: true, label: 'Remove team-packs' },
+      'Cannot remove while in use. Pack request in progress: Install alpha (phase). Finish the request first.']);
+    assert.equal(details.facts['Installed from this source'].startsWith('0'), true);
+    await click(page, `document.querySelector('[data-pack-context="available"]')`);
+    await click(page, button('View pack request'));
+    await packPhase(page, 'waiting_permission');
+    await click(page, button('Open Needs you'));
+    await visible(page, permission.request.prompt);
+    const card = await evaluate(page, `document.querySelector('#dude-panel-needs').innerText`);
+    assert.ok(card.indexOf(`Third-party source ${binding.source.location}`) >= 0, 'Needs you names the third-party source');
+    assert.ok(card.indexOf('Third-party source') < card.indexOf('.dude/metadata/profile.md'), 'and names it first');
+    for (const target of permission.request.fields.targets) assert.ok(card.includes(target.target.split('\n')[0]), `Needs you shows ${target.target}`);
+    // The longer source-first permission fits at 360x900, at 180x450, and at 200% (an effective 180x450).
+    for (const [width, height, scale] of [[360, 900, 1], [180, 450, 1], [180, 450, 2]]) for (const theme of /** @type {const} */ (['light', 'dark'])) {
+      await viewport(page, width, theme, height, scale);
+      await audit(page, output, `source-first-permission-${width}x${height}-${scale === 2 ? 'dpr2-' : ''}${theme}`);
+    }
+    await viewport(page, 1440, 'light');
+    await click(page, button('Back to pack request'));
+    await answerPackPermission(page, fixture, permission);
+
+    // Only an install from that folder is Applied, and the owner echoes the binding whole.
+    const result = await cmdAdd(fixture.args);
+    assert.equal(result.ok, true, result.error);
+    assert.match(fs.readFileSync(path.join(fixture.root, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), 'utf8'), /Team v1\./,
+      'the installed pack came from the added folder, not the default library');
+    fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+    await until(() => evaluate(page, `document.querySelector('[data-pack-total="installed"]')?.textContent === '2'`),
+      'authoritative membership reread before owner acknowledgment');
+    const owner = await packOwnerTool(fixture, packOwnerAcknowledgment(fixture, receipt, result));
+    assert.equal(owner.type, 'success', JSON.stringify(owner.body));
+    await packPhase(page, 'applied');
+    const applied = fixture.provider.read().packRequests[0];
+    assert.deepEqual(applied.receipt.catalogSource, binding);
+    assert.deepEqual(applied.receipt.reread.entry.source, { type: 'local', location: fs.realpathSync(fixture.team) });
+    await audit(page, output, 'source-bound-install-applied');
+    await click(page, button('Return to packs'));
+
+    // Lists and Sources now agree: alpha is installed from the added folder, and neither source offers it again.
+    await click(page, `document.querySelector('[data-pack-context="installed"]')`);
+    assert.deepEqual((await t009Rows(page, '[data-pack-row="pack:alpha"]')).map(([, ...cells]) => cells), [['alpha', 'Pack', 'team-packs - Local folder', 'ui']]);
+    await click(page, `document.querySelector('[data-pack-context="available"]')`);
+    assert.deepEqual(await t009Rows(page, '[data-pack-row^="pack:alpha@"]'), [], 'an installed name leaves Available for every source');
+    details = await t009SourceDetails(page, 'team-packs');
+    assert.deepEqual([details.remove.disabled, details.reason, details.facts['Installed from this source'].startsWith('1: alpha')],
+      [true, 'All packs from this source are installed. Cannot remove while in use. Installed from it: alpha. Remove those installed packs first.', true]);
+    assert.equal(await t009Discoveries(page), 1, 'permission, result and reads acquired no further catalog');
+    assert.equal(fixture.sends.length, 1, 'nothing was replayed');
+    output.results.push({ case: 'source-bound-install', binding, requests: network.filter(item => item.path === '/api/packs/request').map(item => item.body) });
+  });
+});
+
+test('T009 source-bound refresh: the installed record picks its saved source, no source rides the request, and Applied is checked against that folder', {
+  timeout: 300_000, concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  await withPackJourney(context, 'refresh', { name: 'source-bound-refresh', team: true, changed: true }, async ({ fixture, page, output, network }) => {
+    await click(page, `document.querySelector('#dude-tab-settings')`);
+    await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+      ?.getAttribute('aria-busy') === 'false' && Boolean(document.querySelector('[data-settings]'))`), 'current Settings read');
+    // The installed record already names its source, before any catalog is read; Refresh needs the catalog entry.
+    assert.deepEqual((await t009Rows(page, '[data-pack-row="pack:alpha"]')).map(([, ...cells]) => cells), [['alpha', 'Pack', 'team-packs - Local folder', 'Not read']]);
+    await click(page, `document.querySelector('[data-pack-row="pack:alpha"]')`);
+    assert.equal(await evaluate(page, `document.querySelector('[data-pack-operation="refresh"]').disabled`), true, 'Refresh waits for the catalog entry');
+    await press(page, 'Escape');
+    await reloadPacks(page);
+    const sourceKey = await t009SourceKey(page, 'team-packs');
+    await click(page, `document.querySelector('[data-pack-context="installed"]')`);
+    await click(page, `document.querySelector('[data-pack-row="pack:alpha"]')`);
+    assert.equal(await evaluate(page, `document.querySelector('[data-pack-description]').textContent`), 'Added team source alpha',
+      'the description comes from the source the record matches, not the default library');
+    assert.equal(await evaluate(page, `document.querySelector('[data-pack-operation="refresh"]').disabled`), false);
+    const before = packTree(fixture.root);
+    const receipt = await requestPackFromUi(page, fixture);
+    await packPhase(page, 'delivered');
+    assert.deepEqual(network.filter(item => item.path === '/api/packs/request').map(item => item.body), [
+      { op: 'prepare', operation: 'refresh', name: 'alpha' },
+      { op: 'submit', operation: 'refresh', name: 'alpha', packReceipt: receipt.packReceipt }], 'a refresh never carries a source choice from the browser');
+    const binding = receipt.receipt.catalogSource;
+    assert.deepEqual([binding.key, binding.source], [sourceKey, { type: 'local', location: fs.realpathSync(fixture.team) }],
+      'the provider selected the saved source that matches the installed record');
+    assert.deepEqual(packTree(fixture.root), before);
+
+    const impact = await packImpact(fixture);
+    assert.ok(impact.files.length > 0);
+    const permission = await publishPackPermission(fixture, receipt, impact);
+    assert.equal(permission.request.fields.targets[0].target, `Third-party source ${binding.source.location}`);
+    await packPhase(page, 'waiting_permission');
+    await click(page, button('Open Needs you'));
+    await visible(page, permission.request.prompt);
+    for (const [width, height, scale] of [[360, 900, 1], [180, 450, 1], [180, 450, 2]]) for (const theme of /** @type {const} */ (['light', 'dark'])) {
+      await viewport(page, width, theme, height, scale);
+      await audit(page, output, `source-first-refresh-permission-${width}x${height}-${scale === 2 ? 'dpr2-' : ''}${theme}`);
+    }
+    await viewport(page, 1440, 'light');
+    await click(page, button('Back to pack request'));
+    await answerPackPermission(page, fixture, permission);
+    const result = await cmdRefresh(fixture.args);
+    assert.equal(result.ok, true, result.error);
+    assert.match(fs.readFileSync(path.join(fixture.root, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), 'utf8'), /Team v2\./, 'refreshed from the added folder');
+    fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+    const owner = await packOwnerTool(fixture, packOwnerAcknowledgment(fixture, receipt, result));
+    assert.equal(owner.type, 'success', JSON.stringify(owner.body));
+    await packPhase(page, 'applied');
+    assert.deepEqual(fixture.provider.read().packRequests[0].receipt.catalogSource, binding);
+    await click(page, button('Return to packs'));
+    assert.equal(await t009Discoveries(page), 1, 'the journey made one discovery, its Reload');
+    assert.equal(fixture.sends.length, 1);
+  });
+});
+
+/**
+ * Rewrite responses of one route on their way to the page, through the DevTools Fetch domain. The production
+ * server and provider answer truthfully; the page receives what a substituting or confused provider would have
+ * sent. `rewrite(value, request)` edits the parsed JSON and returns true to deliver the edit; any other answer
+ * passes the response through untouched. `delivered` keeps every edited body the page was given.
+ * @param {any} page @param {string} urlPattern @param {(value:any, request:any)=>boolean} rewrite
+ */
+async function t010Rewrite(page, urlPattern, rewrite) {
+  const delivered = [];
+  const stop = page.on('Fetch.requestPaused', async event => {
+    try {
+      const body = await page.send('Fetch.getResponseBody', { requestId: event.requestId });
+      const value = JSON.parse(body.base64Encoded ? Buffer.from(body.body, 'base64').toString('utf8') : body.body);
+      if (!rewrite(value, event.request.postData ? JSON.parse(event.request.postData) : null)) {
+        await page.send('Fetch.continueRequest', { requestId: event.requestId });
+        return;
+      }
+      delivered.push(structuredClone(value));
+      await page.send('Fetch.fulfillRequest', {
+        requestId: event.requestId,
+        responseCode: event.responseStatusCode,
+        responseHeaders: (event.responseHeaders || []).filter(header => !['content-length', 'transfer-encoding'].includes(header.name.toLowerCase())),
+        body: Buffer.from(JSON.stringify(value)).toString('base64'),
+      });
+    } catch {
+      await page.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {});
+    }
+  });
+  await page.send('Fetch.enable', { patterns: [{ urlPattern, requestStage: 'Response' }] });
+  return { delivered, async stop() { stop(); await page.send('Fetch.disable'); } };
+}
+
+test('T010 source substitution: a provider answer that names another source (prepare or submit), a feed record bound to another source, and a source gone since the read are each refused or never joined', {
+  timeout: 420_000, concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  const variants = ['prepare echo names another source', 'prepare echo names no source', 'submit echo names another source',
+    'feed record names another source', 'saved source removed after the read'];
+  for (const variant of variants) {
+    await context.test(variant, async t => {
+      await withPackJourney(t, 'install', { name: `t010-${variant.replaceAll(' ', '-')}`, team: true }, async ({ fixture, page, output, network }) => {
+        // A second saved folder that also offers alpha, so a substituted answer names a real configured source.
+        const second = path.join(fixture.directory, 'second-packs');
+        write(second, 'library/packs/alpha/pack.md',
+          '---\nname: alpha\ndescription: "Second source alpha"\nuse-cases: [ui]\nrequires:\n  tools: [node]\n---\n# Alpha\n');
+        write(second, 'library/packs/alpha/agents/dude-pack-alpha-worker.agent.md',
+          '---\nname: Alpha Worker\ndescription: "Second worker"\ntools: [read, search]\nmodel-class: balanced\n---\nSecond v1.\n');
+        write(second, 'library/packs/alpha/skills/dude-pack-alpha-helper/SKILL.md',
+          '---\nname: dude-pack-alpha-helper\ndescription: "Second helper"\n---\n# Helper\n');
+        const { serializePackSourcesDocument } = await import('../../src/skills/dude-engine/lib/pack-sources.mjs');
+        const sourcesFile = path.join(fixture.root, '.dude', 'metadata', 'pack-sources.md');
+        fs.writeFileSync(sourcesFile, serializePackSourcesDocument([{ type: 'local', location: fixture.team }, { type: 'local', location: second }]));
+
+        await click(page, `document.querySelector('#dude-tab-settings')`);
+        await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+          ?.getAttribute('aria-busy') === 'false' && Boolean(document.querySelector('[data-settings]'))`), 'current Settings read');
+        await reloadPacks(page);
+        const teamKey = await t009SourceKey(page, 'team-packs');
+        const secondKey = await t009SourceKey(page, 'second-packs');
+        await click(page, `document.querySelector('[data-pack-context="available"]')`);
+        assert.deepEqual((await t009Rows(page, '[data-pack-row^="pack:alpha@"]')).map(([, ...cells]) => cells), [
+          ['alpha', 'Local library - Local folder', 'ui'], ['alpha', 'team-packs - Local folder', 'ui'], ['alpha', 'second-packs - Local folder', 'ui']]);
+        // The person chooses the team's alpha.
+        await click(page, `document.querySelector('[data-pack-row="pack:alpha@${teamKey}"]')`);
+        const before = packTree(fixture.root);
+        const install = `document.querySelector('[data-pack-operation="install"]')`;
+        const requests = () => network.filter(item => item.path === '/api/packs/request').map(item => item.body);
+        const prepareChoosingTeam = { op: 'prepare', operation: 'install', name: 'alpha', source: teamKey };
+        const substituted = binding => ({ key: secondKey, sourcesRevision: binding.sourcesRevision, source: { type: 'local', location: fs.realpathSync(second) } });
+        /** What the open request dialog claims about the request. */
+        const claims = () => evaluate(page, `({
+          phase: document.querySelector('[data-pack-request-dialog][open] [data-pack-request-phase]')?.getAttribute('data-pack-request-phase') ?? null,
+          source: document.querySelector('[data-pack-request-dialog] [data-pack-request-source]')?.innerText.replace(/\\s+/g, ' ').trim() ?? null,
+          receipt: [...document.querySelectorAll('[data-pack-request-dialog] .fui-Text')].map(node => node.textContent).find(text => text.startsWith('Receipt:')) ?? null,
+          permission: Boolean(document.querySelector('[data-pack-request-dialog] [data-pack-permission]')),
+        })`);
+
+        if (variant.startsWith('prepare echo')) {
+          // The real provider binds the team's alpha. The page is told another source, or none: it must not submit.
+          const rewrite = await t010Rewrite(page, '*/api/packs/request', (value, request) => {
+            if (request?.op !== 'prepare') return false;
+            if (variant === 'prepare echo names another source') value.receipt.catalogSource = substituted(value.receipt.catalogSource);
+            else delete value.receipt.catalogSource;
+            return true;
+          });
+          await click(page, install);
+          await packPhase(page, 'stale');
+          await rewrite.stop();
+          assert.deepEqual(rewrite.delivered.map(value => value.receipt.catalogSource?.key ?? null),
+            [variant === 'prepare echo names another source' ? secondKey : null], 'the page was given the substituted echo');
+          const records = fixture.provider.read().packRequests;
+          assert.deepEqual(records.map(record => [record.phase, record.receipt.catalogSource.key]), [['prepared', teamKey]],
+            'the provider really bound the chosen source, and the receipt was never submitted');
+          assert.deepEqual(requests(), [prepareChoosingTeam], 'the page sent no submit for a receipt that does not name the chosen source');
+          assert.equal(fixture.sends.length, 0, 'so nothing reached the owner');
+          await visible(page, 'The workspace or joined provider changed. This request will not be sent again.');
+          assert.equal((await claims()).source, 'Requested from team-packs - Local folder', 'the dialog still names the source that was chosen');
+          assert.deepEqual(packTree(fixture.root), before);
+          await audit(page, output, `substitution-${variant.replaceAll(' ', '-')}`);
+        } else if (variant === 'submit echo names another source') {
+          // The provider really delivers the request, and the page is told its receipt names another source. That is not
+          // a delivery it can vouch for: it says delivery is uncertain, and nothing is sent again. The feed is held, so the
+          // page cannot yet learn the truth from its own record of the request.
+          await evaluate(page, `(() => {
+            const original = window.fetch;
+            window.t010 = { hold: true, held: [] };
+            window.fetch = (...args) => new URL(args[0], location.href).pathname === '/api/needs-you' && window.t010.hold
+              ? new Promise(resolve => window.t010.held.push(() => resolve(original(...args)))) : original(...args);
+          })()`);
+          const rewrite = await t010Rewrite(page, '*/api/packs/request', (value, request) => {
+            if (request?.op !== 'submit') return false;
+            value.receipt.catalogSource = substituted(value.receipt.catalogSource);
+            return true;
+          });
+          await click(page, install);
+          await packPhase(page, 'uncertain');
+          await rewrite.stop();
+          assert.deepEqual(rewrite.delivered.map(value => value.receipt.catalogSource.key), [secondKey], 'the page was given the substituted echo');
+          const [record] = fixture.provider.read().packRequests;
+          assert.equal(record.receipt.catalogSource.key, teamKey, 'the provider bound, and delivered, the chosen source');
+          assert.deepEqual(requests(), [prepareChoosingTeam, { ...prepareChoosingTeam, op: 'submit', packReceipt: record.packReceipt }]);
+          assert.equal(fixture.sends.length, 1, 'the owner was sent the request once');
+          await visible(page, 'Delivery is uncertain. Wait for owner reconciliation; do not repeat this request.');
+          await audit(page, output, 'substitution-submit-uncertain');
+          // Control: once the feed is read, the request is joined to its own record and shows its real phase, still unrepeated.
+          await evaluate(page, `(() => { window.t010.hold = false; window.t010.held.splice(0).forEach(release => release()); })()`);
+          await packPhase(page, 'delivered');
+          assert.equal(requests().length, 2, 'nothing was replayed');
+          assert.equal(fixture.sends.length, 1);
+        } else if (variant === 'feed record names another source') {
+          // The request is genuine, and the feed's record of it names another source: it is not this request's record.
+          const rewrite = await t010Rewrite(page, '*/api/needs-you', value => {
+            let changed = false;
+            for (const record of value.packRequests ?? []) {
+              if (record.receipt?.catalogSource) { record.receipt.catalogSource = substituted(record.receipt.catalogSource); changed = true; }
+            }
+            return changed;
+          });
+          const receipt = await requestPackFromUi(page, fixture);
+          assert.equal(receipt.receipt.catalogSource.key, teamKey, 'the provider bound the chosen source');
+          const shownFeed = phase => rewrite.delivered.some(feed => feed.packRequests.some(record => record.packReceipt === receipt.packReceipt && record.phase === phase));
+          await until(() => shownFeed('delivered'), 'the page was shown the delivered request, bound to another source');
+          const impact = await packImpact(fixture);
+          const permission = await publishPackPermission(fixture, receipt, impact);
+          await until(() => shownFeed('waiting_permission'), 'the page was shown the waiting permission, bound to another source');
+          await evaluate(page, `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
+          const unjoined = await claims();
+          assert.deepEqual([unjoined.source, unjoined.receipt, unjoined.permission], ['Requested from team-packs - Local folder', null, false],
+            'a record bound to another source is not joined: no source it was not asked for, no receipt, and no permission shortcut');
+          assert.notEqual(unjoined.phase, 'waiting_permission', 'and its phase is not shown as this request\'s');
+          await audit(page, output, 'substitution-feed-unjoined');
+          // Control: the same request, once the feed is truthful again, is joined and shows its real phase.
+          await rewrite.stop();
+          await evaluate(page, `window.dispatchEvent(new Event('focus'))`);
+          await packPhase(page, 'waiting_permission');
+          assert.deepEqual([(await claims()).source, (await claims()).permission], ['Requested from team-packs - Local folder', true]);
+          assert.equal(requests().length, 2, 'one prepare and one submit, never replayed');
+          assert.equal(fixture.sends.length, 1);
+          permission.controller.abort();
+          await permission.result;
+        } else {
+          // The saved list changed after the page read it: the key it holds names nothing now, so nothing is prepared.
+          const replaced = serializePackSourcesDocument([{ type: 'local', location: second }]);
+          fs.writeFileSync(sourcesFile, replaced);
+          const unchanged = packTree(fixture.root);
+          await click(page, install);
+          await packPhase(page, 'stale');
+          assert.deepEqual(requests(), [prepareChoosingTeam]);
+          assert.equal(fixture.provider.read().packRequests.length, 0, 'no receipt was allocated for a source that is gone');
+          assert.equal(fixture.sends.length, 0);
+          await visible(page, 'The pack authority changed. Reload packs; any changed impact needs fresh confirmation.');
+          assert.equal(fs.readFileSync(sourcesFile, 'utf8'), replaced, 'the refusal saved nothing');
+          assert.deepEqual(packTree(fixture.root), unchanged, 'and changed no pack file, profile, or saved source');
+          await audit(page, output, 'substitution-source-removed');
+        }
+      });
+    });
+  }
 });
 
 test('T011 browser: published blank capture, ordinary-chat refresh, local state, root identity, and responsive shell', {
@@ -16141,6 +16756,7 @@ test('T004 browser: current capture failure keeps Review usable and save-only ac
   const runtimeErrors = [];
   const network = [];
   const baseCaptures = [];
+  const baseSaves = [];
   const sealCalls = [];
   try {
     const selectedCaptureBrowser = findBrowser();
@@ -16158,9 +16774,15 @@ test('T004 browser: current capture failure keeps Review usable and save-only ac
         const opened = await base.openReview(input);
         baseCaptures.push({
           requestRef:input.request.requestRef,
+          workingRevision:opened.workingRevision,
           capture:structuredClone(opened.capture),
         });
         return opened;
+      },
+      async saveReview(input) {
+        const saved = await base.saveReview(input);
+        baseSaves.push(structuredClone(saved));
+        return saved;
       },
       async sealReview(input) {
         sealCalls.push(input.request.requestRef);
@@ -16182,6 +16804,7 @@ test('T004 browser: current capture failure keeps Review usable and save-only ac
       if (!event.request.url.startsWith(fixture.instance.url)) return;
       network.push({
         order:network.length + 1,
+        url:event.request.url,
         method:event.request.method,
         path:new URL(event.request.url).pathname,
         body:event.request.postData ?? null,
@@ -16215,30 +16838,15 @@ test('T004 browser: current capture failure keeps Review usable and save-only ac
     const expectedWarning = `${failureWording} Review cannot send report-only feedback. Working annotations are retained.`;
     await openReviewNotice(page, 'Image capture unavailable');
     await visible(page, expectedWarning);
+    const warningProof = await saveRegressionProof(page, output, 'portable-capture-failure-notice', {
+      actualCapture, expectedWarning,
+    });
+    for (const explanation of [failureWording,
+      'Review cannot send report-only feedback. Working annotations are retained.']) {
+      assert.ok(warningProof.tree.nodes.some(node => !node.ignored && node.name?.value?.includes(explanation)),
+        `the capture-failure explanation reaches the accessibility tree: ${explanation}`);
+    }
     await closeReviewDetails(page);
-
-    // The actual engine remains available. Create native markup, explicitly
-    // save it, then edit its comment and let the normal working-file path keep
-    // that edit before returning through the product's Back control.
-    const savesBefore = network.filter(entry =>
-      entry.method === 'POST' && entry.path === '/api/needs-you/review/save').length;
-    await click(page, `document.querySelector('[aria-label="Box (B)"]')`);
-    await openReviewDetails(page);
-    await click(page, button('Add at center'));
-    await visible(page, 'Comments (1)');
-    await until(() => evaluate(page, `!${button('Save markup')}.disabled`),
-      'capture-failed explicit Save markup enabled');
-    await click(page, button('Save markup'));
-    await until(() => network.filter(entry =>
-      entry.method === 'POST' && entry.path === '/api/needs-you/review/save').length === savesBefore + 1,
-    'capture-failed explicit working save');
-    await openReviewDetails(page);
-    await visible(page, 'Working markup matches the saved revision');
-    await closeReviewDetails(page);
-    await click(page, button('Comments (1)'));
-    const workingComment = '  Capture failed; keep this\u00a0working edit.\nSecond line.  ';
-    await fill(page, field('Comment (optional)'), workingComment);
-    assert.equal(await evaluate(page, `${field('Comment (optional)')}.value`), workingComment);
 
     const current = fixture.provider.read().requests.find(
       ({ requestHandle }) => requestHandle === publication.record.requestHandle,
@@ -16250,12 +16858,99 @@ test('T004 browser: current capture failure keeps Review usable and save-only ac
       current.reviewSubmissionId,
     );
     const workingFile = path.join(reviewDirectory, 'working.json');
+    const saveRequests = () => network.filter(entry =>
+      entry.method === 'POST' && entry.path === '/api/needs-you/review/save');
+
+    // Tool selection is itself a persisted edit. Let that autosave finish
+    // before measuring the one annotation save, which Save markup can force
+    // or the ordinary autosave can finish before the control is reached.
+    await click(page, `document.querySelector('[aria-label="Box (B)"]')`);
+    await openReviewDetails(page);
+    await until(() => baseSaves.length === 1, 'capture-failed Box tool autosave');
+    await visible(page, 'Working markup matches the saved revision');
+    const savesBefore = saveRequests().length;
+    assert.equal(savesBefore, 1, 'only the tool-selection save precedes the annotation');
+    const toolSave = JSON.parse(saveRequests()[0].body);
+    assert.deepEqual({
+      requestHandle:toolSave.requestHandle,
+      revision:toolSave.revision,
+      submissionId:toolSave.submissionId,
+      workingRevision:toolSave.workingRevision,
+      tool:toolSave.working.tool,
+      annotations:toolSave.working.annotations,
+    }, {
+      requestHandle:publication.record.requestHandle,
+      revision:request.revision,
+      submissionId:current.reviewSubmissionId,
+      workingRevision:baseCaptures[0].workingRevision,
+      tool:'box',
+      annotations:[],
+    });
+    const toolWorkingBytes = fs.readFileSync(workingFile);
+    const toolWorking = JSON.parse(toolWorkingBytes).state;
+    assert.deepEqual(toolWorking, toolSave.working);
+    assert.deepEqual(baseSaves[0], {
+      status:'saved', submissionId:current.reviewSubmissionId,
+      workingRevision:hash(toolWorkingBytes),
+    }, 'the tool autosave completes at the actual working-file revision');
+
+    await click(page, button('Add at center'));
+    await visible(page, 'Comments (1)');
+    const annotationId = await evaluate(page,
+      `document.querySelector('.dude-review-overlay [data-annotation]')?.getAttribute('data-annotation')`);
+    assert.ok(annotationId, 'the native Add at center action draws a box');
+    const workingSave = await saveWorkingMarkup(page, network, output);
+    await until(() => baseSaves.length === savesBefore + 1, 'capture-failed annotation working save');
+    assert.equal(saveRequests().length, savesBefore + 1,
+      'exactly one annotation save follows the completed tool autosave');
+    const v = toolWorking.view.viewport;
+    const expectedBox = {
+      id:annotationId, tool:'box',
+      x1:v.scrollX + v.width / 4, y1:v.scrollY + v.height / 3,
+      x2:v.scrollX + v.width * 3 / 4, y2:v.scrollY + v.height * 0.6,
+      comment:'', replacement:'', styleNote:'', element:null,
+    };
+    const expectedState = {
+      ...toolWorking, annotations:[expectedBox], selectedId:annotationId, caret:null,
+    };
+    const annotationSave = JSON.parse(saveRequests()[savesBefore].body);
+    assert.deepEqual(annotationSave, {
+      requestHandle:publication.record.requestHandle,
+      revision:request.revision,
+      submissionId:current.reviewSubmissionId,
+      workingRevision:baseSaves[0].workingRevision,
+      working:expectedState,
+    }, 'the annotation request saves the exact drawn box and selected tool in the same working submission');
+    const annotationWorkingBytes = fs.readFileSync(workingFile);
+    const annotationWorking = JSON.parse(annotationWorkingBytes);
+    assert.deepEqual(annotationWorking, {
+      version:1, submissionId:current.reviewSubmissionId, scope, preview,
+      requestRef:request.requestRef, requestRevision:request.revision, state:expectedState,
+    }, 'working.json echoes the exact annotation state and current artifact/request binding');
+    assert.deepEqual(baseSaves[savesBefore], {
+      status:'saved', submissionId:current.reviewSubmissionId,
+      workingRevision:hash(annotationWorkingBytes),
+    }, 'the annotation save response binds the actual persisted bytes');
+    assert.notEqual(baseSaves[savesBefore].workingRevision, baseSaves[0].workingRevision,
+      'the annotation advances the tool-only working revision');
+    await openReviewDetails(page);
+    await visible(page, 'Working markup matches the saved revision');
+    await closeReviewDetails(page);
+    await click(page, button('Comments (1)'));
+    const workingComment = '  Capture failed; keep this\u00a0working edit.\nSecond line.  ';
+    await fill(page, field('Comment (optional)'), workingComment);
+    assert.equal(await evaluate(page, `${field('Comment (optional)')}.value`), workingComment);
+
     const working = await until(() => {
       if (!fs.existsSync(workingFile)) return null;
       const value = JSON.parse(fs.readFileSync(workingFile, 'utf8'));
       return value.state.annotations.length === 1
         && value.state.annotations[0].comment === workingComment ? value : null;
     }, 'capture-failed edited working.json');
+    assert.deepEqual(working.state.annotations, [{ ...expectedBox, comment:workingComment }],
+      'comment autosave preserves the exact drawn box');
+    assert.equal(working.state.tool, 'box');
+    assert.equal(working.state.selectedId, annotationId);
     assert.deepEqual(fs.readdirSync(reviewDirectory), ['working.json'],
       'capture failure retains only mutable working markup');
     await click(page, `document.querySelector('[data-review-comments-done]')`);
@@ -16322,6 +17017,7 @@ test('T004 browser: current capture failure keeps Review usable and save-only ac
     assert.deepEqual(runtimeErrors, []);
     const proof = {
       browser:browserState.version.Browser,
+      fixtureRoot:root,
       selectedCaptureBrowser,
       incompatibleExecutableSha256:incompatibleBrowser.executableSha256,
       nodeExecutableSha256:incompatibleBrowser.nodeSha256,
@@ -16329,6 +17025,12 @@ test('T004 browser: current capture failure keeps Review usable and save-only ac
       reviewOpens:baseCaptures.length,
       workingSaves:network.filter(entry =>
         entry.method === 'POST' && entry.path === '/api/needs-you/review/save').length,
+      workingSave,
+      savesBeforeAnnotation:savesBefore,
+      toolSave:{ request:toolSave, response:baseSaves[0] },
+      annotationSave:{
+        request:annotationSave, response:baseSaves[savesBefore], working:annotationWorking,
+      },
       workingAnnotations:working.state.annotations.length,
       reopenedComment:working.state.annotations[0].comment,
       requestPhase:finalRequest.phase,
@@ -18511,4 +19213,576 @@ test('T012 review regression: the selected-element context summary collapses sou
     if (fixture) await fixture.close();
     await board.close();
   }
+});
+
+// ---------------------------------------------------------------------------
+// 073 Add/import (T005) through the production provider, HTTP route, and
+// bundle. The installed Dude owner is a stand-in: it publishes the literal
+// permission and acknowledges the result over the real tool, and writes the
+// files a verified result names. It never runs the importer, and no test
+// contacts a network source.
+// ---------------------------------------------------------------------------
+const T005_PLAN = 'sha256:b05799084a5d41db45b11b92698e3a532d1df74099a539dc2311cc53e4f27337';
+const T005_DIRECTORY_LINES = 'Nothing is executed.\nApply is all-or-nothing with rollback.\nReplaced files are overwritten.';
+/** Illustrative permissions in the approved mock's own words; none was observed from a real import. */
+const T005_SAMPLES = Object.freeze({
+  focused: {
+    source: 'C:\\Users\\you\\agent-kit\\skills\\review-checklist\\SKILL.md', operation: 'import:file',
+    prompt: 'Import the skill review-checklist as dude-local-review-checklist?',
+    targets: [
+      { target: '.github/skills/dude-local-review-checklist/SKILL.md\nAnalyzed state: missing\nDecision: create', revision: 'missing' },
+      { target: '.github/skills/dude-local-review-checklist/LICENSE\nAnalyzed state: missing\nDecision: create the reviewed MIT license sibling', revision: 'missing' },
+    ],
+    consequences: 'Creates both files with the default adaptations only: strips the model and compatibility frontmatter and names the skill dude-local-review-checklist.\nPreserves license: MIT in the new LICENSE file.\nUnresolved sibling references, not imported: scripts/check.sh, templates/report.md.\nFocused import is not transactional. If the second write fails, the first file stays written.',
+    eligibility: 'Source: C:\\Users\\you\\agent-kit\\skills\\review-checklist\\SKILL.md\nLocal file that parses as a Dude skill named review-checklist.',
+    confirmation: 'IMPORT SKILL dude-local-review-checklist',
+  },
+  clean: {
+    source: 'https://github.com/example-org/agent-kit/tree/main/kit', operation: 'import:directory',
+    prompt: 'Import 2 artifacts from the reviewed directory plan?',
+    targets: [
+      { target: 'agent dude-local-release-notes\nDestination: .github/agents/dude-local-release-notes.agent.md\n  and .github/agents/dude-local-release-notes.support/\n3 files: 3 new, 0 replaced', revision: T005_PLAN },
+      { target: 'skill dude-local-review-checklist\nDestination: .github/skills/dude-local-review-checklist/\n3 files: 2 new, 1 replaced\nReplaced: SKILL.md', revision: T005_PLAN },
+    ],
+    consequences: `Clean: no static or advisory warnings.\n${T005_DIRECTORY_LINES}`,
+    eligibility: 'Source: https://github.com/example-org/agent-kit/tree/main/kit\nResolved commit: bb413474e1ba9c3633aa7352d3b4572de6f15cce',
+    confirmation: 'IMPORT DIRECTORY 2 ARTIFACTS',
+  },
+  warned: {
+    source: 'C:\\Users\\you\\agent-kit\\ops', operation: 'import:directory',
+    prompt: 'Import 3 artifacts from a directory with warnings?',
+    targets: [
+      { target: 'agent dude-local-deploy-review\nDestination: .github/agents/dude-local-deploy-review.agent.md\n  and .github/agents/dude-local-deploy-review.support/\n3 files: 3 new, 0 replaced', revision: 'sha256:e5e56600754924295821559884f67a16e5afbe435a604335f46a019edc5da9be' },
+      { target: 'skill dude-local-incident-notes\nDestination: .github/skills/dude-local-incident-notes/\n2 files: 2 new, 0 replaced', revision: 'sha256:e5e56600754924295821559884f67a16e5afbe435a604335f46a019edc5da9be' },
+      { target: 'skill dude-local-log-triage\nDestination: .github/skills/dude-local-log-triage/\n3 files: 1 new, 2 replaced\nReplaced: SKILL.md, scripts/collect.sh', revision: 'sha256:e5e56600754924295821559884f67a16e5afbe435a604335f46a019edc5da9be' },
+    ],
+    consequences: `Warned: 5 flagged files and 1 unreviewed or unbatched file.\ndeploy-review/deploy-review.agent.md: static network-exfiltration, advisory prompt-injection-authority-override\ndeploy-review/support/rollback.md: static privilege-boundary-bypass\nincident-notes/SKILL.md: static credential-data-access, advisory persistence-automatic-activation\nincident-notes/templates/postmortem.md: static obfuscation-evasion\nlog-triage/scripts/collect.sh: static dynamic-unsafe-execution, static destructive-action, advisory destructive-action\nUnreviewed or unbatched files: 1\n${T005_DIRECTORY_LINES}`,
+    eligibility: 'Source: C:\\Users\\you\\agent-kit\\ops\nLocal directory.',
+    confirmation: 'IMPORT WITH WARNINGS 3 ARTIFACTS',
+  },
+});
+const T005_NO_WRITES = Object.freeze({ written: [], uncertain: [] });
+const T005_RESULTS = Object.freeze({
+  declined: { outcome: 'declined', mutation: 'none', ...T005_NO_WRITES, note: 'You declined this import. Nothing was applied.' },
+  blocked: { outcome: 'failed', mutation: 'none', ...T005_NO_WRITES,
+    note: 'The directory is Blocked, so Dude asked for no permission. legacy-sync/SKILL.md sets model, which needs focused adaptation. Use focused import in chat or prepare a clean source.' },
+  capacity: { outcome: 'unavailable', mutation: 'none', ...T005_NO_WRITES,
+    note: 'This directory contains 13 agents or skills. A Canvas permission can show at most 12, so Dude asked for no permission and changed nothing. Continue in chat.' },
+  stale: { outcome: 'stale', mutation: 'none', ...T005_NO_WRITES,
+    note: 'The destination changed after the preview, so its reviewed state no longer matches. Nothing was written. Request the import again for a fresh preview and permission.' },
+  restored: { outcome: 'failed', mutation: 'restored', ...T005_NO_WRITES,
+    note: 'apply-directory could not write .github/agents/dude-local-release-notes.support/templates/changelog.md and rolled back. Dude verified that SKILL.md has its previous contents.' },
+  partial: { outcome: 'failed', mutation: 'applied', written: ['.github/skills/dude-local-handmade/SKILL.md'], uncertain: [],
+    note: 'Wrote SKILL.md, then writing LICENSE failed (access denied). The skill is incomplete. dude-lint was not run.' },
+  uncertain: { outcome: 'uncertain', mutation: 'uncertain', written: [],
+    uncertain: ['.github/skills/dude-local-handmade/SKILL.md', '.dude/state/import-transactions/c86a70f0-b0a9-4cae-921a-8d2295d05be5'],
+    note: 'apply-directory reported recovery-failed: after a write failure it could not verify the rollback. Check the uncertain paths before another import.' },
+});
+const T005_TITLES = Object.freeze({
+  waiting_owner: 'Waiting for owner result', applied: 'Applied', declined: 'Declined', failed: 'Failed', unavailable: 'Unavailable',
+  stale: 'Stale request or result', uncertain: 'Uncertain',
+});
+const T005_CHANGES = Object.freeze({
+  none: 'No change. Dude reports that no files changed.',
+  applied: 'Applied. The files below were written and then verified.',
+  partial: 'Partial change. Dude wrote the files below before the import failed. The import is incomplete.',
+  restored: 'Restored. Dude verified that changed files were restored after a caught failure. This is not a crash-recovery guarantee.',
+  uncertain: 'Uncertain. Dude could not establish the resulting files or their restoration.',
+});
+const T005_CAVEAT = 'New agents or skills may not be available until you start a new session.';
+/** The approved verification sizes: four viewports and the plan's 200% reflow (half the CSS viewport at device scale 2). */
+const T005_VIEWPORTS = Object.freeze([
+  { name: '1440x900', width: 1440, height: 900, scale: 1 }, { name: '768x900', width: 768, height: 900, scale: 1 },
+  { name: '360x900', width: 360, height: 900, scale: 1 }, { name: '180x450', width: 180, height: 450, scale: 1 },
+  { name: '1440x900-reflow200', width: 720, height: 450, scale: 2 }, { name: '768x900-reflow200', width: 384, height: 450, scale: 2 },
+  { name: '360x900-reflow200', width: 180, height: 450, scale: 2 },
+]);
+
+/** The installed Dude owner's stand-in over this fixture's real provider and tool. */
+function importOwner(fixture) {
+  const handler = body => fixture.provider.tool.handler(body, { sessionId: fixture.session.sessionId, toolName: 'dude_needs_you',
+    toolCallId: randomUUID(), signal: new AbortController().signal });
+  const owner = {
+    latest: () => fixture.provider.read().importRequests.at(-1),
+    idle: () => fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } }),
+    /** The literal permission for this exact receipt, as dude-bundle-import publishes it. */
+    async permit(sample, record = owner.latest()) {
+      const request = {
+        owner: 'dude', requestRef: `import:${record.importReceipt}`, revision: randomUUID(), class: 'permission', scope: { kind: 'session' },
+        source: { kind: 'session', revision: record.receipt.providerGeneration }, prompt: sample.prompt,
+        whyHuman: 'Importing writes project files. Dude needs your literal permission for these exact targets.',
+        unblocks: 'Dude can apply this reviewed import and report the verified result in Settings > Packs > Add/import.', blocking: true,
+        fields: { operation: sample.operation, targets: sample.targets, consequences: sample.consequences,
+          eligibility: sample.eligibility, confirmation: sample.confirmation },
+      };
+      const result = handler({ op: 'request', request });
+      const published = await until(() => fixture.provider.read().requests.find(item => item.request.requestRef === request.requestRef
+        && item.phase === 'pending'), 'the import permission is published');
+      return { request, record: published, result };
+    },
+    /** The ordinary acknowledgment of the human response: a permission receipt, never a result. */
+    async acknowledgePermission(permission, outcome) {
+      const live = fixture.provider.read().requests.find(item => item.requestHandle === permission.record.requestHandle);
+      const result = await handler({ op: 'acknowledge', acknowledgment: {
+        receiptId: live.receipt.receiptId, owner: live.receipt.owner, requestRef: live.receipt.requestRef, scope: live.receipt.scope,
+        previousRevision: live.receipt.previousRevision, recognizes: live.receipt.recognizes, outcome,
+        note: `Owner ${outcome} this exact response after rereading.`, source: permission.request.source } });
+      assert.equal(result.resultType, 'success', result.textResultForLlm);
+    },
+    /** The owner's import_result. Written paths exist first, as a verified result requires. */
+    async result(result, record = owner.latest()) {
+      for (const file of result.written ?? []) write(fixture.root, file, `---\nname: ${path.basename(file)}\ndescription: "Imported ${file}."\n---\nImported.\n`);
+      const accepted = await handler({ op: 'acknowledge', acknowledgment: {
+        recognizes: 'import_result', receiptId: record.importReceipt, owner: 'dude', importSource: record.importSource,
+        workspaceId: record.receipt.workspaceId, sessionId: record.receipt.sessionId, providerGeneration: record.receipt.providerGeneration,
+        ...result } });
+      assert.equal(accepted.resultType, 'success', accepted.textResultForLlm);
+    },
+  };
+  return owner;
+}
+
+/** Observation and control of Add/import over the t011 page helpers. @param {Cdp} page */
+function importUi(page) {
+  const q = expression => evaluate(page, expression);
+  const ui = {
+    q,
+    /** The Packs views are tabs, or the labeled View Dropdown at 300px of width or less. @param {'installed'|'import'} value */
+    async sub(value) {
+      if (await q(`document.querySelector('[data-pack-context="installed"]').getClientRects().length > 0`)) {
+        await click(page, `document.querySelector('[data-pack-context="${value}"]')`);
+      } else {
+        await click(page, `document.querySelector('[data-pack-view] [role="combobox"]')`);
+        await click(page, `[...document.querySelectorAll('[role="option"]')].find(node => node.textContent.trim().startsWith(${JSON.stringify(value === 'import' ? 'Add/import' : 'Installed')}))`);
+      }
+      await until(() => q(`Boolean(document.querySelector(${JSON.stringify(value === 'import' ? '[data-import-panel]:not([hidden])' : '[data-pack-row]')}))`), `${value} is shown`);
+    },
+    async open() {
+      await click(page, `document.querySelector('#dude-tab-settings')`);
+      await until(() => q(`document.querySelector('[aria-label="Reload packs"]')?.getAttribute('aria-busy') === 'false'
+        && Boolean(document.querySelector('[data-settings]'))`), 'current Settings read');
+      await ui.sub('import');
+      await settleFocusPaint(page);
+    },
+    async type(text) {
+      await fill(page, `document.querySelector('[data-import-source]')`, text);
+    },
+    status: () => q(`(() => {
+      const bar = document.querySelector('[data-import-status]'), show = document.querySelector('[data-import-show-button]');
+      const sheet = Object.fromEntries([...document.querySelectorAll('[data-import-request-status] dl > div')].map(row =>
+        [row.querySelector('dt').textContent, row.querySelector('dd').innerText.replace(/\\s+/g, ' ').trim()]));
+      const paths = Object.fromEntries([...document.querySelectorAll('[data-import-request-status] dl > div')]
+        .filter(row => /^(Written files|Uncertain paths)/.test(row.querySelector('dt').textContent))
+        .map(row => [row.querySelector('dt').textContent, [...row.querySelectorAll('li code')].map(code => code.textContent)]));
+      return { phase: bar?.getAttribute('data-import-phase') ?? null, title: bar?.querySelector('.fui-MessageBarTitle')?.textContent ?? null,
+        text: bar?.querySelector('[role="status"]')?.innerText.replace(/\\s+/g, ' ').trim() ?? null, focused: Boolean(bar) && document.activeElement === bar,
+        sheet, paths, permission: document.querySelector('[data-import-permission]')?.getAttribute('data-import-permission') ?? null,
+        request: { disabled: document.querySelector('[data-import-request]').disabled, note: document.querySelector('[data-import-note]').textContent },
+        show: show ? { disabled: show.disabled, note: document.querySelector('[data-import-show-note]')?.textContent } : null,
+        source: document.querySelector('[data-import-source]')?.value ?? null };
+    })()`),
+    phase: (name, label = `import phase ${name}`) => until(() => q(`document.querySelector('[data-import-status]')?.getAttribute('data-import-phase') === ${JSON.stringify(name)}`), label),
+    list: () => q(`({ context: document.querySelector('[data-pack-context][aria-selected="true"]')?.getAttribute('data-pack-context'),
+      filter: document.querySelector('[data-pack-toolbar] [role="combobox"]')?.textContent.trim(), page: document.querySelector('[data-pack-page]')?.textContent,
+      selected: [...document.querySelectorAll('[data-pack-row][aria-selected="true"]')].map(node => node.getAttribute('data-pack-row')),
+      detail: document.querySelector('[data-pack-detail]')?.getAttribute('data-pack-detail') || null, open: Boolean(document.querySelector('[data-pack-detail]')?.open),
+      keys: [...document.querySelectorAll('[data-pack-row]')].map(node => node.getAttribute('data-pack-row')) })`),
+  };
+  return ui;
+}
+
+/** One request through the permission and the owner's reading, as a person takes it. @param {Cdp} page */
+async function t005Consent(page, owner, ui, sample, record, { keyboard = false, decline = false, steps = [] } = {}) {
+  const permission = await owner.permit(sample, record);
+  await ui.phase('waiting_permission');
+  await click(page, `document.querySelector('[data-import-permission]')`);
+  steps.push({ input: 'pointer', target: 'Open Needs you' });
+  await visible(page, sample.prompt);
+  if (decline) {
+    await click(page, button('Decline'));
+    await fill(page, field('Reason for declining'), 'Leave this unchanged.');
+    await click(page, button('Send decline'));
+    steps.push({ input: 'pointer', target: 'Decline, reason, Send decline' });
+  } else {
+    await fill(page, field('Enter the exact confirmation'), sample.confirmation);
+    if (keyboard) {
+      await evaluate(page, `${field('I grant permission for this operation on these exact targets.')}.focus()`);
+      await press(page, ' ', 'Space');
+      await evaluate(page, `${button('Send permission')}.focus()`);
+      await press(page, 'Enter');
+      steps.push({ input: 'keyboard', target: 'confirmation, consent checkbox, Send permission', keys: ['Space', 'Enter'] });
+    } else {
+      await click(page, field('I grant permission for this operation on these exact targets.'));
+      await click(page, button('Send permission'));
+      steps.push({ input: 'pointer', target: 'consent checkbox, Send permission' });
+    }
+  }
+  const answer = JSON.parse((await permission.result).textResultForLlm);
+  assert.equal(answer.status, 'awaiting_acknowledgment');
+  assert.equal(answer.acceptedAnswer, false, 'the permission response still needs owner recognition');
+  assert.equal(answer.response.action, decline ? 'decline' : 'consent');
+  if (!decline) {
+    assert.deepEqual(answer.response.targets, sample.targets, 'consent names the complete targets exactly');
+    assert.equal(answer.response.confirmation, sample.confirmation);
+  }
+  // The owner's ordinary acknowledgment of the response says "applied": that is the permission, never the import.
+  await owner.acknowledgePermission(permission, decline ? 'declined' : 'applied');
+  await until(() => evaluate(page, `document.querySelector('#dude-panel-needs [aria-label="Response status"]')?.innerText.startsWith(${JSON.stringify(decline ? 'Decline' : 'Permission acknowledged')})`),
+    'the permission acknowledgment');
+  return { permission, answer };
+}
+
+/** One import workspace: real provider, HTTP route, bundle, and a disposable project with hand-made rows. */
+async function withImportJourney(context, slug, options, run) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-t005-'));
+  const root = path.join(directory, 'workspace');
+  const output = evidence(context, `t005-${slug}`);
+  const board = installEmptyBoard();
+  let fixture, driver;
+  const network = [], foreign = [], errors = [];
+  try {
+    write(root, '.dude/metadata/profile.md', '# Install Profile\n\n```json\n{"installed":{}}\n```\n');
+    write(root, '.github/agents/dude-local-alpha.agent.md', '---\nname: dude-local-alpha\ndescription: "The alpha agent."\n---\n# alpha\n');
+    write(root, '.github/agents/dude-local-alpha.support/templates/changelog.md', 'Companion.\n');
+    writeProjectSkills(root, ['dude-local-handmade', 'dude-local-log-triage', ...(options.fill ?? [])]);
+    createIdea(root, 1, 'retained-work', 'defined');
+    fixture = { ...(await createFixture(root)), directory };
+    driver = await startBrowser(1, true);
+    const { page } = driver;
+    page.on('Runtime.exceptionThrown', event => errors.push(event.exceptionDetails));
+    page.on('Network.requestWillBeSent', event => {
+      if (event.request.url.startsWith(fixture.instance.url)) network.push({ method: event.request.method, path: new URL(event.request.url).pathname,
+        ...(event.request.postData ? { body: JSON.parse(event.request.postData) } : {}) });
+      else if (/^https?:/.test(event.request.url)) foreign.push(event.request.url);
+    });
+    // A pack read can be held after the server answers, so a case can observe Reading Installed.
+    await page.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+      const original = window.fetch;
+      window.t005 = { hold: false, held: [] };
+      window.fetch = async (...args) => {
+        const response = await original(...args);
+        if (new URL(args[0], location.href).pathname === '/api/packs') {
+          const read = response.json.bind(response);
+          response.json = async () => { const value = await read(); if (window.t005.hold) await new Promise(resolve => window.t005.held.push(resolve)); return value; };
+        }
+        return response;
+      };
+    })()` });
+    await navigate(page, fixture);
+    await run({ fixture, page, output, network, foreign, owner: importOwner(fixture), ui: importUi(page) });
+    assert.deepEqual(errors, []);
+    assert.deepEqual(foreign, [], 'no source or network request leaves the Canvas origin');
+    output.results.push({ case: slug, browser: driver.version.Browser, node: process.version, requests: network, sends: fixture.sends,
+      limits: 'Real product/provider/HTTP with a disposable project and SDK-session/owner stand-ins. No importer, model, embedded host, or native zoom claim.' });
+  } catch (error) {
+    if (driver) {
+      const image = await driver.page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+      fs.writeFileSync(path.join(output.directory, 'failure.png'), Buffer.from(image.data, 'base64'));
+      writeEvidenceJson(output, 'failure', { message: error.message, network, errors, feed: fixture?.provider.read(),
+        dom: await evaluate(driver.page, `document.body.innerText`) });
+    }
+    throw error;
+  } finally {
+    await runCleanupSteps(
+      async () => { if (driver) { await driver.page.send('Fetch.disable').catch(() => {}); await cleanupBrowserDriver(driver); } },
+      async () => { if (fixture) await fixture.close({ removeRoot: false }); },
+      () => board.close(),
+      () => fs.rmSync(directory, { recursive: true, force: true }),
+    );
+  }
+}
+
+test('073 Add/import: the complete permission, result, return, and Show in Installed script at every size and theme', {
+  timeout: 1_500_000,
+  concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  const draft = 'An idea draft that stays through every size and theme.';
+  const fill30 = Array.from({ length: 30 }, (_unused, index) => `dude-local-fill-${String(index + 1).padStart(2, '0')}`);
+  await withImportJourney(context, 'journey', { fill: fill30 }, async ({ fixture, page, output, owner, ui }) => {
+    const applied = { outcome: 'applied', mutation: 'applied', written: ['.github/skills/dude-local-handmade/SKILL.md'], uncertain: [],
+      note: 'Wrote SKILL.md and verified it. dude-lint passed.' };
+    const samples = [T005_SAMPLES.focused, T005_SAMPLES.clean, T005_SAMPLES.warned];
+    await click(page, button('New idea'));
+    await fill(page, field('Your idea'), draft);
+    const journeys = [];
+    let index = 0;
+    for (const theme of /** @type {const} */ (['light', 'dark'])) {
+      for (const size of T005_VIEWPORTS) {
+        const sample = samples[index % samples.length], keyboard = index % 2 === 1, label = `${size.name}-${theme}`, steps = [];
+        index += 1;
+        await viewport(page, size.width, theme, size.height, size.scale);
+        await ui.open();
+        steps.push({ input: 'pointer', target: 'Settings, then Add/import' });
+        await audit(page, output, `import-idle-${label}`);
+
+        await ui.type(sample.source);
+        await press(page, 'Enter');
+        steps.push({ input: 'keyboard', target: 'Source field', typed: sample.source, keys: ['Enter'] });
+        await ui.phase('delivered');
+        const record = fixture.provider.read().importRequests.at(-1);
+        assert.deepEqual(fixture.sends.length, journeys.length + 1, `${label}: one send, nothing replayed`);
+        const permission = await owner.permit(sample, record);
+        await ui.phase('waiting_permission');
+        assert.equal((await ui.status()).focused, true, `${label}: focus is on the request status`);
+        await audit(page, output, `import-waiting-permission-${label}`);
+
+        await click(page, `document.querySelector('[data-import-permission]')`);
+        steps.push({ input: 'pointer', target: 'Open Needs you' });
+        await visible(page, sample.prompt);
+        for (const part of [sample.operation, ...sample.targets.flatMap(entry => [...entry.target.split('\n'), `Revision: ${entry.revision}`]),
+          ...sample.consequences.split('\n'), ...sample.eligibility.split('\n'), 'Required literal confirmation', sample.confirmation]) {
+          assert.equal(await evaluate(page, `document.querySelector('#dude-panel-needs').innerText.includes(${JSON.stringify(part)})`), true,
+            `${label}: Needs you shows ${JSON.stringify(part)} without truncation`);
+        }
+        assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('#dude-panel-needs button')].filter(node => node.getClientRects().length).map(node => node.innerText.trim()).slice(-2)`),
+          ['Send permission', 'Decline']);
+        assert.equal(await evaluate(page, `Boolean(document.querySelector('#dude-panel-needs section[aria-label="Deferral"]'))`), false, 'a bound import offers no Defer or Save as idea');
+        await audit(page, output, `import-needs-you-${label}`);
+
+        // Consent from the keyboard on odd runs and by pointer on even runs; the response is the same.
+        await evaluate(page, `${field('Enter the exact confirmation')}.focus()`);
+        await page.send('Input.insertText', { text: sample.confirmation });
+        if (keyboard) {
+          await evaluate(page, `${field('I grant permission for this operation on these exact targets.')}.focus()`);
+          await press(page, ' ', 'Space');
+          await evaluate(page, `${button('Send permission')}.focus()`);
+          await press(page, 'Enter');
+          steps.push({ input: 'keyboard', target: 'confirmation, consent checkbox, Send permission', keys: ['Space', 'Enter'] });
+        } else {
+          await click(page, field('I grant permission for this operation on these exact targets.'));
+          await click(page, button('Send permission'));
+          steps.push({ input: 'pointer', target: 'consent checkbox, Send permission' });
+        }
+        const answer = JSON.parse((await permission.result).textResultForLlm);
+        assert.deepEqual([answer.status, answer.response.action, answer.response.confirmation], ['awaiting_acknowledgment', 'consent', sample.confirmation]);
+        assert.deepEqual(answer.response.targets, sample.targets, `${label}: consent names the complete targets exactly`);
+        await owner.acknowledgePermission(permission, 'applied');
+        await until(() => evaluate(page, `document.querySelector('#dude-panel-needs [aria-label="Response status"]')?.innerText.startsWith('Permission acknowledged')`), `${label}: the permission acknowledgment`);
+        await audit(page, output, `import-permission-acknowledged-${label}`);
+
+        await click(page, button('Back to Add/import'));
+        steps.push({ input: 'pointer', target: 'Back to Add/import' });
+        await ui.phase('waiting_owner');
+        let status = await ui.status();
+        assert.deepEqual([status.focused, status.show, status.source], [true, null, sample.source], `${label}: focus, no Show yet, and the Source`);
+
+        await owner.result(applied, record);
+        owner.idle();
+        await ui.phase('applied');
+        await until(async () => (await ui.status()).show?.disabled === false, `${label}: Show in Installed is offered`);
+        status = await ui.status();
+        assert.equal(status.title, 'Applied');
+        assert.equal(status.sheet['Requested source'], sample.source);
+        assert.equal(status.sheet['File changes'], T005_CHANGES.applied);
+        assert.deepEqual(status.paths['Written files (1)'], applied.written);
+        assert.equal(status.text.includes(T005_CAVEAT), true, 'an applied result carries the new-session caveat');
+        await audit(page, output, `import-applied-${label}`);
+
+        await click(page, `document.querySelector('[data-import-show-button]')`);
+        steps.push({ input: 'pointer', target: 'Show in Installed' });
+        const list = await ui.list();
+        assert.deepEqual([list.context, list.filter, list.page, list.selected, list.detail, list.open],
+          ['installed', 'All use cases', 'Page 2 of 2', ['project:skill:dude-local-handmade'], 'project:skill:dude-local-handmade', true], `${label}: Show in Installed`);
+        assert.equal(await evaluate(page, `document.activeElement === document.querySelector('[aria-label="Close project details"]')`), true, `${label}: details Close has focus`);
+        await audit(page, output, `import-show-installed-${label}`);
+        await press(page, 'Escape');
+        steps.push({ input: 'keyboard', target: 'details', keys: ['Escape'] });
+        assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-pack-row')`), 'project:skill:dude-local-handmade');
+        journeys.push({ label, size, theme, operation: sample.operation, keyboard, steps });
+      }
+    }
+    // The idea draft was typed once; every request, return, and result kept it.
+    await click(page, button('New idea'));
+    assert.equal(await evaluate(page, `${field('Your idea')}.value`), draft, 'the New idea draft survived every journey');
+    output.results.push({ case: 'import-journey', journeys });
+  });
+});
+
+test('073 Add/import: non-Applied results with matching existing rows offer no Show, and Show names its disabled reasons', {
+  timeout: 600_000,
+  concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  await withImportJourney(context, 'results', {}, async ({ fixture, page, output, owner, ui }) => {
+    await ui.open();
+    const cases = [
+      ['declined', T005_RESULTS.declined, 'declined', 'none', 'focused', 'decline'],
+      ['blocked', T005_RESULTS.blocked, 'failed', 'none', 'clean', null],
+      ['capacity', T005_RESULTS.capacity, 'unavailable', 'none', 'clean', null],
+      ['stale', T005_RESULTS.stale, 'stale', 'none', 'focused', 'consent'],
+      ['restored', T005_RESULTS.restored, 'failed', 'restored', 'clean', 'consent'],
+      // These two name .github/skills/dude-local-handmade, which Installed already lists.
+      ['partial', T005_RESULTS.partial, 'failed', 'partial', 'focused', 'consent'],
+      ['uncertain', T005_RESULTS.uncertain, 'uncertain', 'uncertain', 'warned', 'consent'],
+    ];
+    for (const [name, result, phase, change, sampleName, response] of cases) {
+      const sample = T005_SAMPLES[sampleName];
+      await ui.type(sample.source);
+      await click(page, `document.querySelector('[data-import-request]')`);
+      await ui.phase('delivered');
+      const record = fixture.provider.read().importRequests.at(-1);
+      if (response) {
+        await t005Consent(page, owner, ui, sample, record, { decline: response === 'decline' });
+        await click(page, button('Back to Add/import'));
+      }
+      await owner.result(result, record);
+      owner.idle();
+      await ui.phase(phase);
+      const status = await ui.status();
+      assert.equal(status.title, T005_TITLES[phase], name);
+      assert.equal(status.sheet['Requested source'], sample.source, `${name}: the submitted Source`);
+      assert.equal(status.sheet["Dude's note"], result.note, name);
+      assert.equal(status.sheet['File changes'], T005_CHANGES[change], name);
+      assert.deepEqual(status.paths[`Written files (${result.written.length})`] ?? [], result.written, name);
+      assert.deepEqual(status.paths[`Uncertain paths (${result.uncertain.length})`] ?? [], result.uncertain, name);
+      assert.equal(status.text.includes(T005_CAVEAT), false, `${name}: only an applied result carries the caveat`);
+      assert.equal(status.show, null, `${name}: only Applied offers Show in Installed, even where a matching row exists`);
+      assert.deepEqual([status.request.disabled, status.permission], [false, null], `${name}: the reconciled result releases Request import`);
+      await audit(page, output, `import-result-${name}`);
+    }
+    assert.deepEqual(await ui.list().then(list => [list.selected, list.detail]), [[], null], 'no result selected or opened a row');
+
+    // Reading Installed: a later read is held, so Show waits and says why.
+    const applied = { outcome: 'applied', mutation: 'applied', written: ['.github/skills/dude-local-handmade/SKILL.md'], uncertain: [], note: 'Wrote SKILL.md and verified it.' };
+    const request = async (sample, written) => {
+      await ui.type(sample.source);
+      await click(page, `document.querySelector('[data-import-request]')`);
+      await ui.phase('delivered');
+      const record = fixture.provider.read().importRequests.at(-1);
+      await t005Consent(page, owner, ui, sample, record);
+      await click(page, button('Back to Add/import'));
+      await owner.result({ ...applied, written }, record);
+      owner.idle();
+      await ui.phase('applied');
+    };
+    await request(T005_SAMPLES.focused, applied.written);
+    await until(async () => (await ui.status()).show?.disabled === false, 'Show in Installed is offered');
+    await evaluate(page, `window.t005.hold = true`);
+    await evaluate(page, `window.dispatchEvent(new Event('focus'))`);
+    await until(() => evaluate(page, `window.t005.held.length >= 1`), 'the focus read is held');
+    assert.deepEqual((await ui.status()).show, { disabled: true, note: 'Reading Installed...' });
+    await audit(page, output, 'import-show-reading');
+    await evaluate(page, `window.t005.hold = false; window.t005.held.splice(0).forEach(resolve => resolve())`);
+    await until(async () => (await ui.status()).show?.disabled === false, 'Show is offered once Installed is read');
+
+    // Not in Installed now: a companion folder has no agent entrypoint, so no current row exists.
+    await request(T005_SAMPLES.clean, ['.github/agents/dude-local-ghost.support/LICENSE']);
+    await until(async () => (await ui.status()).show?.note === 'Not in Installed now', 'Not in Installed now');
+    assert.equal((await ui.status()).show.disabled, true);
+    await audit(page, output, 'import-show-not-in-installed');
+    assert.equal((await ui.list()).detail, null, 'no row is constructed from a result path');
+  });
+
+  // Project agents and skills could not be read: 257 is one over the limit, so no project list exists.
+  await withImportJourney(context, 'unreadable', { fill: Array.from({ length: 255 }, (_unused, index) => `dude-local-fill-${String(index + 1).padStart(3, '0')}`) },
+    async ({ fixture, page, output, owner, ui }) => {
+      await ui.open();
+      await ui.type(T005_SAMPLES.focused.source);
+      await click(page, `document.querySelector('[data-import-request]')`);
+      await ui.phase('delivered');
+      const record = fixture.provider.read().importRequests.at(-1);
+      await t005Consent(page, owner, ui, T005_SAMPLES.focused, record);
+      await click(page, button('Back to Add/import'));
+      await owner.result({ outcome: 'applied', mutation: 'applied', written: ['.github/skills/dude-local-fill-001/SKILL.md'], uncertain: [], note: 'Wrote SKILL.md and verified it.' }, record);
+      owner.idle();
+      await ui.phase('applied');
+      await until(async () => (await ui.status()).show?.note === 'Project agents and skills could not be read', 'the unreadable-project reason');
+      assert.equal((await ui.status()).show.disabled, true);
+      await audit(page, output, 'import-show-unreadable');
+    });
+});
+
+test('073 Add/import: with the production provider an open import excludes every other send, the idea draft and Settings return survive it, and a refresh keeps the Show in Installed selection', {
+  timeout: 600_000,
+  concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  const draft = 'An idea draft that stays through the open import, its return, and every refresh.';
+  const fill30 = Array.from({ length: 30 }, (_unused, index) => `dude-local-fill-${String(index + 1).padStart(2, '0')}`);
+  await withImportJourney(context, 'exclusion', { fill: fill30 }, async ({ fixture, page, output, network, owner, ui }) => {
+    const sample = T005_SAMPLES.focused;
+    const key = 'project:skill:dude-local-handmade';
+    /** A same-origin POST from the page, so the route's Origin and fetch-metadata guards see a real tab. */
+    const post = (route, body) => evaluate(page, `fetch(${JSON.stringify(route)}, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: ${JSON.stringify(JSON.stringify(body))} })
+      .then(async response => ({ status: response.status, body: await response.json() }))`);
+    const packReads = () => network.filter(item => item.method === 'GET' && item.path === '/api/packs').length;
+    const reading = () => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')?.getAttribute('aria-busy') === 'true'`);
+    await click(page, button('New idea'));
+    await fill(page, field('Your idea'), draft);
+    await ui.open();
+    await ui.type(sample.source);
+    await click(page, `document.querySelector('[data-import-request]')`);
+    await ui.phase('delivered');
+    const record = fixture.provider.read().importRequests.at(-1);
+    const permission = await owner.permit(sample, record);
+    await ui.phase('waiting_permission');
+
+    // The provider itself refuses every other send while this import is unreconciled, not only the UI's copy.
+    const refusals = {
+      import: await post('/api/imports/request', { op: 'prepare', importSource: T005_SAMPLES.clean.source }),
+      pack: await post('/api/packs/request', { op: 'prepare', operation: 'install', name: 'alpha' }),
+      capture: await post('/api/needs-you/capture-receipt', { requestHandle: null }),
+    };
+    for (const [kind, refusal] of Object.entries(refusals)) {
+      assert.deepEqual([kind, refusal.status, refusal.body.error], [kind, 409, 'import_unreconciled']);
+    }
+    assert.equal(fixture.sends.length, 1, 'no second request was sent');
+    assert.deepEqual((await ui.status()).request,
+      { disabled: true, note: 'This import request is waiting for your permission response in Needs you.' });
+    // New idea keeps its draft, stays editable, and names the same reason for its two disabled sends.
+    await click(page, button('New idea'));
+    assert.equal(await evaluate(page, `${field('Your idea')}.value`), draft, 'the draft survives the open import');
+    assert.deepEqual(await evaluate(page, `({ submit: ${button('Submit')}.disabled, save: ${button('Save')}.disabled,
+      editable: !${field('Your idea')}.disabled, described: ${button('Save')}.getAttribute('aria-describedby') !== null,
+      reason: document.body.innerText.includes('An artifact import is in progress or needs owner reconciliation. Your idea draft stays here.') })`),
+    { submit: true, save: true, editable: true, described: true, reason: true });
+    // Settings returns with the request kept and the typed Source cleared.
+    await ui.open();
+    assert.deepEqual([(await ui.status()).phase, (await ui.status()).source], ['waiting_permission', '']);
+
+    // Consent in Needs you and return to Add/import, as a person does.
+    await click(page, `document.querySelector('[data-import-permission]')`);
+    await visible(page, sample.prompt);
+    await fill(page, field('Enter the exact confirmation'), sample.confirmation);
+    await click(page, field('I grant permission for this operation on these exact targets.'));
+    await click(page, button('Send permission'));
+    assert.equal(JSON.parse((await permission.result).textResultForLlm).status, 'awaiting_acknowledgment');
+    await owner.acknowledgePermission(permission, 'applied');
+    await until(() => evaluate(page, `document.querySelector('#dude-panel-needs [aria-label="Response status"]')?.innerText.startsWith('Permission acknowledged')`),
+      'the permission acknowledgment');
+    await click(page, button('Back to Add/import'));
+    await ui.phase('waiting_owner');
+    assert.equal((await ui.status()).focused, true, 'the return lands on the request status');
+    await owner.result({ outcome: 'applied', mutation: 'applied', written: ['.github/skills/dude-local-handmade/SKILL.md'], uncertain: [],
+      note: 'Wrote SKILL.md and verified it. dude-lint passed.' }, record);
+    owner.idle();
+    await ui.phase('applied');
+    await until(async () => (await ui.status()).show?.disabled === false, 'Show in Installed is offered without Reload');
+    await click(page, `document.querySelector('[data-import-show-button]')`);
+    const shown = await ui.list();
+    assert.deepEqual([shown.context, shown.page, shown.selected, shown.detail, shown.open], ['installed', 'Page 2 of 2', [key], key, true]);
+    assert.equal(await evaluate(page, `document.activeElement === document.querySelector('[aria-label="Close project details"]')`), true,
+      'details Close has focus');
+
+    // A refresh keeps the surviving selection: the window-focus read, then an explicit Reload.
+    for (const [label, refresh] of [
+      ['window focus', () => evaluate(page, `window.dispatchEvent(new Event('focus'))`)],
+      ['Reload packs', () => click(page, `document.querySelector('[aria-label="Reload packs"]')`)],
+    ]) {
+      const reads = packReads();
+      await refresh();
+      await until(async () => packReads() > reads && !(await reading()), `${label} pack read`);
+      const after = await ui.list();
+      assert.deepEqual([after.context, after.page, after.selected, after.detail, after.open], [shown.context, shown.page, shown.selected, shown.detail, true],
+        `${label} keeps the surviving selection, its page, and its details`);
+    }
+    // The Reload click took focus, so close the details from their own control.
+    await click(page, `document.querySelector('[aria-label="Close project details"]')`);
+    assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-pack-row')`), key, 'closing the details returns to the row');
+    await click(page, button('New idea'));
+    assert.equal(await evaluate(page, `${field('Your idea')}.value`), draft, 'the draft survived the whole journey');
+    output.results.push({ case: 'exclusion-return-refresh', refusals, key, draftSha256: hash(draft) });
+  });
 });

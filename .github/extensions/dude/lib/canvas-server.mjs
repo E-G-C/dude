@@ -30,7 +30,8 @@ import {
 } from './projection.mjs';
 import { NEEDS_YOU_LIMITS, NeedsYouError } from './needs-you.mjs';
 import { REVIEW_LIMITS, ReviewError } from './review.mjs';
-import { readPacks } from './packs.mjs';
+import { addPackSource, readPacks, removePackSource } from './packs.mjs';
+import { readProjectArtifacts } from './project-artifacts.mjs';
 import { readInstallationRecord } from './about.mjs';
 
 const UI_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
@@ -73,11 +74,74 @@ const ASSET_MIME_TYPES = Object.freeze({
 /** The viewport report is a few numbers; anything larger is not ours. */
 const MAX_BODY_BYTES = 4 * 1024;
 
+/**
+ * Exact POST routes that forward one closed prepare/submit body to the joined
+ * provider. The provider alone allocates receipts, sends once and judges results.
+ */
+const PROVIDER_REQUEST_ROUTES = Object.freeze({
+  '/api/packs/request': 'requestPack',
+  '/api/imports/request': 'requestImport',
+});
+
 /** One fixed body for an About read without a live bound workspace. */
 const ABOUT_UNAVAILABLE = Object.freeze({
   error: 'about_unavailable',
   message: 'This Canvas has no current workspace.',
 });
+
+/**
+ * The two exact reads of the pack projection. Both return installed packs, the
+ * source rows and the separate project rows. Only the second acquires catalogs:
+ * the default plus each saved source, once. Browsing, filtering, events and
+ * every other automatic read use the first, so nothing is fetched by accident.
+ */
+const PACKS_ROUTE = '/api/packs';
+const PACKS_DISCOVERY_URL = '/api/packs?discover=1';
+/** The one direct configuration write: add or remove a saved pack source. */
+const SOURCES_ROUTE = '/api/packs/sources';
+const SOURCE_REVISION_RE = /^(?:absent|sha256:[0-9a-f]{64})$/;
+
+/**
+ * How each refusal of a source write is reported. The input itself is refused
+ * (422), the saved configuration is not what the request assumed or cannot be
+ * trusted (409), or the read could not finish (5xx). Nothing is saved on any of
+ * them, and none is a generic failure.
+ */
+const SOURCE_REFUSAL_STATUS = Object.freeze({
+  invalid_location: 422, credentials: 422, invalid_ref: 422, ref_not_applicable: 422, local_missing: 422,
+  local_layout: 422, bare_packs_folder: 422, own_library: 422, missing_catalog: 422, bad_metadata: 422,
+  unreachable: 422, unknown_source: 422, builtin_source: 422,
+  duplicate: 409, limit: 409, sources_changed: 409, sources_unavailable: 409, source_in_use: 409,
+  authority_unavailable: 409, workspace_changed: 409,
+  timeout: 504, cleanup_unconfirmed: 503, unavailable: 503, write_failed: 500,
+});
+
+/**
+ * The closed bodies of the sources route. Every other field, including a root,
+ * path, source identity, command, flag or credential, is refused as input.
+ * Strings are only bounded here for transport; the shared checks judge them.
+ * @param {unknown} value
+ * @returns {{ op: 'add', location: string, ref: string | null, sourcesRevision: string }
+ *   | { op: 'remove', key: string, sourcesRevision: string }}
+ */
+function parseSourceBody(value) {
+  const invalid = () => new NeedsYouError('invalid_input', 400);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid();
+  const body = /** @type {Record<string, unknown>} */ (value);
+  const allowed = body.op === 'add' ? ['op', 'location', 'ref', 'sourcesRevision']
+    : body.op === 'remove' ? ['op', 'key', 'sourcesRevision'] : null;
+  const required = body.op === 'add' ? ['op', 'location', 'sourcesRevision'] : ['op', 'key', 'sourcesRevision'];
+  if (!allowed || Object.keys(body).some(key => !allowed.includes(key)) || !required.every(key => Object.hasOwn(body, key))
+    || typeof body.sourcesRevision !== 'string' || !SOURCE_REVISION_RE.test(body.sourcesRevision)) throw invalid();
+  if (body.op === 'remove') {
+    if (typeof body.key !== 'string' || !/^src_[0-9a-f]{32}$/.test(body.key)) throw invalid();
+    return { op: 'remove', key: body.key, sourcesRevision: body.sourcesRevision };
+  }
+  if (typeof body.location !== 'string' || Buffer.byteLength(body.location) > 4_096
+    || (Object.hasOwn(body, 'ref') && (typeof body.ref !== 'string' || Buffer.byteLength(body.ref) > 256))) throw invalid();
+  return { op: 'add', location: body.location, ref: typeof body.ref === 'string' ? body.ref : null,
+    sourcesRevision: body.sourcesRevision };
+}
 
 /**
  * @typedef {object} CanvasInstance
@@ -92,8 +156,10 @@ const ABOUT_UNAVAILABLE = Object.freeze({
  * @property {AbortSignal} signal
  * @property {ReturnType<import('./needs-you.mjs').createNeedsYou>|null} needsYou
  * @property {(()=>void)|null} unsubscribeNeedsYou
- * @property {{root:string,controller:AbortController,readers:number,promise:ReturnType<typeof readPacks>}|null} packRead
+ * @property {PackReadSlot|null} packRead The coalesced automatic read: installed packs, sources and project rows.
+ * @property {PackReadSlot|null} catalogRead The coalesced explicit discovery, which also acquires catalogs.
  */
+/** @typedef {{root:string,controller:AbortController,readers:number,promise:Promise<Awaited<ReturnType<typeof readPacks>> & {project: Awaited<ReturnType<typeof readProjectArtifacts>>}>}} PackReadSlot */
 
 /**
  * Open instances keyed by host `instanceId`. Each entry owns its in-flight
@@ -174,6 +240,62 @@ async function readRefreshTarget(req) {
     throw new Error('refresh body is not allowlisted');
   }
   return 'target' in body && typeof body.target === 'string' ? body.target : undefined;
+}
+
+/**
+ * The project agents and skills are a projection beside the pack read, not part
+ * of it. A failed scan is its own coverage and never discards the packs; only
+ * cancellation, which ends the whole coalesced read, propagates.
+ * @param {CanvasInstance} instance
+ * @param {string} root
+ * @param {AbortSignal} signal
+ * @returns {Promise<Awaited<ReturnType<typeof readProjectArtifacts>>>}
+ */
+async function readProject(instance, root, signal) {
+  try {
+    return await readProjectArtifacts(root, signal);
+  } catch (error) {
+    signal.throwIfAborted();
+    // Filesystem outcomes are already coverage; only a defect reaches this point.
+    await instance.log(`Dude canvas ${instance.instanceId}: the project agent and skill read failed (${error instanceof Error ? error.name : 'unknown'}).`);
+    return {
+      coverage: { state: /** @type {const} */ ('unavailable'), reason: 'project_unavailable',
+        message: 'The project agent and skill read failed. Reload to try again.' },
+      items: null,
+    };
+  }
+}
+
+/**
+ * The one coalesced Installed read: the pack authority plus the separate
+ * project projection, under one signal. The project scan starts no process and
+ * runs beside the pack read. An automatic read acquires no catalog; an explicit
+ * discovery acquires the default plus each saved source, once.
+ *
+ * This settles only once both children have settled. A cancelled pack read still
+ * owns its reader process tree and temporary root until its bounded stop
+ * finishes, and close and replacement reads wait on this promise for that,
+ * however quickly the scan noticed the cancellation.
+ *
+ * A pack read failure of any kind rejects with that same failure. It discards
+ * the whole result, so it also aborts the sibling scan: the scan stops at its
+ * next cancellation check instead of running on while the failure waits for it.
+ * @param {CanvasInstance} instance
+ * @param {string} root
+ * @param {AbortSignal} signal
+ * @param {boolean} discover
+ */
+async function readInstalledSurface(instance, root, signal, discover) {
+  const stopScan = new AbortController();
+  const packRead = readPacks(root, signal, discover ? { discover: true } : { catalog: false, sources: true });
+  void packRead.catch(() => stopScan.abort());
+  const [packs, project] = await Promise.allSettled([
+    packRead,
+    readProject(instance, root, AbortSignal.any([signal, stopScan.signal])),
+  ]);
+  if (packs.status === 'rejected') throw packs.reason;
+  if (project.status === 'rejected') throw project.reason;
+  return { ...packs.value, project: project.value };
 }
 
 /**
@@ -298,7 +420,7 @@ async function handleRequest(instance, req, res) {
     return;
   }
 
-  if (pathname === '/api/packs/request' && instance.readInput && instance.needsYou) {
+  if (Object.hasOwn(PROVIDER_REQUEST_ROUTES, pathname) && instance.readInput && instance.needsYou) {
     if (req.method !== 'POST' || req.url !== pathname) {
       sendJson(res, 404, { error: 'Not found.' });
       return;
@@ -315,25 +437,78 @@ async function handleRequest(instance, req, res) {
     const body = await readJsonBody(req, NEEDS_YOU_LIMITS.bodyBytes);
     if (instance.signal.aborted || !provider.matchesRoot(instance.readInput.root)) throw new NeedsYouError('identity_mismatch');
     // Only a provider-issued prepare/submit receipt crosses this boundary.
-    // Compose previews, consent, and all pack writes remain with the owner.
-    sendJson(res, 202, await provider.requestPack(body, { signal: instance.signal }));
+    // Compose and import previews, consent, and all writes remain with the owner.
+    sendJson(res, 202, await provider[PROVIDER_REQUEST_ROUTES[pathname]](body, { signal: instance.signal }));
     return;
   }
 
-  if (req.method === 'GET' && req.url === '/api/packs' && instance.readInput) {
+  if (pathname === SOURCES_ROUTE && instance.readInput && instance.needsYou) {
+    // The one direct configuration write. It adds no Needs You class and no
+    // idle-consent gate, and it runs no import or pack: it saves or removes one
+    // validated entry of the project's sources file. Same guards as the provider
+    // routes; its refusals are all explicit and none saves anything.
+    if (req.method !== 'POST' || req.url !== pathname) {
+      sendJson(res, 404, { error: 'Not found.' });
+      return;
+    }
+    if (req.headers.origin !== new URL(instance.url).origin) {
+      sendJson(res, 403, { error: 'Same-origin action required.' });
+      return;
+    }
+    if (req.headers['content-type']?.split(';', 1)[0].trim().toLowerCase() !== 'application/json') {
+      sendJson(res, 415, { error: 'JSON action required.' });
+      return;
+    }
+    const provider = instance.needsYou;
+    const body = parseSourceBody(await readJsonBody(req, NEEDS_YOU_LIMITS.bodyBytes));
+    const root = instance.readInput.root;
+    /** Root and lifetime, checked again immediately before anything is saved. */
+    const current = () => {
+      if (instance.signal.aborted || instance.readInput?.root !== root || !provider.matchesRoot(root)) {
+        throw new NeedsYouError('identity_mismatch');
+      }
+    };
+    current();
+    // A browser that goes away stops the read, and nothing is saved after that.
+    const disconnected = new AbortController();
+    const onClose = () => disconnected.abort();
+    res.once('close', onClose);
+    try {
+      const signal = AbortSignal.any([instance.signal, disconnected.signal]);
+      const result = body.op === 'add'
+        ? await addPackSource(root, signal, body, { beforeCommit: current })
+        : await removePackSource(root, signal, body, { liveUses: key => provider.sourceUses(key), beforeCommit: current });
+      if (res.destroyed) return;
+      if (result.ok) {
+        const { ok, ...saved } = result;
+        sendJson(res, 200, saved);
+      } else {
+        const { ok, code, message, ...rest } = result;
+        sendJson(res, /** @type {Record<string, number>} */ (SOURCE_REFUSAL_STATUS)[code] ?? 409, { error: code, message, ...rest });
+      }
+    } catch (error) {
+      if (res.destroyed || disconnected.signal.aborted) return;
+      throw error;
+    } finally { res.off('close', onClose); }
+    return;
+  }
+
+  if (req.method === 'GET' && (req.url === PACKS_ROUTE || req.url === PACKS_DISCOVERY_URL) && instance.readInput) {
     if (Number(req.headers['content-length'] ?? 0) !== 0 || req.headers['transfer-encoding']) {
       sendJson(res, 400, { error: 'Pack reads do not accept a body.' });
       return;
     }
     const root = instance.readInput.root;
-    let pending = instance.packRead;
+    const discover = req.url === PACKS_DISCOVERY_URL;
+    const slot = discover ? 'catalogRead' : 'packRead';
+    let pending = instance[slot];
     // A cancelled read still owns its reader process tree and temporary root
     // until its bounded stop and removal finish. Do not let rapid abort/reload
     // cycles overlap them.
     while (pending && (pending.controller.signal.aborted || pending.root !== root)) {
       pending.controller.abort();
       await pending.promise.catch(() => null);
-      pending = instance.packRead;
+      pending = instance[slot];
     }
     if (res.destroyed) return;
     if (instance.signal.aborted) {
@@ -342,11 +517,12 @@ async function handleRequest(instance, req, res) {
     }
     if (!pending) {
       const controller = new AbortController();
-      const promise = readPacks(root, AbortSignal.any([instance.signal, controller.signal]));
+      // One pack-plus-project read per coalesced operation, not one per subscriber.
+      const promise = readInstalledSurface(instance, root, AbortSignal.any([instance.signal, controller.signal]), discover);
       pending = { root, controller, readers: 0, promise };
-      instance.packRead = pending;
+      instance[slot] = pending;
       const owned = pending;
-      const forget = () => { if (instance.packRead === owned) instance.packRead = null; };
+      const forget = () => { if (instance[slot] === owned) instance[slot] = null; };
       void promise.then(forget, forget);
     }
     // Coalesce only an in-flight read. The last disconnected reader cancels its
@@ -528,6 +704,7 @@ async function startInstance(instanceId, log, projection, readInput, signal, nee
     needsYou,
     unsubscribeNeedsYou: null,
     packRead: null,
+    catalogRead: null,
   };
 
   instance.server.on('request', (req, res) => {
@@ -542,18 +719,23 @@ async function startInstance(instanceId, log, projection, readInput, signal, nee
       return;
     }
     handleRequest(instance, req, res).catch((error) => {
+      // Failures on these routes keep the provider's explicit status and closed
+      // code, so a possible delivery is never reported as a generic no-change error.
+      // The sources route follows the same discipline without any send semantics.
+      const sourcesRoute = req.url?.startsWith(SOURCES_ROUTE) ?? false;
+      const providerRequest = sourcesRoute || Object.keys(PROVIDER_REQUEST_ROUTES).some((route) => req.url?.startsWith(route));
       if (res.headersSent) res.end();
       else if (error instanceof ReviewError && (req.url?.startsWith('/api/needs-you/review/')
         || req.url?.startsWith('/api/needs-you/respond') || req.url?.startsWith('/review-source/'))) {
         sendJson(res, error.status, { error: error.code, message: error.message });
       }
-      else if (error instanceof NeedsYouError
-        && (req.url?.startsWith('/api/needs-you') || req.url?.startsWith('/api/packs/request'))) {
+      else if (error instanceof NeedsYouError && (req.url?.startsWith('/api/needs-you') || providerRequest)) {
         sendJson(res, error.status, { error: error.code });
-      } else if (req.url?.startsWith('/api/packs/request') && error instanceof SyntaxError) {
+      } else if (providerRequest && error instanceof SyntaxError) {
         sendJson(res, 400, { error: 'invalid_input' });
-      } else if ((req.url?.startsWith('/api/needs-you') || req.url?.startsWith('/api/packs/request'))
-        && !(error instanceof SyntaxError)) {
+      } else if (sourcesRoute) {
+        sendJson(res, 503, { error: 'sources_unavailable' });
+      } else if ((req.url?.startsWith('/api/needs-you') || providerRequest) && !(error instanceof SyntaxError)) {
         sendJson(res, 503, { error: 'provider_unavailable' });
       } else sendJson(res, 400, { error: 'Request failed.' });
     });
@@ -647,6 +829,7 @@ async function stopInstance(instance) {
   instance.eventClients.clear();
   // Also await an acquisition whose last HTTP reader already disconnected.
   await instance.packRead?.promise.catch(() => null);
+  await instance.catalogRead?.promise.catch(() => null);
   if (!instance.server.listening) return;
   await new Promise((resolve) => instance.server.close(() => resolve(undefined)));
 }

@@ -2006,12 +2006,15 @@ async function cmdPacks(argv, apply) {
     return 40;
   }
   const names = installed.result.enabled_packs.slice().sort(codeUnitCompare);
-  const source = plan.source.location;
+  // Pass only the commit, never `source`: an explicit Compose source is exclusive
+  // and would skip a local catalog. Without one, Compose keeps the local target
+  // authoritative, and otherwise reads the manifest repository at this commit.
+  // The committed-boundary check above has already tied that repository to the plan.
   const ref = plan.source.resolved_commit;
   if (!apply) {
     const packs = [];
     for (const name of names) {
-      const preview = await compose.cmdPreviewRefresh({ root: ROOT, library: path.join(ROOT, 'library', 'packs'), name, source, ref });
+      const preview = await compose.cmdPreviewRefresh({ root: ROOT, library: path.join(ROOT, 'library', 'packs'), name, ref });
       if (!preview.ok) {
         const output = {
           status: 'failed',
@@ -2068,7 +2071,7 @@ async function cmdPacks(argv, apply) {
   let operationalFailure = '';
   for (let index = 0; index < names.length; index += 1) {
     const name = names[index];
-    const refreshed = await compose.cmdRefresh({ root: ROOT, library: path.join(ROOT, 'library', 'packs'), name, source, ref });
+    const refreshed = await compose.cmdRefresh({ root: ROOT, library: path.join(ROOT, 'library', 'packs'), name, ref });
     if (!refreshed.ok) {
       failed = { name, reason: refreshed.error, mutation: refreshed.mutation || 'uncertain' };
       if (failed.mutation === 'uncertain') {

@@ -39,6 +39,28 @@ function profileDocument(payload) {
   return `# Install Profile\n\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\`\n`;
 }
 
+const PACK_SOURCES_REL = '.dude/metadata/pack-sources.md';
+
+/** @param {string} json @returns {string} */
+function packSourcesDocument(json) {
+  return `# Pack Sources\n\n\`\`\`json\n${json}\n\`\`\`\n`;
+}
+
+/**
+ * A valid sources document of exactly `size` bytes: the JSON block between
+ * Markdown prose, padded with three-byte characters so its character count is
+ * lower than its byte count.
+ * @param {number} size
+ * @returns {string}
+ */
+function packSourcesDocumentOfSize(size) {
+  const head = '# Pack Sources\n\nNotes kept beside the list, \u00e9\u00e8\u00ea included.\n\n';
+  const block = '```json\n{"sources":[]}\n```\n';
+  const padding = size - Buffer.byteLength(head) - Buffer.byteLength(block) - 1;
+  assert.ok(padding >= 0, 'the size must leave room for the document');
+  return `${head}${block}\n${'\u20ac'.repeat(Math.floor(padding / 3))}${'x'.repeat(padding % 3)}`;
+}
+
 /** @returns {Record<string, unknown>} */
 function canonicalProfile() {
   const artifactPath = '.github/prompts/dude-pack-demo-review.prompt.md';
@@ -1976,6 +1998,225 @@ test('lint accepts empty and non-empty canonical profiles', () => {
     fs.rmSync(emptyRoot, { recursive: true, force: true });
     fs.rmSync(installedRoot, { recursive: true, force: true });
   }
+});
+
+test('lint ignores a missing pack sources file and says nothing about it', () => {
+  const root = rootWithManifest();
+  try {
+    assert.equal(fs.existsSync(path.join(root, PACK_SOURCES_REL)), false);
+    const result = lint(root);
+    assert.equal(result.code, 0, result.output);
+    assert.doesNotMatch(result.output, /pack.sources/i);
+    assert.match(result.output, /0 warning\(s\), 0 failure\(s\)/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lint accepts valid pack sources offline, without reaching any folder or repository', () => {
+  const entry = (n) => ({ type: 'remote', repository: `https://github.com/acme/pack-${n}`, ref: 'main' });
+  const documents = [
+    '{"sources":[]}',
+    // The plan's one-line example: neither the folder nor the repository exists anywhere.
+    '{"sources":[{"type":"remote","repository":"https://github.com/acme/dude-packs","ref":"main"},{"type":"local","location":"../team-packs"}]}',
+    // A Windows drive, a share on a reserved (never routable) address, and a folder that is not here.
+    JSON.stringify({
+      sources: [
+        { type: 'local', location: 'C:\\teams\\packs' },
+        { type: 'local', location: '\\\\192.0.2.1\\share\\packs' },
+        { type: 'local', location: '/nowhere/at/all' },
+      ],
+    }, null, 2),
+    JSON.stringify({ sources: Array.from({ length: 8 }, (_, index) => entry(index)) }, null, 2),
+  ];
+  for (const json of documents) {
+    const root = rootWithManifest();
+    try {
+      write(root, PACK_SOURCES_REL, packSourcesDocument(json));
+      // A lint that reached the share would stall far beyond this bound.
+      const result = spawnSync(process.execPath, [SCRIPT, root], { encoding: 'utf8', timeout: 20_000 });
+      assert.equal(result.error, undefined, json);
+      assert.equal(result.status, 0, `${json}\n${result.stdout}${result.stderr}`);
+      assert.match(result.stdout, /0 warning\(s\), 0 failure\(s\)/, json);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('lint rejects malformed, unknown-field, repeated, over-limit, and unsafe-entry pack sources documents', () => {
+  const remote = (n, ref = 'main') => ({ type: 'remote', repository: `https://github.com/acme/pack-${n}`, ref });
+  const entries = (...sources) => packSourcesDocument(JSON.stringify({ sources }));
+  const empty = packSourcesDocument('{"sources":[]}');
+  const cases = [
+    { name: 'no JSON block', content: '# Pack Sources\n', expected: /exactly one fenced JSON block \(found 0\)/ },
+    { name: 'two JSON blocks', content: `${empty}\n${empty}`, expected: /exactly one fenced JSON block \(found 2\)/ },
+    { name: 'malformed JSON', content: packSourcesDocument('{nope}'), expected: /malformed JSON/ },
+    { name: 'array root', content: packSourcesDocument('[]'), expected: /JSON must contain only sources/ },
+    { name: 'unknown root field', content: packSourcesDocument('{"sources":[],"version":1}'), expected: /JSON must contain only sources/ },
+    { name: 'sources that is not a list', content: packSourcesDocument('{"sources":{}}'), expected: /sources must be a list/ },
+    { name: 'entry that is not an object', content: packSourcesDocument('{"sources":["x"]}'), expected: /sources\[0\] must be an object/ },
+    { name: 'unknown entry field', content: entries({ ...remote(1), alias: 'a' }), expected: /sources\[0\] has unsupported or missing fields/ },
+    { name: 'persisted key', content: entries({ ...remote(1), key: 'src_1' }), expected: /unsupported or missing fields/ },
+    { name: 'remote entry without a ref', content: entries({ type: 'remote', repository: 'https://github.com/acme/x' }), expected: /unsupported or missing fields/ },
+    { name: 'unknown type', content: entries({ type: 'ssh', location: 'x' }), expected: /sources\[0\]\.type must be "remote" or "local"/ },
+    { name: 'credentials in a repository', content: entries({ ...remote(1), repository: 'https://user:s3cr3t@github.com/acme/x' }), expected: /sources\[0\]\.repository must be a public https:\/\/github\.com\/<owner>\/<repo> repository/ },
+    { name: 'explicit port', content: entries({ ...remote(1), repository: 'https://github.com:443/acme/x' }), expected: /sources\[0\]\.repository must be a public/ },
+    { name: 'non-canonical repository', content: entries({ ...remote(1), repository: 'https://github.com/acme/x.git' }), expected: /must be written https:\/\/github\.com\/acme\/x/ },
+    { name: 'leading-dash ref', content: entries(remote(1, '--upload-pack=x')), expected: /sources\[0\]\.ref is not a valid ref/ },
+    { name: 'ref with two periods', content: entries(remote(1, 'a..b')), expected: /not a valid ref/ },
+    { name: 'overlong ref', content: entries(remote(1, 'a'.repeat(129))), expected: /not a valid ref/ },
+    { name: 'URL as a local location', content: entries({ type: 'local', location: 'file:///tmp/x' }), expected: /sources\[0\]\.location must be one trimmed line .* not a URL/ },
+    { name: 'untrimmed local location', content: entries({ type: 'local', location: ' ../x' }), expected: /one trimmed line/ },
+    { name: 'overlong local location', content: entries({ type: 'local', location: 'x'.repeat(2049) }), expected: /one trimmed line/ },
+    { name: 'a ninth source', content: entries(...Array.from({ length: 9 }, (_, index) => remote(index))), expected: /lists 9 sources; at most 8 can be added/ },
+    { name: 'the same repository at another ref', content: entries(remote(1, 'main'), remote(1, 'v2')), expected: /sources\[1\] repeats sources\[0\]/ },
+    { name: 'the same repository in another case', content: entries(remote(1), { ...remote(1), repository: 'https://github.com/ACME/Pack-1' }), expected: /sources\[1\] repeats sources\[0\]/ },
+    { name: 'the same folder with a trailing separator', content: entries({ type: 'local', location: '../a' }, { type: 'local', location: '../a/' }), expected: /sources\[1\] repeats sources\[0\]/ },
+    { name: 'a document over its size limit', content: `${empty}${' '.repeat(65_536)}`, expected: /larger than 65536 bytes/ },
+    { name: 'invalid UTF-8', content: Buffer.concat([Buffer.from(empty), Buffer.from([0xff, 0xfe])]), expected: /not valid UTF-8/ },
+  ];
+  for (const fixture of cases) {
+    const root = rootWithManifest();
+    try {
+      write(root, PACK_SOURCES_REL, fixture.content);
+      const result = lint(root);
+      assert.equal(result.code, 1, `${fixture.name}\n${result.output}`);
+      assert.match(result.output, /\.dude\/metadata\/pack-sources\.md {2}invalid pack sources \(/, fixture.name);
+      assert.match(result.output, fixture.expected, fixture.name);
+      assert.doesNotMatch(result.output, /s3cr3t/, `${fixture.name} must not echo a credential`);
+      assert.match(result.output, /Findings: 0 warning\(s\), 1 failure\(s\)/, fixture.name);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('lint refuses a pack sources path that is not a regular file without parsing it', () => {
+  const root = rootWithManifest();
+  try {
+    fs.mkdirSync(path.join(root, PACK_SOURCES_REL));
+    write(root, `${PACK_SOURCES_REL}/inside.md`, packSourcesDocument('{"sources":[]}'));
+    const result = lint(root);
+    assert.equal(result.code, 1, result.output);
+    assert.match(result.output, /\.dude\/metadata\/pack-sources\.md {2}is not a regular file\/unsafe/);
+    assert.doesNotMatch(result.output, /invalid pack sources/);
+    assert.match(result.output, /Findings: 0 warning\(s\), 1 failure\(s\)/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lint refuses a linked pack sources file without reading its target', { skip: process.platform === 'win32' }, () => {
+  const root = rootWithManifest();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-lint-sources-link-'));
+  try {
+    const external = path.join(outside, 'pack-sources.md');
+    fs.writeFileSync(external, packSourcesDocument('{PACK_SOURCES_PARSE_SENTINEL}'));
+    fs.symlinkSync(external, path.join(root, PACK_SOURCES_REL));
+    const result = lint(root);
+    assert.equal(result.code, 1, result.output);
+    assert.match(result.output, /\.dude\/metadata\/pack-sources\.md {2}is not a regular file\/unsafe because .* is a symbolic link/);
+    assert.doesNotMatch(result.output, /PACK_SOURCES_PARSE_SENTINEL|invalid pack sources/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('lint reports an unsafe metadata ancestor once and never reads pack sources through it', () => {
+  // `.dude/metadata` also holds the profile and the manifest, whose checks already
+  // report a link above them, so the optional sources check adds no third finding
+  // for a file that may not exist. A directory junction is a link to lstat on
+  // Windows and a plain directory symlink elsewhere, so this runs on both.
+  const root = rootWithManifest();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-lint-sources-ancestor-'));
+  try {
+    write(outside, 'profile.md', '# Install Profile\n\n```json\n{PROFILE_ANCESTOR_SENTINEL}\n```\n');
+    write(outside, 'bundle-manifest.md', '# Bundle Manifest\n\n```json\n{MANIFEST_ANCESTOR_SENTINEL}\n```\n');
+    write(outside, 'pack-sources.md', packSourcesDocument('{SOURCES_ANCESTOR_SENTINEL}'));
+    fs.rmSync(path.join(root, '.dude/metadata'), { recursive: true, force: true });
+    fs.symlinkSync(outside, path.join(root, '.dude/metadata'), 'junction');
+
+    const result = lint(root);
+    assert.equal(result.code, 1, result.output);
+    assert.match(result.output, /\.dude\/metadata\/profile\.md {2}is not a regular file\/unsafe because '\.dude\/metadata' is a symbolic link/);
+    assert.match(result.output, /\.dude\/metadata\/bundle-manifest\.md {2}is not a regular file\/unsafe because '\.dude\/metadata' is a symbolic link/);
+    assert.doesNotMatch(result.output, /pack-sources|SOURCES_ANCESTOR_SENTINEL|invalid pack sources/);
+    assert.match(result.output, /Findings: 0 warning\(s\), 2 failure\(s\)/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('lint counts the whole pack sources file against its 64 KiB cap: 65,536 bytes pass and 65,537 fail', () => {
+  for (const [size, accepted] of [[65_536, true], [65_537, false]]) {
+    const root = rootWithManifest();
+    try {
+      const document = packSourcesDocumentOfSize(size);
+      assert.equal(Buffer.byteLength(document), size);
+      assert.ok(document.length < size, 'the cap counts bytes, not characters');
+      write(root, PACK_SOURCES_REL, document);
+      const before = fs.readFileSync(path.join(root, PACK_SOURCES_REL));
+
+      const result = lint(root);
+      if (accepted) {
+        assert.equal(result.code, 0, `${size}\n${result.output}`);
+        assert.match(result.output, /0 warning\(s\), 0 failure\(s\)/);
+      } else {
+        assert.equal(result.code, 1, `${size}\n${result.output}`);
+        assert.match(result.output, /\.dude\/metadata\/pack-sources\.md {2}invalid pack sources \(.*larger than 65536 bytes\)/);
+        assert.match(result.output, /Findings: 0 warning\(s\), 1 failure\(s\)/);
+      }
+      assert.deepEqual(fs.readFileSync(path.join(root, PACK_SOURCES_REL)), before, 'lint never truncates or rewrites the file');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('lint accepts a local pack source location of 2,048 UTF-8 bytes and refuses 2,049, counting bytes not characters', () => {
+  const widths = [
+    ['one-byte', 'x'.repeat(2048), 'x'.repeat(2049)],
+    ['two-byte', '\u00e9'.repeat(1024), `${'\u00e9'.repeat(1024)}x`],
+    ['three-byte', `${'\u20ac'.repeat(682)}ab`, '\u20ac'.repeat(683)],
+    ['four-byte', '\u{1F600}'.repeat(512), `${'\u{1F600}'.repeat(512)}x`],
+  ];
+  for (const [kind, atLimit, overLimit] of widths) {
+    assert.equal(Buffer.byteLength(atLimit), 2048, kind);
+    assert.equal(Buffer.byteLength(overLimit), 2049, kind);
+    for (const [location, accepted] of [[atLimit, true], [overLimit, false]]) {
+      const root = rootWithManifest();
+      try {
+        write(root, PACK_SOURCES_REL, packSourcesDocument(JSON.stringify({ sources: [{ type: 'local', location }] })));
+        const before = fs.readFileSync(path.join(root, PACK_SOURCES_REL));
+
+        const result = lint(root);
+        if (accepted) {
+          assert.equal(result.code, 0, `${kind} ${Buffer.byteLength(location)}\n${result.output}`);
+          assert.match(result.output, /0 warning\(s\), 0 failure\(s\)/);
+        } else {
+          assert.equal(result.code, 1, `${kind} ${Buffer.byteLength(location)}\n${result.output}`);
+          assert.match(result.output, /\.dude\/metadata\/pack-sources\.md {2}invalid pack sources \(pack-sources\.md sources\[0\]\.location must be one trimmed line of at most 2048 bytes/);
+          assert.match(result.output, /Findings: 0 warning\(s\), 1 failure\(s\)/);
+        }
+        assert.deepEqual(fs.readFileSync(path.join(root, PACK_SOURCES_REL)), before, `${kind}: lint never truncates or rewrites the file`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+  }
+});
+
+test('lint checks pack sources only through the shared parser, with no process or network', () => {
+  const source = fs.readFileSync(SCRIPT, 'utf8');
+  assert.match(
+    source,
+    /import \{ PACK_SOURCES_PATH, parsePackSourcesDocument \} from '\.\.\/dude-engine\/lib\/pack-sources\.mjs';/,
+  );
+  assert.match(source, /parsePackSourcesDocument\(fs\.readFileSync\(packSourcesPath\)\)/);
+  assert.doesNotMatch(source, /node:child_process|node:https?|node:net|fetch\(/);
 });
 
 test('lint accepts a missing optional task-state snapshot', () => {

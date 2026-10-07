@@ -1,4 +1,4 @@
-import { makeStyles, tabClassNames, tokens } from '@fluentui/react-components';
+import { buttonClassNames, makeStyles, messageBarClassNames, tabClassNames, tokens } from '@fluentui/react-components';
 export { mergeClasses } from '@fluentui/react-components';
 
 // The shortest vertical palette that still works: one complete 36px tool slot
@@ -146,14 +146,42 @@ export const useCanvasStyles = makeStyles({
     '@media (max-width: 1099px)': { gridTemplateColumns: 'minmax(0, 1fr)' },
   },
   packBrowser: { display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, containerType: 'inline-size' },
-  packTabs: { flexShrink: 0, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', maxWidth: '360px', minWidth: 0 },
+  // The Packs views follow one rule by the Packs column's own width, not the
+  // viewport: one row of tabs from 480px, two columns from 301px, and at 300px
+  // or less a labeled View Dropdown (packView) replaces the strip. Only one of
+  // the two is ever rendered by the browser, so neither leaves a hidden stop.
+  packStrip: { flexShrink: 0, minWidth: 0 },
+  packTabs: {
+    // Four views of 140px, as the approved Packs strip draws them.
+    display: 'grid', gridAutoFlow: 'column', gridAutoColumns: 'minmax(0, 1fr)', maxWidth: '560px', minWidth: 0,
+    '@container (max-width: 479px)': { gridAutoFlow: 'row', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', maxWidth: 'none' },
+    '@container (max-width: 300px)': { display: 'none' },
+  },
+  packView: {
+    // Its inline listbox, now three options long, reaches the toolbar and paints above it.
+    position: 'relative', zIndex: 3,
+    display: 'none', minWidth: 0, padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS} ${tokens.spacingVerticalS}`,
+    '& label': { fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200, fontWeight: tokens.fontWeightSemibold },
+    '@container (max-width: 300px)': { display: 'block' },
+  },
   packTab: {
     minWidth: 0, minHeight: '36px', padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`, justifyContent: 'center',
     '& > span': { minWidth: 0 },
     '@container (max-width: 300px)': { paddingInline: tokens.spacingHorizontalXXS, minHeight: '32px' },
   },
   packTabCount: { fontSize: tokens.fontSizeBase200, fontWeight: tokens.fontWeightRegular },
-  packPanel: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 },
+  // Whole-panel scrolling: at 300px or less the toolbar, rows, and pager scroll
+  // as one column at every height; at 301-479px they do so only below 560px of
+  // height. Otherwise only the rows scroll and the pager stays pinned below them.
+  packPanel: {
+    display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0,
+    // Add/import replaces the list panel without unmounting it.
+    '&[hidden]': { display: 'none' },
+    '@container (max-width: 300px)': { overflowY: 'auto', overscrollBehavior: 'contain' },
+    '@container (max-width: 479px)': {
+      '@media (max-height: 559px)': { overflowY: 'auto', overscrollBehavior: 'contain' },
+    },
+  },
   packToolbar: {
     // The inline Fluent listbox must paint above the sticky table header.
     position: 'relative', zIndex: 2,
@@ -161,18 +189,24 @@ export const useCanvasStyles = makeStyles({
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`,
     borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    // Use case, Source and Clear stack as one column; Clear stays at the first row's end.
     '@container (max-width: 479px)': {
+      flexDirection: 'column', alignItems: 'stretch', gap: tokens.spacingVerticalXS,
       padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
     },
   },
   packFilterField: {
-    display: 'grid', gridTemplateColumns: 'minmax(80px, 1fr) minmax(0, 280px)', alignItems: 'center',
-    columnGap: tokens.spacingHorizontalS, flex: '1 1 540px', minWidth: 0, maxWidth: '660px',
+    display: 'grid', gridTemplateColumns: 'max-content minmax(0, 1fr)', alignItems: 'center',
+    columnGap: tokens.spacingHorizontalS, flex: '1 1 300px', minWidth: 0, maxWidth: '420px',
     '& label': { padding: 0, margin: 0, fontWeight: tokens.fontWeightSemibold },
     '@container (max-width: 479px)': {
-      gridTemplateColumns: 'minmax(0, 1fr)', gap: tokens.spacingVerticalXS,
-      '& label': { minHeight: '32px', display: 'flex', alignItems: 'center', fontSize: tokens.fontSizeBase200, paddingRight: '52px' },
+      gridTemplateColumns: 'minmax(0, 1fr)', gap: tokens.spacingVerticalXS, flex: '0 0 auto', maxWidth: 'none',
+      '& label': { minHeight: '32px', display: 'flex', alignItems: 'center', fontSize: tokens.fontSizeBase200 },
     },
+  },
+  // The first filter's label leaves room for Clear, which sits at the toolbar's top corner when stacked.
+  packFilterFirst: {
+    '@container (min-width: 301px) and (max-width: 479px)': { '& label': { paddingRight: '52px' } },
   },
   packFilter: {
     minWidth: 0, width: '100%',
@@ -181,9 +215,15 @@ export const useCanvasStyles = makeStyles({
   },
   packClear: {
     flexShrink: 0, minWidth: 0,
-    '@container (max-width: 479px)': { position: 'absolute', top: tokens.spacingVerticalXS, right: tokens.spacingHorizontalS, paddingInline: tokens.spacingHorizontalS },
+    '@container (min-width: 301px) and (max-width: 479px)': { position: 'absolute', top: tokens.spacingVerticalXS, right: tokens.spacingHorizontalS, paddingInline: tokens.spacingHorizontalS },
+    // At 300px or less Clear takes its own row below the filters.
+    '@container (max-width: 300px)': { alignSelf: 'flex-end', paddingInline: tokens.spacingHorizontalS },
   },
-  packScroll: { flex: 1, minHeight: 0, minWidth: 0, overflowY: 'auto', overscrollBehavior: 'contain' },
+  packScroll: {
+    flex: 1, minHeight: 0, minWidth: 0, overflowY: 'auto', overscrollBehavior: 'contain',
+    '@container (max-width: 300px)': { flex: '0 0 auto', overflowY: 'visible' },
+    '@container (max-width: 479px)': { '@media (max-height: 559px)': { flex: '0 0 auto', overflowY: 'visible' } },
+  },
   packTableHeader: {
     position: 'sticky', top: 0, zIndex: 1, backgroundColor: tokens.colorNeutralBackground2,
     '& [role="columnheader"]': { paddingBlock: 0, color: tokens.colorNeutralForeground2 },
@@ -191,20 +231,50 @@ export const useCanvasStyles = makeStyles({
   },
   packRow: {
     cursor: 'pointer', minHeight: '44px',
-    '@container (max-width: 479px)': { flexDirection: 'column', alignItems: 'stretch', paddingBlock: tokens.spacingVerticalXS },
+    // A focus return or Show in Installed scrolls a row into view; it must
+    // land below the sticky table header (33px), which the stacked rows do not draw.
+    scrollMarginTop: '33px',
+    '@container (max-width: 479px)': { flexDirection: 'column', alignItems: 'stretch', paddingBlock: tokens.spacingVerticalXS, scrollMarginTop: 0 },
   },
   packCell: {
     boxSizing: 'border-box', flex: '1 1 0px', minWidth: 0,
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`, overflowWrap: 'anywhere',
-    '@container (max-width: 479px)': { flex: 'auto', minHeight: 0, padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalM}` },
+    // A stacked cell wraps its value beneath its label when the value cannot sit beside it.
+    '@container (max-width: 479px)': { flex: 'auto', minHeight: 0, flexWrap: 'wrap', padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalM}` },
   },
   packNameCell: {
-    flexBasis: '45%', flexGrow: 0, color: tokens.colorBrandForeground2,
+    flexBasis: '30%', flexGrow: 0, color: tokens.colorBrandForeground2,
     '@container (max-width: 479px)': { flexBasis: 'auto', minHeight: '28px' },
+  },
+  // Installed adds the Type column, so its Name column gives that width back.
+  packNameCellTyped: { flexBasis: '26%' },
+  packTypeCell: {
+    flex: '0 0 80px', color: tokens.colorNeutralForeground2,
+    // Between 480px and 760px the cells take half the side padding so Agent and Skill stay whole.
+    '@container (min-width: 480px) and (max-width: 760px)': { paddingInline: tokens.spacingHorizontalS },
+    '@container (max-width: 479px)': {
+      flex: 'auto', '& > span': { fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200 },
+    },
+  },
+  packSourceCell: {
+    color: tokens.colorNeutralForeground2,
+    '@container (min-width: 480px) and (max-width: 760px)': { paddingInline: tokens.spacingHorizontalS },
+    '@container (max-width: 479px)': { '& > span': { fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200 } },
   },
   packTagsCell: {
     color: tokens.colorNeutralForeground2,
+    '@container (min-width: 480px) and (max-width: 760px)': { paddingInline: tokens.spacingHorizontalS },
     '@container (max-width: 479px)': { '& > span': { fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200 } },
+  },
+  // The stacked rows label their values; a wide row has a header instead.
+  packCellLabel: {
+    display: 'none',
+    // Never broken mid-word: a long value wraps below its label instead of squeezing it.
+    '@container (max-width: 479px)': { display: 'inline', fontWeight: tokens.fontWeightSemibold, marginInlineEnd: tokens.spacingHorizontalXS, whiteSpace: 'nowrap' },
+  },
+  packRowNote: {
+    display: 'block', color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200,
   },
   packReadNotice: {
     display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, margin: 0,
@@ -222,6 +292,54 @@ export const useCanvasStyles = makeStyles({
   },
   packPageButton: { flexShrink: 0, '@container (max-width: 479px)': { width: '28px', minWidth: '28px', paddingInline: tokens.spacingHorizontalXXS } },
   packPageLabel: { '@container (max-width: 479px)': { display: 'none' } },
+  // Sources: the Installed/Available table pattern, with Source (and its written-out
+  // type), Location and ref, Status, and Scope. At 479px or less the header
+  // hides and each row stacks its complete, labeled values, as the pack rows do.
+  source_source: {
+    flexBasis: '24%', flexGrow: 0, color: tokens.colorBrandForeground2,
+    '@container (max-width: 479px)': { flexBasis: 'auto', minHeight: '28px' },
+  },
+  source_where: { flexBasis: '34%', flexGrow: 0, '@container (max-width: 479px)': { flexBasis: 'auto' } },
+  source_status: { flexBasis: '28%', flexGrow: 0, '@container (max-width: 479px)': { flexBasis: 'auto' } },
+  source_scope: { flexBasis: '14%', flexGrow: 0, '@container (max-width: 479px)': { flexBasis: 'auto' } },
+  sourceStack: { display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 },
+  sourceWhere: {
+    display: 'block', fontFamily: tokens.fontFamilyMonospace, fontSize: tokens.fontSizeBase200,
+    lineHeight: tokens.lineHeightBase200, overflowWrap: 'anywhere',
+    '@container (max-width: 479px)': { display: 'inline' },
+  },
+  sourceRef: {
+    marginTop: tokens.spacingVerticalXXS,
+    '@container (max-width: 479px)': { marginTop: 0, marginInlineStart: tokens.spacingHorizontalS },
+  },
+  // The status text is the fact; its glyph only repeats it, so no state rests on an icon or a color.
+  sourceStatus: { display: 'inline-flex', alignItems: 'flex-start', gap: tokens.spacingHorizontalXS, minWidth: 0 },
+  sourceGlyph: { flexShrink: 0, width: '16px', height: '16px', marginTop: '2px', color: tokens.colorNeutralForeground2 },
+  sourceGlyphWarn: { color: tokens.colorStatusWarningForeground1 },
+  sourcesToolbar: { flexWrap: 'wrap' },
+  sourceNote: { padding: tokens.spacingHorizontalS },
+  sourceOutcome: {
+    '@media (max-width: 479px)': {
+      gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateAreas: '"icon" "body" "secondaryActions"',
+      paddingLeft: tokens.spacingHorizontalS,
+      [`& .${messageBarClassNames.icon}`]: { marginRight: 0, marginBottom: tokens.spacingVerticalXS },
+    },
+  },
+  sourceOutcomeActions: { '@media (max-width: 479px)': { justifyContent: 'flex-start', paddingRight: tokens.spacingHorizontalS } },
+  sourcesFoot: {
+    flexShrink: 0, display: 'flex', justifyContent: 'center', minWidth: 0,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalL}`,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground2,
+    '@container (max-width: 479px)': { paddingInline: tokens.spacingHorizontalS },
+  },
+  // The Add and Remove dialogs use the pack request dialog's geometry.
+  sourceDialog: { '&[open]': { maxHeight: 'calc(100dvh - 16px)' } },
+  sourceDialogFooter: { display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: tokens.spacingHorizontalS },
+  formNotes: {
+    margin: 0, paddingInlineStart: tokens.spacingHorizontalXL, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS,
+    color: tokens.colorNeutralForeground2, fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200, overflowWrap: 'anywhere',
+  },
+  shortControl: { maxWidth: '240px' },
   packDetail: {
     position: 'static', margin: 0, padding: 0, boxSizing: 'border-box', width: '320px', height: '100%', maxHeight: 'none',
     minWidth: 0, minHeight: 0, maxWidth: 'none', overflow: 'hidden', color: tokens.colorNeutralForeground1,
@@ -312,6 +430,55 @@ export const useCanvasStyles = makeStyles({
   },
   aboutLinkIcon: { marginInlineStart: tokens.spacingHorizontalXS, verticalAlign: '-2px' },
   aboutNote: { margin: 0 },
+  // Add/import reuses About's scrolling panel, measure, and ruled label/value
+  // rows. Its own geometry is the form, the accepted-forms list, and the request
+  // status with its one MessageBar.
+  importBody: {
+    boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL, minWidth: 0,
+    maxWidth: `calc(76ch + 2 * ${tokens.spacingHorizontalL})`,
+    padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalL} ${tokens.spacingVerticalXXL}`,
+    '@container (max-width: 479px)': { padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalS} ${tokens.spacingVerticalL}` },
+  },
+  importIntro: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS, minWidth: 0 },
+  importForm: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0 },
+  importAction: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: tokens.spacingVerticalXS, minWidth: 0 },
+  sourceForms: {
+    display: 'grid', gridTemplateColumns: 'max-content minmax(0, 1fr)', margin: 0,
+    columnGap: tokens.spacingHorizontalM, rowGap: tokens.spacingVerticalXXS,
+    fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200, minWidth: 0,
+    '& dt': { color: tokens.colorNeutralForeground3 },
+    '& dd': { margin: 0, minWidth: 0, fontFamily: tokens.fontFamilyMonospace, color: tokens.colorNeutralForeground2, overflowWrap: 'anywhere' },
+    '@container (max-width: 479px)': {
+      gridTemplateColumns: 'minmax(0, 1fr)', rowGap: 0,
+      '& dd + dt': { marginTop: tokens.spacingVerticalXS },
+    },
+  },
+  importRequest: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0, paddingTop: tokens.spacingVerticalL,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+  },
+  importRequestHeading: {
+    margin: 0, fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300, fontWeight: tokens.fontWeightSemibold,
+  },
+  // At 300px or less the status icon sits above its title so the words keep
+  // their width, and the Open Needs you action takes the full row.
+  importStatus: {
+    '@container (max-width: 300px)': {
+      gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateAreas: '"icon" "body" "secondaryActions"',
+      paddingLeft: tokens.spacingHorizontalS,
+      [`& .${messageBarClassNames.icon}`]: { marginRight: 0, marginBottom: tokens.spacingVerticalXS },
+    },
+  },
+  importStatusActions: {
+    '@container (max-width: 479px)': { justifyContent: 'flex-start' },
+    '@container (max-width: 300px)': {
+      paddingRight: tokens.spacingHorizontalS,
+      '& button': { width: '100%', minWidth: 0, maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere' },
+    },
+  },
+  pathList: { listStyleType: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, minWidth: 0 },
+  // A path list takes the sheet's full width so a path usually stays on one line.
+  pathsRow: { gridTemplateColumns: 'minmax(0, 1fr)', rowGap: tokens.spacingVerticalXS },
   nowrap: { whiteSpace: 'nowrap' },
   overview: { width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' },
   overviewHeader: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS, padding: tokens.spacingHorizontalL, flexShrink: 0 },
@@ -533,7 +700,30 @@ export const useCanvasStyles = makeStyles({
     display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS,
     borderLeft: `${tokens.strokeWidthThick} solid ${tokens.colorBrandStroke1}`,
     padding: tokens.spacingHorizontalM, backgroundColor: tokens.colorNeutralBackground2,
+    overflowWrap: 'anywhere',
   },
+  // Needs you keeps every control and target inside its column at the narrowest
+  // width: 8px panel sides and button sides (the shared detail padding is not
+  // touched), a label that still does not fit wraps inside its button, and the
+  // long owner-written targets give back the width their boxes and numbers used.
+  needsPanel: {
+    '@container (max-width: 300px)': {
+      // Griffel emits container rules by ascending width, so the shared 700px detail
+      // padding would follow and beat an equal-specificity rule here. The attribute
+      // raises this one's specificity instead of touching that shared rule.
+      '&[role="tabpanel"]': { paddingInline: tokens.spacingHorizontalS },
+      [`& .${buttonClassNames.root}`]: { maxWidth: '100%', paddingInline: tokens.spacingHorizontalS, overflowWrap: 'anywhere' },
+    },
+  },
+  needsScope: {
+    '@container (max-width: 300px)': {
+      padding: tokens.spacingHorizontalS,
+      '& ol': { paddingInlineStart: 0, listStylePosition: 'inside' },
+      '& li > p': { display: 'inline' },
+    },
+  },
+  consent: { maxWidth: '100%' },
+  consentLabel: { minWidth: 0, overflowWrap: 'anywhere' },
   notice: {
     minWidth: 0, overflowWrap: 'anywhere', flexShrink: 0,
     '&[tabindex="-1"]:focus': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },

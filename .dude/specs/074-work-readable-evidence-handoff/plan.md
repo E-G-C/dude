@@ -3,6 +3,30 @@
 Owner: `.dude/ideas/074-work-readable-evidence-handoff.md`  
 Spec path: `.dude/specs/074-work-readable-evidence-handoff/spec.md`
 
+## Current Release-Maintenance Retirement
+
+The user's literal chat direction at `2026-10-06T20:32:52.137-04:00` permits the minimal retirement below instead of rescuing unsupported historical recovery scenarios. It supersedes future keep-failing-tests directions for these five cases in section 5 and the completed T004/T005 acceptance lists. The original implementation plan below remains the record of completed Feature074 work; its other contracts and historical acceptance evidence are unchanged.
+
+Only these cases in `src/skills/dude-work/host-adapter.test.mjs` may be retired:
+
+| Diagnosis ID | Exact source test name |
+| --- | --- |
+| G1 | `Feature 064 T003: full reference reaches natural settlement through the terminal receipt` |
+| G2 | `Feature 064 T003: a misbound full-reference terminal receipt preserves governed authority` |
+| G3 | `Feature 064 T003: premature ordinal-6 authorization remains a separate governance negative` |
+| G4 | `Feature 065 T002 SC003: complete failed episode refuses direct re-review without changing the sealed successor` |
+| G5 | `Feature 065 T002 SC003: separate complete failed episode refuses supported resume without changing the sealed successor` |
+
+The retained release diagnosis confirms that each composite stops at history-only learning admission before its later oracle. Current no-rewind admission is correct. The user withdraws those composites' unique unsupported-path, later-oracle, and golden-measurement requirements from future CI. Their recorded failures and unreached measurements remain historical, unverified evidence; retirement supplies no equal-or-stronger coverage claim.
+
+The later Code owner may remove these declarations and their exclusively unused private test glue in the same source test file. Check remaining callers before deleting `runT003FullReferenceCase`, `runFeature065FailedEpisode`, or any supporting function. Shared helpers stay, including helpers used by surviving cross-invocation, accounting, inverse, or admission controls. Add no replacement tests, harness, recovery route, state, timer, or production change.
+
+Keep `reference.json`, `retention-episode.json`, and `retained-incident.json` immutable, together with their hash pins, complete historical captures, and the existing inverse. Retain all other source tests, including the `Work recovery admission:` controls, `Feature 064 T003: the production runner cannot settle after a misbound terminal receipt`, and `cross-invocation retention conflicts: exact captures, dual surfaces and one-use receipts remain required`. These existing tests cover their actual current admission, terminal-receipt, retention, and replay boundaries; they do not certify the retired full-history composite oracles. No-rewind, learning, permit, receipt, capacity, and other runtime guards remain unchanged.
+
+After independent review and coordinator application of this definition stage, perform the separately authorized test-only maintenance and run the existing applicable CI commands. Report actual pass/fail/skip counts and the five retired names separately; never count retirement as a pass or skip. Keep all other required checks and the existing independent verification and review gates. This amendment itself reports no CI-green result.
+
+The five completed canonical task units, keys, glyphs, metadata, board, and execution history remain unchanged. Retirement is current release maintenance, not a new Feature074 task or retroactive completion. Do not reopen or redefine 064/065, alter schemas or resource policies, or generate runtime outputs for this test-only change. No new guardrail candidate or human clarification is needed. The author read back the amended spec before staging this plan; independent stage review and coordinator zero-failure lint are still required.
+
 ## Chosen Design
 
 Keep the existing trusted captures and authority contracts. Add exact semantic preimages as substantive readable records beside newly built captures. For historical hash-only captures, admit a separate attachment-only stream entry that references the exact original capture and its original substantive stream hash. Never put a duplicate old capture in the new entry.

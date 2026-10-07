@@ -799,10 +799,10 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   assert.ok(application.length > 100_000, 'the application bundle must contain the browser runtime');
   const gzip = gzipSync(applicationBytes, { level: 9 });
   const repeatedGzip = gzipSync(applicationBytes, { level: 9 });
-  assert.equal(applicationBytes.length, 969_815, 'committed app.js raw byte size');
+  assert.equal(applicationBytes.length, 1_052_725, 'committed app.js raw byte size');
   assert.equal(
     sha256(applicationBytes),
-    '46360200ec0d5ee2864e7ee6162e23e2e3839e90b238d3b059c3a1b560b39531',
+    '465e6a2bcb763621a676aac6be1839e301d2ce2d0fc8d233b1d48e87c342cf7e',
     'committed app.js raw SHA-256',
   );
   assertPortableGzip(gzip, repeatedGzip, applicationBytes, 'Node zlib level-9 app.js');
@@ -876,7 +876,7 @@ test('metafile-derived legal inventory contains every contributing package and c
       name: '@fluentui/react-menu',
       version: '9.25.4',
       inputCount: 36,
-      bytesInOutput: 31_651,
+      bytesInOutput: 31_655,
     },
     {
       name: '@fluentui/react-motion-components-preview',
@@ -888,7 +888,7 @@ test('metafile-derived legal inventory contains every contributing package and c
       name: '@fluentui/react-tooltip',
       version: '9.10.5',
       inputCount: 6,
-      bytesInOutput: 8_330,
+      bytesInOutput: 8_318,
     },
   ], 'the shipped menu, motion implementation, and tooltip contribute real app.js bytes');
   for (const { name, version } of menuGraphPackages) {
@@ -1120,6 +1120,8 @@ function assertT011WorkspaceContract() {
     [
       '/api/about',
       '/api/freshness',
+      '/api/imports/request',
+      '/api/imports/request',
       '/api/needs-you',
       '/api/needs-you/capture',
       '/api/needs-you/capture-receipt',
@@ -1128,6 +1130,9 @@ function assertT011WorkspaceContract() {
       '/api/packs',
       '/api/packs/request',
       '/api/packs/request',
+      // Phase B: the one explicit catalog discovery and the one fixed source-write route.
+      '/api/packs/sources',
+      '/api/packs?discover=1',
       '/api/refresh',
       '/api/work-index',
     ].sort(),
@@ -1432,11 +1437,39 @@ test('074 About reads through the shared helper, bound to the hook lifetime and 
     'either the hook lifetime or the caller exit aborts the read');
   assert.match(reader, /return json\('\/api\/about', \{ signal: read\.signal \}\)/);
   assert.match(reader, /\}, \[\]\);/, 'a stable reader cannot rerun an entry read');
-  assert.match(hook, /respond, capture, requestPack, openReview, readHistory, readAbout \};/);
+  assert.match(hook, /respond, capture, requestPack, requestImport, openReview, readHistory, readAbout \};/);
   for (const exact of ['About · Read only', 'Settings sections', 'Recorded installation metadata; installed files are not verified.',
     'Recorded installation metadata is unavailable, so no version is shown.', 'https://github.com/E-G-C/dude',
     'Development (main), based on ', '["installedRef","sourceRef","baseRelease"]']) {
     assert.equal(bundle.includes(exact), true, `published app.js retains About copy: ${exact}`);
+  }
+});
+
+test('073 Add/import: one closed import route with exact bodies, four Packs views with Sources last, and no Browse or mode control', () => {
+  // Arrange
+  const { hook, bundle } = t011Sources();
+  const view = read('src/extensions/dude/frontend/artifact-import.jsx');
+  const settings = read('src/extensions/dude/frontend/settings.jsx');
+  const requests = [...hook.matchAll(/json\('\/api\/imports\/request', \{\s*body: (\{[^}]*\})/g)].map(match => match[1]);
+
+  // Assert
+  assert.deepEqual(requests, ["{ op: 'prepare', importSource: source }",
+    "{ op: 'submit', importSource: source, importReceipt: prepared.importReceipt }"],
+  'only the closed prepare and submit bodies reach the one import route');
+  assert.match(hook, /queue\(false, !\/\^\(\?:pack\|import\):\/\.test\(record\.request\.requestRef\)\);/,
+    'a pack or import permission acknowledgment never triggers catalog acquisition');
+  assert.match(settings, /const SUBS = \[\.\.\.CONTEXTS, \['import', 'Add\/import'\], \['sources', 'Sources'\]\];/, 'Add/import joins Installed and Available, and Phase B appends Sources');
+  assert.doesNotMatch(view, /['"]sources['"]|>Sources</i, 'the import panel holds nothing about sources');
+  assert.doesNotMatch(view, /type="file"|Browse|<Dropdown|<Checkbox|<Radio|<Switch|<Link\b|<a /,
+    'one Source field and one Request import action: no Browse, mode, adaptation, license, or documentation control');
+  assert.equal((view.match(/<Input\b/g) ?? []).length, 1);
+  assert.match(view, /label=\{\{ children: 'Source', weight: 'semibold' \}\}/);
+  for (const exact of ['Import an agent or skill', 'Request import', 'Open Needs you', 'Back to Add/import', 'Show in Installed',
+    'Reading Installed...', 'Project agents and skills could not be read', 'Not in Installed now',
+    'An artifact import is in progress or needs owner reconciliation. Your idea draft stays here.',
+    'An idea capture needs owner reconciliation before an import can be requested.',
+    'New agents or skills may not be available until you start a new session.']) {
+    assert.equal(bundle.includes(exact), true, `published app.js retains Add/import copy: ${exact}`);
   }
 });
 

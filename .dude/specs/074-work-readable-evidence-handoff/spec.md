@@ -114,6 +114,16 @@ Acceptance scenarios:
 - **SC-006:** Independent expansion reproduces the entire original available projection for old, new-readable, and historical-supplement packets, including ordered occurrences, exact strings, and source descriptors.
 - **SC-007:** Acceptance uses only disposable synthetic data and read-only compatibility fixtures. It records no real learning decision, task completion, restarted invocation, or live acceptance for the motivating incident.
 
+### Current Release-Maintenance Retirement
+
+The user's October 6, 2026, direction permits retirement of exactly five unsupported frozen-history composites: Feature064's full-reference natural settlement, misbound terminal receipt, and premature ordinal-6 authorization, and Feature065 SC003's retained-incident direct re-review and supported resume. Plan section Current Release-Maintenance Retirement binds the exact cases.
+
+For future CI, the requirement to keep those five tests failing and their unique unsupported-path reachability, later-oracle, and golden-measurement obligations are retired. No replacement recovery scenario, new capability, or new proof suite is required. This is user-directed retirement, not a claim of equal-or-stronger successor coverage.
+
+Preserve immutable incident inputs, original history and failed outcomes, inverse and hash-pin checks, and existing current live governance, terminal-receipt, no-replay, and no-rewind coverage. All other readable-handoff requirements, current resource and integrity rules, permitted required-learning restoration, receipt authority, independent verification, and review remain unchanged. No valid runtime guard may be bypassed to obtain a release.
+
+The two compatibility exception sections below and the completed T004/T005 acceptance descriptions record Feature074's original acceptance. Their keep-failing-tests directions no longer govern future CI for these five cases. Recorded failures remain failures, and their unreached later oracles remain historically unverified rather than newly proved. This amendment does not reopen those tasks, grant new completion credit, or rewrite Feature064/065 definitions or history. Actual source retirement is separately authorized release maintenance, not retroactive Feature074 completion.
+
 ### Legacy Compatibility Exception
 
 For compatibility acceptance under SC-005, Feature074 excludes only the obsolete success requirement for a fresh invocation to resume the frozen, already-reviewed Feature064 reference and reach later settlement. The existing no-rewind rule remains in force, and that legacy test stays a documented failure. This exception changes no capability and covers no new regression, readable-handoff acceptance, integrity or capacity requirement, permitted required-learning restoration, or fresh independent review. Related tests qualify only when fresh evidence establishes the same preexisting cause under the plan's boundary.

@@ -13,8 +13,9 @@ import { mergeClasses, useCanvasStyles } from './styles.js';
 import { darkTheme, lightTheme, useHostAppearance } from './theme.js';
 import { currentRequests, matchesRequestScope, NeedsYou, NewIdea, Notice, previewEligibility } from './needs-you.jsx';
 import { loadReviewEngine, ReviewHistory, ReviewWorkspace } from './review.jsx';
-import { packPermission, requestKey, useCanvasData } from './use-canvas-data.js';
+import { importPermission, packPermission, requestKey, useCanvasData } from './use-canvas-data.js';
 import { Settings } from './settings.jsx';
+import { catalogCoverageText } from './pack-sources.jsx';
 
 const TABS = [['overview', 'Overview'], ['context', 'Now'], ['needs', 'Needs you'], ['new', 'New idea'], ['settings', 'Settings']];
 const TAB_ICONS = { overview: GridRegular, context: RecordRegular, needs: CommentRegular, new: AddRegular, settings: SettingsRegular };
@@ -30,6 +31,14 @@ const TASK_FILTERS = [['all', 'All', 'total'], ['todo', 'Pending', 'open'],
   ['in-progress', 'In progress', 'inProgress'], ['blocked', 'Blocked', 'blocked'], ['done', 'Done', 'done']];
 
 function contextTitle(context) { return context.title || 'Title unavailable'; }
+// The Packs footer names the project agent and skill read only while that read
+// is not current, so the default footer is unchanged. As the approved footer
+// says it: reading while a read is pending, otherwise unavailable.
+function projectStatus(packs) {
+  const coverage = packs?.project?.coverage;
+  if (!coverage || ['current', 'empty'].includes(coverage.state)) return '';
+  return ` · Project agents and skills: ${coverage.reason === 'read_pending' ? 'reading' : 'unavailable'}`;
+}
 // Contexts have already passed inventory admission. The number is presentation
 // of that exact path, never a substitute for the idea/spec binding.
 function captureNumber(context) { return context.ideaPath?.match(/^\.dude\/ideas\/(\d{3})-/)?.[1] || ''; }
@@ -652,13 +661,21 @@ function App() {
   const [finderOpen, setFinderOpen] = useState(false);
   const [compactCommands, setCompactCommands] = useState(() => window.matchMedia('(max-width: 479px)').matches);
   const [taskView, setTaskView] = useState({ scope: null, taskKey: null, filter: 'all' });
-  const [packReturn, setPackReturn] = useState(null);
+  // Where "Back" from an open Needs you permission returns to: the exact request
+  // key and Packs view, tagged by what asked. 'pack' reopens that pack request;
+  // 'import' reaches the Add/import status of that exact import. While it is set,
+  // Settings stays mounted, so its local state survives the round trip.
+  const [settingsReturn, setSettingsReturn] = useState(null);
   // Settings' local section is tab state, separate from rail navigation: it
   // resets to Packs whenever Settings is left, not when Settings is reselected.
+  // The Packs view (Installed, Available, or Add/import) follows the same rule,
+  // here and not in Settings because the footer and the header's Reload name it.
   const [settingsSection, setSettingsSection] = useState('packs');
+  const [packsSub, setPacksSub] = useState('installed');
   const settingsActive = tab === 'settings' && !reviewActive && !history;
   const aboutActive = settingsActive && settingsSection === 'about';
-  const data = useCanvasData(selection, { packsActive: settingsActive || Boolean(packReturn) });
+  const importActive = settingsActive && settingsSection === 'packs' && packsSub === 'import';
+  const data = useCanvasData(selection, { packsActive: settingsActive || Boolean(settingsReturn) });
   const root = useRef(null), scroll = useRef(0), main = useRef(null), focusNext = useRef(null), opening = useRef(null);
   const reviewReturn = useRef(null), historyRead = useRef(null), latestData = useRef(data);
   const search = useRef(null), selector = useRef(null), results = useRef(null), position = useRef(null);
@@ -703,8 +720,8 @@ function App() {
       setTab('overview'); setSelection(null); setSelectedRequest(null); setFinder(DEFAULT_FINDER);
       setIdea(''); setDrafts({}); setReview(null); setReviewActive(false); setReviewed(null); setHistory(null);
       setMessage('');
-      setPackReturn(null);
-      setSettingsSection('packs');
+      setSettingsReturn(null);
+      setSettingsSection('packs'); setPacksSub('installed');
       reviewReturn.current = null;
       setFinderOpen(false); position.current = null; focusResults.current = false;
       scroll.current = 0; focusNext.current = 'heading';
@@ -768,16 +785,22 @@ function App() {
     const panel = main.current?.querySelector('[role="tabpanel"]:not([hidden])');
     const node = destination === 'search' ? search.current : destination === 'idea' ? panel?.querySelector('textarea')
       : destination === 'row' && selection ? panel?.querySelector(`[data-work-path="${CSS.escape(selection.ideaPath)}"]`) || panel?.querySelector('h1')
-        : panel?.querySelector('h1');
-    if (node) { if (node.tagName === 'H1') node.tabIndex = -1; node.focus({ preventScroll: true }); }
+        : destination === 'import-status' ? panel?.querySelector('[data-import-status]') || panel?.querySelector('h1')
+          : panel?.querySelector('h1');
+    if (node) {
+      if (node.tagName === 'H1') node.tabIndex = -1;
+      node.focus({ preventScroll: true });
+      // The status can sit below the first screenful of a short panel.
+      if (destination === 'import-status') node.scrollIntoView({ block: 'nearest' });
+    }
   }, [tab, selection, selectedRequest, reviewActive, history, restoreReturnFocus]);
   const navigate = useCallback((destination, focus = destination === 'new' ? 'idea' : 'heading') => {
     cancelHistory();
     opening.current = null;
     // Navigation releases the focused child, never its retained entry object.
     focusResults.current = false;
-    setPackReturn(null);
-    if (destination !== 'settings') setSettingsSection('packs');
+    setSettingsReturn(null);
+    if (destination !== 'settings') { setSettingsSection('packs'); setPacksSub('installed'); }
     setHistory(null); setReviewActive(false); setFinderOpen(false); setMessage('');
     focusNext.current = focus; setTab(destination);
   }, [cancelHistory]);
@@ -826,17 +849,30 @@ function App() {
     setSelectedRequest(key);
     navigate('needs');
   };
-  const openPackPermission = receipt => {
-    const record = packPermission(latestData.current, receipt);
+  // A pack or import permission opens in Needs you. Settings stays mounted and
+  // remembers exactly where it was: the pack's Installed or Available view, or
+  // Add/import. The other Settings state is cleared by navigating away, so the
+  // view is set again after it.
+  const openPermission = (kind, receipt) => {
+    const record = (kind === 'import' ? importPermission : packPermission)(latestData.current, receipt);
     if (!record) {
-      setMessage('This pack permission is no longer current. Nothing was sent. Read the current request before responding.');
+      setMessage(`This ${kind} permission is no longer current. Nothing was sent. Read the current request before responding.`);
       data.reconcile();
       return;
     }
     const key = requestKey(latestData.current.needs, record);
+    const sub = kind === 'import' ? 'import' : packsSub;
     navigate('needs');
     setSelectedRequest(key);
-    setPackReturn(key);
+    setSettingsReturn({ kind, key, section: 'packs', sub });
+    setSettingsSection('packs'); setPacksSub(sub);
+  };
+  // Back to the exact request: a pack reopens its request dialog on its own, and
+  // an import focuses its status in Add/import.
+  const returnToSettings = () => {
+    const returning = settingsReturn;
+    navigate('settings', returning?.kind === 'import' ? 'import-status' : 'heading');
+    if (returning) { setSettingsSection(returning.section); setPacksSub(returning.sub); }
   };
   const requestEntry = context => {
     const records = currentRequests(context, latestData.current);
@@ -934,6 +970,16 @@ function App() {
   };
   const unavailable = data.issues.needs || data.needs?.coverage.state === 'unavailable';
   const readAt = data.projection?.complete ? data.projection.readAt : null;
+  const sourcesActive = settingsActive && settingsSection === 'packs' && packsSub === 'sources';
+  // The Catalog word is honest about a read that was partial or never made.
+  const catalogWord = catalogCoverageText(data.packs);
+  // Add/import reads no pack, so its footer makes no installed or catalog claim.
+  const settingsStatus = aboutActive ? 'About · Read only' : importActive
+    ? `Add/import · ${unavailable || !data.needs ? 'Current request coverage unavailable'
+      : data.connected ? 'Connected' : 'Reconnecting; no automatic resend'}`
+    : data.packsLoading ? 'Reading packs…'
+      : sourcesActive ? `Sources · Catalog: ${catalogWord}`
+        : `Installed: ${data.packs?.coverage.installed.state || 'unavailable'} · Catalog: ${catalogWord}${projectStatus(data.packs)}`;
   const finderControl = <WorkFinder selection={selection} row={selectedRow} browsing={browsing}
     finder={finder} onFinder={value => {
       scroll.current = 0; position.current = null; focusResults.current = false; setFinder(value);
@@ -958,7 +1004,7 @@ function App() {
               resultsRef={results} resultsId={resultsId} />
           </div>}
         </div>
-        {!aboutActive && <Toolbar className={s.refresh} aria-label="Workspace actions"><ToolbarButton className={s.refreshButton} icon={<ArrowClockwiseRegular />}
+        {!aboutActive && !importActive && <Toolbar className={s.refresh} aria-label="Workspace actions"><ToolbarButton className={s.refreshButton} icon={<ArrowClockwiseRegular />}
           aria-label={settingsActive ? 'Reload packs' : 'Refresh'} title={settingsActive ? 'Reload pack information' : 'Refresh'}
           aria-busy={settingsActive ? data.packsLoading : data.loading || data.selecting}
           onClick={settingsActive ? data.reloadPacks : data.refresh}>
@@ -974,9 +1020,11 @@ function App() {
       <main ref={main} className={s.product} aria-label="Workspace">
         {TABS.map(([value]) => <div key={value} id={`dude-panel-${value}`} role="tabpanel"
           aria-labelledby={`dude-tab-${value}`} hidden={reviewActive || Boolean(history) || value !== tab}
-          className={mergeClasses(s.detail, value === 'overview' && s.overviewPanel, value === 'settings' && s.settingsPanel)}>
-          {value === 'settings' ? (settingsActive || packReturn) && <Settings key={data.rootKey} data={data}
-            active={settingsActive} section={settingsSection} onSection={setSettingsSection} onPermission={openPackPermission} />
+          className={mergeClasses(s.detail, value === 'overview' && s.overviewPanel, value === 'settings' && s.settingsPanel,
+            value === 'needs' && s.needsPanel)}>
+          {value === 'settings' ? (settingsActive || settingsReturn) && <Settings key={data.rootKey} data={data}
+            active={settingsActive} section={settingsSection} onSection={setSettingsSection}
+            sub={packsSub} onSub={setPacksSub} onPermission={openPermission} />
             : reviewActive || history || value !== tab ? null : value === 'overview' ? <Overview data={data} rows={rows} selection={selection} finder={finder}
             scroll={scroll} position={position} onOpen={openWork} onNew={newIdea} resultsRef={results} resultsId={resultsId}
             finderControl={compactCommands ? finderControl : null} />
@@ -998,7 +1046,8 @@ function App() {
                 onDraft={(key, value) => setDrafts(previous => ({ ...previous, [key]: value }))}
                 onSelect={selectRequest} scopeTitle={scopeTitle(displayedRequest?.request.scope, rows)} browsingLabel={browsingLabel}
                 onReview={openReview} reviewedKey={reviewed} onNew={newIdea}
-                onReturn={packReturn ? () => navigate('settings') : null} />
+                onReturn={settingsReturn ? returnToSettings : null}
+                returnLabel={settingsReturn?.kind === 'import' ? 'Back to Add/import' : 'Back to pack request'} />
                 : <NewIdea value={idea} onChange={setIdea} data={data}
                   onCancel={() => navigate('needs')} />}
         </div>)}
@@ -1012,8 +1061,7 @@ function App() {
       </div>
       <footer className={mergeClasses(s.footer, reviewActive && s.focusedFooter, settingsActive && s.settingsFooter)}
         aria-label="Workspace status" tabIndex={reviewActive || settingsActive ? 0 : undefined}>
-        {settingsActive ? <span>{aboutActive ? 'About · Read only' : data.packsLoading ? 'Reading packs…'
-          : `Installed: ${data.packs?.coverage.installed.state || 'unavailable'} · Catalog: ${data.packs?.coverage.catalog.state || 'unavailable'}`}</span>
+        {settingsActive ? <span>{settingsStatus}</span>
           : <><span>{data.loading ? 'Reading workspace…' : data.issues.index ? 'Work coverage unavailable'
           : `Work coverage: ${data.index?.coverage.work.state || 'unavailable'}`}</span>
         <span>{unavailable || !data.needs ? 'Current request coverage unavailable'

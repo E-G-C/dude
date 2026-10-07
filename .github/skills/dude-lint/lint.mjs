@@ -25,6 +25,7 @@ import {
   CANONICAL_NOTICE as TASK_CANONICAL_NOTICE,
 } from '../dude-engine/lib/tasks.mjs';
 import { parseProfileDocument } from '../dude-engine/lib/profile.mjs';
+import { PACK_SOURCES_PATH, parsePackSourcesDocument } from '../dude-engine/lib/pack-sources.mjs';
 import { WORKSPACE_PATHS } from '../dude-engine/lib/workspace-paths.mjs';
 import { parseTaskState } from '../dude-engine/lib/task-state.mjs';
 import { scanObjectiveRegistry } from '../dude-work/recovery.mjs';
@@ -96,25 +97,39 @@ function lstatOrNull(abs) {
 }
 
 /**
- * Check a workspace-relative path without following symbolic links.
+ * Walk a workspace-relative path without following symbolic links and describe
+ * the first thing that makes it unsafe to read as a regular file. `ancestor` is
+ * true when that is a directory above the file, not the file itself.
  * @param {string} rel
- * @returns {string | null}
+ * @returns {{ detail: string, ancestor: boolean } | null}
  */
-function unsafeRegularFileDetail(rel) {
+function unsafePathProblem(rel) {
   let cursor = ROOT;
   const parts = rel.split('/');
   for (let index = 0; index < parts.length; index += 1) {
     cursor = path.join(cursor, parts[index]);
     const stat = lstatOrNull(cursor);
     const currentRel = parts.slice(0, index + 1).join('/');
-    if (!stat) return `is missing or does not exist at '${currentRel}'`;
-    if (stat.isSymbolicLink()) return `is not a regular file/unsafe because '${currentRel}' is a symbolic link`;
-    if (index < parts.length - 1 && !stat.isDirectory()) {
-      return `is not a regular file/unsafe because ancestor '${currentRel}' is not a directory`;
+    const ancestor = index < parts.length - 1;
+    if (!stat) return { detail: `is missing or does not exist at '${currentRel}'`, ancestor };
+    if (stat.isSymbolicLink()) {
+      return { detail: `is not a regular file/unsafe because '${currentRel}' is a symbolic link`, ancestor };
     }
-    if (index === parts.length - 1 && !stat.isFile()) return 'is not a regular file/unsafe';
+    if (ancestor && !stat.isDirectory()) {
+      return { detail: `is not a regular file/unsafe because ancestor '${currentRel}' is not a directory`, ancestor };
+    }
+    if (!ancestor && !stat.isFile()) return { detail: 'is not a regular file/unsafe', ancestor };
   }
   return null;
+}
+
+/**
+ * Check a workspace-relative path without following symbolic links.
+ * @param {string} rel
+ * @returns {string | null}
+ */
+function unsafeRegularFileDetail(rel) {
+  return unsafePathProblem(rel)?.detail ?? null;
 }
 
 /** @param {string} content @returns {string[]} */
@@ -741,6 +756,28 @@ if (profileIssue) {
       + `(${error instanceof Error ? error.message : String(error)})`,
     );
   }
+}
+
+// --- Check 2a-1: optional project pack sources ------------------------------
+// The file is optional project configuration. Only its syntax and shape are
+// checked, with the parser Canvas uses; a saved folder or repository need not
+// exist or be reachable here. A missing file is not a finding. A link or
+// non-directory above it is the shared `.dude/metadata` problem that the profile
+// and manifest checks already report, so it is not reported again for a file that
+// may not exist; only a problem with the file itself is reported here.
+const packSourcesPath = path.join(ROOT, ...PACK_SOURCES_PATH.split('/'));
+const packSourcesProblem = unsafePathProblem(PACK_SOURCES_PATH);
+if (!packSourcesProblem) {
+  try {
+    parsePackSourcesDocument(fs.readFileSync(packSourcesPath));
+  } catch (error) {
+    fail(
+      `${PACK_SOURCES_PATH}  invalid pack sources `
+      + `(${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
+} else if (!packSourcesProblem.ancestor && !packSourcesProblem.detail.startsWith('is missing')) {
+  fail(`${PACK_SOURCES_PATH}  ${packSourcesProblem.detail}`);
 }
 
 // --- Check 2b: task-state snapshot identity --------------------------------

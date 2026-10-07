@@ -4,8 +4,8 @@ import {
   Option, Radio, RadioGroup, Text, Textarea,
 } from '@fluentui/react-components';
 import { ArrowLeftRegular, CommentRegular } from '@fluentui/react-icons';
-import { useCanvasStyles } from './styles.js';
-import { authorityKey, packRequestPending, requestKey } from './use-canvas-data.js';
+import { mergeClasses, useCanvasStyles } from './styles.js';
+import { authorityKey, IMPORT_IN_PROGRESS, importRequestPending, packRequestPending, requestKey } from './use-canvas-data.js';
 
 export function Notice({ title, children, intent = 'info', focusRef }) {
   const s = useCanvasStyles();
@@ -103,16 +103,33 @@ function exceedsTextLimit(value, data) {
   return new TextEncoder().encode(value).length > data.needs.limits.textBytes;
 }
 
-// The Dude-owned session permission for a Settings pack request (see
-// packPermission). Other owners' permissions keep their ordinary semantics.
-const isPackPermission = request => request?.class === 'permission' && request.owner === 'dude'
-  && request.requestRef.startsWith('pack:') && String(request.fields?.operation).startsWith('pack:');
+// The Dude-owned session permission for a Settings pack or import request, in
+// its closed operation set (see packPermission and importPermission). Other
+// owners', scopes', and operations' permissions keep their ordinary semantics.
+const PACK_OPERATIONS = ['pack:install', 'pack:remove', 'pack:refresh'];
+const IMPORT_OPERATIONS = ['import:file', 'import:directory'];
+function actionKind(request) {
+  if (request?.class !== 'permission' || request.owner !== 'dude' || request.scope?.kind !== 'session') return null;
+  if (request.requestRef.startsWith('pack:') && PACK_OPERATIONS.includes(request.fields?.operation)) return 'pack';
+  if (request.requestRef.startsWith('import:') && IMPORT_OPERATIONS.includes(request.fields?.operation)) return 'import';
+  return null;
+}
 
-// A canvas_response acknowledges the permission, not the separate pack_result.
-// Only the pack request view establishes an applied operation from that result
-// and its agreeing current installed authority.
+// An import permission is bound only while the provider's live import record
+// names it: this exact receipt and permission handle in this provider generation.
+function boundImport(record, data) {
+  const feed = data.needs, request = record.request;
+  return actionKind(request) === 'import' && Boolean(feed?.importRequests?.some(item =>
+    request.requestRef === `import:${item.importReceipt}` && item.permissionRequest === record.requestHandle
+    && item.receipt.owner === 'dude' && authorityKey(item.receipt) === authorityKey(feed)
+    && request.source.kind === 'session' && request.source.revision === feed.providerGeneration));
+}
+
+// A canvas_response acknowledges the permission, not the separate pack_result
+// or import_result. Only the pack request view or Add/import establishes an
+// applied operation from that result.
 function responsePhase(record, phase) {
-  return phase === 'applied' && isPackPermission(record?.request) ? 'permission_acknowledged' : phase;
+  return phase === 'applied' && actionKind(record?.request) ? 'permission_acknowledged' : phase;
 }
 
 export function ResponseStatus({ record, attempt, draft = false, capture = false, focusRef }) {
@@ -134,7 +151,9 @@ export function ResponseStatus({ record, attempt, draft = false, capture = false
     awaiting_acknowledgment: 'Sent to the joined owner. Acceptance and application are not yet confirmed.',
     accepted: 'The owner accepted this response. Application is not yet confirmed.',
     applied: 'The owner confirmed application and reread the source.',
-    permission_acknowledged: 'The owner acknowledged this permission response. Check the pack request for a verified operation result.',
+    permission_acknowledged: actionKind(record?.request) === 'import'
+      ? 'The owner acknowledged this permission response. Check Add/import for the verified import result.'
+      : 'The owner acknowledged this permission response. Check the pack request for a verified operation result.',
     declined: 'The owner declined this response. A fresh request is needed before responding again.',
     deferred: record?.durable
       ? 'The owner recorded a source-backed deferral. It remains discoverable in the recorded context.'
@@ -172,11 +191,17 @@ export function NewIdea({ value, onChange, onCancel, data }) {
   const unreconciled = feed?.captures.some(item => !item.receipt.acknowledgment && item.phase !== 'unavailable'
     && !(item.phase === 'issued' && item.captureReceipt === attempt?.captureReceipt && attempt.retryable));
   const packWaiting = packRequestPending(data);
+  const importWaiting = importRequestPending(data);
   const idle = feed && !data.issues.needs && feed.coverage.state !== 'unavailable'
-    && feed.capture.idle && !feed.capture.waitingRequests.length && !unreconciled && !packWaiting;
+    && feed.capture.idle && !feed.capture.waitingRequests.length && !unreconciled && !packWaiting && !importWaiting;
   const refusedBeforeSend = candidate?.phase === 'unavailable' && candidate.reason === 'idle_required';
   const locked = attempt && !attempt.retryable && !refusedBeforeSend
     && !(otherCapture && candidate.receipt.acknowledgment) && (!capture?.saved || value === attempt.intent);
+  // An open import keeps the draft editable and gives both disabled sends one
+  // visible reason, which each names with aria-describedby.
+  const reasonId = useId();
+  const importReason = importWaiting && !packWaiting && Boolean(feed) && !data.issues.needs
+    && feed.coverage.state !== 'unavailable' ? reasonId : undefined;
   const submit = continuation => {
     if (!value.trim()) { setValidation('Enter an idea before submitting or saving.'); return; }
     if (exceedsTextLimit(value, data)) {
@@ -199,14 +224,17 @@ export function NewIdea({ value, onChange, onCancel, data }) {
         onChange={(_, input) => { onChange(input.value); setValidation(''); }} />
     </Field>
     <div className={s.actions}>
-      <Button appearance="primary" disabled={!idle || Boolean(locked)} onClick={() => submit('brainstorm')}>Submit</Button>
-      <Button disabled={!idle || Boolean(locked)} onClick={() => submit('capture_only')}>Save</Button>
+      <Button appearance="primary" disabled={!idle || Boolean(locked)} aria-describedby={importReason}
+        onClick={() => submit('brainstorm')}>Submit</Button>
+      <Button disabled={!idle || Boolean(locked)} aria-describedby={importReason}
+        onClick={() => submit('capture_only')}>Save</Button>
       <Button onClick={onCancel}>Cancel</Button>
     </div>
     {otherCapture ? <Notice title="Another capture used this receipt" intent="warning">
       Your draft was not the intent recorded by this receipt. Nothing will be sent automatically.
     </Notice> : (attempt || capture) && <ResponseStatus record={capture} attempt={attempt} capture />}
-    {!idle && (!attempt || capture?.saved) && <Notice title="Waiting for the joined agent">
+    {importReason && <Notice title="Waiting for the joined agent"><span id={importReason}>{IMPORT_IN_PROGRESS}</span></Notice>}
+    {!importReason && !idle && (!attempt || capture?.saved) && <Notice title="Waiting for the joined agent">
       {data.issues.needs || (packWaiting ? 'A pack request is in progress or needs owner reconciliation. Your idea draft stays here.'
         : feed?.capture.waitingRequests.length
         ? 'Another request is waiting. Respond in Needs you first; New idea will not interrupt or bind itself to that request.'
@@ -220,7 +248,9 @@ function RequestForm({ record, data, value, onChange, onReview, reviewed }) {
   const s = useCanvasStyles();
   const request = record.request, fields = request.fields;
   const statusFocus = useRef(null);
-  const pack = isPackPermission(request);
+  // A bound pack or import permission moves focus to its live outcome once consumed.
+  const action = actionKind(request) !== null;
+  const importBound = boundImport(record, data);
   const [error, setError] = useState('');
   const attempt = data.attempts[requestKey(data.needs, record)];
   const busy = Boolean(attempt && !attempt.retryable) || record.responding || record.reviewing;
@@ -234,7 +264,7 @@ function RequestForm({ record, data, value, onChange, onReview, reviewed }) {
     }
     setError('');
     // Move before the consumed permission controls become disabled/removed.
-    if (pack) statusFocus.current?.focus();
+    if (action) statusFocus.current?.focus();
     void data.respond(record, response);
   };
   const requireText = text => {
@@ -286,7 +316,7 @@ function RequestForm({ record, data, value, onChange, onReview, reviewed }) {
     kind: 'feature', status: 'defined', ...request.scope,
   }, data) : null;
   return <div className={s.stack}>
-    <ResponseStatus record={record} attempt={attempt} focusRef={pack ? statusFocus : undefined}
+    <ResponseStatus record={record} attempt={attempt} focusRef={action ? statusFocus : undefined}
       draft={Object.values(value).some(entry => typeof entry === 'string' ? Boolean(entry) : entry === true)} />
     <form className={s.stack} onSubmit={submit}>
       {(request.class === 'fact' || request.class === 'onboarding') && (fields.input.kind === 'text' ? textField()
@@ -306,7 +336,7 @@ function RequestForm({ record, data, value, onChange, onReview, reviewed }) {
           : <Text className={s.eyebrow}>No file revision was supplied. Report your observation; the owner verifies the result.</Text>}
       </>}
       {request.class === 'permission' && <>
-        <section className={s.scope} aria-label="Exact operation">
+        <section className={mergeClasses(s.scope, s.needsScope)} aria-label="Exact operation">
           <Text weight="semibold">{fields.operation}</Text>
           <ol>{fields.targets.map((target, index) => <li key={index}>
             <p className={s.code}>{target.target}{'\n'}Revision: {target.revision}</p>
@@ -322,9 +352,9 @@ function RequestForm({ record, data, value, onChange, onReview, reviewed }) {
             <Textarea className={s.control} value={value.confirmation || ''} autoComplete="off" disabled={disabled}
               onChange={(_, input) => set({ confirmation: input.value })} />
           </Field>
-          <Checkbox checked={Boolean(value.assent)} disabled={disabled}
+          <Checkbox checked={Boolean(value.assent)} disabled={disabled} className={s.consent}
             onChange={(_, input) => set({ assent: input.checked === true })}
-            label="I grant permission for this operation on these exact targets." />
+            label={{ children: 'I grant permission for this operation on these exact targets.', className: s.consentLabel }} />
         </>}
         <Text className={s.eyebrow}>The operation owner revalidates safety and executes or refuses. Canvas does not execute this operation.</Text>
       </>}
@@ -371,7 +401,7 @@ function RequestForm({ record, data, value, onChange, onReview, reviewed }) {
         if (requireText(value.text)) send({ class: 'permission', action: 'decline', text: value.text });
       }}>Send decline</Button>
     </section>}
-    {current && <section className={s.stack} aria-label="Deferral">
+    {current && !importBound && <section className={s.stack} aria-label="Deferral">
       <Button className={s.back} disabled={disabled} onClick={() => set({ deferring: !value.deferring })}>Defer</Button>
       {value.deferring && <>
         <Notice title={sourceBacked ? 'Request a source-backed deferral' : 'This matter is not saved'}>
@@ -402,7 +432,7 @@ function RequestForm({ record, data, value, onChange, onReview, reviewed }) {
   </div>;
 }
 
-export function NeedsYou({ data, selected, onSelect, drafts, onDraft, onReview, reviewedKey, onNew, scopeTitle, browsingLabel, onReturn }) {
+export function NeedsYou({ data, selected, onSelect, drafts, onDraft, onReview, reviewedKey, onNew, scopeTitle, browsingLabel, onReturn, returnLabel }) {
   const s = useCanvasStyles(), heading = useId();
   const feed = data.needs;
   const records = feed?.requests || [];
@@ -413,7 +443,7 @@ export function NeedsYou({ data, selected, onSelect, drafts, onDraft, onReview, 
   if (record) {
     const request = record.request, key = requestKey(feed, record);
     return <div className={s.measure}>
-      {onReturn && <Button className={s.back} icon={<ArrowLeftRegular />} onClick={onReturn}>Back to pack request</Button>}
+      {onReturn && <Button className={s.back} icon={<ArrowLeftRegular />} onClick={onReturn}>{returnLabel}</Button>}
       <Button className={s.back} icon={<ArrowLeftRegular />} onClick={() => onSelect(null)}>All requests</Button>
       <header className={s.detailHeader}>
         <div className={s.row}><Badge appearance="tint">{CLASSES[request.class]}</Badge>
@@ -421,14 +451,14 @@ export function NeedsYou({ data, selected, onSelect, drafts, onDraft, onReview, 
         <h1 className={s.title}>Needs you</h1>
         <p className={request.class === 'permission' ? s.prose : s.lead}>{request.prompt}</p>
       </header>
-      <section className={s.scope} aria-label="Request scope">
+      <section className={mergeClasses(s.scope, s.needsScope)} aria-label="Request scope">
         <Text className={s.eyebrow}>This request is about</Text>
         <ScopeIdentity scope={request.scope} title={scopeTitle} browsingLabel={browsingLabel} />
         <Text>Owner: {request.owner}</Text>
         <Text className={s.code}>Request: {request.requestRef} · Revision: {request.revision}</Text>
         <Text className={s.code}>Source: {request.source.kind === 'file' ? request.source.path : request.source.kind}{'\n'}{request.source.revision}</Text>
       </section>
-      <section className={s.scope}><Text weight="semibold">Why your input is needed</Text>
+      <section className={mergeClasses(s.scope, s.needsScope)}><Text weight="semibold">Why your input is needed</Text>
         <p className={s.prose}>{request.whyHuman}</p><Text weight="semibold">What this unblocks</Text>
         <p className={s.prose}>{request.unblocks}</p></section>
       {unavailable && <Notice intent="warning" title="Current request coverage unavailable">
@@ -445,7 +475,7 @@ export function NeedsYou({ data, selected, onSelect, drafts, onDraft, onReview, 
   }
   const past = records.filter(item => item.phase !== 'pending');
   return <div className={s.measure}>
-    {onReturn && <Button className={s.back} icon={<ArrowLeftRegular />} onClick={onReturn}>Back to pack request</Button>}
+    {onReturn && <Button className={s.back} icon={<ArrowLeftRegular />} onClick={onReturn}>{returnLabel}</Button>}
     <h1 className={s.title} id={heading}>Needs you</h1>
     {uncertain && <Notice intent="warning" title={unavailable ? 'Current request coverage unavailable' : 'Some request coverage is unavailable'}>
       {data.issues.needs || feed?.coverage.reason || 'Affected contexts cannot establish whether further input is needed.'}
