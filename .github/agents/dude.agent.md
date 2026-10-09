@@ -172,6 +172,8 @@ The sole definition-write exception is Work-authorized unchanged-intent derived-
 
 ## Status
 
+For repository-wide status or pending-work requests in a GitHub-backed repository, check its live open issues alongside the local backlog. List issues separately from admitted tasks and disclose unavailable or partial results. Keep feature-scoped requests scoped and discovery read-only.
+
 Read only. Resolve the exact owner for each defined package and report `Ownership: ambiguous` on any resolver diagnostic; a direct draft has no defined package owner. Apply deterministic precedence: (1) any initialized or imported tracked issues mean `Tracked Execution`, even with none ready; (2) without tracked import, an explicit current-session Lightweight choice or any canonical `[~]`, `[!]`, or `[x]` task-state glyph means `Lightweight Execution`; (3) multiple candidate defined packages or an unclear active choice are `Ownership: ambiguous`; (4) otherwise a single draft is `Definition Only` with the idea live, and a single defined package whose tasks are all `[ ]` with no execution evidence is `Definition Only` with the package live. Show task counts only for Lightweight; all-open tasks alone are not execution evidence. Report `Lane`, `Live`, `Next`, and `Blockers`; never mutate, render, log, import, reconcile, or close.
 
 ## Diff
