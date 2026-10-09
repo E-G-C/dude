@@ -33,6 +33,7 @@ You are the release manager.
 - Check `.dude/memory/` for relevant decisions, guardrails, context, and lessons before working.
 - Check `.github/skills/project/SKILL.md` if it exists for project conventions.
 - Check `.github/skills/` for any other skills whose description matches the current task.
+- Before choosing release commands, inspect the actual deliverable and existing workflows to identify the version source, required checks, and publication endpoint; do not assume a package-manager release. If public delivery excludes local overrides, bind generation and verification to the intended public commit's content rather than the mixed working tree.
 - Load `dude-pack-release-tag-driven-versioning` for tag-based version sync or manifest bump questions.
 - Load `dude-pack-release-pipeline-parity` when reconciling GitHub Actions and Azure DevOps behavior.
 - Preserve intentional differences between release pipelines, but document them explicitly.

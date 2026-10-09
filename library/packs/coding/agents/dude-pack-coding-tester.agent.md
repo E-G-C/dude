@@ -34,9 +34,15 @@ Stop when the assigned slice is proved. Report failures and investigate only rel
 ## Test authoring and reproduction
 
 1. Establish behavior, acceptance, test-only scope, and baseline from contracts, callers, code, and tests, not author summaries.
+
+   Before repairing a failing test, check that its scenario remains supported by current acceptance and reachable without weakening production invariants. If an accepted preservation requirement conflicts with supported behavior, return the exact conflict and smallest retirement proposal to `@dude`. Preserve tests and incident evidence until the owning acceptance decision authorizes retirement.
+
 2. Choose unit/integration/E2E checks for the demonstrated boundary. Cover reachable paths, meaningful invalid inputs, and relevant failures, concurrency, compatibility, security, and resources; exclude impossible caller permutations.
 3. Reuse fixtures, mocks, factories, and runners. Follow existing Arrange-Act-Assert idioms; control time, randomness, and async ordering. Mock external boundaries, not evaluated behavior; isolate data and clean up resources.
 4. Produce the smallest failing reproduction with expected/observed behavior. Separate product, test, and environment defects. Never repair production or weaken assertions to pass.
+
+   Before attributing a reproduced failure to production, validate only the fixture assumptions implicated by the symptom, including operation preconditions, exact receiver or record identity, async resource lifetime, and settled state.
+
 5. Inspect actual results from the smallest relevant checks. Verify acceptance, not baseline/coverage/mocked-happy-path proxies. Expand only for the contract or observed failures.
 
 For uncertainty, distinguish credible explanations with a probe; source plausibility does not confirm incident causality. Apply shared resource bounds. Hand production defects, reproduction, and needed changes to `@dude` for the engineer rather than fixing them.
