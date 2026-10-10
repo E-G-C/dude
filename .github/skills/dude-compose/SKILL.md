@@ -171,10 +171,19 @@ works whether or not any catalog or source is available.
 
 **Disclose the source first.** Make the source the first permission target,
 ahead of the file and profile targets. Name the source, its type, the configured
-ref for a remote source, and the resolved commit: a refresh preview reports it as
-`source.resolved_commit`, and for an install resolve the configured ref to its
-full commit, for example with `git ls-remote <repository> <ref>`. A local folder
-has no commit: say that a remote commit is not applicable and do not invent one.
+ref for a remote source, and the resolved commit. Take a remote commit only from
+Compose's own resolution of that source, whatever its host: a refresh preview
+reports it as `source.resolved_commit`. For an install, await `resolvePackDir`
+from `.github/skills/dude-compose/compose.mjs` with the root, library, pack
+name, source, and ref the install will use, and read
+`sourceIdentity.resolved_commit` and the prospective artifacts in `packDir`. A
+remote result owns an acquired copy, so await its `dispose()` afterward to
+remove it. A returned `error` is a refusal and leaves nothing to dispose. That
+resolution reads a public GitHub repository anonymously over HTTPS and clones
+any other host, GitHub Enterprise included, with Git, exactly as the install
+does. Do not look the commit up separately, with Git or with GitHub's API: that
+answer can differ from what Compose reads. A local folder has no commit: say
+that a remote commit is not applicable and do not invent one.
 A remote source's target revision is `commit:<40 hex>`; a local folder's is the
 `sha256:<64 hex>` digest of the pack's files in that folder. Label a source the
 project added "Third-party source": it is not part of the Dude bundle, and its
@@ -398,8 +407,9 @@ never hand-edits the profile.
 The `installed` map is the one pack authority. Its keys are opt-in membership,
 and each entry contains only its sorted exact safe `files` list and source
 identity. A direct local source records `{ type, location }`; it does not claim
-a Git commit. A remote source records its repository, requested ref, and the
-concrete commit fetched for that operation. Source identity identifies where the
+a Git commit. A remote source records its configured repository, its requested
+ref (including `latest`), and the concrete commit fetched for that operation,
+never the temporary folder it was read from. Source identity identifies where the
 projection came from. It does not attest installed bytes.
 
 An existing complete predecessor profile can make one in-memory transition to
@@ -428,18 +438,49 @@ is enabled, even if other local packs exist.
    source. The source is read from `.dude/metadata/bundle-manifest.md`
    (`source_repo` / `source_ref`) — the same trusted pin
    `dude-bundle-upgrade` already uses — or overridden with `--source` / `--ref`.
-   Local-path sources are read in place; remote sources are cloned under the OS
-   temp dir. Every remote request gets current upstream bytes for that
-   invocation, including an exact full commit SHA; the SHA selects exact content
-   but never reuses an existing clone. A required remote fetch failure refuses
-   rather than using old fetched bytes.
+   Local-path sources are read in place. Every remote request resolves the ref
+   to one commit and gets current upstream bytes for that invocation in a new
+   temporary folder under the OS temp dir, which Compose removes before it
+   answers or writes, including after a failure. The one exception is a Git
+   clone whose process tree cannot be confirmed stopped: because a process may
+   still write to that folder, Compose keeps it and reports the unconfirmed
+   cleanup in its refusal. An exact full commit SHA selects exact content but
+   never reuses an earlier copy. A required remote fetch failure refuses rather
+   than using old fetched bytes.
+
+How a remote source is fetched depends on its host:
+
+- **GitHub.** A public GitHub repository (`https://github.com/<owner>/<repo>`,
+  `ssh://git@github.com/<owner>/<repo>`, or `git@github.com:<owner>/<repo>`) is
+  read over anonymous HTTPS and never cloned, not even after a failure. `list`
+  downloads only each direct `library/packs/<name>/pack.md` and the tree
+  listings that find them. `add` and `refresh` download only the selected
+  pack's complete folder, including nested skill files, scripts, assets, and
+  shipped notices. Each file is checked against its Git object ID at the
+  resolved commit, and a branch, tag, or `latest` that moves during the read is
+  refused rather than mixed.
+- **Other hosts**, GitHub Enterprise included, are cloned whole with Git, as
+  before.
+
+Remote reads have fixed bounds: 30 seconds for a GitHub catalog, 120 seconds
+for a selected GitHub pack, and 60 seconds for another host's clone, plus size
+and request limits. Exceeding one, a GitHub rate limit, or an incomplete answer
+is a refusal, never a partial or empty result. When a stopped clone cannot be
+confirmed stopped, the error says so and names the temporary material it kept.
+
+GitHub reads are anonymous: Compose sends no token and uses none of Git's
+credential helpers, `.netrc`, SSH keys, or proxy settings for them. A private
+GitHub repository, or one reachable only through Git's sign-in or proxy
+configuration, therefore fails visibly, and Compose never retries it through
+Git. Use a local folder source (`--source <folder>`) or a vendored `library/`
+for such a catalog.
 
 `--no-fetch` disables step 2 (require the pack locally; `list` then shows only
 the local catalog, which may be empty). Remote selection uses only the manifest
 source pin unless `--source` / `--ref` overrides it; it does not invent
-arbitrary URLs. `git` is required for remote sources. For a fully
-offline/vendored install, use `dude-portability` to vendor the whole `library/`
-once.
+arbitrary URLs. Git is required only for remote sources on other hosts. For a
+fully offline/vendored install, use `dude-portability` to vendor the whole
+`library/` once.
 
 An explicit `--source` replaces that order. Only the named source is consulted:
 a remote repository at `--ref` (default `main`), or a local folder read in place

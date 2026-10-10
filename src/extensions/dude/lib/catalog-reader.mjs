@@ -33,7 +33,16 @@
  * What remains, by design: a credential written into the Git configuration that
  * `packs.mjs` carries (such as `http.extraHeader`) is still sent, a Git older
  * than 2.32 ignores `GIT_CONFIG_GLOBAL` so it does not read `~/.gitconfig`, and a
- * `~/` path inside the carried configuration names the empty home.
+ * `~/` path inside the carried configuration names the empty home. Git serves
+ * only other hosts: Compose reads a GitHub source over anonymous HTTPS, with no
+ * Git and no credentials at all.
+ *
+ * Compose acquires a remote catalog into a temporary folder inside this helper's
+ * own root. Every read awaits Compose and releases that folder before its answer
+ * is sent, so only a settled answer ever crosses IPC. An acquisition that had to
+ * keep material, because a stopped Git could not be confirmed stopped, says so in
+ * its error, which is returned unchanged and marked `kept`: that Git may still be
+ * writing into this helper's root, so the parent must keep the root and its slot.
  */
 import childProcess from 'node:child_process';
 import crypto from 'node:crypto';
@@ -69,6 +78,11 @@ export const CANDIDATE_DOCUMENT = 'pack-sources.candidate.md';
 
 const KEY_RE = /^src_[0-9a-f]{32}$/;
 const REVISION_RE = /^(?:absent|sha256:[0-9a-f]{64})$/;
+/**
+ * How Compose's error ends when it kept an acquisition's material: the root it
+ * names last, which Compose made in `os.tmpdir()`, this helper's own root.
+ */
+const KEPT_MATERIAL = '; its process tree could not be confirmed stopped, so its temporary material was kept at ';
 
 /**
  * @typedef {{ op: 'source', index: number, key: string | null, revision: string,
@@ -117,26 +131,44 @@ function parseRequest(text) {
  * @param {string} root
  * @param {{ dir: string, origin: string }} catalog
  */
-function listCatalog(root, catalog) {
+async function listCatalog(root, catalog) {
   const sourceRoot = fs.realpathSync(path.resolve(catalog.dir, '..', '..'));
   const catalogDir = resolveMutationPath(sourceRoot, 'library/packs');
   for (const name of availablePacks(catalogDir)) {
     resolveMutationPath(catalogDir, `${name}/pack.md`);
   }
-  const result = cmdList({ root, library: catalogDir, fetch: false });
+  const result = await cmdList({ root, library: catalogDir, fetch: false });
   if (result.ok) result.result.origin = catalog.origin;
   return result;
 }
 
+/**
+ * Enumerate a resolved catalog once, then remove the copy Compose acquired for
+ * it, if any, before the answer can be sent. A copy that cannot be removed fails
+ * the read instead of being left behind a listing.
+ * @param {string} root
+ * @param {{ dir: string, origin: string, dispose?: () => Promise<void> }} catalog
+ */
+async function listAndRelease(root, catalog) {
+  try {
+    return await listCatalog(root, catalog);
+  } finally {
+    await catalog.dispose?.();
+  }
+}
+
 /** @param {string} root */
-function readCatalog(root) {
+async function readCatalog(root) {
   try {
     resolveMutationPath(root, WORKSPACE_PATHS.PROFILE);
     resolveMutationPath(root, WORKSPACE_PATHS.BUNDLE_MANIFEST);
     const library = resolveMutationPath(root, 'library/packs');
-    const catalog = resolveCatalogDir({ root, library, fetch: true });
-    if ('error' in catalog) return { ok: false, error: catalog.error };
-    return listCatalog(root, catalog);
+    const catalog = await resolveCatalogDir({ root, library, fetch: true });
+    if ('error' in catalog) {
+      return keptMaterial(catalog.error) ? { ...failure('catalog_cleanup_failed', catalog.error), kept: true }
+        : { ok: false, error: catalog.error };
+    }
+    return await listAndRelease(root, catalog);
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'The catalog could not be read.' };
   }
@@ -148,6 +180,18 @@ function readCatalog(root) {
  */
 function failure(reason, error) {
   return { ok: false, reason, error };
+}
+
+/**
+ * Whether a failed acquisition's error is Compose's report that it kept material
+ * in this helper's own root, which Compose exports no other way. The report is
+ * the error's last clause and names a root directly inside this helper's own
+ * temporary root, a random folder that text inside a source address cannot name.
+ * @param {string} error
+ */
+function keptMaterial(error) {
+  const at = error.lastIndexOf(KEPT_MATERIAL);
+  return at >= 0 && path.dirname(error.slice(at + KEPT_MATERIAL.length)) === path.resolve(os.tmpdir());
 }
 
 /**
@@ -187,11 +231,11 @@ function loadSources(root, request) {
 /**
  * Describe one saved source, and with `list` resolve it once and enumerate its
  * catalog once. An explicit source is exclusive, and the resolved directory is
- * passed on as a local input, so this never clones twice.
+ * passed on as a local input, so this never acquires twice.
  * @param {string} root
  * @param {SourceRequest} request
  */
-function readSource(root, request) {
+async function readSource(root, request) {
   const loaded = loadSources(root, request);
   if ('failure' in loaded) return loaded.failure;
   const entry = loaded.sources[request.index];
@@ -219,12 +263,13 @@ function readSource(root, request) {
     resolveMutationPath(root, WORKSPACE_PATHS.BUNDLE_MANIFEST);
     const library = resolveMutationPath(root, 'library/packs');
     const catalog = source.type === 'remote'
-      ? resolveCatalogDir({ root, library, fetch: true, source: source.repository, ref: source.ref })
-      : resolveCatalogDir({ root, library, fetch: true, source: /** @type {string} */ (source.root) });
+      ? await resolveCatalogDir({ root, library, fetch: true, source: source.repository, ref: source.ref })
+      : await resolveCatalogDir({ root, library, fetch: true, source: /** @type {string} */ (source.root) });
     if ('error' in catalog) {
+      if (keptMaterial(catalog.error)) return { ...unread('catalog_cleanup_failed', catalog.error), kept: true };
       return unread(/^no pack catalog found in /.test(catalog.error) ? 'catalog_missing' : 'catalog_unreachable', catalog.error);
     }
-    const listed = listCatalog(root, catalog);
+    const listed = await listAndRelease(root, catalog);
     if (!listed.ok) {
       const error = listed.error ?? 'The catalog could not be read.';
       return unread(/ has invalid metadata/.test(error) ? 'catalog_metadata' : 'catalog_unavailable', error);
@@ -259,12 +304,16 @@ function validateSource(root, request) {
   }
 }
 
-/** @param {string} root */
-function handle(root) {
+/**
+ * The one operation's answer. It settles only after any catalog copy Compose
+ * acquired has been removed, and it never rejects.
+ * @param {string} root
+ */
+async function handle(root) {
   try {
     const request = parseRequest(process.env[CATALOG_REQUEST_ENV]);
-    if (request === null) return readCatalog(root);
-    return request.op === 'validate' ? validateSource(root, request) : readSource(root, request);
+    if (request === null) return await readCatalog(root);
+    return request.op === 'validate' ? validateSource(root, request) : await readSource(root, request);
   } catch (error) {
     return failure('catalog_unavailable', error instanceof Error ? error.message : 'The catalog could not be read.');
   }
@@ -319,7 +368,8 @@ function holdProcessStartsAfterStop() {
     }
     return spawnSync.apply(this, args);
   });
-  // Compose and release-channel use the built-in module's live named import.
+  // Compose's remote acquisition and release-channel use the built-in module's
+  // live named import, including a module Compose loads after this.
   syncBuiltinESMExports();
 }
 
@@ -335,8 +385,12 @@ if (typeof process.send === 'function' && entry && path.resolve(entry) === SELF 
   const home = privateGitHome(process.env[CATALOG_GIT_HOME_ENV]);
   if (home) useGitHome(home);
   holdProcessStartsAfterStop();
+  // Send only the settled answer, never a pending one. Awaiting at the top level
+  // also keeps a host entry's import of this module pending until the answer is
+  // on its way, as when the read was synchronous.
+  const answer = home ? await handle(root)
+    : failure('catalog_unavailable', 'The catalog reader was not given a Git home of its own.');
   // Exit explicitly: a host runtime may hold handles that would otherwise keep
   // a finished helper alive until the deadline kills it.
-  process.send(home ? handle(root) : failure('catalog_unavailable', 'The catalog reader was not given a Git home of its own.'),
-    error => process.exit(error ? 1 : 0));
+  process.send(answer, error => process.exit(error ? 1 : 0));
 }

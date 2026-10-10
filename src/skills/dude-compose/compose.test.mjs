@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import childProcess, { spawnSync } from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
@@ -155,7 +156,7 @@ function writeManifestSource(root, source, ref) {
   fs.writeFileSync(target, `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify({ source_repo: source, source_ref: ref })}\n\`\`\`\n`);
 }
 
-/** @param {ReturnType<typeof cmdList>} listed @param {string} name @param {string} description */
+/** @param {Awaited<ReturnType<typeof cmdList>>} listed @param {string} name @param {string} description */
 function assertListedDescription(listed, name, description) {
   assert.equal(listed.ok, true, listed.error);
   const pack = listed.result?.packs.find((candidate) => candidate.name === name);
@@ -591,7 +592,7 @@ test('list adds declared and omitted use-cases without changing existing fields 
     assert.equal(added.ok, true, added.error);
 
     // Act.
-    const listed = cmdList({ root, library: path.join(root, 'library', 'packs') });
+    const listed = await cmdList({ root, library: path.join(root, 'library', 'packs') });
 
     // Assert: pre-existing values and catalog order remain stable; discovery is additive.
     assert.equal(listed.ok, true, listed.error);
@@ -619,7 +620,7 @@ test('list adds declared and omitted use-cases without changing existing fields 
     writePack(root, 'broken', [], { skill: false });
     appendUseCasesDeclaration(root, 'broken', 'not-a-list');
     const beforeMalformedList = mutationSnapshot(root);
-    const malformed = cmdList({ root, library: path.join(root, 'library', 'packs') });
+    const malformed = await cmdList({ root, library: path.join(root, 'library', 'packs') });
     assert.equal(malformed.ok, false);
     assert.equal(malformed.code, 2);
     assert.match(malformed.error || '', /pack "broken" has invalid metadata: .*use-cases.*must be a list/);
@@ -629,7 +630,7 @@ test('list adds declared and omitted use-cases without changing existing fields 
   }
 });
 
-test('cmdList filters overlapping use cases by exact membership in catalog order and accepts no match', () => {
+test('cmdList filters overlapping use cases by exact membership in catalog order and accepts no match', async () => {
   const root = createRoot();
   try {
     // Arrange: `writing` overlaps while the valid nearby identifier must not match it.
@@ -648,8 +649,8 @@ test('cmdList filters overlapping use cases by exact membership in catalog order
     const library = path.join(root, 'library', 'packs');
 
     // Act.
-    const filtered = cmdList({ root, library, useCase: 'writing' });
-    const noMatch = cmdList({ root, library, useCase: 'release-management' });
+    const filtered = await cmdList({ root, library, useCase: 'writing' });
+    const noMatch = await cmdList({ root, library, useCase: 'release-management' });
 
     // Assert.
     assert.equal(filtered.ok, true, filtered.error);
@@ -668,7 +669,7 @@ test('cmdList filters overlapping use cases by exact membership in catalog order
   }
 });
 
-test('cmdList rejects an invalid programmatic filter before resolving a released-root source', () => {
+test('cmdList rejects an invalid programmatic filter before resolving a released-root source', async () => {
   const root = createReleasedRoot();
   try {
     // Arrange: reaching catalog resolution would attempt this unavailable source.
@@ -676,7 +677,7 @@ test('cmdList rejects an invalid programmatic filter before resolving a released
     assert.equal(exists(path.join(root, 'library')), false);
 
     // Act.
-    const result = cmdList({
+    const result = await cmdList({
       root,
       library,
       source: 'file:///definitely-missing-use-case-source',
@@ -804,7 +805,7 @@ test('source CLI rejects missing, repeated, invalid, flag-valued, and non-list u
   }
 });
 
-test('a file URL catalog on a released root lists declared and omitted metadata unfiltered and filtered', () => {
+test('a file URL catalog on a released root lists declared and omitted metadata unfiltered and filtered', async () => {
   const remote = createRemoteCatalog();
   const root = createReleasedRoot();
   const library = path.join(root, 'library', 'packs');
@@ -817,8 +818,8 @@ test('a file URL catalog on a released root lists declared and omitted metadata 
     assert.equal(exists(path.join(root, 'library')), false, 'fixture must retain released-root shape');
 
     // Act.
-    const unfiltered = cmdList({ root, library });
-    const filtered = cmdList({ root, library, useCase: 'writing' });
+    const unfiltered = await cmdList({ root, library });
+    const filtered = await cmdList({ root, library, useCase: 'writing' });
 
     // Assert.
     assert.equal(unfiltered.ok, true, unfiltered.error);
@@ -1023,12 +1024,12 @@ test('remote manifest branch re-fetches current bytes for released-bundle list, 
     assert.equal(exists(path.join(root, 'library')), false, 'consumer must have the released-bundle shape');
 
     // Arrange: list creates the first remote checkout at A.
-    assertListedDescription(cmdList({ root, library }), 'demo', 'demo catalog A');
+    assertListedDescription(await cmdList({ root, library }), 'demo', 'demo catalog A');
 
     // Act/Assert: each later consumer runs after a new branch publication.
     writeRemotePack(remote.repo, 'demo', 'B');
     commitRemote(remote.repo, 'publish B');
-    assertListedDescription(cmdList({ root, library }), 'demo', 'demo catalog B');
+    assertListedDescription(await cmdList({ root, library }), 'demo', 'demo catalog B');
 
     writeRemotePack(remote.repo, 'demo', 'C');
     const commitC = commitRemote(remote.repo, 'publish C');
@@ -1075,7 +1076,7 @@ test('remote concrete tags and latest releases are resolved again after publicat
     runGit(tagRemote.repo, 'tag', 'catalog-fixture');
     writeManifestSource(tagRoot, tagRemote.source, 'catalog-fixture');
     assertListedDescription(
-      cmdList({ root: tagRoot, library: path.join(tagRoot, 'library', 'packs') }),
+      await cmdList({ root: tagRoot, library: path.join(tagRoot, 'library', 'packs') }),
       'demo',
       'demo catalog tag-A',
     );
@@ -1102,7 +1103,7 @@ test('remote concrete tags and latest releases are resolved again after publicat
     runGit(latestRemote.repo, 'tag', 'v1.0.0');
     writeManifestSource(latestRoot, latestRemote.source, 'latest');
     assertListedDescription(
-      cmdList({ root: latestRoot, library: path.join(latestRoot, 'library', 'packs') }),
+      await cmdList({ root: latestRoot, library: path.join(latestRoot, 'library', 'packs') }),
       'demo',
       'demo catalog release-1',
     );
@@ -1110,7 +1111,7 @@ test('remote concrete tags and latest releases are resolved again after publicat
     const latestCommit = commitRemote(latestRemote.repo, 'publish release 2');
     runGit(latestRemote.repo, 'tag', 'v1.1.0');
     assertListedDescription(
-      cmdList({ root: latestRoot, library: path.join(latestRoot, 'library', 'packs') }),
+      await cmdList({ root: latestRoot, library: path.join(latestRoot, 'library', 'packs') }),
       'demo',
       'demo catalog release-2',
     );
@@ -1143,7 +1144,7 @@ test('a full remote SHA remains exact but refuses when its prior remote becomes 
     writeRemotePack(remote.repo, 'demo', 'SHA-A');
     const pinned = commitRemote(remote.repo, 'publish SHA A');
     writeManifestSource(root, remote.source, pinned);
-    assertListedDescription(cmdList({ root, library }), 'demo', 'demo catalog SHA-A');
+    assertListedDescription(await cmdList({ root, library }), 'demo', 'demo catalog SHA-A');
 
     // Moving ordinary refs cannot alter a full-SHA selection.
     writeRemotePack(remote.repo, 'demo', 'SHA-B');
@@ -1162,7 +1163,7 @@ test('a full remote SHA remains exact but refuses when its prior remote becomes 
     // The earlier SHA checkout exists, so this would succeed under SHA checkout
     // reuse. Removing the file:// source makes a fresh clone observable.
     fs.renameSync(remote.repo, `${remote.repo}-offline`);
-    const repeated = cmdList({ root, library });
+    const repeated = await cmdList({ root, library });
     assert.equal(repeated.ok, false);
     assert.equal(repeated.code, 2);
     assert.match(repeated.error || '', /failed to fetch source/);
@@ -1181,7 +1182,7 @@ test('unavailable mutable remotes refuse list, add, and refresh without stale mu
     writeRemotePack(remote.repo, 'other', 'online');
     commitRemote(remote.repo, 'publish online catalog');
     writeManifestSource(root, remote.source, 'main');
-    assertListedDescription(cmdList({ root, library }), 'demo', 'demo catalog online');
+    assertListedDescription(await cmdList({ root, library }), 'demo', 'demo catalog online');
     const installed = await cmdAdd({ root, library, name: 'demo', force: false });
     assert.equal(installed.ok, true, installed.error);
     assertInstalledVersion(root, 'demo', 'online');
@@ -1189,7 +1190,7 @@ test('unavailable mutable remotes refuse list, add, and refresh without stale mu
     // A previous checkout is now available at compose's usual destination, but
     // the selected remote can no longer provide current bytes.
     fs.renameSync(remote.repo, `${remote.repo}-offline`);
-    const listed = cmdList({ root, library });
+    const listed = await cmdList({ root, library });
     assert.equal(listed.ok, false);
     assert.equal(listed.code, 2);
     assert.match(listed.error || '', /failed to fetch source/);
@@ -1231,7 +1232,7 @@ test('remote source selection preserves local authority, explicit inputs, manife
     const library = path.join(root, 'library', 'packs');
 
     // A whole local catalog wins even with a configured remote.
-    const localList = cmdList({ root, library });
+    const localList = await cmdList({ root, library });
     assertListedDescription(localList, 'local', 'local fixture pack');
     assert.equal(localList.result?.packs.some((pack) => pack.name === 'remote-only'), false);
     assert.equal(localList.result?.origin, 'local');
@@ -1290,7 +1291,7 @@ test('remote source selection preserves local authority, explicit inputs, manife
     // Explicit source/ref values override an unusable manifest.
     writeManifestSource(explicitRoot, 'file:///definitely-missing-manifest', 'main');
     assertListedDescription(
-      cmdList({
+      await cmdList({
         root: explicitRoot,
         library: path.join(explicitRoot, 'library', 'packs'),
         source: remote.source,
@@ -1304,7 +1305,7 @@ test('remote source selection preserves local authority, explicit inputs, manife
     // fill the ref from this conflicting manifest.
     writeManifestSource(explicitRoot, 'file:///definitely-missing-manifest', 'explicit-fixture');
     assertListedDescription(
-      cmdList({
+      await cmdList({
         root: explicitRoot,
         library: path.join(explicitRoot, 'library', 'packs'),
         source: remote.source,
@@ -1316,7 +1317,7 @@ test('remote source selection preserves local authority, explicit inputs, manife
     // An explicit ref combines with the manifest source instead of its ref.
     writeManifestSource(explicitRoot, remote.source, 'main');
     assertListedDescription(
-      cmdList({
+      await cmdList({
         root: explicitRoot,
         library: path.join(explicitRoot, 'library', 'packs'),
         ref: 'explicit-fixture',
@@ -1327,7 +1328,7 @@ test('remote source selection preserves local authority, explicit inputs, manife
 
     // Local-only callers neither need nor contact the configured remote.
     writeManifestSource(noFetchRoot, 'file:///definitely-missing-no-fetch', 'main');
-    const noFetchList = cmdList({
+    const noFetchList = await cmdList({
       root: noFetchRoot,
       library: path.join(noFetchRoot, 'library', 'packs'),
       fetch: false,
@@ -1851,7 +1852,7 @@ for (const scenario of dependencyFailureScenarios) {
         assert.deepEqual(stages.directories, [], 'dependency failures must precede stage creation');
         assertNoSurvivingStageDirectories(stages.directories);
 
-        const listed = cmdList({ root, library: path.join(root, 'library', 'packs') });
+        const listed = await cmdList({ root, library: path.join(root, 'library', 'packs') });
         const status = cmdStatus({ root });
         assert.equal(listed.ok, true, listed.error);
         assert.equal(status.ok, true, status.error);
@@ -1885,7 +1886,7 @@ test('remove, list, and status dispatch with every rendering dependency absent',
     fs.rmSync(packagedPath(root, 'lib', 'agent-model-map.mjs'));
     fs.rmSync(packagedPath(root, 'lib', 'agent-projection.mjs'));
 
-    assert.equal(cmdList({ root, library: path.join(root, 'library', 'packs') }).ok, true);
+    assert.equal((await cmdList({ root, library: path.join(root, 'library', 'packs') })).ok, true);
     assert.equal(cmdStatus({ root }).ok, true);
     const removed = cmdRemove({ root, name: 'demo' });
     assert.equal(removed.ok, true, removed.error);
@@ -3601,13 +3602,13 @@ test('T007 an explicit remote source is exclusive for list, add, and refresh, an
     const unusable = { root, library, source: 'file:///definitely-missing-explicit-source', ref: 'main' };
 
     // list: only the explicit source's packs, though the library and the manifest have others.
-    const listed = cmdList(explicit);
+    const listed = await cmdList(explicit);
     assert.equal(listed.ok, true, listed.error);
     assert.deepEqual(listed.result?.packs.map((pack) => pack.name), ['remote-only', 'shared']);
     assert.equal(listed.result?.origin, `${remote.source} @ main`);
     assertListedDescription(listed, 'shared', 'shared catalog remote');
     assert.deepEqual(
-      cmdList({ root, library }).result?.packs.map((pack) => pack.name),
+      (await cmdList({ root, library })).result?.packs.map((pack) => pack.name),
       ['local-only', 'shared'],
       'without a source the whole local catalog still wins',
     );
@@ -3645,7 +3646,7 @@ test('T007 an explicit remote source is exclusive for list, add, and refresh, an
     assert.equal(readProfile(root).installed.shared.source.resolved_commit, secondCommit);
 
     // A source that cannot be fetched is a refusal, not a reason to use the library or the manifest.
-    const listFailure = cmdList(unusable);
+    const listFailure = await cmdList(unusable);
     assert.equal(listFailure.ok, false);
     assert.match(listFailure.error || '', /failed to fetch source/);
     const before = mutationSnapshot(root);
@@ -3680,7 +3681,7 @@ test('T007 an explicit source without the catalog or pack, or under --no-fetch, 
     const before = mutationSnapshot(root);
 
     // No catalog in the explicit source: nothing is answered from the library.
-    const noCatalog = cmdList({ root, library, source: bare.source, ref: 'main' });
+    const noCatalog = await cmdList({ root, library, source: bare.source, ref: 'main' });
     assert.equal(noCatalog.ok, false);
     assert.match(noCatalog.error || '', /no pack catalog found in/);
     const noPack = await cmdAdd({ root, library, name: 'shared', force: false, source: bare.source, ref: 'main' });
@@ -3689,7 +3690,7 @@ test('T007 an explicit source without the catalog or pack, or under --no-fetch, 
     assertMutationUnchanged(root, before);
 
     // --no-fetch never fetches an explicit remote, and the library is not a fallback.
-    const noFetchList = cmdList({ root, library, fetch: false, source: remote.source });
+    const noFetchList = await cmdList({ root, library, fetch: false, source: remote.source });
     assert.equal(noFetchList.ok, false);
     assert.match(noFetchList.error || '', /--no-fetch does not fetch it/);
     const noFetchAdd = await cmdAdd({ root, library, name: 'shared', force: false, fetch: false, source: remote.source });
@@ -3706,7 +3707,7 @@ test('T007 an explicit source without the catalog or pack, or under --no-fetch, 
     assertMutationUnchanged(root, installed);
 
     // --library is not consulted when a source is explicit.
-    const ignored = cmdList({ root, library: path.join(elsewhere, 'library', 'packs'), source: remote.source, ref: 'main' });
+    const ignored = await cmdList({ root, library: path.join(elsewhere, 'library', 'packs'), source: remote.source, ref: 'main' });
     assert.equal(ignored.ok, true, ignored.error);
     assert.deepEqual(ignored.result?.packs.map((pack) => pack.name), ['shared']);
   } finally {
@@ -3729,7 +3730,7 @@ test('T007 an explicit local source is read in place, records its containing roo
     fs.rmSync(path.join(noLayout, 'library'), { recursive: true });
     const library = path.join(root, 'library', 'packs');
 
-    const listed = cmdList({ root, library, source: folder });
+    const listed = await cmdList({ root, library, source: folder });
     assert.equal(listed.ok, true, listed.error);
     assert.deepEqual(listed.result?.packs.map((pack) => pack.name), ['folder-only', 'shared']);
     assert.equal(listed.result?.origin, `source ${folder}`);
@@ -3749,7 +3750,7 @@ test('T007 an explicit local source is read in place, records its containing roo
     const missing = await cmdAdd({ root, library, name: 'local-only', force: false, source: folder });
     assert.equal(missing.ok, false);
     assert.match(missing.error || '', /pack "local-only" not found in source/);
-    const noCatalog = cmdList({ root, library, source: noLayout });
+    const noCatalog = await cmdList({ root, library, source: noLayout });
     assert.equal(noCatalog.ok, false);
     assert.match(noCatalog.error || '', /no pack catalog found in/);
     assertMutationUnchanged(root, before);
@@ -3833,7 +3834,7 @@ test('T007 Compose guidance documents the exclusive source, the catalogSource bi
     '`--source <repository>` and the configured `--ref <ref>` for a remote source',
     'or `--source <location>` for a local folder, and add no other source and no `--library` or `--force`',
     'a refresh preview reports it as `source.resolved_commit`',
-    'for example with `git ls-remote <repository> <ref>`',
+    'For an install, await `resolvePackDir` from `.github/skills/dude-compose/compose.mjs` with the root, library, pack name, source, and ref the install will use',
     'never a reason to use another source or catalog',
     'The raw-bytes revision of `.dude/metadata/pack-sources.md`',
     'must still equal `sourcesRevision`',
@@ -3990,4 +3991,782 @@ test('T007 upgrade --all: the Compose preview and refresh calls pass exactly roo
     );
     assert.ok(declared < at, `ref must be bound before compose.${method}(`);
   }
+});
+
+/* ---------------------------------------- T002 targeted remote acquisition */
+
+// Captured before any test records process starts, so the fixture repository's
+// own Git, including the GitHub stand-in's object reads, never counts as Compose's.
+const fixtureSpawnSync = childProcess.spawnSync;
+const PROCESS_APIS = /** @type {const} */ (['spawn', 'spawnSync', 'execFile', 'execFileSync', 'exec', 'execSync', 'fork']);
+const GITHUB_SOURCE = 'https://github.com/acme/catalog';
+const GITHUB_API = 'https://api.github.com/repos/acme/catalog';
+const GITHUB_RAW = 'https://raw.githubusercontent.com/acme/catalog';
+/** Bytes any text conversion would change: a NUL, CRLFs, and a lone CR. */
+const BINARY_ASSET = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0x0d, 0x0a, 0xfe, 0x0d]);
+const STALE_ADD = 'profile changed after authorizing add of pack "alpha"; refusing add';
+const STALE_LIST = 'profile changed while the catalog was read; refusing stale installed flags';
+
+/** @param {string} cwd @param {...string} args */
+function fixtureGit(cwd, ...args) {
+  const result = fixtureSpawnSync('git', args, { cwd, encoding: 'utf8' });
+  assert.equal(result.status, 0, `git ${args.join(' ')} failed in ${cwd}: ${result.stderr || result.stdout || 'no output'}`);
+  return result.stdout.trim();
+}
+
+/** @typedef {string | Buffer | { bytes: string, executable: true }} CatalogFile */
+
+/**
+ * One published revision of a multi-pack catalog. `alpha` ships nested skill
+ * companions, an executable script, a binary asset, and notices; `gamma` is a
+ * folder without a manifest; everything outside `library/packs` is unrelated.
+ * Revision `two` drops alpha's prompt, changes its agent, and adds an instruction.
+ * @param {'one' | 'two'} revision
+ * @returns {Record<string, CatalogFile>}
+ */
+function catalogFiles(revision) {
+  const alpha = 'library/packs/alpha';
+  const skill = `${alpha}/skills/dude-pack-alpha-writer`;
+  return {
+    'README.md': '# Unrelated repository content\n',
+    'docs/large.bin': Buffer.alloc(256 * 1024, 7),
+    'library/README.md': '# Library\n',
+    'library/packs/notes.txt': 'not a pack\n',
+    [`${alpha}/pack.md`]: '---\nname: alpha\ndescription: "alpha pack"\nuse-cases: [writing]\n---\n# alpha\n',
+    [`${alpha}/LICENSE`]: 'MIT License (alpha)\n',
+    [`${alpha}/NOTICE`]: 'alpha notice\n',
+    [`${alpha}/agents/dude-pack-alpha-worker.agent.md`]: agentSource({ name: `Alpha Worker ${revision}` }),
+    [`${skill}/SKILL.md`]: '---\nname: dude-pack-alpha-writer\ndescription: "fixture writer"\n---\n# Writer\n',
+    [`${skill}/LICENSE`]: 'MIT License (writer)\n',
+    [`${skill}/assets/logo.png`]: BINARY_ASSET,
+    [`${skill}/scripts/run.sh`]: { bytes: '#!/bin/sh\necho alpha\n', executable: true },
+    [`${skill}/scripts/vendor.js`]: 'export const vendor = 1;\n',
+    [`${skill}/scripts/vendor.js.LEGAL.txt`]: 'vendor: MIT\n',
+    [`${skill}/references/deep/notes.md`]: 'nested notes\n',
+    ...(revision === 'one'
+      ? { [`${alpha}/prompts/dude-pack-alpha-ask.prompt.md`]: '# alpha ask\n' }
+      : { [`${alpha}/instructions/dude-pack-alpha-guide.instructions.md`]: '# alpha guide\n' }),
+    'library/packs/beta/pack.md': '---\nname: beta\ndescription: "beta pack"\n---\n# beta\n',
+    'library/packs/beta/agents/dude-pack-beta-worker.agent.md': agentSource({ name: 'Beta Worker' }),
+    'library/packs/gamma/README.md': 'a folder without a manifest\n',
+  };
+}
+
+/**
+ * Replace the repository's working tree with `files` and commit it.
+ * @param {string} repo
+ * @param {Record<string, CatalogFile>} files
+ * @param {string} message
+ * @returns {string} the new commit
+ */
+function publishCatalog(repo, files, message) {
+  for (const entry of fs.readdirSync(repo)) {
+    if (entry !== '.git') fs.rmSync(path.join(repo, entry), { recursive: true, force: true });
+  }
+  /** @type {string[]} */
+  const executables = [];
+  for (const [relative, value] of Object.entries(files)) {
+    const absolute = path.join(repo, ...relative.split('/'));
+    fs.mkdirSync(path.dirname(absolute), { recursive: true });
+    const executable = typeof value === 'object' && !Buffer.isBuffer(value);
+    fs.writeFileSync(absolute, executable ? value.bytes : value);
+    if (executable) {
+      executables.push(relative);
+      if (process.platform !== 'win32') fs.chmodSync(absolute, 0o755);
+    }
+  }
+  fixtureGit(repo, '-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', 'add', '-A');
+  for (const relative of executables) fixtureGit(repo, 'update-index', '--chmod=+x', '--', relative);
+  fixtureGit(repo, '-c', 'user.email=fixture@example.test', '-c', 'user.name=Catalog Fixture', 'commit', '-qm', message);
+  return fixtureGit(repo, 'rev-parse', 'HEAD');
+}
+
+/** A real repository at revision `one`; its working tree is also a local folder source. */
+function createGitHubCatalog() {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-compose-github-'));
+  const repo = path.join(parent, 'catalog');
+  fs.mkdirSync(repo);
+  fixtureGit(repo, 'init', '-q', '-b', 'main');
+  return { parent, repo, first: publishCatalog(repo, catalogFiles('one'), 'revision one') };
+}
+
+/** @param {string} directory @returns {string[]} sorted file paths relative to `directory` */
+function relativeFiles(directory) {
+  /** @type {string[]} */
+  const files = [];
+  /** @param {string} current @param {string} prefix */
+  const visit = (current, prefix) => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) visit(path.join(current, entry.name), relative);
+      else files.push(relative);
+    }
+  };
+  visit(directory, '');
+  return files.sort();
+}
+
+/**
+ * A request-recording stand-in for GitHub's API and raw hosts. It answers from one
+ * real repository's own Git objects, as GitHub serves that repository, so a GitHub
+ * read can be compared with the same commit read as a local folder. `intercept`
+ * may answer or delay a request instead.
+ * @param {string} repo
+ */
+function githubStandIn(repo) {
+  /** @type {string[]} */
+  const requests = [];
+  /** @type {((url: string, signal: AbortSignal | undefined) => Promise<Response | undefined>) | null} */
+  let intercept = null;
+  /** @param {...string} args @returns {Buffer | null} */
+  const objects = (...args) => {
+    const result = fixtureSpawnSync('git', args, { cwd: repo, encoding: 'buffer' });
+    return result.status === 0 ? result.stdout : null;
+  };
+  /** @param {unknown} value @param {number} [status] */
+  const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
+  /** @param {string} url */
+  const route = (url) => {
+    if (url.startsWith(`${GITHUB_RAW}/`)) {
+      const [commit, ...segments] = url.slice(GITHUB_RAW.length + 1).split('/').map(decodeURIComponent);
+      const bytes = objects('cat-file', 'blob', `${commit}:${segments.join('/')}`);
+      return bytes ? new Response(bytes) : new Response('404: Not Found', { status: 404 });
+    }
+    if (url.startsWith(`${GITHUB_API}/commits/`)) {
+      const ref = url.slice(`${GITHUB_API}/commits/`.length).split('/').map(decodeURIComponent).join('/');
+      const commit = objects('rev-parse', '--verify', '--quiet', `${ref}^{commit}`);
+      return commit ? new Response(commit.toString('utf8').trim()) : json({ message: `No commit found for SHA: ${ref}` }, 422);
+    }
+    if (url.startsWith(`${GITHUB_API}/git/commits/`)) {
+      const sha = url.slice(`${GITHUB_API}/git/commits/`.length);
+      const tree = objects('rev-parse', '--verify', '--quiet', `${sha}^{tree}`);
+      return tree ? json({ sha, tree: { sha: tree.toString('utf8').trim() } }) : json({ message: 'Not Found' }, 404);
+    }
+    if (url.startsWith(`${GITHUB_API}/git/trees/`)) {
+      const [sha, query] = url.slice(`${GITHUB_API}/git/trees/`.length).split('?');
+      const listed = objects('ls-tree', '-z', '-l', ...(query === 'recursive=1' ? ['-r', '-t'] : []), sha);
+      if (!listed) return json({ message: 'Not Found' }, 404);
+      const tree = listed.toString('utf8').split('\0').filter(Boolean).map((line) => {
+        const [, mode, type, object, size, itemPath] = /** @type {RegExpExecArray} */ (/^(\d{6}) (\w+) ([0-9a-f]{40}) +(-|\d+)\t(.*)$/s.exec(line));
+        return { path: itemPath, mode, type, sha: object, ...(type === 'blob' ? { size: Number(size) } : {}) };
+      });
+      return json({ sha, tree, truncated: false });
+    }
+    if (url.startsWith(`${GITHUB_API}/tags?`)) {
+      const page = Number(new URL(url).searchParams.get('page'));
+      const listed = objects('for-each-ref', '--format=%(refname:strip=2) %(*objectname) %(objectname)', 'refs/tags');
+      const tags = (listed?.toString('utf8') ?? '').split('\n').filter(Boolean).map((line) => {
+        const [name, commit] = line.split(' ').filter(Boolean);
+        return { name, commit: { sha: commit } };
+      });
+      return json(tags.slice((page - 1) * 100, page * 100));
+    }
+    return new Response('unexpected request', { status: 599 });
+  };
+  return {
+    requests,
+    /** @param {typeof intercept} handler */
+    intercept(handler) {
+      intercept = handler;
+    },
+    /** @param {string} prefix */
+    of: (prefix) => requests.filter((url) => url.startsWith(prefix)),
+    /** @type {typeof fetch} */
+    async fetch(input, init = {}) {
+      const url = String(input);
+      requests.push(url);
+      await new Promise((resolve) => setImmediate(resolve));
+      init.signal?.throwIfAborted();
+      return (intercept ? await intercept(url, init.signal ?? undefined) : undefined) ?? route(url);
+    },
+  };
+}
+
+/**
+ * Hold the first request `matches` accepts until `release()`, so a test can act
+ * while that acquisition waits. A held request still ends with its operation.
+ * @param {ReturnType<typeof githubStandIn>} server
+ * @param {(url: string) => boolean} matches
+ */
+function holdFirst(server, matches) {
+  /** @type {() => void} */
+  let release = () => {};
+  const released = new Promise((resolve) => { release = () => resolve(undefined); });
+  /** @type {() => void} */
+  let reach = () => {};
+  const arrived = new Promise((resolve) => { reach = () => resolve(undefined); });
+  let held = false;
+  server.intercept(async (url, signal) => {
+    if (held || !matches(url)) return undefined;
+    held = true;
+    reach();
+    await new Promise((resolve, reject) => {
+      void released.then(resolve);
+      signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+    return undefined;
+  });
+  return { arrived, release };
+}
+
+/**
+ * Run `run` with `fetch` answered by `server`, every process start recorded (and
+ * `spawnSync` optionally replaced), and the OS temporary folder pointed at an
+ * empty folder, so a check can see that each call left nothing behind.
+ * @param {ReturnType<typeof githubStandIn> | null} server null fails any HTTP request
+ * @param {(state: { calls: Array<{ api: string, command: unknown, args: string[] }>, temporary: string }) => Promise<void>} run
+ * @param {{ spawnSync?: (...args: any[]) => any }} [replace]
+ */
+async function withAcquisition(server, run, replace = {}) {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-compose-acq-'));
+  const savedEnv = ['TMPDIR', 'TMP', 'TEMP'].map((name) => /** @type {[string, string | undefined]} */ ([name, process.env[name]]));
+  const originalFetch = globalThis.fetch;
+  const originals = Object.fromEntries(PROCESS_APIS.map((name) => [name, childProcess[name]]));
+  /** @type {Array<{ api: string, command: unknown, args: string[] }>} */
+  const calls = [];
+  for (const name of PROCESS_APIS) {
+    /** @type {any} */ (childProcess)[name] = function recorded(/** @type {any[]} */ ...args) {
+      calls.push({ api: name, command: args[0], args: Array.isArray(args[1]) ? [...args[1]] : [] });
+      const replacement = /** @type {any} */ (replace)[name];
+      return replacement ? replacement(...args) : originals[name].apply(this, args);
+    };
+  }
+  syncBuiltinESMExports();
+  globalThis.fetch = server
+    ? server.fetch
+    : /** @type {typeof fetch} */ (async (input) => assert.fail(`no HTTP request was expected: ${String(input)}`));
+  for (const [name] of savedEnv) process.env[name] = temporary;
+  try {
+    await run({ calls, temporary });
+  } finally {
+    for (const [name, value] of savedEnv) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    globalThis.fetch = originalFetch;
+    Object.assign(childProcess, originals);
+    syncBuiltinESMExports();
+    fs.rmSync(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+/** @param {string} root @param {string} relative */
+function executableBits(root, relative) {
+  return fs.statSync(path.join(root, ...relative.split('/'))).mode & 0o111;
+}
+
+/**
+ * Both roots hold the same installed alpha, byte for byte and with the same
+ * executable bits, and record the same files.
+ * @param {string} githubRoot
+ * @param {string} localRoot
+ */
+function assertSameProjection(githubRoot, localRoot) {
+  assert.deepEqual(snapshotTree(githubRoot, ['.github']), snapshotTree(localRoot, ['.github']));
+  assert.deepEqual(readProfile(githubRoot).installed.alpha.files, readProfile(localRoot).installed.alpha.files);
+  if (process.platform !== 'win32') {
+    const script = '.github/skills/dude-pack-alpha-writer/scripts/run.sh';
+    assert.notEqual(executableBits(githubRoot, script), 0, 'the shipped script stays executable');
+    assert.equal(executableBits(githubRoot, script), executableBits(localRoot, script));
+  }
+}
+
+test('T002 GitHub list, add, preview, and refresh read only manifests or the selected pack and project like the same commit read locally', async () => {
+  const catalog = createGitHubCatalog();
+  const githubRoot = createRoot();
+  const localRoot = createRoot();
+  const server = githubStandIn(catalog.repo);
+  const github = { root: githubRoot, library: path.join(githubRoot, 'library', 'packs'), source: GITHUB_SOURCE, ref: 'main' };
+  const local = { root: localRoot, library: path.join(localRoot, 'library', 'packs'), source: catalog.repo };
+  try {
+    await withAcquisition(server, async ({ calls, temporary }) => {
+      // list: only direct manifests, and the trees that find them, at one commit.
+      const listed = await cmdList(github);
+      assert.equal(listed.ok, true, listed.error);
+      assert.deepEqual(listed.result, {
+        packs: [
+          { name: 'alpha', installed: false, description: 'alpha pack', use_cases: ['writing'] },
+          { name: 'beta', installed: false, description: 'beta pack', use_cases: [] },
+        ],
+        enabled_packs: [],
+        origin: `${GITHUB_SOURCE} @ main`,
+      });
+      assert.deepEqual((await cmdList(local)).result?.packs, listed.result.packs, 'the same commit lists the same packs locally');
+      assert.deepEqual(
+        server.of(GITHUB_RAW).sort(),
+        ['alpha', 'beta'].map((name) => `${GITHUB_RAW}/${catalog.first}/library/packs/${name}/pack.md`),
+      );
+      assert.deepEqual(server.requests.filter((url) => url.endsWith('?recursive=1')), [], 'no pack is read whole to list it');
+      assert.equal(server.of(`${GITHUB_API}/commits/`).length, 2, 'the branch is resolved, then rechecked');
+      assert.deepEqual(fs.readdirSync(temporary), [], 'list removed its acquired catalog');
+
+      // add: only the selected pack's complete subtree.
+      server.requests.length = 0;
+      const added = await cmdAdd({ ...github, name: 'alpha', force: false });
+      assert.equal(added.ok, true, added.error);
+      assert.equal(added.result.origin, `${GITHUB_SOURCE} @ main`);
+      const alphaTree = fixtureGit(catalog.repo, 'rev-parse', `${catalog.first}:library/packs/alpha`);
+      assert.deepEqual(server.requests.filter((url) => url.endsWith('?recursive=1')), [`${GITHUB_API}/git/trees/${alphaTree}?recursive=1`]);
+      assert.deepEqual(
+        server.of(GITHUB_RAW).sort(),
+        relativeFiles(path.join(catalog.repo, 'library', 'packs', 'alpha'))
+          .map((file) => `${GITHUB_RAW}/${catalog.first}/library/packs/alpha/${file}`),
+        'every file of alpha, notices included, and nothing else',
+      );
+      assert.deepEqual(readProfile(githubRoot).installed.alpha.source, {
+        type: 'remote', repository: GITHUB_SOURCE, requested_ref: 'main', resolved_commit: catalog.first,
+      });
+      assert.deepEqual(fs.readdirSync(temporary), [], 'add removed its acquired pack and its stage');
+      assert.deepEqual(calls, [], 'a GitHub source is never cloned or otherwise run as a process');
+    });
+
+    const localAdded = await cmdAdd({ ...local, name: 'alpha', force: false });
+    assert.equal(localAdded.ok, true, localAdded.error);
+    assert.deepEqual(readProfile(localRoot).installed.alpha.source, { type: 'local', location: fs.realpathSync(catalog.repo) });
+    assertSameProjection(githubRoot, localRoot);
+    const writer = path.join(githubRoot, '.github', 'skills', 'dude-pack-alpha-writer');
+    assert.deepEqual(fs.readFileSync(path.join(writer, 'assets', 'logo.png')), BINARY_ASSET, 'a binary asset keeps its exact bytes');
+    for (const nested of ['LICENSE', 'scripts/vendor.js.LEGAL.txt', 'references/deep/notes.md']) {
+      assert.equal(exists(path.join(writer, ...nested.split('/'))), true, `${nested} is projected with its skill`);
+    }
+
+    // refresh: the next commit replaces, adds, and removes; its preview changes nothing.
+    const second = publishCatalog(catalog.repo, catalogFiles('two'), 'revision two');
+    await withAcquisition(server, async ({ calls, temporary }) => {
+      server.requests.length = 0;
+      const before = mutationSnapshot(githubRoot);
+      const preview = await cmdPreviewRefresh({ ...github, name: 'alpha' });
+      assert.equal(preview.ok, true, preview.error);
+      assert.deepEqual(preview.result, {
+        previewed: 'alpha',
+        replaced: ['.github/agents/dude-pack-alpha-worker.agent.md', '.github/skills/dude-pack-alpha-writer'],
+        added: ['.github/instructions/dude-pack-alpha-guide.instructions.md'],
+        removed: ['.github/prompts/dude-pack-alpha-ask.prompt.md'],
+        files: [
+          '.github/agents/dude-pack-alpha-worker.agent.md',
+          '.github/instructions/dude-pack-alpha-guide.instructions.md',
+          '.github/skills/dude-pack-alpha-writer',
+        ],
+        source: { type: 'remote', repository: GITHUB_SOURCE, requested_ref: 'main', resolved_commit: second },
+      });
+      assertMutationUnchanged(githubRoot, before);
+      assert.deepEqual(fs.readdirSync(temporary), [], 'the preview removed its acquired pack and its stage');
+
+      const refreshed = await cmdRefresh({ ...github, name: 'alpha' });
+      assert.equal(refreshed.ok, true, refreshed.error);
+      const { replaced, added, removed, files, source } = preview.result;
+      assert.deepEqual(refreshed.result, { refreshed: 'alpha', replaced, added, removed, files });
+      assert.equal(exists(path.join(githubRoot, '.github', 'prompts', 'dude-pack-alpha-ask.prompt.md')), false, 'the dropped prompt is removed');
+      assert.deepEqual(readProfile(githubRoot).installed.alpha.source, source);
+      assert.ok(server.of(GITHUB_RAW).every((url) => url.startsWith(`${GITHUB_RAW}/${second}/library/packs/alpha/`)), 'refresh reads only alpha at the new commit');
+      assert.deepEqual(fs.readdirSync(temporary), [], 'refresh removed its acquired pack, stage, and transaction');
+      assert.deepEqual(calls, []);
+    });
+    const localRefreshed = await cmdRefresh({ ...local, name: 'alpha' });
+    assert.equal(localRefreshed.ok, true, localRefreshed.error);
+    assertSameProjection(githubRoot, localRoot);
+  } finally {
+    cleanup(githubRoot);
+    cleanup(localRoot);
+    cleanup(catalog.parent);
+  }
+});
+
+test('T002 an add refuses when its profile basis or a destination changed while it acquired, and never erases the other change', async (t) => {
+  const catalog = createGitHubCatalog();
+  /**
+   * Hold alpha's GitHub add after it read the profile, run `meanwhile`, then let
+   * the add finish.
+   * @param {(root: string) => Promise<void>} prepare
+   * @param {(root: string) => Promise<void>} meanwhile
+   * @param {(result: Awaited<ReturnType<typeof cmdAdd>>, root: string, between: ReturnType<typeof mutationSnapshot>) => void} check
+   */
+  const interleave = async (prepare, meanwhile, check) => {
+    const root = createRoot();
+    writePack(root, 'yankee', [packAgent('yankee', 'worker')], { skill: false });
+    writePack(root, 'zulu', [packAgent('zulu', 'worker')], { skill: false });
+    const server = githubStandIn(catalog.repo);
+    try {
+      await prepare(root);
+      await withAcquisition(server, async ({ calls, temporary }) => {
+        const hold = holdFirst(server, (url) => url.includes('/library/packs/alpha/'));
+        const pending = cmdAdd({ root, library: path.join(root, 'library', 'packs'), name: 'alpha', force: false, source: GITHUB_SOURCE, ref: 'main' });
+        await hold.arrived;
+        await meanwhile(root);
+        const between = mutationSnapshot(root);
+        hold.release();
+        check(await pending, root, between);
+        assert.deepEqual(fs.readdirSync(temporary), [], 'the add removed its acquired pack and its stage');
+        assert.deepEqual(calls, []);
+      });
+    } finally {
+      cleanup(root);
+    }
+  };
+  /** @param {Awaited<ReturnType<typeof cmdAdd>>} result @param {string} root @param {ReturnType<typeof mutationSnapshot>} between */
+  const refusedStale = (result, root, between) => {
+    assert.deepEqual(result, { ok: false, code: 2, error: STALE_ADD });
+    assertMutationUnchanged(root, between);
+    assertNoPackLeftovers(root, 'alpha');
+  };
+  try {
+    await t.test('another GitHub add creates the profile that was absent', () => interleave(
+      async () => {},
+      async (root) => {
+        assert.equal(profileBytes(root), null, 'an absent profile authorized the held add');
+        const first = await cmdAdd({ root, library: path.join(root, 'library', 'packs'), name: 'beta', force: false, source: GITHUB_SOURCE, ref: 'main' });
+        assert.equal(first.ok, true, first.error);
+      },
+      (result, root, between) => {
+        refusedStale(result, root, between);
+        assert.deepEqual(Object.keys(readProfile(root).installed), ['beta']);
+      },
+    ));
+
+    await t.test('another add changes the existing profile', () => interleave(
+      async (root) => { assert.equal((await addPack(root, 'yankee')).ok, true); },
+      async (root) => { assert.equal((await addPack(root, 'zulu')).ok, true); },
+      (result, root, between) => {
+        refusedStale(result, root, between);
+        assert.deepEqual(Object.keys(readProfile(root).installed).sort(), ['yankee', 'zulu']);
+      },
+    ));
+
+    await t.test('a foreign file appears at a destination', () => interleave(
+      async () => {},
+      async (root) => { fs.writeFileSync(path.join(root, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), '# foreign\n'); },
+      (result, root, between) => {
+        assert.equal(result.ok, false);
+        assert.match(result.error ?? '', /^destination ownership conflict:\n {2}\.github\/agents\/dude-pack-alpha-worker\.agent\.md \(already exists/);
+        assertMutationUnchanged(root, between);
+      },
+    ));
+
+    await t.test('nothing changes, so the held add applies', () => interleave(
+      async () => {},
+      async () => {},
+      (result, root) => {
+        assert.equal(result.ok, true, result.error);
+        assert.equal(readProfile(root).installed.alpha.source.resolved_commit, catalog.first);
+      },
+    ));
+  } finally {
+    cleanup(catalog.parent);
+  }
+});
+
+test('T002 a refresh refuses when a destination parent became a link while it acquired, and leaves the linked folder untouched', async () => {
+  const catalog = createGitHubCatalog();
+  const root = createRoot();
+  // A folder outside the workspace that holds a file with the installed prompt's name.
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-compose-outside-'));
+  const prompt = 'dude-pack-alpha-ask.prompt.md';
+  const outsideBytes = Buffer.from('# not installed by any pack\n');
+  fs.writeFileSync(path.join(outside, prompt), outsideBytes);
+  const prompts = path.join(root, '.github', 'prompts');
+  const server = githubStandIn(catalog.repo);
+  const github = { root, library: path.join(root, 'library', 'packs'), source: GITHUB_SOURCE, ref: 'main' };
+  try {
+    await withAcquisition(server, async ({ calls, temporary }) => {
+      assert.equal((await cmdAdd({ ...github, name: 'alpha', force: false })).ok, true);
+      assert.equal(exists(path.join(prompts, prompt)), true, 'revision one installs the prompt');
+      // Revision two drops alpha's only prompt, so the refresh removes that destination.
+      publishCatalog(catalog.repo, catalogFiles('two'), 'revision two');
+
+      const hold = holdFirst(server, (url) => url.includes('/library/packs/alpha/'));
+      const pending = cmdRefresh({ ...github, name: 'alpha' });
+      await hold.arrived;
+      // While the pack is acquired, the prompt's parent becomes a link to the outside folder
+      // (a junction on Windows), so the recorded destination now names the outside file.
+      fs.rmSync(prompts, { recursive: true });
+      fs.symlinkSync(outside, prompts, 'junction');
+      const between = mutationSnapshot(root);
+      hold.release();
+      const refreshed = await pending;
+
+      assert.deepEqual(fs.readdirSync(outside), [prompt], 'the outside file is not removed through the link');
+      assert.deepEqual(fs.readFileSync(path.join(outside, prompt)), outsideBytes, 'the outside file keeps its bytes');
+      assert.deepEqual(refreshed, {
+        ok: false,
+        code: 2,
+        mutation: 'none',
+        error: `pack profile path '.github/prompts/${prompt}' contains symbolic link '.github/prompts'`,
+      });
+      assertMutationUnchanged(root, between);
+      assert.deepEqual(fs.readdirSync(temporary), [], 'the refused refresh removed its acquired pack and its stage');
+      assert.deepEqual(calls, []);
+    });
+  } finally {
+    // Remove the link itself first, so cleaning the workspace cannot reach the outside folder.
+    if (fs.lstatSync(prompts, { throwIfNoEntry: false })?.isSymbolicLink()) fs.unlinkSync(prompts);
+    cleanup(root);
+    cleanup(outside);
+    cleanup(catalog.parent);
+  }
+});
+
+test('T002 a GitHub list refuses installed flags from a profile that changed while it read the catalog', async () => {
+  const catalog = createGitHubCatalog();
+  const root = createRoot();
+  writePack(root, 'zulu', [packAgent('zulu', 'worker')], { skill: false });
+  const server = githubStandIn(catalog.repo);
+  const github = { root, library: path.join(root, 'library', 'packs'), source: GITHUB_SOURCE, ref: 'main' };
+  try {
+    await withAcquisition(server, async ({ calls, temporary }) => {
+      const hold = holdFirst(server, (url) => url.startsWith(`${GITHUB_RAW}/`));
+      const pending = cmdList(github);
+      await hold.arrived;
+      assert.equal((await addPack(root, 'zulu')).ok, true);
+      hold.release();
+      assert.deepEqual(await pending, { ok: false, code: 2, error: STALE_LIST });
+      assert.deepEqual(fs.readdirSync(temporary), [], 'the refused list still removed its acquired catalog');
+
+      server.intercept(null);
+      assert.equal((await cmdAdd({ ...github, name: 'alpha', force: false })).ok, true);
+      const listed = await cmdList(github);
+      assert.equal(listed.ok, true, listed.error);
+      assert.deepEqual(listed.result?.packs.map(({ name, installed }) => [name, installed]), [['alpha', true], ['beta', false]]);
+      assert.deepEqual(listed.result?.enabled_packs, ['alpha', 'zulu']);
+      assert.deepEqual(fs.readdirSync(temporary), []);
+      assert.deepEqual(calls, []);
+    });
+  } finally {
+    cleanup(root);
+    cleanup(catalog.parent);
+  }
+});
+
+test('T002 a core-only install reads its GitHub upstream by its configured spelling and ref, and a ref-only refresh stays local-first and pinned', async () => {
+  const catalog = createGitHubCatalog();
+  fixtureGit(catalog.repo, 'tag', 'v1.0.0');
+  fixtureGit(catalog.repo, 'tag', 'v1.1.0-rc1');
+  const second = publishCatalog(catalog.repo, catalogFiles('two'), 'revision two');
+  fixtureGit(catalog.repo, '-c', 'user.email=fixture@example.test', '-c', 'user.name=Catalog Fixture', 'tag', '-a', 'v1.1.0', '-m', 'release');
+  const spelling = 'git@github.com:acme/catalog.git';
+  const released = createReleasedRoot();
+  writeManifestSource(released, spelling, 'latest');
+  const vendored = createRoot();
+  writePack(vendored, 'alpha', [packAgent('alpha', 'worker', { name: 'Vendored Alpha' })], { skill: false });
+  writeManifestSource(vendored, GITHUB_SOURCE, 'main');
+  const server = githubStandIn(catalog.repo);
+  try {
+    await withAcquisition(server, async ({ calls, temporary }) => {
+      const library = path.join(released, 'library', 'packs');
+      const listed = await cmdList({ root: released, library });
+      assert.equal(listed.ok, true, listed.error);
+      assert.equal(listed.result?.origin, `${spelling} @ latest`);
+      assert.deepEqual(listed.result?.packs.map((pack) => pack.name), ['alpha', 'beta']);
+      assert.ok(server.of(GITHUB_RAW).every((url) => url.startsWith(`${GITHUB_RAW}/${second}/`)), 'latest is the highest stable release');
+      assert.equal(server.of(`${GITHUB_API}/tags?`).length, 2, 'the release channel is selected, then rechecked');
+
+      const added = await cmdAdd({ root: released, library, name: 'alpha', force: false });
+      assert.equal(added.ok, true, added.error);
+      assert.deepEqual(readProfile(released).installed.alpha.source, {
+        type: 'remote', repository: spelling, requested_ref: 'latest', resolved_commit: second,
+      });
+
+      // A ref-only call, as `upgrade --all` makes it: no source, and a full commit as the ref.
+      server.requests.length = 0;
+      const pinned = await cmdPreviewRefresh({ root: released, library, name: 'alpha', ref: catalog.first });
+      assert.equal(pinned.ok, true, pinned.error);
+      assert.deepEqual(pinned.result.source, { type: 'remote', repository: spelling, requested_ref: catalog.first, resolved_commit: catalog.first });
+      assert.deepEqual(server.of(`${GITHUB_API}/commits/`), [`${GITHUB_API}/commits/${catalog.first}`], 'a full commit needs no recheck');
+      assert.ok(server.of(GITHUB_RAW).every((url) => url.startsWith(`${GITHUB_RAW}/${catalog.first}/library/packs/alpha/`)));
+      assert.deepEqual(server.of(`${GITHUB_API}/tags?`), []);
+      assert.deepEqual(fs.readdirSync(temporary), []);
+
+      // A local target stays authoritative for the same ref-only call.
+      server.requests.length = 0;
+      const vendoredLibrary = path.join(vendored, 'library', 'packs');
+      assert.equal((await cmdAdd({ root: vendored, library: vendoredLibrary, name: 'alpha', force: false })).ok, true);
+      const localFirst = await cmdPreviewRefresh({ root: vendored, library: vendoredLibrary, name: 'alpha', ref: catalog.first });
+      assert.equal(localFirst.ok, true, localFirst.error);
+      assert.deepEqual(localFirst.result.source, { type: 'local', location: fs.realpathSync(vendoredLibrary) });
+      assert.deepEqual(server.requests, [], 'the local target is read in place');
+      assert.deepEqual(fs.readdirSync(temporary), []);
+      assert.deepEqual(calls, []);
+    });
+  } finally {
+    cleanup(released);
+    cleanup(vendored);
+    cleanup(catalog.parent);
+  }
+});
+
+test('T002 GitHub failures, missing or invalid packs, and refused sources and refs leave membership unchanged and nothing behind', async () => {
+  const catalog = createGitHubCatalog();
+  // A pack with invalid metadata lives on its own branch, so the main catalog stays valid.
+  fixtureGit(catalog.repo, 'checkout', '-q', '-b', 'broken');
+  publishCatalog(catalog.repo, {
+    ...catalogFiles('one'),
+    'library/packs/broken/pack.md': '---\nname: broken\ndescription: "broken pack"\nuse-cases: not-a-list\n---\n# broken\n',
+    'library/packs/broken/agents/dude-pack-broken-worker.agent.md': agentSource({ name: 'Broken Worker' }),
+  }, 'invalid pack');
+  fixtureGit(catalog.repo, 'checkout', '-q', 'main');
+  const root = createRoot();
+  const server = githubStandIn(catalog.repo);
+  const github = { root, library: path.join(root, 'library', 'packs'), source: GITHUB_SOURCE, ref: 'main' };
+  try {
+    await withAcquisition(server, async ({ calls, temporary }) => {
+      assert.equal((await cmdAdd({ ...github, name: 'alpha', force: false })).ok, true);
+      const installed = mutationSnapshot(root);
+      /**
+       * @param {string} label
+       * @param {() => Promise<any>} act
+       * @param {RegExp | string} expected
+       * @param {{ requests?: number }} [options]
+       */
+      const refused = async (label, act, expected, { requests } = {}) => {
+        server.requests.length = 0;
+        const result = await act();
+        assert.equal(result.ok, false, label);
+        assert.equal(result.code, 2, label);
+        if (typeof expected === 'string') assert.equal(result.error, expected, label);
+        else assert.match(result.error, expected, label);
+        if (requests !== undefined) assert.equal(server.requests.length, requests, `${label}: requests`);
+        assertMutationUnchanged(root, installed);
+        assert.deepEqual(fs.readdirSync(temporary), [], `${label}: nothing is left behind`);
+        return result;
+      };
+
+      // A failed read part way through a pack refuses before any change.
+      server.intercept(async (url) => (url.startsWith(`${GITHUB_RAW}/`) && url.endsWith('/run.sh') ? new Response('boom', { status: 500 }) : undefined));
+      const refresh = await refused('refresh', () => cmdRefresh({ ...github, name: 'alpha' }),
+        /^failed to fetch source https:\/\/github\.com\/acme\/catalog @ main: .*HTTP 500/);
+      assert.equal(refresh.mutation, 'none');
+      await refused('preview', () => cmdPreviewRefresh({ ...github, name: 'alpha' }), /HTTP 500/);
+      // A manifest that cannot be read makes the catalog unavailable, never an empty list.
+      server.intercept(async (url) => (url.endsWith('/beta/pack.md') ? new Response('Not Found', { status: 404 }) : undefined));
+      await refused('list', () => cmdList(github), /HTTP 404.*must be public/);
+      server.intercept(null);
+
+      await refused('missing ref', () => cmdAdd({ ...github, ref: 'no-such-branch', name: 'beta', force: false }),
+        /^failed to fetch source https:\/\/github\.com\/acme\/catalog @ no-such-branch: .*HTTP 422/);
+      await refused('missing pack', () => cmdAdd({ ...github, name: 'omega', force: false }), `pack "omega" not found in source ${GITHUB_SOURCE} @ main`);
+      await refused('folder without a manifest', () => cmdAdd({ ...github, name: 'gamma', force: false }), `pack "gamma" not found in source ${GITHUB_SOURCE} @ main`);
+      await refused('invalid pack', () => cmdAdd({ ...github, ref: 'broken', name: 'broken', force: false }), /^pack "broken" has invalid metadata: .*use-cases/);
+      await refused('invalid ref', () => cmdAdd({ ...github, ref: 'a..b', name: 'beta', force: false }),
+        'A GitHub pack source ref must be a valid branch, tag or full commit name.', { requests: 0 });
+      const credential = await refused('credential source', () => cmdAdd({ ...github, source: 'https://reader:hunter2@github.com/acme/catalog', name: 'beta', force: false }),
+        /^A pack source address must not contain a user name or password;/, { requests: 0 });
+      assert.doesNotMatch(credential.error, /hunter2/);
+      await refused('malformed GitHub source', () => cmdList({ ...github, source: 'https://github.com/acme' }),
+        /^A GitHub pack source must be https:\/\/github\.com\/<owner>\/<repo>/, { requests: 0 });
+      assert.deepEqual(calls, [], 'no failure falls back to Git');
+    });
+    assert.deepEqual(Object.keys(readProfile(root).installed), ['alpha']);
+  } finally {
+    cleanup(root);
+    cleanup(catalog.parent);
+  }
+});
+
+test('T002 --no-fetch, local folders, and a local catalog never contact a GitHub source', async () => {
+  const catalog = createGitHubCatalog();
+  const released = createReleasedRoot();
+  writeManifestSource(released, GITHUB_SOURCE, 'main');
+  const vendored = createRoot();
+  writePack(vendored, 'zulu', [packAgent('zulu', 'worker')], { skill: false });
+  writeManifestSource(vendored, GITHUB_SOURCE, 'main');
+  const server = githubStandIn(catalog.repo);
+  try {
+    await withAcquisition(server, async ({ calls, temporary }) => {
+      const releasedLibrary = path.join(released, 'library', 'packs');
+      assert.deepEqual(await cmdList({ root: released, library: releasedLibrary, fetch: false }),
+        { ok: true, code: 0, result: { packs: [], enabled_packs: [], origin: 'local' } });
+      const offlineAdd = await cmdAdd({ root: released, library: releasedLibrary, name: 'alpha', force: false, fetch: false });
+      assert.match(offlineAdd.error ?? '', /^pack not found in catalog: /);
+
+      const vendoredLibrary = path.join(vendored, 'library', 'packs');
+      const listed = await cmdList({ root: vendored, library: vendoredLibrary });
+      assert.deepEqual([listed.result?.origin, listed.result?.packs.map((pack) => pack.name)], ['local', ['zulu']]);
+      assert.equal((await cmdAdd({ root: vendored, library: vendoredLibrary, name: 'zulu', force: false })).ok, true);
+      const folder = await cmdList({ root: vendored, library: vendoredLibrary, source: catalog.repo, fetch: false });
+      assert.deepEqual(folder.result?.packs.map((pack) => pack.name), ['alpha', 'beta'], 'a local folder needs no fetch');
+      for (const result of [
+        await cmdList({ root: released, library: releasedLibrary, fetch: false, source: GITHUB_SOURCE }),
+        await cmdAdd({ root: released, library: releasedLibrary, name: 'alpha', force: false, fetch: false, source: GITHUB_SOURCE }),
+        await cmdRefresh({ root: vendored, library: vendoredLibrary, name: 'zulu', fetch: false, source: GITHUB_SOURCE }),
+      ]) {
+        assert.equal(result.ok, false);
+        assert.match(result.error ?? '', /--no-fetch does not fetch it/);
+      }
+      const verified = await cmdVerify({ root: vendored, library: vendoredLibrary });
+      assert.deepEqual(verified.result?.verified.map((entry) => entry.name), ['zulu'], 'verify reads only the local catalog');
+
+      assert.deepEqual(server.requests, [], 'nothing reached GitHub');
+      assert.deepEqual(calls.filter(({ command }) => command === 'git'), [], 'nothing ran Git');
+      assert.deepEqual(fs.readdirSync(temporary), []);
+    });
+  } finally {
+    cleanup(released);
+    cleanup(vendored);
+    cleanup(catalog.parent);
+  }
+});
+
+test('T002 an other-host clone whose stop is unconfirmed is reported with its kept material, and Compose writes nothing', async () => {
+  const root = createRoot();
+  const before = mutationSnapshot(root);
+  const repository = 'https://git.example.invalid/acme/catalog';
+  try {
+    await withAcquisition(null, async ({ calls, temporary }) => {
+      const result = await cmdAdd({ root, library: path.join(root, 'library', 'packs'), name: 'alpha', force: false, source: repository, ref: 'main' });
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 2);
+      assert.match(result.error ?? '', new RegExp(`^failed to fetch source ${repository.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')} @ main: `
+        + 'Git did not finish within the 60-second acquisition deadline; its process tree could not be confirmed stopped, so its temporary material was kept at '));
+      const kept = fs.readdirSync(temporary);
+      assert.equal(kept.length, 1, 'only the acquisition root remains; no stage was created');
+      assert.match(kept[0], /^dude-pack-/);
+      assert.ok(result.error?.endsWith(path.join(temporary, kept[0])), 'the error names the kept root');
+      assertMutationUnchanged(root, before);
+      assert.deepEqual(calls.map(({ command, args }) => [command, args[0]]), [['git', 'clone']], 'nothing runs after the stopped clone');
+    }, {
+      spawnSync: () => ({
+        pid: 4242,
+        status: null,
+        signal: 'SIGKILL',
+        error: Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+        stdout: null,
+        stderr: null,
+        output: [null, null, null],
+      }),
+    });
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('T002 Compose guidance describes targeted GitHub reads, other-host clones, cleanup, and the anonymous-access limit', () => {
+  const text = fs.readFileSync(new URL('./SKILL.md', import.meta.url), 'utf8');
+  const unwrap = (/** @type {string} */ value) => value.replace(/\s+/g, ' ');
+  const catalog = unwrap(text.split('\n## Catalog Resolution\n')[1]?.split('\n## Verify')[0] ?? '');
+  const sources = unwrap(text.split('### Sources In Pack Requests\n')[1]?.split('**An added source arrives')[0] ?? '');
+  assert.ok(catalog && sources, 'the shipped skill must contain both sections');
+  for (const requirement of [
+    'is read over anonymous HTTPS and never cloned, not even after a failure',
+    '`list` downloads only each direct `library/packs/<name>/pack.md` and the tree listings that find them',
+    '`add` and `refresh` download only the selected pack\'s complete folder, including nested skill files, scripts, assets, and shipped notices',
+    'a branch, tag, or `latest` that moves during the read is refused rather than mixed',
+    '**Other hosts**, GitHub Enterprise included, are cloned whole with Git',
+    // The cleanup promise names its exception beside it.
+    'which Compose removes before it answers or writes, including after a failure. The one exception is a Git clone whose process tree cannot be confirmed stopped',
+    'Compose keeps it and reports the unconfirmed cleanup in its refusal',
+    'the error says so and names the temporary material it kept',
+    'Compose sends no token and uses none of Git\'s credential helpers, `.netrc`, SSH keys, or proxy settings for them',
+    'therefore fails visibly, and Compose never retries it through Git',
+    'Git is required only for remote sources on other hosts',
+  ]) assert.ok(catalog.includes(requirement), `missing catalog resolution rule: ${requirement}`);
+  // Every remote source-first commit comes from Compose's own awaited resolution, which is then disposed.
+  for (const requirement of [
+    'Take a remote commit only from Compose\'s own resolution of that source, whatever its host',
+    'a refresh preview reports it as `source.resolved_commit`',
+    'For an install, await `resolvePackDir` from `.github/skills/dude-compose/compose.mjs` with the root, library, pack name, source, and ref the install will use',
+    'read `sourceIdentity.resolved_commit`',
+    'await its `dispose()` afterward to remove it',
+    'reads a public GitHub repository anonymously over HTTPS and clones any other host, GitHub Enterprise included, with Git',
+    'Do not look the commit up separately',
+  ]) assert.ok(sources.includes(requirement), `missing source-first preview rule: ${requirement}`);
+  assert.doesNotMatch(sources, /git ls-remote|api\.github\.com/);
 });

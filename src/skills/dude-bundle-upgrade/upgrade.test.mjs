@@ -22,7 +22,7 @@ import {
   pickLatestReleaseTag,
   scanCoreInventoryPaths,
 } from './upgrade.mjs';
-import { cmdAdd } from '../dude-compose/compose.mjs';
+import { cmdAdd, readProfile } from '../dude-compose/compose.mjs';
 import { enumerateCorePaths } from '../dude-engine/lib/ownership.mjs';
 import {
   parseDevelopmentBaseRelease,
@@ -47,6 +47,7 @@ const LF_GIT_ENV = Object.freeze({
   GIT_CONFIG_VALUE_0: 'false',
 });
 const COMPOSE_SOURCE = fileURLToPath(new URL('../dude-compose/compose.mjs', import.meta.url));
+const COMPOSE_ACQUISITION_SOURCE = fileURLToPath(new URL('../dude-compose/lib/pack-acquisition.mjs', import.meta.url));
 const ENGINE_SOURCE = fileURLToPath(new URL('../dude-engine/', import.meta.url));
 const MODEL_CONFIG_SOURCE = fileURLToPath(new URL('../../config/agent-models.json', import.meta.url));
 
@@ -353,8 +354,11 @@ function runFixture(fixture, args) {
 /** @param {string} root */
 function packageComposeRuntime(root) {
   const compose = path.join(root, '.github', 'skills', 'dude-compose', 'compose.mjs');
-  fs.mkdirSync(path.dirname(compose), { recursive: true });
+  fs.mkdirSync(path.join(path.dirname(compose), 'lib'), { recursive: true });
   fs.copyFileSync(COMPOSE_SOURCE, compose);
+  // Compose loads its remote acquisition from beside itself to read a remote
+  // pack source; that module's own engine dependency ships with the engine.
+  fs.copyFileSync(COMPOSE_ACQUISITION_SOURCE, path.join(path.dirname(compose), 'lib', 'pack-acquisition.mjs'));
   fs.cpSync(ENGINE_SOURCE, path.join(root, '.github', 'skills', 'dude-engine'), { recursive: true });
   const config = path.join(root, '.github', 'skills', 'dude-engine', 'config', 'agent-models.json');
   fs.mkdirSync(path.dirname(config), { recursive: true });
@@ -730,9 +734,14 @@ test('bulk packs keeps a local target authoritative and freezes remote work at t
     writeBulkPack(remote.upstreamRoot, 'alpha', 'remote-v2');
     git(remote.upstreamRoot, ['add', '-A']);
     git(remote.upstreamRoot, ['commit', '-q', '-m', 'advance selector after core']);
-    const remotePreviewResult = runBulk(remote, ['packs-preview', '--plan', remote.planPath]);
+    // Point every platform's temporary folder at the fixture, so the pack calls'
+    // acquired copies would be found there.
+    const acquisitionTemp = { TMP: remote.tmpRoot, TEMP: remote.tmpRoot };
+    const acquisitionRoots = () => fs.readdirSync(remote.tmpRoot).filter((name) => name.startsWith('dude-pack-'));
+    const remotePreviewResult = runBulk(remote, ['packs-preview', '--plan', remote.planPath], acquisitionTemp);
     const remotePreview = JSON.parse(remotePreviewResult.stdout);
-    const remoteAppliedResult = runBulk(remote, ['packs-apply', '--plan', remote.planPath, '--confirm', 'confirm-packs']);
+    const rootsAfterPreview = acquisitionRoots();
+    const remoteAppliedResult = runBulk(remote, ['packs-apply', '--plan', remote.planPath, '--confirm', 'confirm-packs'], acquisitionTemp);
 
     // Assert
     assert.equal(localAppliedResult.status, 0, `${localAppliedResult.stdout}${localAppliedResult.stderr}`);
@@ -745,6 +754,18 @@ test('bulk packs keeps a local target authoritative and freezes remote work at t
     assert.equal(remoteAppliedResult.status, 0, `${remoteAppliedResult.stdout}${remoteAppliedResult.stderr}`);
     assert.match(fs.readFileSync(path.join(remote.localRoot, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), 'utf8'), /remote-v1/);
     assert.doesNotMatch(fs.readFileSync(path.join(remote.localRoot, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), 'utf8'), /remote-v2/);
+    // The ref-only call records the configured repository at the core-selected
+    // commit, never the temporary copy it read, and that copy is gone after each call.
+    const pinned = {
+      type: 'remote',
+      repository: remote.source,
+      requested_ref: plan.source.resolved_commit,
+      resolved_commit: plan.source.resolved_commit,
+    };
+    assert.deepEqual(remotePreview.packs[0].source, pinned);
+    assert.deepEqual(readProfile(remote.localRoot).installed.alpha.source, pinned);
+    assert.deepEqual(rootsAfterPreview, [], 'the preview removed its acquired copy');
+    assert.deepEqual(acquisitionRoots(), [], 'the refresh removed its acquired copy');
   } finally {
     fs.rmSync(local.base, { recursive: true, force: true });
     fs.rmSync(remote.base, { recursive: true, force: true });

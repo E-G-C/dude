@@ -42,7 +42,7 @@ const BROWSER = process.env.DUDE_CANVAS_BROWSER
   ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
 const REQUIRED = process.env.DUDE_CANVAS_BROWSER_REQUIRED === '1';
 const DEADLINE = 20_000;
-const PUBLISHED_APP_SHA256 = '465e6a2bcb763621a676aac6be1839e301d2ce2d0fc8d233b1d48e87c342cf7e';
+const PUBLISHED_APP_SHA256 = '0a808370514afa32602d0031352070be781e99a7e43dfe94da5a98f8aa9bf59c';
 
 /** @param {string|Buffer} value */
 function hash(value) {
@@ -3776,14 +3776,19 @@ async function packImpact(fixture) {
     assert.equal(status.ok, true, status.error);
     return status.result.installed.alpha;
   }
-  const source = resolvePackDir(fixture.args);
+  const source = await resolvePackDir(fixture.args);
   assert.ok(!('error' in source), source.error);
-  const manifest = fs.readFileSync(path.join(source.packDir, 'pack.md'), 'utf8');
-  assert.match(manifest, /tools: \[node\]/);
-  const tool = spawnSync(process.execPath, ['--version'], { encoding: 'utf8' });
-  assert.equal(tool.status, 0);
-  return { source: source.sourceIdentity, files: packArtifacts(source.packDir).map(item => item.destRel).sort(),
-    tools: [{ name: 'node', available: true, version: tool.stdout.trim() }] };
+  try {
+    const manifest = fs.readFileSync(path.join(source.packDir, 'pack.md'), 'utf8');
+    assert.match(manifest, /tools: \[node\]/);
+    const tool = spawnSync(process.execPath, ['--version'], { encoding: 'utf8' });
+    assert.equal(tool.status, 0);
+    return { source: source.sourceIdentity, files: packArtifacts(source.packDir).map(item => item.destRel).sort(),
+      tools: [{ name: 'node', available: true, version: tool.stdout.trim() }] };
+  } finally {
+    // A remote resolution owns a temporary copy; a local folder owns none.
+    await source.dispose?.();
+  }
 }
 
 function packImpactBasis(fixture, impact) {

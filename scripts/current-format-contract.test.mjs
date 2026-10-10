@@ -8383,6 +8383,11 @@ const GITHUB_ISSUE_BEADS_NORMALIZATION_PATHS = new Set([
   '.github/skills/dude-engine/lib/beads-issue.mjs',
   'src/skills/dude-engine/lib/beads-issue.test.mjs',
 ]);
+const GITHUB_CONTENT_TRANSPORT_PATHS = new Set([
+  'src/skills/dude-engine/lib/github-content.mjs',
+  '.github/skills/dude-engine/lib/github-content.mjs',
+  'src/skills/dude-engine/lib/github-content.test.mjs',
+]);
 const GITHUB_ISSUE_DOCUMENTATION_ROOT = 'docs/';
 const GITHUB_ISSUE_DENIAL = /\b(?:no|not|never|without|do not|does not|cannot|can't|refuse|stop|separate from)\b/i;
 // The required default denials above are the dominating invariant: their presence is
@@ -8421,6 +8426,7 @@ function prohibitedGitHubIssueArtifact(relative) {
   const normalized = relative.split(path.sep).join('/');
   if (GITHUB_ISSUE_AUTHORITY_PATHS.has(normalized)) return null;
   if (GITHUB_ISSUE_BEADS_NORMALIZATION_PATHS.has(normalized)) return null;
+  if (GITHUB_CONTENT_TRANSPORT_PATHS.has(normalized)) return null;
   if (!GITHUB_ISSUE_INVENTORY_ROOTS.some((root) => normalized === root || normalized.startsWith(`${root}/`))) {
     return null;
   }
@@ -8614,6 +8620,7 @@ test('GitHub issue intake rejects unsupported infrastructure and contradictory p
   for (const relative of [
     ...GITHUB_ISSUE_AUTHORITY_PATHS,
     ...GITHUB_ISSUE_BEADS_NORMALIZATION_PATHS,
+    ...GITHUB_CONTENT_TRANSPORT_PATHS,
     '.dude/specs/034-github-issue-work-intake/spec.md',
   ]) {
     assert.equal(prohibitedGitHubIssueArtifact(relative), null, `allow ${relative}`);

@@ -46,6 +46,11 @@ export const NEEDS_YOU_LIMITS = Object.freeze({
   imagePixels: 16 * 1024 * 1024,
   operationMs: 5_000,
 });
+// The outer ceiling of one install or refresh preparation or submission. Their
+// catalog read can acquire a remote source within the pack read's own one-minute
+// window; every other step keeps its own short bound, and removal, which reads
+// no catalog, keeps `operationMs` for the whole request.
+const PACK_CATALOG_REQUEST_MS = 90_000;
 
 /** @typedef {import('@github/copilot-sdk').ToolInvocation} ToolInvocation */
 /** @typedef {import('@github/copilot-sdk').ToolResultObject} ToolResult */
@@ -1773,7 +1778,8 @@ export function createNeedsYou({ root, reviewAdapter }) {
     // and a removal reads none, so a choice on either is not a request we admit.
     const choice = body.source === undefined ? null : sourceKey(body.source);
     requireInput(choice === null || operation === 'install');
-    const bound = AbortSignal.any([lifetime.signal, AbortSignal.timeout(NEEDS_YOU_LIMITS.operationMs),
+    const bound = AbortSignal.any([lifetime.signal,
+      AbortSignal.timeout(operation === 'remove' ? NEEDS_YOU_LIMITS.operationMs : PACK_CATALOG_REQUEST_MS),
       ...(signal ? [signal] : [])]);
     if (body.op === 'prepare') {
       object(body, ['op', 'operation', 'name'], ['source']);
@@ -1858,7 +1864,9 @@ export function createNeedsYou({ root, reviewAdapter }) {
     idleEventId = null;
     record.sendStarted = true;
     try {
-      const messageId = await bounded(current.send({ prompt, mode: 'immediate' }), bound);
+      // The send keeps its short confirmation bound, whatever the catalog read took.
+      const messageId = await bounded(current.send({ prompt, mode: 'immediate' }),
+        AbortSignal.any([bound, AbortSignal.timeout(NEEDS_YOU_LIMITS.operationMs)]));
       if (typeof messageId !== 'string' || !messageId || messageId.length > 256 || record.phase !== 'admitted') {
         throw new NeedsYouError('pack_send_uncertain', 502);
       }

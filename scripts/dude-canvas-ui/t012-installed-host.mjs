@@ -48,6 +48,16 @@
  * installed-use removal blocker are then observed where they landed. Every
  * fixture's installed core modules, including the saved-sources parser and the
  * Compose, lint, and upgrade skills, are checked byte for byte against source.
+ *
+ * Feature 082 T004 runs first, in its own core-only release fixture, whose
+ * default catalog is therefore the public GitHub upstream its manifest names at
+ * `latest`. Through the installed extension's own pack route, a plain read must
+ * acquire nothing, and one explicit Reload must return the complete catalog of
+ * the current stable release within the 60-second acquisition window, without a
+ * clone. This is the driver's only network case. Its oracle does not use the
+ * product: Git's own protocol names the release, and this checkout's Git
+ * objects name the packs at its commit. An unreachable network or GitHub, or a
+ * spent anonymous GitHub API allowance, reports BLOCKED, never a pass.
  */
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -238,7 +248,7 @@ const DEVELOPMENT_ABOUT = Object.freeze({
   baseRelease: 'v1.3.0',
   rows: installedAboutRows('Development (main), based on v1.3.0', 'Development (main)'),
 });
-const SOURCE_APP_SHA256 = '465e6a2bcb763621a676aac6be1839e301d2ce2d0fc8d233b1d48e87c342cf7e';
+const SOURCE_APP_SHA256 = '0a808370514afa32602d0031352070be781e99a7e43dfe94da5a98f8aa9bf59c';
 const TASKS_PATH = path.posix.join(path.posix.dirname(SPEC_PATH), 'tasks.md');
 const DONE_IDEA_PATH = '.dude/ideas/052-dude-canvas-ui.md';
 const DONE_SPEC_PATH = '.dude/specs/052-dude-canvas-ui/spec.md';
@@ -275,8 +285,12 @@ const APPROVED_HASHES = Object.freeze({
     '38a227b01622013560f87b78b61c5ad917bc0408073e9c39d7443bbf5f76cc16',
 });
 
-const { buildRelease, parseManifestDocument } =
+const { buildRelease, listCoreOutputs, parseManifestDocument } =
   await import(pathToFileURL(path.join(ROOT, 'scripts/build-release.mjs')));
+const { pickLatestReleaseTag } = await import(pathToFileURL(path.join(
+  ROOT,
+  'src/skills/dude-engine/lib/release-channel.mjs',
+)));
 const { parseTasks } = await import(pathToFileURL(path.join(
   ROOT,
   'src/skills/dude-engine/lib/tasks.mjs',
@@ -5047,12 +5061,19 @@ const RAW_DUDE_TOOLS = Object.freeze([
 ]);
 const RAW_SPEC_LEAD_TOOLS = Object.freeze(['read', 'edit', 'search']);
 
-/** @param {string} root @param {string} filename */
+/**
+ * The installed profile must be the one the current source renders for a
+ * release. The repository's own `.github/agents` copy is not the oracle: it
+ * may carry the maintainer's private model choices.
+ * @param {string} root @param {string} filename
+ */
 function rawProfileEvidence(root, filename) {
   const profilePath = path.join(root, '.github/agents', filename);
   const bytes = fs.readFileSync(profilePath);
+  const rendered = listCoreOutputs(ROOT).find((output) => output.relPath === `.github/agents/${filename}`);
+  assert.ok(rendered && 'bytes' in rendered, `the current source renders no ${filename}`);
   assert.equal(
-    bytes.equals(fs.readFileSync(path.join(ROOT, '.github/agents', filename))),
+    bytes.equals(rendered.bytes),
     true,
     `installed ${filename} drifted from the current generated bundle`,
   );
@@ -5118,10 +5139,11 @@ async function probeRealHostPackRead(root) {
 
 /**
  * Stall a real-host catalog read on a silent git:// peer, which Git never
- * times out. The installed reader must end the read at its deadline by
- * stopping the whole helper tree in the launcher's runtime: the relaunched
- * launcher, the PATH git wrapper and the real git. A disposable release has no
- * local catalog, so its configured source is the only one.
+ * times out. Another host's clone gets 55 seconds from its reader's admission,
+ * and the installed reader must end the read then by stopping the whole helper
+ * tree in the launcher's runtime: the relaunched launcher, the PATH git wrapper
+ * and the real git. A disposable release has no local catalog, so its
+ * configured source is the only one.
  */
 async function probeRealHostPackStall() {
   const root = path.join(RUN, 'real-host-pack-stall');
@@ -5149,7 +5171,8 @@ async function probeRealHostPackStall() {
     const { port } = /** @type {import('node:net').AddressInfo} */ (peer.address());
     write(root, '.dude/metadata/bundle-manifest.md', `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify({
       source_repo: `git://127.0.0.1:${port}/catalog.git`, source_ref: 'main' })}\n\`\`\`\n`);
-    const evidence = await runRealHostPackProbe('real-host-pack-stall-probe', root, data);
+    // The probe's own limit outlasts the 60-second acquisition window and the stop allowance.
+    const evidence = await runRealHostPackProbe('real-host-pack-stall-probe', root, data, 70_000);
     const stall = {
       data,
       connections,
@@ -5160,7 +5183,7 @@ async function probeRealHostPackStall() {
     fs.writeFileSync(path.join(evidence.directory, 'stall.json'), `${JSON.stringify(stall, null, 2)}\n`);
     assert.deepEqual(evidence.result.coverage.catalog, { state: 'unavailable', reason: 'catalog_timeout',
       message: 'The catalog read timed out. Reload to try a fresh read.' });
-    assert.ok(evidence.result.elapsedMs >= 5_000 && evidence.result.elapsedMs < 7_500,
+    assert.ok(evidence.result.elapsedMs >= 55_000 && evidence.result.elapsedMs < 57_500,
       `real-host stalled read ended within the deadline plus stop window: ${evidence.result.elapsedMs} ms`);
     assert.ok(stall.connections >= 1, 'real-host git reached the silent peer');
     assert.equal(stall.openAfterRead, 0, 'no real-host git process still holds the stalled connection');
@@ -5183,8 +5206,9 @@ async function probeRealHostPackStall() {
  * @param {string} name evidence directory under this run
  * @param {string} root disposable release fixture
  * @param {string} [data] the host's profile and temporary roots
+ * @param {number} [limitMs] when the probe abandons its read
  */
-async function runRealHostPackProbe(name, root, data = path.join(RUN, name, 'data')) {
+async function runRealHostPackProbe(name, root, data = path.join(RUN, name, 'data'), limitMs = 20_000) {
   const directory = path.join(RUN, name);
   fs.mkdirSync(directory, { recursive: true });
   fs.mkdirSync(path.join(data, 'tmp'), { recursive: true });
@@ -5194,7 +5218,7 @@ async function runRealHostPackProbe(name, root, data = path.join(RUN, name, 'dat
     "import { pathToFileURL } from 'node:url';",
     `const { readPacks } = await import(pathToFileURL(${JSON.stringify(reader)}).href);`,
     'const started = performance.now();',
-    `const snapshot = await readPacks(${JSON.stringify(root)}, AbortSignal.timeout(20_000));`,
+    `const snapshot = await readPacks(${JSON.stringify(root)}, AbortSignal.timeout(${limitMs}));`,
     'const elapsedMs = Math.round(performance.now() - started);',
     'process.stdout.write(JSON.stringify({ execPath: process.execPath, node: process.version, elapsedMs,',
     '  coverage: snapshot.coverage, origin: snapshot.catalog?.origin ?? null,',
@@ -5221,7 +5245,7 @@ async function runRealHostPackProbe(name, root, data = path.join(RUN, name, 'dat
   const exit = await bounded(name, () => new Promise((resolve, reject) => {
     child.once('error', reject);
     child.once('close', (code, signal) => resolve({ code, signal }));
-  })).catch((error) => {
+  }), limitMs + 10_000).catch((error) => {
     child.kill();
     throw error;
   });
@@ -5240,6 +5264,229 @@ async function runRealHostPackProbe(name, root, data = path.join(RUN, name, 'dat
   assert.equal(sameExecutable(evidence.result.execPath, CLI), true,
     `${name} ran outside the launcher: ${evidence.result.execPath}`);
   return { ...evidence, directory, data };
+}
+
+/**
+ * One installed-host pack read through the route Settings uses: a plain read,
+ * or with `?discover=1` an explicit Reload. `ms` bounds a hung read.
+ * @param {string} canvasUrl @param {'' | '?discover=1'} query @param {number} ms
+ */
+async function readInstalledPacks(canvasUrl, query, ms) {
+  const started = Date.now();
+  const response = await fetch(new URL(`/api/packs${query}`, canvasUrl), {
+    signal: AbortSignal.timeout(ms),
+  });
+  assert.equal(response.status, 200, `installed-host pack read status${query}`);
+  const snapshot = await response.json();
+  return {
+    elapsedMs: Date.now() - started,
+    coverage: snapshot.coverage,
+    origin: snapshot.catalog?.origin ?? null,
+    packs: snapshot.catalog?.packs.map((pack) => pack.name) ?? null,
+    sources: snapshot.sources?.items.map((item) => ({ name: item.name, scope: item.scope, status: item.status, count: item.count })) ?? null,
+  };
+}
+
+/**
+ * A plain read answers installed state and the saved sources and acquires no catalog.
+ * @param {Awaited<ReturnType<typeof readInstalledPacks>>} plain
+ */
+function assertNoCatalogRead(plain) {
+  assert.deepEqual(plain.coverage.catalog.state, 'not_read',
+    `the plain installed-host read acquires no catalog: ${JSON.stringify(plain.coverage)}`);
+  assert.equal(plain.origin, null);
+  assert.equal(plain.packs, null);
+  assert.ok(plain.sources.length >= 1, 'the plain read still lists the built-in sources');
+  assert.deepEqual(plain.sources.filter((item) => item.status !== 'not_read' || item.count !== null), [],
+    'every source row says Not read, with no count');
+}
+
+/**
+ * A condition outside the product that keeps this acceptance from running: a
+ * missing installed host, no network or GitHub for the default-source case, or
+ * no anonymous GitHub API allowance left. The run reports it as BLOCKED, never
+ * as a pass.
+ */
+class ExternalBlocker extends Error {}
+
+/** @param {unknown} error */
+function briefError(error) {
+  const cause = error instanceof Error && error.cause instanceof Error ? `: ${error.cause.message}` : '';
+  return `${error instanceof Error ? error.message : String(error)}${cause}`;
+}
+
+/**
+ * This address's anonymous GitHub API allowance, which the installed reader's
+ * requests also draw on. Reading it spends none.
+ */
+async function githubAllowance() {
+  let response;
+  try {
+    response = await fetch('https://api.github.com/rate_limit', {
+      headers: { accept: 'application/vnd.github+json', 'user-agent': 'dude-t012-installed-host' },
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    throw new ExternalBlocker(`network: api.github.com could not be reached (${briefError(error)})`);
+  }
+  if (response.status !== 200) {
+    throw new ExternalBlocker(`network: api.github.com answered its rate limit query with HTTP ${response.status}`);
+  }
+  const { limit, remaining, used, reset } = (await response.json()).resources.core;
+  return { limit, remaining, used, resetAt: new Date(reset * 1_000).toISOString() };
+}
+
+/**
+ * A repository's current stable release, named without the product: the
+ * highest stable `vX.Y.Z` tag that Git's own protocol lists, by the shared
+ * release rule, and the commit that tag names. An annotated tag names its
+ * commit in its peeled `^{}` entry.
+ * @param {string} repository
+ */
+function stableRelease(repository) {
+  const listed = command('git', ['ls-remote', '--tags', '--', repository], {
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+  });
+  if (listed.exitCode !== 0) {
+    throw new ExternalBlocker(`network: git ls-remote could not list ${repository} (${
+      (listed.error ?? listed.stderr).trim().split(/\r?\n/)[0]})`);
+  }
+  /** @type {Map<string, string>} */
+  const commits = new Map();
+  for (const line of listed.stdout.split(/\r?\n/)) {
+    const match = /^([0-9a-f]{40})\trefs\/tags\/([^^\s]+)(\^\{\})?$/.exec(line);
+    if (match && (match[3] || !commits.has(match[2]))) commits.set(match[2], match[1]);
+  }
+  const tag = pickLatestReleaseTag([...commits.keys()]);
+  assert.ok(tag, `${repository} lists no stable release tag`);
+  return { tag, commit: /** @type {string} */ (commits.get(tag)) };
+}
+
+/**
+ * The packs of the catalog at `commit`, from this checkout's own Git objects
+ * rather than from GitHub: each direct `library/packs/<name>` folder with a
+ * direct regular `pack.md`, which is what discovery lists.
+ * @param {string} commit
+ */
+function catalogAtCommit(commit) {
+  const present = command('git', ['-C', ROOT, 'cat-file', '-e', `${commit}^{commit}`]);
+  assert.equal(present.exitCode, 0, `release commit ${commit} is not in this checkout; fetch its tag, then rerun`);
+  const listed = command('git', ['-C', ROOT, 'ls-tree', '-r', '--full-tree', commit, '--', 'library/packs'], {
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  assert.equal(listed.exitCode, 0, listed.error ?? listed.stderr);
+  return listed.stdout.split(/\r?\n/).flatMap((line) => {
+    const match = /^100(?:644|755) blob [0-9a-f]{40}\tlibrary\/packs\/([^/]+)\/pack\.md$/.exec(line);
+    return match ? [match[1]] : [];
+  }).sort();
+}
+
+/**
+ * What is created below `directory` while `read` runs. Each catalog reader
+ * makes its own `dude-canvas-packs-*` root there, and Compose acquires into a
+ * `dude-pack-*` root inside it, so the names show whether a read started a
+ * reader and what it acquired. An event the OS drops goes unseen, so an absence
+ * counts only beside what the same watch did see.
+ * @template T @param {string} directory @param {() => Promise<T>} read
+ */
+async function watchReaderRoots(directory, read) {
+  /** @type {Set<string>} */
+  const names = new Set();
+  const watcher = fs.watch(directory, { recursive: true }, (_event, filename) => {
+    if (filename) names.add(String(filename).split(path.sep).join('/'));
+  });
+  try {
+    const result = await read();
+    // The events of the reader's last writes and of its removal can trail the answer.
+    await delay(500);
+    const created = [...names].filter((name) => name.startsWith('dude-canvas-packs-')).sort();
+    return { result, created, roots: [...new Set(created.map((name) => name.split('/')[0]))] };
+  } finally {
+    watcher.close();
+  }
+}
+
+/**
+ * Feature 082 T004 (SC-006) in a core-only release fixture on the actual host;
+ * see the header. The independent oracle and the allowance are read before
+ * anything can spend a request, and the run spends one discovery.
+ */
+async function driveDefaultSourceDiscovery() {
+  // Short, owned roots outside the evidence folder, as the stall probe keeps them.
+  const owned = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-t012-gh-'));
+  note('default-source-case-started', { owned });
+  const root = path.join(owned, 'w');
+  const data = path.join(owned, 'h');
+  const release = installRelease(root);
+  const parity = installedParity(root);
+  assert.equal(fs.existsSync(path.join(root, 'library')), false, 'the release fixture is core-only');
+  const upstream = installedAboutMetadata(root);
+  assert.deepEqual([upstream.sourceRepo, upstream.sourceRef], [INSTALLED_SOURCE_REPO, 'latest']);
+  const expected = stableRelease(upstream.sourceRepo);
+  const expectedPacks = catalogAtCommit(expected.commit);
+  assert.ok(expectedPacks.length > 0, `${expected.tag} holds no pack`);
+  const allowanceBefore = await githubAllowance();
+  if (allowanceBefore.remaining === 0) {
+    throw new ExternalBlocker(`rate: no anonymous GitHub API request remains until ${allowanceBefore.resetAt}`);
+  }
+  // No prompt is sent, so the provider is a loopback stub that refuses whatever reaches it.
+  let modelRequests = 0;
+  const model = http.createServer((_request, response) => {
+    modelRequests += 1;
+    response.writeHead(400).end();
+  });
+  modelServers.push(model);
+  const host = await createInstalledHost({ root, data, modelUrl: await listen(model), caseName: 'default-source' });
+  hosts.push(host);
+  const hostTemp = host.record.childEnvironment.TEMP ?? host.record.childEnvironment.TMPDIR;
+  const plain = await watchReaderRoots(hostTemp, () => readInstalledPacks(host.canvas.url, '', 15_000));
+  assertNoCatalogRead(plain.result);
+  assert.deepEqual(plain.roots, [], 'the plain read started no catalog reader');
+  // The bound exceeds the 60-second window plus the reader's stop allowance, so a hung Reload fails.
+  const reload = await watchReaderRoots(hostTemp, () => readInstalledPacks(host.canvas.url, '?discover=1', 75_000));
+  const allowanceAfter = await githubAllowance();
+  const catalog = reload.result.coverage.catalog;
+  if (catalog.state !== 'current' && /\(rate limit\)/.test(catalog.message ?? '')) {
+    throw new ExternalBlocker(`rate: ${catalog.message} (${allowanceAfter.remaining} remain until ${allowanceAfter.resetAt})`);
+  }
+  assert.deepEqual(catalog, { state: 'current', reason: null, message: null },
+    `default-source Reload: ${JSON.stringify(reload.result.coverage)}`);
+  assert.deepEqual(stableRelease(upstream.sourceRepo), expected, 'the stable release did not change during the Reload');
+  assert.equal(reload.result.origin, `${upstream.sourceRepo} @ ${upstream.sourceRef}`);
+  assert.deepEqual([...reload.result.packs].sort(), expectedPacks, `the Reload lists every pack of ${expected.tag}`);
+  assert.deepEqual(reload.result.sources,
+    [{ name: 'Bundle upstream', scope: 'builtin', status: 'read', count: expectedPacks.length }]);
+  assert.ok(reload.result.elapsedMs < 60_000,
+    `the Reload ended within the 60-second acquisition window: ${reload.result.elapsedMs} ms`);
+  assert.equal(reload.roots.length, 1, 'the Reload started one catalog reader');
+  // What that reader acquired, below Compose's own root inside the reader's root.
+  const acquired = reload.created.flatMap((name) => {
+    const match = /^dude-canvas-packs-[^/]+\/dude-pack-[^/]+\/(.+)$/.exec(name);
+    return match ? [match[1]] : [];
+  });
+  assert.ok(acquired.some((name) => name.endsWith('/pack.md')), 'the watch saw the acquired manifests');
+  assert.deepEqual(acquired.filter((name) => !/^library(?:\/packs(?:\/[^/]+(?:\/pack\.md)?)?)?$/.test(name)), [],
+    'the Reload acquired pack manifests only, with no clone');
+  const readerRootsLeft = reload.roots.filter((name) => fs.existsSync(path.join(hostTemp, name)));
+  assert.deepEqual(readerRootsLeft, [], 'the reader root was removed after the Reload');
+  await closeInstalledHost(host);
+  await closeServer(model);
+  // Only a passed case removes its roots; a failed one keeps them as evidence.
+  fs.rmSync(owned, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  return {
+    owned,
+    releaseFiles: release.files.length,
+    parity,
+    upstream: { repository: upstream.sourceRepo, ref: upstream.sourceRef },
+    release: { ...expected, oracle: 'git ls-remote --tags, read before and after the Reload' },
+    packs: { count: expectedPacks.length, names: expectedPacks, oracle: `git ls-tree ${expected.commit} library/packs` },
+    plain: { ...plain.result, readerRoots: plain.roots },
+    reload: { ...reload.result, readerRoots: reload.roots, acquired },
+    allowance: { before: allowanceBefore, after: allowanceAfter },
+    modelRequests,
+    host: { sessionId: host.record.sessionId, extensionExecutable: host.record.extensionProcess.executable },
+    cleanup: { readerRootsLeft, host: host.record.cleanup, ownedRootRemoved: !fs.existsSync(owned) },
+  };
 }
 
 /**
@@ -5885,11 +6132,14 @@ function installedParity(root) {
   }
   // The 073 core modules outside the extension: the saved-sources parser and writer Canvas and Compose share,
   // Compose and its Sources procedure, the lint that checks the sources document, and bundle upgrade's two
-  // Compose calls. Each is the installed owner's own tool, so each must be the authored bytes.
+  // Compose calls. Each is the installed owner's own tool, so each must be the authored bytes. Compose's
+  // remote acquisition and the GitHub transport it imports load only for a remote read, so they are checked too.
   const skills = {};
   for (const relative of [
     'dude-engine/lib/pack-sources.mjs',
+    'dude-engine/lib/github-content.mjs',
     'dude-compose/compose.mjs',
+    'dude-compose/lib/pack-acquisition.mjs',
     'dude-compose/SKILL.md',
     'dude-lint/lint.mjs',
     'dude-bundle-upgrade/upgrade.mjs',
@@ -8385,6 +8635,7 @@ const manifest = {
   approvedMockHashes: {},
   workspaceSourcePreimages,
   source: {},
+  defaultSourceCase: null,
   blankCases: [],
   packCase: null,
   importCase: null,
@@ -8405,6 +8656,10 @@ const modelServers = [];
 
 try {
   assert.ok(SDK, 'Set DUDE_COPILOT_SDK to an existing SDK directory with real invocation cancellation.');
+  const missingArtifacts = [CLI, CLI_RUNTIME, path.join(SDK, 'index.js'), BROWSER].filter((file) => !fs.existsSync(file));
+  if (missingArtifacts.length) {
+    throw new ExternalBlocker(`host: the installed artifacts are missing: ${missingArtifacts.join(', ')}`);
+  }
   ({ CopilotClient, RuntimeConnection } = await import(pathToFileURL(path.join(SDK, 'index.js'))));
   manifest.installedIdentities = {
     cli: await fileIdentity(CLI),
@@ -8508,6 +8763,15 @@ try {
     ])),
     extension: sha256(sourceBytes('src/extensions/dude/extension.mjs')),
   };
+  // Feature 082 T004 first: the run's only network case needs no browser.
+  manifest.defaultSourceCase = await driveDefaultSourceDiscovery();
+  note('default-source-case-passed', {
+    tag: manifest.defaultSourceCase.release.tag,
+    commit: manifest.defaultSourceCase.release.commit,
+    packs: manifest.defaultSourceCase.packs.names,
+    elapsedMs: manifest.defaultSourceCase.reload.elapsedMs,
+    cleanup: manifest.defaultSourceCase.cleanup,
+  });
   browserState = await startBrowser();
   manifest.uiBrowser = browserState.version;
   note('browser-ready', {
@@ -8636,29 +8900,9 @@ try {
   // acquires no catalog, so it needs no reader process, and only the discovery read exercises the
   // launcher's real extension runtime. The bound exceeds the reader's deadline plus stop window, so a
   // hung read fails.
-  const hostPackReadOnce = async (query) => {
-    const started = Date.now();
-    const response = await fetch(new URL(`/api/packs${query}`, packHost.canvas.url), {
-      signal: AbortSignal.timeout(15_000),
-    });
-    assert.equal(response.status, 200, `installed-host pack read status${query}`);
-    const snapshot = await response.json();
-    return {
-      elapsedMs: Date.now() - started,
-      coverage: snapshot.coverage,
-      origin: snapshot.catalog?.origin ?? null,
-      packs: snapshot.catalog?.packs.map((pack) => pack.name) ?? null,
-      sources: snapshot.sources?.items.map((item) => ({ name: item.name, scope: item.scope, status: item.status, count: item.count })) ?? null,
-    };
-  };
+  const hostPackReadOnce = (query) => readInstalledPacks(packHost.canvas.url, query, 15_000);
   const hostPackPlain = await hostPackReadOnce('');
-  assert.deepEqual(hostPackPlain.coverage.catalog.state, 'not_read',
-    `the plain installed-host read acquires no catalog: ${JSON.stringify(hostPackPlain.coverage)}`);
-  assert.equal(hostPackPlain.origin, null);
-  assert.equal(hostPackPlain.packs, null);
-  assert.ok(hostPackPlain.sources.length >= 1, 'the plain read still lists the built-in sources');
-  assert.deepEqual(hostPackPlain.sources.filter((item) => item.status !== 'not_read' || item.count !== null), [],
-    'every source row says Not read, with no count');
+  assertNoCatalogRead(hostPackPlain);
   const hostPackRead = { ...(await hostPackReadOnce('?discover=1')), extensionExecutable: packHost.record.extensionProcess.executable, plain: hostPackPlain };
   assert.deepEqual(hostPackRead.coverage.catalog, { state: 'current', reason: null, message: null },
     `installed-host catalog read: ${JSON.stringify(hostPackRead.coverage)}`);
@@ -9472,10 +9716,11 @@ try {
   manifest.result = 'PASS';
   manifest.exitCode = 0;
 } catch (error) {
-  manifest.result = 'FAIL';
+  const blocked = error instanceof ExternalBlocker;
+  manifest.result = blocked ? 'BLOCKED' : 'FAIL';
   manifest.exitCode = 1;
   manifest.error = safeError(error);
-  note('acceptance-failed', { error: manifest.error });
+  note(blocked ? 'acceptance-blocked' : 'acceptance-failed', { error: manifest.error });
   if (browserState) {
     try {
       manifest.failurePage = await bounded('failure page evidence', async () => ({
@@ -9565,6 +9810,12 @@ try {
     result: manifest.result,
     exitCode: manifest.exitCode,
     run: RUN,
+    defaultSource: manifest.defaultSourceCase && {
+      tag: manifest.defaultSourceCase.release.tag,
+      commit: manifest.defaultSourceCase.release.commit,
+      packs: manifest.defaultSourceCase.packs.count,
+      elapsedMs: manifest.defaultSourceCase.reload.elapsedMs,
+    },
     blankCases: manifest.blankCases.length,
     packRoundTrip: manifest.packCase?.browser?.provider?.packRequests?.[0]?.phase ?? null,
     importRoundTrips: manifest.importCase?.browser?.provider?.importRequests?.map((entry) => entry.phase) ?? [],

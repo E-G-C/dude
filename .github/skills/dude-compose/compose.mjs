@@ -15,6 +15,12 @@
  * renderer. Removal deletes exactly the recorded destination without
  * reprojecting anything.
  *
+ * A local folder is read in place. A remote source is acquired by
+ * `lib/pack-acquisition.mjs` into a new temporary folder for each call: a public
+ * GitHub repository over anonymous HTTPS (only the manifests to list, only the
+ * selected pack to stage), any other host by a whole Git clone. Each caller
+ * removes that folder once it has read it, before it answers or writes.
+ *
  * Dependency-free ESM. Targets Node >= 20. Run `node compose.mjs --help`.
  *
  * Commands:
@@ -54,14 +60,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { belongsToPack } from '../dude-engine/lib/ownership.mjs';
 import {
   PACK_NAME_RE,
-  normalizeGitObjectId,
   parseProfileDocument,
   resolveProfileArtifact,
   serializeProfileDocument,
 } from '../dude-engine/lib/profile.mjs';
 import { parsePackManifestMetadata, USE_CASE_ID_RE } from '../dude-engine/lib/pack-manifest.mjs';
 import { normalizePath } from '../dude-engine/lib/text.mjs';
-import { resolveReleaseRef } from '../dude-engine/lib/release-channel.mjs';
 import {
   WORKSPACE_PATHS,
   resolveMutationPath,
@@ -69,7 +73,6 @@ import {
 
 const COPY_DIRS = ['agents', 'skills', 'instructions', 'prompts'];
 const AGENT_SOURCE_SUFFIX = '.agent.md';
-const CACHE_ROOT = path.join(os.tmpdir(), 'dude-compose-cache');
 
 /**
  * Every location a pack can install into. Named once here so `verify` copies
@@ -176,27 +179,58 @@ function profilePath(root) {
 }
 
 /**
- * Read and strictly validate the install profile. A missing profile represents
- * a bundle with no installed packs; malformed content never does.
+ * The install profile's exact bytes, or null when it is absent.
+ * @param {string} root
+ * @returns {Buffer | null}
+ */
+function readProfileBytes(root) {
+  const p = profilePath(root);
+  if (!exists(p)) return null;
+  if (fs.lstatSync(p).isSymbolicLink()) throw new Error(`${WORKSPACE_PATHS.PROFILE} must not be a symbolic link`);
+  return fs.readFileSync(p);
+}
+
+/**
+ * The strictly validated install profile and the exact bytes it was read from
+ * (null when absent): the basis a later answer or write must still match. A
+ * missing profile represents a bundle with no installed packs; malformed
+ * content never does.
+ * @param {string} root
+ * @returns {{ profile: Profile, bytes: Buffer | null }}
+ */
+function readProfileBasis(root) {
+  const bytes = readProfileBytes(root);
+  return { profile: bytes === null ? { installed: {} } : parseProfileDocument(bytes, { root }), bytes };
+}
+
+/**
+ * Read and strictly validate the install profile.
  * @param {string} root
  * @returns {Profile}
  */
 function readProfile(root) {
-  const p = profilePath(root);
-  /** @type {Profile} */
-  const empty = { installed: {} };
-  if (!exists(p)) return empty;
-  if (fs.lstatSync(p).isSymbolicLink()) throw new Error(`${WORKSPACE_PATHS.PROFILE} must not be a symbolic link`);
-  return parseProfileDocument(fs.readFileSync(p), { root });
+  return readProfileBasis(root).profile;
 }
 
-/** @param {string} root @returns {{ profile: Profile } | { error: string }} */
+/** @param {string} root @returns {{ profile: Profile, bytes: Buffer | null } | { error: string }} */
 function loadProfile(root) {
   try {
-    return { profile: readProfile(root) };
+    return readProfileBasis(root);
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/**
+ * Whether the profile still has exactly the bytes read as `basis`, or is still
+ * absent when absence was read.
+ * @param {string} root
+ * @param {Buffer | null} basis
+ * @returns {boolean}
+ */
+function profileUnchanged(root, basis) {
+  const current = readProfileBytes(root);
+  return current === null || basis === null ? current === basis : basis.equals(current);
 }
 
 /** @param {string} root @param {Profile} profile @returns {string} */
@@ -305,71 +339,29 @@ function readManifestSource(root) {
   }
 }
 
-/** @param {string[]} args @param {string} [cwd] @returns {number} exit status */
-function git(args, cwd) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
-  return r.status == null ? 1 : r.status;
-}
-/** @param {string[]} args @param {string} cwd @returns {string | null} */
-function gitOutput(args, cwd) {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
-  return result.status === 0 ? result.stdout.trim() : null;
-}
-/** @returns {boolean} */
-function hasGit() {
-  return spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0;
+/**
+ * The remote acquisition module. It is loaded only when a remote source is read,
+ * so local and offline commands, and the Canvas process that imports this module
+ * for installed state, never load the network transport.
+ */
+function loadRemoteAcquisition() {
+  return import('./lib/pack-acquisition.mjs');
 }
 
 /**
- * Resolve a source tree for an upstream source + ref. Local-dir sources are
- * used in place; remote sources are cloned anew so current upstream bytes are
- * used for every invocation.
- * @param {string} source repo URL or local path
- * @param {string} ref
- * @returns {{ tree: string, sourceIdentity: SourceIdentity } | { error: string }}
+ * Remove the temporary copy a remote resolution acquired, once it has been read.
+ * A local folder is read in place and owns none.
+ * @param {{ origin: string, dispose?: () => Promise<void> }} resolved
+ * @returns {Promise<string>} the failure to report, or '' when nothing is left behind
  */
-function resolveSourceTree(source, ref) {
-  if (isDir(source)) {
-    return {
-      tree: source,
-      sourceIdentity: { type: 'local', location: fs.realpathSync(source) },
-    };
+async function releaseResolved(resolved) {
+  if (!resolved.dispose) return '';
+  try {
+    await resolved.dispose();
+    return '';
+  } catch (error) {
+    return `the temporary copy of ${resolved.origin} could not be removed: ${error instanceof Error ? error.message : String(error)}`;
   }
-  if (!hasGit()) return { error: 'git is required to fetch a pack from a remote source' };
-  // Resolve the `latest` release channel to a concrete tag (shared with upgrade)
-  // so a released manifest's `source_ref: latest` fetches packs from the newest
-  // release tag rather than a nonexistent `latest` ref.
-  const chan = resolveReleaseRef(source, ref);
-  if (chan.channel && !chan.resolvedRef) {
-    return { error: `no releases published yet at ${source} (channel: ${ref})` };
-  }
-  const fetchRef = chan.resolvedRef;
-  fs.mkdirSync(CACHE_ROOT, { recursive: true });
-  const key = crypto.createHash('sha256').update(`${source}|${fetchRef}`).digest('hex').slice(0, 12);
-  const dest = path.join(CACHE_ROOT, `src-${key}`);
-  removePath(dest);
-  let cloned = git(['clone', '--quiet', '--depth=1', '--branch', fetchRef, source, dest]) === 0;
-  if (!cloned) {
-    removePath(dest);
-    cloned = git(['clone', '--quiet', source, dest]) === 0
-      && git(['checkout', '--quiet', fetchRef], dest) === 0;
-  }
-  if (cloned) {
-    const resolvedCommit = normalizeGitObjectId(gitOutput(['rev-parse', '--verify', 'HEAD^{commit}'], dest));
-    if (resolvedCommit) {
-      return {
-        tree: dest,
-        sourceIdentity: {
-          type: 'remote',
-          repository: source,
-          requested_ref: ref,
-          resolved_commit: resolvedCommit,
-        },
-      };
-    }
-  }
-  removePath(dest);
-  return { error: `failed to fetch source ${source} @ ${fetchRef}` };
 }
 
 /**
@@ -379,10 +371,16 @@ function resolveSourceTree(source, ref) {
  * one, prefer the local catalog, then fall back to the bundle's configured
  * upstream source, so a pack can be installed even when `library/packs/` is not
  * vendored locally.
+ *
+ * A local folder is read in place. A remote source is acquired anew for this
+ * call, at one resolved commit, into a temporary folder that the caller must
+ * release with `dispose()` once it has read the pack. A failed acquisition owns
+ * nothing to release: its error is returned as it was reported, including one
+ * that names material it had to keep.
  * @param {{ root: string, library: string, name: string, fetch: boolean, source?: string, ref?: string }} a
- * @returns {{ packDir: string, origin: string, sourceIdentity: SourceIdentity } | { error: string }}
+ * @returns {Promise<{ packDir: string, origin: string, sourceIdentity: SourceIdentity, dispose?: () => Promise<void> } | { error: string }>}
  */
-function resolvePackDir({ root, library, name, fetch, source, ref }) {
+async function resolvePackDir({ root, library, name, fetch, source, ref }) {
   if (!source) {
     const localDir = path.join(library, name);
     if (isDir(localDir) && exists(path.join(localDir, 'pack.md'))) {
@@ -414,17 +412,25 @@ function resolvePackDir({ root, library, name, fetch, source, ref }) {
     };
   }
   if (!sref) sref = 'main';
-  const tree = resolveSourceTree(src, sref);
-  if ('error' in tree) return { error: tree.error };
-  const fetchedDir = path.join(tree.tree, 'library', 'packs', name);
-  if (isDir(fetchedDir) && exists(path.join(fetchedDir, 'pack.md'))) {
-    return {
-      packDir: fetchedDir,
-      origin: isDir(src) ? `source ${src}` : `${src} @ ${sref}`,
-      sourceIdentity: tree.sourceIdentity,
-    };
+  if (isDir(src)) {
+    const packDir = path.join(src, 'library', 'packs', name);
+    if (isDir(packDir) && exists(path.join(packDir, 'pack.md'))) {
+      return { packDir, origin: `source ${src}`, sourceIdentity: { type: 'local', location: fs.realpathSync(src) } };
+    }
+    return { error: `pack "${name}" not found in source ${src}` };
   }
-  return { error: `pack "${name}" not found in source ${src}${isDir(src) ? '' : ` @ ${sref}`}` };
+  try {
+    const { acquireRemotePack } = await loadRemoteAcquisition();
+    const acquired = await acquireRemotePack({ repository: src, ref: sref, name });
+    return {
+      packDir: acquired.packDir,
+      origin: `${src} @ ${sref}`,
+      sourceIdentity: acquired.sourceIdentity,
+      dispose: acquired.dispose,
+    };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 /**
@@ -434,10 +440,13 @@ function resolvePackDir({ root, library, name, fetch, source, ref }) {
  * Without one, prefer a local `library/packs/` when the repo vendors one;
  * otherwise (a released core ships no local catalog) fall back to the bundle's
  * configured upstream source so `list` can still show installable packs.
+ *
+ * A remote catalog is acquired anew for this call into a temporary folder that
+ * the caller must release with `dispose()` once it has read the catalog.
  * @param {{ root: string, library: string, fetch: boolean, source?: string, ref?: string }} a
- * @returns {{ dir: string, origin: string } | { error: string }}
+ * @returns {Promise<{ dir: string, origin: string, dispose?: () => Promise<void> } | { error: string }>}
  */
-function resolveCatalogDir({ root, library, fetch, source, ref }) {
+async function resolveCatalogDir({ root, library, fetch, source, ref }) {
   if (!source) {
     if (isDir(library)) return { dir: library, origin: 'local' };
     if (fetch === false) return { dir: library, origin: 'local' };
@@ -456,13 +465,18 @@ function resolveCatalogDir({ root, library, fetch, source, ref }) {
   }
   if (!src) return { dir: library, origin: 'local' };
   if (!sref) sref = 'main';
-  const tree = resolveSourceTree(src, sref);
-  if ('error' in tree) return { error: tree.error };
-  const catalog = path.join(tree.tree, 'library', 'packs');
-  if (isDir(catalog)) {
-    return { dir: catalog, origin: isDir(src) ? `source ${src}` : `${src} @ ${sref}` };
+  if (isDir(src)) {
+    const catalog = path.join(src, 'library', 'packs');
+    if (isDir(catalog)) return { dir: catalog, origin: `source ${src}` };
+    return { error: `no pack catalog found in ${src}` };
   }
-  return { error: `no pack catalog found in ${src}${isDir(src) ? '' : ` @ ${sref}`}` };
+  try {
+    const { acquireRemoteCatalog } = await loadRemoteAcquisition();
+    const acquired = await acquireRemoteCatalog({ repository: src, ref: sref });
+    return { dir: acquired.catalogDir, origin: `${src} @ ${sref}`, dispose: acquired.dispose };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 /** @param {string} root */
@@ -550,10 +564,12 @@ function artifactInNamespace(artifact, packName) {
  * pre-stage validation passes, so an invalid source never creates a stage
  * directory. On success the caller owns cleanup of the returned `stageRoot`; on
  * a staging failure the helper removes its own stage directory before returning.
+ * A remote source's acquired copy is removed before this returns, whether the
+ * pack staged or not, so it never outlives the call or reaches a transaction.
  * @param {{ root: string, library: string, name: string, projection: any, stagePrefix: string, fetch?: boolean, source?: string, ref?: string, validateDiscoveryMetadata?: boolean }} args
- * @returns {{ origin: string, sourceIdentity: SourceIdentity, staged: StagedArtifact[], stageRoot: string } | { error: string }}
+ * @returns {Promise<{ origin: string, sourceIdentity: SourceIdentity, staged: StagedArtifact[], stageRoot: string } | { error: string }>}
  */
-function stagePackFromSource({
+async function stagePackFromSource({
   root,
   library,
   name,
@@ -564,11 +580,30 @@ function stagePackFromSource({
   ref,
   validateDiscoveryMetadata = true,
 }) {
-  const resolved = resolvePackDir({ root, library, name, fetch, source, ref });
+  const resolved = await resolvePackDir({ root, library, name, fetch, source, ref });
   if ('error' in resolved) {
     return { error: resolved.error };
   }
-  const { packDir, origin, sourceIdentity } = resolved;
+  /** @type {Awaited<ReturnType<typeof stagePackFromSource>>} */
+  let staged;
+  try {
+    staged = stageResolvedPack(resolved, { name, projection, stagePrefix, validateDiscoveryMetadata });
+  } catch (error) {
+    staged = { error: error instanceof Error ? error.message : String(error) };
+  }
+  const released = await releaseResolved(resolved);
+  if (!released) return staged;
+  if (!('error' in staged)) removePath(staged.stageRoot);
+  return { error: 'error' in staged ? `${staged.error}; ${released}` : released };
+}
+
+/**
+ * The synchronous part of staging, over a resolved pack directory.
+ * @param {{ packDir: string, origin: string, sourceIdentity: SourceIdentity }} resolved
+ * @param {{ name: string, projection: any, stagePrefix: string, validateDiscoveryMetadata: boolean }} options
+ * @returns {{ origin: string, sourceIdentity: SourceIdentity, staged: StagedArtifact[], stageRoot: string } | { error: string }}
+ */
+function stageResolvedPack({ packDir, origin, sourceIdentity }, { name, projection, stagePrefix, validateDiscoveryMetadata }) {
   let manifestName;
   if (validateDiscoveryMetadata) {
     try {
@@ -676,9 +711,12 @@ async function cmdAdd({
     return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
   }
 
+  // The exact profile bytes read here, or their absence, authorize this add.
+  // Staging can wait on a remote source, so they are compared again before any
+  // write, and a changed profile is refused rather than overwritten.
   const loadedProfile = loadProfile(root);
   if ('error' in loadedProfile) return { ok: false, code: 2, error: loadedProfile.error };
-  const { profile } = loadedProfile;
+  const { profile, bytes: authorizedProfileBytes } = loadedProfile;
   if (Object.hasOwn(profile.installed, name)) {
     return { ok: true, code: 0, result: { added: name, files: [], alreadyInstalled: true } };
   }
@@ -696,7 +734,7 @@ async function cmdAdd({
   /** @type {string | null} */
   let stageRoot = null;
   try {
-    const stagedResult = stagePackFromSource({
+    const stagedResult = await stagePackFromSource({
       root,
       library,
       name,
@@ -713,6 +751,12 @@ async function cmdAdd({
     stageRoot = stagedResult.stageRoot;
     const { origin, sourceIdentity, staged } = stagedResult;
     const backupRoot = path.join(stageRoot, 'backup');
+
+    // From this reauthorization through the profile write nothing awaits, so no
+    // other operation in this process can change the profile or a destination
+    // between these checks and the writes they authorize.
+    const authorityError = reauthorizeAdd(root, name, authorizedProfileBytes);
+    if (authorityError) return { ok: false, code: 2, error: authorityError };
 
     const claimedBy = new Map();
     for (const [packName, entry] of Object.entries(profile.installed)) {
@@ -748,7 +792,8 @@ async function cmdAdd({
       source: sourceIdentity,
     };
     const nextProfileBody = serializeProfile(root, nextProfile);
-    const previousProfile = exists(profilePath(root)) ? fs.readFileSync(profilePath(root)) : null;
+    // Reauthorization proved the profile still has these bytes (or is absent).
+    const previousProfile = authorizedProfileBytes;
 
     /** @type {{ relPath: string, destination: string, backup: string | null }[]} */
     const applied = [];
@@ -805,6 +850,26 @@ async function cmdAdd({
     return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
   } finally {
     if (stageRoot) removePath(stageRoot);
+  }
+}
+
+/**
+ * Re-establish an add's authority immediately before it writes: the profile path
+ * is still a safe mutation target, and the profile still has exactly the bytes,
+ * or the absence, that authorized the add.
+ * @param {string} root
+ * @param {string} name
+ * @param {Buffer | null} authorizedProfileBytes
+ * @returns {string} the refusal, or '' when the add may write
+ */
+function reauthorizeAdd(root, name, authorizedProfileBytes) {
+  try {
+    resolveMutationPath(root, WORKSPACE_PATHS.PROFILE);
+    return profileUnchanged(root, authorizedProfileBytes)
+      ? ''
+      : `profile changed after authorizing add of pack "${name}"; refusing add`;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
   }
 }
 
@@ -1011,7 +1076,9 @@ async function prepareRefresh({ root, library, name, fetch = true, source, ref }
   let stageRoot = null;
   let ready = false;
   try {
-    const stagedResult = stagePackFromSource({
+    // Staging can wait on a remote source. The authorized profile bytes read
+    // above are compared again below, after staging and before any answer.
+    const stagedResult = await stagePackFromSource({
       root,
       library,
       name,
@@ -1085,8 +1152,8 @@ async function prepareRefresh({ root, library, name, fetch = true, source, ref }
       return { ok: false, code: 2, mutation: 'none', error: `destination ownership conflict:\n  ${conflicts.join('\n  ')}` };
     }
 
-    // Build the next canonical profile and re-establish authority by rereading
-    // the record immediately before application.
+    // Build the next canonical profile, then re-establish authority over the
+    // record and every affected destination immediately before application.
     const nextProfile = structuredClone(profile);
     nextProfile.installed[name] = {
       files: newFiles,
@@ -1103,6 +1170,9 @@ async function prepareRefresh({ root, library, name, fetch = true, source, ref }
       name,
       currentProfilePath,
       authorizedProfileBytes,
+      replacements,
+      additions,
+      removals,
     });
     if (authorityError) return { ok: false, code: 2, mutation: 'none', error: authorityError };
 
@@ -1131,13 +1201,26 @@ async function prepareRefresh({ root, library, name, fetch = true, source, ref }
   }
 }
 
-/** @param {any} prepared */
+/**
+ * Re-establish a refresh's authority immediately before it answers or writes:
+ * the profile path is still a safe mutation target and still has exactly the
+ * authorized bytes, and every affected destination (replacement, addition, and
+ * removal) still passes the artifact-path check, so neither it nor a parent has
+ * become a symbolic link. Removal destinations were resolved before staging
+ * waited on the source, so they are checked again here rather than trusted.
+ * @param {{ root: string, name: string, currentProfilePath: string, authorizedProfileBytes: Buffer,
+ *   replacements: { relPath: string }[], additions: { relPath: string }[], removals: { relPath: string }[] }} prepared
+ * @returns {string} the refusal, or '' when the refresh may proceed
+ */
 function reauthorizeRefresh(prepared) {
   try {
     resolveMutationPath(prepared.root, WORKSPACE_PATHS.PROFILE);
     const currentProfileBytes = exists(prepared.currentProfilePath) ? fs.readFileSync(prepared.currentProfilePath) : null;
     if (!currentProfileBytes || !prepared.authorizedProfileBytes.equals(currentProfileBytes)) {
       return `profile changed after authorizing refresh of pack "${prepared.name}"; refusing refresh`;
+    }
+    for (const item of [...prepared.replacements, ...prepared.additions, ...prepared.removals]) {
+      resolveProfileArtifact(prepared.root, item.relPath, prepared.name);
     }
     return '';
   } catch (error) {
@@ -1181,6 +1264,9 @@ async function cmdRefresh(args) {
   let transactionRoot = null;
   let mutationStarted = false;
   try {
+    // `prepareRefresh` was the last await. Recheck the profile bytes and every
+    // destination path here, before the first backup or write; nothing below
+    // awaits until the transaction ends.
     const authorityError = reauthorizeRefresh({ ...data, root: args.root });
     if (authorityError) return { ok: false, code: 2, mutation: 'none', error: authorityError };
 
@@ -1290,38 +1376,42 @@ async function cmdRefresh(args) {
 }
 
 /**
+ * List one catalog's packs with their installed flags, in catalog order.
+ * Installed flags come from the profile read before the catalog; reading a
+ * remote catalog can wait, so the list is refused if that profile changed
+ * meanwhile rather than answered from a stale membership.
  * @param {{ root: string, library: string, fetch?: boolean, source?: string, ref?: string, useCase?: string }} args
- * @returns {{ ok: boolean, code: number, result?: any, error?: string }}
+ * @returns {Promise<{ ok: boolean, code: number, result?: any, error?: string }>}
  */
-function cmdList({ root, library, fetch = true, source, ref, useCase }) {
+async function cmdList({ root, library, fetch = true, source, ref, useCase }) {
   if (useCase !== undefined && (typeof useCase !== 'string' || !USE_CASE_ID_RE.test(useCase))) {
     return { ok: false, code: 1, error: `invalid use case: ${JSON.stringify(useCase)}` };
   }
   const loadedProfile = loadProfile(root);
   if ('error' in loadedProfile) return { ok: false, code: 2, error: loadedProfile.error };
-  const { profile } = loadedProfile;
+  const { profile, bytes: profileBytes } = loadedProfile;
   const installedSet = new Set(Object.keys(profile.installed));
-  const cat = resolveCatalogDir({ root, library, fetch, source, ref });
+  const cat = await resolveCatalogDir({ root, library, fetch, source, ref });
   if ('error' in cat) return { ok: false, code: 2, error: cat.error };
-  const packs = [];
-  for (const name of availablePacks(cat.dir)) {
-    let metadata;
-    try {
-      metadata = parsePackManifestMetadata(fs.readFileSync(path.join(cat.dir, name, 'pack.md'), 'utf8'));
-    } catch (error) {
-      return {
-        ok: false,
-        code: 2,
-        error: `pack "${name}" has invalid metadata: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-    packs.push({
-      name,
-      installed: installedSet.has(name),
-      description: metadata.description,
-      use_cases: metadata.useCases,
-    });
+  /** @type {{ packs: { name: string, installed: boolean, description: string, use_cases: string[] }[] } | { error: string }} */
+  let listed;
+  try {
+    listed = listCatalogPacks(cat.dir, installedSet);
+  } catch (error) {
+    listed = { error: error instanceof Error ? error.message : String(error) };
   }
+  const released = await releaseResolved(cat);
+  if ('error' in listed || released) {
+    return { ok: false, code: 2, error: ['error' in listed ? listed.error : '', released].filter(Boolean).join('; ') };
+  }
+  try {
+    if (!profileUnchanged(root, profileBytes)) {
+      return { ok: false, code: 2, error: 'profile changed while the catalog was read; refusing stale installed flags' };
+    }
+  } catch (error) {
+    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+  }
+  const { packs } = listed;
   return {
     ok: true,
     code: 0,
@@ -1331,6 +1421,32 @@ function cmdList({ root, library, fetch = true, source, ref, useCase }) {
       origin: cat.origin,
     },
   };
+}
+
+/**
+ * Read every pack manifest in one catalog directory. Invalid metadata fails the
+ * whole list rather than dropping that pack.
+ * @param {string} dir
+ * @param {Set<string>} installedSet
+ * @returns {{ packs: { name: string, installed: boolean, description: string, use_cases: string[] }[] } | { error: string }}
+ */
+function listCatalogPacks(dir, installedSet) {
+  const packs = [];
+  for (const name of availablePacks(dir)) {
+    let metadata;
+    try {
+      metadata = parsePackManifestMetadata(fs.readFileSync(path.join(dir, name, 'pack.md'), 'utf8'));
+    } catch (error) {
+      return { error: `pack "${name}" has invalid metadata: ${error instanceof Error ? error.message : String(error)}` };
+    }
+    packs.push({
+      name,
+      installed: installedSet.has(name),
+      description: metadata.description,
+      use_cases: metadata.useCases,
+    });
+  }
+  return { packs };
 }
 
 /**
@@ -1606,7 +1722,7 @@ async function main() {
   let r;
   switch (args.cmd) {
     case 'list':
-      r = cmdList({
+      r = await cmdList({
         root,
         library,
         fetch: args.fetch,

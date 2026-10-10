@@ -11,13 +11,12 @@ import assert from 'node:assert/strict';
 import childProcess, { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { createServer as createTcpServer } from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
@@ -469,28 +468,164 @@ const remoteSource = (repository, ref = 'main') => ({ type: /** @type {const} */
 /** @param {string} location */
 const localSource = location => ({ type: /** @type {const} */ ('local'), location });
 
+/*
+ * Offline GitHub over HTTP. Compose reads a public GitHub source over HTTPS from
+ * api.github.com and raw.githubusercontent.com, in the catalog reader process,
+ * and never runs Git for it. `offlineGitHub` writes a small module into its
+ * workspace, and Node preloads it through NODE_OPTIONS into every Node process
+ * the case starts, readers included. It sends exactly those two origins to this
+ * file's loopback stand-in and refuses any other address that is not loopback,
+ * so no case reaches a network while the real reader, Compose and its checks
+ * run. The stand-in answers GitHub's REST and raw forms from real local Git
+ * repositories, and an unpublished repository is a 404, as GitHub answers a
+ * missing or private one. Git keeps a catch-all rewrite of https://github.com/
+ * to a folder that does not exist, so a stray Git would fail offline too.
+ */
+const GITHUB_STAND_IN_ENV = 'DUDE_TEST_GITHUB_STAND_IN';
+/** The stand-in's answer that makes the preload stop its reader's thread, as a reader that no longer progresses. */
+const GITHUB_HANG_HEADER = 'x-dude-test-hang';
+const GITHUB_PRELOAD = [
+  `const standIn = process.env.${GITHUB_STAND_IN_ENV};`,
+  'if (standIn) {',
+  '  const fetch = globalThis.fetch;',
+  "  const loopback = new Set(['127.0.0.1', 'localhost', '[::1]']);",
+  '  globalThis.fetch = async (input, init) => {',
+  "    const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);",
+  "    const origin = url.origin === 'https://api.github.com' ? 'api' : url.origin === 'https://raw.githubusercontent.com' ? 'raw' : null;",
+  '    if (!origin) {',
+  '      if (loopback.has(url.hostname)) return fetch(input, init);',
+  '      throw new TypeError(`offline fixture: ${url.origin} is not reachable`);',
+  '    }',
+  '    const response = await fetch(`${standIn}/${origin}${url.pathname}${url.search}`, init);',
+  `    if (response.headers.has('${GITHUB_HANG_HEADER}')) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);`,
+  '    return response;',
+  '  };',
+  '}',
+  '',
+].join('\n');
 /**
- * Offline GitHub: Git itself rewrites a public repository URL to a local
- * repository through a fixture global config, so the real reader, real Git and
- * the real URL checks run and no case reaches a network. A catch-all rewrite
- * sends every unpublished GitHub URL to a folder that does not exist, so a
- * missed fixture fails offline instead of connecting out. `restore()` puts the
- * process environment back.
+ * @typedef {{ mode: 'serve', directory: string } | { mode: 'hold' | 'hang' }} StandInRepository
+ * @typedef {{ repositories: Map<string, StandInRepository>, requests: Array<{ repository: string, path: string }>,
+ *   held: Set<import('node:http').ServerResponse> }} StandInWorld
+ */
+/** Each offline GitHub's world, by the token its preload names. @type {Map<string, StandInWorld>} */
+const gitHubWorlds = new Map();
+// Taken before any case replaces execFile, so the stand-in's own Git calls are never a case's to see.
+const standInExecFile = childProcess.execFile;
+/** @param {string} directory @param {string[]} args @returns {Promise<Buffer | null>} */
+function standInGit(directory, args) {
+  return new Promise(resolve => {
+    standInExecFile('git', args, { cwd: directory, encoding: 'buffer', windowsHide: true, maxBuffer: 64 * 1024 * 1024 },
+      (error, stdout) => resolve(error ? null : stdout));
+  });
+}
+/**
+ * Answer one GitHub request from the world its path names, as GitHub would: the
+ * SHA media type for a commit lookup, JSON for commit and tree objects, raw bytes
+ * at a commit, and a 404 for anything unpublished.
+ * @param {import('node:http').IncomingMessage} request @param {import('node:http').ServerResponse} response
+ */
+async function answerGitHub(request, response) {
+  const url = new URL(request.url ?? '/', 'http://stand-in');
+  const [, token = '', origin = '', ...rest] = url.pathname.split('/');
+  const world = gitHubWorlds.get(token);
+  /** @param {number} status @param {string | Buffer} body @param {string} [type] */
+  const send = (status, body, type = 'application/json; charset=utf-8') => {
+    response.writeHead(status, { 'content-type': type });
+    response.end(body);
+  };
+  const notFound = () => send(404, JSON.stringify({ message: 'Not Found' }));
+  const parts = origin === 'api' && rest[0] === 'repos' ? rest.slice(1) : origin === 'raw' ? rest : null;
+  if (!world || !parts || parts.length < 3) return notFound();
+  const segments = parts.map(part => decodeURIComponent(part));
+  const repository = `${segments[0]}/${segments[1]}`.toLowerCase();
+  world.requests.push({ repository, path: `${url.pathname.slice(token.length + 1)}${url.search}` });
+  const published = world.repositories.get(repository);
+  if (!published) return notFound();
+  if (published.mode !== 'serve') {
+    world.held.add(response);
+    response.once('close', () => world.held.delete(response));
+    if (published.mode === 'hang') {
+      response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', [GITHUB_HANG_HEADER]: '1' });
+      response.flushHeaders();
+    }
+    return undefined;
+  }
+  const tail = segments.slice(2);
+  const git = (/** @type {string[]} */ ...args) => standInGit(published.directory, args);
+  const objectId = (/** @type {string | undefined} */ value) => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
+  if (origin === 'raw') {
+    const [commit, ...file] = tail;
+    const bytes = objectId(commit) && file.length ? await git('cat-file', 'blob', `${commit}:${file.join('/')}`) : null;
+    return bytes ? send(200, bytes, 'text/plain; charset=utf-8') : notFound();
+  }
+  if (tail[0] === 'commits' && tail.length > 1) {
+    if (request.headers.accept !== 'application/vnd.github.sha') return send(415, JSON.stringify({ message: 'Unsupported media type' }));
+    const commit = await git('rev-parse', '--verify', '--quiet', `${tail.slice(1).join('/')}^{commit}`);
+    return commit ? send(200, commit.toString('latin1').trim(), 'text/plain; charset=utf-8')
+      : send(422, JSON.stringify({ message: `No commit found for SHA: ${tail.slice(1).join('/')}` }));
+  }
+  if (tail[0] === 'git' && tail[1] === 'commits' && tail.length === 3 && objectId(tail[2])) {
+    const type = await git('cat-file', '-t', tail[2]);
+    const tree = type?.toString('latin1').trim() === 'commit' ? await git('rev-parse', `${tail[2]}^{tree}`) : null;
+    return tree ? send(200, JSON.stringify({ sha: tail[2], tree: { sha: tree.toString('latin1').trim() } })) : notFound();
+  }
+  if (tail[0] === 'git' && tail[1] === 'trees' && tail.length === 3 && objectId(tail[2])) {
+    const recursive = url.searchParams.get('recursive') === '1';
+    const type = await git('cat-file', '-t', tail[2]);
+    const listed = type?.toString('latin1').trim() === 'tree'
+      ? await git('ls-tree', '-z', '-l', ...(recursive ? ['-r', '-t'] : []), tail[2]) : null;
+    if (!listed) return notFound();
+    const tree = listed.toString('utf8').split('\0').filter(Boolean).map(line => {
+      const [, mode, kind, sha, size, file] = /** @type {RegExpExecArray} */ (/^(\d{6}) (\w+) ([0-9a-f]{40}) +(-|\d+)\t(.*)$/s.exec(line));
+      return { path: file, mode, type: kind, sha, ...(size === '-' ? {} : { size: Number(size) }) };
+    });
+    return send(200, JSON.stringify({ sha: tail[2], tree, truncated: false }));
+  }
+  return notFound();
+}
+/** @type {Set<import('node:net').Socket>} */
+const gitHubSockets = new Set();
+const gitHubServer = createServer((request, response) => {
+  answerGitHub(request, response).catch(() => { if (!response.headersSent) response.writeHead(500); response.end(); });
+});
+gitHubServer.on('connection', socket => { gitHubSockets.add(socket); socket.once('close', () => gitHubSockets.delete(socket)); });
+await new Promise(resolve => gitHubServer.listen(0, '127.0.0.1', () => resolve(undefined)));
+gitHubServer.unref();
+const GITHUB_STAND_IN = `http://127.0.0.1:${/** @type {import('node:net').AddressInfo} */ (gitHubServer.address()).port}`;
+after(() => {
+  for (const socket of gitHubSockets) socket.destroy();
+  gitHubServer.close();
+});
+
+/**
+ * Offline GitHub for one case: repositories it publishes are served, every other
+ * one is a 404, `hold` accepts a repository's requests and never answers them,
+ * and `hang` answers in a way that stops the reader's thread, so only the
+ * reader's owner can end that read. `restore()` puts the process environment back.
  * @param {ReturnType<typeof createReviewWorkspaceFixture>} workspace
  */
 function offlineGitHub(workspace) {
   const base = path.join(workspace.directory, 'github');
   fs.mkdirSync(base, { recursive: true });
   const config = path.join(base, 'gitconfig');
-  const rewrites = new Map([['https://github.com/', `${pathToFileURL(path.join(base, 'unpublished')).href}/`]]);
-  const write = () => fs.writeFileSync(config, [...rewrites].map(([from, to]) => `[url ${JSON.stringify(to)}]\n\tinsteadOf = ${from}\n`).join(''));
-  write();
-  const saved = { GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM };
-  process.env.GIT_CONFIG_GLOBAL = config;
-  process.env.GIT_CONFIG_NOSYSTEM = '1';
+  fs.writeFileSync(config, `[url ${JSON.stringify(`${pathToFileURL(path.join(base, 'unpublished')).href}/`)}]\n\tinsteadOf = https://github.com/\n`);
+  const token = randomUUID();
+  /** @type {StandInWorld} */
+  const world = { repositories: new Map(), requests: [], held: new Set() };
+  gitHubWorlds.set(token, world);
+  const preload = path.join(base, 'github-stand-in.mjs');
+  fs.writeFileSync(preload, GITHUB_PRELOAD);
+  const flag = `--import=${pathToFileURL(preload).href}`;
+  const saved = { GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM,
+    [GITHUB_STAND_IN_ENV]: process.env[GITHUB_STAND_IN_ENV] };
+  Object.assign(process.env, { GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: '1', [GITHUB_STAND_IN_ENV]: `${GITHUB_STAND_IN}/${token}` });
+  process.env.NODE_OPTIONS = [process.env.NODE_OPTIONS, flag].filter(Boolean).join(' ');
+  /** @param {string} repository @param {'hold' | 'hang'} mode */
+  const stall = (repository, mode) => world.repositories.set(repository.toLowerCase(), { mode });
   let sequence = 0;
   return {
-    /** Publish a repository whose catalog holds `packs`; it is what https://github.com/<repository> clones. */
+    /** Publish a repository whose catalog holds `packs`; it is what https://github.com/<repository> serves. */
     publish(/** @type {string} */ repository, /** @type {Parameters<typeof addLocalSource>[2]} */ packs) {
       const directory = addLocalSource({ ...workspace, directory: path.join(base, `repository-${++sequence}`) }, '.', packs);
       const git = (/** @type {string[]} */ ...args) => {
@@ -501,16 +636,21 @@ function offlineGitHub(workspace) {
       git('init', '-q', '-b', 'main');
       git('add', '-A');
       git('-c', 'user.email=fixture@example.test', '-c', 'user.name=Canvas Fixture', 'commit', '-qm', 'catalog fixture');
-      rewrites.set(`https://github.com/${repository}`, pathToFileURL(directory).href);
-      write();
+      world.repositories.set(repository.toLowerCase(), { mode: 'serve', directory });
       return { url: `https://github.com/${repository}`, directory };
     },
-    /** Send a repository somewhere else, such as a Git peer that never answers. */
-    redirect(/** @type {string} */ repository, /** @type {string} */ target) {
-      rewrites.set(`https://github.com/${repository}`, target);
-      write();
-    },
+    /** Accept every request for a repository and never answer it. */
+    hold: (/** @type {string} */ repository) => stall(repository, 'hold'),
+    /** Answer a repository's first request in a way that stops the reader's thread. */
+    hang: (/** @type {string} */ repository) => stall(repository, 'hang'),
+    /** How many requests named a repository. */
+    connections: (/** @type {string} */ repository) => world.requests.filter(entry => entry.repository === repository.toLowerCase()).length,
     restore() {
+      gitHubWorlds.delete(token);
+      for (const response of world.held) response.destroy();
+      const rest = (process.env.NODE_OPTIONS ?? '').split(' ').filter(part => part && part !== flag).join(' ');
+      if (rest) process.env.NODE_OPTIONS = rest;
+      else delete process.env.NODE_OPTIONS;
       for (const [name, value] of Object.entries(saved)) {
         if (value === undefined) delete process.env[name];
         else process.env[name] = value;
@@ -3194,7 +3334,7 @@ test('T012 anchoring regression: nested-scroll Open comment clips then recovers 
         )));
         assert.equal(
           productAppSha256,
-          '465e6a2bcb763621a676aac6be1839e301d2ce2d0fc8d233b1d48e87c342cf7e',
+          '0a808370514afa32602d0031352070be781e99a7e43dfe94da5a98f8aa9bf59c',
           'the exact-source regression executes the current published product UI',
         );
         const exactHarnessOptions = {
@@ -15860,26 +16000,9 @@ test('073 Packs: a retained project selection leaves no hidden stop in About and
 // 073 Phase B (T009): Sources, multi-source discovery, the Source column and
 // filter, and source-bound pack requests. Every case runs the production
 // provider, HTTP routes and bundle over disposable workspaces. Local folders and
-// offline GitHub (Git rewrites a public URL to a local repository) are the only
+// offline GitHub (a loopback stand-in for GitHub's HTTP reads) are the only
 // sources, so no case reaches a network.
 // ---------------------------------------------------------------------------
-
-/**
- * A loopback Git peer that accepts connections and never answers, so a read of
- * it runs to its 5,000 ms deadline. Nothing leaves the machine.
- */
-async function silentGitPeer() {
-  const sockets = new Set();
-  let connections = 0;
-  const server = createTcpServer(socket => { connections += 1; sockets.add(socket); socket.on('close', () => sockets.delete(socket)); socket.on('error', () => {}); });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const { port } = /** @type {import('node:net').AddressInfo} */ (server.address());
-  return {
-    url: `git://127.0.0.1:${port}/slow.git`,
-    get connections() { return connections; },
-    async close() { for (const socket of sockets) socket.destroy(); await new Promise(resolve => server.close(resolve)); },
-  };
-}
 
 /** The sources every Phase B case shares: a team folder, an offline public repository, and a saved folder that is gone. @param {ReturnType<typeof createReviewWorkspaceFixture>} workspace @param {(offline: ReturnType<typeof offlineGitHub>) => void} [more] */
 async function t073SourcesWorkspace(workspace, more = () => {}) {
@@ -16210,9 +16333,9 @@ async function t073Submit(p, location, ref = '') {
     set('[data-source-location]', ${JSON.stringify(location)}); set('[data-source-ref]', ${JSON.stringify(ref)}); })()`);
   await p.click('[data-source-add-submit]');
 }
-/** Wait until the open Add dialog settles on a refusal or a recovery message. @param {Awaited<ReturnType<typeof t073Driver>>} p */
-const t073Refused = async p => {
-  await until(async () => (await t073Add(p)).status?.phase === 'refused', 'a refusal inside Add');
+/** Wait until the open Add dialog settles on a refusal or a recovery message. @param {Awaited<ReturnType<typeof t073Driver>>} p @param {number} [timeout] */
+const t073Refused = async (p, timeout) => {
+  await until(async () => (await t073Add(p)).status?.phase === 'refused', 'a refusal inside Add', timeout);
   return t073Add(p);
 };
 
@@ -16221,20 +16344,20 @@ test('073 Sources: every server refusal stays inside Add with the typed text, an
   concurrency: false,
 }, async context => {
   if (!t010BrowserReady(context)) return;
-  let peer = null;
-  try {
-    await runAboutCase(context, '073-sources-add-refusals', { packs: {}, prepare: async workspace => {
-      peer = await silentGitPeer();
-      const restore = await t073SourcesWorkspace(workspace, github => github.redirect('acme/slow', peer.url));
-      addLocalSource(workspace, 'no-catalog-folder', []);
-      fs.rmSync(path.join(workspace.directory, 'no-catalog-folder', 'library'), { recursive: true });
-      fs.mkdirSync(path.join(workspace.directory, 'no-catalog-folder', 'docs'));
-      addLocalSource(workspace, 'broken-packs', []);
-      fs.mkdirSync(path.join(workspace.directory, 'broken-packs', 'library', 'packs', 'broken'), { recursive: true });
-      fs.writeFileSync(path.join(workspace.directory, 'broken-packs', 'library', 'packs', 'broken', 'pack.md'), '---\nuse-cases: ui\n---\n');
-      return restore;
-    } },
-    async canvas => {
+  /** @type {ReturnType<typeof offlineGitHub> | null} */
+  let github = null;
+  await runAboutCase(context, '073-sources-add-refusals', { packs: {}, prepare: async workspace => {
+    // The slow repository's reader stops progressing, so only its 30-second GitHub deadline ends the read.
+    const restore = await t073SourcesWorkspace(workspace, offline => { github = offline; offline.hang('acme/slow'); });
+    addLocalSource(workspace, 'no-catalog-folder', []);
+    fs.rmSync(path.join(workspace.directory, 'no-catalog-folder', 'library'), { recursive: true });
+    fs.mkdirSync(path.join(workspace.directory, 'no-catalog-folder', 'docs'));
+    addLocalSource(workspace, 'broken-packs', []);
+    fs.mkdirSync(path.join(workspace.directory, 'broken-packs', 'library', 'packs', 'broken'), { recursive: true });
+    fs.writeFileSync(path.join(workspace.directory, 'broken-packs', 'library', 'packs', 'broken', 'pack.md'), '---\nuse-cases: ui\n---\n');
+    return restore;
+  } },
+  async canvas => {
       const { page, output, workspace } = canvas;
       const p = await t073Driver(canvas);
       await p.enter();
@@ -16267,31 +16390,33 @@ test('073 Sources: every server refusal stays inside Add with the typed text, an
       assert.equal(canvas.discoveryReads().length, 0, 'a refused add reads no catalog for the lists');
       await aboutScreenshot(page, output, 'sources-add-refused-duplicate-1440x900-light');
 
-      // Reading: nothing dismisses the dialog until the 5,000 ms deadline and cleanup have finished.
+      // Reading: nothing dismisses the dialog until the 30,000 ms GitHub deadline and cleanup have finished.
       await t073Submit(p, 'https://github.com/acme/slow');
       await until(async () => (await t073Add(p)).status?.phase === 'reading', 'a source being read');
       const reading = await t073Add(p);
       assert.deepEqual([reading.cancelDisabled, reading.closeDisabled, reading.readOnly, reading.submitDisabled, reading.focus],
         [true, true, true, true, 'status'], 'Cancel, Close, the inputs and Add source are blocked while reading');
-      assert.match(reading.status.text, /^Reading the source Checking that its pack catalog can be read\. Nothing is installed, and nothing is saved until the read succeeds\. Reading stops after 5 seconds\.$/);
+      assert.match(reading.status.text, /^Reading the source Checking that its pack catalog can be read\. Nothing is installed, and nothing is saved until the read succeeds\. Reading stops after 30 seconds\.$/);
       await aboutScreenshot(page, output, 'sources-add-reading-1440x900-light');
       await key(page, 'Escape');
       await t073Pointer(page, { x: 8, y: 8 });
       assert.equal((await t073Add(p)).open, true, 'Esc and a full backdrop press and release do nothing while reading');
       assert.equal(await p.q(`document.querySelector('[data-sources-add]').disabled`), false, 'the trigger behind the modal is not what blocks it');
       const waited = Date.now();
-      const timedOut = await t073Refused(p);
+      const timedOut = await t073Refused(p, 40_000);
       context.diagnostic(`reading ended after ${Date.now() - waited} ms more: ${timedOut.status.text}`);
       assert.match(await p.q(`document.querySelector('[data-source-add-status] .fui-MessageBarTitle').textContent`), /^(Reading timed out|Reading could not be stopped cleanly)$/,
         'a stalled source ends at its deadline (or, if the platform could not confirm the stop, says so)');
+      if (await p.q(`document.querySelector('[data-source-add-status] .fui-MessageBarTitle').textContent`) === 'Reading timed out') {
+        assert.match(timedOut.status.text, /Reading took longer than 30 seconds, so it was stopped\./, 'the stated bound is the GitHub read\'s own');
+      }
       assert.deepEqual([timedOut.open, timedOut.location, timedOut.cancelDisabled, timedOut.closeDisabled, timedOut.readOnly, timedOut.focus],
         [true, 'https://github.com/acme/slow', false, false, false, 'status']);
       assert.deepEqual(fs.readFileSync(file), before, 'a timed-out read saves nothing');
-      assert.ok(peer.connections >= 1, 'the offline peer was the only thing contacted');
+      assert.ok(/** @type {ReturnType<typeof offlineGitHub>} */ (github).connections('acme/slow') >= 1, 'the offline stand-in was the only thing contacted');
       await p.click('[data-source-add-cancel]');
       assert.deepEqual([(await t073Add(p)).open, (await t073Add(p)).focus], [false, 'trigger']);
     });
-  } finally { await peer?.close(); }
 });
 
 /** The state of the details pane and the focus, whichever view owns it. @param {Awaited<ReturnType<typeof t073Driver>>} p */
@@ -17288,33 +17413,32 @@ test('073 Sources: leaving Settings cancels a Reload in flight, the server stops
   concurrency: false,
 }, async context => {
   if (!t010BrowserReady(context)) return;
-  let peer = null;
-  try {
-    await runAboutCase(context, '073-sources-cancel', { packs: {}, prepare: async workspace => {
-      peer = await silentGitPeer();
-      return t073SourcesWorkspace(workspace, github => github.redirect('acme/dude-packs', peer.url));
-    } }, async canvas => {
-      const { page } = canvas;
-      const p = await t073Driver(canvas);
-      await p.enter();
-      await p.chooseSub('sources');
-      await p.click('[aria-label="Reload packs"]');
-      await until(() => canvas.discoveryReads().length === 1 && peer.connections >= 1, 'the discovery is reading the stalled source');
-      assert.equal(await p.busy(), true, 'Reload reports it is reading');
-      const started = Date.now();
-      await p.click('#dude-tab-overview');
-      const id = canvas.requests.find(entry => entry.url.endsWith('/api/packs?discover=1')).id;
-      await until(() => canvas.cancelled.has(id), 'the browser cancelled the discovery request');
-      await until(() => canvas.releaseTracking.isIdle() && !canvas.instance.packRead, 'the server stopped the readers it started');
-      assert.ok(Date.now() - started < 4_000, 'the readers stopped with the request, well before the stalled source\'s own deadline');
+  /** @type {ReturnType<typeof offlineGitHub> | null} */
+  let github = null;
+  await runAboutCase(context, '073-sources-cancel', { packs: {}, prepare: async workspace => (
+    t073SourcesWorkspace(workspace, offline => { github = offline; offline.hold('acme/dude-packs'); })
+  ) }, async canvas => {
+    const { page } = canvas;
+    const p = await t073Driver(canvas);
+    const stalled = /** @type {ReturnType<typeof offlineGitHub>} */ (github);
+    await p.enter();
+    await p.chooseSub('sources');
+    await p.click('[aria-label="Reload packs"]');
+    await until(() => canvas.discoveryReads().length === 1 && stalled.connections('acme/dude-packs') >= 1, 'the discovery is reading the stalled source');
+    assert.equal(await p.busy(), true, 'Reload reports it is reading');
+    const started = Date.now();
+    await p.click('#dude-tab-overview');
+    const id = canvas.requests.find(entry => entry.url.endsWith('/api/packs?discover=1')).id;
+    await until(() => canvas.cancelled.has(id), 'the browser cancelled the discovery request');
+    await until(() => canvas.releaseTracking.isIdle() && !canvas.instance.packRead, 'the server stopped the readers it started');
+    assert.ok(Date.now() - started < 4_000, 'the readers stopped with the request, well before the stalled source\'s own bound');
 
-      // Coming back reads installed packs only: nothing started a discovery, and nothing was kept from the aborted one.
-      await p.click('#dude-tab-settings');
-      await packsSettled(page);
-      assert.equal(canvas.discoveryReads().length, 1, 're-entry starts no discovery');
-      assert.equal(await p.q(`document.querySelector('[data-pack-total="available"]').textContent`), '?', 'an aborted read left no catalog behind');
-    });
-  } finally { await peer?.close(); }
+    // Coming back reads installed packs only: nothing started a discovery, and nothing was kept from the aborted one.
+    await p.click('#dude-tab-settings');
+    await packsSettled(page);
+    assert.equal(canvas.discoveryReads().length, 1, 're-entry starts no discovery');
+    assert.equal(await p.q(`document.querySelector('[data-pack-total="available"]').textContent`), '?', 'an aborted read left no catalog behind');
+  });
 });
 
 // ---------------------------------------------------------------------------

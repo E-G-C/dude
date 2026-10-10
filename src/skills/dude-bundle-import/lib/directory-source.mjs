@@ -4,6 +4,15 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import {
+  GITHUB_API_HEADERS,
+  createReadBudget,
+  fetchGitHubBytes,
+  fetchGitHubJson,
+  gitBlobSha1,
+  validateGitObjectId,
+  validateGitTree,
+} from '../../dude-engine/lib/github-content.mjs';
 
 export const DIRECTORY_SOURCE_LIMITS = Object.freeze({
   max_depth: 12,
@@ -631,11 +640,6 @@ export async function analyzeLocalDirectory(source) {
 }
 
 const GITHUB_SOURCE_PREFIX = 'https://github.com/';
-const GITHUB_API_HEADERS = Object.freeze({
-  accept: 'application/vnd.github+json',
-  'x-github-api-version': '2022-11-28',
-});
-const GIT_OBJECT_ID = /^[0-9a-f]{40}$/;
 
 /** @param {unknown} value */
 function isPlainObject(value) {
@@ -646,12 +650,22 @@ function isPlainObject(value) {
   );
 }
 
-/** @param {unknown} value @param {string} label */
-function validateGitObjectId(value, label) {
-  if (typeof value !== 'string' || !GIT_OBJECT_ID.test(value)) {
-    throw new Error(`invalid ${label} Git SHA-1 object ID`);
-  }
-  return value;
+/** One analysis's metadata and raw read budgets, from the fixed directory-source limits. */
+function createDirectoryReadBudgets() {
+  return {
+    metadata: createReadBudget('metadata', {
+      maxRequests: DIRECTORY_SOURCE_LIMITS.max_metadata_requests,
+      maxResponseBytes: DIRECTORY_SOURCE_LIMITS.max_metadata_response_bytes,
+      maxTotalBytes: DIRECTORY_SOURCE_LIMITS.max_metadata_total_bytes,
+      requestTimeoutMs: DIRECTORY_SOURCE_LIMITS.request_timeout_ms,
+    }),
+    raw: createReadBudget('raw', {
+      maxRequests: DIRECTORY_SOURCE_LIMITS.max_raw_requests,
+      maxResponseBytes: DIRECTORY_SOURCE_LIMITS.max_raw_response_bytes,
+      maxTotalBytes: DIRECTORY_SOURCE_LIMITS.max_raw_total_bytes,
+      requestTimeoutMs: DIRECTORY_SOURCE_LIMITS.request_timeout_ms,
+    }),
+  };
 }
 
 /** @param {string} rawSegment @param {string} label */
@@ -738,172 +752,12 @@ function githubApiUrl(parsed, suffix) {
   return `https://api.github.com/repos/${encodeUrlPath([parsed.owner, parsed.repository])}${suffix}`;
 }
 
-/** @param {ReadableStreamDefaultReader<Uint8Array>} reader @param {AbortSignal} signal */
-function readStreamChunk(reader, signal) {
-  if (signal.aborted) return Promise.reject(signal.reason);
-  return new Promise((resolve, reject) => {
-    const abort = () => reject(signal.reason);
-    signal.addEventListener('abort', abort, { once: true });
-    reader.read().then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
-  });
-}
-
-/**
- * @param {ReadableStream<Uint8Array>|ReadableStreamDefaultReader<Uint8Array>|null} cancellable
- * @param {AbortController} controller
- * @param {Error} error
- * @returns {never}
- */
-function abortAndCancelResponse(cancellable, controller, error) {
-  controller.abort(error);
-  void cancellable?.cancel(error).catch(() => {});
-  throw error;
-}
-
-/**
- * @param {Response} response
- * @param {'metadata'|'raw'} kind
- * @param {any} counters
- * @param {AbortController} controller
- */
-async function readBoundedResponse(response, kind, counters, controller) {
-  const responseLimit = kind === 'metadata'
-    ? DIRECTORY_SOURCE_LIMITS.max_metadata_response_bytes
-    : DIRECTORY_SOURCE_LIMITS.max_raw_response_bytes;
-  const totalLimit = kind === 'metadata'
-    ? DIRECTORY_SOURCE_LIMITS.max_metadata_total_bytes
-    : DIRECTORY_SOURCE_LIMITS.max_raw_total_bytes;
-  const totalKey = kind === 'metadata' ? 'metadataBytes' : 'rawBytes';
-  const contentLength = response.headers.get('content-length');
-  if (contentLength !== null) {
-    if (!/^(?:0|[1-9][0-9]*)$/.test(contentLength) || !Number.isSafeInteger(Number(contentLength))) {
-      abortAndCancelResponse(
-        response.body,
-        controller,
-        new Error(`GitHub ${kind} response has an invalid Content-Length header`),
-      );
-    }
-    const declaredBytes = Number(contentLength);
-    if (declaredBytes > responseLimit) {
-      abortAndCancelResponse(
-        response.body,
-        controller,
-        new Error(`GitHub ${kind} response body exceeds the 1048576-byte (1 MiB) limit`),
-      );
-    }
-    if (counters[totalKey] + declaredBytes > totalLimit) {
-      abortAndCancelResponse(
-        response.body,
-        controller,
-        new Error(`GitHub ${kind} response aggregate exceeds the 4194304-byte (4 MiB) limit`),
-      );
-    }
-  }
-
-  if (response.body === null) {
-    abortAndCancelResponse(
-      null,
-      controller,
-      new Error(`GitHub ${kind} response with HTTP 200 has no body`),
-    );
-  }
-  const reader = response.body.getReader();
-  const chunks = [];
-  let responseBytes = 0;
-  while (true) {
-    let result;
-    try {
-      result = await readStreamChunk(reader, controller.signal);
-    } catch (error) {
-      const readError = error instanceof Error ? error : new Error(String(error));
-      abortAndCancelResponse(reader, controller, readError);
-    }
-    if (result.done) break;
-    const chunk = Buffer.from(result.value);
-    const nextResponseBytes = responseBytes + chunk.length;
-    const nextTotalBytes = counters[totalKey] + chunk.length;
-    if (nextResponseBytes > responseLimit || nextTotalBytes > totalLimit) {
-      if (nextResponseBytes > responseLimit) {
-        const error = new Error(`GitHub ${kind} response body exceeds the 1048576-byte (1 MiB) limit`);
-        abortAndCancelResponse(reader, controller, error);
-      }
-      const error = new Error(`GitHub ${kind} response aggregate exceeds the 4194304-byte (4 MiB) limit`);
-      abortAndCancelResponse(reader, controller, error);
-    }
-    responseBytes = nextResponseBytes;
-    counters[totalKey] = nextTotalBytes;
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks, responseBytes);
-}
-
-/** @param {string} url @param {'metadata'|'raw'} kind @param {any} counters */
-async function fetchGitHubBytes(url, kind, counters) {
-  const requestKey = kind === 'metadata' ? 'metadataRequests' : 'rawRequests';
-  const requestLimit = kind === 'metadata'
-    ? DIRECTORY_SOURCE_LIMITS.max_metadata_requests
-    : DIRECTORY_SOURCE_LIMITS.max_raw_requests;
-  counters[requestKey] += 1;
-  if (counters[requestKey] > requestLimit) {
-    throw new Error(`GitHub ${kind} request limit of ${requestLimit} exceeded`);
-  }
-
-  const controller = new AbortController();
-  let timedOut = false;
-  const timeout = globalThis.setTimeout(() => {
-    timedOut = true;
-    controller.abort(new DOMException('GitHub request timed out', 'TimeoutError'));
-  }, DIRECTORY_SOURCE_LIMITS.request_timeout_ms);
-  try {
-    const init = {
-      method: 'GET',
-      redirect: /** @type {RequestRedirect} */ ('error'),
-      signal: controller.signal,
-      ...(kind === 'metadata' ? { headers: GITHUB_API_HEADERS } : {}),
-    };
-    const response = await globalThis.fetch(url, init);
-    if (response.status !== 200) {
-      const rateLimited = response.status === 429
-        || (response.status === 403 && (
-          response.headers.get('x-ratelimit-remaining') === '0'
-          || response.headers.has('retry-after')
-        ));
-      abortAndCancelResponse(
-        response.body,
-        controller,
-        new Error(
-          `GitHub ${kind} request failed with HTTP ${response.status}${rateLimited ? ' (rate limit)' : ''}`,
-        ),
-      );
-    }
-    return await readBoundedResponse(response, kind, counters, controller);
-  } catch (error) {
-    if (timedOut) {
-      throw new Error(`GitHub ${kind} request timed out or was aborted`, { cause: error });
-    }
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`GitHub ${kind} fetch failed: ${message}`, { cause: error });
-  } finally {
-    globalThis.clearTimeout(timeout);
-  }
-}
-
-/** @param {string} url @param {any} counters */
-async function fetchGitHubJson(url, counters) {
-  const bytes = await fetchGitHubBytes(url, 'metadata', counters);
-  if (!isUtf8(bytes)) throw new Error('GitHub metadata response is not valid UTF-8 JSON');
-  try {
-    return JSON.parse(bytes.toString('utf8'));
-  } catch (error) {
-    throw new Error('GitHub metadata response is not valid JSON', { cause: error });
-  }
-}
-
-/** @param {any} parsed @param {any} counters */
-async function resolveGitHubCommit(parsed, counters) {
+/** @param {any} parsed @param {ReturnType<typeof createDirectoryReadBudgets>} budgets */
+async function resolveGitHubCommit(parsed, budgets) {
   const value = await fetchGitHubJson(
     githubApiUrl(parsed, `/commits/${encodeURIComponent(parsed.requestedRef)}`),
-    counters,
+    budgets.metadata,
+    { headers: GITHUB_API_HEADERS },
   );
   if (!isPlainObject(value) || !isPlainObject(value.commit) || !isPlainObject(value.commit.tree)) {
     throw new Error('GitHub commit metadata is malformed');
@@ -914,69 +768,16 @@ async function resolveGitHubCommit(parsed, counters) {
   };
 }
 
-/** @param {string} mode @param {string} type */
-function gitEntryType(mode, type) {
-  if (mode === '040000' && type === 'tree') return 'directory';
-  if ((mode === '100644' || mode === '100755') && type === 'blob') return 'regular-file';
-  if (mode === '120000' && type === 'blob') return 'symbolic-link';
-  if (mode === '160000' && type === 'commit') return 'non-regular';
-  throw new Error(`invalid Git tree mode/type pair: ${JSON.stringify(mode)}/${JSON.stringify(type)}`);
-}
-
-/** @param {unknown} value @param {string} expectedTreeSha @param {boolean} recursive */
-function validateGitTree(value, expectedTreeSha, recursive) {
-  if (!isPlainObject(value)) throw new Error('Git tree metadata is malformed');
-  const actualTreeSha = validateGitObjectId(value.sha, 'tree');
-  if (actualTreeSha !== expectedTreeSha) throw new Error('Git tree response identity does not match the requested tree');
-  if (value.truncated !== false) throw new Error('Git tree response is truncated or lacks an exact truncation marker');
-  if (!Array.isArray(value.tree)) throw new Error('Git tree response has a malformed tree record list');
-
-  const exactPaths = new Set();
-  const foldedPaths = new Map();
-  const records = value.tree.map((item) => {
-    if (!isPlainObject(item)) throw new Error('Git tree contains a malformed record');
-    validateRelativePath(item.path);
-    if (!recursive && item.path.includes('/')) {
-      throw new Error('nonrecursive Git tree response contains a nested path');
-    }
-    if (exactPaths.has(item.path)) throw new Error(`duplicate Git tree path: ${JSON.stringify(item.path)}`);
-    exactPaths.add(item.path);
-    const foldedPath = item.path.toLowerCase();
-    const collision = foldedPaths.get(foldedPath);
-    if (collision !== undefined && collision !== item.path) {
-      throw new Error(`case collision between Git tree paths ${JSON.stringify(collision)} and ${JSON.stringify(item.path)}`);
-    }
-    foldedPaths.set(foldedPath, item.path);
-
-    if (typeof item.mode !== 'string' || typeof item.type !== 'string') {
-      throw new Error('Git tree record has a malformed mode or type');
-    }
-    const entryType = gitEntryType(item.mode, item.type);
-    const objectSha = validateGitObjectId(item.sha, 'tree record');
-    if (entryType === 'regular-file' && !Number.isSafeInteger(item.size)) {
-      throw new Error('regular-file Git tree record has a missing or invalid size');
-    }
-    if (Object.hasOwn(item, 'size') && (!Number.isSafeInteger(item.size) || item.size < 0)) {
-      throw new Error('Git tree record has an invalid size');
-    }
-    return {
-      path: item.path,
-      mode: item.mode,
-      type: item.type,
-      sha: objectSha,
-      size: Object.hasOwn(item, 'size') ? item.size : null,
-      entryType,
-    };
-  }).sort((left, right) => compareRawPaths(left.path, right.path));
-
-  return records;
-}
-
-/** @param {any} parsed @param {string} treeSha @param {boolean} recursive @param {any} counters */
-async function readGitHubTree(parsed, treeSha, recursive, counters) {
+/**
+ * @param {any} parsed
+ * @param {string} treeSha
+ * @param {boolean} recursive
+ * @param {ReturnType<typeof createDirectoryReadBudgets>} budgets
+ */
+async function readGitHubTree(parsed, treeSha, recursive, budgets) {
   const suffix = `/git/trees/${treeSha}${recursive ? '?recursive=1' : ''}`;
-  const value = await fetchGitHubJson(githubApiUrl(parsed, suffix), counters);
-  return validateGitTree(value, treeSha, recursive);
+  const value = await fetchGitHubJson(githubApiUrl(parsed, suffix), budgets.metadata, { headers: GITHUB_API_HEADERS });
+  return validateGitTree(value, treeSha, recursive, validateRelativePath);
 }
 
 /** @param {any[]} records */
@@ -1017,20 +818,10 @@ function validateGitHubInventory(records) {
   }
 }
 
-/** @param {Buffer} bytes */
-function gitBlobSha1(bytes) {
-  return crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
-}
-
 /** @param {any} parsed @param {{commitSha: string, rootTreeSha: string} | undefined} expectedIdentity */
 async function acquireGitHubSnapshot(parsed, expectedIdentity) {
-  const counters = {
-    metadataRequests: 0,
-    rawRequests: 0,
-    metadataBytes: 0,
-    rawBytes: 0,
-  };
-  const opening = await resolveGitHubCommit(parsed, counters);
+  const budgets = createDirectoryReadBudgets();
+  const opening = await resolveGitHubCommit(parsed, budgets);
   if (expectedIdentity !== undefined && opening.commitSha !== expectedIdentity.commitSha) {
     throw new Error('GitHub requested ref changed since analysis');
   }
@@ -1041,7 +832,7 @@ async function acquireGitHubSnapshot(parsed, expectedIdentity) {
   let currentTreeSha = opening.rootTreeSha;
   const subtreeTreeShas = [];
   for (const segment of parsed.subtreeSegments) {
-    const records = await readGitHubTree(parsed, currentTreeSha, false, counters);
+    const records = await readGitHubTree(parsed, currentTreeSha, false, budgets);
     const child = records.find((record) => record.path === segment);
     if (child === undefined || child.entryType !== 'directory') {
       throw new Error(`GitHub subtree segment is missing or not a tree: ${JSON.stringify(segment)}`);
@@ -1050,7 +841,7 @@ async function acquireGitHubSnapshot(parsed, expectedIdentity) {
     subtreeTreeShas.push(currentTreeSha);
   }
 
-  const records = await readGitHubTree(parsed, currentTreeSha, true, counters);
+  const records = await readGitHubTree(parsed, currentTreeSha, true, budgets);
   validateGitHubInventory(records);
   const fileBytes = new Map();
   const entries = [];
@@ -1073,7 +864,7 @@ async function acquireGitHubSnapshot(parsed, expectedIdentity) {
       ...parsed.subtreeSegments,
       ...record.path.split('/'),
     ])}`;
-    const bytes = await fetchGitHubBytes(rawUrl, 'raw', counters);
+    const bytes = await fetchGitHubBytes(rawUrl, budgets.raw);
     if (bytes.length !== record.size) {
       throw new Error(`raw file size does not match Git tree metadata for ${JSON.stringify(record.path)}`);
     }
@@ -1090,7 +881,7 @@ async function acquireGitHubSnapshot(parsed, expectedIdentity) {
     });
   }
 
-  const closing = await resolveGitHubCommit(parsed, counters);
+  const closing = await resolveGitHubCommit(parsed, budgets);
   if (closing.commitSha !== opening.commitSha || closing.rootTreeSha !== opening.rootTreeSha) {
     throw new Error('GitHub requested ref moved during directory analysis');
   }

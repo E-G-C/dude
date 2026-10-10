@@ -6,12 +6,17 @@
  * Every catalog read runs in a short-lived helper process (catalog-reader.mjs),
  * and there are three reads: the default catalog (the local library, else the
  * recorded upstream), one saved source, and an explicit discovery of the default
- * plus each saved source. At most four helpers are ever active in this process.
+ * plus each saved source. At most four helpers are ever active in this process,
+ * and at most sixteen more wait for one. A helper's deadline follows from what it
+ * reads: a folder, a public GitHub catalog, or another host's whole clone. Every
+ * helper one operation starts, and every wait for a helper, also ends within that
+ * operation's one acquisition window, so no Git runs on the Canvas thread and no
+ * read outlives its bounds.
  *
  * Source identity of a saved local folder needs its real path, and a path on an
  * unreachable share can block a synchronous call for as long as the OS waits. So
- * the Canvas thread never resolves one: a helper per folder does, behind the read
- * deadline. A folder that does not answer costs only its own slot, and an
+ * the Canvas thread never resolves one: a helper per folder does, behind the
+ * folder deadline. A folder that does not answer costs only its own slot, and an
  * operation that does not need it does not wait for it:
  *
  * - a request that names a source by key describes every saved folder at once and
@@ -51,20 +56,43 @@ import {
 import { resolveMutationPath, WORKSPACE_PATHS } from '../../../skills/dude-engine/lib/workspace-paths.mjs';
 import { CANDIDATE_DOCUMENT, CATALOG_GIT_HOME_ENV, CATALOG_REQUEST_ENV, CATALOG_STOP_MARKER } from './catalog-reader.mjs';
 
-// Match Canvas's existing external-acquisition window. Never return a truncated
-// catalog: one reader process carries the complete result, with O(record bytes)
-// memory rather than per-row reads or a retained catalog cache.
-const READ_DEADLINE_MS = 5_000;
+// How long one reader may run before it is stopped, by what it reads, counted
+// from its slot's admission rather than its launch. Each budget follows from the
+// validated source and the operation, never from a caller: a folder is
+// described, validated or read within the local bound, and a public GitHub
+// catalog within Compose's own 30-second catalog acquisition. Another host's
+// whole clone gets 55 seconds, five fewer than Compose's own 60-second Git
+// deadline, which starts later still, once the reader runs. So this process
+// stops the reader's whole tree, within its two-second stop window, before
+// Compose's deadline can stop only Git's launcher, which on Windows leaves the
+// real Git running outside that tree. Never return a truncated catalog: one
+// reader process carries the complete result, with O(record bytes) memory
+// rather than per-row reads or a retained catalog cache.
+const READER_BUDGET_MS = Object.freeze({ local: 5_000, github: 30_000, git: 55_000 });
+// Every reader one operation starts, and every wait for a reader slot, ends
+// within this one absolute window from the operation's start.
+const ACQUISITION_WINDOW_MS = 60_000;
 // A timed-out or cancelled reader has this long to confirm that its whole
 // process tree stopped before its read reports unconfirmed cleanup.
 const STOP_CONFIRM_MS = 2_000;
 // No more helpers than this are active at once, across every read in this process.
 const MAX_READERS = 4;
+// No more reads than this wait for a slot, across every read in this process. A
+// further one is refused at once and never launches.
+const MAX_WAITING_READERS = 16;
+// A reader's own root, which holds any clone Compose makes, is observed while it
+// runs, and a read whose root is seen at this size or entry count is stopped.
+// Checks are asynchronous, skip the links they see in a listing, start every
+// 250 ms and never overlap, so writes can overshoot between checks. They are a
+// best-effort observation, not a quota or a race-proof boundary.
+const ROOT_LIMITS = Object.freeze({ bytes: 1_073_741_824, entries: 65_536, intervalMs: 250 });
 // Each read runs this module in its own helper process.
 const READER = fileURLToPath(new URL('./catalog-reader.mjs', import.meta.url));
 const CATALOG_FAILURES = Object.freeze({
   catalog_timeout: 'The catalog read timed out. Reload to try a fresh read.',
   catalog_cleanup_failed: 'The catalog reader could not confirm process cleanup.',
+  catalog_busy: 'Too many catalog reads were waiting, so this one did not start. Reload to try a fresh read.',
+  catalog_too_large: 'The source grew past 1 GiB or 65,536 files and folders while it was read, so the read was stopped.',
 });
 // Compose's own test of a URL-shaped location, which the shared checks treat as a
 // public repository and never resolve as a folder. A location that does not match
@@ -73,6 +101,7 @@ const URL_SCHEME_RE = /^[A-Za-z][A-Za-z0-9+.-]+:/;
 
 /** @typedef {import('../../../skills/dude-engine/lib/pack-sources.mjs').PackSource} PackSource */
 /** @typedef {import('../../../skills/dude-engine/lib/pack-sources.mjs').DescribedSource} DescribedSource */
+/** What a reader reads, which alone decides its budget. @typedef {keyof typeof READER_BUDGET_MS} ReaderPurpose */
 /** @typedef {{ type: 'remote', repository: string, ref: string } | { type: 'local', location: string }} BoundSource */
 /** The closed value a pack request carries for a source the project added. @typedef {{ key: string, sourcesRevision: string, source: BoundSource }} CatalogSource */
 /** @typedef {{ status: 'read' | 'unavailable', reason: string | null, message: string | null,
@@ -213,19 +242,25 @@ function catalogFailure(reason) {
 
 /**
  * The only code that knows the Copilot CLI extension launch contract. The CLI
- * starts an extension as `<execPath> <runtime>/preloads/extension_bootstrap.mjs`
- * with EXTENSION_PATH naming the extension and COPILOT_EXTENSION_PARENT_PID
- * naming the CLI, and its single executable runs a script only through that
- * bootstrap. So relaunch the reader the same way, as this process's child.
- * Override both variables: otherwise the bootstrap imports the extension again,
- * or exits because its parent is not the CLI. Use the bootstrap only if it
- * exists, as the CLI does. Under plain Node, execPath runs the reader directly.
+ * starts an extension as `<execPath> <bootstrap>`, with EXTENSION_PATH naming
+ * the extension and COPILOT_EXTENSION_PARENT_PID naming the CLI. `<bootstrap>`
+ * is the path of `<runtime>/preloads/extension_bootstrap.mjs`, or that file
+ * name alone. The CLI's single executable runs a script only through that
+ * bootstrap: for an argument with the bootstrap's file name, it runs the
+ * bootstrap its runtime ships, whatever the argument's folder or the working
+ * directory. So relaunch the reader the same way, as this process's child,
+ * with the argument as the CLI spelled it. Override both variables: otherwise
+ * the bootstrap imports the extension again, or exits because its parent is
+ * not the CLI. Use a path only if it exists, because under plain Node execPath
+ * runs that file. A bare name is never checked: Node lists the script it runs
+ * by its full path, so a bare name comes only from the CLI, which resolves it
+ * itself. Otherwise, under plain Node, execPath runs the reader directly.
  * @param {string} root
  * @returns {{ args: string[], env: Record<string, string> }}
  */
 function readerLaunch(root) {
   const bootstrap = process.argv.find(arg => path.basename(arg) === 'extension_bootstrap.mjs');
-  return bootstrap && fs.existsSync(bootstrap)
+  return bootstrap && (bootstrap === path.basename(bootstrap) || fs.existsSync(bootstrap))
     ? { args: [bootstrap, READER, root],
       env: { EXTENSION_PATH: READER, COPILOT_EXTENSION_PARENT_PID: String(process.pid) } }
     : { args: [READER, root], env: {} };
@@ -382,32 +417,94 @@ function admitWaitingReaders() {
 }
 
 /**
+ * The end of a new operation's acquisition window, on the monotonic clock. Every
+ * reader the operation starts, and every wait for a slot, ends by then.
+ */
+function acquisitionWindow() {
+  return performance.now() + ACQUISITION_WINDOW_MS;
+}
+
+/**
+ * The budget a reader of `source` runs under. A folder is local, a public GitHub
+ * repository (the shared module's `github:` identity) is a GitHub catalog, and
+ * any other repository address, including an upstream on another host, is a
+ * whole clone. An upstream spelled as a path rather than an address names the
+ * folder Compose reads in place, so it is local too. The reader finds out, behind
+ * this budget, whether that path is a folder, because this thread never touches a
+ * path that may lie on an unreachable share; a path that is not a folder, which
+ * Compose would hand to Git, also gets the local budget. Only the source's
+ * description decides it.
+ * @param {DescribedSource} source
+ * @returns {ReaderPurpose}
+ */
+function purposeOf(source) {
+  if (source.type === 'local' || !namesRemote(source.repository)) return 'local';
+  return source.identity.startsWith('github:') ? 'github' : 'git';
+}
+
+/**
+ * Whether Git, and so Compose, reads `location` as a remote address rather than
+ * a path: a `<scheme>://` URL, or an SSH address whose colon comes before any
+ * slash and after more than one letter, since one letter is a Windows drive.
+ * Compose's own test lives in its network module, which this process never loads.
+ * @param {string} location
+ */
+function namesRemote(location) {
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(location)) return true;
+  const colon = location.indexOf(':');
+  const slash = location.search(/[\\/]/);
+  return colon > 0 && (slash < 0 || colon < slash) && !/^[A-Za-z]:/.test(location);
+}
+
+/**
+ * What the default read reads: the workspace library, else the recorded
+ * upstream. Without either it reads nothing remote.
+ * @param {DescribedSource[]} builtins
+ * @returns {ReaderPurpose}
+ */
+function defaultPurpose(builtins) {
+  const source = builtins.find(builtin => builtin.builtin === 'local-library')
+    ?? builtins.find(builtin => builtin.builtin === 'bundle-upstream');
+  return source ? purposeOf(source) : 'local';
+}
+
+/**
  * One of at most four reader slots, in first-come order. A reader holds its slot
  * until its tree has stopped and its root is removed or kept, so the cap counts
- * live processes and their cleanup. A cancelled wait never starts a reader.
+ * live processes and their cleanup. At most sixteen reads wait: a further one is
+ * refused at once as busy. A wait, or a start, that the operation's window has
+ * run out on is a timeout. A read refused for either reason, or cancelled while
+ * it waits, never starts a reader.
  * @param {AbortSignal} signal
- * @returns {Promise<() => void>} releases the slot
+ * @param {number} until the operation's window end
+ * @returns {Promise<{ release: () => void } | { refused: 'catalog_busy' | 'catalog_timeout' }>}
  */
-function acquireReaderSlot(signal) {
+function acquireReaderSlot(signal, until) {
   return new Promise((resolve, reject) => {
     if (signal.aborted) { reject(signal.reason); return; }
+    const remaining = until - performance.now();
+    if (remaining <= 0) { resolve({ refused: 'catalog_timeout' }); return; }
     const grant = () => {
       activeReaders += 1;
       let released = false;
-      resolve(() => {
+      resolve({ release: () => {
         if (released) return;
         released = true;
         activeReaders -= 1;
         admitWaitingReaders();
-      });
+      } });
     };
     if (activeReaders < MAX_READERS && !waitingReaders.length) { grant(); return; }
-    const waiter = { grant: () => { signal.removeEventListener('abort', onAbort); grant(); } };
-    const onAbort = () => {
+    if (waitingReaders.length >= MAX_WAITING_READERS) { resolve({ refused: 'catalog_busy' }); return; }
+    const leave = () => {
+      clearTimeout(expiry);
+      signal.removeEventListener('abort', onAbort);
       const index = waitingReaders.indexOf(waiter);
       if (index >= 0) waitingReaders.splice(index, 1);
-      reject(signal.reason);
     };
+    const waiter = { grant: () => { leave(); grant(); } };
+    const onAbort = () => { leave(); reject(signal.reason); };
+    const expiry = setTimeout(() => { leave(); resolve({ refused: 'catalog_timeout' }); }, remaining);
     signal.addEventListener('abort', onAbort, { once: true });
     waitingReaders.push(waiter);
   });
@@ -416,22 +513,41 @@ function acquireReaderSlot(signal) {
 /**
  * Compose's remote resolver runs synchronous Git, which no thread can
  * interrupt. So every read runs the reader in its own short-lived process tree
- * with its own temporary root, and nothing outlives the read. The deadline or
- * a cancellation stops the whole tree within a bounded window. The root is
- * removed only when nothing can still write into it. No shell, arbitrary
- * command, source override or installed-file write is admitted here: the reader
- * is told only a closed request, never a path, repository or ref.
+ * with its own temporary root, and nothing outlives the read. Its deadline, its
+ * root's observed bound or a cancellation stops the whole tree within a bounded
+ * window. The root is removed only when nothing can still write into it. No
+ * shell, arbitrary command, source override or installed-file write is admitted
+ * here: the reader is told only a closed request, never a path, repository or ref.
+ *
+ * A stop that cannot be confirmed may leave a live process behind, and so may a
+ * Git that Compose itself stopped but could not confirm stopped, so then its root
+ * stays where it is and its slot stays taken for the life of this process. The
+ * capacity is never released into more such processes, and nothing reclaims it.
  * @param {string} root
  * @param {AbortSignal} signal
+ * @param {number} until the operation's window end
+ * @param {ReaderPurpose} purpose what the reader reads, from its validated source
  * @param {Record<string, unknown> | null} [request] a closed request, or null for the default read
  * @param {((temporary: string) => Promise<void>) | null} [prepare] writes the reader's only input file into its own root
  * @returns {Promise<any>}
  */
-async function acquireCatalog(root, signal, request = null, prepare = null) {
+async function acquireCatalog(root, signal, until, purpose, request = null, prepare = null) {
   signal.throwIfAborted();
-  const release = await acquireReaderSlot(signal);
-  try { return await runReader(root, signal, request, prepare); }
-  finally { release(); }
+  const slot = await acquireReaderSlot(signal, until);
+  if ('refused' in slot) return catalogFailure(slot.refused);
+  let kept = false;
+  try {
+    const admitted = performance.now();
+    // A slot granted as the window ends still starts no reader.
+    if (until <= admitted) return catalogFailure('catalog_timeout');
+    // The budget runs from this admission, so preparing and launching the reader
+    // spend it too, and it never runs past the operation's window.
+    const read = await runReader(root, signal, Math.min(admitted + READER_BUDGET_MS[purpose], until), request, prepare);
+    kept = read.kept;
+    return read.answer;
+  } finally {
+    if (!kept) slot.release();
+  }
 }
 
 /**
@@ -440,12 +556,14 @@ async function acquireCatalog(root, signal, request = null, prepare = null) {
  * which ends the whole read, propagates.
  * @param {string} root
  * @param {AbortSignal} signal
+ * @param {number} until
+ * @param {ReaderPurpose} purpose
  * @param {Record<string, unknown> | null} [request]
  * @param {((temporary: string) => Promise<void>) | null} [prepare]
  * @returns {Promise<any>}
  */
-async function acquireContained(root, signal, request = null, prepare = null) {
-  try { return await acquireCatalog(root, signal, request, prepare); }
+async function acquireContained(root, signal, until, purpose, request = null, prepare = null) {
+  try { return await acquireCatalog(root, signal, until, purpose, request, prepare); }
   catch {
     signal.throwIfAborted();
     return { ok: false, reason: 'catalog_unavailable', error: 'The catalog acquisition or its cleanup failed. Reload to try a fresh read.' };
@@ -466,38 +584,76 @@ async function settleAll(promises) {
   if (failed) throw /** @type {PromiseRejectedResult} */ (failed).reason;
   return results.map(result => /** @type {PromiseFulfilledResult<T>} */ (result).value);
 }
+
 /**
+ * Whether a reader's own root has reached its observed bound. Every entry
+ * counts, whatever its type, and a folder's entries are counted before any of
+ * its files is sized. The walk enters only entries its listing reports as
+ * folders and sizes files by `lstat`, so each link it sees counts as one entry
+ * and is skipped. This is a best-effort observation, not a race-proof boundary.
+ * The walk stops as soon as either bound is reached.
+ * @param {string} directory
+ */
+async function rootReachedLimits(directory) {
+  let entries = 0, bytes = 0;
+  const pending = [directory];
+  while (pending.length) {
+    const folder = /** @type {string} */ (pending.pop());
+    /** @type {import('node:fs').Dirent[]} */
+    let listed;
+    try { listed = await fs.promises.readdir(folder, { withFileTypes: true }); }
+    catch { continue; }
+    entries += listed.length;
+    if (entries >= ROOT_LIMITS.entries) return true;
+    for (const entry of listed) {
+      const absolute = path.join(folder, entry.name);
+      if (entry.isDirectory()) pending.push(absolute);
+      else if (entry.isFile()) {
+        try { bytes += (await fs.promises.lstat(absolute)).size; }
+        catch { continue; }
+        if (bytes >= ROOT_LIMITS.bytes) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Run one reader to its answer, or stop its tree at `deadlineAt`, at its root's
+ * observed bound or on cancellation. `kept` is true when that stop could not be
+ * confirmed, or when the reader answered that Compose kept its material because
+ * a Git it stopped could not be confirmed stopped: that Git may run outside the
+ * tree this process stops, so even a confirmed tree stop does not cover it. The
+ * root is then left in place, and the caller keeps its slot.
  * @param {string} root
  * @param {AbortSignal} signal
+ * @param {number} deadlineAt when the reader is stopped, on the monotonic clock
  * @param {Record<string, unknown> | null} request
  * @param {((temporary: string) => Promise<void>) | null} prepare
+ * @returns {Promise<{ answer: any, kept: boolean }>}
  */
-async function runReader(root, signal, request, prepare) {
+async function runReader(root, signal, deadlineAt, request, prepare) {
   signal.throwIfAborted();
   const temporary = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'dude-canvas-packs-'));
   // Compose's temporary checkout belongs to this acquisition only.
   // A process that was just stopped can hold a file in its checkout for a moment longer, so a locked
   // entry is retried briefly before the removal is reported as failed.
   const remove = () => fs.promises.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-  if (signal.aborted) {
+  /** @param {string} reason */
+  const unstarted = async reason => {
     await remove();
-    return catalogFailure('catalog_cancelled');
-  }
+    return { answer: catalogFailure(reason), kept: false };
+  };
+  if (signal.aborted) return unstarted('catalog_cancelled');
   if (prepare) {
     try { await prepare(temporary); }
-    catch {
-      await remove();
-      return catalogFailure('catalog_unavailable');
-    }
+    catch { return unstarted('catalog_unavailable'); }
   }
   const launch = readerLaunch(root);
   /** @type {Record<string, string>} */
   let git;
   try { git = await readerGitEnvironment(process.env, temporary); }
-  catch {
-    await remove();
-    return catalogFailure('catalog_unavailable');
-  }
+  catch { return unstarted('catalog_unavailable'); }
   /** @type {import('node:child_process').ChildProcess} */
   let child;
   try {
@@ -515,10 +671,7 @@ async function runReader(root, signal, request, prepare) {
         ...git,
         ...(request ? { [CATALOG_REQUEST_ENV]: JSON.stringify(request) } : {}) },
     });
-  } catch {
-    await remove();
-    return catalogFailure('catalog_unavailable');
-  }
+  } catch { return unstarted('catalog_unavailable'); }
   /** @type {{ reason: string | null, result?: any }} */
   const outcome = await new Promise(resolve => {
     /** @type {any} */
@@ -531,23 +684,29 @@ async function runReader(root, signal, request, prepare) {
     let held = false;
     /** @type {NodeJS.Timeout | undefined} */
     let stopWindow;
+    // The one observation of the root in flight, if any.
+    let observing = false;
     /** @param {{ reason: string | null, result?: any }} value */
     const settle = value => {
       if (settled) return;
       settled = true;
       clearTimeout(deadline);
       clearTimeout(stopWindow);
+      clearInterval(observer);
       signal.removeEventListener('abort', cancel);
       resolve(value);
     };
+    // The reader's answer that Compose kept its material (see catalog-reader.mjs).
+    const keptByCompose = () => message?.kept === true;
     // After a trigger, the stop is confirmed only by both the close and the kill result.
     const confirm = () => {
-      if (closed && stopped !== null) settle({ reason: stopped && !held ? trigger : 'catalog_cleanup_failed' });
+      if (closed && stopped !== null) settle({ reason: stopped && !held && !keptByCompose() ? trigger : 'catalog_cleanup_failed' });
     };
     /** @param {string} reason */
     const stop = reason => {
-      if (trigger || closed) return;
+      if (trigger || closed || settled) return;
       trigger = reason;
+      clearInterval(observer);
       // Finish the gate write before a kill can release the reader's current
       // Git call into Compose's fallback. If it fails, still stop, but retain
       // this root: even a successful kill cannot confirm the ungated stop.
@@ -561,7 +720,15 @@ async function runReader(root, signal, request, prepare) {
       stopTree(child, result => { stopped = result; confirm(); });
     };
     const cancel = () => stop('catalog_cancelled');
-    const deadline = setTimeout(() => stop('catalog_timeout'), READ_DEADLINE_MS);
+    const deadline = setTimeout(() => stop('catalog_timeout'), Math.max(0, deadlineAt - performance.now()));
+    // A whole clone is repository-sized. Observe the root it lands in, one walk at
+    // a time, off this thread's synchronous path, and stop the tree past the bound.
+    const observer = setInterval(() => {
+      if (observing || trigger || closed || settled) return;
+      observing = true;
+      rootReachedLimits(temporary).then(reached => { if (reached) stop('catalog_too_large'); }, () => {})
+        .finally(() => { observing = false; });
+    }, ROOT_LIMITS.intervalMs);
     signal.addEventListener('abort', cancel, { once: true });
     child.once('message', value => { message = value; });
     child.on('error', () => {
@@ -572,16 +739,17 @@ async function runReader(root, signal, request, prepare) {
     child.once('close', code => {
       closed = true;
       if (trigger) return confirm();
+      if (keptByCompose()) return settle({ reason: 'catalog_cleanup_failed' });
       settle(!failed && code === 0 && message && typeof message.ok === 'boolean'
         ? { reason: null, result: message } : { reason: 'catalog_unavailable' });
     });
     if (signal.aborted) cancel();
   });
-  // An unconfirmed stop may leave a live descendant writing into the root, so
-  // leave the root rather than race it.
-  if (outcome.reason === 'catalog_cleanup_failed') return catalogFailure(outcome.reason);
+  // An unconfirmed stop, or Compose's kept material, may leave a live process
+  // writing into the root, so leave the root rather than race it.
+  if (outcome.reason === 'catalog_cleanup_failed') return { answer: catalogFailure(outcome.reason), kept: true };
   await remove();
-  return outcome.reason ? catalogFailure(outcome.reason) : outcome.result;
+  return { answer: outcome.reason ? catalogFailure(outcome.reason) : outcome.result, kept: false };
 }
 
 /** @param {string} state @param {string|null} [reason] @param {string|null} [message] */
@@ -592,17 +760,26 @@ function coverage(state, reason = null, message = null) {
 /* ------------------------------------------------------- saved and built-in sources */
 
 /**
+ * The two derived built-ins: the workspace library and the recorded upstream.
+ * They sit under the workspace root, so describing them never resolves a saved
+ * local folder.
+ * @param {string} root
+ */
+function readBuiltins(root) {
+  /** @type {ReturnType<typeof readManifestSource>} */
+  let upstream = null;
+  try { upstream = readManifestSource(root); } catch { /* an unreadable manifest names no upstream */ }
+  return describeBuiltinSources({ root, upstream });
+}
+
+/**
  * The saved document and the two derived built-ins. Both are cheap and never
  * resolve a saved local folder: the built-ins sit under the workspace root, and
  * parsing is only text.
  * @param {string} root
  */
 function readConfiguration(root) {
-  const saved = readPackSources(root);
-  /** @type {ReturnType<typeof readManifestSource>} */
-  let upstream = null;
-  try { upstream = readManifestSource(root); } catch { /* an unreadable manifest names no upstream */ }
-  return { saved, builtins: describeBuiltinSources({ root, upstream }) };
+  return { saved: readPackSources(root), builtins: readBuiltins(root) };
 }
 
 /** @typedef {ReturnType<typeof readConfiguration>} Configuration */
@@ -659,14 +836,15 @@ function unresolvedSource(root, entry) {
  * real key and an unavailable catalog.
  * @param {string} root
  * @param {AbortSignal} signal
+ * @param {number} until the operation's window end
  * @param {string} revision the saved document's revision the helper must find
  * @param {{ type: 'local', location: string }} entry
  * @param {number} index
  * @param {boolean} list
  * @returns {Promise<SavedSource>}
  */
-async function describeFolder(root, signal, revision, entry, index, list) {
-  const outcome = await acquireContained(root, signal, {
+async function describeFolder(root, signal, until, revision, entry, index, list) {
+  const outcome = await acquireContained(root, signal, until, 'local', {
     op: 'source', index, key: null, revision, document: 'configured', list });
   /** @type {SavedSource} */
   const item = { index, entry, described: true, source: null, problem: null, read: null };
@@ -690,25 +868,26 @@ async function describeFolder(root, signal, revision, entry, index, list) {
  * never waits for the others.
  * @param {string} root
  * @param {AbortSignal} signal
+ * @param {number} until the operation's window end
  * @param {Configuration} configuration
  * @param {{ list: boolean, types?: Array<'remote' | 'local'> }} options
  * @returns {Promise<{ ok: true, items: SavedSource[] } | { ok: false, error: string }>}
  */
-async function readSavedSources(root, signal, configuration, { list, types = ['remote', 'local'] }) {
+async function readSavedSources(root, signal, until, configuration, { list, types = ['remote', 'local'] }) {
   const { saved, builtins } = configuration;
   if (!saved.ok) return { ok: false, error: saved.error };
   /** @type {string | null} */
   let invalid = null;
   const items = await settleAll(saved.sources.map(async (entry, index) => {
     if (!types.includes(entry.type)) return /** @type {SavedSource} */ ({ index, entry, described: false, source: null, problem: null, read: null });
-    if (entry.type === 'local') return describeFolder(root, signal, saved.revision, entry, index, list);
+    if (entry.type === 'local') return describeFolder(root, signal, until, saved.revision, entry, index, list);
     /** @type {SavedSource} */
     const item = { index, entry, described: true, source: null, problem: null, read: null };
     const described = describePackSources({ root, sources: [entry], builtins });
     if (!described.ok) { invalid ??= described.error; return item; }
     item.source = described.sources[0];
     if (list) {
-      item.read = normalizeRead(await acquireContained(root, signal, {
+      item.read = normalizeRead(await acquireContained(root, signal, until, purposeOf(item.source), {
         op: 'source', index, key: item.source.key, revision: saved.revision, document: 'configured', list: true }));
     }
     return item;
@@ -740,16 +919,17 @@ async function readSavedSources(root, signal, configuration, { list, types = ['r
  * then the one removed or read.
  * @param {string} root
  * @param {AbortSignal} signal
+ * @param {number} until the operation's window end
  * @param {Configuration} configuration
  * @param {string} key
  * @returns {Promise<{ ok: true, item: SavedSource }
  *   | { ok: false, why: 'unreadable', error: string } | { ok: false, why: 'unanswered', reason: string }
  *   | { ok: false, why: 'changed' | 'unknown' }>}
  */
-async function findSavedSource(root, signal, configuration, key) {
+async function findSavedSource(root, signal, until, configuration, key) {
   const { saved } = configuration;
   if (!saved.ok) return { ok: false, why: 'unreadable', error: saved.error };
-  const remote = await readSavedSources(root, signal, configuration, { list: false, types: ['remote'] });
+  const remote = await readSavedSources(root, signal, until, configuration, { list: false, types: ['remote'] });
   if (!remote.ok) return { ok: false, why: 'unreadable', error: remote.error };
   const repository = remote.items.find(item => item.source?.key === key);
   if (repository) return { ok: true, item: repository };
@@ -764,7 +944,7 @@ async function findSavedSource(root, signal, configuration, key) {
   await settleAll(folders.map(async ({ entry, index }) => {
     /** @type {SavedSource} */
     let item;
-    try { item = await describeFolder(root, searching, saved.revision, entry, index, false); }
+    try { item = await describeFolder(root, searching, until, saved.revision, entry, index, false); }
     catch (error) {
       // Only the search's own end is expected; a cancelled read is the caller's.
       if (found.signal.aborted && !signal.aborted) return;
@@ -822,13 +1002,14 @@ function bindingFor(item, revision) {
  * unreadable or unresolved is a refusal, never a quiet use of another catalog.
  * @param {string} root
  * @param {AbortSignal} signal
+ * @param {number} until the operation's window end
  * @param {Configuration} configuration
  * @param {{ source: string } | { refresh: true }} select
  * @param {any} recorded the installed record's source, for a refresh
  * @returns {Promise<{ ok: true, selection: CatalogSource | null, item: SavedSource | null }
  *   | { ok: false, state: 'stale' | 'unavailable', reason: string, message: string }>}
  */
-async function chooseSource(root, signal, configuration, select, recorded) {
+async function chooseSource(root, signal, until, configuration, select, recorded) {
   const { saved, builtins } = configuration;
   /** @param {'stale' | 'unavailable'} state @param {string} reason @param {string} message */
   const refuse = (state, reason, message) => ({ ok: /** @type {const} */ (false), state, reason, message });
@@ -837,7 +1018,7 @@ async function chooseSource(root, signal, configuration, select, recorded) {
     if (builtins.some(builtin => builtin.key === select.source)) {
       return refuse('unavailable', 'source_not_added', 'Built-in sources are the default catalog and take no source selection.');
     }
-    const search = await findSavedSource(root, signal, configuration, select.source);
+    const search = await findSavedSource(root, signal, until, configuration, select.source);
     if (!search.ok) {
       if (search.why === 'unreadable') return refuse('unavailable', 'sources_unavailable', search.error);
       // A folder that did not answer might be the one this key names, so the key is not simply gone.
@@ -852,7 +1033,7 @@ async function chooseSource(root, signal, configuration, select, recorded) {
     return { ok: true, selection: bindingFor(found, saved.revision), item: found };
   }
   if (!recorded) return { ok: true, selection: null, item: null };
-  const read = await readSavedSources(root, signal, configuration, { list: false, types: [recorded.type] });
+  const read = await readSavedSources(root, signal, until, configuration, { list: false, types: [recorded.type] });
   if (!read.ok) return refuse('unavailable', 'sources_unavailable', read.error);
   // An entry that could not be described might be the very source this was installed from.
   if (read.items.some(item => item.described && item.problem)) {
@@ -1035,6 +1216,7 @@ function projectSources({ root, configuration, items, invalid, reads, defaultKey
 export async function readPacks(root, signal, { catalog: includeCatalog = true, name, select = null, discover = false, sources: includeSources = false } = {}) {
   root = path.resolve(root);
   signal.throwIfAborted();
+  const until = acquisitionWindow();
   const projected = includeSources || discover;
   const snapshot = {
     workspaceId: identity(root), rootIdentity: null, profileRevision: null, readRevision: null, readAt: null,
@@ -1052,7 +1234,7 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
   const withSources = async value => {
     if (projected) {
       const configuration = readConfiguration(root);
-      const described = configuration.saved.ok ? await readSavedSources(root, signal, configuration, { list: false }) : null;
+      const described = configuration.saved.ok ? await readSavedSources(root, signal, until, configuration, { list: false }) : null;
       signal.throwIfAborted();
       value.sources = projectSources({ root, configuration, items: described?.ok ? described.items : null,
         invalid: described && !described.ok ? described.error : null, reads: new Map(), defaultKey: null,
@@ -1083,7 +1265,7 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
   /** @type {string | null} */
   let savedInvalid = null;
   if (projected && !discover && configuration?.saved.ok) {
-    const described = await readSavedSources(root, signal, configuration, { list: false });
+    const described = await readSavedSources(root, signal, until, configuration, { list: false });
     savedItems = described.ok ? described.items : null;
     savedInvalid = described.ok ? null : described.error;
   }
@@ -1099,8 +1281,8 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
     } else if (discover && configuration) {
       inputs = catalogInputsRevision(root);
       const [defaultOutcome, saved] = await settleAll([
-        acquireContained(root, signal),
-        configuration.saved.ok ? readSavedSources(root, signal, configuration, { list: true }) : null,
+        acquireContained(root, signal, until, defaultPurpose(configuration.builtins)),
+        configuration.saved.ok ? readSavedSources(root, signal, until, configuration, { list: true }) : null,
       ]);
       catalog = defaultOutcome;
       savedItems = saved?.ok ? saved.items : null;
@@ -1108,19 +1290,20 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
     } else if (select && configuration) {
       const recorded = name !== undefined && Object.hasOwn(installed.result.installed, name)
         ? installed.result.installed[name].source : null;
-      const chosen = await chooseSource(root, signal, configuration, select, recorded);
+      const chosen = await chooseSource(root, signal, until, configuration, select, recorded);
       if (!chosen.ok) catalog = { ok: false, reason: chosen.reason, error: chosen.message, state: chosen.state };
       else {
         snapshot.selection = chosen.selection;
         inputs = catalogInputsRevision(root, name, chosen.selection);
         catalog = chosen.item && chosen.selection
-          ? await acquireCatalog(root, signal, { op: 'source', index: chosen.item.index, key: chosen.selection.key,
-            revision: chosen.selection.sourcesRevision, document: 'configured', list: true })
-          : await acquireCatalog(root, signal);
+          ? await acquireCatalog(root, signal, until, purposeOf(/** @type {DescribedSource} */ (chosen.item.source)), {
+            op: 'source', index: chosen.item.index, key: chosen.selection.key, revision: chosen.selection.sourcesRevision,
+            document: 'configured', list: true })
+          : await acquireCatalog(root, signal, until, defaultPurpose(configuration.builtins));
       }
     } else {
       inputs = catalogInputsRevision(root, name);
-      catalog = await acquireCatalog(root, signal);
+      catalog = await acquireCatalog(root, signal, until, defaultPurpose(readBuiltins(root)));
     }
   }
   catch {
@@ -1179,7 +1362,7 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
   }
   // A read that could not finish still shows every saved source, described but unread.
   if (projected && configuration?.saved.ok && savedItems === null && savedInvalid === null) {
-    const described = await readSavedSources(root, signal, configuration, { list: false });
+    const described = await readSavedSources(root, signal, until, configuration, { list: false });
     signal.throwIfAborted();
     savedItems = described.ok ? described.items : null;
     savedInvalid = described.ok ? null : described.error;
@@ -1247,9 +1430,9 @@ const sourceCode = code => code === 'stale' ? 'sources_changed' : code === 'unav
 
 /** How a read's failure is reported when it stops an addition. Nothing here is saved. */
 const ADD_READ_REFUSALS = Object.freeze({
-  catalog_timeout: ['timeout', 'The source did not answer within 5 seconds.'],
   catalog_cleanup_failed: ['cleanup_unconfirmed', 'The catalog reader could not confirm process cleanup, so nothing was saved.'],
   catalog_unavailable: ['unavailable', 'The catalog reader is unavailable. Try again.'],
+  catalog_busy: ['unavailable', 'Too many catalog reads were waiting, so the source was not read. Try again.'],
   catalog_missing: ['missing_catalog', 'The source has no library/packs catalog.'],
   catalog_unreachable: ['unreachable', 'The source could not be fetched. It may be private or missing, or its ref may not exist.'],
   source_unavailable: ['local_missing', 'The folder is not available.'],
@@ -1258,6 +1441,17 @@ const ADD_READ_REFUSALS = Object.freeze({
 });
 /** The shared checks of a local add also resolve every saved folder, so the new folder is not the only one that can stall them. */
 const ADD_VALIDATE_TIMEOUT = Object.freeze(['timeout', 'A folder, the new one or a saved one, did not answer within 5 seconds. Nothing was saved.']);
+
+/**
+ * The refusal for a candidate read that ended in `reason`. A timeout names the
+ * bound of what was read: a folder's or a repository's.
+ * @param {string} reason @param {ReaderPurpose} purpose
+ * @returns {string[]}
+ */
+function addReadRefusal(reason, purpose) {
+  if (reason === 'catalog_timeout') return ['timeout', `The source did not answer within ${READER_BUDGET_MS[purpose] / 1_000} seconds.`];
+  return /** @type {Record<string, string[]>} */ (ADD_READ_REFUSALS)[reason] ?? ADD_READ_REFUSALS.catalog_unavailable;
+}
 
 /**
  * Add one source: validate it, read its catalog once from a validated prospective
@@ -1279,6 +1473,7 @@ const ADD_VALIDATE_TIMEOUT = Object.freeze(['timeout', 'A folder, the new one or
 export async function addPackSource(root, signal, { location, ref = null, sourcesRevision }, { beforeCommit } = {}) {
   root = path.resolve(root);
   signal.throwIfAborted();
+  const until = acquisitionWindow();
   let rootIdentity;
   try { rootIdentity = readRootIdentity(root); }
   catch { return refusal('workspace_changed', 'The workspace is not available.'); }
@@ -1288,7 +1483,7 @@ export async function addPackSource(root, signal, { location, ref = null, source
   if (saved.revision !== sourcesRevision) {
     return refusal('sources_changed', 'The saved sources changed. Reload packs and try again.');
   }
-  /** @type {{ entry: PackSource, key: string, root: string | null }} */
+  /** @type {{ entry: PackSource, key: string, root: string | null, purpose: ReaderPurpose }} */
   let validated;
   if (URL_SCHEME_RE.test(location)) {
     // The shared check refuses a ninth entry first, so this does the same, in its words.
@@ -1298,33 +1493,32 @@ export async function addPackSource(root, signal, { location, ref = null, source
     try {
       const { entry, source } = validateNewSource({ root, sources: saved.sources.filter(existing => existing.type === 'remote'),
         builtins: configuration.builtins, location, ref: ref ?? undefined });
-      validated = { entry, key: source.key, root: source.root ?? null };
+      validated = { entry, key: source.key, root: source.root ?? null, purpose: purposeOf(source) };
     } catch (error) {
       if (!(error instanceof PackSourceError)) throw error;
       return refusal(sourceCode(error.code), error.message, error.key ? { key: error.key } : {});
     }
   } else {
-    const outcome = await acquireContained(root, signal, { op: 'validate', location, ref, revision: saved.revision });
+    const outcome = await acquireContained(root, signal, until, 'local', { op: 'validate', location, ref, revision: saved.revision });
     if (outcome.refusal) {
       return refusal(sourceCode(outcome.refusal.code), outcome.refusal.message, outcome.refusal.key ? { key: outcome.refusal.key } : {});
     }
     if (!outcome.ok) {
-      const [code, message] = outcome.reason === 'catalog_timeout' ? ADD_VALIDATE_TIMEOUT
-        : /** @type {Record<string, string[]>} */ (ADD_READ_REFUSALS)[outcome.reason] ?? ADD_READ_REFUSALS.catalog_unavailable;
+      const [code, message] = outcome.reason === 'catalog_timeout' ? ADD_VALIDATE_TIMEOUT : addReadRefusal(outcome.reason, 'local');
       signal.throwIfAborted();
       return refusal(code, message);
     }
-    validated = { entry: outcome.entry, key: outcome.source.key, root: outcome.source.root };
+    validated = { entry: outcome.entry, key: outcome.source.key, root: outcome.source.root, purpose: 'local' };
   }
   const prospective = [...saved.sources, validated.entry];
   const bytes = Buffer.from(serializePackSourcesDocument(prospective), 'utf8');
-  const read = await acquireContained(root, signal, {
+  const read = await acquireContained(root, signal, until, validated.purpose, {
     op: 'source', index: saved.sources.length, key: validated.key, revision: identity(bytes), document: 'candidate', list: true,
   }, async temporary => { await fs.promises.writeFile(path.join(temporary, CANDIDATE_DOCUMENT), bytes, { flag: 'wx' }); });
   signal.throwIfAborted();
   if (!read.ok) {
     if (read.reason === 'catalog_metadata') return refusal('bad_metadata', read.error);
-    const [code, message] = /** @type {Record<string, string[]>} */ (ADD_READ_REFUSALS)[read.reason] ?? ADD_READ_REFUSALS.catalog_unavailable;
+    const [code, message] = addReadRefusal(read.reason, validated.purpose);
     return refusal(code, message);
   }
   // The candidate that was read must be the candidate that was validated.
@@ -1383,6 +1577,7 @@ function describeBlockers(blockers) {
 export async function removePackSource(root, signal, { key, sourcesRevision }, { liveUses, beforeCommit }) {
   root = path.resolve(root);
   signal.throwIfAborted();
+  const until = acquisitionWindow();
   let rootIdentity;
   try { rootIdentity = readRootIdentity(root); }
   catch { return refusal('workspace_changed', 'The workspace is not available.'); }
@@ -1395,7 +1590,7 @@ export async function removePackSource(root, signal, { key, sourcesRevision }, {
   if (builtins.some(builtin => builtin.key === key)) {
     return refusal('builtin_source', 'A built-in source is managed by the bundle and cannot be removed.');
   }
-  const search = await findSavedSource(root, signal, configuration, key);
+  const search = await findSavedSource(root, signal, until, configuration, key);
   if (!search.ok) {
     if (search.why === 'unreadable') return refusal('sources_unavailable', search.error);
     if (search.why === 'changed') return refusal('sources_changed', 'The saved sources changed. Reload packs and try again.');

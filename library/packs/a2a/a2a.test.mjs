@@ -909,7 +909,7 @@ test('real Compose lifecycle preserves unrelated state and core usability in an 
     const initialProfile = read(profilePath);
     const sentinelEntry = installedEntryBytes(initialProfile, 'sentinel');
     const initialCoreAgent = fs.readFileSync(coreAgentPath);
-    const directBefore = cmdList({
+    const directBefore = await cmdList({
       root: fixture.root,
       library: fixture.library,
       fetch: false,

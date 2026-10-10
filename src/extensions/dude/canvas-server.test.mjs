@@ -4,7 +4,7 @@
  * route allowlist, cross-origin refusal, idempotent open by `instanceId`, and
  * cleanup on close. The SDK canvas plumbing itself is not retested here.
  */
-import { test } from 'node:test';
+import { after, test as registerTest } from 'node:test';
 import assert from 'node:assert/strict';
 import childProcess, { fork, spawnSync } from 'node:child_process';
 import nodeCrypto, { createHash, randomUUID } from 'node:crypto';
@@ -47,6 +47,33 @@ const READER = fileURLToPath(new URL('./lib/catalog-reader.mjs', import.meta.url
 const PACKS_MODULE = new URL('./lib/packs.mjs', import.meta.url).href;
 /** Every environment variable that names a home to the CLI's loader, to Git for Windows or to libcurl. */
 const HOME_VARIABLES = Object.freeze(['HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH']);
+
+/** The one test that a child run of this file registers when it runs a test alone (see `isolatedTest`). */
+const ISOLATED_TEST_ENV = 'DUDE_CANVAS_ISOLATED_TEST';
+const isolatedName = process.env[ISOLATED_TEST_ENV];
+/** Register a test; a child run for one isolated test registers that test alone. @type {typeof registerTest} */
+const test = /** @type {any} */ (isolatedName === undefined ? registerTest
+  : (/** @type {string} */ name, /** @type {any[]} */ ...rest) => (name === isolatedName ? registerTest(name, ...rest) : undefined));
+
+/*
+ * The loopback GitHub stand-in that `offlineGitHub` sends readers to (see the
+ * T008 section). It listens before any test is registered, and it holds no
+ * reference on this process: every socket it still has is closed after the
+ * last test.
+ */
+/** @type {Set<import('node:net').Socket>} */
+const gitHubSockets = new Set();
+const gitHubServer = http.createServer((request, response) => {
+  answerGitHub(request, response).catch(() => { if (!response.headersSent) response.writeHead(500); response.end(); });
+});
+gitHubServer.on('connection', socket => { gitHubSockets.add(socket); socket.once('close', () => gitHubSockets.delete(socket)); });
+await new Promise(resolve => gitHubServer.listen(0, '127.0.0.1', () => resolve(undefined)));
+gitHubServer.unref();
+const GITHUB_STAND_IN = `http://127.0.0.1:${/** @type {import('node:net').AddressInfo} */ (gitHubServer.address()).port}`;
+after(() => {
+  for (const socket of gitHubSockets) socket.destroy();
+  gitHubServer.close();
+});
 
 /** The explicit discovery read of the pack projection. The plain URL reads installed packs, sources and project rows and acquires no catalog. */
 const DISCOVER = '/api/packs?discover=1';
@@ -286,12 +313,15 @@ function remotePackCatalog(fixture, names) {
  * @returns {ReturnType<typeof cmdAdd>}
  */
 function cmdAddOffLoop(args) {
+  // A worker shares this process, which started without the offline GitHub preload, so it imports that preload itself.
   const worker = new Worker([
     "const { parentPort, workerData } = require('node:worker_threads');",
-    'import(workerData.compose).then(async compose => parentPort.postMessage(await compose.cmdAdd(workerData.args)));',
+    '(workerData.preload ? import(workerData.preload) : Promise.resolve())',
+    '  .then(() => import(workerData.compose)).then(async compose => parentPort.postMessage(await compose.cmdAdd(workerData.args)));',
   ].join('\n'), {
     eval: true,
-    workerData: { compose: new URL('../../skills/dude-compose/compose.mjs', import.meta.url).href, args },
+    workerData: { compose: new URL('../../skills/dude-compose/compose.mjs', import.meta.url).href, args,
+      preload: process.env[GITHUB_PRELOAD_ENV] ?? null },
   });
   return new Promise((resolve, reject) => {
     let received = false, result;
@@ -1481,6 +1511,25 @@ function spawnSpy(t) {
 }
 
 /**
+ * Record when production creates each reader's own temporary root, without
+ * replacing that call. Production creates it through `fs.promises` as soon as a
+ * reader's slot is admitted and before it launches the reader, so for a read
+ * that waited for nothing, the slot was admitted between the request and the
+ * recorded time.
+ * @param {import('node:test').TestContext} t
+ */
+function readerRootSpy(t) {
+  const mkdtemp = fs.promises.mkdtemp;
+  /** @type {number[]} */
+  const created = [];
+  t.mock.method(fs.promises, 'mkdtemp', /** @this {any} */ function (prefix) {
+    if (typeof prefix === 'string' && path.basename(prefix) === 'dude-canvas-packs-') created.push(performance.now());
+    return mkdtemp.apply(this, arguments);
+  });
+  return { created };
+}
+
+/**
  * Record production's Windows tree kills. Production calls taskkill through the
  * child_process default export, so this method mock sees every tree kill; other
  * execFile calls pass through. By default each kill runs the real taskkill and
@@ -1706,20 +1755,81 @@ function deadlineCoverage(kills) {
 }
 
 /**
+ * A test that runs alone in a Node process of its own. Production keeps the slot
+ * of a reader whose stop it cannot confirm for the life of its process. So a test
+ * that leaves a stop unconfirmed on purpose, or whose real tree kill can fail for
+ * a reader that is already exiting, would take that slot from every later test
+ * here, and a test that needs all four slots could not count on having them. A
+ * wrapper of the same name runs this file again with only this test registered,
+ * and passes only when that run does. The child is this suite itself, so every
+ * fixture, spy and assertion is unchanged.
+ * @param {string} name
+ * @param {{ timeout: number, skip?: string | false }} options
+ * @param {(t: import('node:test').TestContext) => Promise<void>} body
+ */
+function isolatedTest(name, options, body) {
+  if (isolatedName !== undefined) { test(name, options, body); return; }
+  test(name, { ...options, timeout: options.timeout + 30_000 }, async t => {
+    const env = { ...process.env, [ISOLATED_TEST_ENV]: name };
+    // A run under `node --test` reports to its parent runner; this child reports to this test.
+    delete env.NODE_TEST_CONTEXT;
+    /** @type {{ code: number | null, output: string }} */
+    const run = await new Promise((resolve, reject) => {
+      const child = childProcess.spawn(process.execPath, ['--test-reporter=tap', fileURLToPath(import.meta.url)],
+        { cwd: process.cwd(), env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      let output = '';
+      child.stdout.on('data', chunk => { output += chunk; });
+      child.stderr.on('data', chunk => { output += chunk; });
+      child.once('error', reject);
+      child.once('close', code => resolve({ code, output }));
+    });
+    for (const line of run.output.split(/\r?\n/)) if (/^\s*# /.test(line)) t.diagnostic(`isolated: ${line.trim()}`);
+    assert.equal(run.code, 0, `the isolated run failed:\n${run.output}`);
+    assert.match(run.output, /^# pass [1-9]/m, 'the isolated run ran its test');
+    assert.match(run.output, /^# fail 0$/m);
+  });
+}
+
+/**
+ * Stop a stalled read through its root's observed bound, the quickest stop that
+ * still answers the read: a 1 GiB file of no written data makes the reader's root
+ * reach that bound at its next check.
+ * @param {string} root the reader's own root
+ */
+function outgrowRoot(root) {
+  const handle = fs.openSync(path.join(root, 'outgrown.bin'), 'wx');
+  try { fs.ftruncateSync(handle, 2 ** 30); } finally { fs.closeSync(handle); }
+}
+
+/**
+ * Every path under `folder` with its kind and, for a file, its size, read
+ * without following any link. Nothing is read from a file.
+ * @param {string} folder
+ */
+function shapeOf(folder) {
+  return fs.readdirSync(folder, { recursive: true }).map(String).sort().map(name => {
+    const stat = fs.lstatSync(path.join(folder, name));
+    return `${name}:${stat.isFile() ? stat.size : stat.isDirectory() ? 'folder' : 'link'}`;
+  });
+}
+
+/**
  * Run `readPacks` in a plain-Node driver that stands in for a Copilot CLI
  * extension host, so no global in this test process is patched. With
  * `executable: 'git'`, the driver's execPath is a real binary whose own parser
  * rejects a script path, like the CLI's single executable. A spawn of it runs
  * `cli/index.mjs`, as that executable runs only its own entry. The entry
- * mirrors the runtime's argv routing; the bootstrap mirrors the real parent
- * check and extension import. The driver inherits what a CLI gives an
+ * mirrors the runtime's argv routing: any argument with the bootstrap's file
+ * name runs the entry's own bootstrap, so `bootstrap: 'bare'` passes that name
+ * alone, as a CLI may. The bootstrap mirrors the real parent check and
+ * extension import. The driver inherits what a CLI gives an
  * extension: its entry module (a decoy here) and the CLI's PID. Only
  * allowlisted launch fields and environment keys reach the output. The driver
  * reports the home it has, which is the host's own, and the bootstrap records
  * the home it starts with, before it imports the extension, as the CLI's own
  * loader and bootstrap would find it.
  * @param {ReturnType<typeof packFixture>} fixture
- * @param {{executable: 'git'|'node', bootstrap?: 'current'|'changed'|'missing'}} options
+ * @param {{executable: 'git'|'node', bootstrap?: 'current'|'changed'|'missing'|'bare'}} options
  */
 function simulatedCliHost(fixture, { executable, bootstrap }) {
   const cli = path.join(fixture.temporary, 'cli');
@@ -1756,6 +1866,7 @@ function simulatedCliHost(fixture, { executable, bootstrap }) {
   fs.writeFileSync(decoy, `import fs from 'node:fs';\nfs.writeFileSync(${JSON.stringify(marker)}, '');\nprocess.exit(1);\n`);
   const host = executable === 'git' ? executableOnPath('git') : process.execPath;
   const argvBootstrap = bootstrap === 'missing' ? path.join(cli, 'absent', 'preloads', 'extension_bootstrap.mjs')
+    : bootstrap === 'bare' ? 'extension_bootstrap.mjs'
     : bootstrap ? cliBootstrap : null;
   fs.writeFileSync(driver, [
     "import childProcess from 'node:child_process';",
@@ -2684,14 +2795,17 @@ test('T001 packs GET close awaits cleanup after its last HTTP reader has disconn
   }
 });
 
-test('T001 packs GET stops a stalled Git transfer\'s whole reader tree at the deadline without manual release', { timeout: 30_000 }, async t => {
-  for (const scheme of /** @type {const} */ (['git', 'http'])) await t.test(`${scheme}://`, async t => {
+isolatedTest('T001 packs GET stops a stalled Git transfer\'s whole reader tree at the deadline without manual release', { timeout: 180_000 }, async t => {
+  // The one real production deadline: another host's whole clone has 55 seconds from its slot's admission, within
+  // the read's one-minute window and five seconds before Compose's own 60-second Git deadline.
+  for (const scheme of /** @type {const} */ (['git', 'http'])) await t.test(`${scheme}://`, { timeout: 85_000 }, async t => {
     const fixture = packFixture();
     const installed = { alpha: fixture.entry('alpha') };
     fixture.profile(installed);
     const listener = await silentGitListener(t);
     const spy = spawnSpy(t);
     const kills = taskkillSpy(t);
+    const roots = readerRootSpy(t);
     stallCatalog(fixture, listener.url(scheme));
     const before = snapshotFiles(fixture.root);
     const instanceId = `packs-stalled-${scheme}`;
@@ -2704,7 +2818,7 @@ test('T001 packs GET stops a stalled Git transfer\'s whole reader tree at the de
       tree = await readerTree(spy.readers()[0]?.child.pid);
       const response = await pending;
       const body = await response.json();
-      const elapsed = performance.now() - started;
+      const reported = performance.now();
       assert.equal(response.status, 200);
       assert.deepEqual(body.coverage.catalog, deadlineCoverage(kills));
       assert.equal(body.coverage.installed.state, 'current');
@@ -2713,11 +2827,35 @@ test('T001 packs GET stops a stalled Git transfer\'s whole reader tree at the de
       assert.ok(listener.connections >= 1, 'Git reached the stalled transport');
       assert.equal(listener.open, 0, 'no Git process still holds the stalled connection');
       await assertTreeStops({ t, spy, kills, trees: [tree], scratch: fs.readdirSync(fixture.scratch) });
-      assert.ok(elapsed >= 5_000 && elapsed < 7_500, `reported within the deadline plus stop confirmation: ${elapsed} ms`);
+      // The read was uncontended, so its slot was admitted between the request and the reader root's creation.
+      assert.equal(roots.created.length, 1, 'one reader root was created');
+      const fromRoot = reported - roots.created[0];
+      const fromRequest = reported - started;
+      t.diagnostic(`reported ${fromRoot.toFixed(0)} ms after the reader root was created, ${fromRequest.toFixed(0)} ms after the request`);
+      assert.ok(fromRoot >= 55_000, `not before 55 seconds from the slot's admission: ${fromRoot.toFixed(0)} ms`);
+      assert.ok(fromRequest < 57_500, `within 55 seconds of the slot's admission plus stop confirmation: ${fromRequest.toFixed(0)} ms`);
       assert.deepEqual(snapshotFiles(fixture.root), before);
-      // Launch evidence last: the spy cannot see a fork-launched reader.
+      // Launch evidence: the spy cannot see a fork-launched reader.
       assert.equal(spy.readers().length, 1);
       assert.notEqual(spy.readers()[0].exitedAt, null, 'the reader exited before the read reported');
+      if (scheme !== 'git') return;
+      // A later read recovers at once while the stalled transfer stays unreleased: only the deadline ended it.
+      const connections = listener.connections;
+      // Compose prefers a local catalog; the configured stalled source stays in place.
+      fixture.catalog(['alpha', 'bravo']);
+      const recoveredAt = performance.now();
+      const recovered = await (await call(instance.url, { path: DISCOVER })).json();
+      const recovery = performance.now() - recoveredAt;
+      assert.deepEqual(recovered.coverage.catalog, { state: 'current', reason: null, message: null });
+      assert.equal(recovered.catalog.origin, 'local');
+      assert.deepEqual(recovered.catalog.packs.map(/** @param {any} pack */ pack => pack.name), ['alpha', 'bravo']);
+      assert.ok(recovery < 5_000, `the later read waited on nothing: ${recovery} ms`);
+      assert.equal(listener.connections, connections, 'the later read did not touch the stalled source');
+      assert.equal(listener.open, 0);
+      const readers = spy.readers();
+      assert.equal(readers.length, 2);
+      assert.ok(readers[0].exitedAt !== null && readers[0].exitedAt <= readers[1].spawnedAt,
+        'reader 2 started after reader 1 had exited');
     } finally {
       await closeInstance(instanceId);
       await stopRecorded(tree);
@@ -2726,47 +2864,7 @@ test('T001 packs GET stops a stalled Git transfer\'s whole reader tree at the de
   });
 });
 
-test('T001 a later pack read recovers at once while an earlier stalled Git transfer stays unreleased', { timeout: 30_000 }, async t => {
-  const fixture = packFixture();
-  fixture.profile({ alpha: fixture.entry('alpha') });
-  const listener = await silentGitListener(t);
-  const spy = spawnSpy(t);
-  const kills = taskkillSpy(t);
-  stallCatalog(fixture, listener.url('git'));
-  const instance = await openInstance('packs-stall-recovery', () => {}, { complete: true }, { root: fixture.root });
-  let tree = /** @type {ProcessRow[]} */ ([]);
-  try {
-    const pending = call(instance.url, { path: DISCOVER });
-    await listener.connected();
-    tree = await readerTree(spy.readers()[0]?.child.pid);
-    const stalled = await (await pending).json();
-    const connections = listener.connections;
-    // Compose prefers a local catalog; the configured stalled source stays in place.
-    fixture.catalog(['alpha', 'bravo']);
-    const started = performance.now();
-    const recovered = await (await call(instance.url, { path: DISCOVER })).json();
-    const elapsed = performance.now() - started;
-    assert.deepEqual(recovered.coverage.catalog, { state: 'current', reason: null, message: null });
-    assert.equal(recovered.catalog.origin, 'local');
-    assert.deepEqual(recovered.catalog.packs.map(pack => pack.name), ['alpha', 'bravo']);
-    assert.ok(elapsed < 5_000, `the later read waited on nothing: ${elapsed} ms`);
-    assert.equal(listener.connections, connections, 'the later read did not touch the stalled source');
-    assert.equal(listener.open, 0);
-    await assertTreeStops({ t, spy, kills, trees: [tree], scratch: fs.readdirSync(fixture.scratch) });
-    assert.equal(stalled.coverage.catalog.reason, deadlineCoverage(kills).reason, 'the stalled read ended at its deadline');
-    // Launch evidence last: the spy cannot see a fork-launched reader.
-    const readers = spy.readers();
-    assert.equal(readers.length, 2);
-    assert.ok(readers[0].exitedAt !== null && readers[0].exitedAt <= readers[1].spawnedAt,
-      'reader 2 started after reader 1 had exited');
-  } finally {
-    await closeInstance('packs-stall-recovery');
-    await stopRecorded(tree);
-    fixture.cleanup();
-  }
-});
-
-test('T001 Install and Refresh prepare and submit rechecks recover at once after a stalled Git read', { timeout: 45_000 }, async t => {
+test('T001 Install and Refresh prepare and submit rechecks proceed at once beside a stalled Git read, which then stops on cancellation', { timeout: 45_000 }, async t => {
   for (const operation of ['install', 'refresh']) await t.test(operation, async t => {
     const fixture = packEngineFixture();
     const args = { root: fixture.root, library: fixture.library, name: 'alpha', fetch: false };
@@ -2786,10 +2884,10 @@ test('T001 Install and Refresh prepare and submit rechecks recover at once after
       fs.renameSync(fixture.library, aside);
       stallCatalog(fixture, listener.url('git'));
       f = await packHttpFixture(fixture);
-      const pending = call(f.instance.url, { path: DISCOVER });
+      const controller = new AbortController();
+      const pending = call(f.instance.url, { path: DISCOVER, signal: controller.signal }).catch(error => error);
       await listener.connected();
       tree = await readerTree(spy.readers()[0]?.child.pid);
-      const stalled = await (await pending).json();
       fs.renameSync(aside, fixture.library);
       if (manifest) fs.writeFileSync(manifestPath, manifest);
       else fs.rmSync(manifestPath);
@@ -2800,6 +2898,7 @@ test('T001 Install and Refresh prepare and submit rechecks recover at once after
         const value = await response.json();
         return { status: response.status, value, elapsed: performance.now() - started };
       };
+      // The stalled clone holds one reader slot; the request's own local read takes another.
       const prepared = await timedPost({ op: 'prepare', operation, name: 'alpha' });
       assert.equal(prepared.status, 202, JSON.stringify(prepared.value));
       assert.equal(prepared.value.phase, 'prepared');
@@ -2809,10 +2908,17 @@ test('T001 Install and Refresh prepare and submit rechecks recover at once after
       assert.equal(delivered.value.phase, 'delivered');
       assert.ok(delivered.elapsed < 5_000, `submit waited on nothing: ${delivered.elapsed} ms`);
       assert.equal(f.sends.length, 1);
+      assert.equal(spy.readers()[0].exitedAt, null, 'the stalled clone was still running beside both');
+      assert.equal(listener.open, 1);
+      // Its last subscriber leaves, so the read is cancelled and its whole tree stopped.
+      controller.abort();
+      assert.ok((await pending) instanceof Error);
+      const until = performance.now() + 5_000;
+      while (f.instance.catalogRead && performance.now() < until) await new Promise(resolve => setTimeout(resolve, 25));
+      assert.equal(f.instance.catalogRead, null, 'the cancelled read settled');
       assert.ok(listener.connections >= 1);
       assert.equal(listener.open, 0);
       await assertTreeStops({ t, spy, kills, trees: [tree], scratch: fs.readdirSync(fixture.scratch) });
-      assert.equal(stalled.coverage.catalog.reason, deadlineCoverage(kills).reason, 'the stalled read ended at its deadline');
     } finally { await f?.close(); await stopRecorded(tree); fixture.cleanup(); }
   });
 });
@@ -2907,7 +3013,7 @@ test('T001 Canvas close during a stalled pack read stops its reader tree and a r
   }
 });
 
-test('T001 stopping the native shallow clone cannot escape through the reader\'s full fallback clone', {
+isolatedTest('T001 stopping the native shallow clone cannot escape through the reader\'s full fallback clone', {
   timeout: 45_000, skip: process.platform !== 'win32' && 'the snapshot-to-kill window uses Windows taskkill',
 }, async t => {
   for (const report of ['a failed kill', 'taskkill reaches the reader']) await t.test(report, async t => {
@@ -2937,12 +3043,14 @@ test('T001 stopping the native shallow clone cannot escape through the reader\'s
       });
     });
     const controller = new AbortController();
-    const started = performance.now();
     const reading = readPacks(fixture.root, controller.signal);
     try {
       await listener.connected();
       tree = await readerTree(spy.readers()[0]?.child.pid);
-      assert.ok(tree.length > 1, 'the live reader and native Git were recorded before the deadline');
+      assert.ok(tree.length > 1, 'the live reader and native Git were recorded before the stop');
+      // The clone's root reaches its observed bound, which stops the read as its deadline would, without the wait.
+      const started = performance.now();
+      outgrowRoot(spy.readers()[0].options.env.TMP);
       const snapshot = await reading;
       const elapsed = performance.now() - started;
       await fault;
@@ -2963,10 +3071,11 @@ test('T001 stopping the native shallow clone cannot escape through the reader\'s
       assert.equal(markerBeforeKill, true, 'the marker was written before invoking the tree kill');
       assert.deepEqual(snapshot.coverage.catalog, report === 'a failed kill'
         ? { state: 'unavailable', reason: 'catalog_cleanup_failed', message: 'The catalog reader could not confirm process cleanup.' }
-        : { state: 'unavailable', reason: 'catalog_timeout', message: 'The catalog read timed out. Reload to try a fresh read.' });
+        : { state: 'unavailable', reason: 'catalog_too_large',
+          message: 'The source grew past 1 GiB or 65,536 files and folders while it was read, so the read was stopped.' });
       assert.equal(kills.failed.size, report === 'a failed kill' ? 1 : 0, 'the real taskkill result is not masked');
       await assertTreeStops({ t, spy, kills, trees: [recorded], scratch: fs.readdirSync(fixture.scratch) });
-      assert.ok(elapsed >= 5_000 && elapsed < 7_500, `within the read deadline and stop window: ${elapsed} ms`);
+      assert.ok(elapsed < 3_500, `within one observation and the stop window: ${elapsed} ms`);
       fixture.cleanup();
       cleaned = true;
       assert.equal(fs.existsSync(fixture.temporary), false, 'fixture cleanup succeeded while the peer was still listening');
@@ -2986,7 +3095,7 @@ test('T001 stopping the native shallow clone cannot escape through the reader\'s
   });
 });
 
-test('T001 a failed stop-marker write keeps exactly its reader root unconfirmed despite a successful tree kill', {
+isolatedTest('T001 a failed stop-marker write keeps exactly its reader root unconfirmed despite a successful tree kill', {
   timeout: 20_000,
 }, async t => {
   const fixture = packFixture();
@@ -3039,10 +3148,11 @@ test('T001 a failed stop-marker write keeps exactly its reader root unconfirmed 
 });
 
 /**
- * Stall one read to its deadline with `fail` standing in for taskkill: it
- * reports a failed tree kill and kills nothing itself. The reader's live tree
- * is recorded first. Teardown stops whatever of that tree still runs, only by
- * exact identity, and then removes the kept root.
+ * Stall one read, then stop it through its root's observed bound with `fail`
+ * standing in for taskkill: it reports a failed tree kill and kills nothing
+ * itself. The reader's live tree is recorded first. Teardown stops whatever of
+ * that tree still runs, only by exact identity, and then removes the kept root.
+ * `settled.elapsed` runs from the stop's trigger.
  * @param {import('node:test').TestContext} t
  * @param {(reader: import('node:child_process').ChildProcess, fail: () => void) => void} fail
  */
@@ -3064,16 +3174,17 @@ async function readWithFailedTreeKill(t, fail) {
     fail(/** @type {NonNullable<typeof reader>} */ (reader).child, report);
   });
   stallCatalog(fixture, listener.url('git'));
-  const started = performance.now();
-  const reading = readPacks(fixture.root, AbortSignal.timeout(20_000));
+  const reading = readPacks(fixture.root, new AbortController().signal);
   await listener.connected();
   tree = await readerTree(spy.readers()[0]?.child.pid);
+  const started = performance.now();
+  outgrowRoot(spy.readers()[0].options.env.TMP);
   const snapshot = await reading;
   const settled = { elapsed: performance.now() - started, open: listener.open, scratch: fs.readdirSync(fixture.scratch) };
   return { installed, spy, kills, tree, snapshot, settled, alive: await liveMembers(tree) };
 }
 
-test('T001 a failed tree kill leaves the stop unconfirmed and keeps the root while a real descendant survives', {
+isolatedTest('T001 a failed tree kill leaves the stop unconfirmed and keeps the root while a real descendant survives', {
   timeout: 30_000, skip: process.platform !== 'win32' && 'taskkill stops reader trees only on Windows',
 }, async t => {
   const observed = await readWithFailedTreeKill(t, (_reader, fail) => setImmediate(fail));
@@ -3082,8 +3193,8 @@ test('T001 a failed tree kill leaves the stop unconfirmed and keeps the root whi
     message: 'The catalog reader could not confirm process cleanup.' });
   assert.equal(observed.snapshot.coverage.installed.state, 'current');
   assert.deepEqual(observed.snapshot.items, [{ key: 'pack:alpha', name: 'alpha', installed: true, ...observed.installed.alpha, description: null, use_cases: null }]);
-  assert.ok(observed.settled.elapsed >= 5_000 && observed.settled.elapsed < 7_500,
-    `settled within the deadline plus the stop window: ${observed.settled.elapsed} ms`);
+  assert.ok(observed.settled.elapsed < 3_500,
+    `settled within one observation and the stop window: ${observed.settled.elapsed} ms`);
   assert.deepEqual(observed.kills.calls.map(call => call.args), [['/PID', String(reader.child.pid), '/T', '/F']]);
   assert.deepEqual(observed.settled.scratch, [path.basename(reader.options.env.TMP)], 'the unconfirmed stop kept its checkout root');
   assert.ok(observed.settled.open >= 1, 'a live Git still held the stalled connection at settlement');
@@ -3092,7 +3203,7 @@ test('T001 a failed tree kill leaves the stop unconfirmed and keeps the root whi
   assert.deepEqual(await stopRecorded(observed.tree), [], 'the test stopped the surviving tree by exact identity');
 });
 
-test('T001 a failed tree kill stays unconfirmed even when the reader exits inside the stop window', {
+isolatedTest('T001 a failed tree kill stays unconfirmed even when the reader exits inside the stop window', {
   timeout: 45_000, skip: process.platform !== 'win32' && 'taskkill stops reader trees only on Windows',
 }, async t => {
   /** @type {[string, (reader: import('node:child_process').ChildProcess, fail: () => void) => void][]} */
@@ -3113,7 +3224,7 @@ test('T001 a failed tree kill stays unconfirmed even when the reader exits insid
     assert.deepEqual(observed.snapshot.coverage.catalog, { state: 'unavailable', reason: 'catalog_cleanup_failed',
       message: 'The catalog reader could not confirm process cleanup.' });
     assert.ok(reader.exitedAt !== null && reader.exitedAt - kill.calledAt < 2_000, 'the reader exited inside the stop window');
-    assert.ok(observed.settled.elapsed < 7_500, `settled within the deadline plus the stop window: ${observed.settled.elapsed} ms`);
+    assert.ok(observed.settled.elapsed < 3_500, `settled within one observation and the stop window: ${observed.settled.elapsed} ms`);
     assert.deepEqual(observed.settled.scratch, [path.basename(reader.options.env.TMP)], 'the reader\'s exit did not confirm the stop');
     assert.ok(observed.settled.open >= 1, 'a live Git still held the stalled connection at settlement');
     assert.ok(observed.alive.some(member => member.name.toLowerCase() === 'git.exe'), 'a recorded Git descendant outlived the reader');
@@ -3157,6 +3268,29 @@ test('T001 the bootstrap relaunch gives its helper this module\'s reader and par
     assert.equal(launch.env.EXTENSION_PATH, READER);
     assert.equal(launch.env.COPILOT_EXTENSION_PARENT_PID, String(observed.hostPid));
     assertIsolatedLaunch(launch, fixture);
+  } finally { fixture.cleanup(); }
+});
+
+test('T001 a host that names its bootstrap by file name alone reads the catalog through that bootstrap', { timeout: 30_000 }, () => {
+  const fixture = packFixture();
+  fixture.profile({ alpha: fixture.entry('alpha') });
+  fixture.catalog(['alpha', 'bravo']);
+  try {
+    const observed = simulatedCliHost(fixture, { executable: 'git', bootstrap: 'bare' });
+    assert.equal(fs.existsSync(path.join(fixture.root, 'extension_bootstrap.mjs')), false,
+      'the working directory of the host and the reader holds no file of that name');
+    assert.equal(observed.execPath, observed.host, 'the reader ran under a host executable that is not Node');
+    assert.deepEqual(observed.coverage.catalog, { state: 'current', reason: null, message: null });
+    assert.deepEqual(observed.packs, ['alpha', 'bravo']);
+    assert.equal(fs.existsSync(observed.marker), false, 'the helper never imported the inherited extension entry');
+    assert.equal(observed.launches.length, 1, 'one reader launch through the host bootstrap');
+    const [launch] = observed.launches;
+    assert.equal(launch.command, observed.host);
+    assert.deepEqual(launch.args, ['extension_bootstrap.mjs', READER, fixture.root], 'the bootstrap keeps the host\'s own spelling');
+    assert.equal(launch.env.EXTENSION_PATH, READER);
+    assert.equal(launch.env.COPILOT_EXTENSION_PARENT_PID, String(observed.hostPid));
+    assertIsolatedLaunch(launch, fixture);
+    assert.deepEqual(fs.readdirSync(fixture.scratch), [], 'the acquisition root was removed');
   } finally { fixture.cleanup(); }
 });
 
@@ -6751,17 +6885,157 @@ test('T003 an upper-range project of 256 artifacts and 128 files each is read co
 /* ----------------------------------------------------------------------------
  * T008: the saved sources route, multi-source discovery and source-bound packs.
  *
- * Every GitHub case uses controlled offline acquisition. Git itself rewrites a
- * public repository URL to a local repository, or to a peer that never answers,
- * through a fixture global config, so the real reader, real Git and the real URL
- * checks run and no test reaches a network. A catch-all rewrite sends every
- * unpublished GitHub URL to a folder that does not exist, so a missed fixture
- * fails offline instead of connecting out.
+ * Every GitHub case uses controlled offline acquisition. Compose reads a public
+ * GitHub source over HTTPS from api.github.com and raw.githubusercontent.com,
+ * in the reader process, and never runs Git for it. `offlineGitHub` writes a
+ * small module into its fixture's own folder, and Node preloads it through
+ * NODE_OPTIONS into every Node process the test starts, readers included. It
+ * sends exactly those two origins to this file's loopback stand-in and refuses
+ * any other address that is not loopback, so no case reaches a network and the
+ * real reader, Compose and its checks run. The stand-in answers GitHub's REST
+ * and raw forms from real local Git repositories, so trees, object IDs and
+ * sizes are Git's own, and an unpublished repository is a 404, as GitHub
+ * answers a missing or private one. Git itself keeps a catch-all rewrite of
+ * https://github.com/ to a folder that does not exist, so a stray Git for a
+ * GitHub address would fail offline too.
  * ------------------------------------------------------------------------- */
 
 const SOURCES_ROUTE = '/api/packs/sources';
+/** Where a test's preload sends GitHub requests, and the preload's own URL for a worker to import. */
+const GITHUB_STAND_IN_ENV = 'DUDE_TEST_GITHUB_STAND_IN';
+const GITHUB_PRELOAD_ENV = 'DUDE_TEST_GITHUB_PRELOAD';
+/** The stand-in's answer that makes the preload stop its reader's thread, as a reader that no longer progresses. */
+const GITHUB_HANG_HEADER = 'x-dude-test-hang';
+const GITHUB_PRELOAD = [
+  `const standIn = process.env.${GITHUB_STAND_IN_ENV};`,
+  'if (standIn) {',
+  '  const fetch = globalThis.fetch;',
+  "  const loopback = new Set(['127.0.0.1', 'localhost', '[::1]']);",
+  '  globalThis.fetch = async (input, init) => {',
+  "    const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);",
+  "    const origin = url.origin === 'https://api.github.com' ? 'api' : url.origin === 'https://raw.githubusercontent.com' ? 'raw' : null;",
+  '    if (!origin) {',
+  '      if (loopback.has(url.hostname)) return fetch(input, init);',
+  '      throw new TypeError(`offline fixture: ${url.origin} is not reachable`);',
+  '    }',
+  '    const response = await fetch(`${standIn}/${origin}${url.pathname}${url.search}`, init);',
+  `    if (response.headers.has('${GITHUB_HANG_HEADER}')) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);`,
+  '    return response;',
+  '  };',
+  '}',
+  '',
+].join('\n');
 
 /**
+ * @typedef {{ mode: 'serve', directory: string, delayMs?: number } | { mode: 'hold' | 'hang' }} StandInRepository
+ * @typedef {{ origin: string, repository: string, path: string, accept: string | null, authorization: string | null }} StandInRequest
+ * @typedef {{ repositories: Map<string, StandInRepository>, requests: StandInRequest[],
+ *   held: Set<import('node:http').ServerResponse>, records: Array<{ repository: string, acceptedAt: number, closedAt: number | null }>,
+ *   arrivals: Map<string, () => void> }} StandInWorld
+ */
+/** Each offline GitHub fixture's world, by the token its preload names. @type {Map<string, StandInWorld>} */
+const gitHubWorlds = new Map();
+// Taken before any test mocks execFile, so the stand-in's own Git calls are never a test's to see.
+const standInExecFile = childProcess.execFile;
+/** @param {string} directory @param {string[]} args @returns {Promise<Buffer | null>} */
+function standInGit(directory, args) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_TRACE')));
+  return new Promise(resolve => {
+    standInExecFile('git', args, { cwd: directory, encoding: 'buffer', windowsHide: true, maxBuffer: 64 * 1024 * 1024, env },
+      (error, stdout) => resolve(error ? null : stdout));
+  });
+}
+/**
+ * Answer one GitHub request from the world its path names, as GitHub would: the
+ * SHA media type for a commit lookup, JSON for commit and tree objects, raw bytes
+ * at a commit, and a 404 for anything unpublished.
+ * @param {import('node:http').IncomingMessage} request @param {import('node:http').ServerResponse} response
+ */
+async function answerGitHub(request, response) {
+  const url = new URL(request.url ?? '/', 'http://stand-in');
+  const [, token = '', origin = '', ...rest] = url.pathname.split('/');
+  const world = gitHubWorlds.get(token);
+  /** @param {number} status @param {string | Buffer} body @param {string} [type] */
+  const send = (status, body, type = 'application/json; charset=utf-8') => {
+    response.writeHead(status, { 'content-type': type });
+    response.end(body);
+  };
+  const notFound = () => send(404, JSON.stringify({ message: 'Not Found' }));
+  const parts = origin === 'api' && rest[0] === 'repos' ? rest.slice(1) : origin === 'raw' ? rest : null;
+  if (!world || !parts || parts.length < 3) return notFound();
+  const segments = parts.map(part => decodeURIComponent(part));
+  const repository = `${segments[0]}/${segments[1]}`.toLowerCase();
+  world.requests.push({ origin, repository, path: `${url.pathname.slice(token.length + 1)}${url.search}`,
+    accept: request.headers.accept ?? null, authorization: request.headers.authorization ?? null });
+  const published = world.repositories.get(repository);
+  if (!published) return notFound();
+  if (published.mode !== 'serve') {
+    const record = { repository, acceptedAt: performance.now(), closedAt: /** @type {number | null} */ (null) };
+    world.records.push(record);
+    world.held.add(response);
+    response.once('close', () => { record.closedAt = performance.now(); world.held.delete(response); });
+    world.arrivals.get(repository)?.();
+    if (published.mode === 'hang') {
+      response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', [GITHUB_HANG_HEADER]: '1' });
+      response.flushHeaders();
+    }
+    return undefined;
+  }
+  const tail = segments.slice(2);
+  if (published.delayMs) await new Promise(resolve => setTimeout(resolve, published.delayMs));
+  const git = (/** @type {string[]} */ ...args) => standInGit(published.directory, args);
+  const objectId = (/** @type {string | undefined} */ value) => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
+  if (origin === 'raw') {
+    const [commit, ...file] = tail;
+    const bytes = objectId(commit) && file.length ? await git('cat-file', 'blob', `${commit}:${file.join('/')}`) : null;
+    return bytes ? send(200, bytes, 'text/plain; charset=utf-8') : notFound();
+  }
+  if (tail[0] === 'commits' && tail.length > 1) {
+    if (request.headers.accept !== 'application/vnd.github.sha') return send(415, JSON.stringify({ message: 'Unsupported media type' }));
+    const commit = await git('rev-parse', '--verify', '--quiet', `${tail.slice(1).join('/')}^{commit}`);
+    return commit ? send(200, commit.toString('latin1').trim(), 'text/plain; charset=utf-8')
+      : send(422, JSON.stringify({ message: `No commit found for SHA: ${tail.slice(1).join('/')}` }));
+  }
+  if (tail[0] === 'git' && tail[1] === 'commits' && tail.length === 3 && objectId(tail[2])) {
+    const type = await git('cat-file', '-t', tail[2]);
+    const tree = type?.toString('latin1').trim() === 'commit' ? await git('rev-parse', `${tail[2]}^{tree}`) : null;
+    return tree ? send(200, JSON.stringify({ sha: tail[2], tree: { sha: tree.toString('latin1').trim() } })) : notFound();
+  }
+  if (tail[0] === 'git' && tail[1] === 'trees' && tail.length === 3 && objectId(tail[2])) {
+    const recursive = url.searchParams.get('recursive') === '1';
+    const type = await git('cat-file', '-t', tail[2]);
+    const listed = type?.toString('latin1').trim() === 'tree'
+      ? await git('ls-tree', '-z', '-l', ...(recursive ? ['-r', '-t'] : []), tail[2]) : null;
+    if (!listed) return notFound();
+    const tree = listed.toString('utf8').split('\0').filter(Boolean).map(line => {
+      const [, mode, kind, sha, size, file] = /** @type {RegExpExecArray} */ (/^(\d{6}) (\w+) ([0-9a-f]{40}) +(-|\d+)\t(.*)$/s.exec(line));
+      return { path: file, mode, type: kind, sha, ...(size === '-' ? {} : { size: Number(size) }) };
+    });
+    return send(200, JSON.stringify({ sha: tail[2], tree, truncated: false }));
+  }
+  return notFound();
+}
+/**
+ * Add one `--import` preload to NODE_OPTIONS, and return what takes exactly that
+ * one out again, whatever was added or removed after it.
+ * @param {string} preload
+ */
+function preloadIntoChildren(preload) {
+  const flag = `--import=${pathToFileURL(preload).href}`;
+  process.env.NODE_OPTIONS = [process.env.NODE_OPTIONS, flag].filter(Boolean).join(' ');
+  return () => {
+    const rest = (process.env.NODE_OPTIONS ?? '').split(' ').filter(part => part && part !== flag).join(' ');
+    if (rest) process.env.NODE_OPTIONS = rest;
+    else delete process.env.NODE_OPTIONS;
+  };
+}
+
+/**
+ * Offline GitHub for one test: repositories it publishes are served, every other
+ * one is a 404, and one it holds or hangs stalls. `hold` accepts a request and
+ * never answers, as a network that stalls: the reader's own request bound ends
+ * that read. `hang` answers in a way that stops the reader's thread, so only the
+ * reader's owner can end it, at its deadline or by cancellation.
  * @param {import('node:test').TestContext} t
  * @param {ReturnType<typeof packFixture>} fixture
  */
@@ -6770,27 +7044,43 @@ function offlineGitHub(t, fixture) {
   fs.mkdirSync(base);
   const config = path.join(base, 'gitconfig');
   const nowhere = pathToFileURL(path.join(base, 'unpublished')).href;
-  /** @type {Map<string, string>} */
-  const rewrites = new Map([['https://github.com/', `${nowhere}/`]]);
   let extra = '';
-  const write = () => fs.writeFileSync(config, [...rewrites]
-    .map(([from, to]) => `[url ${JSON.stringify(to)}]\n\tinsteadOf = ${from}\n`).join('') + extra);
+  const write = () => fs.writeFileSync(config, `[url ${JSON.stringify(`${nowhere}/`)}]\n\tinsteadOf = https://github.com/\n${extra}`);
   write();
-  const saved = { GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM };
-  process.env.GIT_CONFIG_GLOBAL = config;
-  process.env.GIT_CONFIG_NOSYSTEM = '1';
+  const token = randomUUID();
+  /** @type {StandInWorld} */
+  const world = { repositories: new Map(), requests: [], held: new Set(), records: [], arrivals: new Map() };
+  gitHubWorlds.set(token, world);
+  const preload = path.join(base, 'github-stand-in.mjs');
+  fs.writeFileSync(preload, GITHUB_PRELOAD);
+  const saved = Object.fromEntries(['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', GITHUB_STAND_IN_ENV, GITHUB_PRELOAD_ENV]
+    .map(key => [key, process.env[key]]));
+  Object.assign(process.env, { GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: '1',
+    [GITHUB_STAND_IN_ENV]: `${GITHUB_STAND_IN}/${token}`, [GITHUB_PRELOAD_ENV]: pathToFileURL(preload).href });
+  const unload = preloadIntoChildren(preload);
   t.after(() => {
+    gitHubWorlds.delete(token);
+    for (const response of world.held) response.destroy();
+    unload();
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
   });
+  /** @param {string} repository @param {'hold' | 'hang'} mode */
+  const stall = (repository, mode) => world.repositories.set(repository.toLowerCase(), { mode });
   let sequence = 0;
   return {
     config,
+    /** Every request the stand-in received, in order. */
+    requests: world.requests,
+    /** Stalled requests still held open by a live reader. */
+    get open() { return world.held.size; },
+    /** When each stalled request arrived and closed. */
+    records: world.records,
     /**
      * Publish a repository whose catalog holds `names`; it is what
-     * https://github.com/<repository> clones. `files` overrides or adds files
+     * https://github.com/<repository> serves. `files` overrides or adds files
      * before the one commit.
      * @param {string} repository `owner/repo`
      * @param {string[]} names
@@ -6813,16 +7103,30 @@ function offlineGitHub(t, fixture) {
       }
       git('add', '-A');
       git('-c', 'user.email=fixture@example.test', '-c', 'user.name=Canvas Fixture', 'commit', '-qm', 'catalog fixture');
-      rewrites.set(`https://github.com/${repository}`, pathToFileURL(directory).href);
-      write();
+      world.repositories.set(repository.toLowerCase(), { mode: 'serve', directory });
       return { url: `https://github.com/${repository}`, directory, git, commit: () => git('rev-parse', 'HEAD') };
     },
-    /** Send a repository somewhere else, such as a Git peer that never answers. @param {string} repository @param {string} target */
-    redirect(repository, target) {
-      rewrites.set(`https://github.com/${repository}`, target);
-      write();
+    /** Accept every request for a repository and never answer it. @param {string} repository */
+    hold: (/** @type {string} */ repository) => stall(repository, 'hold'),
+    /** Answer a repository's first request in a way that stops the reader's thread. @param {string} repository */
+    hang: (/** @type {string} */ repository) => stall(repository, 'hang'),
+    /** Answer every request for a published repository only after `delayMs`. @param {string} repository @param {number} delayMs */
+    slow(repository, delayMs) {
+      const published = world.repositories.get(repository.toLowerCase());
+      assert.equal(published?.mode, 'serve', 'only a published repository answers slowly');
+      world.repositories.set(repository.toLowerCase(), { .../** @type {{ mode: 'serve', directory: string }} */ (published), delayMs });
     },
-    /** Static config that stays in force across rewrites. @param {string} text */
+    /** Answer a repository as GitHub answers one that is private or missing. @param {string} repository */
+    unpublish: (/** @type {string} */ repository) => { world.repositories.delete(repository.toLowerCase()); },
+    /** Resolves when a request for a stalled repository first arrives. @param {string} repository */
+    connected(repository) {
+      const name = repository.toLowerCase();
+      if (world.records.some(record => record.repository === name)) return Promise.resolve();
+      return new Promise(resolve => world.arrivals.set(name, () => { world.arrivals.delete(name); resolve(undefined); }));
+    },
+    /** How many requests named a repository. @param {string} repository */
+    connections: (/** @type {string} */ repository) => world.requests.filter(request => request.repository === repository.toLowerCase()).length,
+    /** Static Git configuration that stays in force. @param {string} text */
     append(text) {
       extra += text;
       write();
@@ -7240,13 +7544,13 @@ test('T008 add refuses duplicates, the ninth source and a stale or unreadable do
   } finally { await f.close(); fixture.cleanup(); }
 });
 
-test('T008 add stops a stalled source at the deadline, kills its whole tree, removes its root and saves nothing', { timeout: 30_000 }, async t => {
+test('T008 add stops a stalled source at the deadline, kills its whole tree, removes its root and saves nothing', { timeout: 60_000 }, async t => {
   const fixture = packFixture();
   fixture.profile({});
   fixture.catalog(['alpha']);
   const github = offlineGitHub(t, fixture);
-  const listener = await silentGitListener(t);
-  github.redirect('acme/slow', listener.url('git'));
+  // A reader that stops progressing: its own request bound cannot end it, only its owner's 30-second GitHub deadline.
+  github.hang('acme/slow');
   const spy = spawnSpy(t);
   const kills = taskkillSpy(t);
   const f = await packHttpFixture(fixture);
@@ -7254,14 +7558,15 @@ test('T008 add stops a stalled source at the deadline, kills its whole tree, rem
   try {
     const started = performance.now();
     const pending = addSource(f, fixture, 'https://github.com/acme/slow');
-    await listener.connected();
+    await github.connected('acme/slow');
     tree = await readerTree(spy.readers()[0]?.child.pid);
     const response = await pending;
     const elapsed = performance.now() - started;
     assert.equal(response.status, deadlineCoverage(kills).reason === 'catalog_cleanup_failed' ? 503 : 504, JSON.stringify(response.body));
     assert.equal(/** @type {any} */ (response.body).error, deadlineCoverage(kills).reason === 'catalog_cleanup_failed' ? 'cleanup_unconfirmed' : 'timeout');
-    assert.ok(elapsed >= 5_000 && elapsed < 7_500, `within the deadline plus stop confirmation: ${elapsed} ms`);
-    assert.equal(listener.open, 0, 'no Git process still holds the stalled connection');
+    if (!kills.failed.size) assert.equal(/** @type {any} */ (response.body).message, 'The source did not answer within 30 seconds.');
+    assert.ok(elapsed >= 30_000 && elapsed < 32_500, `within the GitHub catalog deadline plus stop confirmation: ${elapsed} ms`);
+    assert.equal(github.open, 0, 'no reader still holds the stalled connection');
     await assertTreeStops({ t, spy, kills, trees: [tree], scratch: fs.readdirSync(fixture.scratch) });
     assert.equal(fs.existsSync(sourcesFile(fixture)), false);
     assert.equal(spy.readers().length, 1);
@@ -7430,7 +7735,7 @@ test('T008 every reader gets reader-local noninteractive Git settings, appended 
   } finally { fixture.cleanup(); }
 });
 
-test('T008 a private source fails visibly: an ambient credential helper never reaches it', { timeout: 30_000 }, async t => {
+test('T008 a private source fails visibly: an ambient credential helper never reaches it', { timeout: 60_000 }, async t => {
   const fixture = packFixture();
   fixture.profile({});
   fixture.catalog(['alpha']);
@@ -7451,24 +7756,33 @@ test('T008 a private source fails visibly: an ambient credential helper never re
   const helper = path.join(fixture.temporary, 'ambient-helper.sh');
   fs.writeFileSync(helper, '#!/bin/sh\nif [ "$1" = get ]; then echo username=ambient; echo password=secret; fi\n');
   github.append(`[credential]\n\thelper = !sh ${slash(helper)}\n`);
-  github.redirect('acme/private', `http://127.0.0.1:${port}/acme/private`);
+  // A private repository on another Git host, which only Git reads.
+  const privateHost = `http://127.0.0.1:${port}/acme/private`;
   const f = await packHttpFixture(fixture);
   try {
     // Control: without the reader's settings, the same Git and config do send the ambient credential.
     const control = await new Promise(resolve => {
-      const child = childProcess.spawn('git', ['clone', '--quiet', '--depth=1', '--branch', 'main', 'https://github.com/acme/private',
+      const child = childProcess.spawn('git', ['clone', '--quiet', '--depth=1', '--branch', 'main', privateHost,
         path.join(fixture.temporary, 'control-clone')], { env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, stdio: 'ignore', windowsHide: true });
       child.once('close', code => resolve(code));
     });
     assert.notEqual(control, 0);
     assert.ok(seen.some(Boolean), 'the fixture\'s ambient helper is real: it supplied a credential');
     seen.length = 0;
+    // A public GitHub address is read over anonymous HTTPS: no Git runs for it, so no helper can answer.
     const refused = await addSource(f, fixture, 'https://github.com/acme/private');
     assert.equal(refused.status, 422, JSON.stringify(refused.body));
     assert.equal(/** @type {any} */ (refused.body).error, 'unreachable');
+    assert.ok(github.connections('acme/private') > 0, 'the reader asked GitHub for the repository');
+    assert.deepEqual(github.requests.filter(request => request.authorization !== null), [], 'and sent no credential to it');
+    assert.deepEqual(seen, [], 'no Git ran for a GitHub source');
+    assert.equal(fs.existsSync(sourcesFile(fixture)), false);
+    // Another host is cloned by Git inside the reader, whose helper list is reset.
+    stallCatalog(fixture, privateHost);
+    const read = await discover(f);
+    assert.equal(read.coverage.catalog.state, 'unavailable', JSON.stringify(read.coverage.catalog));
     assert.ok(seen.length > 0, 'the reader did contact the private host');
     assert.deepEqual(seen.filter(Boolean), [], 'and sent no credential to it');
-    assert.equal(fs.existsSync(sourcesFile(fixture)), false);
   } finally { await f.close(); fixture.cleanup(); }
 });
 
@@ -7476,7 +7790,8 @@ test('T008 a private source fails visibly: a helper inherited through GIT_CONFIG
   const fixture = packFixture();
   fixture.profile({});
   fixture.catalog(['alpha']);
-  const github = offlineGitHub(t, fixture);
+  // Its Git configuration keeps a stray Git for a GitHub address offline; the source here is another host.
+  offlineGitHub(t, fixture);
   /** @type {Array<string | null>} */
   const seen = [];
   const server = http.createServer((request, response) => {
@@ -7499,7 +7814,9 @@ test('T008 a private source fails visibly: a helper inherited through GIT_CONFIG
     return { command: `!sh ${slash(script)}`, calls, called: () => fs.readFileSync(calls, 'utf8').split('\n').filter(Boolean) };
   };
   const scoped = helper('scoped'), unscoped = helper('unscoped');
-  github.redirect('acme/private', `${wall}/acme/private`);
+  // A private repository on another Git host, which only Git reads: the upstream that discovery reads.
+  const privateHost = `${wall}/acme/private`;
+  stallCatalog(fixture, privateHost);
   // The same two helpers as `git -c` or a host exports them: one scoped to the wall's URL and one for every
   // URL, in the format Git writes and in its older format.
   const carriers = /** @type {Array<[string, string, string]>} */ ([
@@ -7512,7 +7829,7 @@ test('T008 a private source fails visibly: a helper inherited through GIT_CONFIG
   const f = await packHttpFixture(fixture);
   /** Plain Git, as it runs for anyone whose environment carries these helpers. @param {string} parameters */
   const control = parameters => new Promise(resolve => {
-    const child = childProcess.spawn('git', ['clone', '--quiet', '--depth=1', '--branch', 'main', 'https://github.com/acme/private',
+    const child = childProcess.spawn('git', ['clone', '--quiet', '--depth=1', '--branch', 'main', privateHost,
       path.join(fixture.temporary, `control-clone-${randomUUID()}`)],
       { env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_PARAMETERS: parameters }, stdio: 'ignore', windowsHide: true });
     child.once('close', code => resolve(code));
@@ -7531,9 +7848,8 @@ test('T008 a private source fails visibly: a helper inherited through GIT_CONFIG
       reset();
       process.env.GIT_CONFIG_PARAMETERS = `${scopedEntry} ${unscopedEntry}`;
       const launched = spy.readers().length;
-      const refused = await addSource(f, fixture, 'https://github.com/acme/private');
-      assert.equal(refused.status, 422, `${format}: ${JSON.stringify(refused.body)}`);
-      assert.equal(/** @type {any} */ (refused.body).error, 'unreachable');
+      const read = await discover(f);
+      assert.equal(read.coverage.catalog.state, 'unavailable', `${format}: ${JSON.stringify(read.coverage.catalog)}`);
       assert.ok(seen.length > 0, `${format}: the reader did contact the private host`);
       assert.deepEqual(seen.filter(Boolean), [], `${format}: and sent no credential to it`);
       assert.deepEqual(scoped.called(), [], `${format}: the URL-scoped helper was never run`);
@@ -7544,7 +7860,7 @@ test('T008 a private source fails visibly: a helper inherited through GIT_CONFIG
         assert.equal(launch.options.env.GIT_CONFIG_PARAMETERS, `${scopedEntry} ${unscopedEntry} 'credential.helper='`,
           `${format}: the inherited entries are kept, and the last word is an empty helper`);
       }
-      assert.equal(fs.existsSync(sourcesFile(fixture)), false);
+      assert.deepEqual(fs.readdirSync(fixture.scratch), [], `${format}: the reader's root was removed`);
     }
   } finally { await f.close(); fixture.cleanup(); }
 });
@@ -7596,8 +7912,12 @@ test('T008 a private source fails visibly: a ~/.netrc login never reaches it, wh
   fixture.catalog(['alpha']);
   const github = offlineGitHub(t, fixture);
   const wall = await privateWall(t);
-  github.redirect('acme/private', `${wall.url}/acme/private`);
-  // The user's own Git configuration: the fixture's rewrites, the only way for https://github.com/acme/private to reach the wall.
+  // A private repository on another Git host, the upstream that discovery reads with Git. Its name never resolves:
+  // only the rewrite in the user's own Git configuration sends it to the wall.
+  const privateHost = 'https://private.example.test/acme/private';
+  github.append(`[url ${JSON.stringify(`${wall.url}/acme/private`)}]\n\tinsteadOf = ${privateHost}\n`);
+  stallCatalog(fixture, privateHost);
+  // The user's own Git configuration: the fixture's rewrites, the only way for that address to reach the wall.
   const rewrites = fs.readFileSync(github.config, 'utf8');
   // A missed rewrite goes to a closed proxy, so it fails offline and the wall is never contacted.
   const closedPort = await new Promise(resolve => {
@@ -7650,7 +7970,7 @@ test('T008 a private source fails visibly: a ~/.netrc login never reaches it, wh
   };
   /** Plain Git, as it runs for anyone whose home holds one of those files. */
   const control = () => new Promise(resolve => {
-    const child = childProcess.spawn('git', ['clone', '--quiet', '--depth=1', '--branch', 'main', 'https://github.com/acme/private',
+    const child = childProcess.spawn('git', ['clone', '--quiet', '--depth=1', '--branch', 'main', privateHost,
       path.join(fixture.temporary, `control-clone-${randomUUID()}`)], { env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, stdio: 'ignore', windowsHide: true });
     child.once('close', code => resolve(code));
   });
@@ -7675,9 +7995,8 @@ test('T008 a private source fails visibly: a ~/.netrc login never reaches it, wh
         if (userAgent) assert.deepEqual([...new Set(wall.agents)], [userAgent], `${label}: plain Git reads the XDG file, then ~/.gitconfig`);
         wall.reset();
         const launched = spy.readers().length;
-        const refused = await addSource(f, fixture, 'https://github.com/acme/private');
-        assert.equal(refused.status, 422, `${label}: ${JSON.stringify(refused.body)}`);
-        assert.equal(/** @type {any} */ (refused.body).error, 'unreachable', label);
+        const read = await discover(f);
+        assert.equal(read.coverage.catalog.state, 'unavailable', `${label}: ${JSON.stringify(read.coverage.catalog)}`);
         assert.ok(wall.seen.length > 0, `${label}: the reader did contact the private host, so it read the user's own Git configuration`);
         assert.deepEqual(wall.seen.filter(Boolean), [], `${label}: and sent no login to it`);
         if (userAgent) assert.deepEqual([...new Set(wall.agents)], [userAgent], `${label}: and read both files, in Git's order`);
@@ -7978,8 +8297,7 @@ test('T008 discovery reads the default and every saved source once, with source-
   const packs = github.publish('acme/dude-packs', ['twin', 'rust', 'zeta']);
   const team = localSource(fixture, 'team-packs', ['twin', 'ui']);
   // A development bundle: its library exists, so its upstream is displayed and never acquired.
-  const listener = await silentGitListener(t);
-  github.redirect('acme/upstream', listener.url('git'));
+  github.hold('acme/upstream');
   fs.writeFileSync(path.join(fixture.root, '.dude/metadata/bundle-manifest.md'),
     `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify({ source_repo: upstream.url, source_ref: 'main' })}\n\`\`\`\n`);
   const commit = 'a'.repeat(40);
@@ -8020,7 +8338,7 @@ test('T008 discovery reads the default and every saved source once, with source-
       count: bundle.count, repositoryName: bundle.repositoryName, ref: bundle.ref },
     { status: 'not_read', reason: 'not_read_by_design', message: 'Not read while library/packs exists.', managedBy: 'bundle-upgrade',
       count: null, repositoryName: 'acme/upstream', ref: 'main' });
-    assert.equal(listener.connections, 0, 'the development upstream was never contacted');
+    assert.equal(github.connections('acme/upstream'), 0, 'the development upstream was never contacted');
     assert.deepEqual({ type: remote.type, repository: remote.repository, ref: remote.ref, status: remote.status, count: remote.count,
       uninstalled: remote.uninstalled, installed: remote.installedNames },
     { type: 'remote', repository: packs.url, ref: 'main', status: 'read', count: 3, uninstalled: 2, installed: ['rust'] });
@@ -8073,7 +8391,7 @@ test('T008 matched-but-unavailable metadata stays unavailable, and only an unmat
     assert.equal(first.items.find(/** @param {any} item */ item => item.name === 'unlisted-pack').description,
       'unlisted-pack full description <script>inert()</script>', 'an unmatched record keeps today\'s by-name default lookup');
     // The matched source stops answering. Its record's metadata is not borrowed from another catalog.
-    github.redirect('acme/dude-packs', pathToFileURL(path.join(fixture.temporary, 'gone')).href);
+    github.unpublish('acme/dude-packs');
     fixture.catalog(['rust'], fixture.library);
     const second = await discover(f);
     const rust = second.items.find(/** @param {any} item */ item => item.name === 'rust');
@@ -8085,17 +8403,16 @@ test('T008 matched-but-unavailable metadata stays unavailable, and only an unmat
   } finally { await f.close(); fixture.cleanup(); }
 });
 
-test('T008 a failing source leaves the others\' results, with known coverage; every unavailable case is explicit', { timeout: 45_000 }, async t => {
+test('T008 a failing source leaves the others\' results, with known coverage; every unavailable case is explicit', { timeout: 75_000 }, async t => {
   const fixture = packFixture();
   fixture.profile({});
   fixture.catalog(['alpha', 'bravo']);
   const github = offlineGitHub(t, fixture);
-  // Each real clone costs a second or more on a slow Windows host, and the 5,000 ms deadline is fixed,
-  // so only one source is cloned here and the layout cases use saved folders. The remote layout and
-  // metadata refusals are covered, one clone at a time, by the add tests.
+  // GitHub sources are read over the stand-in; the folder layout cases use saved folders, and the remote layout
+  // and metadata refusals are covered by the add tests. The stalled repository's reader stops progressing, so
+  // only its owner's 30-second GitHub deadline ends it.
   github.publish('acme/good', ['rust']);
-  const listener = await silentGitListener(t);
-  github.redirect('acme/slow', listener.url('git'));
+  github.hang('acme/slow');
   const hollow = localSource(fixture, 'hollow-packs', []);
   fs.mkdirSync(path.join(hollow, 'library/packs'), { recursive: true });
   const broken = localSource(fixture, 'broken-packs', []);
@@ -8221,9 +8538,8 @@ test('T008 browsing is not discovery: the plain read describes saved sources, re
   fixture.profile({});
   fixture.catalog(['alpha']);
   const github = offlineGitHub(t, fixture);
-  const listener = await silentGitListener(t);
-  github.redirect('acme/slow', listener.url('git'));
-  github.redirect('acme/other', listener.url('git'));
+  github.hold('acme/slow');
+  github.hold('acme/other');
   const team = localSource(fixture, 'team-packs', ['ui']);
   saveSources(fixture, [remoteEntry('acme/slow'), remoteEntry('acme/other')]);
   const spy = spawnSpy(t);
@@ -8242,14 +8558,14 @@ test('T008 browsing is not discovery: the plain read describes saved sources, re
     }
     assert.deepEqual(body.sources.items.map(/** @param {any} row */ row => row.name), ['Local library', 'acme/slow', 'acme/other']);
     assert.equal(spy.readers().length, 0, 'only GitHub sources are saved, so describing them needs no helper');
-    assert.equal(listener.connections, 0);
+    assert.deepEqual(github.requests, [], 'nothing asked GitHub');
     // A saved local folder is described, by key, in a helper that reads no catalog.
     saveSources(fixture, [remoteEntry('acme/slow'), localEntry(team)]);
     const withFolder = await (await call(f.instance.url, { path: '/api/packs' })).json();
     assert.deepEqual(spy.readers().map(readerRequest).map(request => [request.op, request.list]), [['source', false]]);
     assert.equal(withFolder.sources.items[2].status, 'not_read');
     assert.match(withFolder.sources.items[2].key, /^src_[0-9a-f]{32}$/);
-    assert.equal(listener.connections, 0);
+    assert.deepEqual(github.requests, []);
   } finally { await f.close(); fixture.cleanup(); }
 });
 
@@ -8258,8 +8574,8 @@ test('T008 discovery is single-flight, separate from the automatic read, and nev
   fixture.profile({ legacy: fixture.entry('legacy') });
   fixture.catalog(['alpha']);
   const github = offlineGitHub(t, fixture);
-  const listener = await silentGitListener(t);
-  github.redirect('acme/slow', listener.url('git'));
+  // A network that stalls: the reader's own 15-second request bound ends the source's read.
+  github.hold('acme/slow');
   saveSources(fixture, [remoteEntry('acme/slow')]);
   const spy = spawnSpy(t);
   const kills = taskkillSpy(t);
@@ -8269,7 +8585,7 @@ test('T008 discovery is single-flight, separate from the automatic read, and nev
   try {
     const first = call(f.instance.url, { path: DISCOVER });
     const second = call(f.instance.url, { path: DISCOVER });
-    await listener.connected();
+    await github.connected('acme/slow');
     trees = await Promise.all(spy.readers().map(reader => readerTree(reader.child.pid)));
     // While discovery stalls, the automatic read answers at once with the profile and sources.
     const started = performance.now();
@@ -8279,13 +8595,14 @@ test('T008 discovery is single-flight, separate from the automatic read, and nev
     assert.deepEqual(automatic.items.map(/** @param {any} item */ item => item.name), ['legacy']);
     const bodies = await Promise.all([first, second].map(async response => (await response).json()));
     assert.deepEqual(bodies[0].sources.items.map(/** @param {any} row */ row => row.status), ['read', 'unavailable']);
+    assert.equal(bodies[0].sources.items[1].reason, 'catalog_unreachable', 'the stalled request ended at its own bound');
     assert.deepEqual(bodies[1].sources.items, bodies[0].sources.items, 'both tabs received the one read');
     // The default plus the one saved source: one reader each, once, for both requests.
     assert.deepEqual(spy.readers().map(readerRequest).map(request => request.op).sort(), ['default', 'source']);
-    assert.equal(listener.open, 0);
+    assert.equal(github.open, 0);
     await assertTreeStops({ t, spy, kills, trees: trees.filter(tree => tree.length), scratch: fs.readdirSync(fixture.scratch) });
     // A finished read is not a cache: the next discovery reads again.
-    github.redirect('acme/slow', pathToFileURL(path.join(fixture.temporary, 'gone')).href);
+    github.unpublish('acme/slow');
     const launched = spy.readers().length;
     const third = await call(f.instance.url, { path: '/api/packs?discover=1' });
     assert.equal(third.status, 200);
@@ -8319,14 +8636,14 @@ function assertKeptRoots(t, spy, kills, scratch) {
     assert.ok(failed.includes(root) || outOfWindow.includes(root), `every other root was removed after its confirmed stop: ${root}`);
   }
 }
-test('T008 at most four readers are ever active, and every source is read exactly once', { timeout: 60_000 }, async t => {
+isolatedTest('T008 at most four readers are ever active, and every source is read exactly once', { timeout: 60_000 }, async t => {
   const fixture = packFixture();
   fixture.profile({});
   fixture.catalog(['alpha']);
   const github = offlineGitHub(t, fixture);
-  const listener = await silentGitListener(t);
   const names = ['one', 'two', 'three', 'four', 'five'];
-  for (const name of names) github.redirect(`acme/${name}`, listener.url('git'));
+  // Networks that stall: each reader's own 15-second request bound ends its read.
+  for (const name of names) github.hold(`acme/${name}`);
   saveSources(fixture, names.map(name => remoteEntry(`acme/${name}`)));
   const spy = spawnSpy(t);
   const kills = taskkillSpy(t);
@@ -8341,22 +8658,24 @@ test('T008 at most four readers are ever active, and every source is read exactl
     for (const [, delta] of events) { active += delta; peak = Math.max(peak, active); }
     assert.ok(peak <= 4, `at most four readers were alive at once: ${peak}`);
     assert.ok(peak >= 3, `the pool really ran readers together: ${peak}`);
-    // A source is contacted once, and no more than once, however many were queued. A slow host can end one at its deadline first.
-    assert.ok(listener.connections >= 1 && listener.connections <= names.length, 'each stalled source was contacted at most once: ' + listener.connections);
+    // A source is contacted once, and no more than once, however many were queued.
+    assert.equal(github.records.length, names.length, 'each stalled source was contacted exactly once: ' + github.records.length);
+    assert.deepEqual(names.map(name => github.connections(`acme/${name}`)), names.map(() => 1));
     const stalled = body.sources.items.slice(1);
     assert.deepEqual(stalled.map(/** @param {any} row */ row => row.status), names.map(() => 'unavailable'));
-    // Each ended at its own deadline, or as unconfirmed cleanup exactly where its tree kill reported a failure.
+    // Each ended at its own request bound, or as unconfirmed cleanup exactly where a tree kill reported a failure.
     assert.ok(stalled.filter(/** @param {any} row */ row => row.reason === 'catalog_cleanup_failed').length >= kills.failed.size,
       'every failed tree kill is an unconfirmed cleanup, and nothing else is a cleanup failure but a stop that ran out of its window');
-    assert.ok(stalled.every(/** @param {any} row */ row => ['catalog_timeout', 'catalog_cleanup_failed'].includes(row.reason)));
+    assert.ok(stalled.every(/** @param {any} row */ row => ['catalog_unreachable', 'catalog_cleanup_failed'].includes(row.reason)),
+      JSON.stringify(stalled.map(/** @param {any} row */ row => row.reason)));
     assert.equal(body.coverage.catalog.state, 'partial');
     if (!kills.failed.size) {
-      // The same bound holds for the stalled transports Git held open.
-      const stamps = listener.records.flatMap(record => [[record.acceptedAt, 1], [record.closedAt ?? Infinity, -1]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      // The same bound holds for the stalled requests the readers held open.
+      const stamps = github.records.flatMap(record => [[record.acceptedAt, 1], [record.closedAt ?? Infinity, -1]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
       let open = 0, peakOpen = 0;
       for (const [, delta] of stamps) { open += delta; peakOpen = Math.max(peakOpen, open); }
       assert.ok(peakOpen <= 4, `at most four stalled connections were open at once: ${peakOpen}`);
-      assert.equal(listener.open, 0);
+      assert.equal(github.open, 0);
     }
     assertKeptRoots(t, spy, kills, fs.readdirSync(fixture.scratch));
   } finally { await f.close(); fixture.cleanup(); }
@@ -8367,9 +8686,8 @@ test('T008 cancelling a discovery stops every active reader\'s tree and never st
   fixture.profile({});
   fixture.catalog(['alpha']);
   const github = offlineGitHub(t, fixture);
-  const listener = await silentGitListener(t);
   const names = ['one', 'two', 'three', 'four', 'five', 'six'];
-  for (const name of names) github.redirect(`acme/${name}`, listener.url('git'));
+  for (const name of names) github.hold(`acme/${name}`);
   saveSources(fixture, names.map(name => remoteEntry(`acme/${name}`)));
   const spy = spawnSpy(t);
   const kills = taskkillSpy(t);
@@ -8379,10 +8697,10 @@ test('T008 cancelling a discovery stops every active reader\'s tree and never st
   let trees = [];
   try {
     const reading = call(f.instance.url, { path: DISCOVER, signal: controller.signal }).catch(error => error);
-    // The default read finishes at once; stalled transports fill the pool and the rest of the sources wait.
-    const until = Date.now() + 20_000;
-    while (listener.connections < 2 && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 50));
-    assert.ok(listener.connections >= 2, `at least two readers reached their stalled transport: ${listener.connections}`);
+    // The default read finishes at once; stalled requests fill the pool and the rest of the sources wait.
+    const until = Date.now() + 10_000;
+    while (github.records.length < 2 && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 50));
+    assert.ok(github.records.length >= 2, `at least two readers reached their stalled source: ${github.records.length}`);
     trees = await Promise.all(spy.readers().map(reader => readerTree(reader.child.pid)));
     const aborted = performance.now();
     controller.abort();
@@ -8392,15 +8710,15 @@ test('T008 cancelling a discovery stops every active reader\'s tree and never st
     assert.ok(performance.now() - aborted < 6_000, 'every tree stopped within its stop window');
     // The pool holds four readers, the default among them while it runs, so the cancelled read started at most
     // the default and four sources. The two that were still waiting never started.
-    assert.ok(listener.connections <= 4, 'the queued sources never reached a transport: ' + listener.connections);
+    assert.ok(github.records.length <= 4, 'the queued sources never reached GitHub: ' + github.records.length);
     assert.ok(spy.readers().length <= 1 + 4, `the default plus at most the four that were running: ${spy.readers().length}`);
     assert.ok(spy.readers().length >= 3);
-    // A killed Git's loopback connection is reaped a moment after its process ends, and four trees end together.
+    // A killed reader's loopback connection is reaped a moment after its process ends, and four trees end together.
     const reaping = performance.now() + 3_000;
-    while (listener.open && performance.now() < reaping) await new Promise(resolve => setTimeout(resolve, 25));
-    if (!kills.failed.size) assert.equal(listener.open, 0, 'no Git process still holds a stalled connection');
+    while (github.open && performance.now() < reaping) await new Promise(resolve => setTimeout(resolve, 25));
+    if (!kills.failed.size) assert.equal(github.open, 0, 'no reader still holds a stalled connection');
     assertKeptRoots(t, spy, kills, fs.readdirSync(fixture.scratch));
-    for (const tree of trees.filter(members => members.length > 1)) {
+    for (const tree of trees.filter(members => members.length)) {
       assert.deepEqual(await survivorsAfterBound(tree), [], 'no process recorded from a reader tree survived its stop');
     }
   } finally { await f.close(); for (const tree of trees) await stopRecorded(tree); fixture.cleanup(); }
@@ -8453,7 +8771,7 @@ async function assertRetainedRoots({ t, fixture, spy, kills }) {
   for (const reader of spy.readers()) assert.ok(exited(reader), `reader ${reader.child.pid} has exited`);
 }
 
-test('T008 remove deletes only the one saved entry, whether the source was never read, cannot be read or its folder is gone', { timeout: 30_000 }, async t => {
+isolatedTest('T008 remove deletes only the one saved entry, whether the source was never read, cannot be read or its folder is gone', { timeout: 30_000 }, async t => {
   const fixture = packFixture();
   fixture.profile({});
   fixture.catalog(['alpha']);
@@ -8546,7 +8864,7 @@ async function stalledSiblingScenario(t, replace) {
   };
 }
 
-test('T008 on Windows a failed tree kill of the stalled sibling that a removal cancels still removes only the healthy folder\'s entry and keeps only that reader\'s root', {
+isolatedTest('T008 on Windows a failed tree kill of the stalled sibling that a removal cancels still removes only the healthy folder\'s entry and keeps only that reader\'s root', {
   timeout: 45_000, skip: process.platform !== 'win32' && 'taskkill stops reader trees only on Windows',
 }, async t => {
   // The tree kill is replaced and fails, and kills nothing itself: the stop is unconfirmed, as when taskkill is denied.
@@ -8757,8 +9075,8 @@ test('T008 a request that is still being prepared holds its source, and a remova
   fixture.profile({});
   fixture.catalog(['alpha']);
   const github = offlineGitHub(t, fixture);
-  const listener = await silentGitListener(t);
-  github.redirect('acme/slow', listener.url('git'));
+  // A network that stalls: the reader's own 15-second request bound ends the preparation's read.
+  github.hold('acme/slow');
   github.publish('acme/spare', ['alpha']);
   saveSources(fixture, [remoteEntry('acme/slow'), remoteEntry('acme/spare')]);
   const f = await packHttpFixture(fixture);
@@ -8767,14 +9085,14 @@ test('T008 a request that is still being prepared holds its source, and a remova
     const slow = rows.get('acme/slow').key, spare = rows.get('acme/spare').key;
     // The preparation is stalled in its source's read, so it is in flight while the removal runs.
     const preparing = f.post({ op: 'prepare', operation: 'install', name: 'alpha', source: slow });
-    await listener.connected();
+    await github.connected('acme/slow');
     const refused = await removeSource(f, fixture, slow);
     assert.deepEqual([refused.status, /** @type {any} */ (refused.body).error], [409, 'source_in_use']);
     assert.deepEqual(/** @type {any} */ (refused.body).blockers, [{ kind: 'request', name: 'alpha', operation: 'install', phase: 'preparing' }]);
     assert.equal(readPackSources(fixture.root).sources.length, 2, 'the source stayed while it was being used');
-    // The preparation ends at its read deadline without a receipt, and the source is then free.
+    // The preparation ends at its read's bound without a receipt, and the source is then free.
     const outcome = await preparing;
-    assert.notEqual(outcome.status, 202, 'a stalled source never yields a prepared receipt');
+    assert.deepEqual([outcome.status, (await outcome.json()).error], [409, 'source_unavailable'], 'a stalled source never yields a prepared receipt');
     assert.equal(f.provider.read().packRequests.length, 0);
     assert.equal((await removeSource(f, fixture, slow)).status, 200);
     // The other order: the source is already removed, so a preparation for its key is stale and sends nothing.
@@ -8846,14 +9164,13 @@ function stallResolutionOf(t, fixture, folder) {
     '}',
     '',
   ].join('\n'));
-  const saved = { NODE_OPTIONS: process.env.NODE_OPTIONS, DUDE_TEST_STALLED_FOLDER: process.env.DUDE_TEST_STALLED_FOLDER };
+  const saved = process.env.DUDE_TEST_STALLED_FOLDER;
   process.env.DUDE_TEST_STALLED_FOLDER = folder;
-  process.env.NODE_OPTIONS = `${saved.NODE_OPTIONS ? `${saved.NODE_OPTIONS} ` : ''}--import=${pathToFileURL(preload).href}`;
+  const unload = preloadIntoChildren(preload);
   t.after(() => {
-    for (const [key, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
+    unload();
+    if (saved === undefined) delete process.env.DUDE_TEST_STALLED_FOLDER;
+    else process.env.DUDE_TEST_STALLED_FOLDER = saved;
   });
 }
 
@@ -8867,7 +9184,7 @@ async function timed(work) {
   return { value, ms: performance.now() - started };
 }
 
-test('T008 a saved folder that never answers delays no other source', { timeout: 120_000 }, async t => {
+isolatedTest('T008 a saved folder that never answers delays no other source', { timeout: 120_000 }, async t => {
   /**
    * A project with a stalled folder, two good folders beside it and a repository. Each case below builds its
    * own, so each one passes or fails by itself.
@@ -9519,13 +9836,13 @@ test('T008 a refresh takes its source from the installed record and accepts no c
   });
 });
 
-test('T008 cancelling a request that is reading its source stops that source\'s reader tree and frees the source', { timeout: 45_000 }, async t => {
+test('T008 cancelling a request that is reading its source stops that source\'s reader tree and frees the source', { timeout: 60_000 }, async t => {
   const fixture = packFixture();
   fixture.profile({});
   fixture.catalog(['alpha']);
   const github = offlineGitHub(t, fixture);
-  const listener = await silentGitListener(t);
-  github.redirect('acme/slow', listener.url('git'));
+  // A reader that stops progressing, so only its owner can end it.
+  github.hang('acme/slow');
   saveSources(fixture, [remoteEntry('acme/slow')]);
   const spy = spawnSpy(t);
   const kills = taskkillSpy(t);
@@ -9539,7 +9856,7 @@ test('T008 cancelling a request that is reading its source stops that source\'s 
     const reading = call(f.instance.url, { path: '/api/packs/request', method: 'POST', signal: controller.signal,
       headers: { origin, 'content-type': 'application/json' },
       body: JSON.stringify({ op: 'prepare', operation: 'install', name: 'alpha', source: key }) }).catch(error => error);
-    await listener.connected();
+    await github.connected('acme/slow');
     const reader = spy.readers().find(launch => readerRequest(launch).op === 'source' && readerRequest(launch).list === true);
     assert.ok(reader, 'the source\'s own reader is the one that is stalled');
     tree = await readerTree(/** @type {number} */ (reader.child.pid));
@@ -9547,26 +9864,28 @@ test('T008 cancelling a request that is reading its source stops that source\'s 
     assert.equal(/** @type {any} */ (refused.body).error, 'source_in_use', 'a preparation in flight holds its source');
     controller.abort();
     assert.ok((await reading) instanceof Error);
-    // The preparation ends with the request: the source is released only after its tree has stopped.
-    const until = Date.now() + 8_000;
+    // The provider request is bound to the Canvas lifetime, not to its browser request, so the preparation runs on
+    // until its read's 30-second GitHub deadline stops the reader tree. Only then is the source released.
+    const until = Date.now() + 40_000;
     while (f.provider.sourceUses(key).length && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 25));
     assert.deepEqual(f.provider.sourceUses(key), []);
     const reaping = performance.now() + 3_000;
-    while (listener.open && performance.now() < reaping) await new Promise(resolve => setTimeout(resolve, 25));
-    if (!kills.failed.size) assert.equal(listener.open, 0, 'no Git process still holds the stalled connection');
-    await assertTreeStops({ t, spy, kills, trees: [tree].filter(members => members.length > 1), scratch: fs.readdirSync(fixture.scratch) });
+    while (github.open && performance.now() < reaping) await new Promise(resolve => setTimeout(resolve, 25));
+    if (!kills.failed.size) assert.equal(github.open, 0, 'no reader still holds the stalled connection');
+    await assertTreeStops({ t, spy, kills, trees: [tree].filter(members => members.length), scratch: fs.readdirSync(fixture.scratch) });
     assert.equal(f.provider.read().packRequests.length, 0, 'a cancelled preparation leaves no receipt');
     assert.equal((await removeSource(f, fixture, key)).status, 200, 'the freed source can now be removed');
   } finally { await f.close(); await stopRecorded(tree); fixture.cleanup(); }
 });
 
-test('T008 discovery clones a remote source exactly once: it is resolved once and listed from that checkout', { timeout: 45_000 }, async t => {
+test('T008 discovery acquires each remote source exactly once: another host is cloned once and GitHub is read once without Git', { timeout: 45_000 }, async t => {
   const fixture = packFixture();
   fixture.profile({});
-  fixture.catalog(['alpha']);
   const github = offlineGitHub(t, fixture);
   github.publish('acme/good', ['rust']);
   const team = localSource(fixture, 'team-packs', ['zeta']);
+  // Another Git host is the default catalog: a released install whose upstream is a disposable file:// repository.
+  const upstream = remotePackCatalog(fixture, ['alpha']);
   saveSources(fixture, [remoteEntry('acme/good'), localEntry(team)]);
   // Git's own trace, inherited by every reader and the Git it runs, records each clone it is asked for.
   const trace = path.join(fixture.temporary, 'git-trace.log');
@@ -9576,10 +9895,373 @@ test('T008 discovery clones a remote source exactly once: it is resolved once an
   const f = await packHttpFixture(fixture);
   try {
     const body = await discover(f);
-    assert.deepEqual(body.sources.items.slice(1).map(/** @param {any} row */ row => [row.name, row.status, row.count]),
-      [['acme/good', 'read', 1], ['team-packs', 'read', 1]]);
+    assert.deepEqual(body.sources.items.map(/** @param {any} row */ row => [row.name, row.status, row.count]),
+      [['Bundle upstream', 'read', 1], ['acme/good', 'read', 1], ['team-packs', 'read', 1]]);
     const clones = fs.readFileSync(trace, 'utf8').split(/\r?\n/).filter(line => /trace: built-in: git clone /.test(line));
-    assert.equal(clones.length, 1, `one clone for the one remote source, none for a folder: ${clones.join(' | ')}`);
-    assert.equal(clones[0].includes('https://github.com/acme/good '), true);
+    assert.equal(clones.length, 1, `one clone for the one other-host source, none for GitHub or a folder: ${clones.join(' | ')}`);
+    assert.equal(clones[0].includes(upstream.source), true);
+    // The GitHub source was read once, over HTTP, from its manifests alone: its commit twice, to refuse a moved ref.
+    assert.deepEqual(github.requests.map(request => request.path.replace(/[0-9a-f]{40}/g, '<id>')), [
+      '/api/repos/acme/good/commits/main', '/api/repos/acme/good/git/commits/<id>', '/api/repos/acme/good/git/trees/<id>',
+      '/api/repos/acme/good/git/trees/<id>', '/api/repos/acme/good/git/trees/<id>', '/api/repos/acme/good/git/trees/<id>',
+      '/raw/acme/good/<id>/library/packs/rust/pack.md', '/api/repos/acme/good/commits/main']);
   } finally { await f.close(); fixture.cleanup(); }
+});
+
+/* ----------------------------------------------------------------------------
+ * T003 (targeted pack acquisition): each reader's budget follows from what it
+ * reads, every reader an operation starts ends within that operation's one
+ * acquisition window, at most sixteen reads wait for one of the four reader
+ * slots, a reader's own root is observed against its size and entry bounds,
+ * and a stop that cannot be confirmed keeps its root and its slot.
+ * ------------------------------------------------------------------------- */
+
+const OUTGROWN = Object.freeze({ state: 'unavailable', reason: 'catalog_too_large',
+  message: 'The source grew past 1 GiB or 65,536 files and folders while it was read, so the read was stopped.' });
+
+test('T003 an installed-only pack read answers while another host\'s whole clone is held pending', { timeout: 30_000 }, async t => {
+  const fixture = packFixture();
+  const installed = { alpha: fixture.entry('alpha') };
+  fixture.profile(installed);
+  const listener = await silentGitListener(t);
+  const spy = spawnSpy(t);
+  const kills = taskkillSpy(t);
+  stallCatalog(fixture, listener.url('git'));
+  const instanceId = 'packs-held-clone';
+  const instance = await openInstance(instanceId, () => {}, { complete: true }, { root: fixture.root });
+  const controller = new AbortController();
+  let tree = /** @type {ProcessRow[]} */ ([]);
+  try {
+    const discovery = call(instance.url, { path: DISCOVER, signal: controller.signal }).catch(error => error);
+    await listener.connected();
+    tree = await readerTree(spy.readers()[0]?.child.pid);
+    const started = performance.now();
+    const response = await call(instance.url, { path: '/api/packs' });
+    const body = await response.json();
+    const elapsed = performance.now() - started;
+    // Taken when the answer arrived: the clone was still running then.
+    const held = { readerRunning: spy.readers()[0].exitedAt === null, open: listener.open, readers: spy.readers().length };
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.coverage.installed, { state: 'current', reason: null, message: null });
+    assert.equal(body.coverage.catalog.state, 'not_read');
+    assert.deepEqual(body.items.map(/** @param {any} item */ item => item.name), ['alpha']);
+    assert.ok(elapsed < 3_000, `answered beside the pending clone: ${elapsed} ms`);
+    assert.deepEqual(held, { readerRunning: true, open: 1, readers: 1 },
+      'the clone was pending when the installed-only read completed, and that read started no reader');
+    assert.equal((await call(instance.url, { path: '/api/projection' })).status, 200, 'other routes answer too');
+    controller.abort();
+    assert.ok((await discovery) instanceof Error);
+    assert.equal(await closeInstance(instanceId), true);
+    assert.equal(listener.open, 0, 'the cancelled clone holds no connection');
+    await assertTreeStops({ t, spy, kills, trees: [tree], scratch: fs.readdirSync(fixture.scratch) });
+  } finally {
+    await closeInstance(instanceId);
+    await stopRecorded(tree);
+    fixture.cleanup();
+  }
+});
+
+test('T003 a whole clone whose root reaches an observed bound is stopped and removed, and a link out of the root is never followed', { timeout: 120_000 }, async t => {
+  /**
+   * Stall another host's clone, grow its reader's root with `grow`, and read the snapshot.
+   * @param {import('node:test').TestContext} t
+   * @param {(root: string, outside: string, reader: ReturnType<ReturnType<typeof spawnSpy>['readers']>[number]) => Promise<void>} grow
+   */
+  const outgrown = async (t, grow) => {
+    const fixture = packFixture();
+    fixture.profile({});
+    const listener = await silentGitListener(t);
+    const spy = spawnSpy(t);
+    const kills = taskkillSpy(t);
+    stallCatalog(fixture, listener.url('git'));
+    const outside = path.join(fixture.temporary, 'outside');
+    fs.mkdirSync(outside);
+    const controller = new AbortController();
+    const reading = readPacks(fixture.root, controller.signal);
+    let tree = /** @type {ProcessRow[]} */ ([]);
+    try {
+      await listener.connected();
+      tree = await readerTree(spy.readers()[0]?.child.pid);
+      const started = performance.now();
+      await grow(spy.readers()[0].options.env.TMP, outside, spy.readers()[0]);
+      const shaped = shapeOf(outside);
+      const snapshot = await reading;
+      const elapsed = performance.now() - started;
+      assert.deepEqual(snapshot.coverage.catalog, kills.failed.size ? deadlineCoverage(kills) : OUTGROWN);
+      assert.equal(listener.open, 0, 'no Git process still holds the stalled connection');
+      await assertTreeStops({ t, spy, kills, trees: [tree], scratch: fs.readdirSync(fixture.scratch) });
+      assert.deepEqual(shapeOf(outside), shaped, 'nothing outside the root changed, not even when the root was removed');
+      return { elapsed, outside };
+    } finally {
+      controller.abort();
+      await reading.catch(() => {});
+      await stopRecorded(tree);
+      fixture.cleanup();
+    }
+  };
+  await t.test('a size of 1 GiB, beside a link to a larger folder that is never followed', async t => {
+    /** @type {boolean | null} */
+    let stillReading = null;
+    const { elapsed } = await outgrown(t, async (root, outside, reader) => {
+      outgrowRoot(outside);
+      fs.writeFileSync(path.join(outside, 'more.bin'), 'x');
+      fs.symlinkSync(outside, path.join(root, 'linked-outside'), process.platform === 'win32' ? 'junction' : 'dir');
+      // Four observations: a followed link would have stopped the read already.
+      await new Promise(resolve => setTimeout(resolve, 1_000));
+      stillReading = reader.exitedAt === null;
+      assert.equal(fs.statSync(path.join(outside, 'outgrown.bin')).size, 2 ** 30, 'the folder outside is untouched');
+      outgrowRoot(root);
+    });
+    assert.equal(stillReading, true, 'a link to a large folder counts as one entry, not as its contents');
+    assert.ok(elapsed < 4_500, `the bound stopped the read within one observation and the stop window: ${elapsed} ms`);
+  });
+  await t.test('65,536 files and folders', async t => {
+    const { elapsed } = await outgrown(t, async (root, _outside, reader) => {
+      const crowd = path.join(root, 'crowd');
+      fs.mkdirSync(crowd);
+      // Written until the observation stops the read; a stopped read's root may already be gone.
+      for (let index = 0; index < 65_536 && reader.exitedAt === null; index += 256) {
+        const written = await Promise.allSettled(Array.from({ length: 256 },
+          (_, offset) => fs.promises.writeFile(path.join(crowd, String(index + offset)), '')));
+        if (written.some(result => result.status === 'rejected')) break;
+      }
+    });
+    t.diagnostic(`stopped ${elapsed.toFixed(0)} ms after the crowd began`);
+  });
+});
+
+test('T003 a GitHub catalog read runs within its own 30-second budget, past the five seconds a folder gets', { timeout: 60_000 }, async t => {
+  const fixture = packFixture();
+  fixture.profile({});
+  fixture.catalog(['alpha']);
+  const github = offlineGitHub(t, fixture);
+  github.publish('acme/slow-packs', ['rust', 'zeta']);
+  // Eight rounds of requests at 800 ms each: well past a folder's 5 seconds, and each one well within its own 15.
+  github.slow('acme/slow-packs', 800);
+  saveSources(fixture, [remoteEntry('acme/slow-packs')]);
+  const f = await packHttpFixture(fixture);
+  try {
+    const started = performance.now();
+    const body = await discover(f);
+    const elapsed = performance.now() - started;
+    const row = sourceRows(body).get('acme/slow-packs');
+    assert.deepEqual([row.status, row.reason, row.count], ['read', null, 2], JSON.stringify(row));
+    assert.ok(elapsed > 5_000 && elapsed < 30_000, `read in ${elapsed.toFixed(0)} ms`);
+    assert.deepEqual(body.coverage.catalog, { state: 'current', reason: null, message: null });
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+test('T003 an upstream that names a folder is read within a folder\'s five seconds, not a whole clone\'s 55', { timeout: 150_000 }, async t => {
+  // A bundle manifest's upstream may name a folder, absolute or relative to the workspace, which Compose reads in place.
+  for (const spelling of /** @type {const} */ (['absolute', 'relative'])) await t.test(spelling, { timeout: 70_000 }, async t => {
+    const fixture = packFixture();
+    fixture.profile({});
+    const upstream = path.join(fixture.temporary, 'upstream-folder');
+    fixture.catalog(['alpha'], path.join(upstream, 'library', 'packs'));
+    fs.rmSync(fixture.library, { recursive: true });
+    const source = spelling === 'absolute' ? upstream : path.relative(fixture.root, upstream);
+    fs.writeFileSync(path.join(fixture.root, '.dude/metadata/bundle-manifest.md'),
+      `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify({ source_repo: source, source_ref: 'main' })}\n\`\`\`\n`);
+    // Inside the reader the folder never answers, as a folder on an unreachable share does.
+    stallResolutionOf(t, fixture, upstream);
+    const kills = taskkillSpy(t);
+    const roots = readerRootSpy(t);
+    try {
+      const started = performance.now();
+      const snapshot = await readPacks(fixture.root, new AbortController().signal);
+      const reported = performance.now();
+      assert.deepEqual(snapshot.coverage.catalog, deadlineCoverage(kills));
+      assert.equal(roots.created.length, 1, 'one reader read the upstream');
+      const fromRoot = reported - roots.created[0];
+      const fromRequest = reported - started;
+      assert.ok(fromRoot >= 5_000 && fromRequest < 7_500, `stopped at a folder's 5 seconds plus stop confirmation, not another `
+        + `host's 55: ${fromRoot.toFixed(0)} ms after its root, ${fromRequest.toFixed(0)} ms after the request`);
+    } finally { fixture.cleanup(); }
+  });
+});
+
+test('T003 an install from a saved GitHub source is prepared and submitted when each catalog read outlasts five seconds', { timeout: 90_000 }, async t => {
+  const fixture = packEngineFixture();
+  const github = offlineGitHub(t, fixture);
+  publishAlpha(github, fixture, 'acme/dude-packs');
+  saveSources(fixture, [remoteEntry('acme/dude-packs')]);
+  const f = await packHttpFixture(fixture);
+  try {
+    const key = sourceRows(await plainRead(f)).get('acme/dude-packs').key;
+    // The install reads the one saved source's catalog for its preparation and again for its submission.
+    github.slow('acme/dude-packs', 800);
+    /** @param {Record<string, unknown>} body */
+    const timedPost = async body => {
+      const started = performance.now();
+      const response = await f.post(body);
+      return { status: response.status, value: await response.json(), elapsed: performance.now() - started };
+    };
+    const prepared = await timedPost({ op: 'prepare', operation: 'install', name: 'alpha', source: key });
+    assert.equal(prepared.status, 202, JSON.stringify(prepared.value));
+    assert.equal(prepared.value.phase, 'prepared');
+    assert.ok(prepared.elapsed > 5_000, `the preparation's read took ${prepared.elapsed.toFixed(0)} ms`);
+    const delivered = await timedPost({ op: 'submit', operation: 'install', name: 'alpha', source: key, packReceipt: prepared.value.packReceipt });
+    assert.equal(delivered.status, 202, JSON.stringify(delivered.value));
+    assert.equal(delivered.value.phase, 'delivered');
+    assert.ok(delivered.elapsed > 5_000, `the submission's read took ${delivered.elapsed.toFixed(0)} ms`);
+    assert.equal(f.sends.length, 1, 'the one handoff was sent');
+    assert.deepEqual(github.requests.filter(request => request.authorization !== null), []);
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+isolatedTest('T003 an unconfirmed stop keeps its root and its reader slot, at most sixteen reads wait, and a wait ends with its window', { timeout: 120_000 }, async t => {
+  const fixture = packFixture();
+  fixture.profile({});
+  fixture.catalog(['alpha']);
+  // Every reader stalls in a local path call, so each stops at the folder deadline. Its stop marker is already a
+  // folder, so the marker write fails: the stop is unconfirmed, while the real tree kill still ends the reader.
+  stallResolutionOf(t, fixture, fixture.root);
+  const spy = spawnSpy(t);
+  const spawn = childProcess.spawn;
+  t.mock.method(childProcess, 'spawn', /** @this {any} */ function (command, args, options) {
+    if (Array.isArray(args) && args.includes(READER)) fs.mkdirSync(path.join(options.env.TMP, CATALOG_STOP_MARKER));
+    return spawn.apply(this, arguments);
+  });
+  const read = async () => {
+    const started = performance.now();
+    const snapshot = await readPacks(fixture.root, new AbortController().signal);
+    return { coverage: snapshot.coverage.catalog, elapsed: performance.now() - started };
+  };
+  const exited = (/** @type {{ child: import('node:child_process').ChildProcess }} */ { child }) => child.exitCode !== null || child.signalCode !== null;
+  try {
+    // Four unconfirmed stops: each keeps its root and its slot.
+    const stopped = await Promise.all(Array.from({ length: 4 }, read));
+    for (const { coverage } of stopped) {
+      assert.deepEqual(coverage, { state: 'unavailable', reason: 'catalog_cleanup_failed', message: 'The catalog reader could not confirm process cleanup.' });
+    }
+    assert.equal(spy.readers().length, 4);
+    assert.deepEqual(fs.readdirSync(fixture.scratch).sort(), spy.readers().map(reader => path.basename(reader.options.env.TMP)).sort(),
+      'each unconfirmed stop kept exactly its own root');
+    const settle = performance.now() + 5_000;
+    while (!spy.readers().every(exited) && performance.now() < settle) await new Promise(resolve => setTimeout(resolve, 25));
+    assert.ok(spy.readers().every(exited), 'the tree kills ended every reader, but no stop was confirmed');
+    // Every slot is held, so sixteen reads wait, and the seventeenth is refused at once without a reader.
+    const waiting = Array.from({ length: 16 }, read);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const refused = await read();
+    assert.deepEqual(refused.coverage, { state: 'unavailable', reason: 'catalog_busy',
+      message: 'Too many catalog reads were waiting, so this one did not start. Reload to try a fresh read.' });
+    assert.ok(refused.elapsed < 1_000, `refused at once: ${refused.elapsed.toFixed(0)} ms`);
+    assert.equal(spy.readers().length, 4, 'no reader started for a waiting or refused read');
+    // A wait ends with its operation's one-minute window, and still starts no reader.
+    const expired = await Promise.all(waiting);
+    for (const { coverage, elapsed } of expired) {
+      assert.deepEqual(coverage, { state: 'unavailable', reason: 'catalog_timeout', message: 'The catalog read timed out. Reload to try a fresh read.' });
+      assert.ok(elapsed >= 60_000 && elapsed < 62_500, `the wait ended with its window: ${elapsed.toFixed(0)} ms`);
+    }
+    assert.equal(spy.readers().length, 4, 'no slot was ever released into another reader');
+    assert.equal(fs.readdirSync(fixture.scratch).length, 4, 'the kept roots stay; nothing reclaims them');
+  } finally { t.mock.restoreAll(); fixture.cleanup(); }
+});
+
+isolatedTest('T003 material that Compose kept for a Git it could not confirm stopped is unconfirmed cleanup: the reader root and slot stay', { timeout: 60_000 }, async t => {
+  const fixture = packFixture();
+  fixture.profile({});
+  // The default catalog is another host's, read at `latest`, and it has more tags than Compose's 1 MiB bound on Git's
+  // output. Compose stops that `ls-remote`, cannot confirm that its process tree stopped, and keeps its root.
+  const upstream = remotePackCatalog(fixture, ['alpha']);
+  const commit = upstream.git('rev-parse', 'HEAD');
+  // About 225 listed bytes per tag.
+  const tags = Array.from({ length: 6_000 }, (_, index) => `refs/tags/overflow-${'x'.repeat(150)}-${String(index).padStart(5, '0')}`);
+  fs.writeFileSync(path.join(upstream.repository, '.git', 'packed-refs'),
+    `# pack-refs with: peeled fully-peeled sorted \n${tags.map(tag => `${commit} ${tag}\n`).join('')}`);
+  const listed = spawnSync('git', ['ls-remote', '--tags', '--refs', '--', upstream.source], { maxBuffer: 64 * 1024 * 1024, windowsHide: true });
+  assert.ok(listed.status === 0 && listed.stdout.length > 1_048_576, 'the fixture lists more than 1 MiB of tags');
+  fs.writeFileSync(path.join(fixture.root, '.dude/metadata/bundle-manifest.md'),
+    `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify({ source_repo: upstream.source, source_ref: 'latest' })}\n\`\`\`\n`);
+  const spy = spawnSpy(t);
+  try {
+    // Four such reads: each reader answers by itself, and each keeps its root and its slot.
+    const reads = await Promise.all(Array.from({ length: 4 }, async () => {
+      const started = performance.now();
+      const snapshot = await readPacks(fixture.root, new AbortController().signal);
+      return { coverage: snapshot.coverage.catalog, elapsed: performance.now() - started };
+    }));
+    for (const { coverage, elapsed } of reads) {
+      assert.deepEqual(coverage, { state: 'unavailable', reason: 'catalog_cleanup_failed',
+        message: 'The catalog reader could not confirm process cleanup.' }, 'unconfirmed cleanup, never a removal or another failure');
+      assert.ok(elapsed < 20_000, `answered long before the 55-second deadline: ${elapsed.toFixed(0)} ms`);
+    }
+    const readers = spy.readers();
+    assert.equal(readers.length, 4);
+    assert.ok(readers.every(reader => reader.exitedAt !== null), 'every reader has exited');
+    assert.deepEqual(fs.readdirSync(fixture.scratch).sort(), readers.map(reader => path.basename(reader.options.env.TMP)).sort(),
+      'each reader root was kept');
+    for (const reader of readers) {
+      const kept = fs.readdirSync(reader.options.env.TMP);
+      assert.equal(kept.includes(CATALOG_STOP_MARKER), false, 'nothing stopped the reader: it answered by itself');
+      assert.equal(kept.filter(name => name.startsWith('dude-pack-')).length, 1, 'the root Compose kept is still inside it');
+    }
+    // All four slots stay taken: a fifth read waits, starts no reader, and ends only when it is cancelled.
+    const controller = new AbortController();
+    const waiting = readPacks(fixture.root, controller.signal);
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+    assert.equal(spy.readers().length, 4, 'no slot was released into another reader');
+    controller.abort();
+    await assert.rejects(waiting);
+    assert.equal(spy.readers().length, 4);
+    assert.equal(fs.readdirSync(fixture.scratch).length, 4, 'nothing reclaims the kept roots');
+  } finally { t.mock.restoreAll(); fixture.cleanup(); }
+});
+
+isolatedTest('T003 a read admitted late in its window is stopped when the window ends, not when its own budget would', { timeout: 100_000 }, async t => {
+  const fixture = packFixture();
+  fixture.profile({});
+  const listener = await silentGitListener(t);
+  const spy = spawnSpy(t);
+  const kills = taskkillSpy(t);
+  const roots = readerRootSpy(t);
+  stallCatalog(fixture, listener.url('git'));
+  const controller = new AbortController();
+  const read = async () => {
+    const started = performance.now();
+    const snapshot = await readPacks(fixture.root, controller.signal);
+    const settled = performance.now();
+    return { coverage: snapshot.coverage.catalog, elapsed: settled - started, settled };
+  };
+  /** @type {Promise<unknown>[]} */
+  const pending = [];
+  try {
+    // Four stalled clones of another host hold every reader slot until their own 55-second budgets end.
+    const holders = Array.from({ length: 4 }, read);
+    pending.push(...holders);
+    const ready = performance.now() + 10_000;
+    while (spy.readers().length < 4 && performance.now() < ready) await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(spy.readers().length, 4, 'four readers hold every slot');
+    // A fifth read of the same clone waits about 55 seconds for a slot, so its one-minute window has about five
+    // seconds left when it is admitted. Its own budget would run on for 55 seconds from there.
+    const late = read();
+    pending.push(late);
+    /** @type {NodeJS.Timeout | undefined} */
+    let bound;
+    const outcome = await Promise.race([late, new Promise(resolve => { bound = setTimeout(resolve, 70_000, null); })]);
+    clearTimeout(bound);
+    assert.ok(outcome, 'the late read was stopped at its window\'s end, long before its own budget would end');
+    const { coverage, elapsed, settled } = /** @type {Awaited<ReturnType<typeof read>>} */ (outcome);
+    await Promise.all(holders);
+    const readers = spy.readers();
+    assert.equal(readers.length, 5, 'a stopped holder freed its slot for the late read');
+    const lateReader = readers[4];
+    assert.ok(readers.slice(0, 4).some(reader => reader.exitedAt !== null && reader.exitedAt <= lateReader.spawnedAt),
+      'the late read started only after a holder had stopped');
+    assert.ok(elapsed >= 60_000 && elapsed < 62_500, `stopped at its window's end plus stop confirmation: ${elapsed.toFixed(0)} ms`);
+    assert.equal(roots.created.length, 5);
+    const ran = settled - roots.created[4];
+    t.diagnostic(`late read: admitted ${(roots.created[4] - (settled - elapsed)).toFixed(0)} ms after it began, stopped ${elapsed.toFixed(0)} ms after it began`);
+    assert.ok(ran < 10_000, `admitted with about five seconds of its window left, it ran ${ran.toFixed(0)} ms, not 55 seconds`);
+    const lateKillFailed = kills.calls.some(call => call.args[1] === String(lateReader.child.pid) && call.error);
+    assert.deepEqual(coverage, lateKillFailed
+      ? { state: 'unavailable', reason: 'catalog_cleanup_failed', message: 'The catalog reader could not confirm process cleanup.' }
+      : { state: 'unavailable', reason: 'catalog_timeout', message: 'The catalog read timed out. Reload to try a fresh read.' });
+    if (!kills.failed.size) assert.equal(listener.open, 0, 'no Git process still holds the stalled connection');
+  } finally {
+    controller.abort();
+    await Promise.allSettled(pending);
+    fixture.cleanup();
+  }
 });
