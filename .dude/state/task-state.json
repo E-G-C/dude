@@ -670,5 +670,14 @@
       "T001@b7c9e2a4": "x"
     },
     "updated_at": "2026-09-28T03:12:07.361Z"
+  },
+  ".dude/specs/082-targeted-pack-acquisition/tasks.md": {
+    "glyphs": {
+      "T001@c4b08a21": "x",
+      "T002@a92e7c10": "x",
+      "T005@7d44d411": "x",
+      "T004@d3087fa2": "x"
+    },
+    "updated_at": "2026-10-10T20:35:08.000Z"
   }
 }

@@ -622,6 +622,76 @@ test('T004 an unsubmitted prepared pack receipt excludes while fresh, then retir
   });
 });
 
+test('T003 install and refresh outlast the five-second operation bound for their catalog phase, and removal keeps it', { timeout: 60_000 }, async t => {
+  // Two queue checks of 3.5 seconds: each within its own short bound, together past five seconds.
+  /** @param {ReturnType<typeof packProviderFixture>} f */
+  const slowQueue = f => {
+    f.state.pendingItems = () => new Promise(resolve => setTimeout(() => resolve({ items: [], steeringMessages: [] }), 3_500));
+  };
+  for (const operation of /** @type {const} */ (['install', 'refresh'])) await t.test(operation, async () => {
+    const f = packProviderFixture(operation);
+    try {
+      slowQueue(f);
+      const started = performance.now();
+      const prepared = await f.prepare();
+      const elapsed = performance.now() - started;
+      assert.equal(prepared.phase, 'prepared');
+      assert.ok(elapsed > 6_500, `the preparation ran past five seconds: ${elapsed.toFixed(0)} ms`);
+      assert.equal((await f.submit(prepared)).phase, 'delivered');
+      assert.equal(f.calls.sends.length, 1);
+    } finally { f.cleanup(); }
+  });
+  await t.test('remove', async () => {
+    const f = packProviderFixture('remove');
+    try {
+      slowQueue(f);
+      const started = performance.now();
+      await assert.rejects(f.prepare(), { code: 'operation_unavailable' });
+      const elapsed = performance.now() - started;
+      assert.ok(elapsed >= 4_900 && elapsed < 6_500, `a removal, which reads no catalog, keeps five seconds in all: ${elapsed.toFixed(0)} ms`);
+      assert.equal(f.provider.read().packRequests.length, 0);
+      assert.equal(f.calls.sends.length, 0);
+    } finally { f.cleanup(); }
+  });
+});
+
+test('T003 install and refresh keep five-second queue and send bounds inside their longer request ceiling', { timeout: 60_000 }, async t => {
+  /**
+   * The provider's own bounds are unreferenced timers, which alone would let this process's event loop end
+   * before they fire, so a referenced timer keeps it alive while `work` waits on them.
+   * @template T @param {() => Promise<T>} work
+   */
+  const whileAlive = async work => {
+    const alive = setInterval(() => {}, 1_000);
+    try { return await work(); } finally { clearInterval(alive); }
+  };
+  await t.test('a queue check that never answers', async () => {
+    const f = packProviderFixture();
+    try {
+      f.state.pendingItems = () => new Promise(() => {});
+      const started = performance.now();
+      await whileAlive(() => assert.rejects(f.prepare(), { code: 'operation_unavailable' }));
+      const elapsed = performance.now() - started;
+      assert.ok(elapsed >= 4_900 && elapsed < 6_500, `the queue check kept its own bound: ${elapsed.toFixed(0)} ms`);
+      assert.equal(f.provider.read().packRequests.length, 0, 'no receipt was allocated');
+    } finally { f.cleanup(); }
+  });
+  await t.test('a send that never confirms', async () => {
+    const f = packProviderFixture('refresh');
+    try {
+      const prepared = await f.prepare();
+      f.state.send = () => new Promise(() => {});
+      const started = performance.now();
+      await whileAlive(() => assert.rejects(f.submit(prepared), { code: 'pack_send_uncertain' }));
+      const elapsed = performance.now() - started;
+      assert.ok(elapsed >= 4_900 && elapsed < 6_500, `the send kept its own bound: ${elapsed.toFixed(0)} ms`);
+      assert.equal(f.provider.read().packRequests[0].phase, 'uncertain');
+      assert.equal(f.calls.sends.length, 1, 'sent once and never replayed');
+      await assert.rejects(f.submit(prepared), { code: 'already_consumed' });
+    } finally { f.cleanup(); }
+  });
+});
+
 test('T003 pack receipt is burned on every final-queue refusal, with fresh valid companion inputs', async t => {
   const cases = [
     ['queued input', f => { f.queueResult = { items: [{}], steeringMessages: [] }; }, 'idle_required'],

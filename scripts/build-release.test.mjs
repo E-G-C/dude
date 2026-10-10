@@ -400,6 +400,8 @@ test('buildRelease preserves unrelated source bytes and excludes source tests', 
       [RECOVERY_SOURCE_REL, RECOVERY_DEPLOY_REL],
       ['src/skills/dude-engine/lib/lightweight-work-postimage.mjs', '.github/skills/dude-engine/lib/lightweight-work-postimage.mjs'],
       ['src/skills/dude-lightweight-execution/board.mjs', '.github/skills/dude-lightweight-execution/board.mjs'],
+      ['src/skills/dude-compose/lib/pack-acquisition.mjs', '.github/skills/dude-compose/lib/pack-acquisition.mjs'],
+      ['src/skills/dude-engine/lib/github-content.mjs', '.github/skills/dude-engine/lib/github-content.mjs'],
       ...T007_PROJECTION_PAIRS,
     ]) {
       assert.ok(result.files.includes(deployRel), deployRel);
@@ -438,6 +440,15 @@ test('buildRelease preserves unrelated source bytes and excludes source tests', 
           /import \{ buildLightweightWorkPostimages \} from '\.\.\/dude-engine\/lib\/lightweight-work-postimage\.mjs'/);
       }
     }
+    // Compose imports its remote acquisition only when it reads a remote source,
+    // so the core-only release must ship it, and the GitHub transport it imports.
+    const acquisition = path.join(outDir, '.github/skills/dude-compose/lib/pack-acquisition.mjs');
+    assert.match(fs.readFileSync(path.join(outDir, '.github/skills/dude-compose/compose.mjs'), 'utf8'),
+      /import\('\.\/lib\/pack-acquisition\.mjs'\)/);
+    checkImports(acquisition);
+    assert.ok(visited.has(path.join(outDir, '.github/skills/dude-engine/lib/github-content.mjs')),
+      'the released acquisition imports the released GitHub transport');
+    assert.equal(typeof (await import(pathToFileURL(acquisition).href)).acquireRemoteCatalog, 'function');
     const fixturePaths = [
       ...['README.md', 'reference.json', 'retention-episode.json', 'model-view-test-helpers.mjs']
         .map(filename => `scripts/fixtures/064-work-receipt-overflow-handling/${filename}`),

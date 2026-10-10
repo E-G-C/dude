@@ -53,6 +53,24 @@ see [Settings: optional packs](#settings-optional-packs). Without `--source`,
 `list` reads only the default catalog, and no Compose command reads the sources
 saved in Canvas Settings (see [Settings: pack sources](#settings-pack-sources)).
 
+A public GitHub source, given with `--source https://github.com/<owner>/<repo>`
+or as the bundle manifest's upstream, is read over anonymous HTTPS at one
+resolved commit. `list` downloads only each pack's `pack.md`, and `add` and
+`refresh` download only the selected pack's folder. Compose never clones a
+GitHub source, not even after a failure, and sends no token, credential helper
+login, `.netrc` login, SSH key, or Git proxy setting with it. A private
+repository, or one you can reach only through Git's sign-in or proxy
+configuration, therefore fails; use a local folder `--source` for such a
+catalog. Any other host, GitHub Enterprise included, is cloned whole with Git.
+Remote reads have fixed bounds: 30 seconds for a GitHub catalog, 120 seconds
+for a selected GitHub pack, and 60 seconds for another host's clone, plus size
+and request limits. Exceeding one is a refusal, never a partial or empty
+result. Each read uses a new temporary folder that Compose removes before it
+answers. The one exception is a Git process that could not be confirmed
+stopped: Compose then keeps its folder and says so in the refusal. Canvas
+Settings stops its own read of another host's clone at 55 seconds; see
+[Settings: optional packs](#settings-optional-packs).
+
 ### GitHub Issue Input
 
 One explicit GitHub issue can supply material to an existing request:
@@ -1133,11 +1151,32 @@ A catalog is read only when you choose Reload packs, which replaces Refresh in
 the command bar on Installed, Available, and Sources, and once after you add or
 remove a source. Opening a view, filtering, paging, Show packs in Available,
 Show in Installed, and answering a permission read no catalog. A Reload reads
-the default catalog and each added source once, at most four at a time, and
-stops each read at 5 seconds. The default catalog is the local `library/packs/`
-when present; otherwise it is the upstream source pinned in the bundle manifest.
-Reading or reloading never requests a pack change. If a Reload fails or is slow,
-Settings reports it and does not show that read as current.
+the default catalog and each added source once, each in its own helper process,
+at most four at a time. Each read stops at its own bound, counted from when it
+gets a helper: 5 seconds for a folder, 30 seconds for a public GitHub
+repository, whose `pack.md` files Canvas downloads without cloning it, and 55
+seconds for a repository on another host, which Git clones whole. Compose and
+the CLI give that clone 60 seconds. Canvas stops its helper 5 seconds sooner so
+that it stops all of the helper's processes itself: on Windows, Compose's own
+deadline can stop Git's launcher and leave Git running. Every read in a Reload,
+including any wait for a free helper, stops within 60 seconds of the Reload's
+start, and confirming that a stopped helper's processes ended can take up to 2
+seconds more. At most 16 reads wait at once; a read that cannot start in time,
+or finds 16 already waiting, is reported unavailable and never runs. A clone
+whose folder reaches 1 GiB or 65,536 files and folders is stopped. Canvas
+checks that size about every quarter second, one check at a time, so a clone
+can grow past it before a check sees it.
+The default catalog is the local `library/packs/` when present; otherwise it is
+the upstream source pinned in the bundle manifest. Reading or reloading never
+requests a pack change. If a Reload fails or is slow, Settings reports it and
+does not show that read as current.
+
+Leaving Settings or closing Canvas cancels a Reload and stops its helpers.
+Canvas removes a helper's temporary files only after it has confirmed that the
+helper's processes stopped. If it cannot confirm that, or Compose reports that
+it kept a clone's folder because it could not confirm that its Git stopped,
+Canvas keeps those files, reports that cleanup could not be confirmed, and runs
+with one helper fewer until the extension restarts.
 
 Until the first Reload, Available shows `?` and lists nothing, with the heading
 `Catalog not read yet` and a Reload packs button, and the Use case filter is
@@ -1241,6 +1280,9 @@ for that exact operation and pack to the joined session. It refuses before
 sending while the session is busy, a request is waiting, chat input is queued,
 or an earlier capture or pack request is unreconciled. It never queues,
 retries, or resends a pack request, including after a reload or reconnect.
+Preparing and submitting an install or refresh each read its catalog again, so
+either can take as long as that read, and never more than 90 seconds. A removal
+reads no catalog and keeps its 5-second bound.
 Closing the request dialog or navigating away does not cancel an admitted
 request; View pack request reopens its status.
 
@@ -1452,15 +1494,20 @@ refuses:
   location, so a second ref is not a second source;
 - a ninth added source.
 
-Canvas never asks for credentials. It runs Git without prompts, credential
-helpers, or a `.netrc` login, so a private repository fails as unreachable. A
-credential you wrote into your own Git configuration, such as an
-`http.extraHeader` value, still applies. A source is third-party content: its
+Canvas never asks for credentials. It reads a GitHub repository over anonymous
+HTTPS, runs no Git for it, and sends no token, credential helper login,
+`.netrc` login, SSH key, or Git proxy setting with it, so a private repository,
+or one you can reach only through Git's sign-in or proxy configuration, fails as
+unreachable. Git runs only for a bundle upstream on another host, such as GitHub
+Enterprise, and then without prompts, credential helpers, or a `.netrc` login.
+A credential you wrote into your own Git configuration, such as an
+`http.extraHeader` value, still applies there. A source is third-party content: its
 packs can add agents and instructions, so add only sources you trust. Every
 install still asks for your permission first.
 
-Add source reads the source's catalog once before it saves anything, and it
-stops the read at 5 seconds. Every pack's `pack.md` must parse. A valid catalog
+Add source reads the source's catalog once before it saves anything. It stops
+that read at 30 seconds for a GitHub repository, and each check and read of a
+folder at 5 seconds. Every pack's `pack.md` must parse. A valid catalog
 with no packs is accepted and reports 0 packs. If any check fails, nothing is
 saved, and the refusal stays in the dialog with what you typed. While Canvas
 reads, Cancel, Close, Escape, and the backdrop do nothing. Otherwise Cancel,
@@ -2175,10 +2222,10 @@ $env:DUDE_CANVAS_BROWSER_REQUIRED = '1'
 
 On the recorded Windows 11 host, the Git that Copilot bundles came first on
 `PATH`. Starting it took about 1.4 s, against about 0.17 s for Git for Windows,
-and a small local clone with it took 3.8 to 4.1 s against the catalog reader's
-5-second deadline. Under CPU load, reads of a source timed out. That is one
-host's measurement. It explains the `PATH` order and does not promise a
-failure-free Windows run.
+and a small local clone with it took 3.8 to 4.1 s, close to the 5-second
+deadline the catalog reader then had for every read. Under CPU load, reads of a
+source timed out. That is one host's measurement. It explains the `PATH` order
+and does not promise a failure-free Windows run.
 
 Source, Compose, lint, and provider changes also run the next three commands,
 each on its own and in the same environment. The importer files stay unchanged
@@ -2256,8 +2303,8 @@ Settings coverage uses the same stand-ins. `browser.test.mjs` reads local and
 configured-remote catalogs; the remote case clones a disposable `file://` Git
 source, not a network host. Its Sources cases add, read, and remove saved
 sources through the real provider and HTTP routes. They reach public GitHub
-sources only through a Git configuration that rewrites each GitHub address to a
-local repository, so no case needs a network. `t011-browser.test.mjs` drives
+sources only through a loopback stand-in for GitHub's API and raw-file hosts
+that serves local repositories, so no case needs a network. `t011-browser.test.mjs` drives
 Install, Remove, and Refresh through the real provider, HTTP routes, and Compose
 commands in disposable bundles, including installs and refreshes from an added
 source, while test code acts as the owner that previews, confirms, and
@@ -2265,7 +2312,8 @@ acknowledges. These suites do not exercise a model-driven coordinator. The
 installed-host driver below adds deterministic round trips through the
 installed selected-Dude owner, exact permission, Compose or the importer, result
 acknowledgment, and authoritative provider reread: one for a local pack, two
-for local imports, and one for a pack from an added local folder. The recorded
+for local imports, and one for a pack from an added local folder. It also reads
+a core-only install's default catalog from public GitHub. The recorded
 Windows runs below executed them; macOS behavior of the current driver is
 unverified.
 
@@ -2325,8 +2373,9 @@ and refuses to infer Lightweight status through it. If the normal Windows
 `TEMP` is below such a directory, set `TEMP`, `TMP`, and
 `DUDE_CANVAS_ARTIFACTS_DIR` to one other short owned temporary root for this
 command. After reading the manifest, confirm that every owned host and browser
-process stopped before removing that exact root. A complete pass takes about 3
-minutes and uses about 550 MB of scratch space under that root.
+process stopped before removing that exact root. A complete Windows pass with
+CLI `1.0.94-3` took about 7 minutes, about one of them in the stall probe
+below, and used about 550 MB of scratch space under that root.
 
 For comparison, these Windows paths were used by the observed `1.0.84-5`
 installation. Set them to the versions and locations actually installed on
@@ -2353,7 +2402,8 @@ the driver neither fabricates it nor weakens the production guard.
 The driver installs the current release into owned blank Git/non-Git fixtures.
 To reuse a previously verified current release, set `DUDE_CANVAS_RELEASE_DIR` to
 its directory. The driver checks its runtime bytes against source before copying
-it and checks the raw agent profiles when opening each session. Verify the
+it, and when opening each session checks the raw agent profiles against the
+ones the current source renders for a release. Verify the
 complete release manifest before reuse; the driver does not rebuild the UI,
 project generated files over your checkout, install dependencies, or repair an
 old release. Each invocation retains a unique `installed-host-*` directory,
@@ -2466,17 +2516,49 @@ check of that helper's launch.
 
 The stall probe points a disposable release's catalog source at a local
 `git://` peer that never answers. Git must reach the peer, and the read must end
-with `catalog_timeout` between 5 and 7.5 seconds, leaving no open connection and
-no `dude-canvas-packs-*` temporary root. Those checks show that the deadline
-stopped the helper's process tree, including the Git process that held the
-connection. None of these pack reads has run on macOS or in the embedded
-desktop panel.
+with `catalog_timeout` between 55 and 57.5 seconds, leaving no open connection
+and no `dude-canvas-packs-*` temporary root: another host's clone gets 55
+seconds from its reader's admission, and confirming the stop can take up to 2
+seconds more. Those checks show that the deadline stopped the helper's process
+tree, including the Git process that held the connection. None of these pack
+reads has run on macOS or in the embedded desktop panel.
 
 The catalog helper depends on the CLI's `extension_bootstrap.mjs` launch
 contract (the bootstrap's basename in `process.argv`, plus `EXTENSION_PATH` and
 `COPILOT_EXTENSION_PARENT_PID`), so re-run this driver, including its real-host
 probes, whenever the Copilot CLI version changes. A changed contract shows up in
 Settings as an ordinary `Catalog: unavailable`.
+
+Before its other cases, the driver checks default-source discovery in its own
+core-only release fixture, whose default catalog is therefore the public GitHub
+upstream that the bundle manifest names, at `latest`. Its fixture and host use
+short owned folders under the OS temporary directory, outside the evidence
+folder, and a pass removes them. A plain `GET /api/packs` must report the
+catalog not read and start no catalog reader. One `GET /api/packs?discover=1`,
+the request Reload packs sends, must then return a current catalog within the
+60-second acquisition window. A watch on the host's temporary folder must see
+one reader acquire only `pack.md` files, with no clone, and then remove its
+folder. The expected catalog comes from outside the product:
+`git ls-remote --tags` names the highest stable `vX.Y.Z` tag and its commit
+before and after the Reload, and `git ls-tree` lists the packs at that commit
+in this checkout. If the commit is not local, fetch the tag first. The
+manifest's `defaultSourceCase` and the summary line record the tag, commit,
+packs, and elapsed time, and the manifest also records the GitHub API
+allowance and cleanup.
+
+This is the driver's only network case. It spends one discovery, about 25 of
+the 60 anonymous GitHub API requests that each address gets per hour, so check
+`https://api.github.com/rate_limit`, which spends none, before another run from
+the same address. A missing installed artifact, an unreachable network or
+GitHub, or a spent allowance ends the run as `BLOCKED` with a non-zero exit,
+never as a pass.
+
+The driver starts every host from a fresh release, so each loads the current
+backend. To check by hand in a workspace whose Dude extension is already
+running, replace the backend modules, then restart the extension as described
+in [Reloading the development canvas](#reloading-the-development-canvas) before
+you choose Reload packs. A running extension keeps the modules it loaded;
+neither Reload packs nor a Canvas reload loads new ones.
 
 Two further disposable workspaces drive Settings. The first drives Add/import.
 The shipped route hands one local skill file and one local directory (an agent
@@ -2503,12 +2585,13 @@ it (`409`, `source_in_use`). In the pack, import, and source cases, entering
 Settings acquires no catalog, and only an explicit read does: a Reload, or the
 one read that follows a source save.
 
-This case adds a local folder only. Public GitHub sources run in the provider
-and browser suites, through a Git configuration that rewrites each GitHub
-address to a local repository, and are not exercised in the installed host.
+This case adds a local folder only. The provider and browser suites cover
+added public GitHub sources through their loopback stand-in; the installed host
+reads public GitHub only in the default-source case above.
 Every fixture also compares the installed runtime modules, including the project
 reader (`lib/project-artifacts.mjs`) and the pack reader and provider, and the
-installed saved-sources parser, Compose, lint, upgrade, and import skill files
+installed saved-sources parser, Compose with its remote acquisition and GitHub
+transport modules, lint, upgrade, and import skill files
 with `src/` byte for byte. It checks that a fresh install holds no
 `.dude/metadata/pack-sources.md`.
 

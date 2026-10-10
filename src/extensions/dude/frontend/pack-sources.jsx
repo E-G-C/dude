@@ -30,6 +30,11 @@ const DEFAULT_LIMIT = 8;
 const NOT_READ_BY_DESIGN = 'Not read while library/packs exists';
 
 const packsWord = count => `${count} ${count === 1 ? 'pack' : 'packs'}`;
+/**
+ * How long the server reads a source Add names before it stops: a GitHub
+ * repository's catalog within 30 seconds, and a folder within 5.
+ */
+const readingSeconds = location => (/^https:/i.test(location) ? 30 : 5);
 /** The written-out type of a source: never an icon or a color alone. */
 const sourceType = item => item.type === 'remote' ? 'GitHub' : 'Local folder';
 /** `Local library - Local folder`, `owner/repo - GitHub`, `Bundle upstream - GitHub E-G-C/dude`. */
@@ -159,7 +164,7 @@ function refProblem(ref, location) {
  * unchanged and stays inside the dialog with what was typed. The two that need a
  * fresh read offer it as an action, never a replay of the write.
  */
-function refusalOf({ code, message }, sources, key) {
+function refusalOf({ code, message }, sources, key, location) {
   const nothing = 'Nothing was saved.';
   switch (code) {
     case 'invalid_location': case 'credentials': return { field: 'location', message };
@@ -184,7 +189,7 @@ function refusalOf({ code, message }, sources, key) {
     case 'limit': return { intent: 'warning', title: 'Source limit reached',
       text: `This project has ${sources?.limit ?? DEFAULT_LIMIT} of ${sources?.limit ?? DEFAULT_LIMIT} sources. Remove one before adding another. ${nothing}` };
     case 'timeout': return { intent: 'error', title: 'Reading timed out',
-      text: `Reading took longer than 5 seconds, so it was stopped. ${nothing} Try again when the source responds faster.` };
+      text: `Reading took longer than ${readingSeconds(location)} seconds, so it was stopped. ${nothing} Try again when the source responds faster.` };
     case 'cleanup_unconfirmed': return { intent: 'error', title: 'Reading could not be stopped cleanly', text: `${message} ${nothing}` };
     case 'sources_changed': return { intent: 'warning', title: 'The source list changed', reload: true,
       text: `Another tab or person changed the saved source list after Canvas last read it. ${nothing} Choose Reload packs to read the current list, then add the source again.` };
@@ -327,12 +332,12 @@ function AddSourceForm({ data, packs, reason, onReading, onSaved, onReload, loca
     if (problems.location || problems.ref) { (problems.location ? locationRef : refInput).current?.focus(); return; }
     submittedRevision.current = sources?.sourcesRevision ?? null;
     setStatus({ phase: 'reading', intent: 'info', title: 'Reading the source',
-      text: 'Checking that its pack catalog can be read. Nothing is installed, and nothing is saved until the read succeeds. Reading stops after 5 seconds.' });
+      text: `Checking that its pack catalog can be read. Nothing is installed, and nothing is saved until the read succeeds. Reading stops after ${readingSeconds(where)} seconds.` });
     onReading(true);
     const result = await data.addSource({ location: where, ref: tracked });
     onReading(false);
     if (result.ok) { onSaved({ ...result, location: where, name: typedName(where) }); return; }
-    const refused = refusalOf(result, sources, result.key);
+    const refused = refusalOf(result, sources, result.key, where);
     if (refused.field) { setStatus(null); setErrors({ location: '', ref: '', [refused.field]: refused.message });
       (refused.field === 'ref' ? refInput : locationRef).current?.focus(); return; }
     setStatus({ phase: 'refused', ...refused });

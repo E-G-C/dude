@@ -3,7 +3,7 @@ name: "Architect"
 description: "Design practical software and system architectures, evaluate tradeoffs, review boundaries and contracts, select technology stacks, and produce implementation-ready designs. Use for new subsystems, architectural reviews, API and data design, and reliability or scaling decisions."
 tools: ["read", "edit", "search"]
 user-invocable: false
-model: gpt-6-astra
+model: gpt-6.1-sol
 ---
 
 # System architect
