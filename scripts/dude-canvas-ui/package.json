@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@fluentui/react-components": "9.74.7",
+    "marked": "18.1.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

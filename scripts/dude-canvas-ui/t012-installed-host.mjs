@@ -248,13 +248,13 @@ const DEVELOPMENT_ABOUT = Object.freeze({
   baseRelease: 'v1.3.0',
   rows: installedAboutRows('Development (main), based on v1.3.0', 'Development (main)'),
 });
-const SOURCE_APP_SHA256 = '0a808370514afa32602d0031352070be781e99a7e43dfe94da5a98f8aa9bf59c';
+const SOURCE_APP_SHA256 = '7223f8c918d2686e103e8dbef5a118c0be6e1c48a713552103676419a72af7a1';
 const TASKS_PATH = path.posix.join(path.posix.dirname(SPEC_PATH), 'tasks.md');
 const DONE_IDEA_PATH = '.dude/ideas/052-dude-canvas-ui.md';
 const DONE_SPEC_PATH = '.dude/specs/052-dude-canvas-ui/spec.md';
 const MIXED_IDEA_PATH = '.dude/ideas/061-installed-controlled-tasks.md';
 const MIXED_SPEC_PATH = '.dude/specs/061-installed-controlled-tasks/spec.md';
-const SOURCE_LEGAL_SHA256 = '3be2d01e3b59529e54cde5f17aee76c168bcde63245c21ec387cf70ba7a6d869';
+const SOURCE_LEGAL_SHA256 = 'f5722a59f11d3b24a83b546313fde699789d759791fcb554ebf0dcdce083c8b2';
 /**
  * The Review gesture behavior lives in these static modules, not in the bundled
  * frontend, so the frontend hash alone cannot show which engine an installed

@@ -387,6 +387,64 @@ export const useCanvasStyles = makeStyles({
     '& ul': { paddingInlineStart: tokens.spacingHorizontalXL, marginBlock: tokens.spacingVerticalS },
     '& li + li': { marginTop: tokens.spacingVerticalXS },
   },
+  // Details (080): one secondary button per document, labeled with its path,
+  // which wraps inside its button at any width.
+  packDocuments: {
+    margin: 0, padding: 0, listStyleType: 'none', minWidth: 0,
+    display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: tokens.spacingVerticalS,
+    '& > li': { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS, maxWidth: '100%', minWidth: 0, overflowWrap: 'anywhere' },
+  },
+  packDocument: { maxWidth: '100%', textAlign: 'start', overflowWrap: 'anywhere' },
+  // The document reader: the pack request dialog, widened. It stays as tall as
+  // its document up to the viewport less 16px, and only its body scrolls.
+  packReader: { width: 'min(880px, calc(100vw - 16px))' },
+  // A rendered document: Markdown as elements in the details' type and tokens,
+  // with no syntax colors. Headings sit under the reader's h2 (# is h3).
+  markdown: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0,
+    color: tokens.colorNeutralForeground1, overflowWrap: 'anywhere',
+    '& h3, & h4, & h5, & h6, & p, & ul, & ol, & blockquote, & pre, & hr': { margin: 0 },
+    '& h3, & h4, & h5, & h6, & strong, & th': { fontWeight: tokens.fontWeightSemibold },
+    '& h3': { fontSize: tokens.fontSizeBase500, lineHeight: tokens.lineHeightBase500 },
+    '& h4': { fontSize: tokens.fontSizeBase400, lineHeight: tokens.lineHeightBase400 },
+    '& h5, & h6': { fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300 },
+    '& > h3:not(:first-child), & > h4:not(:first-child)': { marginTop: tokens.spacingVerticalM },
+    '& ul, & ol': { paddingInlineStart: tokens.spacingHorizontalXXL },
+    '& li + li, & li > ul, & li > ol, & li > pre, & li > blockquote, & li > div': { marginTop: tokens.spacingVerticalXS },
+    '& li > p + p': { marginTop: tokens.spacingVerticalS },
+    '& blockquote': {
+      paddingInlineStart: tokens.spacingHorizontalM, color: tokens.colorNeutralForeground2,
+      borderInlineStart: `${tokens.strokeWidthThicker} solid ${tokens.colorNeutralStroke1}`,
+    },
+    '& blockquote > :not(:first-child)': { marginTop: tokens.spacingVerticalS },
+    '& hr': { border: 0, borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}` },
+  },
+  markdownCode: {
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`, borderRadius: tokens.borderRadiusMedium,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground3,
+    fontFamily: tokens.fontFamilyMonospace, fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200,
+    whiteSpace: 'pre-wrap', overflowWrap: 'anywhere',
+    '& code': { fontFamily: 'inherit', fontSize: 'inherit' },
+  },
+  markdownCodespan: {
+    padding: `0 ${tokens.spacingHorizontalXXS}`, borderRadius: tokens.borderRadiusSmall,
+    backgroundColor: tokens.colorNeutralBackground3, fontFamily: tokens.fontFamilyMonospace, fontSize: tokens.fontSizeBase200,
+  },
+  // A too-wide table scrolls sideways in its own box. One that cannot fit even
+  // at its narrowest keeps readable columns, 12em each including padding,
+  // instead of one word per line.
+  markdownTable: {
+    maxWidth: '100%', overflowX: 'auto', overscrollBehaviorX: 'contain',
+    ':focus-visible': { outline: `${tokens.strokeWidthThick} solid ${tokens.colorStrokeFocus2}`, outlineOffset: tokens.strokeWidthThin },
+    '& table': { borderCollapse: 'collapse' },
+    '& th, & td': {
+      padding: `${tokens.spacingVerticalSNudge} ${tokens.spacingHorizontalS}`, textAlign: 'start', verticalAlign: 'top', overflowWrap: 'normal',
+    },
+    '& th': { borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1}` },
+    '& td': { borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}` },
+    '& code': { whiteSpace: 'nowrap' },
+    '&[data-wide] th, &[data-wide] td': { boxSizing: 'border-box', minWidth: '12em' },
+  },
   settingsFooter: { maxHeight: '20dvh', overflowY: 'auto', overflowWrap: 'anywhere' },
   // About is the classic desktop sheet: one focal product name over a ruled
   // label/value list, in a panel that owns the vertical scroll. The row label

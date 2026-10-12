@@ -9,6 +9,7 @@ import { AboutPanel } from './about.jsx';
 import { ArtifactImport, NEW_SESSION } from './artifact-import.jsx';
 import { catalogCoverageText, RemoveSourceDialog, removalRefusal, blockersOf, SourceBody, sourceLabel, SourcesPanel,
   sourceStatus, sourceWriteReason } from './pack-sources.jsx';
+import { Markdown } from './markdown.jsx';
 import { mergeClasses, useCanvasStyles } from './styles.js';
 import { importRequestStatus, packActionReason, packPermission, packRequestStatus } from './use-canvas-data.js';
 
@@ -23,6 +24,10 @@ const SUBS = [...CONTEXTS, ['import', 'Add/import'], ['sources', 'Sources']];
 const OPERATIONS = { install: 'Install', remove: 'Remove', refresh: 'Refresh pack' };
 const TYPES = { pack: 'Pack', agent: 'Agent', skill: 'Skill' };
 const PROJECT_NOTE = 'Read only. Project agents and skills are project files, not packs: Canvas offers no install, refresh, or remove for them here.';
+// Details (080): the section's fixed wording.
+const DETAILS_NONE = 'No details found.';
+const DETAILS_TOO_LARGE = 'Not shown: larger than 64 KiB';
+const DETAILS_GITHUB_NOTE = 'Member READMEs are not read from GitHub before installation.';
 const PHASES = {
   preparing: ['Preparing request', 'Checking the exact pack and joined session. This does not grant permission.'],
   prepared: ['Request prepared', 'Nothing has been sent. This receipt will not be submitted automatically on reload or return.'],
@@ -181,9 +186,9 @@ function sourceExplanation(row, packs, sourcesByKey) {
   if (row.group.startsWith('unlisted-')) {
     const fallback = sourcesByKey.get(packs?.sources?.defaultKey)?.name;
     return `The recorded ${row.pack.source?.type === 'local' ? 'folder' : 'repository'} matches no current source on this computer, so Source shows Unlisted. `
-      + `Description and use cases come from the default catalog${fallback ? ` (${fallback})` : ''} by pack name. A confirmed refresh records a current source.`;
+      + `Description, use cases, and details come from the default catalog${fallback ? ` (${fallback})` : ''} by pack name. A confirmed refresh records a current source.`;
   }
-  return `The recorded source matches ${sourcesByKey.get(row.group)?.name ?? 'a current source'}, which also supplies this pack's description and use cases.`;
+  return `The recorded source matches ${sourcesByKey.get(row.group)?.name ?? 'a current source'}, which also supplies this pack's description, use cases, and details.`;
 }
 
 function RecordedSource({ source }) {
@@ -198,6 +203,44 @@ function RecordedSource({ source }) {
   </React.Fragment>)}</dl>;
 }
 
+/**
+ * A pack's documents: its pack.md, then each member skill's README. An
+ * installed pack's pack.md follows its description, so until a catalog read
+ * supplies it, the description's not-read or unavailable reason takes its place.
+ */
+function packDocuments(pack, catalogState) {
+  if (!pack.installed || pack.description !== null) return pack.documents;
+  return [{ path: 'pack.md', reason: catalogState === 'not_read' ? 'pack.md not read. Choose Reload packs to read catalogs.'
+    : 'pack.md unavailable; no readable catalog record.' }, ...pack.documents];
+}
+
+// Withheld files, or an entrypoint that is unreadable or has an unclosed
+// metadata header, give the row's own reason instead of documents (FR-013).
+const projectDetailsReason = project => project.files.state === 'withheld'
+  ? `Not shown. ${project.files.message}` : project.declaredName.message;
+
+/**
+ * Details (080), directly after the facts at the position 073 reserves: one
+ * button per document, labeled with its path, that opens it in the reader. A
+ * document over 64 KiB is listed by its path alone. Documents arrive with the
+ * row, so nothing here reads or waits.
+ */
+function DetailsSection({ documents, reason = null, note = null, onRead }) {
+  const s = useCanvasStyles();
+  return <div className={s.tight} data-pack-details>
+    <h3 className={s.packMetadataHeading}>Details</h3>
+    {reason ? <Text>{reason}</Text> : documents.length ? <ul className={s.packDocuments}>
+      {documents.map(doc => <li key={doc.path}>
+        {doc.reason ? <Text>{doc.reason}</Text> : doc.tooLarge ? <>
+          <Text>{doc.path}</Text><Text className={s.eyebrow}>{DETAILS_TOO_LARGE}</Text>
+        </> : <Button className={s.packDocument} aria-haspopup="dialog" data-pack-document={doc.path}
+          onClick={event => onRead(doc, event.currentTarget)}>{doc.path}</Button>}
+      </li>)}
+    </ul> : <Text>{DETAILS_NONE}</Text>}
+    {note && <Text className={s.eyebrow}>{note}</Text>}
+  </div>;
+}
+
 // The facts a project row's file read supports, never more: a complete list
 // counts its files, a partial one says what was and was not read, and a
 // withheld one has no count at all, only its reason.
@@ -206,14 +249,13 @@ const fileCount = files => files.state === 'complete' ? `${files.count} ${files.
 
 /**
  * Project agent or skill details after the heading (FR-075, FR-086): coverage
- * notices, the description, a read-only note, facts, Files, and the new-session
- * caveat. Every value and path is a text child, so nothing here is a link, HTML,
- * an action, or the project's own documentation. The Documentation position sits
- * between the facts and Files and renders nothing in this feature.
+ * notices, the description, a read-only note, facts, Details, Files, and the
+ * new-session caveat. Every value and path is a text child, so nothing here is
+ * a link, HTML, or an action; a Details button only opens its document.
  */
-function ProjectBody({ row, coverage }) {
+function ProjectBody({ row, coverage, onRead }) {
   const s = useCanvasStyles();
-  const { description, declaredName, files } = row.project;
+  const { description, declaredName, files, documents } = row.project;
   // A linked root is listed by its directory entry and nothing inside it is read.
   const linked = files.state === 'withheld' && files.reason === 'linked';
   const notice = files.state === 'complete' ? null : linked
@@ -235,6 +277,7 @@ function ProjectBody({ row, coverage }) {
       <dt>Declared name</dt><dd>{declaredName.state === 'read' ? declaredName.value : `Unavailable. ${declaredName.message}`}</dd>
       <dt>File count</dt><dd>{fileCount(files)}</dd>
     </dl>
+    <DetailsSection documents={documents} reason={documents ? null : projectDetailsReason(row.project)} onRead={onRead} />
     {files.state === 'withheld' ? <div className={s.tight}>
       <h3 className={s.packMetadataHeading}>Files</h3><Text>Not listed. {files.message}</Text>
     </div> : <details open className={s.packFiles}>
@@ -252,7 +295,7 @@ function ProjectBody({ row, coverage }) {
 
 function trapTab(event, dialog) {
   if (event.key !== 'Tab') return;
-  const stops = [...dialog.querySelectorAll('button:not(:disabled), summary, [tabindex="0"]')]
+  const stops = [...dialog.querySelectorAll('button:not(:disabled), summary, a[href], [tabindex="0"]')]
     .filter(node => node.getClientRects().length);
   const first = stops[0], last = stops.at(-1);
   if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
@@ -284,11 +327,14 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
   const [sourceNote, setSourceNote] = useState(null);
   const [removal, setRemoval] = useState(null);
   const [learned, setLearned] = useState({});
+  // The document the reader shows: { key, title, doc } for the details item that opened it.
+  const [reading, setReading] = useState(null);
   const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 1099px)').matches);
   const heading = useRef(null), results = useRef(null), panel = useRef(null), filter = useRef(null), detail = useRef(null);
   const closeButton = useRef(null), returnToRow = useRef(false), reveal = useRef(null), strip = useRef(null);
   const last = useRef({ list: null, sources: null });
   const requestDialog = useRef(null), requestClose = useRef(null), requestTrigger = useRef(null);
+  const reader = useRef(null), readerBody = useRef(null), readerTrigger = useRef(null), readerReturn = useRef(false);
   const sourcesScroll = useRef(null), sourcesHeading = useRef(null), addSource = useRef(null), noteRef = useRef(null);
   const removeRef = useRef(null), reasonRef = useRef(null), focusAvailable = useRef(false);
   const noteFocus = useRef(false), removeReturn = useRef(false), latest = useRef(null);
@@ -353,6 +399,8 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
   const selectedSource = onSources && sourceKey !== null ? sourcesByKey.get(sourceKey) ?? null : null;
   const detailKey = onSources ? selectedSource?.key ?? null : selected?.key ?? null;
   const owner = onSources ? 'sources' : 'list';
+  // The reader belongs to one details item: it closes with its details, or when they show another item.
+  if (reading && (!listShown || reading.key !== detailKey)) setReading(null);
   // The confirmation is for one source: if the next read no longer lists it, there is nothing left to confirm.
   const removing = removal && sourceItems ? sourcesByKey.get(removal.key) ?? null : null;
   if (removal && sourceItems && !removing) setRemoval(null);
@@ -459,6 +507,29 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
     requestTrigger.current = document.activeElement;
     setRequestView(binding);
   };
+  const closeReader = () => {
+    readerReturn.current = true;
+    setReading(null);
+  };
+  // The reader is a second native modal, stacked over the details at any
+  // width, that opens on its scrolling body. Closing it by Escape or Close
+  // returns focus to the button that opened it, or to the details' Close if
+  // that button is gone (the request dialog's rule). It runs before the details
+  // effect, so details closing with it still find focus inside them.
+  useLayoutEffect(() => {
+    const dialog = reader.current;
+    if (reading) {
+      if (!dialog.open) dialog.showModal();
+      readerBody.current.scrollTop = 0;
+      readerBody.current.focus({ preventScroll: true });
+      return;
+    }
+    if (dialog.open) dialog.close();
+    if (!readerReturn.current) return;
+    readerReturn.current = false;
+    const trigger = readerTrigger.current;
+    (trigger?.isConnected && trigger.getClientRects().length ? trigger : closeButton.current)?.focus({ preventScroll: true });
+  }, [reading]);
   // The one details pane serves the lists and Sources, each with its own last
   // selection, so a trip to the other keeps this one's focus rules intact.
   useLayoutEffect(() => {
@@ -478,6 +549,8 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
       }
       return;
     }
+    // So is an open reader, which belongs to these details.
+    if (reading) return;
     const closingRequest = request.open;
     if (closingRequest) request.close();
     if (!detailKey) {
@@ -512,7 +585,7 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
     // from the section tab that revealed it; show() alone would move focus in.
     else if (!narrow && focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
     last.current[owner] = detailKey;
-  }, [listShown, detailKey, onSources, narrow, current.snapshot, requestView]);
+  }, [listShown, detailKey, onSources, narrow, current.snapshot, requestView, reading]);
 
   const changeFilters = patch => {
     setView(previous => {
@@ -661,6 +734,11 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
         : `${selected.name} - ${sourcesByKey.get(selected.pack.sourceKey).name}`,
       closeLabel: selected.project ? 'Close project details' : 'Close pack details',
       bodyLabel: selected.project ? 'Project agent or skill details' : 'Pack metadata, source, and files' };
+  // A Details button opens its document in the reader, which reads nothing.
+  const readDocument = (doc, trigger) => {
+    readerTrigger.current = trigger;
+    setReading({ key: detailKey, title: pane.title, doc });
+  };
 
   return <div className={s.settings} data-settings>
     <header className={s.settingsHeader}>
@@ -838,7 +916,7 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
         <div className={s.packDetailBody} tabIndex={0} role="region" data-pack-detail-body aria-label={pane.bodyLabel}>
           {onSources ? <SourceBody item={selectedSource} sources={packs?.sources} shown={lists.available.shown} uses={usesOf(selectedSource)}
             reason={sourceWriteReason(data, packs, loading)} onShow={showPacks} onRemove={askRemove} removeRef={removeRef} reasonRef={reasonRef} />
-            : selected.project ? <ProjectBody row={selected} coverage={projectCoverage} /> : <>
+            : selected.project ? <ProjectBody row={selected} coverage={projectCoverage} onRead={readDocument} /> : <>
           {(!installedCurrent || !(catalogReadable || catalogState === 'not_read')) && <Text className={s.packReadNotice}>
             Installed: {coverage('installed')} · Catalog: {catalogText}. Retained facts are for inspection only.
           </Text>}
@@ -875,6 +953,8 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
             </>}
             <dt>Declared tools</dt><dd>Not acquired in this snapshot.</dd>
           </dl>
+          <DetailsSection documents={packDocuments(selected.pack, catalogState)}
+            note={selected.pack.fromGitHub ? DETAILS_GITHUB_NOTE : null} onRead={readDocument} />
           {selected.pack.installed ? <>
             <h3 className={s.packMetadataHeading}>Recorded installed source</h3>
             <RecordedSource source={selected.pack.source} />
@@ -928,6 +1008,23 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
           <Text className={s.eyebrow}>Closing or navigating away does not cancel an admitted request. Reading pack information never repeats it.</Text>
         </div>
         <footer className={s.packDetailFooter}><Button onClick={() => setRequestView(null)}>Return to packs</Button></footer>
+      </>}
+    </dialog>
+    <dialog ref={reader} className={mergeClasses(s.packRequestDialog, s.packReader)} aria-labelledby={`${id}-reader-heading`}
+      data-pack-reader onCancel={event => { event.preventDefault(); closeReader(); }}
+      onKeyDown={event => {
+        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeReader(); }
+        else trapTab(event, reader.current);
+      }}>
+      {reading && <>
+        <header className={s.packDetailHeader}>
+          <div className={s.grow}><Text block className={s.eyebrow}>{reading.title} details</Text>
+            <h2 id={`${id}-reader-heading`} className={s.subheading}>{reading.doc.path}</h2></div>
+          <Button appearance="subtle" icon={<DismissRegular />} aria-label="Close details" onClick={closeReader} />
+        </header>
+        <div ref={readerBody} className={s.packDetailBody} tabIndex={0} role="region" aria-labelledby={`${id}-reader-heading`}>
+          <Markdown text={reading.doc.text} />
+        </div>
       </>}
     </dialog>
     <RemoveSourceDialog source={removing} busy={Boolean(removal?.busy)} refusal={removal?.refusal ?? null}

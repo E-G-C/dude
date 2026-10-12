@@ -42,7 +42,7 @@ const BROWSER = process.env.DUDE_CANVAS_BROWSER
   ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
 const REQUIRED = process.env.DUDE_CANVAS_BROWSER_REQUIRED === '1';
 const DEADLINE = 20_000;
-const PUBLISHED_APP_SHA256 = '0a808370514afa32602d0031352070be781e99a7e43dfe94da5a98f8aa9bf59c';
+const PUBLISHED_APP_SHA256 = '7223f8c918d2686e103e8dbef5a118c0be6e1c48a713552103676419a72af7a1';
 
 /** @param {string|Buffer} value */
 function hash(value) {

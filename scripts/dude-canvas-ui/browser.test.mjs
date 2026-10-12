@@ -3334,7 +3334,7 @@ test('T012 anchoring regression: nested-scroll Open comment clips then recovers 
         )));
         assert.equal(
           productAppSha256,
-          '0a808370514afa32602d0031352070be781e99a7e43dfe94da5a98f8aa9bf59c',
+          '7223f8c918d2686e103e8dbef5a118c0be6e1c48a713552103676419a72af7a1',
           'the exact-source regression executes the current published product UI',
         );
         const exactHarnessOptions = {
@@ -12219,7 +12219,7 @@ test('T002 Settings reads real local and configured-remote pack authorities only
         await settleBrowserWork(page);
         const fileVisibility = await evaluate(page, `(() => {
           const body = document.querySelector('[data-pack-detail-body]');
-          const file = document.querySelector('[data-pack-detail] li:last-child');
+          const file = document.querySelector('[data-pack-detail] details li:last-child');
           const r = file.getBoundingClientRect(), b = body.getBoundingClientRect();
           const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
           return { text: file.textContent, visible: r.top >= b.top && r.bottom <= b.bottom,
@@ -15266,6 +15266,8 @@ const t073Outline = p => p.q(`[...document.querySelector('[data-pack-detail-body
   if (node.hasAttribute('data-pack-project-files-notice')) return 'files notice';
   if (node.hasAttribute('data-pack-description')) return 'description';
   if (node.hasAttribute('data-pack-readonly')) return 'read-only note';
+  if (node.hasAttribute('data-pack-details')) return 'details: ' + ([...node.querySelectorAll('li')].map(li => li.textContent).join(' | ')
+    || node.lastElementChild.textContent);
   if (node.querySelector('[data-pack-actions]')) return 'actions';
   if (node.tagName === 'DL') return 'facts: ' + [...node.querySelectorAll('dt')].map(dt => dt.textContent).join(' | ');
   if (node.tagName === 'DETAILS') return 'files: ' + node.querySelector('summary').textContent;
@@ -15317,8 +15319,8 @@ test('073 Packs: Installed lists Name, Type, and Use cases with read-only projec
       assert.equal(await p.q(`document.activeElement === document.querySelector('[aria-label="Close project details"]')`), true,
         'opening project details focuses its Close control');
       assert.deepEqual(await t073Outline(p), ['description', 'read-only note',
-        'facts: Type | Location | Declared name | File count', 'files: Files (3)', `text: ${T073_CAVEAT}`],
-      'description, read-only note, facts, then Files and the caveat; nothing at the reserved Documentation position');
+        'facts: Type | Location | Declared name | File count', 'details: dude-local-alpha.agent.md', 'files: Files (3)', `text: ${T073_CAVEAT}`],
+      'description, read-only note, facts, Details at the position 073 reserves, then Files and the caveat');
       assert.equal(await p.q(`document.querySelector('[data-pack-detail] header span').textContent`), 'Installed · This project');
       assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-detail-body] dl > *')].map(node => node.textContent)`),
         ['Type', 'Agent', 'Location', '.github/agents/dude-local-alpha.agent.md', 'Declared name', 'Alpha Agent', 'File count', '3 files']);
@@ -15328,16 +15330,16 @@ test('073 Packs: Installed lists Name, Type, and Use cases with read-only projec
       assert.equal(await p.q(`document.querySelector('[data-pack-description]').textContent`), 'The alpha agent.');
       assert.equal(await p.q(`document.querySelector('[data-pack-readonly]').textContent`), T073_READ_ONLY);
       assert.deepEqual(await p.q(`({ links: document.querySelectorAll('[data-pack-detail] a, [data-pack-detail] [href]').length,
-        buttons: [...document.querySelectorAll('[data-pack-detail-body] button')].length,
+        buttons: [...document.querySelectorAll('[data-pack-detail-body] button:not([data-pack-document])')].length,
         operations: document.querySelectorAll('[data-pack-operation], [data-pack-actions]').length,
         text: /Remove|Open file|Documentation/.test(document.querySelector('[data-pack-detail]').textContent) })`),
-      { links: 0, buttons: 0, operations: 0, text: false }, 'inert text only: no link, action, Remove, Open file, or documentation');
+      { links: 0, buttons: 0, operations: 0, text: false }, 'inert text only: no link, action, Remove, or Open file; its one button opens a Details document');
       await key(page, 'Escape');
       assert.equal(await p.q(`document.activeElement?.getAttribute('data-pack-row')`), 'project:agent:dude-local-alpha',
         'focus returns to the agent row, not its same-name skill');
       await p.click('[data-pack-row="project:skill:dude-local-alpha"]');
       assert.deepEqual(await t073Outline(p), ['description', 'read-only note',
-        'facts: Type | Location | Declared name | File count', 'files: Files (2)', `text: ${T073_CAVEAT}`]);
+        'facts: Type | Location | Declared name | File count', 'details: SKILL.md', 'files: Files (2)', `text: ${T073_CAVEAT}`]);
       await key(page, 'Escape');
 
       // Unreadable metadata keeps its own reason; markup is never interpreted.
@@ -15361,8 +15363,9 @@ test('073 Packs: Installed lists Name, Type, and Use cases with read-only projec
       // Pack details keep their own order and provenance.
       await p.click('[data-pack-row="pack:zulu"]');
       assert.deepEqual(await t073Outline(p), ['description', 'actions', 'facts: Use cases | Source | Declared tools',
+        'details: pack.md not read. Choose Reload packs to read catalogs.',
         'heading: Recorded installed source', 'facts: Type | Repository | Requested ref | Resolved commit',
-        'text: The recorded repository matches no current source on this computer, so Source shows Unlisted. Description and use cases come from the default catalog (Local library) by pack name. A confirmed refresh records a current source.',
+        'text: The recorded repository matches no current source on this computer, so Source shows Unlisted. Description, use cases, and details come from the default catalog (Local library) by pack name. A confirmed refresh records a current source.',
         'files: Recorded files (18)', 'text: Membership and files: .dude/metadata/profile.md. Recorded source does not verify installed bytes.']);
       assert.equal(await p.q(`document.querySelector('[data-pack-detail] header span').textContent`), 'Installed · Workspace scope');
       assert.equal(await p.q(`document.querySelector('[data-pack-detail]').textContent.includes('Documentation')`), false);
@@ -15924,8 +15927,9 @@ test('073 Packs: a failed project read keeps the packs listed with a known count
       await aboutScreenshot(page, output, 'project-read-unavailable-1440x900-light');
       await p.click(`[data-pack-row="${packKey('zulu')}"]`);
       assert.deepEqual(await t073Outline(p), ['description', 'actions', 'facts: Use cases | Source | Declared tools',
+        'details: pack.md not read. Choose Reload packs to read catalogs.',
         'heading: Recorded installed source', 'facts: Type | Repository | Requested ref | Resolved commit',
-        'text: The recorded repository matches no current source on this computer, so Source shows Unlisted. Description and use cases come from the default catalog (Local library) by pack name. A confirmed refresh records a current source.',
+        'text: The recorded repository matches no current source on this computer, so Source shows Unlisted. Description, use cases, and details come from the default catalog (Local library) by pack name. A confirmed refresh records a current source.',
         'files: Recorded files (18)', 'text: Membership and files: .dude/metadata/profile.md. Recorded source does not verify installed bytes.'],
       'a pack remains inspectable while the project read is unavailable');
       await key(page, 'Escape');
@@ -15994,6 +15998,222 @@ test('073 Packs: a retained project selection leaves no hidden stop in About and
       const reentry = await p.state();
       assert.deepEqual([reentry.context, reentry.filter, reentry.page, reentry.detail], ['installed', 'All use cases', 'Page 1 of 1', null]);
     });
+});
+
+// ---------------------------------------------------------------------------
+// 080 Documentation: the Details section after the facts and the reader its
+// buttons open, over the real Canvas server. The clearline and strata packs are
+// this checkout's own, read as the local library; the project skills are
+// disposable fixtures at, over, and around the 64 KiB limit.
+// ---------------------------------------------------------------------------
+
+/** The approved reader widths, min(880px, 100vw - 16px), at the three checked sizes. */
+const T080_SIZES = Object.freeze([
+  { name: '1440x900', width: 1440, height: 900, scale: 1, reader: 880 },
+  { name: '360x900', width: 360, height: 900, scale: 1, reader: 344 },
+  { name: '180x450', width: 180, height: 450, scale: 1, reader: 164 },
+]);
+const T080_README = 'dude-pack-clearline-visual/README.md';
+const T080_GITHUB_NOTE = 'Member READMEs are not read from GitHub before installation.';
+
+/** Copy real packs from this checkout into a case's local library. @param {ReturnType<typeof createReviewWorkspaceFixture>} workspace @param {string[]} names */
+function t080Library(workspace, names) {
+  for (const name of names) {
+    fs.cpSync(path.join(ROOT, 'library', 'packs', name), path.join(workspace.root, 'library', 'packs', name), { recursive: true });
+  }
+}
+
+/** A README of exactly `bytes` ASCII bytes. @param {number} bytes */
+function t080Readme(bytes) {
+  const line = 'Every line of this README stays whole in the reader.\n';
+  return `# Limit fixture\n\n${line.repeat(Math.ceil(bytes / line.length))}`.slice(0, bytes - 1) + '\n';
+}
+
+/** The open Details section: its heading, each item's text, its buttons, and any note. @param {Awaited<ReturnType<typeof t073Driver>>} p */
+const t080Details = p => p.q(`(() => {
+  const section = document.querySelector('[data-pack-details]');
+  return { heading: section.querySelector('h3').textContent,
+    items: [...section.querySelectorAll('li')].map(li => [...li.children].map(node => node.textContent)),
+    buttons: [...section.querySelectorAll('button')].map(node => node.textContent),
+    text: [...section.children].slice(1).filter(node => node.tagName !== 'UL').map(node => node.textContent) };
+})()`);
+
+/** The reader as a person meets it: geometry, scrolling, focus, and the header. @param {Awaited<ReturnType<typeof t073Driver>>} p */
+const t080Reader = p => p.q(`(() => {
+  const dialog = document.querySelector('[data-pack-reader]'), body = dialog.querySelector(':scope > [role="region"]');
+  if (!dialog.open || !body) return { open: dialog.open };
+  const r = dialog.getBoundingClientRect(), header = dialog.querySelector('header').getBoundingClientRect();
+  return { open: true, modal: dialog.matches(':modal'), width: r.width, top: r.top, bottom: r.bottom, innerHeight,
+    pageWide: document.documentElement.scrollWidth > innerWidth,
+    readerWide: dialog.scrollWidth > dialog.clientWidth + 1 || body.scrollWidth > body.clientWidth + 1,
+    dialogScrolls: dialog.scrollHeight > dialog.clientHeight + 1, bodyScrolls: body.scrollHeight > body.clientHeight + 1,
+    headerShown: header.top >= r.top - 0.5 && header.bottom <= r.bottom + 0.5, focused: document.activeElement === body,
+    eyebrow: dialog.querySelector('header .fui-Text').textContent, title: dialog.querySelector('h2').textContent,
+    close: dialog.querySelector('header button').getAttribute('aria-label') };
+})()`);
+
+const t080ReaderOpen = p => until(() => p.q(`document.querySelector('[data-pack-reader]').open`), 'the reader opens');
+
+test('080 Documentation: the reader fits 1440x900, 360x900, and 180x450, scrolls only inside, reads nothing, and returns focus', {
+  timeout: 360_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '080-reader', { packs: {}, prepare: workspace => {
+    t080Library(workspace, ['clearline', 'docsy', 'strata']);
+    return t073SourcesWorkspace(workspace);
+  } }, async canvas => {
+    const { page, output } = canvas;
+    const p = await t073Driver(canvas);
+    await p.enter();
+    await discoverCatalog(canvas);
+    await p.chooseContext('available');
+
+    // A pack from GitHub lists only its pack.md, with the note.
+    await p.click('[data-pack-row^="pack:rust@"]');
+    assert.deepEqual(await t080Details(p), { heading: 'Details', items: [['pack.md']], buttons: ['pack.md'], text: [T080_GITHUB_NOTE] });
+
+    // A local-library pack lists pack.md, then its member README, each a button labeled with its path.
+    await p.click('[data-pack-row^="pack:clearline@"]');
+    assert.deepEqual(await t080Details(p), { heading: 'Details', items: [['pack.md'], [T080_README]],
+      buttons: ['pack.md', T080_README], text: [] });
+    assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-document]')].map(node => node.getAttribute('aria-haspopup'))`),
+      ['dialog', 'dialog']);
+    await aboutScreenshot(page, output, 'details-available-clearline-1440x900-light');
+
+    for (const size of T080_SIZES) {
+      await aboutViewport(page, size, 'light');
+      await p.q(`document.querySelector('[data-pack-document="${T080_README}"]').scrollIntoView({ block: 'nearest', behavior: 'instant' })`);
+      assert.equal(await p.q(`[...document.querySelectorAll('[data-pack-document]')].every(node => node.scrollWidth <= node.clientWidth + 1
+        && node.getBoundingClientRect().right <= document.querySelector('[data-pack-detail-body]').getBoundingClientRect().right)`), true,
+      `a long path wraps inside its button at ${size.name}`);
+      if (size.width < 1440) {
+        await settleBrowserWork(page);
+        await aboutScreenshot(page, output, `details-available-clearline-${size.name}-light`);
+      }
+      const requests = canvas.requests.length;
+      await p.click(`[data-pack-document="${T080_README}"]`);
+      await t080ReaderOpen(p);
+      const open = await t080Reader(p);
+      assert.equal(open.width, size.reader, `the reader is ${size.reader}px wide at ${size.name}`);
+      assert.ok(open.top >= 0 && open.bottom <= open.innerHeight && open.bottom - open.top <= open.innerHeight - 16 + 0.5,
+        `the reader is at most the viewport height less 16px at ${size.name}: ${JSON.stringify(open)}`);
+      assert.deepEqual({ modal: open.modal, pageWide: open.pageWide, readerWide: open.readerWide, dialogScrolls: open.dialogScrolls,
+        headerShown: open.headerShown, focused: open.focused }, { modal: true, pageWide: false, readerWide: false, dialogScrolls: false,
+        headerShown: true, focused: true }, `one modal reader on its body, and nothing scrolls sideways at ${size.name}`);
+      assert.deepEqual([open.eyebrow, open.title, open.close], ['clearline - Local library details', T080_README, 'Close details']);
+      if (size.width < 1440) assert.equal(open.bodyScrolls, true, `the long README scrolls in the body at ${size.name}`);
+      if (size.width === 360) {
+        for (const shift of [false, true]) for (let step = 0; step < 4; step += 1) {
+          await key(page, 'Tab', 'Tab', { shift });
+          assert.equal(await p.q(`document.querySelector('[data-pack-reader]').contains(document.activeElement)`), true,
+            'Tab and Shift+Tab stay in the reader');
+        }
+      }
+      await aboutScreenshot(page, output, `reader-readme-${size.name}-light`);
+      await key(page, 'Escape');
+      assert.deepEqual(await p.q(`({ reader: document.querySelector('[data-pack-reader]').open,
+        details: document.querySelector('[data-pack-detail]').open, focus: document.activeElement?.getAttribute('data-pack-document') })`),
+      { reader: false, details: true, focus: T080_README }, `Escape closes only the reader and returns focus to its button (${size.name})`);
+      assert.equal(canvas.requests.length, requests, `opening and closing the reader sends no request (${size.name})`);
+    }
+
+    // The README renders: headings, its code blocks, and its table, with no Markdown syntax outside code and no image.
+    await aboutViewport(page, T080_SIZES[0], 'dark');
+    await focus(page, `[data-pack-document="${T080_README}"]`);
+    await key(page, 'Enter');
+    await t080ReaderOpen(p);
+    assert.deepEqual(await p.q(`(() => {
+      const body = document.querySelector('[data-pack-reader] > [role="region"]'), prose = body.cloneNode(true);
+      prose.querySelectorAll('pre, code').forEach(node => node.remove());
+      return { focused: document.activeElement === body, headings: [...body.querySelectorAll('h3, h4')].map(node => node.textContent),
+        tables: body.querySelectorAll('table').length, code: body.querySelectorAll('pre').length, images: body.querySelectorAll('img').length,
+        links: body.querySelectorAll('a').length, syntax: /\`\`\`|\\|\\s*:?-{3,}/.test(prose.textContent)
+          || [...prose.querySelectorAll('p, li, td, th')].some(node => /^\\s*#{1,6}\\s/.test(node.textContent)) };
+    })()`), { focused: true, headings: ['Clearline visual system', 'Token location', 'Core roles', 'Mark slot', 'Validate'], tables: 1, code: 4,
+      images: 0, links: 0, syntax: false }, 'Enter opens the rendered README on its body; its relative links stay text');
+    await aboutScreenshot(page, output, 'reader-readme-1440x900-dark');
+
+    // Close returns focus to the button too.
+    await p.click('[data-pack-reader] header button');
+    assert.deepEqual(await p.q(`({ reader: document.querySelector('[data-pack-reader]').open,
+      focus: document.activeElement?.getAttribute('data-pack-document') })`), { reader: false, focus: T080_README });
+
+    // A web link is About's new-tab link, and Tab moves from the body to it, then wraps to Close inside the reader.
+    await p.click('[data-pack-row^="pack:docsy@"]');
+    await focus(page, '[data-pack-document="pack.md"]');
+    await key(page, 'Enter');
+    await t080ReaderOpen(p);
+    assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-reader] a')].map(node => [node.textContent,
+      node.getAttribute('href'), node.getAttribute('target'), node.getAttribute('rel'), node.getAttribute('aria-label')])`),
+    [['Docsy', 'https://www.docsy.dev/', '_blank', 'noopener noreferrer', 'Docsy (opens in a new tab)']]);
+    await key(page, 'Tab');
+    assert.equal(await p.q(`document.activeElement?.getAttribute('href')`), 'https://www.docsy.dev/', 'Tab reaches the link after the body');
+    await key(page, 'Tab');
+    assert.equal(await p.q(`document.activeElement?.getAttribute('aria-label')`), 'Close details', 'and wraps to Close');
+    await aboutScreenshot(page, output, 'reader-docsy-link-1440x900-dark');
+    await key(page, 'Escape');
+    assert.equal(await p.q(`document.activeElement?.getAttribute('data-pack-document')`), 'pack.md');
+
+    // An installed pack's pack.md follows its description: an automatic read keeps both and reads no catalog.
+    await p.chooseContext('installed');
+    await p.click('[data-pack-row="pack:papa"]');
+    assert.deepEqual((await t080Details(p)).buttons, ['pack.md']);
+    const reads = { plain: canvas.packReads().length, discovery: canvas.discoveryReads().length };
+    await p.q(`window.dispatchEvent(new Event('focus'))`);
+    await until(() => canvas.packReads().length > reads.plain, 'an automatic installed read');
+    await until(() => p.q(`document.querySelector('[data-pack-scroll]').getAttribute('aria-busy') === 'false'`), 'the read is adopted');
+    assert.deepEqual([(await t080Details(p)).buttons, canvas.discoveryReads().length], [['pack.md'], reads.discovery],
+      'the retained catalog keeps pack.md beside the description');
+    assert.deepEqual(canvas.foreign(), [], 'no document content reached beyond the Canvas origin');
+  });
+});
+
+test('080 Documentation: project Details show documents at 64 KiB, list a larger one without a button, and keep each reason', {
+  timeout: 240_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  const atLimit = t080Readme(64 * 1024);
+  await runAboutCase(context, '080-project', { packs: {}, prepare: workspace => {
+    addProjectArtifacts(workspace, [{ type: 'skill', name: 'dude-local-at-limit' }, { type: 'skill', name: 'dude-local-over-limit' },
+      { type: 'skill', name: 'dude-local-many', files: Array.from({ length: 129 }, (_, index) => `notes/note-${index}.md`) }]);
+    workspace.write('.github/skills/dude-local-at-limit/README.md', atLimit);
+    workspace.write('.github/skills/dude-local-over-limit/README.md', t080Readme(64 * 1024 + 1));
+    workspace.write('.github/skills/dude-local-empty/SKILL.md', '---\nname: dude-local-empty\ndescription: Only metadata.\n---\n');
+    workspace.write('.github/agents/dude-local-unclosed.agent.md', '---\nname: Unclosed\ndescription: Never closed.\n\n# Unclosed\n');
+  } }, async canvas => {
+    const { page, output } = canvas;
+    const p = await t073Driver(canvas);
+    await p.enter();
+    const reads = canvas.packReads().length;
+
+    // At the limit: the entrypoint, then the README, and the README opens whole.
+    await p.click('[data-pack-row="project:skill:dude-local-at-limit"]');
+    assert.deepEqual(await t080Details(p), { heading: 'Details', items: [['SKILL.md'], ['README.md']],
+      buttons: ['SKILL.md', 'README.md'], text: [] });
+    await p.click('[data-pack-document="README.md"]');
+    await t080ReaderOpen(p);
+    assert.equal(await p.q(`document.querySelector('[data-pack-reader] > [role="region"]').textContent.replace(/\\s+/g, '')`),
+      atLimit.replace('# ', '').replace(/\s+/g, ''), 'a 64 KiB README shows in full');
+    assert.equal((await t080Reader(p)).eyebrow, 'dude-local-at-limit details');
+    await key(page, 'Escape');
+
+    // One byte over: listed by its path with the notice, and no button.
+    await p.click('[data-pack-row="project:skill:dude-local-over-limit"]');
+    assert.deepEqual(await t080Details(p), { heading: 'Details', items: [['SKILL.md'], ['README.md', 'Not shown: larger than 64 KiB']],
+      buttons: ['SKILL.md'], text: [] });
+    await aboutScreenshot(page, output, 'project-over-limit-1440x900-light');
+
+    // Nothing to list, an unclosed metadata header, and withheld files each say so, with no button.
+    for (const [row, text] of [['project:skill:dude-local-empty', 'No details found.'],
+      ['project:agent:dude-local-unclosed', 'The frontmatter block is not closed.'],
+      ['project:skill:dude-local-many', 'Not shown. More than 128 files were found, so the file list and count are withheld.']]) {
+      await p.click(`[data-pack-row="${row}"]`);
+      assert.deepEqual(await t080Details(p), { heading: 'Details', items: [], buttons: [], text: [text] }, row);
+    }
+    assert.equal(canvas.packReads().length, reads, 'selecting rows and reading documents reads no packs');
+  });
 });
 
 // ---------------------------------------------------------------------------

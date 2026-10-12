@@ -16,8 +16,11 @@
  * Containment goes through the engine's no-symbolic-link resolver once per
  * collection and once per artifact root. Every descendant is judged by `lstat`
  * alone: no link is followed or read, and a link keeps its reason visible
- * instead of being counted as a readable file. An entrypoint is read through
- * one positioned read of its first 8 KiB, never as a whole file.
+ * instead of being counted as a readable file. An entrypoint's metadata is
+ * judged from its first 8 KiB. For Details, an entrypoint and the README at the
+ * root of its folder are read whole, through the same no-follow open, only when
+ * at most 64 KiB. A larger one is listed as too large: an entrypoint is then
+ * read only for its first 8 KiB, and a README not at all.
  *
  * Nothing is silently truncated. More than 256 artifacts withholds the whole
  * list; a per-artifact limit withholds only that row's files and count. The
@@ -53,9 +56,15 @@ import { ENGINE_PATHS, resolveMutationPath } from '../../../skills/dude-engine/l
  *   state: 'complete' | 'partial' | 'withheld', count: number | null, paths: string[] | null,
  *   notRead: ProjectNotRead[], reason: string | null, message: string | null,
  * }} ProjectFiles
+ * `documents` has the pack rows' document shape (see `joinItems` in packs.mjs):
+ * the entrypoint, then the README at the root of the skill folder or the agent's
+ * `.support/` folder. It is null when the files are withheld or the entrypoint
+ * is unreadable or its metadata header unclosed: the row's reason stands instead.
+ * @typedef {{ path: string, text: string } | { path: string, tooLarge: true }} ProjectDocument
  * @typedef {{
  *   key: string, type: 'agent' | 'skill', name: string, location: string,
  *   description: ProjectField, declaredName: ProjectField, files: ProjectFiles,
+ *   documents: ProjectDocument[] | null,
  * }} ProjectItem
  * @typedef {{ state: 'current' | 'empty' | 'unavailable' | 'stale', reason: string | null, message: string | null }} ProjectCoverage
  * @typedef {{
@@ -76,6 +85,7 @@ import { ENGINE_PATHS, resolveMutationPath } from '../../../skills/dude-engine/l
 const LIMITS = Object.freeze({
   artifacts: 256,
   prefixBytes: 8 * 1024,
+  documentBytes: 64 * 1024,
   files: 128,
   depth: 12,
 });
@@ -87,9 +97,14 @@ const COLLECTIONS = Object.freeze([
 const AGENT_SUFFIX = '.agent.md';
 const SUPPORT_SUFFIX = '.support';
 const SKILL_ENTRYPOINT = 'SKILL.md';
+const README = 'README.md';
 const LINKED = 'Linked; not read';
 const DESCRIPTION_UNAVAILABLE = 'Description unavailable';
 const PREFIX_KIB = `${LIMITS.prefixBytes / 1024} KiB`;
+/** Entrypoint reasons that leave a row without documents: its start is not text, or its header is unclosed. */
+const NO_DOCUMENTS = Object.freeze(['invalid_utf8', 'closing_delimiter_missing', 'closing_delimiter_late']);
+/** A leading metadata header: a `---` line, through the next `---` line (as in catalog-reader.mjs). */
+const HEADER_RE = /^---[ \t]*\r?\n(?:[\s\S]*?\r?\n)?---[ \t]*(?:\r?\n|$)/;
 
 /** A condition that ends the whole read as a coverage, never as an exception. */
 class ProjectFailure extends Error {
@@ -110,7 +125,7 @@ class FilesWithheld extends Error {
   }
 }
 
-/** The entrypoint opened to something other than the file that was inspected. */
+/** The file opened to something other than the file that was inspected. */
 class EntrypointChanged extends Error {}
 
 /**
@@ -140,6 +155,12 @@ const unavailable = (key, reason, message) => ({ state: 'unavailable', reason,
 const bothUnavailable = (reason, message) => ({
   description: unavailable('description', reason, message), declaredName: unavailable('name', reason, message),
 });
+
+/**
+ * An entrypoint that could not be read leaves its row without documents.
+ * @param {string} reason @param {string} message
+ */
+const unreadEntrypoint = (reason, message) => ({ ...bothUnavailable(reason, message), documents: null });
 
 /** @param {string} reason @param {string} message @returns {ProjectFiles} */
 const withheldFiles = (reason, message) => ({
@@ -285,7 +306,7 @@ async function listCollection(collection, found, signal) {
 }
 
 /**
- * One positioned read of an entrypoint's first bytes. The opened handle must be
+ * One positioned read of a file's first `limit` bytes. The opened handle must be
  * the very file `lstat` classified: where the platform has `O_NOFOLLOW` a link
  * swapped in after that check is refused at open, and everywhere the identity
  * comparison catches it. `O_NONBLOCK` keeps a special file swapped in from
@@ -293,21 +314,22 @@ async function listCollection(collection, found, signal) {
  * @param {string} absolute
  * @param {import('node:fs').BigIntStats} expected
  * @param {AbortSignal} signal
+ * @param {number} [limit]
  * @returns {Promise<{ bytes: Buffer, truncated: boolean }>}
  */
-async function readPrefix(absolute, expected, signal) {
+async function readPrefix(absolute, expected, signal, limit = LIMITS.prefixBytes) {
   signal.throwIfAborted();
   const { O_RDONLY, O_NOFOLLOW = 0, O_NONBLOCK = 0 } = fs.constants;
   const handle = await fs.promises.open(absolute, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
   try {
     const stat = await handle.stat({ bigint: true });
     if (!stat.isFile() || stat.dev !== expected.dev || stat.ino !== expected.ino) throw new EntrypointChanged();
-    const buffer = Buffer.allocUnsafe(LIMITS.prefixBytes);
+    const buffer = Buffer.allocUnsafe(limit);
     let length = 0;
-    // Never past the prefix, and never past the size this handle reported.
-    while (length < LIMITS.prefixBytes && BigInt(length) < stat.size) {
+    // Never past the limit, and never past the size this handle reported.
+    while (length < limit && BigInt(length) < stat.size) {
       signal.throwIfAborted();
-      const { bytesRead } = await handle.read(buffer, length, LIMITS.prefixBytes - length, length);
+      const { bytesRead } = await handle.read(buffer, length, limit - length, length);
       if (bytesRead === 0) break;
       length += bytesRead;
     }
@@ -315,6 +337,18 @@ async function readPrefix(absolute, expected, signal) {
   } finally {
     await handle.close();
   }
+}
+
+/**
+ * The document one read gives: too large when the file went past the read, else
+ * its text after any leading metadata header, and nothing when no text remains.
+ * @param {string} label @param {{ bytes: Buffer, truncated: boolean }} read
+ * @returns {ProjectDocument[]}
+ */
+function documentOf(label, { bytes, truncated }) {
+  if (truncated) return [{ path: label, tooLarge: true }];
+  const text = new TextDecoder().decode(bytes).replace(HEADER_RE, '');
+  return text.trim() ? [{ path: label, text }] : [];
 }
 
 /**
@@ -390,21 +424,29 @@ function describeEntrypoint({ bytes, truncated }) {
 }
 
 /**
+ * Judge an entrypoint from its first 8 KiB, and read it whole for its document
+ * only when it is at most 64 KiB. An unreadable start or an unclosed header
+ * leaves the row without documents.
  * @param {string} absolute @param {import('node:fs').BigIntStats} expected @param {AbortSignal} signal
- * @returns {Promise<{ description: ProjectField, declaredName: ProjectField }>}
+ * @param {string} label the path its document is listed by
+ * @returns {Promise<{ description: ProjectField, declaredName: ProjectField, documents: ProjectDocument[] | null }>}
  */
-async function readEntrypoint(absolute, expected, signal) {
-  let prefix;
-  try { prefix = await readPrefix(absolute, expected, signal); }
+async function readEntrypoint(absolute, expected, signal, label) {
+  const limit = expected.size <= BigInt(LIMITS.documentBytes) ? LIMITS.documentBytes : LIMITS.prefixBytes;
+  let read;
+  try { read = await readPrefix(absolute, expected, signal, limit); }
   catch (error) {
     signal.throwIfAborted();
-    if (error instanceof EntrypointChanged) return bothUnavailable('changed_during_read', 'The file changed while it was being read.');
+    if (error instanceof EntrypointChanged) return unreadEntrypoint('changed_during_read', 'The file changed while it was being read.');
     const code = systemCode(error);
     // A link swapped in after `lstat` fails the no-follow open.
-    return code === 'ELOOP' ? bothUnavailable('linked', LINKED)
-      : bothUnavailable('read_failed', `The file could not be read (${code}).`);
+    return code === 'ELOOP' ? unreadEntrypoint('linked', LINKED)
+      : unreadEntrypoint('read_failed', `The file could not be read (${code}).`);
   }
-  return describeEntrypoint(prefix);
+  const fields = describeEntrypoint({ bytes: read.bytes.subarray(0, LIMITS.prefixBytes),
+    truncated: read.truncated || read.bytes.length > LIMITS.prefixBytes });
+  const shown = fields.description.state === 'read' || !NO_DOCUMENTS.includes(fields.description.reason);
+  return { ...fields, documents: shown ? documentOf(label, read) : null };
 }
 
 /** @param {Candidate} candidate @param {AbortSignal} signal */
@@ -415,12 +457,39 @@ async function readSkillEntrypoint(candidate, signal) {
   catch (error) {
     signal.throwIfAborted();
     const code = systemCode(error);
-    return code === 'ENOENT' ? bothUnavailable('entrypoint_missing', `${SKILL_ENTRYPOINT} is missing.`)
-      : bothUnavailable('read_failed', `${SKILL_ENTRYPOINT} could not be read (${code}).`);
+    return code === 'ENOENT' ? unreadEntrypoint('entrypoint_missing', `${SKILL_ENTRYPOINT} is missing.`)
+      : unreadEntrypoint('read_failed', `${SKILL_ENTRYPOINT} could not be read (${code}).`);
   }
-  if (stat.isSymbolicLink()) return bothUnavailable('linked', LINKED);
-  if (!stat.isFile()) return bothUnavailable('entrypoint_not_file', `${SKILL_ENTRYPOINT} is not a regular file.`);
-  return readEntrypoint(absolute, stat, signal);
+  if (stat.isSymbolicLink()) return unreadEntrypoint('linked', LINKED);
+  if (!stat.isFile()) return unreadEntrypoint('entrypoint_not_file', `${SKILL_ENTRYPOINT} is not a regular file.`);
+  return readEntrypoint(absolute, stat, signal, SKILL_ENTRYPOINT);
+}
+
+/**
+ * Add the README at the root of an artifact's folder to its entrypoint's
+ * documents when the file list read it as a regular file. Withheld files leave
+ * the row's reason instead of documents.
+ * @param {ProjectDocument[] | null} documents the entrypoint's
+ * @param {ProjectFiles} files
+ * @param {string} absolute @param {string} relative the artifact's folder
+ * @param {string} label @param {AbortSignal} signal
+ * @returns {Promise<ProjectDocument[] | null>}
+ */
+async function withReadme(documents, files, absolute, relative, label, signal) {
+  if (documents === null || files.state === 'withheld') return null;
+  if (!files.paths?.includes(`${relative}/${README}`)) return documents;
+  const file = path.join(absolute, README);
+  try {
+    const stat = await fs.promises.lstat(file, { bigint: true });
+    if (!stat.isFile()) return documents;
+    if (stat.size > BigInt(LIMITS.documentBytes)) return [...documents, { path: label, tooLarge: true }];
+    return [...documents, ...documentOf(label, await readPrefix(file, stat, signal, LIMITS.documentBytes))];
+  } catch (error) {
+    signal.throwIfAborted();
+    // A README that changed or became unreadable since it was listed is not listed.
+    if (!(error instanceof EntrypointChanged)) systemCode(error);
+    return documents;
+  }
 }
 
 /**
@@ -581,7 +650,7 @@ async function readArtifact(workspace, candidate, signal) {
     location: candidate.relative,
   };
   /** @param {string} reason @param {string} message @returns {ProjectItem} */
-  const identityOnly = (reason, message) => ({ ...base, ...bothUnavailable(reason, message), files: withheldFiles(reason, message) });
+  const identityOnly = (reason, message) => ({ ...base, ...unreadEntrypoint(reason, message), files: withheldFiles(reason, message) });
   if (candidate.kind === 'linked') return identityOnly('linked', LINKED);
   if (candidate.kind === 'unreadable') return identityOnly('read_failed', `Could not be read (${candidate.code}).`);
   // The one containment check for this artifact root; descendants are never resolved.
@@ -591,12 +660,17 @@ async function readArtifact(workspace, candidate, signal) {
     return identityOnly('unsafe_path', 'The path is unsafe, so it was not read.');
   }
   if (candidate.type === 'agent') {
-    const fields = await readEntrypoint(candidate.absolute, /** @type {import('node:fs').BigIntStats} */ (candidate.stat), signal);
-    return { ...base, ...fields, files: await agentFiles(workspace, candidate, signal) };
+    const stat = /** @type {import('node:fs').BigIntStats} */ (candidate.stat);
+    const { documents, ...fields } = await readEntrypoint(candidate.absolute, stat, signal, candidate.entry);
+    const files = await agentFiles(workspace, candidate, signal);
+    const support = `${candidate.name}${SUPPORT_SUFFIX}`;
+    return { ...base, ...fields, files, documents: await withReadme(documents, files,
+      path.join(path.dirname(candidate.absolute), support), `${candidate.directory}/${support}`, `${support}/${README}`, signal) };
   }
-  const fields = await readSkillEntrypoint(candidate, signal);
+  const { documents, ...fields } = await readSkillEntrypoint(candidate, signal);
   const files = await inventory(signal, { files: [], notRead: [] }, candidate.absolute, candidate.relative);
-  return { ...base, ...fields, files };
+  return { ...base, ...fields, files,
+    documents: await withReadme(documents, files, candidate.absolute, candidate.relative, README, signal) };
 }
 
 /**
