@@ -1,8 +1,8 @@
 ---
 title: Dude Canvas Pack Documentation
 slug: dude-canvas-pack-documentation
-status: draft
-spec_path:
+status: defined
+spec_path: .dude/specs/080-dude-canvas-pack-documentation/spec.md
 ---
 
 # Idea: Dude Canvas Pack Documentation
@@ -41,6 +41,19 @@ Exclude new documentation formats, generated documentation, authoring, and chang
 
 Under the same adopted recommendation, 073 reserves one Documentation section directly after the facts in every pack and project-artifact details view, annotated visibly in its mock as "Planned (080)". The display follows that reserved and annotated position in 073's round-5 mock, which the user approved in chat on 2026-10-01 ("I approve the mockup"; SHA256 58cffc7a8be6699726c87508e8524a866e55435f53293a712b664ad49840c4f9). 080 keeps the content, display, rendering choice, and implementation; its own presentation and explicit visual approval remain open.
 
+## Definition Package
+
+Definition package: `.dude/specs/080-dude-canvas-pack-documentation/spec.md`, with a lean `plan.md` and a header-only `tasks.md`. The round-1 mock at `.dude/specs/080-dude-canvas-pack-documentation/design/pack-documentation.html` was proposed, then rejected by the user at 2026-10-11T20:37:54Z. Design is `exploring` for round 2, and product implementation and task derivation still wait for the user's explicit approval of the round-2 mock.
+
+Two choices now follow the user's direction in that rejection: documents display as rendered Markdown, and each opens in a reader window over the details. They replace the round-1 Q1 and display dispositions. Following the Architect's round-2 recommendation of 2026-10-11, the Documentation section stays directly after the facts, at the position the user approved in 073's round-5 mock, and lists one button per document.
+
+During the user's explicit `ship 080`, the Spec Lead applied two Ship-authorized definition-owner dispositions that remain in force. They are not user answers, and Q1 and Q2 stay unanswered in the user-owned Open Questions above. The user confirms or changes them only through the mandatory mock approval.
+
+- Q2: project agents and skills use the same section. Basis: 073 reserves it in every pack and project-artifact details view.
+- Scope (YAGNI): an Available pack from a GitHub source shows its `pack.md` documentation and a note that member READMEs are read after installation. Today all 20 catalog packs have `pack.md` documentation, and only 2 member READMEs exist.
+
+The package settles the limits below: rendered Markdown in which only http and https links are links, opening in a new tab, while relative links, images, and raw HTML show as text; contained reads; 64 KiB per document; and the existing source explanation, which now also names documentation, in place of a separate catalog-versus-installed mechanism.
+
 ## Current Context And Investigation
 
 Verified project facts, not user answers:
@@ -54,7 +67,7 @@ The gap is reading and presenting existing pack, member, and project-artifact do
 
 ## Definition Limits
 
-The Architect recommends an inline, read-only, collapsible "Documentation" section in the selected pack or project-artifact detail pane, following the VS Code extension/npm README pattern. The presentation questions remain unanswered, and no 080 design is approved.
+Before definition, the Architect recommended an inline, read-only, collapsible "Documentation" section in the selected pack or project-artifact detail pane, following the VS Code extension/npm README pattern. The presentation questions remain unanswered, and no 080 design is approved.
 
 Choose plain text or one sanitized-renderer dependency during definition. Settle read-only Markdown/link/asset safety and bounded, contained reads from the selected pack source or project artifact. Limit each document read to 64 KiB. Distinguish current catalog documentation from installed bytes when their source or ref differs; matching pack names do not prove matching documentation.
 
@@ -84,3 +97,14 @@ These references establish continuity, not execution order. Lifecycle numbers re
 - 2026-09-30T14:05:34Z - brainstorm: Recorded 073's proposed documentation placement in pack details, pending user approval, as the coordinator's reversible scope assumption following the user's 2026-09-30 review; 080 retains content, rendering choice, and implementation and must follow the approved placement. Preserved draft status, user text, open questions, assumptions, and prior log; no package, tasks, mock, import, or pack operation was authorized.
 - 2026-10-01T01:31:17Z - brainstorm: Extended this draft to project agent and skill documentation moved from the resolved .dude/ideas/079-dude-canvas-local-artifacts.md, following 073's reserved Documentation section; added one focused presentation question. No package, tasks, or mock were authorized.
 - 2026-10-01T10:07:19Z - brainstorm: Recorded the user's 2026-10-01 confirmation that documentation display for packs, members, and project agents and skills belongs to this draft, following 073's approved Documentation placement. No package, tasks, or mock were authorized.
+- 2026-10-11T18:09:39Z - define: Staged first definition at .dude/specs/080-dude-canvas-pack-documentation/spec.md with spec, plan, and header-only tasks during the user's explicit ship; design is exploring, and canonical mock creation and explicit user visual approval remain pending. Recorded Ship-authorized definition-owner dispositions for Q1, Q2, plain-text display, and the GitHub member-README limit; they are not user answers. No product implementation or task-state change.
+- 2026-10-11T18:24:06Z - route: Assigned the canonical mock at .dude/specs/080-dude-canvas-pack-documentation/design/pack-documentation.html to FluentUI, starting from 073's approved artifact-import.html and staying inside the Architect's declared capability envelope; design remains exploring and needs the user's explicit approval before implementation.
+- 2026-10-11T19:17:53Z - define: Settled the initial pack documentation design to proposed at .dude/specs/080-dude-canvas-pack-documentation/design/pack-documentation.html; the artifact hash and proposal evidence are bound in the spec Revision Log, and FR-013 and SC-006 now cover 073's unreadable and unclosed-header fixtures as the mock draws them. The user's explicit visual approval remains pending. No product implementation, plan or task changes, or task derivation.
+- 2026-10-11T20:59:03Z - route: Assigned round 2 of the canonical mock at .dude/specs/080-dude-canvas-pack-documentation/design/pack-documentation.html to FluentUI after the user rejected round 1 at 2026-10-11T20:37:54Z (raw Markdown in a narrow pane); it follows the Architect's round-2 envelope of a reader window with rendered Markdown. The Spec Lead is revising the spec and plan in parallel; the user's explicit approval is still required before implementation.
+- 2026-10-11T21:13:12Z - define: Reopened the design to exploring after the user rejected the round-1 mock at 2026-10-11T20:37:54Z, and revised the spec and plan to round 2 per the Architect's round-2 recommendation: one button per document in the Documentation section opens a reader window with rendered Markdown. No product implementation and no task derivation; the user's explicit approval of a new mock remains pending.
+- 2026-10-11T21:37:18Z - define: Settled round 2 of the pack documentation design to proposed at .dude/specs/080-dude-canvas-pack-documentation/design/pack-documentation.html; the artifact hash and proposal evidence are bound in the spec Revision Log. The user's explicit visual approval remains pending. No product implementation, plan or task changes, or task derivation.
+- 2026-10-11T22:21:56Z - define: Staged approval of round 2 with the Details rename from the user's explicit chat reply at 2026-10-11T22:12:34Z, bound to .dude/specs/080-dude-canvas-pack-documentation/design/pack-documentation.html at SHA256 `2b71061155b280e360b0b1335c257c4435da48e34a8ee868a771c41670127299`; the coordinator verified that it differs from the viewed `507d47ebfe69494d3b8c57603099965506ce4ae7dedadaf969a4d3abfa1e4db4` only by that rename and mock-only chrome. Derived two new sequential implementation units, T001@6b3e91d4 and T002@f20a7c58, with no inherited completion evidence. No execution or task completion is claimed.
+- 2026-10-11T22:21:56Z - execution-reconciliation: Applied the checked approval stage and two new open task units, T001@6b3e91d4 and T002@f20a7c58 (deps: T001@6b3e91d4), with no inherited state; kept 0, changed 0, dropped 0, new 2. Preserved user sections and append-only history, retained the approved mock bytes at SHA256 2b71061155b280e360b0b1335c257c4435da48e34a8ee868a771c41670127299, and observed zero lint failures inside the rollback boundary. Definition is ready for the existing Ship execution path; no implementation has started.
+- 2026-10-11T22:23:11Z - work: Claimed T001@6b3e91d4 for the user-authorized autonomous Ship invocation; implementation has not started.
+- 2026-10-12T00:24:08Z - work: Claimed T002@f20a7c58 for the user-authorized autonomous Ship invocation; implementation has not started.
+- 2026-10-12T04:39:45Z - work: Closed Dude Canvas Pack Documentation: both live canonical tasks (T001@6b3e91d4, T002@f20a7c58) are done through autonomous Work in the Ship invocation. T002's first attempt missed the approved mock's reader frame (header 67 vs 63 px, narrow table cells 184 vs 168 px; implementation mismatch), and its one retry matched it (design close: matches approved spec), with independent Tester and Reviewer acceptance for every closed attempt. The one Rubber Duck retrospective dispatch completed and is recorded in retrospective.md. Nothing is committed; Git delivery awaits the user's decision.

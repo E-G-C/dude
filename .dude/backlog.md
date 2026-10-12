@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **8**
+- Ideas awaiting definition: **7**
 - Defined awaiting work: **0**
-- Completed: **76**
+- Completed: **77**
 
 ## Current
 
@@ -27,7 +27,6 @@ No current work to diagram.
 - `070` · `dude-canvas-skill-customization` — Dude Canvas Skill Customization (`.dude/ideas/070-dude-canvas-skill-customization.md`)
 - `071` · `dude-canvas-pack-authoring` — Dude Canvas Pack Authoring (`.dude/ideas/071-dude-canvas-pack-authoring.md`)
 - `072` · `dude-canvas-bundle-upgrade` — Dude Canvas Bundle Upgrade (`.dude/ideas/072-dude-canvas-bundle-upgrade.md`)
-- `080` · `dude-canvas-pack-documentation` — Dude Canvas Pack Documentation (`.dude/ideas/080-dude-canvas-pack-documentation.md`)
 
 ## Completed
 
@@ -105,6 +104,7 @@ No current work to diagram.
 - `077` · `work-model-packet-capacity` — Work Model Packet Capacity (`.dude/ideas/077-work-model-packet-capacity.md`)
 - `078` · `dude-canvas-pack-sources` — Dude Canvas Pack Sources (`.dude/ideas/078-dude-canvas-pack-sources.md`)
 - `079` · `dude-canvas-local-artifacts` — Dude Canvas Local Artifacts (`.dude/ideas/079-dude-canvas-local-artifacts.md`)
+- `080` · `dude-canvas-pack-documentation` — Dude Canvas Pack Documentation (`.dude/ideas/080-dude-canvas-pack-documentation.md`)
 - `081` · `animation-short-video-pack` — Animation and Short-Video Pack (`.dude/ideas/081-animation-short-video-pack.md`)
 - `082` · `targeted-pack-acquisition` — Targeted Pack Acquisition (`.dude/ideas/082-targeted-pack-acquisition.md`)
 

@@ -376,7 +376,9 @@ function invalidatePacks(snapshot, state, message = null) {
  * packs. It keeps only what the fresh read can still stand behind. A source that
  * is no longer saved keeps no row, a pack that is now installed leaves Available,
  * and an installed pack keeps its description only while it still matches the
- * same source. Nothing here reads or stores a catalog; the next Reload replaces it.
+ * same source, with the pack.md Details that came with that description. Its
+ * member READMEs are the fresh read's own. Nothing here reads or stores a
+ * catalog; the next Reload replaces it.
  */
 function retainCatalog(fresh, discovery) {
   if (!discovery?.sources || !fresh.sources || !fresh.installed || !fresh.items
@@ -388,7 +390,8 @@ function retainCatalog(fresh, discovery) {
   const metadata = row => {
     const known = discovery.items.find(old => old.name === row.name && old.sourceKey === row.sourceKey
       && (old.installed ? old.provenance === row.provenance : row.provenance === 'source'));
-    return { description: known ? known.description : null, use_cases: known ? known.use_cases : null };
+    return { description: known ? known.description : null, use_cases: known ? known.use_cases : null,
+      documents: [...(known?.documents ?? []).filter(entry => entry.path === 'pack.md'), ...row.documents] };
   };
   const sources = { ...fresh.sources, items: fresh.sources.items.map(item => {
     const read = discovery.sources.items.find(old => old.key === item.key);

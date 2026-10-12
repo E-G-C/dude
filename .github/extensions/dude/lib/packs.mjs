@@ -54,7 +54,7 @@ import {
   writePackSources,
 } from '../../../skills/dude-engine/lib/pack-sources.mjs';
 import { resolveMutationPath, WORKSPACE_PATHS } from '../../../skills/dude-engine/lib/workspace-paths.mjs';
-import { CANDIDATE_DOCUMENT, CATALOG_GIT_HOME_ENV, CATALOG_REQUEST_ENV, CATALOG_STOP_MARKER } from './catalog-reader.mjs';
+import { CANDIDATE_DOCUMENT, CATALOG_GIT_HOME_ENV, CATALOG_REQUEST_ENV, CATALOG_STOP_MARKER, readDocument } from './catalog-reader.mjs';
 
 // How long one reader may run before it is stopped, by what it reads, counted
 // from its slot's admission rather than its launch. Each budget follows from the
@@ -1065,16 +1065,38 @@ function matchInstalled(root, installedEntries, candidates, undecided) {
 }
 
 /**
+ * The root README of each skill folder an installed pack records, read from the
+ * installed files in recorded order.
+ * @param {string} root @param {string[]} files the pack's recorded destinations
+ */
+function installedReadmes(root, files) {
+  return files.flatMap(file => {
+    const folder = /^\.github\/skills\/([^/]+)$/.exec(file)?.[1];
+    const readme = folder ? readDocument(root, `${file}/README.md`, `${folder}/README.md`) : null;
+    return readme ? [readme] : [];
+  });
+}
+
+/**
  * Profile order first, then each read catalog's uninstalled packs in catalog
  * order. Installed membership is by name alone, so any installation of a name
  * leaves none of its Available rows, but same-named Available rows from different
  * sources stay separate, each with its own key. An installed row's description
  * comes from the source its record matches (unavailable when that source was not
  * read), and only an unmatched record uses the default catalog by name.
- * @param {{ installed: Record<string, any>, catalogs: Array<{ key: string | null, packs: any[] }>,
+ *
+ * Each row's `documents` lists its Details in order: the pack's `pack.md`, then
+ * each member skill folder's root `README.md`. A document is `{ path, text }`,
+ * its text after any leading metadata header, or `{ path, tooLarge: true }` for
+ * a file over 64 KiB, which is never read; an empty one is not listed. An
+ * installed row's `pack.md` follows its description, so it is absent until a
+ * catalog is read; its READMEs are read from its installed skill folders every
+ * time. An Available row read from GitHub also has `fromGitHub: true`: GitHub
+ * discovery downloads only `pack.md`, so its member READMEs are not read.
+ * @param {{ root: string, installed: Record<string, any>, catalogs: Array<{ key: string | null, packs: any[] }>,
  *   defaultCatalog: any[] | null, matches: ReturnType<typeof matchInstalled> | null }} input
  */
-function joinItems({ installed, catalogs, defaultCatalog, matches }) {
+function joinItems({ root, installed, catalogs, defaultCatalog, matches }) {
   const projected = matches !== null;
   const rows = Object.keys(installed).map(name => {
     const entry = installed[name];
@@ -1084,6 +1106,8 @@ function joinItems({ installed, catalogs, defaultCatalog, matches }) {
       : defaultCatalog)?.find(candidate => candidate.name === name);
     return { key: `pack:${name}`, name, installed: true, files: entry.files, source: entry.source,
       description: pack?.description ?? null, use_cases: pack?.use_cases ?? null,
+      documents: [...(pack?.documents ?? []).filter(/** @param {any} document */ document => document.path === 'pack.md'),
+        ...installedReadmes(root, entry.files)],
       ...(projected ? { sourceKey: match?.sourceKey ?? null, provenance: match?.provenance ?? null } : {}) };
   });
   for (const catalog of catalogs) {
@@ -1091,6 +1115,7 @@ function joinItems({ installed, catalogs, defaultCatalog, matches }) {
       if (Object.hasOwn(installed, pack.name)) continue;
       rows.push({ key: catalog.key ? `pack:${pack.name}@${catalog.key}` : `pack:${pack.name}`, name: pack.name,
         installed: false, files: null, source: null, description: pack.description ?? null, use_cases: pack.use_cases ?? null,
+        documents: pack.documents ?? null, ...(pack.fromGitHub ? { fromGitHub: true } : {}),
         ...(projected ? { sourceKey: catalog.key, provenance: null } : {}) });
     }
   }
@@ -1402,7 +1427,7 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
     matches = matchInstalled(root, Object.entries(snapshot.installed.installed), candidates, undecided);
   }
   if (snapshot.installed) {
-    snapshot.items = joinItems({ installed: snapshot.installed.installed, catalogs,
+    snapshot.items = joinItems({ root, installed: snapshot.installed.installed, catalogs,
       defaultCatalog: snapshot.catalog?.packs ?? null, matches });
   }
   if (projected && configuration) {

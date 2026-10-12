@@ -79,13 +79,16 @@ after(() => {
 const DISCOVER = '/api/packs?discover=1';
 /**
  * An installed row as the explicit discovery projects it: the Phase A fields plus
- * its key and, when no source matches its record, Unlisted provenance.
+ * its key and, when no source matches its record, Unlisted provenance. Its
+ * recorded files hold no README, so it has no documents.
  * @param {string} name @param {{ files: string[], source: any }} entry @param {Record<string, unknown>} [extra]
  */
 const installedRow = (name, entry, extra = {}) => ({
-  key: `pack:${name}`, name, installed: true, ...entry, description: null, use_cases: null,
+  key: `pack:${name}`, name, installed: true, ...entry, description: null, use_cases: null, documents: [],
   sourceKey: null, provenance: 'unlisted', ...extra,
 });
+/** The Details document a `packFixture` catalog pack has: its pack.md text after the metadata header. @param {string} name */
+const fixturePackDocument = name => ({ path: 'pack.md', text: `\n# ${name}\n` });
 
 /**
  * Runs a real Node child at production's `bd` invocation boundary. `hold` keeps
@@ -2359,7 +2362,7 @@ test('T001 packs GET preserves complete catalog metadata and profile-ordered ins
     assert.equal(body.catalog.origin, 'local');
     assert.deepEqual(body.catalog.packs, names.map(name => ({
       name, description: `${name} full description <script>inert()</script>`,
-      use_cases: ['writing', 'ui'], installed: Object.hasOwn(installed, name),
+      use_cases: ['writing', 'ui'], installed: Object.hasOwn(installed, name), documents: [fixturePackDocument(name)],
     })));
     assert.deepEqual(body.items.map(item => item.name), ['zulu', 'alpha', 'retired', ...names.filter(name => !Object.hasOwn(installed, name))]);
     assert.deepEqual(body.items.find(item => item.name === 'retired'), installedRow('retired', installed.retired));
@@ -2392,6 +2395,7 @@ test('T001 packs GET does not invent prototype membership for a catalog named co
     assert.deepEqual(body.catalog.packs, [{
       name: 'constructor', installed: false,
       description: 'constructor full description <script>inert()</script>', use_cases: ['writing', 'ui'],
+      documents: [fixturePackDocument('constructor')],
     }], 'Compose reports valid catalog metadata without installed membership');
     assert.deepEqual(body.items, [{
       ...body.catalog.packs[0], files: null, source: null,
@@ -3192,7 +3196,7 @@ isolatedTest('T001 a failed tree kill leaves the stop unconfirmed and keeps the 
   assert.deepEqual(observed.snapshot.coverage.catalog, { state: 'unavailable', reason: 'catalog_cleanup_failed',
     message: 'The catalog reader could not confirm process cleanup.' });
   assert.equal(observed.snapshot.coverage.installed.state, 'current');
-  assert.deepEqual(observed.snapshot.items, [{ key: 'pack:alpha', name: 'alpha', installed: true, ...observed.installed.alpha, description: null, use_cases: null }]);
+  assert.deepEqual(observed.snapshot.items, [{ key: 'pack:alpha', name: 'alpha', installed: true, ...observed.installed.alpha, description: null, use_cases: null, documents: [] }]);
   assert.ok(observed.settled.elapsed < 3_500,
     `settled within one observation and the stop window: ${observed.settled.elapsed} ms`);
   assert.deepEqual(observed.kills.calls.map(call => call.args), [['/PID', String(reader.child.pid), '/T', '/F']]);
@@ -3363,7 +3367,7 @@ test('T001 a changed or absent host launch contract is an ordinary bounded catal
         assert.deepEqual(observed.coverage.catalog, { state: 'unavailable', reason: 'catalog_unavailable',
           message: 'The catalog reader is unavailable. Reload to try a fresh read.' });
         assert.equal(observed.coverage.installed.state, 'current');
-        assert.deepEqual(observed.items, [{ key: 'pack:alpha', name: 'alpha', installed: true, ...installed.alpha, description: null, use_cases: null }]);
+        assert.deepEqual(observed.items, [{ key: 'pack:alpha', name: 'alpha', installed: true, ...installed.alpha, description: null, use_cases: null, documents: [] }]);
         assert.ok(observed.elapsedMs < 5_000, `reported at helper exit, not at the deadline: ${observed.elapsedMs} ms`);
         assert.equal(observed.launches.length, 1, 'no retry and no fallback launcher');
         assert.deepEqual(fs.readdirSync(fixture.scratch), []);
@@ -5193,13 +5197,18 @@ const completeFiles = paths => ({ state: 'complete', count: paths.length, paths,
  * One expected row. `location` follows the type: an agent's entrypoint file,
  * or a skill's folder.
  * @param {'agent' | 'skill'} type @param {string} name
- * @param {{ description: unknown, declaredName: unknown, files: unknown }} parts
+ * @param {{ description: unknown, declaredName: unknown, files: unknown, documents: unknown }} parts
  */
-function projectRow(type, name, { description, declaredName, files }) {
+function projectRow(type, name, { description, declaredName, files, documents }) {
   return { key: `project:${type}:${name}`, type, name,
     location: type === 'agent' ? `.github/agents/${name}.agent.md` : `.github/skills/${name}`,
-    description, declaredName, files };
+    description, declaredName, files, documents };
 }
+
+/** The document a `markdownFor` entrypoint gives, listed by `label`. @param {string} label @param {string} name */
+const markdownDocument = (label, name) => ({ path: label, text: `\n# ${name}\n` });
+/** The document a `frontmatterOf` entrypoint gives, listed by `label`. @param {string} label */
+const bodyDocument = label => ({ path: label, text: '\nBody.\n' });
 
 /** A field's stable part: its text, or its reason. @param {any} value */
 const summarize = value => (value.state === 'read' ? { value: value.value } : { reason: value.reason });
@@ -5268,20 +5277,23 @@ test('T003 project rows list imported, hand-made and same-name artifacts in exac
       items: [
         row('skill', 'dude-local-focused', { description: readField('Focused skill import.'),
           declaredName: readField('dude-local-focused'),
-          files: completeFiles(['.github/skills/dude-local-focused/LICENSE', '.github/skills/dude-local-focused/SKILL.md']) }),
+          files: completeFiles(['.github/skills/dude-local-focused/LICENSE', '.github/skills/dude-local-focused/SKILL.md']),
+          documents: [markdownDocument('SKILL.md', 'dude-local-focused')] }),
         row('skill', 'dude-local-hand', { description: readField('Hand made, unquoted text'), declaredName: readField('hand made'),
-          files: completeFiles(['.github/skills/dude-local-hand/SKILL.md']) }),
+          files: completeFiles(['.github/skills/dude-local-hand/SKILL.md']), documents: [bodyDocument('SKILL.md')] }),
         row('agent', 'dude-local-helper', { description: readField('Focused agent import.'), declaredName: readField('Helper'),
-          files: completeFiles(['.github/agents/dude-local-helper.agent.md', '.github/agents/dude-local-helper.support/NOTICE']) }),
+          files: completeFiles(['.github/agents/dude-local-helper.agent.md', '.github/agents/dude-local-helper.support/NOTICE']),
+          documents: [markdownDocument('dude-local-helper.agent.md', 'Helper')] }),
         row('agent', 'dude-local-note', { description: readField('Plain note'),
           declaredName: { state: 'unavailable', reason: 'missing', message: 'The frontmatter does not declare a name.' },
-          files: completeFiles(['.github/agents/dude-local-note.agent.md']) }),
+          files: completeFiles(['.github/agents/dude-local-note.agent.md']), documents: [bodyDocument('dude-local-note.agent.md')] }),
         row('agent', 'dude-local-suite', { description: readField('Directory import agent.'), declaredName: readField('Suite agent'),
           files: completeFiles(['.github/agents/dude-local-suite.agent.md', '.github/agents/dude-local-suite.support/NOTICE',
-            '.github/agents/dude-local-suite.support/notes/guide.md']) }),
+            '.github/agents/dude-local-suite.support/notes/guide.md']),
+          documents: [markdownDocument('dude-local-suite.agent.md', 'Suite agent')] }),
         row('skill', 'dude-local-suite', { description: readField('Directory import skill.'), declaredName: readField('declared-elsewhere'),
           files: completeFiles(['.github/skills/dude-local-suite/LICENSE', '.github/skills/dude-local-suite/SKILL.md',
-            '.github/skills/dude-local-suite/refs/deep/file.md']) }),
+            '.github/skills/dude-local-suite/refs/deep/file.md']), documents: [markdownDocument('SKILL.md', 'declared-elsewhere')] }),
       ],
     }, 'the exact rows, keys, path-identity names, order (name, then agent before skill) and files');
     assert.deepEqual(packAuthority(after), packAuthority(baseline),
@@ -5466,10 +5478,11 @@ test('T003 each unusable description or declared name is Description unavailable
   }
 });
 
-test('T003 an entrypoint is judged from one positioned read of its first 8 KiB, never the whole file', async t => {
+test('T003 an entrypoint is judged from its first 8 KiB, and read whole only when it is at most 64 KiB', async t => {
   const f = projectFixture();
   const instance = await openInstance('project-prefix', () => {}, { complete: true }, { root: f.root });
   const prefix = 8192; // the plan's 8 KiB, pinned here as a literal
+  const documentBytes = 65536; // 080's 64 KiB document bound, pinned here as a literal
   const head = '---\nname: x\ndescription: "early"\n';
   // A closing delimiter after the prefix: the description line is early, but the block is not closed in time.
   const late = `${head}pad: ${'a'.repeat(prefix + 904)}\n---\nBody\n`;
@@ -5540,18 +5553,17 @@ test('T003 an entrypoint is judged from one positioned read of its first 8 KiB, 
     const entrypoints = reads.filter(entry => /SKILL\.md$|\.agent\.md$/.test(entry.file ?? ''));
     assert.ok(entrypoints.length >= Object.keys(files).length + 2, 'the spy observed the entrypoint reads');
     for (const entry of entrypoints) {
-      assert.ok(entry.length <= prefix, `${entry.file} requested ${entry.length} bytes at once`);
-      assert.ok(Number(entry.position) < prefix, `${entry.file} read at position ${entry.position}`);
+      assert.ok(entry.length <= documentBytes, `${entry.file} requested ${entry.length} bytes at once`);
+      assert.ok(Number(entry.position) < documentBytes, `${entry.file} read at position ${entry.position}`);
     }
     const readFor = (/** @type {string} */ file) => entrypoints.filter(entry => entry.file === file)
       .reduce((sum, entry) => sum + entry.bytesRead, 0);
-    for (const label of ['late', 'split', 'straddle', 'big', 'late-bad']) {
-      assert.equal(readFor(`dude-local-p-${label}/SKILL.md`), prefix, `${label} is read for exactly its first 8 KiB`);
+    assert.equal(readFor('dude-local-p-big/SKILL.md'), prefix, 'a file over 64 KiB is read for exactly its first 8 KiB');
+    assert.equal(readFor('agents/dude-local-p-agent-big.agent.md'), prefix, 'an agent over 64 KiB is read for exactly its first 8 KiB');
+    for (const label of ['late', 'split', 'straddle', 'late-bad', 'exact']) {
+      assert.equal(readFor(`dude-local-p-${label}/SKILL.md`), Buffer.byteLength(files[label]), `${label}, at most 64 KiB, is read once, whole`);
     }
-    for (const label of ['agent-late', 'agent-big']) {
-      assert.equal(readFor(`agents/dude-local-p-${label}.agent.md`), prefix, `${label} is read for exactly its first 8 KiB`);
-    }
-    assert.equal(readFor('dude-local-p-exact/SKILL.md'), prefix, 'a file of exactly 8 KiB is read once, whole');
+    assert.equal(readFor('agents/dude-local-p-agent-late.agent.md'), Buffer.byteLength(late));
     assert.equal(wholeFileHandleReaders.reduce((sum, [, spy]) => sum + spy.mock.calls.filter(call => owners.has(call.this)).length, 0), 0,
       'no whole-file read through an opened project file');
     assert.equal(wholeFilePathReaders.reduce((sum, [, spy]) => sum + spy.mock.calls
@@ -5614,16 +5626,18 @@ test('T003 a linked artifact root is an identity-only row and descendant links k
             declaredName: readField('Compan'),
             files: { state: 'partial', count: 1, paths: ['.github/agents/dude-local-compan.agent.md'],
               notRead: [{ path: '.github/agents/dude-local-compan.support', reason: 'linked', message: LINKED_NOT_READ }],
-              reason: 'descendants_not_read', message: NOT_COMPLETE } }),
+              reason: 'descendants_not_read', message: NOT_COMPLETE },
+            documents: [markdownDocument('dude-local-compan.agent.md', 'Compan')] }),
           projectRow('skill', 'dude-local-linked-root', {
             description: descriptionUnavailable('linked', LINKED_NOT_READ),
             declaredName: { state: 'unavailable', reason: 'linked', message: LINKED_NOT_READ },
-            files: withheld('linked', LINKED_NOT_READ) }),
+            files: withheld('linked', LINKED_NOT_READ), documents: null }),
           projectRow('skill', 'dude-local-real', { description: readField('A real skill.'), declaredName: readField('real'),
             files: { state: 'partial', count: 2,
               paths: ['.github/skills/dude-local-real/LICENSE', '.github/skills/dude-local-real/SKILL.md'],
               notRead: [{ path: '.github/skills/dude-local-real/refs', reason: 'linked', message: LINKED_NOT_READ }],
-              reason: 'descendants_not_read', message: NOT_COMPLETE } }),
+              reason: 'descendants_not_read', message: NOT_COMPLETE },
+            documents: [markdownDocument('SKILL.md', 'real')] }),
         ],
       });
       // A link is judged by lstat only: never opened, listed, resolved, or looked beneath.
@@ -5640,7 +5654,7 @@ test('T003 a linked artifact root is an identity-only row and descendant links k
     });
   });
 
-  await t.test('file links: a linked agent entrypoint, a linked SKILL.md and a linked file inside a skill', { skip: NO_FILE_SYMLINKS }, async t => {
+  await t.test('file links: a linked agent entrypoint, a linked SKILL.md, and a linked file and README inside a skill or catalog pack', { skip: NO_FILE_SYMLINKS }, async t => {
     await withProject('project-file-links', async (f, instance) => {
       const outside = path.join(f.temporary, 'outside');
       fs.mkdirSync(outside);
@@ -5655,6 +5669,10 @@ test('T003 a linked artifact root is an identity-only row and descendant links k
       f.put('.github/skills/dude-local-link-file/SKILL.md', markdownFor('link-file', 'Has a linked file.'));
       const fileLink = path.join(f.root, '.github/skills/dude-local-link-file/secret.txt');
       fs.symlinkSync(path.join(outside, 'secret.txt'), fileLink, 'file');
+      const readmeLink = path.join(f.root, '.github/skills/dude-local-link-file/README.md');
+      fs.symlinkSync(path.join(outside, 'secret.txt'), readmeLink, 'file');
+      fs.mkdirSync(path.join(f.library, 'alpha/skills/dude-pack-alpha-helper'), { recursive: true });
+      fs.symlinkSync(path.join(outside, 'secret.txt'), path.join(f.library, 'alpha/skills/dude-pack-alpha-helper/README.md'), 'file');
 
       const seen = recordFsPaths(t);
       const { project } = await readPacksRoute(instance);
@@ -5663,22 +5681,28 @@ test('T003 a linked artifact root is an identity-only row and descendant links k
         projectRow('agent', 'dude-local-link-agent', {
           description: descriptionUnavailable('linked', LINKED_NOT_READ),
           declaredName: { state: 'unavailable', reason: 'linked', message: LINKED_NOT_READ },
-          files: withheld('linked', LINKED_NOT_READ) }),
+          files: withheld('linked', LINKED_NOT_READ), documents: null }),
         projectRow('skill', 'dude-local-link-entry', {
           description: descriptionUnavailable('linked', LINKED_NOT_READ),
           declaredName: { state: 'unavailable', reason: 'linked', message: LINKED_NOT_READ },
           files: { state: 'partial', count: 1, paths: ['.github/skills/dude-local-link-entry/LICENSE'],
             notRead: [{ path: '.github/skills/dude-local-link-entry/SKILL.md', reason: 'linked', message: LINKED_NOT_READ }],
-            reason: 'descendants_not_read', message: NOT_COMPLETE } }),
+            reason: 'descendants_not_read', message: NOT_COMPLETE }, documents: null }),
         projectRow('skill', 'dude-local-link-file', { description: readField('Has a linked file.'), declaredName: readField('link-file'),
           files: { state: 'partial', count: 1, paths: ['.github/skills/dude-local-link-file/SKILL.md'],
-            notRead: [{ path: '.github/skills/dude-local-link-file/secret.txt', reason: 'linked', message: LINKED_NOT_READ }],
-            reason: 'descendants_not_read', message: NOT_COMPLETE } }),
+            notRead: [{ path: '.github/skills/dude-local-link-file/README.md', reason: 'linked', message: LINKED_NOT_READ },
+              { path: '.github/skills/dude-local-link-file/secret.txt', reason: 'linked', message: LINKED_NOT_READ }],
+            reason: 'descendants_not_read', message: NOT_COMPLETE },
+          documents: [markdownDocument('SKILL.md', 'link-file')] }),
       ]);
-      for (const link of [agentLink, entryLink, fileLink]) {
+      for (const link of [agentLink, entryLink, fileLink, readmeLink]) {
         assert.deepEqual(seen.open.filter(file => file === link), [], `${path.basename(link)} is never opened`);
       }
       assert.deepEqual(Object.values(seen).flat().filter(file => file.startsWith(outside)), [], 'no link target is examined');
+      // The catalog reader follows no link to a member README either.
+      const discovered = await readPacksRoute(instance, DISCOVER);
+      assert.deepEqual(discovered.items.find(/** @param {any} item */ item => item.name === 'alpha').documents, [fixturePackDocument('alpha')]);
+      assert.equal(JSON.stringify(discovered).includes('outside secret'), false, 'no linked text is read anywhere');
     });
   });
 });
@@ -5755,7 +5779,7 @@ test('T003 256 artifacts are all listed and a 257th withholds the whole list, ne
       assert.equal(body.coverage.catalog.state, 'current', 'the packs stay readable beside a withheld project list');
       assert.deepEqual(packAuthority(body).items, [{ key: `pack:alpha@${body.sources.defaultKey}`, name: 'alpha', installed: false,
         files: null, source: null, description: 'alpha full description <script>inert()</script>', use_cases: ['writing', 'ui'],
-        sourceKey: body.sources.defaultKey, provenance: null }]);
+        documents: [fixturePackDocument('alpha')], sourceKey: body.sources.defaultKey, provenance: null }]);
     });
   });
 });
@@ -5928,7 +5952,9 @@ test('T003 an unreadable entrypoint, artifact folder, subfolder or root keeps it
   await withProject('project-unreadable', async (f, instance) => {
     const ok = markdownFor('x', 'Readable.');
     f.put('.github/skills/dude-local-u-entry/SKILL.md', ok);
+    f.put('.github/skills/dude-local-u-entry/README.md', '# Not listed beside an unreadable entrypoint\n');
     f.put('.github/skills/dude-local-u-folder/SKILL.md', ok);
+    f.put('.github/skills/dude-local-u-folder/README.md', '# Not listed while the files are withheld\n');
     f.put('.github/skills/dude-local-u-sub/SKILL.md', ok);
     f.put('.github/skills/dude-local-u-sub/inner/hidden.md');
     f.put('.github/skills/dude-local-u-root/SKILL.md', ok);
@@ -5959,10 +5985,13 @@ test('T003 an unreadable entrypoint, artifact folder, subfolder or root keeps it
     assert.deepEqual(byName.get('dude-local-u-entry').description, descriptionUnavailable('read_failed', 'The file could not be read (EACCES).'),
       'an unreadable entrypoint shows its reason');
     assert.deepEqual(byName.get('dude-local-u-entry').declaredName, unreadable);
-    assert.deepEqual(byName.get('dude-local-u-entry').files, completeFiles(['.github/skills/dude-local-u-entry/SKILL.md']));
+    assert.deepEqual(byName.get('dude-local-u-entry').files,
+      completeFiles(['.github/skills/dude-local-u-entry/README.md', '.github/skills/dude-local-u-entry/SKILL.md']));
+    assert.equal(byName.get('dude-local-u-entry').documents, null, 'its reason stands in place of any document, even its README');
     assert.deepEqual(byName.get('dude-local-u-folder').description, readField('Readable.'));
     assert.deepEqual(byName.get('dude-local-u-folder').files, withheld('unreadable', 'The folder could not be read (EACCES).'),
       'an unreadable artifact folder withholds only its files and count');
+    assert.equal(byName.get('dude-local-u-folder').documents, null, 'withheld files leave their reason in place of any document');
     assert.deepEqual(byName.get('dude-local-u-sub').files, {
       state: 'partial', count: 1, paths: ['.github/skills/dude-local-u-sub/SKILL.md'],
       notRead: [{ path: '.github/skills/dude-local-u-sub/inner', reason: 'read_failed', message: 'The folder could not be read (EACCES).' }],
@@ -5970,9 +5999,10 @@ test('T003 an unreadable entrypoint, artifact folder, subfolder or root keeps it
     const identityOnly = { state: 'unavailable', reason: 'read_failed', message: 'Could not be read (EACCES).' };
     assert.deepEqual(byName.get('dude-local-u-root'), projectRow('skill', 'dude-local-u-root', {
       description: descriptionUnavailable('read_failed', 'Could not be read (EACCES).'), declaredName: identityOnly,
-      files: withheld('read_failed', 'Could not be read (EACCES).') }));
+      files: withheld('read_failed', 'Could not be read (EACCES).'), documents: null }));
     assert.deepEqual(byName.get('dude-local-u-fine').description, readField('Readable.'), 'a sibling row is untouched');
     assert.equal(byName.get('dude-local-u-fine').files.state, 'complete');
+    assert.deepEqual(byName.get('dude-local-u-fine').documents, [markdownDocument('SKILL.md', 'x')]);
   });
 });
 
@@ -10264,4 +10294,139 @@ isolatedTest('T003 a read admitted late in its window is stopped when the window
     await Promise.allSettled(pending);
     fixture.cleanup();
   }
+});
+
+/* ----------------------------------------------------------------------------
+ * 080 T001: Details documents arrive with the existing pack and project reads.
+ * ------------------------------------------------------------------------- */
+
+test('080 Documents: an Available pack lists its pack.md text, then each member README, each whole up to 64 KiB', async () => {
+  await withProject('documents-available', async (f, instance) => {
+    f.catalog(['bravo', 'charlie']);
+    f.put('library/packs/alpha/skills/dude-pack-alpha-helper/README.md', '---\ntitle: Helper\n---\n# Helper\n');
+    f.put('library/packs/alpha/skills/dude-pack-alpha-quiet/SKILL.md', '---\nname: quiet\n---\n');
+    // Nothing after the metadata header is no document.
+    f.put('library/packs/bravo/pack.md', '---\nname: bravo\ndescription: "Bravo"\n---\n\n');
+    f.put('library/packs/charlie/skills/dude-pack-charlie-max/README.md', 'm'.repeat(65_536));
+    f.put('library/packs/charlie/skills/dude-pack-charlie-over/README.md', 'o'.repeat(65_537));
+    const body = await readPacksRoute(instance, DISCOVER);
+    assert.deepEqual(Object.fromEntries(body.items.map(/** @param {any} item */ item => [item.name, item.documents])), {
+      alpha: [fixturePackDocument('alpha'), { path: 'dude-pack-alpha-helper/README.md', text: '# Helper\n' }],
+      bravo: [],
+      charlie: [fixturePackDocument('charlie'), { path: 'dude-pack-charlie-max/README.md', text: 'm'.repeat(65_536) },
+        { path: 'dude-pack-charlie-over/README.md', tooLarge: true }],
+    });
+    assert.equal(body.items.some(/** @param {any} item */ item => 'fromGitHub' in item), false, 'a local catalog is not marked');
+  });
+});
+
+test('080 Documents: a GitHub catalog lists only each pack.md, marks its rows, and requests no README', { timeout: 30_000 }, async t => {
+  const fixture = packFixture();
+  fixture.profile({});
+  // A released install: no local library, so the GitHub upstream is the default catalog.
+  fs.rmSync(fixture.library, { recursive: true });
+  const github = offlineGitHub(t, fixture);
+  const readme = (/** @type {string} */ pack, /** @type {string} */ skill) => ({ [`library/packs/${pack}/skills/${skill}/README.md`]: '# Never requested\n' });
+  const upstream = github.publish('acme/upstream', ['alpha'], { files: readme('alpha', 'dude-pack-alpha-guide') });
+  github.publish('acme/dude-packs', ['rust'], { files: readme('rust', 'dude-pack-rust-guide') });
+  fs.writeFileSync(path.join(fixture.root, '.dude/metadata/bundle-manifest.md'),
+    `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify({ source_repo: upstream.url, source_ref: 'main' })}\n\`\`\`\n`);
+  const team = localSource(fixture, 'team-packs', ['ui']);
+  fs.mkdirSync(path.join(team, 'library/packs/ui/skills/dude-pack-ui-kit'), { recursive: true });
+  fs.writeFileSync(path.join(team, 'library/packs/ui/skills/dude-pack-ui-kit/README.md'), '# Folder kit\n');
+  saveSources(fixture, [remoteEntry('acme/dude-packs'), localEntry(team)]);
+  const instance = await openInstance('documents-github', () => {}, { complete: true }, { root: fixture.root });
+  try {
+    const body = await readPacksRoute(instance, DISCOVER);
+    assert.equal(body.coverage.catalog.state, 'current');
+    assert.deepEqual(body.items.map(/** @param {any} item */ item => [item.name, item.documents, item.fromGitHub ?? false]), [
+      ['alpha', [fixturePackDocument('alpha')], true],
+      ['rust', [fixturePackDocument('rust')], true],
+      ['ui', [fixturePackDocument('ui'), { path: 'dude-pack-ui-kit/README.md', text: '# Folder kit\n' }], false],
+    ], 'the GitHub upstream and a saved GitHub source are marked; a saved folder is not');
+    for (const pack of ['alpha', 'rust']) {
+      assert.ok(github.requests.some(request => request.path.endsWith(`/library/packs/${pack}/pack.md`)), `sensitivity: ${pack}'s pack.md was downloaded`);
+    }
+    assert.deepEqual(github.requests.filter(request => /readme/i.test(request.path)), [], 'no README is requested from GitHub');
+  } finally {
+    await closeInstance('documents-github');
+    fixture.cleanup();
+  }
+});
+
+test('080 Documents: an installed pack lists its member READMEs from its installed files, before and after a catalog read', async () => {
+  const fixture = packFixture();
+  const installed = { alpha: { ...fixture.entry('alpha'), files: ['.github/agents/dude-pack-alpha-worker.agent.md',
+    '.github/skills/dude-pack-alpha-bare', '.github/skills/dude-pack-alpha-helper'] } };
+  fixture.profile(installed);
+  fixture.catalog(['alpha']);
+  /** @param {string} relative @param {string} content */
+  const write = (relative, content) => {
+    const target = path.join(fixture.root, ...relative.split('/'));
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, content);
+  };
+  write('.github/skills/dude-pack-alpha-bare/SKILL.md', '---\nname: bare\n---\n');
+  write('.github/skills/dude-pack-alpha-helper/README.md', '# Installed helper\n');
+  // The catalog's own copy differs, and an installed row never shows it.
+  write('library/packs/alpha/skills/dude-pack-alpha-helper/README.md', '# Catalog helper\n');
+  const instance = await openInstance('documents-installed', () => {}, { complete: true }, { root: fixture.root });
+  try {
+    const readme = { path: 'dude-pack-alpha-helper/README.md', text: '# Installed helper\n' };
+    const automatic = await readPacksRoute(instance);
+    assert.equal(automatic.coverage.catalog.state, 'not_read');
+    assert.deepEqual(automatic.items.map(/** @param {any} item */ item => [item.name, item.description, item.documents]),
+      [['alpha', null, [readme]]], 'its READMEs need no catalog read; its pack.md waits for one, as its description does');
+    const discovered = await readPacksRoute(instance, DISCOVER);
+    assert.deepEqual(discovered.items.map(/** @param {any} item */ item => [item.name, item.documents]),
+      [['alpha', [fixturePackDocument('alpha'), readme]]]);
+  } finally {
+    await closeInstance('documents-installed');
+    fixture.cleanup();
+  }
+});
+
+test('080 Documents: a project skill or agent lists its entrypoint text, then the README at its folder root, each whole up to 64 KiB', async t => {
+  await withProject('documents-project', async (f, instance) => {
+    f.put('.github/skills/dude-local-guide/SKILL.md', markdownFor('guide', 'With a README.'));
+    f.put('.github/skills/dude-local-guide/README.md', '---\ntitle: Guide\n---\n# Guide README\n');
+    f.put('.github/skills/dude-local-plain/SKILL.md', markdownFor('plain', 'Without a README.'));
+    f.put('.github/agents/dude-local-scribe.agent.md', markdownFor('Scribe', 'With a support README.'));
+    f.put('.github/agents/dude-local-scribe.support/README.md', '# Scribe support\n');
+    f.put('.github/agents/dude-local-solo.agent.md', markdownFor('Solo', 'Without a support folder.'));
+    // Nothing after the metadata header is no document.
+    f.put('.github/skills/dude-local-empty/SKILL.md', '---\nname: empty\ndescription: "Empty body."\n---\n\n');
+    // At most 65,536 bytes is shown whole; one byte more is too large.
+    const header = '---\nname: bound\ndescription: "At the bound."\n---\n';
+    const atBound = header + 'b'.repeat(65_536 - Buffer.byteLength(header));
+    f.put('.github/skills/dude-local-max/SKILL.md', atBound);
+    f.put('.github/skills/dude-local-max/README.md', 'r'.repeat(65_536));
+    f.put('.github/skills/dude-local-over/SKILL.md', `${atBound}b`);
+    f.put('.github/skills/dude-local-over/README.md', 'r'.repeat(65_537));
+    // An unclosed header, or withheld files, is the row's reason in place of documents, even beside a README.
+    f.put('.github/agents/dude-local-open.agent.md', '---\nname: open\ndescription: "Never closed."\n');
+    f.put('.github/agents/dude-local-open.support/README.md', '# Not listed\n');
+    f.put('.github/skills/dude-local-many/SKILL.md', markdownFor('many', 'More than 128 files.'));
+    f.put('.github/skills/dude-local-many/README.md', '# Not listed\n');
+    putMany(f.root, '.github/skills/dude-local-many/refs', 128);
+
+    const seen = recordFsPaths(t);
+    const { project } = await readPacksRoute(instance);
+    t.mock.restoreAll();
+    assert.deepEqual(Object.fromEntries(project.items.map(/** @param {any} item */ item => [`${item.type}:${item.name}`, item.documents])), {
+      'agent:dude-local-open': null,
+      'agent:dude-local-scribe': [markdownDocument('dude-local-scribe.agent.md', 'Scribe'),
+        { path: 'dude-local-scribe.support/README.md', text: '# Scribe support\n' }],
+      'agent:dude-local-solo': [markdownDocument('dude-local-solo.agent.md', 'Solo')],
+      'skill:dude-local-empty': [],
+      'skill:dude-local-guide': [markdownDocument('SKILL.md', 'guide'), { path: 'README.md', text: '# Guide README\n' }],
+      'skill:dude-local-many': null,
+      'skill:dude-local-max': [{ path: 'SKILL.md', text: atBound.slice(header.length) }, { path: 'README.md', text: 'r'.repeat(65_536) }],
+      'skill:dude-local-over': [{ path: 'SKILL.md', tooLarge: true }, { path: 'README.md', tooLarge: true }],
+      'skill:dude-local-plain': [markdownDocument('SKILL.md', 'plain')],
+    });
+    for (const unread of ['skills/dude-local-over/README.md', 'agents/dude-local-open.support/README.md', 'skills/dude-local-many/README.md']) {
+      assert.deepEqual(seen.open.filter(file => file === path.join(f.root, '.github', ...unread.split('/'))), [], `${unread} is never opened`);
+    }
+  });
 });

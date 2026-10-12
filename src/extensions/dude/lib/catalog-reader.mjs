@@ -78,6 +78,10 @@ export const CANDIDATE_DOCUMENT = 'pack-sources.candidate.md';
 
 const KEY_RE = /^src_[0-9a-f]{32}$/;
 const REVISION_RE = /^(?:absent|sha256:[0-9a-f]{64})$/;
+/** A document file larger than this is listed as too large and never read. */
+const DOCUMENT_BYTES = 64 * 1024;
+/** A leading metadata header: a `---` line, through the next `---` line. */
+const HEADER_RE = /^---[ \t]*\r?\n(?:[\s\S]*?\r?\n)?---[ \t]*(?:\r?\n|$)/;
 /**
  * How Compose's error ends when it kept an acquisition's material: the root it
  * names last, which Compose made in `os.tmpdir()`, this helper's own root.
@@ -123,22 +127,79 @@ function parseRequest(text) {
 }
 
 /**
+ * One Details document (see `joinItems` in packs.mjs): `{ path, text }`, the
+ * file's text after any leading metadata header, or `{ path, tooLarge: true }`
+ * for a file over 64 KiB, which is never read. Null when nothing is listed: no
+ * regular file there, a file-system link on the way, which is never followed, a
+ * file that cannot be read, or no text.
+ * @param {string} base the folder `relative` is resolved in
+ * @param {string} relative
+ * @param {string} label the path the document is listed by
+ * @returns {{ path: string, text: string } | { path: string, tooLarge: true } | null}
+ */
+export function readDocument(base, relative, label) {
+  try {
+    const file = resolveMutationPath(base, relative);
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile()) return null;
+    if (stat.size > DOCUMENT_BYTES) return { path: label, tooLarge: true };
+    const text = fs.readFileSync(file, 'utf8').replace(HEADER_RE, '');
+    return text.trim() ? { path: label, text } : null;
+  } catch (error) {
+    if (error instanceof TypeError) throw error;
+    return null;
+  }
+}
+
+/**
+ * A catalog pack's documents: its own `pack.md`, then the root README of each
+ * member skill folder, in folder-name order. A GitHub catalog holds each
+ * `pack.md` alone, so its members are not looked for.
+ * @param {string} catalogDir @param {string} name @param {boolean} fromGitHub
+ */
+function packDocuments(catalogDir, name, fromGitHub) {
+  const documents = [readDocument(catalogDir, `${name}/pack.md`, 'pack.md')];
+  let skills = /** @type {string[]} */ ([]);
+  if (!fromGitHub) {
+    try {
+      skills = fs.readdirSync(resolveMutationPath(catalogDir, `${name}/skills`), { withFileTypes: true })
+        .filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
+    } catch (error) {
+      // A missing or linked skills folder has no member READMEs.
+      if (error instanceof TypeError) throw error;
+    }
+  }
+  for (const skill of skills) {
+    documents.push(readDocument(catalogDir, `${name}/skills/${skill}/README.md`, `${skill}/README.md`));
+  }
+  return documents.filter(document => document !== null);
+}
+
+/**
  * Validate the resolved catalog directory, then enumerate it once. This resolver
  * always returns <source-or-checkout>/library/packs. Validate from that source
  * root, not below a potentially linked library ancestor, before enumerating even
  * an empty catalog. The resolved directory is passed back as a local input only
  * to avoid a second acquisition; its actual origin remains the resolver's origin.
+ * Each pack's documents are read here too, while an acquired copy still exists.
  * @param {string} root
  * @param {{ dir: string, origin: string }} catalog
+ * @param {boolean} fromGitHub whether GitHub discovery acquired the catalog
  */
-async function listCatalog(root, catalog) {
+async function listCatalog(root, catalog, fromGitHub) {
   const sourceRoot = fs.realpathSync(path.resolve(catalog.dir, '..', '..'));
   const catalogDir = resolveMutationPath(sourceRoot, 'library/packs');
   for (const name of availablePacks(catalogDir)) {
     resolveMutationPath(catalogDir, `${name}/pack.md`);
   }
   const result = await cmdList({ root, library: catalogDir, fetch: false });
-  if (result.ok) result.result.origin = catalog.origin;
+  if (result.ok) {
+    result.result.origin = catalog.origin;
+    for (const pack of result.result.packs) {
+      pack.documents = packDocuments(catalogDir, pack.name, fromGitHub);
+      if (fromGitHub) pack.fromGitHub = true;
+    }
+  }
   return result;
 }
 
@@ -148,10 +209,11 @@ async function listCatalog(root, catalog) {
  * the read instead of being left behind a listing.
  * @param {string} root
  * @param {{ dir: string, origin: string, dispose?: () => Promise<void> }} catalog
+ * @param {boolean} fromGitHub
  */
-async function listAndRelease(root, catalog) {
+async function listAndRelease(root, catalog, fromGitHub) {
   try {
-    return await listCatalog(root, catalog);
+    return await listCatalog(root, catalog, fromGitHub);
   } finally {
     await catalog.dispose?.();
   }
@@ -168,7 +230,10 @@ async function readCatalog(root) {
       return keptMaterial(catalog.error) ? { ...failure('catalog_cleanup_failed', catalog.error), kept: true }
         : { ok: false, error: catalog.error };
     }
-    return await listAndRelease(root, catalog);
+    // Only the bundle upstream is ever acquired here, and GitHub discovery of it downloads each pack.md alone.
+    const fromGitHub = Boolean(catalog.dispose)
+      && Boolean(builtinSources(root).find(source => source.builtin === 'bundle-upstream')?.identity.startsWith('github:'));
+    return await listAndRelease(root, catalog, fromGitHub);
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'The catalog could not be read.' };
   }
@@ -269,7 +334,7 @@ async function readSource(root, request) {
       if (keptMaterial(catalog.error)) return { ...unread('catalog_cleanup_failed', catalog.error), kept: true };
       return unread(/^no pack catalog found in /.test(catalog.error) ? 'catalog_missing' : 'catalog_unreachable', catalog.error);
     }
-    const listed = await listAndRelease(root, catalog);
+    const listed = await listAndRelease(root, catalog, source.type === 'remote' && source.identity.startsWith('github:'));
     if (!listed.ok) {
       const error = listed.error ?? 'The catalog could not be read.';
       return unread(/ has invalid metadata/.test(error) ? 'catalog_metadata' : 'catalog_unavailable', error);

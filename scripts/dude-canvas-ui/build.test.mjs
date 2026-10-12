@@ -549,6 +549,37 @@ async function loadFrontendForSsr({
   }
 }
 
+/**
+ * Compile the authored Markdown component, with its own dependencies bundled
+ * as the build bundles them, for a static render. React stays external and
+ * resolves through the scoped install, so the component and `renderFrontend`
+ * share one React.
+ */
+async function loadMarkdownForSsr() {
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-markdown-ssr-'));
+  try {
+    const output = path.join(sandbox, 'markdown.testable.mjs');
+    fs.symlinkSync(path.join(TOOL_ROOT, 'node_modules'), path.join(sandbox, 'node_modules'), 'dir');
+    createRequire(path.join(TOOL_ROOT, 'package.json'))('esbuild').buildSync({
+      bundle: true,
+      entryPoints: [path.join(FRONTEND_ROOT, 'markdown.jsx')],
+      external: ['react', 'react-dom'],
+      format: 'esm',
+      jsx: 'automatic',
+      logLevel: 'silent',
+      nodePaths: [path.join(TOOL_ROOT, 'node_modules')],
+      outfile: output,
+      platform: 'node',
+      target: 'node20',
+    });
+    const { Markdown } = await import(pathToFileURL(output).href);
+    return { Markdown, dispose: () => fs.rmSync(sandbox, { recursive: true, force: true }) };
+  } catch (error) {
+    fs.rmSync(sandbox, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 /** @param {(props: any) => unknown} Component @param {Record<string, unknown>} props */
 function renderFrontend(Component, props) {
   const scopedRequire = createRequire(path.join(TOOL_ROOT, 'package.json'));
@@ -652,6 +683,7 @@ test('scoped manifest and lock have the exact minimal production build closure',
   assert.equal(manifest.engines.node, '>=20');
   assert.deepEqual(manifest.dependencies, {
     '@fluentui/react-components': '9.74.7',
+    marked: '18.1.0',
     react: '19.2.8',
     'react-dom': '19.2.8',
   });
@@ -665,6 +697,7 @@ test('scoped manifest and lock have the exact minimal production build closure',
 
   for (const [name, version] of Object.entries({
     '@fluentui/react-components': '9.74.7',
+    marked: '18.1.0',
     react: '19.2.8',
     'react-dom': '19.2.8',
     esbuild: '0.28.2',
@@ -799,10 +832,10 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   assert.ok(application.length > 100_000, 'the application bundle must contain the browser runtime');
   const gzip = gzipSync(applicationBytes, { level: 9 });
   const repeatedGzip = gzipSync(applicationBytes, { level: 9 });
-  assert.equal(applicationBytes.length, 1_052_773, 'committed app.js raw byte size');
+  assert.equal(applicationBytes.length, 1_107_721, 'committed app.js raw byte size');
   assert.equal(
     sha256(applicationBytes),
-    '0a808370514afa32602d0031352070be781e99a7e43dfe94da5a98f8aa9bf59c',
+    '7223f8c918d2686e103e8dbef5a118c0be6e1c48a713552103676419a72af7a1',
     'committed app.js raw SHA-256',
   );
   assertPortableGzip(gzip, repeatedGzip, applicationBytes, 'Node zlib level-9 app.js');
@@ -814,10 +847,10 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   assert.match(legal, /keyborg\/dist\/index\.js/);
   assert.match(legal, /MIT License/i);
   assert.match(legal, /Third-party package licenses \(metafile-derived\)/);
-  assert.equal(legalBytes.length, 79_762, 'complete legal notice byte size');
+  assert.equal(legalBytes.length, 82_901, 'complete legal notice byte size');
   assert.equal(
     sha256(legalBytes),
-    '3be2d01e3b59529e54cde5f17aee76c168bcde63245c21ec387cf70ba7a6d869',
+    'f5722a59f11d3b24a83b546313fde699789d759791fcb554ebf0dcdce083c8b2',
     'complete legal notice SHA-256',
   );
   assert.match(html, /<script type="module" src="\/assets\/app\.js"><\/script>/);
@@ -858,7 +891,7 @@ test('metafile-derived legal inventory contains every contributing package and c
   });
 
   // Assert
-  assert.equal(expected.length, 53, 'metafile identifies the exact bundled npm package count');
+  assert.equal(expected.length, 54, 'metafile identifies the exact bundled npm package count');
   assert.deepEqual(
     actual.map(({ name, rootRelative, version }) => ({ name, rootRelative, version })),
     expected,
@@ -876,7 +909,7 @@ test('metafile-derived legal inventory contains every contributing package and c
       name: '@fluentui/react-menu',
       version: '9.25.4',
       inputCount: 36,
-      bytesInOutput: 31_655,
+      bytesInOutput: 31_653,
     },
     {
       name: '@fluentui/react-motion-components-preview',
@@ -888,7 +921,7 @@ test('metafile-derived legal inventory contains every contributing package and c
       name: '@fluentui/react-tooltip',
       version: '9.10.5',
       inputCount: 6,
-      bytesInOutput: 8_318,
+      bytesInOutput: 8_313,
     },
   ], 'the shipped menu, motion implementation, and tooltip contribute real app.js bytes');
   for (const { name, version } of menuGraphPackages) {
@@ -1470,6 +1503,76 @@ test('073 Add/import: one closed import route with exact bodies, four Packs view
     'An idea capture needs owner reconciliation before an import can be requested.',
     'New agents or skills may not be available until you start a new session.']) {
     assert.equal(bundle.includes(exact), true, `published app.js retains Add/import copy: ${exact}`);
+  }
+});
+
+test('080 Documentation: every library pack.md and member README renders as elements, with web links only and literal HTML', async (context) => {
+  if (!hasFrontendTestRuntime()) {
+    skipScopedDependencies(context);
+    return;
+  }
+  // Arrange: each document's text after its metadata header, as the reads supply it.
+  const header = /^---[ \t]*\r?\n(?:[\s\S]*?\r?\n)?---[ \t]*(?:\r?\n|$)/;
+  const library = path.join(ROOT, 'library', 'packs');
+  const packs = fs.readdirSync(library).filter((name) => fs.existsSync(path.join(library, name, 'pack.md'))).sort();
+  const documents = packs.flatMap((name) => {
+    const skills = path.join(library, name, 'skills');
+    const readmes = fs.existsSync(skills) ? fs.readdirSync(skills).sort()
+      .filter((skill) => fs.existsSync(path.join(skills, skill, 'README.md'))).map((skill) => `${name}/skills/${skill}/README.md`) : [];
+    return [`${name}/pack.md`, ...readmes];
+  }).map((relative) => [relative, fs.readFileSync(path.join(library, ...relative.split('/')), 'utf8').replace(header, '')]);
+  const hostile = [
+    '<script>window.markdownExecuted = true</script>',
+    '',
+    'Inline <img src="https://example.test/x.png" onerror="alert(1)"> and <iframe src="https://example.test/"></iframe>.',
+    '',
+    '[run](javascript:alert(1)) [relative](docs/a.md) [anchor](#top) [web](https://example.test/a)',
+    '',
+    '![tracker](https://example.test/pixel.png) <a href="https://example.test/raw">raw anchor</a>',
+    '',
+  ].join('\n');
+  const allowed = new Set(['div', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'table', 'thead',
+    'tbody', 'tr', 'th', 'td', 'hr', 'br', 'strong', 'em', 'del', 'a', 'svg', 'path']);
+  const { Markdown, dispose } = await loadMarkdownForSsr();
+
+  try {
+    // Act
+    const rendered = new Map([...documents, ['hostile', hostile]].map(([label, text]) => [label, renderFrontend(Markdown, { text })]));
+
+    // Assert
+    assert.ok(packs.includes('clearline') && packs.includes('strata') && packs.length >= 19, `every library pack.md: ${packs}`);
+    assert.ok(['clearline/skills/dude-pack-clearline-visual/README.md', 'strata/skills/dude-pack-strata-visual/README.md']
+      .every((readme) => rendered.has(readme)), 'both member READMEs');
+    let webLinks = 0;
+    for (const [label, markup] of rendered) {
+      const tags = [...markup.matchAll(/<([a-z][a-z0-9]*)\b/g)].map((match) => match[1]);
+      assert.deepEqual(tags.filter((tag) => !allowed.has(tag)), [], `${label} renders only Markdown elements, never raw HTML`);
+      assert.equal(tags.includes('img'), false, `${label} renders no image`);
+      for (const [anchor] of markup.matchAll(/<a\b[^>]*>/g)) {
+        assert.match(anchor, /href="https?:\/\/[^"]+"/, `${label} links only to web addresses: ${anchor}`);
+        assert.match(anchor, /target="_blank"/, `${label} opens its links in a new tab`);
+        assert.match(anchor, /rel="noopener noreferrer"/, `${label} links carry no opener or referrer`);
+        webLinks += 1;
+      }
+      assert.doesNotMatch(markup, /&amp;(?:lt|gt|amp|quot);/, `${label} escapes each character once`);
+      // Outside code, no heading, table, or code-fence syntax remains.
+      const prose = markup.replace(/<pre\b[\s\S]*?<\/pre>|<code\b[\s\S]*?<\/code>/g, '').split(/<[^>]+>/);
+      assert.deepEqual(prose.filter((text) => /(?:^|\n)[ \t]*#{1,6}[ \t]|```|~~~|\|[ \t]*:?-{3,}/.test(text)), [], `${label} leaves no syntax outside code`);
+      if (label.endsWith('/pack.md')) assert.match(markup, /<h3>/, `${label} renders its title as a heading under the reader's h2`);
+    }
+    assert.ok(webLinks >= 2, 'the real http(s) links in docsy and writing render as links');
+    const readme = rendered.get('clearline/skills/dude-pack-clearline-visual/README.md');
+    assert.match(readme, /<code[^>]*>&lt;clearline-root&gt;<\/code>/, '<clearline-root> in inline code is escaped once');
+    assert.match(readme, /<table>/);
+    const unsafe = rendered.get('hostile');
+    assert.match(unsafe, /<pre[^>]*><code>&lt;script&gt;window\.markdownExecuted = true&lt;\/script&gt;\s*<\/code><\/pre>/,
+      'a raw HTML block is literal text in a code box');
+    assert.match(unsafe, /Inline &lt;img src=&quot;https:\/\/example\.test\/x\.png&quot; onerror=&quot;alert\(1\)&quot;&gt; and &lt;iframe/);
+    assert.match(unsafe, /run relative anchor <a\b[^>]*href="https:\/\/example\.test\/a"/, 'other schemes, relative links, and anchors are text');
+    assert.match(unsafe, /tracker &lt;a href=/, 'an image is its alt text, and a raw anchor is literal');
+    assert.equal((unsafe.match(/<a\b/g) ?? []).length, 1);
+  } finally {
+    dispose();
   }
 });
 

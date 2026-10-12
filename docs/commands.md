@@ -1210,10 +1210,14 @@ only while that pack is still on the first page of the results.
 Pack, project, and source details keep one order: the heading, a coverage notice
 when there is one, the description, the actions with their reason or a
 read-only note, and then the facts. The body scrolls as one region while the
-heading, Close, and Back to results stay in view. Settings shows no
-documentation for a pack, its members, or a project agent or skill. That display
-belongs to feature 080 (Dude Canvas Pack Documentation), and the details leave
-no section, control, or placeholder for it.
+heading, Close, and Back to results stay in view. After the facts, pack and
+project details have a Details section: one button per document, labeled with
+its path, for `pack.md` or the agent or skill file and then any root
+`README.md`. A button opens that document, formatted, in a reader window over
+the details, where web links open in a new tab; Escape or Close returns to the
+button. A document over 64 KiB is listed without a button, an installed pack's
+`pack.md` appears only after Reload packs reads its catalog, and a pack from
+GitHub shows its member READMEs only after installation.
 
 If the catalog cannot be read, Installed remains inspectable from its recorded
 names, files, and source. Available and use-case filtering are unavailable, not
@@ -1418,8 +1422,9 @@ matches no use-case filter and does not count as incomplete tag coverage. They
 never affect pack membership, Available, pack requests, or source removal.
 Details show the description, type, location, declared name, file count, and
 exact files, including an agent's `.support/` companions. The read is local and
-follows no links. It lists at most 256 artifacts, reads at most 8 KiB of each
-entrypoint, and lists at most 128 files per artifact, to a depth of 12. A
+follows no links. It lists at most 256 artifacts, reads an entrypoint of at
+most 64 KiB whole for Details and a larger one only for the metadata in its
+first 8 KiB, and lists at most 128 files per artifact, to a depth of 12. A
 linked, unreadable, or over-limit entry shows its reason: more than 256
 artifacts withholds the whole project list, and a per-artifact limit withholds
 only that row's files. An unavailable read is never shown as an empty list.
