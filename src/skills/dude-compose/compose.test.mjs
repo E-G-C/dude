@@ -12,7 +12,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   cmdAdd,
   cmdList,
+  cmdPreviewAdd,
   cmdPreviewRefresh,
+  cmdPreviewRemove,
   cmdRefresh,
   cmdRemove,
   cmdStatus,
@@ -1709,8 +1711,9 @@ test('remove and refresh refuse a symbolic linked recorded destination before mu
 
     // Act + Assert
     const removed = cmdRemove({ root, name: 'demo' });
+    const removalPreview = cmdPreviewRemove({ root, name: 'demo' });
     const refreshed = await refreshPack(root, 'demo');
-    for (const result of [removed, refreshed]) {
+    for (const result of [removed, removalPreview, refreshed]) {
       assert.equal(result.ok, false);
       assert.match(result.error || '', /symbolic link/);
     }
@@ -2562,8 +2565,8 @@ test('T003 remote refresh preview is not an apply token; the owner must retain a
     writeRemotePack(remote.repo, 'demo', 'moved');
     const movedCommit = commitRemote(remote.repo, 'source moved after preview');
     assert.notEqual(movedCommit, reviewedCommit);
-    // Ordinary refresh intentionally prepares again. This is the unsafe
-    // assumption the Canvas owner guidance must not make about an old preview.
+    // Ordinary refresh intentionally prepares again. This is why an apply that
+    // must match an old preview pins the previewed commit.
     const unbound = await cmdRefresh(args(moving));
     assert.equal(unbound.ok, true, unbound.error);
     assert.equal(readProfile(moving).installed.demo.source.resolved_commit, movedCommit);
@@ -2589,118 +2592,6 @@ test('T003 remote refresh preview is not an apply token; the owner must retain a
     cleanup(moving); cleanup(pinned);
     fs.rmSync(remote.parent, { recursive: true, force: true });
   }
-});
-
-test('T003 source CLI --envelope prints the unchanged engine envelope for add, remove, and refresh; --json keeps its shape', async () => {
-  // Arrange: the CLI root and an engine-control root receive the same pack and
-  // operations, so every CLI envelope is compared with the engine's own return.
-  const root = createRoot();
-  const control = createRoot();
-  try {
-    for (const target of [root, control]) {
-      writePack(target, 'demo', [packAgent('demo', 'worker', { name: 'Demo Worker' })], { skill: true });
-    }
-    /** @param {ReturnType<typeof runCompose>} result @param {number} status */
-    const stdoutJson = (result, status) => {
-      assert.equal(result.status, status, result.stderr);
-      assert.equal(result.stderr, '');
-      return JSON.parse(result.stdout);
-    };
-    /** @param {object} value */
-    const keys = (value) => Object.keys(value).sort();
-
-    // Act / Assert: install success is exactly the engine envelope.
-    const added = stdoutJson(runCompose(root, 'add', 'demo', '--envelope'), 0);
-    assert.deepEqual(added, await addPack(control, 'demo'));
-    assert.deepEqual(keys(added), ['code', 'ok', 'result']);
-    assert.deepEqual(keys(added.result), ['added', 'files', 'origin']);
-
-    // Refresh success: --json keeps its flattened shape; --envelope does not.
-    const expectedRefresh = await refreshPack(control, 'demo');
-    assert.equal(expectedRefresh.ok, true, expectedRefresh.error);
-    assert.deepEqual(stdoutJson(runCompose(root, 'refresh', 'demo', '--json'), 0),
-      { ok: true, ...expectedRefresh.result });
-    const refreshed = stdoutJson(runCompose(root, 'refresh', 'demo', '--envelope'), 0);
-    assert.deepEqual(refreshed, await refreshPack(control, 'demo'));
-    assert.deepEqual(keys(refreshed), ['code', 'ok', 'result']);
-
-    // Refresh pre-mutation failure: an occupied new destination refuses first.
-    for (const target of [root, control]) {
-      const packDir = path.join(target, 'library', 'packs', 'demo');
-      fs.mkdirSync(path.join(packDir, 'instructions'), { recursive: true });
-      fs.writeFileSync(path.join(packDir, 'instructions', 'dude-pack-demo-guide.instructions.md'), '# demo guide\n');
-      fs.writeFileSync(
-        path.join(target, '.github', 'instructions', 'dude-pack-demo-guide.instructions.md'),
-        '# pre-existing foreign artifact\n',
-      );
-    }
-    const expectedFailure = await refreshPack(control, 'demo');
-    assert.equal(expectedFailure.mutation, 'none');
-    const before = mutationSnapshot(root);
-    assert.deepEqual(stdoutJson(runCompose(root, 'refresh', 'demo', '--json'), 2),
-      { ok: false, error: expectedFailure.error }, 'the --json failure shape is unchanged');
-    const failed = stdoutJson(runCompose(root, 'refresh', 'demo', '--envelope'), 2);
-    assert.deepEqual(failed, expectedFailure);
-    assert.deepEqual(failed, { ok: false, code: 2, mutation: 'none', error: expectedFailure.error });
-    assert.match(failed.error, /destination ownership conflict/);
-    assertMutationUnchanged(root, before);
-
-    // Remove success.
-    const removed = stdoutJson(runCompose(root, 'remove', 'demo', '--envelope'), 0);
-    assert.deepEqual(removed, cmdRemove({ root: control, name: 'demo' }));
-    assert.deepEqual(keys(removed.result), ['files', 'removed']);
-
-    // Add failure: the retained foreign instruction still blocks a new install.
-    const addFailure = stdoutJson(runCompose(root, 'add', 'demo', '--envelope'), 2);
-    assert.deepEqual(addFailure, await addPack(control, 'demo'));
-    assert.deepEqual(keys(addFailure), ['code', 'error', 'ok']);
-    assert.equal(addFailure.code, 2);
-    assert.match(addFailure.error, /already exists as a core, project, or foreign artifact/);
-
-    // The flag is a usage error outside the three result-bearing operations.
-    for (const command of ['list', 'status', 'verify']) {
-      assert.deepEqual(stdoutJson(runCompose(root, command, '--envelope'), 1), {
-        ok: false, code: 1, error: '--envelope is only supported by add, remove, and refresh',
-      });
-    }
-    const help = runCompose(root, '--help');
-    assert.equal(help.status, 0);
-    assert.match(help.stdout, /--envelope {8}unchanged engine result envelope for add\/remove\/refresh/);
-  } finally {
-    cleanup(root);
-    cleanup(control);
-  }
-});
-
-test('T003 source Compose guidance owns Canvas permission, exact-source rechecks, result shape and failure limits', () => {
-  const text = fs.readFileSync(new URL('./SKILL.md', import.meta.url), 'utf8');
-  const section = text.split('## Canvas Pack Requests And Results\n')[1]?.split('\n## Add Flow')[0];
-  assert.ok(section, 'the shipped source skill must contain the owner handoff');
-  const prose = section.replace(/\s+/g, ' ');
-  for (const requirement of [
-    'The HTTP handler never runs Compose mutations.',
-    'The click, prepared receipt, admission, delivery, and accepted permission reply are not an Applied result.',
-    'Missing tools are a refusal, not permission to install prerequisites.',
-    'unrecorded residue do not change that set.',
-    'a later refresh prepares again and is not inherently bound to that preview.',
-    '--ref <resolved_commit>',
-    'Drift or an unprovable basis requires a fresh preview and literal confirmation.',
-    'Decline performs no pack/profile write.',
-    'result` is the complete unchanged Compose envelope.',
-    '`node .github/skills/dude-compose/compose.mjs add|remove|refresh <name> --envelope`',
-    'Forward the step 4 command\'s stdout unchanged as `result`',
-    'never upgrade uncertainty to restoration.',
-    'Never enqueue, replay, or retry that receipt.',
-    'The idea-specific capture acknowledgment and six human request classes are unchanged.',
-  ]) assert.ok(prose.includes(requirement), `missing owner contract: ${requirement}`);
-  const example = JSON.parse(section.match(/```json\n(\{\n[\s\S]*?)\n```/)[1]);
-  assert.equal(example.op, 'acknowledge');
-  assert.deepEqual(Object.keys(example.acknowledgment).sort(), [
-    'recognizes', 'receiptId', 'owner', 'operation', 'name', 'workspaceId', 'sessionId', 'providerGeneration',
-    'outcome', 'mutation', 'result', 'profileRevision', 'source', 'note',
-  ].sort());
-  assert.equal(example.acknowledgment.recognizes, 'pack_result');
-  assert.deepEqual(Object.keys(example.acknowledgment.result.result).sort(), ['added', 'files', 'origin']);
 });
 
 /* ------------------------------------------------------ T007 saved pack sources */
@@ -3800,14 +3691,12 @@ test('T007 ordinary Compose calls neither read nor enumerate the saved sources',
 
 /* ---------------------------------------------- T007 Compose owner guidance */
 
-test('T007 Compose guidance documents the exclusive source, the catalogSource binding, pinning, freshness, and the result echo', () => {
+test('T007 Compose guidance documents the exclusive source and the catalog resolution order', () => {
   const text = fs.readFileSync(new URL('./SKILL.md', import.meta.url), 'utf8');
   const unwrap = (/** @type {string} */ value) => value.replace(/\s+/g, ' ');
   const flags = unwrap(text.split('\n## Engine\n')[1]?.split('\n## Discovery metadata')[0] ?? '');
   const catalog = unwrap(text.split('\n## Catalog Resolution\n')[1]?.split('\n## Verify')[0] ?? '');
-  const section = text.split('## Canvas Pack Requests And Results\n')[1]?.split('\n## Add Flow')[0] ?? '';
-  const sources = unwrap(section.split('### Sources In Pack Requests\n')[1]?.split('The pack acknowledgment has exactly these fields')[0] ?? '');
-  assert.ok(flags && catalog && section && sources, 'the shipped skill must contain each owner section');
+  assert.ok(flags && catalog, 'the shipped skill must contain each owner section');
 
   for (const requirement of [
     'an explicit `--source` is exclusive, see Catalog Resolution',
@@ -3820,46 +3709,6 @@ test('T007 Compose guidance documents the exclusive source, the catalogSource bi
     'With `--no-fetch`, an explicit remote source is refused rather than fetched',
     'no Compose call reads or lists `.dude/metadata/pack-sources.md`',
   ]) assert.ok(catalog.includes(requirement), `missing catalog resolution rule: ${requirement}`);
-  for (const requirement of [
-    'Make the source the first permission target',
-    'the configured ref for a remote source, and the resolved commit',
-    'say that a remote commit is not applicable and do not invent one',
-    'target revision is `commit:<40 hex>`',
-    'Label a source the project added "Third-party source"',
-    'begin that target with `Source changes: A -> B` whenever they differ',
-    'including an unlisted local path moving to the local library',
-    '`catalogSource`',
-    'It is absent, never `null`',
-    'Retain `catalogSource` exactly as received',
-    '`--source <repository>` and the configured `--ref <ref>` for a remote source',
-    'or `--source <location>` for a local folder, and add no other source and no `--library` or `--force`',
-    'a refresh preview reports it as `source.resolved_commit`',
-    'For an install, await `resolvePackDir` from `.github/skills/dude-compose/compose.mjs` with the root, library, pack name, source, and ref the install will use',
-    'never a reason to use another source or catalog',
-    'The raw-bytes revision of `.dude/metadata/pack-sources.md`',
-    'must still equal `sourcesRevision`',
-    'Apply with `--ref <resolved_commit>`',
-    'Put the same `catalogSource`, unchanged, in the acknowledgment as `catalogSource`, and only when the request was bound to one',
-    'A matching pack name or an echoed key alone is not enough.',
-    'Removal is source-free',
-  ]) assert.ok(sources.includes(requirement), `missing source-bound owner rule: ${requirement}`);
-
-  // The default-only bodies and acknowledgment keep their exact bytes: no field, never null.
-  assert.ok(section.includes(
-    '{"op":"prepare","operation":"install","name":"<exact pack name>"}\n'
-    + '{"op":"submit","operation":"install","name":"<exact pack name>","packReceipt":"<provider UUID>"}\n',
-  ));
-  const acknowledgment = JSON.parse(section.match(/```json\n(\{\n[\s\S]*?)\n```/)[1]).acknowledgment;
-  assert.equal(Object.hasOwn(acknowledgment, 'catalogSource'), false);
-
-  // The source-bound bodies and the closed binding are exactly the contract.
-  assert.ok(section.includes(
-    '{"op":"prepare","operation":"install","name":"<exact pack name>","source":"<configured source key>"}\n'
-    + '{"op":"submit","operation":"install","name":"<exact pack name>","source":"<same source key>","packReceipt":"<provider UUID>"}\n',
-  ));
-  const binding = JSON.parse(/```json\n(\{"catalogSource":[^\n]*\})\n```/.exec(section)?.[1] ?? 'null');
-  assert.deepEqual(Object.keys(binding.catalogSource), ['key', 'sourcesRevision', 'source']);
-  assert.deepEqual(Object.keys(binding.catalogSource.source), ['type', 'repository', 'ref']);
 });
 
 /* ----------------------------------------- T007 upgrade --all Compose calls */
@@ -4405,7 +4254,7 @@ test('T002 an add refuses when its profile basis or a destination changed while 
   };
   /** @param {Awaited<ReturnType<typeof cmdAdd>>} result @param {string} root @param {ReturnType<typeof mutationSnapshot>} between */
   const refusedStale = (result, root, between) => {
-    assert.deepEqual(result, { ok: false, code: 2, error: STALE_ADD });
+    assert.deepEqual(result, { ok: false, code: 2, mutation: 'none', error: STALE_ADD });
     assertMutationUnchanged(root, between);
     assertNoPackLeftovers(root, 'alpha');
   };
@@ -4742,8 +4591,7 @@ test('T002 Compose guidance describes targeted GitHub reads, other-host clones, 
   const text = fs.readFileSync(new URL('./SKILL.md', import.meta.url), 'utf8');
   const unwrap = (/** @type {string} */ value) => value.replace(/\s+/g, ' ');
   const catalog = unwrap(text.split('\n## Catalog Resolution\n')[1]?.split('\n## Verify')[0] ?? '');
-  const sources = unwrap(text.split('### Sources In Pack Requests\n')[1]?.split('**An added source arrives')[0] ?? '');
-  assert.ok(catalog && sources, 'the shipped skill must contain both sections');
+  assert.ok(catalog, 'the shipped skill must contain the catalog resolution section');
   for (const requirement of [
     'is read over anonymous HTTPS and never cloned, not even after a failure',
     '`list` downloads only each direct `library/packs/<name>/pack.md` and the tree listings that find them',
@@ -4758,15 +4606,266 @@ test('T002 Compose guidance describes targeted GitHub reads, other-host clones, 
     'therefore fails visibly, and Compose never retries it through Git',
     'Git is required only for remote sources on other hosts',
   ]) assert.ok(catalog.includes(requirement), `missing catalog resolution rule: ${requirement}`);
-  // Every remote source-first commit comes from Compose's own awaited resolution, which is then disposed.
-  for (const requirement of [
-    'Take a remote commit only from Compose\'s own resolution of that source, whatever its host',
-    'a refresh preview reports it as `source.resolved_commit`',
-    'For an install, await `resolvePackDir` from `.github/skills/dude-compose/compose.mjs` with the root, library, pack name, source, and ref the install will use',
-    'read `sourceIdentity.resolved_commit`',
-    'await its `dispose()` afterward to remove it',
-    'reads a public GitHub repository anonymously over HTTPS and clones any other host, GitHub Enterprise included, with Git',
-    'Do not look the commit up separately',
-  ]) assert.ok(sources.includes(requirement), `missing source-first preview rule: ${requirement}`);
-  assert.doesNotMatch(sources, /git ls-remote|api\.github\.com/);
+});
+
+/* --------------------------------------- 083 T001 previews and the write gate */
+
+test('083 T001 add and remove dry runs write nothing, repeat identically, and agree with the action', async () => {
+  // Arrange
+  const root = createRoot();
+  const stages = trackStageDirectories();
+  try {
+    writePack(root, 'mixed', [packAgent('mixed', 'worker', { name: 'Mixed Worker' })], {
+      skill: true,
+      instruction: true,
+      prompt: true,
+    });
+    const library = path.join(root, 'library', 'packs');
+    const before = mutationSnapshot(root);
+
+    // Act
+    const preview = await cmdPreviewAdd({ root, library, name: 'mixed' });
+
+    // Assert
+    assert.equal(preview.ok, true, preview.error);
+    assert.deepEqual(preview.result, {
+      items: [
+        { kind: 'Agent', name: 'dude-pack-mixed-worker' },
+        { kind: 'Instructions', name: 'dude-pack-mixed-guide' },
+        { kind: 'Prompt', name: 'dude-pack-mixed-ask' },
+        { kind: 'Skill', name: 'dude-pack-mixed-helper' },
+      ],
+      files: [
+        '.github/agents/dude-pack-mixed-worker.agent.md',
+        '.github/instructions/dude-pack-mixed-guide.instructions.md',
+        '.github/prompts/dude-pack-mixed-ask.prompt.md',
+        '.github/skills/dude-pack-mixed-helper',
+      ],
+      source: { type: 'local', location: fs.realpathSync(library) },
+      conflicts: [],
+      tools: [],
+    });
+    assert.deepEqual(await cmdPreviewAdd({ root, library, name: 'mixed' }), preview, 'a repeated add preview differs');
+    assertMutationUnchanged(root, before);
+    assertNoSurvivingStageDirectories(stages.directories);
+
+    // The add records exactly the files and source its preview showed.
+    assert.equal((await addPack(root, 'mixed')).ok, true);
+    assert.deepEqual(readProfile(root).installed.mixed, { files: preview.result.files, source: preview.result.source });
+    assert.deepEqual(await cmdPreviewAdd({ root, library, name: 'mixed' }),
+      { ok: false, code: 2, mutation: 'none', error: 'pack "mixed" is already installed' });
+
+    const installed = mutationSnapshot(root);
+    const removal = cmdPreviewRemove({ root, name: 'mixed' });
+    assert.deepEqual(removal, { ok: true, code: 0, result: { files: preview.result.files } });
+    assert.deepEqual(cmdPreviewRemove({ root, name: 'mixed' }), removal, 'a repeated remove preview differs');
+    assertMutationUnchanged(root, installed);
+    const removed = cmdRemove({ root, name: 'mixed' });
+    assert.equal(removed.ok, true, removed.error);
+    assert.deepEqual(removed.result.files, removal.result.files);
+
+    // A destination the add refuses is a named conflict in its preview, not a refusal.
+    fs.writeFileSync(path.join(root, '.github', 'agents', 'dude-pack-mixed-worker.agent.md'), '# foreign\n');
+    const blocked = await cmdPreviewAdd({ root, library, name: 'mixed' });
+    assert.equal(blocked.ok, true, blocked.error);
+    assert.deepEqual(blocked.result.conflicts, ['.github/agents/dude-pack-mixed-worker.agent.md']);
+    assert.match((await addPack(root, 'mixed')).error || '',
+      /^destination ownership conflict:\n {2}\.github\/agents\/dude-pack-mixed-worker\.agent\.md \(already exists/);
+    assertNoSurvivingStageDirectories(stages.directories);
+  } finally {
+    stages.restore();
+    cleanup(root);
+  }
+});
+
+test('083 T001 a remote add dry run reports the resolved commit its add records, and tools read before the copy is removed', async () => {
+  const remote = createRemoteCatalog();
+  const root = createReleasedRoot();
+  try {
+    writeRemotePack(remote.repo, 'demo', 'v1');
+    const manifestPath = path.join(remote.repo, 'library', 'packs', 'demo', 'pack.md');
+    fs.writeFileSync(manifestPath, fs.readFileSync(manifestPath, 'utf8')
+      .replace('---\n# demo v1', 'requires:\n  tools: [dude-fixture-missing-tool]\n---\n# demo v1'));
+    const commit = commitRemote(remote.repo, 'v1');
+    const args = { root, library: path.join(root, 'library', 'packs'), name: 'demo', source: remote.source, ref: 'main' };
+    const before = mutationSnapshot(root);
+
+    const preview = await cmdPreviewAdd(args);
+
+    assert.equal(preview.ok, true, preview.error);
+    assert.deepEqual(preview.result.source,
+      { type: 'remote', repository: remote.source, requested_ref: 'main', resolved_commit: commit });
+    assert.deepEqual(preview.result.tools, [{ name: 'dude-fixture-missing-tool', found: false }]);
+    assertMutationUnchanged(root, before);
+    assert.equal((await cmdAdd({ ...args, force: false })).ok, true);
+    assert.deepEqual(readProfile(root).installed.demo.source, preview.result.source);
+  } finally {
+    cleanup(root);
+    fs.rmSync(remote.parent, { recursive: true, force: true });
+  }
+});
+
+test('083 T001 the add dry run reports each required tool as found or missing on PATH, and add checks none', async () => {
+  // Arrange: one tool is an executable file in a PATH folder (through PATHEXT on Windows).
+  const root = scaffold();
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-compose-bin-'));
+  const savedPath = process.env.PATH;
+  try {
+    if (process.platform === 'win32') {
+      fs.writeFileSync(path.join(bin, 'dude-fixture-tool.cmd'), '@echo off\r\n');
+    } else {
+      fs.writeFileSync(path.join(bin, 'dude-fixture-tool'), '#!/bin/sh\n', { mode: 0o755 });
+    }
+    fs.writeFileSync(
+      path.join(root, 'library', 'packs', 'demo', 'pack.md'),
+      '---\nname: demo\ndescription: "demo fixture pack"\nrequires:\n  tools: [dude-fixture-tool, dude-fixture-missing-tool]\n---\n# demo\n',
+    );
+    process.env.PATH = `${bin}${path.delimiter}${savedPath ?? ''}`;
+    const before = mutationSnapshot(root);
+
+    // Act
+    const preview = await cmdPreviewAdd({ root, library: path.join(root, 'library', 'packs'), name: 'demo' });
+
+    // Assert
+    assert.equal(preview.ok, true, preview.error);
+    assert.deepEqual(preview.result.tools, [
+      { name: 'dude-fixture-tool', found: true },
+      { name: 'dude-fixture-missing-tool', found: false },
+    ]);
+    assertMutationUnchanged(root, before);
+    // Tool checks stay out of add itself, so verify and chat installs behave as before.
+    const added = await addPack(root, 'demo');
+    assert.equal(added.ok, true, added.error);
+  } finally {
+    if (savedPath === undefined) delete process.env.PATH;
+    else process.env.PATH = savedPath;
+    fs.rmSync(bin, { recursive: true, force: true });
+    cleanup(root);
+  }
+});
+
+test('083 T001 a write gate that says no writes nothing for add or refresh, and a change during its wait is still refused', async () => {
+  const root = scaffold();
+  try {
+    writePack(root, 'other', [packAgent('other', 'worker')], { skill: false });
+    const library = path.join(root, 'library', 'packs');
+    const no = async () => false;
+
+    // Add: "no" writes nothing.
+    const before = mutationSnapshot(root);
+    assert.deepEqual(await cmdAdd({ root, library, name: 'demo', force: false, beforeWrite: no }), {
+      ok: false, code: 2, mutation: 'none', error: 'write not confirmed for add of pack "demo"; refusing add',
+    });
+    assertMutationUnchanged(root, before);
+
+    // Add: the gate runs before the profile recheck, which refuses a change made while it waited.
+    const stale = await cmdAdd({
+      root, library, name: 'demo', force: false, beforeWrite: async () => (await addPack(root, 'other')).ok,
+    });
+    assert.deepEqual(stale, {
+      ok: false, code: 2, mutation: 'none', error: 'profile changed after authorizing add of pack "demo"; refusing add',
+    });
+    assertNoPackLeftovers(root, 'demo');
+    const added = await cmdAdd({ root, library, name: 'demo', force: false, beforeWrite: async () => true });
+    assert.equal(added.ok, true, added.error);
+
+    // Refresh: "no", or a gate that fails, writes nothing; "yes" applies.
+    const source = path.join(library, 'demo', 'agents', 'dude-pack-demo-worker.agent.md');
+    fs.writeFileSync(source, fs.readFileSync(source, 'utf8').replace('You are Demo Worker.', 'You are Demo Worker v2.'));
+    const installed = mutationSnapshot(root);
+    assert.deepEqual(await cmdRefresh({ root, library, name: 'demo', beforeWrite: no }), {
+      ok: false, code: 2, mutation: 'none', error: 'write not confirmed for refresh of pack "demo"; refusing refresh',
+    });
+    assert.deepEqual(
+      await cmdRefresh({ root, library, name: 'demo', beforeWrite: async () => { throw new Error('gate disconnected'); } }),
+      { ok: false, code: 2, mutation: 'none', error: 'gate disconnected' },
+    );
+    assertMutationUnchanged(root, installed);
+    const refreshed = await cmdRefresh({ root, library, name: 'demo', beforeWrite: async () => true });
+    assert.equal(refreshed.ok, true, refreshed.error);
+    assert.match(fs.readFileSync(path.join(root, '.github', 'agents', 'dude-pack-demo-worker.agent.md'), 'utf8'),
+      /You are Demo Worker v2\./);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('083 T001 add and remove failures carry mutation: none before writing, restored after a caught failure, uncertain when restoring fails', async () => {
+  const root = scaffold();
+  const originalWriteFileSync = fs.writeFileSync;
+  /**
+   * Run one operation while the profile write fails, and with `restoring` while
+   * restoring the profile fails too.
+   * @param {boolean} restoring
+   * @param {() => any} operation
+   */
+  const withFailingProfile = async (restoring, operation) => {
+    fs.writeFileSync = (file, ...rest) => {
+      const name = path.basename(String(file));
+      if (name.startsWith('profile.md.tmp-') || (restoring && name === 'profile.md')) {
+        throw new Error('injected profile write failure');
+      }
+      return originalWriteFileSync(file, ...rest);
+    };
+    try {
+      return await operation();
+    } finally {
+      fs.writeFileSync = originalWriteFileSync;
+    }
+  };
+  try {
+    writePack(root, 'other', [packAgent('other', 'worker')], { skill: false });
+    assert.equal((await addPack(root, 'other')).ok, true, 'a present profile is what a rollback restores');
+    assert.equal((await addPack(root, 'Not A Name')).mutation, 'none');
+    assert.equal(cmdRemove({ root, name: 'demo' }).mutation, 'none');
+
+    const before = mutationSnapshot(root);
+    const restoredAdd = await withFailingProfile(false, () => addPack(root, 'demo'));
+    assert.equal(restoredAdd.mutation, 'restored', restoredAdd.error);
+    assertMutationUnchanged(root, before);
+    const uncertainAdd = await withFailingProfile(true, () => addPack(root, 'demo'));
+    assert.equal(uncertainAdd.mutation, 'uncertain', uncertainAdd.error);
+    assert.match(uncertainAdd.error || '', /rollback failed/);
+
+    assert.equal((await addPack(root, 'demo')).ok, true);
+    const installed = mutationSnapshot(root);
+    const restoredRemove = await withFailingProfile(false, () => cmdRemove({ root, name: 'demo' }));
+    assert.equal(restoredRemove.mutation, 'restored', restoredRemove.error);
+    assertMutationUnchanged(root, installed);
+    const uncertainRemove = await withFailingProfile(true, () => cmdRemove({ root, name: 'demo' }));
+    assert.equal(uncertainRemove.mutation, 'uncertain', uncertainRemove.error);
+    assert.match(uncertainRemove.error || '', /rollback failed/);
+  } finally {
+    fs.writeFileSync = originalWriteFileSync;
+    cleanup(root);
+  }
+});
+
+test('083 T001 source CLI accepts --dry-run for add and remove, and --json prints the preview', async () => {
+  const root = scaffold();
+  try {
+    const before = mutationSnapshot(root);
+    const add = runCompose(root, 'add', 'demo', '--dry-run', '--json');
+    assert.equal(add.status, 0, add.stderr);
+    const expected = await cmdPreviewAdd({ root, library: path.join(root, 'library', 'packs'), name: 'demo' });
+    assert.deepEqual(JSON.parse(add.stdout), { ok: true, ...expected.result });
+    const human = runCompose(root, 'add', 'demo', '--dry-run');
+    assert.equal(human.status, 0, human.stderr);
+    assert.equal(human.stdout, '[OK] add preview: 2 item(s), 0 conflict(s), no missing tools\n');
+    assertMutationUnchanged(root, before);
+
+    assert.equal((await addPack(root, 'demo')).ok, true);
+    const installed = mutationSnapshot(root);
+    const remove = runCompose(root, 'remove', 'demo', '--dry-run', '--json');
+    assert.equal(remove.status, 0, remove.stderr);
+    assert.deepEqual(JSON.parse(remove.stdout), { ok: true, files: readProfile(root).installed.demo.files });
+    assertMutationUnchanged(root, installed);
+
+    // Other commands still answer --dry-run with usage, which names the new scope.
+    const usage = runCompose(root, 'status', '--dry-run');
+    assert.equal(usage.status, 0);
+    assert.match(usage.stdout, /--dry-run {9}preview add, remove, or refresh without writing/);
+  } finally {
+    cleanup(root);
+  }
 });

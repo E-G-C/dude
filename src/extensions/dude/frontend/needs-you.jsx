@@ -5,7 +5,7 @@ import {
 } from '@fluentui/react-components';
 import { ArrowLeftRegular, CommentRegular } from '@fluentui/react-icons';
 import { mergeClasses, useCanvasStyles } from './styles.js';
-import { authorityKey, IMPORT_IN_PROGRESS, importRequestPending, packRequestPending, requestKey } from './use-canvas-data.js';
+import { authorityKey, IMPORT_IN_PROGRESS, importRequestPending, requestKey } from './use-canvas-data.js';
 
 export function Notice({ title, children, intent = 'info', focusRef }) {
   const s = useCanvasStyles();
@@ -103,14 +103,12 @@ function exceedsTextLimit(value, data) {
   return new TextEncoder().encode(value).length > data.needs.limits.textBytes;
 }
 
-// The Dude-owned session permission for a Settings pack or import request, in
-// its closed operation set (see packPermission and importPermission). Other
-// owners', scopes', and operations' permissions keep their ordinary semantics.
-const PACK_OPERATIONS = ['pack:install', 'pack:remove', 'pack:refresh'];
+// The Dude-owned session permission for a Settings import request, in its
+// closed operation set (see importPermission). Other owners', scopes', and
+// operations' permissions keep their ordinary semantics.
 const IMPORT_OPERATIONS = ['import:file', 'import:directory'];
 function actionKind(request) {
   if (request?.class !== 'permission' || request.owner !== 'dude' || request.scope?.kind !== 'session') return null;
-  if (request.requestRef.startsWith('pack:') && PACK_OPERATIONS.includes(request.fields?.operation)) return 'pack';
   if (request.requestRef.startsWith('import:') && IMPORT_OPERATIONS.includes(request.fields?.operation)) return 'import';
   return null;
 }
@@ -125,9 +123,8 @@ function boundImport(record, data) {
     && request.source.kind === 'session' && request.source.revision === feed.providerGeneration));
 }
 
-// A canvas_response acknowledges the permission, not the separate pack_result
-// or import_result. Only the pack request view or Add/import establishes an
-// applied operation from that result.
+// A canvas_response acknowledges the permission, not the separate
+// import_result. Only Add/import establishes an applied import from that result.
 function responsePhase(record, phase) {
   return phase === 'applied' && actionKind(record?.request) ? 'permission_acknowledged' : phase;
 }
@@ -151,9 +148,7 @@ export function ResponseStatus({ record, attempt, draft = false, capture = false
     awaiting_acknowledgment: 'Sent to the joined owner. Acceptance and application are not yet confirmed.',
     accepted: 'The owner accepted this response. Application is not yet confirmed.',
     applied: 'The owner confirmed application and reread the source.',
-    permission_acknowledged: actionKind(record?.request) === 'import'
-      ? 'The owner acknowledged this permission response. Check Add/import for the verified import result.'
-      : 'The owner acknowledged this permission response. Check the pack request for a verified operation result.',
+    permission_acknowledged: 'The owner acknowledged this permission response. Check Add/import for the verified import result.',
     declined: 'The owner declined this response. A fresh request is needed before responding again.',
     deferred: record?.durable
       ? 'The owner recorded a source-backed deferral. It remains discoverable in the recorded context.'
@@ -190,17 +185,16 @@ export function NewIdea({ value, onChange, onCancel, data }) {
   const capture = otherCapture ? null : candidate;
   const unreconciled = feed?.captures.some(item => !item.receipt.acknowledgment && item.phase !== 'unavailable'
     && !(item.phase === 'issued' && item.captureReceipt === attempt?.captureReceipt && attempt.retryable));
-  const packWaiting = packRequestPending(data);
   const importWaiting = importRequestPending(data);
   const idle = feed && !data.issues.needs && feed.coverage.state !== 'unavailable'
-    && feed.capture.idle && !feed.capture.waitingRequests.length && !unreconciled && !packWaiting && !importWaiting;
+    && feed.capture.idle && !feed.capture.waitingRequests.length && !unreconciled && !importWaiting;
   const refusedBeforeSend = candidate?.phase === 'unavailable' && candidate.reason === 'idle_required';
   const locked = attempt && !attempt.retryable && !refusedBeforeSend
     && !(otherCapture && candidate.receipt.acknowledgment) && (!capture?.saved || value === attempt.intent);
   // An open import keeps the draft editable and gives both disabled sends one
   // visible reason, which each names with aria-describedby.
   const reasonId = useId();
-  const importReason = importWaiting && !packWaiting && Boolean(feed) && !data.issues.needs
+  const importReason = importWaiting && Boolean(feed) && !data.issues.needs
     && feed.coverage.state !== 'unavailable' ? reasonId : undefined;
   const submit = continuation => {
     if (!value.trim()) { setValidation('Enter an idea before submitting or saving.'); return; }
@@ -235,8 +229,7 @@ export function NewIdea({ value, onChange, onCancel, data }) {
     </Notice> : (attempt || capture) && <ResponseStatus record={capture} attempt={attempt} capture />}
     {importReason && <Notice title="Waiting for the joined agent"><span id={importReason}>{IMPORT_IN_PROGRESS}</span></Notice>}
     {!importReason && !idle && (!attempt || capture?.saved) && <Notice title="Waiting for the joined agent">
-      {data.issues.needs || (packWaiting ? 'A pack request is in progress or needs owner reconciliation. Your idea draft stays here.'
-        : feed?.capture.waitingRequests.length
+      {data.issues.needs || (feed?.capture.waitingRequests.length
         ? 'Another request is waiting. Respond in Needs you first; New idea will not interrupt or bind itself to that request.'
         : 'Capture requires a current idle session with no unreconciled capture. Your draft stays here.')}
     </Notice>}
@@ -248,7 +241,7 @@ function RequestForm({ record, data, value, onChange, onReview, reviewed }) {
   const s = useCanvasStyles();
   const request = record.request, fields = request.fields;
   const statusFocus = useRef(null);
-  // A bound pack or import permission moves focus to its live outcome once consumed.
+  // A bound import permission moves focus to its live outcome once consumed.
   const action = actionKind(request) !== null;
   const importBound = boundImport(record, data);
   const [error, setError] = useState('');

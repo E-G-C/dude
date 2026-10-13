@@ -13,7 +13,7 @@ import { mergeClasses, useCanvasStyles } from './styles.js';
 import { darkTheme, lightTheme, useHostAppearance } from './theme.js';
 import { currentRequests, matchesRequestScope, NeedsYou, NewIdea, Notice, previewEligibility } from './needs-you.jsx';
 import { loadReviewEngine, ReviewHistory, ReviewWorkspace } from './review.jsx';
-import { importPermission, packPermission, requestKey, useCanvasData } from './use-canvas-data.js';
+import { importPermission, requestKey, useCanvasData } from './use-canvas-data.js';
 import { Settings } from './settings.jsx';
 import { catalogCoverageText } from './pack-sources.jsx';
 
@@ -661,10 +661,9 @@ function App() {
   const [finderOpen, setFinderOpen] = useState(false);
   const [compactCommands, setCompactCommands] = useState(() => window.matchMedia('(max-width: 479px)').matches);
   const [taskView, setTaskView] = useState({ scope: null, taskKey: null, filter: 'all' });
-  // Where "Back" from an open Needs you permission returns to: the exact request
-  // key and Packs view, tagged by what asked. 'pack' reopens that pack request;
-  // 'import' reaches the Add/import status of that exact import. While it is set,
-  // Settings stays mounted, so its local state survives the round trip.
+  // Where "Back" from an open Needs you permission returns to: the exact import
+  // request's key and its Add/import status. While it is set, Settings stays
+  // mounted, so its local state survives the round trip.
   const [settingsReturn, setSettingsReturn] = useState(null);
   // Settings' local section is tab state, separate from rail navigation: it
   // resets to Packs whenever Settings is left, not when Settings is reselected.
@@ -849,29 +848,26 @@ function App() {
     setSelectedRequest(key);
     navigate('needs');
   };
-  // A pack or import permission opens in Needs you. Settings stays mounted and
-  // remembers exactly where it was: the pack's Installed or Available view, or
-  // Add/import. The other Settings state is cleared by navigating away, so the
-  // view is set again after it.
-  const openPermission = (kind, receipt) => {
-    const record = (kind === 'import' ? importPermission : packPermission)(latestData.current, receipt);
+  // An import permission opens in Needs you. Settings stays mounted and
+  // remembers that it was on Add/import. The other Settings state is cleared by
+  // navigating away, so the view is set again after it.
+  const openPermission = receipt => {
+    const record = importPermission(latestData.current, receipt);
     if (!record) {
-      setMessage(`This ${kind} permission is no longer current. Nothing was sent. Read the current request before responding.`);
+      setMessage('This import permission is no longer current. Nothing was sent. Read the current request before responding.');
       data.reconcile();
       return;
     }
     const key = requestKey(latestData.current.needs, record);
-    const sub = kind === 'import' ? 'import' : packsSub;
     navigate('needs');
     setSelectedRequest(key);
-    setSettingsReturn({ kind, key, section: 'packs', sub });
-    setSettingsSection('packs'); setPacksSub(sub);
+    setSettingsReturn({ key, section: 'packs', sub: 'import' });
+    setSettingsSection('packs'); setPacksSub('import');
   };
-  // Back to the exact request: a pack reopens its request dialog on its own, and
-  // an import focuses its status in Add/import.
+  // Back to the exact request: focus its status in Add/import.
   const returnToSettings = () => {
     const returning = settingsReturn;
-    navigate('settings', returning?.kind === 'import' ? 'import-status' : 'heading');
+    navigate('settings', 'import-status');
     if (returning) { setSettingsSection(returning.section); setPacksSub(returning.sub); }
   };
   const requestEntry = context => {
@@ -1047,7 +1043,7 @@ function App() {
                 onSelect={selectRequest} scopeTitle={scopeTitle(displayedRequest?.request.scope, rows)} browsingLabel={browsingLabel}
                 onReview={openReview} reviewedKey={reviewed} onNew={newIdea}
                 onReturn={settingsReturn ? returnToSettings : null}
-                returnLabel={settingsReturn?.kind === 'import' ? 'Back to Add/import' : 'Back to pack request'} />
+                returnLabel="Back to Add/import" />
                 : <NewIdea value={idea} onChange={setIdea} data={data}
                   onCancel={() => navigate('needs')} />}
         </div>)}

@@ -22,13 +22,8 @@ import {
 } from '../../../skills/dude-engine/lib/feature-identity.mjs';
 import { classifyPath, TIER } from '../../../skills/dude-engine/lib/ownership.mjs';
 import { resolveMutationPath } from '../../../skills/dude-engine/lib/workspace-paths.mjs';
-import { describePackSources, matchesRecordedSource } from '../../../skills/dude-engine/lib/pack-sources.mjs';
-import {
-  PACK_NAME_RE, normalizeGitObjectId, resolveProfileArtifact, validateProfile,
-} from '../../../skills/dude-engine/lib/profile.mjs';
 import { parseVisibleTasks } from '../../../skills/dude-engine/lib/tasks.mjs';
 import { readNowProjection } from './projection.mjs';
-import { packReadRevision, readPacks } from './packs.mjs';
 import { REVIEW_LIMITS } from './review/data.mjs';
 
 export const NEEDS_YOU_LIMITS = Object.freeze({
@@ -46,11 +41,6 @@ export const NEEDS_YOU_LIMITS = Object.freeze({
   imagePixels: 16 * 1024 * 1024,
   operationMs: 5_000,
 });
-// The outer ceiling of one install or refresh preparation or submission. Their
-// catalog read can acquire a remote source within the pack read's own one-minute
-// window; every other step keeps its own short bound, and removal, which reads
-// no catalog, keeps `operationMs` for the whole request.
-const PACK_CATALOG_REQUEST_MS = 90_000;
 
 /** @typedef {import('@github/copilot-sdk').ToolInvocation} ToolInvocation */
 /** @typedef {import('@github/copilot-sdk').ToolResultObject} ToolResult */
@@ -148,52 +138,19 @@ const PACK_CATALOG_REQUEST_MS = 90_000;
 /** @typedef {Outcome|'publishing'|'pending'|'awaiting_acknowledgment'|'capture_intent'|'source_changed'|'outside_input_available'|'cancelled'} RequestPhase */
 /** @typedef {Outcome|'issued'|'sending'|'awaiting_acknowledgment'|'uncertain'} CapturePhase */
 /** @typedef {'provider_ended'|'workspace_changed'|'session_ended'|'session_changed'} ProviderEnd */
-/** @typedef {'install'|'remove'|'refresh'} PackOperation */
-/** @typedef {'applied'|'declined'|'failed'|'unavailable'|'stale'|'uncertain'} PackOutcome */
-/** @typedef {PackOutcome|'prepared'|'admitted'|'delivered'|'waiting_permission'|'waiting_owner'} PackPhase */
-/** @typedef {import('../../../skills/dude-engine/lib/profile.mjs').ProfileSource} PackSource */
-/** @typedef {import('../../../skills/dude-engine/lib/profile.mjs').ProfileEntry} PackEntry */
-/** The closed value a request carries for a source the project added: the saved entry's key, the raw sources revision it was read at, and the configured source. @typedef {import('./packs.mjs').CatalogSource} CatalogSource */
-/** @typedef {{receiptId:string,owner:string,operation:PackOperation,name:string,workspaceId:string,sessionId:string,providerGeneration:string,catalogSource?:CatalogSource}} PackBinding */
-/** @typedef {{ok:false,code:number,error:string,mutation?:'none'|'restored'|'uncertain'}|
- * {ok:true,code:0,result:({added:string,files:string[],origin:string}|{added:string,files:[],alreadyInstalled:true}|
- * {removed:string,files:string[]}|{refreshed:string,replaced:string[],added:string[],removed:string[],files:string[]})}} PackResult */
-/** @typedef {PackBinding & {recognizes:'pack_result',outcome:PackOutcome,mutation:'applied'|'none'|'restored'|'uncertain',
- * result:PackResult|null,profileRevision:string|null,source:PackSource|null,note:string}} PackAcknowledgment */
-/** @typedef {{rootIdentity:string,profileRevision:string,readRevision:string,entry:PackEntry|null,catalogRevision:string|null,selection:CatalogSource|null}} PackBasis */
-/** @typedef {{workspaceId:string,rootIdentity:string|null,profileRevision:string|null,readRevision:string|null,entry:PackEntry|null,
- * state:'current'|'unavailable',reason:string|null}} PackReread */
-/**
- * A pack result is deliberately separate from an idea's canonical-file receipt.
- * It lives in the same bounded registry and uses the same idle exclusion.
- * @typedef {object} PackState
- * @property {'pack'} kind
- * @property {string} handle
- * @property {PackPhase} phase
- * @property {string|null} reason
- * @property {PackBinding & {acknowledgment:PackAcknowledgment|null,acknowledging:boolean,ackToolCallId:string|null,
- * reread:PackReread|null,freshness:'current'|'stale'|'unavailable'}} receipt
- * @property {PackBasis} basis
- * @property {string|null} permissionHandle
- * @property {string} idleEventId
- * @property {number} lifecycleRevision
- * @property {number} preparedAt Monotonic allocation time; bounds an unsubmitted receipt.
- * @property {boolean} sendStarted
- * @property {string|null} promptRevision
- * @property {string|null} messageId
- * @property {{messageId:string,delivery:string}|null} observed
- */
+/** @typedef {'applied'|'declined'|'failed'|'unavailable'|'stale'|'uncertain'} ImportOutcome */
+/** @typedef {ImportOutcome|'prepared'|'admitted'|'delivered'|'waiting_permission'|'waiting_owner'} ImportPhase */
 /** @typedef {{receiptId:string,owner:'dude',importSource:string,workspaceId:string,sessionId:string,providerGeneration:string}} ImportBinding */
-/** @typedef {ImportBinding & {recognizes:'import_result',outcome:PackOutcome,mutation:'applied'|'none'|'restored'|'uncertain',
+/** @typedef {ImportBinding & {recognizes:'import_result',outcome:ImportOutcome,mutation:'applied'|'none'|'restored'|'uncertain',
  * written:string[],uncertain:string[],note:string}} ImportAcknowledgment */
 /**
- * An import result is separate from an idea's canonical-file receipt and from a
- * pack result. It shares the bounded registry, the idle exclusion and the pack
- * outcome/phase vocabulary. Nothing here is reread from the imported files.
+ * An import result is separate from an idea's canonical-file receipt. It shares
+ * the bounded registry and the idle exclusion. Nothing here is reread from the
+ * imported files.
  * @typedef {object} ImportState
  * @property {'import'} kind
  * @property {string} handle
- * @property {PackPhase} phase
+ * @property {ImportPhase} phase
  * @property {string|null} reason
  * @property {ImportBinding & {acknowledgment:ImportAcknowledgment|null,ackToolCallId:string|null,
  * freshness:'current'|'stale'|'unavailable'}} receipt
@@ -278,7 +235,6 @@ const PACK_CATALOG_REQUEST_MS = 90_000;
  * 'unknown_receipt'|'acknowledgment_conflict'|'review_unavailable'|
  * 'review_evidence_invalid'|'operation_unavailable'|'idle_required'|
  * 'waiter_required'|'capture_unreconciled'|'capture_send_uncertain'|
- * 'pack_unreconciled'|'pack_send_uncertain'|'pack_ineligible'|'pack_state_mismatch'|
  * 'import_unreconciled'|'import_send_uncertain'|'import_state_mismatch'} ErrorCode
  */
 export class NeedsYouError extends Error {
@@ -289,7 +245,7 @@ export class NeedsYouError extends Error {
     this.status = status;
   }
 }
-/** The shared send exclusion names whichever action still needs its owner. @param {'capture'|'pack'|'import'} kind */
+/** The shared send exclusion names whichever action still needs its owner. @param {'capture'|'import'} kind */
 function unreconciled(kind) {
   return new NeedsYouError(/** @type {ErrorCode} */ (`${kind}_unreconciled`));
 }
@@ -518,145 +474,9 @@ function parseAcknowledgment(value) {
   };
 }
 
-// Pack and import results share one outcome and mutation vocabulary.
+// An import result's outcome and mutation vocabulary.
 const RESULT_OUTCOMES = Object.freeze(['applied', 'declined', 'failed', 'unavailable', 'stale', 'uncertain']);
 const RESULT_MUTATIONS = Object.freeze(['applied', 'none', 'restored', 'uncertain']);
-
-/** @param {unknown} value @returns {PackOperation} */
-function packOperation(value) {
-  requireInput(value === 'install' || value === 'remove' || value === 'refresh');
-  return value;
-}
-/** @param {unknown} value */
-function packName(value) {
-  const name = identifier(value);
-  requireInput(PACK_NAME_RE.test(name));
-  return name;
-}
-/** @param {unknown} value */
-function packFiles(value) {
-  // The existing UTF-8 body/retention budgets bound the complete list. Do not
-  // truncate a real pack to the human-request reference count.
-  requireInput(Array.isArray(value));
-  // These are inert recorded artifact names, not review URLs. Compose's
-  // profile validator below owns their path rules (including literal #/%).
-  const files = value.map(file => text(file, 512));
-  requireInput(new Set(files).size === files.length);
-  return files;
-}
-/**
- * A saved source's opaque key. It selects one entry of the saved sources; it is
- * never a path, repository or ref.
- * @param {unknown} value
- */
-function sourceKey(value) {
-  const key = text(value, 36);
-  requireInput(/^src_[0-9a-f]{32}$/.test(key));
-  return key;
-}
-/**
- * The one closed shape a source-bound request carries, compared whole at every
- * boundary. Absent, never null, when the request uses the default catalog.
- * @param {unknown} value @returns {CatalogSource}
- */
-function parseCatalogSource(value) {
-  const record = object(value, ['key', 'sourcesRevision', 'source']);
-  const sourcesRevision = text(record.sourcesRevision, 71);
-  requireInput(sourcesRevision === 'absent' || /^sha256:[a-f0-9]{64}$/.test(sourcesRevision));
-  const source = object(record.source, ['type'], ['repository', 'ref', 'location']);
-  if (source.type === 'local') {
-    object(source, ['type', 'location']);
-    return { key: sourceKey(record.key), sourcesRevision, source: { type: 'local', location: text(source.location, 2_048) } };
-  }
-  requireInput(source.type === 'remote');
-  object(source, ['type', 'repository', 'ref']);
-  return { key: sourceKey(record.key), sourcesRevision,
-    source: { type: 'remote', repository: text(source.repository, 2_048), ref: text(source.ref, 128) } };
-}
-/** @param {unknown} value @returns {PackSource|null} */
-function packSource(value) {
-  if (value === null) return null;
-  const source = object(value, ['type'], ['location', 'repository', 'requested_ref', 'resolved_commit']);
-  if (source.type === 'local') {
-    object(source, ['type', 'location']);
-    return { type: 'local', location: text(source.location) };
-  }
-  requireInput(source.type === 'remote');
-  object(source, ['type', 'repository', 'requested_ref', 'resolved_commit']);
-  const commit = source.resolved_commit === null ? null : normalizeGitObjectId(source.resolved_commit);
-  requireInput(source.resolved_commit === null || commit === source.resolved_commit);
-  return { type: 'remote', repository: text(source.repository), requested_ref: text(source.requested_ref), resolved_commit: commit };
-}
-/** @param {unknown} value @param {PackOperation} operation @param {string} name @returns {PackResult|null} */
-function packResult(value, operation, name) {
-  if (value === null) return null;
-  const result = object(value, ['ok', 'code'], ['result', 'error', 'mutation']);
-  if (result.ok === false) {
-    object(result, ['ok', 'code', 'error'], operation === 'refresh' ? ['mutation'] : []);
-    requireInput(result.code === 1 || result.code === 2);
-    if (operation === 'refresh') requireInput(['none', 'restored', 'uncertain'].includes(result.mutation));
-    return /** @type {PackResult} */ ({ ...result, error: text(result.error) });
-  }
-  requireInput(result.ok === true && result.code === 0);
-  object(result, ['ok', 'code', 'result']);
-  if (operation === 'install') {
-    const installed = object(result.result, ['added', 'files'], ['origin', 'alreadyInstalled']);
-    requireInput(installed.added === name);
-    const files = packFiles(installed.files);
-    if (installed.alreadyInstalled === true) {
-      object(installed, ['added', 'files', 'alreadyInstalled']);
-      requireInput(files.length === 0);
-      return { ok: true, code: 0, result: { added: name, files: [], alreadyInstalled: true } };
-    }
-    object(installed, ['added', 'files', 'origin']);
-    requireInput(files.length > 0);
-    return { ok: true, code: 0, result: { added: name, files, origin: text(installed.origin) } };
-  }
-  if (operation === 'remove') {
-    const removed = object(result.result, ['removed', 'files']);
-    requireInput(removed.removed === name);
-    return { ok: true, code: 0, result: { removed: name, files: packFiles(removed.files) } };
-  }
-  const refreshed = object(result.result, ['refreshed', 'replaced', 'added', 'removed', 'files']);
-  requireInput(refreshed.refreshed === name);
-  const files = packFiles(refreshed.files), replaced = packFiles(refreshed.replaced);
-  const added = packFiles(refreshed.added), removed = packFiles(refreshed.removed);
-  requireInput(files.length > 0 && same([...replaced, ...added].sort(), [...files].sort())
-    && removed.every(file => !files.includes(file)));
-  return { ok: true, code: 0, result: { refreshed: name, files, replaced, added, removed } };
-}
-/** @param {unknown} value @returns {PackAcknowledgment} */
-function parsePackAcknowledgment(value) {
-  const ack = object(value, ['receiptId', 'owner', 'operation', 'name', 'workspaceId', 'sessionId',
-    'providerGeneration', 'recognizes', 'outcome', 'mutation', 'result', 'profileRevision', 'source', 'note'], ['catalogSource']);
-  requireInput(ack.recognizes === 'pack_result' && ack.owner === 'dude'
-    && RESULT_OUTCOMES.includes(ack.outcome) && RESULT_MUTATIONS.includes(ack.mutation));
-  const operation = packOperation(ack.operation), name = packName(ack.name);
-  const result = packResult(ack.result, operation, name);
-  const alreadyInstalled = result?.ok && 'alreadyInstalled' in result.result;
-  requireInput(!alreadyInstalled || (ack.outcome === 'stale' && ack.mutation === 'none'));
-  requireInput(ack.outcome !== 'applied' || (result?.ok && !alreadyInstalled && ack.mutation === 'applied'));
-  requireInput(ack.outcome !== 'declined' || (result === null && ack.mutation === 'none'));
-  requireInput(!['stale', 'unavailable'].includes(ack.outcome) || ack.mutation === 'none');
-  requireInput(ack.outcome !== 'uncertain' || ack.mutation === 'uncertain');
-  requireInput(ack.mutation !== 'uncertain' || ack.outcome === 'uncertain');
-  requireInput(ack.mutation !== 'restored' || (ack.outcome === 'failed' && result?.ok === false));
-  requireInput(!result || result.ok !== false || !result.mutation
-    || result.mutation === ack.mutation || ack.mutation === 'uncertain');
-  requireInput(!result?.ok || alreadyInstalled || ['applied', 'uncertain'].includes(ack.mutation));
-  requireInput(result !== null || ['none', 'uncertain'].includes(ack.mutation));
-  const profileRevision = ack.profileRevision === null ? null
-    : ack.profileRevision === 'absent' ? 'absent' : revision(ack.profileRevision);
-  requireInput(profileRevision !== null || ['unavailable', 'uncertain'].includes(ack.outcome));
-  return /** @type {PackAcknowledgment} */ ({
-    receiptId: uuid(ack.receiptId), owner: 'dude', operation, name,
-    workspaceId: revision(ack.workspaceId), sessionId: identifier(ack.sessionId),
-    providerGeneration: uuid(ack.providerGeneration), recognizes: 'pack_result',
-    outcome: ack.outcome, mutation: ack.mutation, result, profileRevision,
-    source: packSource(ack.source), note: text(ack.note),
-    ...(ack.catalogSource === undefined ? {} : { catalogSource: parseCatalogSource(ack.catalogSource) }),
-  });
-}
 
 const IMPORT_SOURCE_BYTES = 2_048;
 // Closed outcome -> mutation pairs. `uncertain` appears on both sides only together.
@@ -807,47 +627,6 @@ const acknowledgmentSchema = schemaObject({
   note: textSchema, source: { anyOf: [sourceSchema, { type: 'null' }] },
   preview: schemaObject({ reviewedRevision: hashSchema, current: previewSchema }),
 }, ['receiptId', 'owner', 'requestRef', 'scope', 'previousRevision', 'recognizes', 'outcome', 'note', 'source']);
-const packNameSchema = { ...shortSchema, pattern: PACK_NAME_RE.source };
-const packFilesSchema = { type: 'array', items: pathSchema, uniqueItems: true };
-const packSourceSchema = { oneOf: [
-  { type: 'null' },
-  schemaObject({ type: { const: 'local' }, location: textSchema }),
-  schemaObject({ type: { const: 'remote' }, repository: textSchema, requested_ref: textSchema,
-    resolved_commit: { anyOf: [{ type: 'null' }, { type: 'string', pattern: '^(?:[a-f0-9]{40}|[a-f0-9]{64})$' }] } }),
-] };
-const catalogSourceSchema = schemaObject({
-  key: { type: 'string', pattern: '^src_[0-9a-f]{32}$' },
-  sourcesRevision: { type: 'string', pattern: '^(?:absent|sha256:[a-f0-9]{64})$' },
-  source: { oneOf: [
-    schemaObject({ type: { const: 'remote' }, repository: textSchema, ref: shortSchema }),
-    schemaObject({ type: { const: 'local' }, location: textSchema }),
-  ] },
-});
-const packAcknowledgmentFields = {
-  receiptId: uuidSchema, owner: { const: 'dude' },
-  operation: { enum: ['install', 'remove', 'refresh'] }, name: packNameSchema,
-  workspaceId: hashSchema, sessionId: shortSchema, providerGeneration: uuidSchema,
-  recognizes: { const: 'pack_result' },
-  outcome: { enum: RESULT_OUTCOMES },
-  mutation: { enum: RESULT_MUTATIONS },
-  result: { oneOf: [
-    { type: 'null' },
-    schemaObject({ ok: { const: true }, code: { const: 0 }, result: { oneOf: [
-      schemaObject({ added: packNameSchema, files: packFilesSchema, origin: textSchema }),
-      schemaObject({ added: packNameSchema, files: { ...packFilesSchema, maxItems: 0 }, alreadyInstalled: { const: true } }),
-      schemaObject({ removed: packNameSchema, files: packFilesSchema }),
-      schemaObject({ refreshed: packNameSchema, replaced: packFilesSchema, added: packFilesSchema,
-        removed: packFilesSchema, files: packFilesSchema }),
-    ] } }),
-    schemaObject({ ok: { const: false }, code: { enum: [1, 2] }, error: textSchema,
-      mutation: { enum: ['none', 'restored', 'uncertain'] } }, ['ok', 'code', 'error']),
-  ] },
-  profileRevision: { anyOf: [hashSchema, { const: 'absent' }, { type: 'null' }] },
-  source: packSourceSchema, note: textSchema,
-};
-// `catalogSource` is optional: present only for a request bound to a saved source.
-const packAcknowledgmentSchema = schemaObject({ ...packAcknowledgmentFields, catalogSource: catalogSourceSchema },
-  Object.keys(packAcknowledgmentFields));
 const importPathsSchema = { type: 'array', items: pathSchema, uniqueItems: true };
 const importAcknowledgmentSchema = schemaObject({
   receiptId: uuidSchema, owner: { const: 'dude' },
@@ -860,7 +639,7 @@ const importAcknowledgmentSchema = schemaObject({
 export const NEEDS_YOU_PARAMETERS = freeze({
   type: 'object', additionalProperties: false, required: ['op'],
   properties: { op: { enum: ['request', 'acknowledge'] }, request: requestSchema,
-    acknowledgment: { oneOf: [acknowledgmentSchema, packAcknowledgmentSchema, importAcknowledgmentSchema] } },
+    acknowledgment: { oneOf: [acknowledgmentSchema, importAcknowledgmentSchema] } },
   oneOf: [
     { properties: { op: { const: 'request' } }, required: ['request'], not: { required: ['acknowledgment'] } },
     { properties: { op: { const: 'acknowledge' } }, required: ['acknowledgment'], not: { required: ['request'] } },
@@ -958,58 +737,6 @@ async function bounded(work, signal) {
 }
 
 /**
- * A permission target names the bound source only as a whole token: the text
- * before it ends at a boundary (the start, whitespace or an opening quote or
- * bracket) and the text after it begins at one (the end, whitespace, a closing
- * quote or bracket, a comma or semicolon, or a sentence's period or colon). So
- * `<url>-evil`, `<url>/extra`, `<url>.git` and `<folder>-EVIL` name another
- * source, and so does the bound text found inside a longer path. Another
- * occurrence that is a whole token still counts, because decoy text in the same
- * target is the owner's to prevent, not something a check on one string can.
- * @param {string} text @param {string} bound
- */
-function namesWhole(text, bound) {
-  for (let at = text.indexOf(bound); at !== -1; at = text.indexOf(bound, at + 1)) {
-    if (/(?:^|[\s"'([{<,;=])$/.test(text.slice(0, at))
-      && /^(?:$|[\s"')\]}>,;]|[.:](?:$|[\s"')\]}>,;]))/.test(text.slice(at + bound.length))) return true;
-  }
-  return false;
-}
-
-/**
- * The first permission target of a source-bound pack request: the saved source's
- * exact repository or folder, the third-party label every added source carries,
- * and the revision that pins it, a remote source's reviewed commit as
- * `commit:<hex>` or a local folder's file digest. The owner copies these from the
- * bound `catalogSource`, so a permission that names another source, or none,
- * cannot be published for the request.
- * @param {CatalogSource} binding @param {OperationTarget|undefined} target
- */
-function namesBoundSource(binding, target) {
-  if (!target || !target.target.includes('Third-party source')) return false;
-  const { source } = binding;
-  return source.type === 'remote'
-    ? namesWhole(target.target, source.repository) && /^commit:(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(target.revision)
-    : namesWhole(target.target, source.location) && /^sha256:[a-f0-9]{64}$/.test(target.revision);
-}
-/**
- * Does the profile's fresh recorded source come from the bound selection? A
- * remote source is the same normalized repository at exactly the reviewed commit;
- * a local one is the real folder the request bound. A pack name or an echoed key
- * proves neither.
- * @param {string} root @param {CatalogSource} binding @param {unknown} recorded @param {string|null} reviewedCommit
- */
-function recordedFromBound(root, binding, recorded, reviewedCommit) {
-  const { source } = binding;
-  if (source.type === 'local') {
-    return matchesRecordedSource(/** @type {any} */ ({ type: 'local', root: source.location }), recorded);
-  }
-  const described = describePackSources({ root, sources: [source], builtins: [] });
-  return described.ok && matchesRecordedSource(described.sources[0], recorded)
-    && reviewedCommit !== null && isObject(recorded) && recorded.resolved_commit === reviewedCommit;
-}
-
-/**
  * A single instance is created by extension.mjs, not by canvas.open().
  * Source reads and adapter injection are also used by real openInstance tests.
  * @param {{root:string,reviewAdapter?:ReviewAdapter}} options
@@ -1027,16 +754,12 @@ export function createNeedsYou({ root, reviewAdapter }) {
   let lifecycleRevision = 0;
   let retainedBytes = 0;
   const lifetime = new AbortController();
-  // One bounded acquisition may precede allocation. Capture, pack and import
-  // preparations all use this exclusion, including a capture whose queue read
+  // One bounded acquisition may precede allocation. Capture and import
+  // preparations both use this exclusion, including a capture whose queue read
   // started before it.
-  /** @type {'pack'|'import'|null} */
+  /** @type {'import'|null} */
   let preparing = null;
-  // The install being prepared against a saved source. Removing that source is
-  // refused for as long as it is set, so a preparation cannot lose its source.
-  /** @type {{operation:PackOperation,name:string,key:string}|null} */
-  let preparingSource = null;
-  /** @type {Map<string,RequestState|CaptureState|PackState|ImportState>} */
+  /** @type {Map<string,RequestState|CaptureState|ImportState>} */
   const records = new Map();
   /** @type {Set<(hint:'needs-you'|'workspace')=>void>} */
   const listeners = new Set();
@@ -1211,12 +934,12 @@ export function createNeedsYou({ root, reviewAdapter }) {
   /** @param {RequestState} record */
   const isWaiting = (record) => record.phase === 'publishing' || record.phase === 'pending';
   /**
-   * Pack and import requests are the one-send actions: both are prepared, burned
-   * by one submit, delivered by one correlated immediate send, then acknowledged.
-   * @param {{kind:string}|undefined} record @returns {record is PackState|ImportState}
+   * An import request is the one-send action: it is prepared, burned by one
+   * submit, delivered by one correlated immediate send, then acknowledged.
+   * @param {{kind:string}|undefined} record @returns {record is ImportState}
    */
   function isSendAction(record) {
-    return record?.kind === 'pack' || record?.kind === 'import';
+    return record?.kind === 'import';
   }
   function waiters() {
     return [...records.values()].flatMap((record) => record.kind === 'request' && isWaiting(record) ? [record] : []);
@@ -1344,22 +1067,16 @@ export function createNeedsYou({ root, reviewAdapter }) {
   /** @param {HumanRequest} request @param {ToolInvocation} invocation @param {number} bytes */
   async function requestHuman(request, invocation, bytes) {
     checkInvocation(invocation);
-    // A bound permission belongs to exactly one live pack or import receipt, in
-    // its own closed operation set, and to no other class, scope or generation.
-    const action = [...records.values()].find(entry => (entry.kind === 'pack' || entry.kind === 'import')
+    // A bound permission belongs to exactly one live import receipt, in its own
+    // closed operation set, and to no other class, scope or generation.
+    const action = [...records.values()].find(entry => entry.kind === 'import'
       && request.requestRef === `${entry.kind}:${entry.handle}`);
     if (isSendAction(action) && (!action.sendStarted || action.receipt.acknowledgment
       || !['admitted', 'delivered', 'waiting_owner'].includes(action.phase)
       || request.owner !== action.receipt.owner || request.class !== 'permission'
       || request.scope.kind !== 'session' || request.source.kind !== 'session'
       || request.source.revision !== providerGeneration
-      || (action.kind === 'pack' ? request.fields.operation !== `pack:${action.receipt.operation}`
-        : !IMPORT_OPERATIONS.includes(request.fields.operation)))) {
-      throw new NeedsYouError('identity_mismatch');
-    }
-    // A permission for a pack bound to a saved source names that source first.
-    if (action?.kind === 'pack' && action.receipt.catalogSource
-      && !(request.class === 'permission' && namesBoundSource(action.receipt.catalogSource, request.fields.targets[0]))) {
+      || !IMPORT_OPERATIONS.includes(request.fields.operation))) {
       throw new NeedsYouError('identity_mismatch');
     }
     const fingerprint = digest(JSON.stringify(request));
@@ -1661,7 +1378,7 @@ export function createNeedsYou({ root, reviewAdapter }) {
     }
     if (retired) publish();
   }
-  /** @param {PackState|ImportState|CaptureState|null} [except] */
+  /** @param {ImportState|CaptureState|null} [except] */
   function idleAction(except = null) {
     retireUnsubmittedPreparations();
     return [...records.values()].find(entry => entry !== except && entry.kind !== 'request'
@@ -1670,16 +1387,16 @@ export function createNeedsYou({ root, reviewAdapter }) {
         : entry.sendStarted || !['unavailable', 'stale'].includes(entry.phase)));
   }
   /**
-   * The pack or import, if any, that excludes an idea capture: in flight,
-   * prepared, or sent and still unreconciled.
-   * @returns {'pack'|'import'|null}
+   * The import, if any, that excludes an idea capture: in flight, prepared, or
+   * sent and still unreconciled.
+   * @returns {'import'|null}
    */
   function sendExclusion() {
     if (preparing) return preparing;
     const other = idleAction();
     return isSendAction(other) ? other.kind : null;
   }
-  /** @param {string|null} boundary @param {number} epoch @param {PackState|ImportState|null} [except] */
+  /** @param {string|null} boundary @param {number} epoch @param {ImportState|null} [except] */
   function idleBoundary(boundary, epoch, except = null) {
     const current = available();
     const other = idleAction(except);
@@ -1692,194 +1409,6 @@ export function createNeedsYou({ root, reviewAdapter }) {
     }
     return current;
   }
-  /** @param {Awaited<ReturnType<typeof readPacks>>} value @param {PackOperation} operation @param {string} name @returns {PackBasis} */
-  function packBasis(value, operation, name) {
-    if (value.workspaceId !== workspaceId) throw new NeedsYouError('identity_mismatch');
-    if (value.coverage.installed.state === 'stale') throw new NeedsYouError('source_changed');
-    if (!value.installed || !value.rootIdentity || !value.profileRevision || !value.readRevision) {
-      throw new NeedsYouError('source_unavailable');
-    }
-    const installed = value.installed.installed;
-    const entry = Object.hasOwn(installed, name) ? installed[name] : null;
-    const catalogPack = value.catalog?.packs.find(pack => pack.name === name);
-    if (operation !== 'remove' && (!value.catalog || value.coverage.catalog.state === 'stale')) {
-      // A built-in is the default catalog, never a saved source a request can name.
-      if (value.coverage.catalog.reason === 'source_not_added') throw new NeedsYouError('invalid_input', 400);
-      throw new NeedsYouError(value.coverage.catalog.state === 'stale' ? 'source_changed' : 'source_unavailable');
-    }
-    if (operation === 'install' ? entry || !catalogPack
-      || Object.keys(installed).some(other => name.startsWith(`${other}-`) || other.startsWith(`${name}-`))
-      : !entry || (operation === 'refresh' && !catalogPack)) throw new NeedsYouError('pack_ineligible');
-    // The basis binds the selected source and the saved sources it was read at; a
-    // default request has none. That is internal, never part of its public binding.
-    const selection = value.selection ?? null;
-    return freeze({
-      rootIdentity: value.rootIdentity, profileRevision: value.profileRevision, readRevision: value.readRevision,
-      entry, catalogRevision: operation === 'remove' ? null
-        : digest(JSON.stringify(selection ? [value.catalog.origin, catalogPack, selection] : [value.catalog.origin, catalogPack])),
-      selection,
-    });
-  }
-  /** @param {PackOperation} operation @param {string} [name] @param {CatalogSource|null} [selection] */
-  function currentPackReadRevision(operation, name, selection = null) {
-    try { return packReadRevision(workspaceRoot, operation !== 'remove', name, selection); }
-    catch { throw new NeedsYouError('source_unavailable'); }
-  }
-  /**
-   * Which saved source a request reads. An install names one by key; a refresh
-   * derives the matching saved source, else the default, and takes no browser
-   * choice; a remove reads no catalog.
-   * @param {PackOperation} operation @param {string|null} key
-   */
-  function packSelect(operation, key) {
-    return operation === 'install' ? (key ? { source: key } : null) : operation === 'refresh' ? { refresh: /** @type {const} */ (true) } : null;
-  }
-  /**
-   * The live, unreconciled pack requests bound to one saved source, each by pack
-   * and operation. They are the same requests that keep idle capture and other
-   * sends excluded: being prepared, prepared, or sent and not yet acknowledged.
-   * @param {string} key
-   */
-  function sourceUses(key) {
-    if (closed) throw new NeedsYouError('provider_unavailable', 503);
-    retireUnsubmittedPreparations();
-    /** @type {Array<{name:string,operation:PackOperation,phase:string}>} */
-    const uses = [];
-    if (preparingSource?.key === key) uses.push({ name: preparingSource.name, operation: preparingSource.operation, phase: 'preparing' });
-    for (const record of records.values()) {
-      if (record.kind !== 'pack' || record.receipt.catalogSource?.key !== key || record.receipt.acknowledgment) continue;
-      if (!record.sendStarted && ['unavailable', 'stale'].includes(record.phase)) continue;
-      uses.push({ name: record.receipt.name, operation: record.receipt.operation, phase: packView(record).phase });
-    }
-    return uses;
-  }
-  /** @param {PackState} record */
-  function packView(record) {
-    const permission = record.permissionHandle ? records.get(record.permissionHandle) : null;
-    const phase = ['delivered', 'waiting_owner'].includes(record.phase) && permission?.kind === 'request'
-      ? isWaiting(permission) ? 'waiting_permission' : 'waiting_owner' : record.phase;
-    const { acknowledging, ...receipt } = record.receipt;
-    return {
-      packReceipt: record.handle, operation: record.receipt.operation, name: record.receipt.name,
-      phase, reason: record.reason, permissionRequest: record.permissionHandle,
-      receipt: { ...receipt,
-        freshness: closed ? 'unavailable' : record.receipt.freshness,
-        current: !closed && record.receipt.freshness === 'current' },
-      applied: !closed && record.phase === 'applied' && record.receipt.freshness === 'current',
-    };
-  }
-  /** @param {unknown} value @param {{signal?:AbortSignal}} [options] */
-  async function requestPack(value, { signal } = {}) {
-    const bytes = inputBytes(value);
-    const body = object(value, ['op', 'operation', 'name'], ['packReceipt', 'source']);
-    const operation = packOperation(body.operation), name = packName(body.name);
-    requireInput(body.op === 'prepare' || body.op === 'submit');
-    // Only an install names a saved source, by its key. A refresh derives its own
-    // and a removal reads none, so a choice on either is not a request we admit.
-    const choice = body.source === undefined ? null : sourceKey(body.source);
-    requireInput(choice === null || operation === 'install');
-    const bound = AbortSignal.any([lifetime.signal,
-      AbortSignal.timeout(operation === 'remove' ? NEEDS_YOU_LIMITS.operationMs : PACK_CATALOG_REQUEST_MS),
-      ...(signal ? [signal] : [])]);
-    if (body.op === 'prepare') {
-      object(body, ['op', 'operation', 'name'], ['source']);
-      if (preparing) throw unreconciled(preparing);
-      const boundary = idleEventId, epoch = lifecycleRevision;
-      const sessionId = idleBoundary(boundary, epoch).sessionId;
-      preparing = 'pack';
-      preparingSource = choice ? { operation, name, key: choice } : null;
-      try {
-        if (await pendingInput(bound)) throw new NeedsYouError('idle_required');
-        idleBoundary(boundary, epoch);
-        const basis = packBasis(await readPacks(workspaceRoot, bound,
-          { catalog: operation !== 'remove', name, select: packSelect(operation, choice) }), operation, name);
-        if (await pendingInput(bound)) throw new NeedsYouError('idle_required');
-        if (idleBoundary(boundary, epoch).sessionId !== sessionId) throw new NeedsYouError('identity_mismatch');
-        bound.throwIfAborted();
-        if (currentPackReadRevision(operation, name, basis.selection) !== basis.readRevision) throw new NeedsYouError('source_changed');
-        const handle = randomUUID();
-        /** @type {PackState} */
-        const record = {
-          kind: 'pack', handle, phase: 'prepared', reason: null, basis, permissionHandle: null,
-          idleEventId: boundary, lifecycleRevision: epoch, preparedAt: performance.now(), sendStarted: false,
-          promptRevision: null, messageId: null, observed: null,
-          receipt: { receiptId: handle, owner: 'dude', operation, name, workspaceId, sessionId, providerGeneration,
-            ...(basis.selection ? { catalogSource: basis.selection } : {}),
-            acknowledgment: null, acknowledging: false, ackToolCallId: null, reread: null, freshness: 'current' },
-        };
-        reserve(bytes + Buffer.byteLength(JSON.stringify(record)), true);
-        records.set(handle, record);
-        publish();
-        return packView(record);
-      } catch (error) {
-        throw error instanceof NeedsYouError ? error : new NeedsYouError('operation_unavailable', 503);
-      } finally { preparing = null; preparingSource = null; }
-    }
-    object(body, ['op', 'operation', 'name', 'packReceipt'], ['source']);
-    const record = records.get(uuid(body.packReceipt));
-    if (!record || record.kind !== 'pack') throw new NeedsYouError('unknown_receipt', 404);
-    // The submit names the same saved source the receipt was prepared for, or none.
-    const boundKey = record.receipt.catalogSource?.key ?? null;
-    if (record.receipt.operation !== operation || record.receipt.name !== name
-      || (operation === 'install' && boundKey !== choice)) throw new NeedsYouError('identity_mismatch');
-    retireUnsubmittedPreparations();
-    if (record.phase !== 'prepared') throw new NeedsYouError('already_consumed');
-    reserve(bytes);
-    // Burn before the first async boundary. Refusal, cancellation and uncertainty
-    // cannot put this receipt back in the prepared state.
-    record.phase = 'admitted';
-    publish();
-    let current;
-    try {
-      current = idleBoundary(record.idleEventId, record.lifecycleRevision, record);
-      const fresh = packBasis(await readPacks(workspaceRoot, bound,
-        { catalog: operation !== 'remove', name, select: packSelect(operation, boundKey) }), operation, name);
-      // A removed, replaced or changed saved source is not the source that was prepared.
-      if (!same(fresh, record.basis)) throw new NeedsYouError('source_changed');
-      if (await pendingInput(bound)) throw new NeedsYouError('idle_required');
-      current = idleBoundary(record.idleEventId, record.lifecycleRevision, record);
-      bound.throwIfAborted();
-      if (currentPackReadRevision(operation, name, fresh.selection) !== fresh.readRevision) throw new NeedsYouError('source_changed');
-    } catch (error) {
-      record.phase = error instanceof NeedsYouError && ['source_changed', 'identity_mismatch', 'pack_ineligible'].includes(error.code)
-        ? 'stale' : 'unavailable';
-      record.reason = error instanceof NeedsYouError ? error.code : 'operation_unavailable';
-      record.receipt.freshness = record.phase === 'stale' ? 'stale' : 'unavailable';
-      publish();
-      throw error instanceof NeedsYouError ? error : new NeedsYouError('operation_unavailable', 503);
-    }
-    const { receiptId, owner, workspaceId: workspace, sessionId, providerGeneration: generation, catalogSource } = record.receipt;
-    const prompt = [
-      'Dude Canvas explicit pack request in this joined workspace/session.',
-      'Use dude-compose for this exact operation and pack only. This request is not application consent.',
-      // Only a source the project added adds this line; the default handoff is unchanged.
-      ...(catalogSource ? ['This request is bound to one source the project added (catalogSource in the final JSON). Use exactly that source and its configured ref with Compose --source and --ref, with no other source, --library, --force or fallback: a missing, unavailable or changed source is a refusal.'] : []),
-      'The coordinator owns the actual impact preview, exact literal permission, source/profile/target freshness, Compose application and verification.',
-      'Use the existing Needs You session permission: requestRef=pack:<receiptId>, source.revision=<providerGeneration>, fields.operation=pack:<operation>.',
-      'After the owner result, use dude_needs_you acknowledge with recognizes=pack_result, the exact binding below, actual Compose result and current profile source/revision. Delivery never means Applied.',
-      JSON.stringify({ receiptId, owner, operation, name, workspaceId: workspace, sessionId, providerGeneration: generation,
-        ...(catalogSource ? { catalogSource } : {}) }),
-    ].join('\n');
-    record.promptRevision = digest(prompt);
-    idleEventId = null;
-    record.sendStarted = true;
-    try {
-      // The send keeps its short confirmation bound, whatever the catalog read took.
-      const messageId = await bounded(current.send({ prompt, mode: 'immediate' }),
-        AbortSignal.any([bound, AbortSignal.timeout(NEEDS_YOU_LIMITS.operationMs)]));
-      if (typeof messageId !== 'string' || !messageId || messageId.length > 256 || record.phase !== 'admitted') {
-        throw new NeedsYouError('pack_send_uncertain', 502);
-      }
-      record.messageId = messageId;
-      if (reconcileSend(record) === 'uncertain') throw new NeedsYouError('pack_send_uncertain', 502);
-      return packView(record);
-    } catch {
-      if (!closed) { record.phase = 'uncertain'; record.reason = 'pack_send_uncertain'; }
-      // SDK errors can include the prompt. Expose only this owned classification.
-      throw new NeedsYouError('pack_send_uncertain', 502);
-    } finally { publish(); }
-  }
-
   /** @param {ImportState} record */
   function importView(record) {
     const permission = record.permissionHandle ? records.get(record.permissionHandle) : null;
@@ -2050,7 +1579,7 @@ export function createNeedsYou({ root, reviewAdapter }) {
     records.set(handle, capture);
     return { status: 'prepared', captureReceipt: handle, throughRequest: capture.waiterHandle };
   }
-  /** @param {CaptureState|PackState|ImportState} capture */
+  /** @param {CaptureState|ImportState} capture */
   function reconcileSend(capture) {
     const action = capture.kind !== 'capture';
     if (capture.phase !== (action ? 'admitted' : 'sending')
@@ -2144,133 +1673,18 @@ export function createNeedsYou({ root, reviewAdapter }) {
     } finally { publish(); }
   }
 
-  /** @param {PackState} record @param {AbortSignal} signal @returns {Promise<PackReread>} */
-  async function rereadPack(record, signal) {
-    const value = await readPacks(workspaceRoot, signal, { catalog: false });
-    const installed = value.installed?.installed;
-    return {
-      workspaceId: value.workspaceId, rootIdentity: value.rootIdentity,
-      profileRevision: installed ? value.profileRevision : null,
-      readRevision: installed ? value.readRevision : null,
-      entry: installed && Object.hasOwn(installed, record.receipt.name) ? installed[record.receipt.name] : null,
-      state: installed ? 'current' : 'unavailable', reason: value.coverage.installed.reason,
-    };
-  }
-  /**
-   * The commit the owner's permission reviewed for a source-bound remote
-   * request: the first target's `commit:<hex>` revision, which the provider
-   * required when the permission was published. Null when there is none.
-   * @param {PackState} record
-   */
-  function reviewedCommit(record) {
-    const permission = record.permissionHandle ? records.get(record.permissionHandle) : null;
-    if (permission?.kind !== 'request' || permission.request.class !== 'permission') return null;
-    return /^commit:([a-f0-9]{40}|[a-f0-9]{64})$/.exec(permission.request.fields.targets[0]?.revision ?? '')?.[1] ?? null;
-  }
-  /** @param {PackState} record @param {PackAcknowledgment} ack @param {PackReread} reread */
-  function checkPackResult(record, ack, reread) {
-    const mismatch = () => { throw new NeedsYouError('pack_state_mismatch'); };
-    if (reread.workspaceId !== workspaceId || reread.rootIdentity !== record.basis.rootIdentity) {
-      throw new NeedsYouError('identity_mismatch');
-    }
-    if (ack.profileRevision !== reread.profileRevision || !same(ack.source, reread.entry?.source ?? null)) mismatch();
-    if (reread.state !== 'current') {
-      if (!['unavailable', 'uncertain'].includes(ack.outcome)) mismatch();
-      return;
-    }
-    if (ack.mutation === 'restored'
-      && (reread.profileRevision !== record.basis.profileRevision || !same(reread.entry, record.basis.entry))) mismatch();
-    if (ack.outcome !== 'applied') return;
-    const result = ack.result;
-    if (!result?.ok) return mismatch();
-    const body = result.result;
-    if (record.receipt.operation === 'remove') {
-      if (!('removed' in body) || Array.isArray(body.removed) || reread.entry
-        || body.files.some(file => !record.basis.entry?.files.includes(file))) mismatch();
-      return;
-    }
-    if (!reread.entry || !ack.source || !same(body.files, reread.entry.files)
-      || (ack.source.type === 'remote' && !ack.source.resolved_commit)) return mismatch();
-    // A request bound to a saved source is Applied only from that selection: the
-    // fresh recorded profile source must be the bound repository at the reviewed
-    // commit, or the bound real folder. The echoed key or pack name alone is not it.
-    if (record.receipt.catalogSource
-      && !recordedFromBound(workspaceRoot, record.receipt.catalogSource, reread.entry.source, reviewedCommit(record))) mismatch();
-    // Shared canonical profile validation owns namespace, containment, links,
-    // and sorted/unique recorded paths. Result metadata cannot invent authority.
-    try {
-      validateProfile({ installed: { [ack.name]: { files: body.files, source: ack.source } } }, { root: workspaceRoot });
-      for (const file of body.files) {
-        const stat = fs.lstatSync(resolveProfileArtifact(workspaceRoot, file, ack.name));
-        if (file.startsWith('.github/skills/') ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== 1) mismatch();
-      }
-    } catch { return mismatch(); }
-    if (record.receipt.operation === 'refresh') {
-      if (!('refreshed' in body)
-        || !same([...body.replaced, ...body.removed].sort(), [...record.basis.entry.files].sort())) mismatch();
-    }
-  }
   /** @param {ToolInvocation} invocation */
   function acknowledgmentCallUsed(invocation) {
     return [...records.values()].some(entry => (entry.kind === 'request' && entry.invocation.toolCallId === invocation.toolCallId)
       || entry.receipt?.ackToolCallId === invocation.toolCallId);
   }
-  /** @param {PackState|ImportState} record @param {PackOutcome} outcome */
+  /** @param {ImportState} record @param {ImportOutcome} outcome */
   function checkActionPermission(record, outcome) {
     const permission = record.permissionHandle ? records.get(record.permissionHandle) : null;
     if (outcome === 'applied' && permission?.kind === 'request'
       && (isWaiting(permission) || ['decline', 'defer'].includes(permission.responseAction))) {
       throw new NeedsYouError('acknowledgment_conflict');
     }
-  }
-  /** @param {PackAcknowledgment} ack @param {ToolInvocation} invocation @param {number} bytes */
-  async function acknowledgePack(ack, invocation, bytes) {
-    checkInvocation(invocation);
-    const record = records.get(ack.receiptId);
-    if (!record || record.kind !== 'pack') throw new NeedsYouError('unknown_receipt', 404);
-    const receipt = record.receipt;
-    if (receipt.acknowledgment || receipt.acknowledging || acknowledgmentCallUsed(invocation)
-      || ['receiptId', 'owner', 'operation', 'name', 'workspaceId', 'sessionId', 'providerGeneration']
-        .some(key => ack[key] !== receipt[key])
-      // The exact bound selection is echoed back whole, or absent when there was none.
-      || !same(ack.catalogSource ?? null, receipt.catalogSource ?? null)) throw new NeedsYouError('acknowledgment_conflict');
-    if (!record.sendStarted || (!['delivered', 'waiting_owner'].includes(record.phase)
-      && !(['uncertain', 'stale', 'unavailable'].includes(record.phase) && ['unavailable', 'uncertain'].includes(ack.outcome)))) {
-      throw new NeedsYouError('pack_unreconciled');
-    }
-    checkActionPermission(record, ack.outcome);
-    const epoch = lifecycleRevision;
-    receipt.acknowledging = true;
-    try {
-      const signal = AbortSignal.any([lifetime.signal, invocation.signal, AbortSignal.timeout(NEEDS_YOU_LIMITS.operationMs)]);
-      const reread = await rereadPack(record, signal);
-      checkInvocation(invocation);
-      if (epoch !== lifecycleRevision || available().sessionId !== receipt.sessionId) throw new NeedsYouError('operation_unavailable', 503);
-      if (reread.state === 'current' && currentPackReadRevision('remove') !== reread.readRevision) {
-        throw new NeedsYouError('pack_state_mismatch');
-      }
-      checkPackResult(record, ack, reread);
-      // The owner can replace an acknowledged permission during the reread.
-      checkActionPermission(record, ack.outcome);
-      reserve(bytes + Buffer.byteLength(JSON.stringify(reread)));
-      receipt.acknowledgment = freeze(ack);
-      receipt.ackToolCallId = invocation.toolCallId;
-      receipt.reread = freeze(reread);
-      receipt.freshness = reread.state === 'current' ? 'current' : 'unavailable';
-      record.phase = ack.outcome;
-      record.reason = null;
-      publish('workspace');
-      return toolResult(packView(record));
-    } catch (error) {
-      if (error instanceof NeedsYouError && error.code === 'pack_state_mismatch') {
-        record.phase = 'stale'; record.reason = error.code; receipt.freshness = 'stale';
-        publish();
-      } else if (error instanceof NeedsYouError && error.code === 'source_unavailable') {
-        record.phase = 'unavailable'; record.reason = error.code; receipt.freshness = 'unavailable';
-        publish();
-      }
-      throw error;
-    } finally { receipt.acknowledging = false; }
   }
 
   /**
@@ -2402,9 +1816,6 @@ export function createNeedsYou({ root, reviewAdapter }) {
       }
       requireInput(operation.op === 'acknowledge');
       object(args, ['op', 'acknowledgment']);
-      if (isObject(operation.acknowledgment) && operation.acknowledgment.recognizes === 'pack_result') {
-        return await acknowledgePack(parsePackAcknowledgment(operation.acknowledgment), invocation, bytes);
-      }
       if (isObject(operation.acknowledgment) && operation.acknowledgment.recognizes === 'import_result') {
         return acknowledgeImport(parseImportAcknowledgment(operation.acknowledgment), invocation, bytes);
       }
@@ -2498,7 +1909,6 @@ export function createNeedsYou({ root, reviewAdapter }) {
       || entry.phase === 'unavailable' || entry.phase === 'uncertain'
       || (entry.receipt && entry.receipt.freshness !== 'current')).map((entry) => entry.kind === 'request'
       ? { scope: entry.request.scope, requestHandle: entry.handle, phase: entry.phase }
-      : entry.kind === 'pack' ? { scope: { kind: 'session' }, packReceipt: entry.handle, phase: entry.phase }
       : entry.kind === 'import' ? { scope: { kind: 'session' }, importReceipt: entry.handle, phase: entry.phase }
       // A capture keeps its session identity; its canonical reread is source evidence.
       : { scope: entry.receipt.scope, captureReceipt: entry.handle, phase: entry.phase,
@@ -2526,7 +1936,6 @@ export function createNeedsYou({ root, reviewAdapter }) {
         saved: !closed && entry.receipt.freshness === 'current'
           && entry.receipt.acknowledgment?.outcome === 'applied' && entry.receipt.acknowledgment.source?.kind === 'file',
       })),
-      packRequests: [...records.values()].filter(entry => entry.kind === 'pack').map(packView),
       importRequests: [...records.values()].filter(entry => entry.kind === 'import').map(importView),
     };
   }
@@ -2541,23 +1950,6 @@ export function createNeedsYou({ root, reviewAdapter }) {
       // generation. Nothing rereads the imported files, and root or provider
       // replacement ends the authority above.
       if (entry.kind === 'import') return;
-      if (entry.kind === 'pack') {
-        const receipt = entry.receipt;
-        if (!receipt.acknowledgment || receipt.freshness !== 'current') return;
-        try {
-          const reread = await rereadPack(entry, AbortSignal.any([lifetime.signal, AbortSignal.timeout(NEEDS_YOU_LIMITS.operationMs)]));
-          if (!same(reread, receipt.reread)) receipt.freshness = reread.state === 'current' ? 'stale' : 'unavailable';
-          else if (receipt.acknowledgment.outcome === 'applied') checkPackResult(entry, receipt.acknowledgment, reread);
-        } catch (error) {
-          receipt.freshness = error instanceof NeedsYouError && error.code === 'pack_state_mismatch' ? 'stale' : 'unavailable';
-        }
-        if (receipt.freshness !== 'current') {
-          if (entry.phase === 'applied') entry.phase = receipt.freshness === 'stale' ? 'stale' : 'unavailable';
-          entry.reason = receipt.freshness === 'stale' ? 'source_changed' : 'source_unavailable';
-          publish();
-        }
-        return;
-      }
       if (entry.kind === 'request' && isWaiting(entry)) {
         try { await currentRequest(entry); }
         catch { invalidate(entry, 'unavailable'); }
@@ -2585,7 +1977,7 @@ export function createNeedsYou({ root, reviewAdapter }) {
     /** @type {import('@github/copilot-sdk').Tool} */
     tool: {
       name: 'dude_needs_you',
-      description: 'Publish one current owner-qualified human request and wait for its Canvas response, or acknowledge a prior receipt after owner recognition/application and a fresh canonical reread. Only request/acknowledge; six closed human classes. A pack_result acknowledgment uses the exact Canvas pack receipt binding (including its catalogSource, echoed whole, only when the request was bound to a source the project added), actual Compose result and current profile source/revision; it cannot acknowledge an idea capture. An import_result acknowledgment uses the exact Canvas import receipt binding, the owner\'s actual outcome and mutation, and complete canonical project-local file paths; Applied needs each one verified now, and it cannot acknowledge a capture or pack request. Scope selectors are exact paths in this joined workspace; session/generation/tool-call/cancellation identity is provider-bound. Defer never captures. Annotation feedback requires sealed report plus actual PNG, not approval. No workflow writes or operation execution.',
+      description: 'Publish one current owner-qualified human request and wait for its Canvas response, or acknowledge a prior receipt after owner recognition/application and a fresh canonical reread. Only request/acknowledge; six closed human classes. An import_result acknowledgment uses the exact Canvas import receipt binding, the owner\'s actual outcome and mutation, and complete canonical project-local file paths; Applied needs each one verified now, and it cannot acknowledge a capture. Scope selectors are exact paths in this joined workspace; session/generation/tool-call/cancellation identity is provider-bound. Defer never captures. Annotation feedback requires sealed report plus actual PNG, not approval. No workflow writes or operation execution.',
       parameters: NEEDS_YOU_PARAMETERS,
       handler: invoke,
     },
@@ -2607,7 +1999,7 @@ export function createNeedsYou({ root, reviewAdapter }) {
     matchesRoot(candidate) { return path.resolve(candidate) === workspaceRoot; },
     /** @param {(hint:'needs-you'|'workspace')=>void} listener */
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
-    onEvent, read, refresh, respond, issueCaptureReceipt, captureIdea, requestPack, requestImport, dispose, sourceUses,
+    onEvent, read, refresh, respond, issueCaptureReceipt, captureIdea, requestImport, dispose,
     openReview: (value, options) => reviewOperation('open', value, options),
     saveReview: (value, options) => reviewOperation('save', value, options),
     sealReview: (value, options) => reviewOperation('seal', value, options),

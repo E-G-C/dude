@@ -8,6 +8,7 @@ import {
   addProvide,
   listProvide,
   parsePackManifestMetadata,
+  parseRequiredTools,
   USE_CASE_ID_RE,
 } from './pack-manifest.mjs';
 
@@ -292,4 +293,33 @@ test('addProvide preserves adjacent use-cases bytes and listProvide remains scop
     'dude-pack-hugo-site-architect',
     'dude-pack-hugo-troubleshooter',
   ]);
+});
+
+test('parseRequiredTools reads requires.tools as an inline or block list, and only under requires', () => {
+  assert.deepEqual(parseRequiredTools(BLOCK), ['hugo']);
+  assert.deepEqual(parseRequiredTools(manifest('requires:\n  tools: []')), []);
+  assert.deepEqual(parseRequiredTools(manifest('requires:\n  tools:\n    - node\n    - "ffmpeg"')), ['node', 'ffmpeg']);
+  // An agent-style top-level `tools` is not a requirement, and the next top-level key ends `requires`.
+  assert.deepEqual(
+    parseRequiredTools(manifest('tools: [read]\nrequires:\n  tools: [bd, \'cargo\']\nhooks:\n  - execution-lane')),
+    ['bd', 'cargo'],
+  );
+  assert.deepEqual(parseRequiredTools(manifest('requires:\nhooks:\n  tools: [x]')), []);
+  for (const omitted of [NO_PROVIDES, INLINE, 'no frontmatter here']) {
+    assert.deepEqual(parseRequiredTools(omitted), []);
+  }
+  assert.throws(() => parseRequiredTools(manifest('requires:\n  tools: cargo')), /requires\.tools must be a list/);
+
+  // Every maintained manifest parses, including the two packs the approved design draws.
+  const catalogDir = path.join(REPOSITORY_ROOT, 'library', 'packs');
+  /** @type {Map<string, string[]>} */
+  const required = new Map();
+  for (const entry of fs.readdirSync(catalogDir, { withFileTypes: true })) {
+    const manifestPath = path.join(catalogDir, entry.name, 'pack.md');
+    if (entry.isDirectory() && fs.existsSync(manifestPath)) {
+      required.set(entry.name, parseRequiredTools(fs.readFileSync(manifestPath, 'utf8')));
+    }
+  }
+  assert.deepEqual(required.get('rust'), ['cargo']);
+  assert.deepEqual(required.get('beads'), ['bd']);
 });

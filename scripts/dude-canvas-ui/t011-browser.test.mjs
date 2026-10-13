@@ -26,9 +26,7 @@ import { findBrowser } from '../../src/extensions/dude/lib/review/browser.mjs';
 import { buildReport, jsonBytes } from '../../src/extensions/dude/lib/review/data.mjs';
 import { decodePng } from '../../src/extensions/dude/lib/review/png.mjs';
 import { closeInstance, openInstance } from '../../src/extensions/dude/lib/canvas-server.mjs';
-import {
-  cmdAdd, cmdRemove, cmdRefresh, cmdPreviewRefresh, cmdStatus, packArtifacts, resolvePackDir,
-} from '../../src/skills/dude-compose/compose.mjs';
+import { cmdAdd, cmdStatus } from '../../src/skills/dude-compose/compose.mjs';
 import { renderDevelopmentBaseRelease } from '../../src/skills/dude-engine/lib/development-base-release.mjs';
 import {
   createInspector,
@@ -42,7 +40,7 @@ const BROWSER = process.env.DUDE_CANVAS_BROWSER
   ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
 const REQUIRED = process.env.DUDE_CANVAS_BROWSER_REQUIRED === '1';
 const DEADLINE = 20_000;
-const PUBLISHED_APP_SHA256 = '7223f8c918d2686e103e8dbef5a118c0be6e1c48a713552103676419a72af7a1';
+const PUBLISHED_APP_SHA256 = 'be30db45dd5e002bc643de4e01b99f599f0006c9242f164e83ba41a16fbe17ba';
 
 /** @param {string|Buffer} value */
 function hash(value) {
@@ -2717,7 +2715,7 @@ function textContrastSnapshot(page) {
       .reduce((sum, value, index) => sum + value * [.2126, .7152, .0722][index], 0);
     return [...document.querySelectorAll(
       'h1,h2,h3,p,label,button:not(:disabled),[role=tab],[data-work-number],'
-      + '[data-pack-request-phase] > span,[data-pack-request-dialog] [role=region] > span'
+      + '[data-pack-action-body] span'
     )]
       .filter((node) => node.getClientRects().length && node.textContent.trim())
       .map((node) => {
@@ -2805,11 +2803,9 @@ async function audit(page, output, name, deferredHorizontalFindings = null) {
   fs.writeFileSync(path.join(output.directory, `${name}.png`), image);
   const tree = await page.send('Accessibility.getFullAXTree');
   fs.writeFileSync(path.join(output.directory, `${name}.ax.json`), `${JSON.stringify(tree, null, 2)}\n`);
-  const packAnnouncement = await evaluate(page, `document.querySelector(
-    '[data-pack-request-dialog][open] [data-pack-request-phase]'
-  )?.firstElementChild?.textContent`);
+  const packAnnouncement = await evaluate(page, `document.querySelector('[data-pack-action-dialog][open] [role="status"]')?.textContent`);
   if (packAnnouncement) assert.ok(axLiveRegions(tree).some(region => region.text.includes(packAnnouncement)),
-    `${name}: the exact pack outcome is exposed through a native live region`);
+    `${name}: the pack action state is exposed through a native live region`);
   const namedRoles = new Set([
     'button', 'checkbox', 'combobox', 'listbox', 'option', 'radio',
     'radiogroup', 'tab', 'tabpanel', 'textbox', 'toolbar',
@@ -3765,103 +3761,6 @@ function packTree(absolute) {
     .map(name => [name, packTree(path.join(absolute, name))])) : hash(fs.readFileSync(absolute));
 }
 
-async function packImpact(fixture) {
-  if (fixture.operation === 'refresh') {
-    const preview = await cmdPreviewRefresh(fixture.args);
-    assert.equal(preview.ok, true, preview.error);
-    return preview.result;
-  }
-  if (fixture.operation === 'remove') {
-    const status = cmdStatus({ root: fixture.root });
-    assert.equal(status.ok, true, status.error);
-    return status.result.installed.alpha;
-  }
-  const source = await resolvePackDir(fixture.args);
-  assert.ok(!('error' in source), source.error);
-  try {
-    const manifest = fs.readFileSync(path.join(source.packDir, 'pack.md'), 'utf8');
-    assert.match(manifest, /tools: \[node\]/);
-    const tool = spawnSync(process.execPath, ['--version'], { encoding: 'utf8' });
-    assert.equal(tool.status, 0);
-    return { source: source.sourceIdentity, files: packArtifacts(source.packDir).map(item => item.destRel).sort(),
-      tools: [{ name: 'node', available: true, version: tool.stdout.trim() }] };
-  } finally {
-    // A remote resolution owns a temporary copy; a local folder owns none.
-    await source.dispose?.();
-  }
-}
-
-function packImpactBasis(fixture, impact) {
-  // A request bound to an added folder reads that folder's pack, not the default library's.
-  const catalog = fixture.args.source ? path.join(fixture.args.source, 'library', 'packs') : fixture.library;
-  return {
-    profile: hash(fs.readFileSync(fixture.profilePath)),
-    source: packTree(path.join(catalog, 'alpha')),
-    targets: Object.fromEntries([...new Set([...impact.files, ...(impact.removed || [])])].sort()
-      .map(file => [file, packTree(path.join(fixture.root, ...file.split('/')))])),
-  };
-}
-
-async function publishPackPermission(fixture, receipt, impact, prefix = '') {
-  await until(() => fixture.provider.read().packRequests.some(item => item.packReceipt === receipt.packReceipt
-    && ['delivered', 'waiting_owner'].includes(item.phase)), 'owner receives the delivered pack request');
-  const basis = packImpactBasis(fixture, impact);
-  // A request bound to a source the project added names that source first, as a third-party source.
-  const binding = receipt.receipt.catalogSource;
-  const sourceFirst = binding ? [{ target: `Third-party source ${binding.source.location}`,
-    revision: hash(fs.readFileSync(path.join(fixture.team, 'library', 'packs', 'alpha', 'pack.md'))) }] : [];
-  const request = {
-    ...requestFor(fixture, 'permission', {
-      operation: `pack:${fixture.operation}`,
-      targets: [
-        ...sourceFirst,
-        { target: '.dude/metadata/profile.md', revision: basis.profile },
-        { target: 'pack:alpha source', revision: hash(JSON.stringify(basis.source)) },
-        ...Object.entries(basis.targets).map(([target, value]) => ({ target, revision: hash(JSON.stringify(value)) })),
-      ],
-      consequences: fixture.operation === 'refresh'
-        ? 'Generated installed edits can be overwritten. Keep persistent customization under dude-local-*.'
-        : fixture.operation === 'remove'
-          ? 'Delete only these exact recorded safe files. Preserve unrecorded residue and unrelated work.'
-          : 'Install these prospective namespaced artifacts from this source. Required tools: node; no tools will be installed.',
-      eligibility: 'The owner rechecks this profile, source, affected targets, and tools before applying.',
-      confirmation: `${fixture.operation.toUpperCase()} PACK alpha`,
-    }),
-    requestRef: `pack:${receipt.packReceipt}`,
-    revision: hash(JSON.stringify({ impact, basis })),
-    source: { kind: 'session', revision: receipt.receipt.providerGeneration },
-    prompt: `${prefix}Preview ${fixture.operation} alpha:\n${JSON.stringify(impact, null, 2)}`,
-  };
-  return { ...(await publish(fixture, request)), request, impact, basis };
-}
-
-function packOwnerAcknowledgment(fixture, receipt, result, outcome = 'applied', mutation = 'applied', note = 'Owner verified the actual Compose result and installed bytes.') {
-  const { receiptId, owner, operation, name, workspaceId, sessionId, providerGeneration } = receipt.receipt;
-  const status = cmdStatus({ root: fixture.root });
-  return {
-    recognizes: 'pack_result', receiptId, owner, operation, name, workspaceId, sessionId, providerGeneration,
-    outcome, mutation, result, note,
-    profileRevision: status.ok ? hash(fs.readFileSync(fixture.profilePath)) : null,
-    source: status.ok ? status.result.installed[name]?.source || null : null,
-    // The exact bound selection comes back whole, or is absent for a default-catalog request.
-    ...(receipt.receipt.catalogSource ? { catalogSource: receipt.receipt.catalogSource } : {}),
-  };
-}
-
-async function packOwnerTool(fixture, acknowledgment) {
-  const result = await fixture.provider.tool.handler({ op: 'acknowledge', acknowledgment }, {
-    sessionId: fixture.session.sessionId, toolName: 'dude_needs_you', toolCallId: randomUUID(),
-    signal: new AbortController().signal,
-  });
-  return { type: result.resultType, body: JSON.parse(result.textResultForLlm) };
-}
-
-async function packPhase(page, phase) {
-  await until(() => evaluate(page, `document.querySelector(
-    '[data-pack-request-dialog][open] [data-pack-request-phase]'
-  )?.getAttribute('data-pack-request-phase') === ${JSON.stringify(phase)}`), `pack request phase ${phase}`);
-}
-
 /**
  * The one explicit catalog discovery: choose Reload packs and wait for the read it starts to
  * commit. Entering Settings reads installed packs and the saved sources only, so Available,
@@ -3876,63 +3775,6 @@ async function reloadPacks(page) {
     const url = new URL(entry.name); return url.pathname === '/api/packs' && url.search === '?discover=1'; })`), 'the explicit catalog read starts');
   await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')?.getAttribute('aria-busy') === 'false'`),
     'the catalog read commits');
-}
-
-async function openPack(page, operation) {
-  await click(page, `document.querySelector('#dude-tab-settings')`);
-  await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
-    ?.getAttribute('aria-busy') === 'false' && Boolean(document.querySelector('[data-settings]'))`), 'current Settings read');
-  await reloadPacks(page);
-  if (operation === 'install') await click(page, `document.querySelector('[data-pack-context="available"]')`);
-  // An Available row's key carries its source: `pack:alpha@<source key>`. Installed rows are keyed by name alone.
-  await click(page, operation === 'install' ? `document.querySelector('[data-pack-row^="pack:alpha@"]')`
-    : `document.querySelector('[data-pack-row="pack:alpha"]')`);
-}
-
-async function requestPackFromUi(page, fixture, double = false) {
-  const action = `document.querySelector('[data-pack-operation="${fixture.operation}"]')`;
-  if (double) {
-    assert.equal(await evaluate(page, `${action}.disabled`), false);
-    await evaluate(page, `(() => { const action = ${action}; action.click(); action.click(); })()`);
-  } else await click(page, action);
-  return until(() => fixture.provider.read().packRequests.at(-1), 'real prepared pack receipt');
-}
-
-async function answerPackPermission(page, fixture, permission, decline = false, outcome = decline ? 'declined' : 'accepted') {
-  await packPhase(page, 'waiting_permission');
-  assert.equal(await evaluate(page, `document.querySelector('[data-pack-permission]').getAttribute('data-pack-permission')`),
-    permission.record.requestHandle, 'the shortcut binds the current permission handle, not a feature or source path');
-  await click(page, button('Open Needs you'));
-  await visible(page, permission.request.prompt);
-  assert.equal(await evaluate(page, `document.querySelectorAll('[data-pack-request-dialog]:modal').length`), 0);
-  if (decline) {
-    await click(page, button('Decline'));
-    await fill(page, field('Reason for declining'), 'Leave this pack unchanged.');
-    await click(page, button('Send decline'));
-  } else {
-    await fill(page, field('Enter the exact confirmation'), permission.request.fields.confirmation);
-    if (!await evaluate(page, `${field('I grant permission for this operation on these exact targets.')}.checked`)) {
-      await click(page, field('I grant permission for this operation on these exact targets.'));
-    }
-    await click(page, button('Send permission'));
-  }
-  const answer = JSON.parse((await permission.result).textResultForLlm);
-  assert.equal(answer.status, 'awaiting_acknowledgment');
-  assert.equal(answer.acceptedAnswer, false, 'the permission response still needs owner recognition');
-  assert.equal(answer.response.action, decline ? 'decline' : 'consent');
-  assert.equal(await evaluate(page, `document.activeElement.getAttribute('aria-label')`), 'Response status',
-    'consumed permission controls leave focus on their live outcome, never the body');
-  assert.ok(await evaluate(page, `parseFloat(getComputedStyle(document.activeElement).outlineWidth) >= 2`),
-    'the focused permission outcome has a visible token-based focus outline');
-  if (!decline) {
-    assert.deepEqual(answer.response.targets, permission.request.fields.targets);
-    assert.equal(answer.response.confirmation, permission.request.fields.confirmation);
-  }
-  const record = fixture.provider.read().requests.find(item => item.requestHandle === permission.record.requestHandle);
-  await acknowledge(fixture, record.receipt, outcome, permission.request.source);
-  await click(page, button('Back to pack request'));
-  await packPhase(page, 'waiting_owner');
-  return answer;
 }
 
 async function withPackJourney(context, operation, options, run) {
@@ -3975,50 +3817,16 @@ async function withPackJourney(context, operation, options, run) {
         ].join('\n'));
       }
     }
-    // A folder the project added as a source: its own alpha, distinct from the default library's.
-    let team = null;
-    if (options.team) {
-      team = path.join(directory, 'team-packs');
-      write(team, 'library/packs/alpha/pack.md',
-        '---\nname: alpha\ndescription: "Added team source alpha"\nuse-cases: [ui]\nrequires:\n  tools: [node]\n---\n# Alpha\n');
-      write(team, 'library/packs/alpha/agents/dude-pack-alpha-worker.agent.md',
-        '---\nname: Alpha Worker\ndescription: "Team worker"\ntools: [read, search]\nmodel-class: balanced\n---\nTeam v1.\n');
-      write(team, 'library/packs/alpha/skills/dude-pack-alpha-helper/SKILL.md',
-        '---\nname: dude-pack-alpha-helper\ndescription: "Team helper"\n---\n# Helper\n');
-      const { serializePackSourcesDocument } = await import('../../src/skills/dude-engine/lib/pack-sources.mjs');
-      write(root, '.dude/metadata/pack-sources.md', serializePackSourcesDocument([{ type: 'local', location: team }]));
-    }
     write(root, '.github/agents/dude-local-unrelated.agent.md', 'Unrelated file; preserve it.\n');
     write(root, '.github/agents/dude-pack-alpha-residue.agent.md', 'Unrecorded residue; never removal authority.\n');
-    const args = { root, library, name: 'alpha', fetch: false, ...(team ? { source: fs.realpathSync(team) } : {}) };
+    const args = { root, library, name: 'alpha', fetch: false };
     assert.notEqual(fs.realpathSync(root), fs.realpathSync(ROOT));
     if (operation !== 'install') {
       const installed = await cmdAdd(args);
       assert.equal(installed.ok, true, installed.error);
     }
-    if (operation === 'refresh' && options.changed) {
-      write(root, 'library/packs/alpha/agents/dude-pack-alpha-worker.agent.md',
-        fs.readFileSync(path.join(library, 'alpha', 'agents', 'dude-pack-alpha-worker.agent.md'), 'utf8')
-          .replace('Fixture v1.', 'Fixture v2.'));
-      fs.rmSync(path.join(library, 'alpha', 'instructions', 'dude-pack-alpha-old.instructions.md'));
-      write(root, 'library/packs/alpha/instructions/dude-pack-alpha-new.instructions.md', '# New instruction\n');
-      fs.appendFileSync(path.join(root, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), '\nEdited generated destination.\n');
-    }
-    if (options.offline) {
-      fs.renameSync(library, path.join(root, 'offline-packs'));
-      const absentSource = path.join(directory, 'unavailable-catalog');
-      fs.mkdirSync(absentSource);
-      write(root, '.dude/metadata/bundle-manifest.md', '# Bundle Manifest\n\n```json\n'
-        + JSON.stringify({ source_repo: absentSource, source_ref: 'main' }) + '\n```\n');
-    }
     const work = createIdea(root, 1, 'retained-work', 'defined');
-    if (operation === 'refresh' && team && options.changed) {
-      // The team's alpha moved on after it was installed, and the installed copy was edited.
-      const worker = path.join(team, 'library', 'packs', 'alpha', 'agents', 'dude-pack-alpha-worker.agent.md');
-      fs.writeFileSync(worker, fs.readFileSync(worker, 'utf8').replace('Team v1.', 'Team v2.'));
-      fs.appendFileSync(path.join(root, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), '\nEdited generated destination.\n');
-    }
-    fixture = { ...(await createFixture(root)), directory, library, profilePath, args, operation, work, team };
+    fixture = { ...(await createFixture(root)), directory, library, profilePath, args, operation, work };
     driver = await startBrowser(1, true);
     driver.page.on('Runtime.exceptionThrown', event => errors.push(event.exceptionDetails));
     driver.page.on('Network.requestWillBeSent', event => {
@@ -4314,7 +4122,7 @@ test('075 About: production provider shows the recorded base and retains work, d
   }
 });
 
-test('075 About: production Packs view and one real request receipt survive recorded-base About round trips', {
+test('075 About: production Packs view and one dialog install survive recorded-base About round trips', {
   timeout: 240_000,
   concurrency: false,
 }, async context => {
@@ -4388,85 +4196,36 @@ test('075 About: production Packs view and one real request receipt survive reco
       assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-pack-row^="pack:alpha@"]'))`), true);
       await click(page, `document.querySelector('[data-pack-row^="pack:alpha@"]')`);
 
-      let sent;
-      fixture.session.send = async input => {
-        fixture.sends.push(input);
-        sent = { input, messageId: randomUUID() };
-        return sent.messageId;
-      };
+      // One click in the pack action dialog installs alpha; nothing is sent to the session.
       const before = packTree(fixture.root);
-      const receipt = await requestPackFromUi(page, fixture, true);
-      await packPhase(page, 'admitted');
-      await until(() => fixture.sends.length === 1, 'one admitted About pack request send');
-      fixture.provider.onEvent({
-        id: randomUUID(),
-        type: 'user.message',
-        data: { content: sent.input.prompt, messageId: sent.messageId, delivery: 'idle' },
-      });
-      await packPhase(page, 'delivered');
-      const impact = await packImpact(fixture);
-      const permission = await publishPackPermission(fixture, receipt, impact, 'About continuity: ');
-      await packPhase(page, 'waiting_permission');
-      const waitingPermission = fixture.provider.read().packRequests.at(-1);
-
-      await click(page, button('Return to packs'));
-      const aboutWaiting = await openAbout(page);
-      assert.equal(aboutWaiting.rows[0][1], ABOUT_KNOWN_BASE, 'a waiting pack request leaves the recorded base in place');
-      assert.equal(fixture.provider.read().packRequests.at(-1).phase, 'waiting_permission');
-      assert.equal(fixture.provider.read().packRequests.at(-1).packReceipt, receipt.packReceipt);
-      await returnToPacks(page);
-      await click(page, button('View pack request'));
-      await packPhase(page, 'waiting_permission');
-      await answerPackPermission(page, fixture, permission);
-      assert.deepEqual(packTree(fixture.root), before,
-        'About and accepted permission still perform no frontend pack write');
-
-      assert.deepEqual(packImpactBasis(fixture, impact), permission.basis);
-      const result = await cmdAdd(fixture.args);
-      assert.equal(result.ok, true, result.error);
-      fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+      const phase = value => until(() => evaluate(page, `document.querySelector('[data-pack-action-dialog]')
+        ?.getAttribute('data-pack-action-phase') === ${JSON.stringify(value)}`), `the pack action ${value} state`);
+      await click(page, `document.querySelector('[data-pack-operation="install"]')`);
+      await phase('ready');
+      assert.deepEqual(packTree(fixture.root), before, 'the preview writes nothing');
+      await click(page, `document.querySelector('[data-pack-action-primary]')`);
+      await phase('success');
       await until(() => evaluate(page, `document.querySelector('[data-pack-total="installed"]')
-        ?.textContent === '2'`), 'authoritative About fixture membership reread (the installed pack joins the project agent)');
-      const owner = await packOwnerTool(
-        fixture,
-        packOwnerAcknowledgment(
-          fixture,
-          receipt,
-          result,
-          'applied',
-          'applied',
-          'Owner verified installed files and recorded source after the About round trip.',
-        ),
-      );
-      assert.equal(owner.type, 'success');
-      await packPhase(page, 'applied');
-      const applied = fixture.provider.read().packRequests.at(-1);
-      assert.equal(applied.packReceipt, waitingPermission.packReceipt);
-      assert.equal(applied.receipt.receiptId, waitingPermission.receipt.receiptId);
+        ?.textContent === '2'`), 'the automatic read lists the installed pack beside the project agent');
+      await click(page, `document.querySelector('[data-pack-action-primary]')`);
+      assert.equal(await evaluate(page, `document.querySelector('[data-pack-action-dialog]').open`), false, 'Done closes the dialog');
 
-      await click(page, button('Return to packs'));
       const aboutApplied = await openAbout(page);
-      assert.equal(aboutApplied.rows[0][1], ABOUT_KNOWN_BASE, 'an applied pack result leaves the recorded base in place');
-      assert.equal(fixture.provider.read().packRequests.at(-1).phase, 'applied');
+      assert.equal(aboutApplied.rows[0][1], ABOUT_KNOWN_BASE, 'an installed pack leaves the recorded base in place');
       await returnToPacks(page);
-      await click(page, button('View pack request'));
-      await packPhase(page, 'applied');
-      await click(page, button('Return to packs'));
       await click(page, `document.querySelector('[data-pack-context="installed"]')`);
       assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-pack-row="pack:alpha"]'))`), true);
-      assert.equal(fixture.sends.length, 1, 'About visits, Reload, and result reads never replay the request');
-      assert.equal(network.filter(item => item.method === 'GET' && item.path === '/api/about').length, 3);
+      assert.deepEqual([fixture.sends.length, fixture.provider.read().requests.length], [0, 0],
+        'About visits, Reload, and the install send nothing and ask nothing in Needs you');
+      assert.equal(network.filter(item => item.method === 'GET' && item.path === '/api/about').length, 2);
       assert.deepEqual(foreign, [], 'About rendering does not contact the repository URL');
       output.results.push({
         case: 'about-pack-roundtrip',
         api,
         retainedView,
         aboutBeforeRequest,
-        aboutWaiting,
         aboutApplied,
-        packReceipt: receipt.packReceipt,
-        receiptId: applied.receipt.receiptId,
-        phase: applied.phase,
+        actions: network.filter(item => item.path === '/api/packs/action').map(item => item.body.op),
         installed: cmdStatus({ root: fixture.root }).result.installed.alpha,
         aboutRequests: network.filter(item => item.path === '/api/about'),
       });
@@ -4605,1131 +4364,63 @@ test('073 Installed: the production provider pages exactly 25 and 26 rows by opa
     });
 });
 
-test('T004 Settings install: exact one-send request, actual impact, literal consent, owner result, and retained work', {
-  timeout: 240_000, concurrency: false,
+test('083 Pack actions: with the production provider, Refresh, Remove, and Install pass the audit across sizes and themes, and a removed pack returns to Available after Reload packs', {
+  timeout: 300_000,
+  concurrency: false,
 }, async context => {
   if (!browserReady(context)) return;
-  for (const disposition of ['applied', 'declined']) await context.test(disposition, async t => {
-    await withPackJourney(t, 'install', { name: disposition }, async ({ fixture, page, output, network }) => {
-      await click(page, `document.querySelector('[data-work-path="${fixture.work.ideaPath}"]')`);
-      await click(page, `document.querySelector('[data-task-key="T001@a1111111"]')`);
-      await click(page, button('New idea'));
-      await fill(page, field('Your idea'), 'Keep this unsent idea while changing a pack.');
-      await openPack(page, 'install');
-      const before = packTree(fixture.root);
-      let sent;
-      fixture.session.send = async input => {
-        fixture.sends.push(input);
-        sent = { input, messageId: randomUUID() };
-        return sent.messageId;
-      };
-      const receipt = await requestPackFromUi(page, fixture, true);
-      await packPhase(page, 'admitted');
-      await until(() => fixture.sends.length === 1, 'SDK send after admitted eligibility rechecks');
-      assert.equal(fixture.sends.length, 1);
-      assert.deepEqual(network.filter(item => item.path === '/api/packs/request').map(item => item.body), [
-        { op: 'prepare', operation: 'install', name: 'alpha' },
-        { op: 'submit', operation: 'install', name: 'alpha', packReceipt: receipt.packReceipt },
-      ]);
-      assert.deepEqual(packTree(fixture.root), before, 'admission and HTTP 202 cannot change packs');
-      fixture.provider.onEvent({ id: randomUUID(), type: 'user.message',
-        data: { content: sent.input.prompt, messageId: sent.messageId, delivery: 'idle' } });
-      await packPhase(page, 'delivered');
-      const impact = await packImpact(fixture);
-      assert.deepEqual(packTree(fixture.root), before, 'a real impact preview supplies no consent');
-      // Add/import's own Source form is a separate panel; the pack request layer and its details hold none.
-      assert.equal(await evaluate(page, `document.querySelectorAll('[data-pack-request-dialog] form, [data-pack-detail] form').length`), 0,
-        'the request layer does not collect a second permission form');
-
-      if (disposition === 'applied') {
-        for (const theme of /** @type {const} */ (['light', 'dark'])) {
-          for (const width of [1440, 768, 360, 180]) {
-            await viewport(page, width, theme, width === 180 ? 450 : 900);
-            const focus = [];
-            for (let index = 0; index < 10; index += 1) {
-              await pressNavigationKey(page, 'Tab', 'Tab', index >= 5 ? 8 : 0);
-              const inside = await evaluate(page, `document.querySelector('[data-pack-request-dialog]:modal')
-                .contains(document.activeElement) && document.activeElement !== document.body`);
-              focus.push(inside);
-              assert.equal(inside, true, 'every Tab transition stays in the top request layer');
-            }
-            await audit(page, output, `pack-request-${width}-${theme}`);
-            output.results.push({ case: 'request-focus', width, theme, focus });
-          }
-        }
-        await viewport(page, 360, 'light');
-        await press(page, 'Escape');
-        assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').matches(':modal')`), true,
-          'closing the request reconciles the retained wide detail to the current narrow width');
-        assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').contains(document.activeElement)`), true);
-        await press(page, 'Escape');
-        assert.match(await evaluate(page, `document.activeElement.getAttribute('data-pack-row')`), /^pack:alpha@src_[0-9a-f]{32}$/,
-          'focus returns to the Available row, whose key names its source');
-        await click(page, button('View pack request'));
-        await packPhase(page, 'delivered');
-      }
-      const permission = await publishPackPermission(fixture, receipt, impact);
-      await packPhase(page, 'waiting_permission');
-      if (disposition === 'applied') {
-        await click(page, button('Open Needs you'));
-        await visible(page, permission.request.prompt);
-        for (const file of impact.files) assert.equal(await evaluate(page, `document.querySelector('#dude-panel-needs')
-          .textContent.includes(${JSON.stringify(file)})`), true);
-        await visible(page, 'Required tools: node');
-        await visible(page, JSON.stringify(impact.source.location));
-        // The existing pack permission fits the Needs you panel at an effective 180x450, in both themes.
-        for (const theme of /** @type {const} */ (['light', 'dark'])) {
-          await viewport(page, 180, theme, 450);
-          await audit(page, output, `install-permission-180-${theme}`);
-        }
-        await viewport(page, 360, 'light');
-        await click(page, button('Send permission'));
-        await visible(page, 'Confirm the exact operation');
-        await fill(page, field('Enter the exact confirmation'), 'INSTALL SOME OTHER PACK');
-        await click(page, field('I grant permission for this operation on these exact targets.'));
-        await click(page, button('Send permission'));
-        assert.equal(network.filter(item => item.path === '/api/needs-you/respond').length, 0);
-        assert.deepEqual(packTree(fixture.root), before, 'invalid literal confirmation performs zero writes');
-        await click(page, button('Back to pack request'));
-        await packPhase(page, 'waiting_permission');
-        await click(page, button('Open Needs you'));
-        assert.equal(await evaluate(page, `${field('Enter the exact confirmation')}.value`), 'INSTALL SOME OTHER PACK');
-        assert.equal(await evaluate(page, `${field('I grant permission for this operation on these exact targets.')}.checked`), true);
-        await audit(page, output, 'install-permission-360-light');
-        await click(page, button('Back to pack request'));
-      }
-
-      await answerPackPermission(page, fixture, permission, disposition === 'declined');
-      assert.deepEqual(packTree(fixture.root), before, 'even accepted permission cannot perform a frontend pack write');
-      let result = null;
-      if (disposition === 'applied') {
-        assert.deepEqual(packImpactBasis(fixture, impact), permission.basis);
-        result = await cmdAdd(fixture.args);
-        assert.equal(result.ok, true, result.error);
-        assert.deepEqual(result.result.files, impact.files);
-        fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
-        await until(() => evaluate(page, `document.querySelector('[data-pack-total="installed"]')?.textContent === '2'`),
-          'authoritative membership reread before owner acknowledgment (the installed pack joins the project agent)');
-        await packPhase(page, 'waiting_owner');
-        assert.equal(fixture.provider.read().packRequests[0].applied, false);
-        const mismatch = await packOwnerTool(fixture, {
-          ...packOwnerAcknowledgment(fixture, receipt, result), sessionId: randomUUID(),
-        });
-        assert.equal(mismatch.type, 'failure');
-        assert.equal(mismatch.body.reason, 'acknowledgment_conflict');
-        await packPhase(page, 'waiting_owner');
-      }
-      const owner = await packOwnerTool(fixture, packOwnerAcknowledgment(fixture, receipt, result,
-        disposition, disposition === 'applied' ? 'applied' : 'none',
-        disposition === 'applied' ? 'Owner verified installed files and recorded source.' : 'The user declined; no files changed.'));
-      assert.equal(owner.type, 'success');
-      await packPhase(page, disposition);
-      if (disposition === 'declined') assert.deepEqual(packTree(fixture.root), before);
-      else {
-        assert.deepEqual(cmdStatus({ root: fixture.root }).result.installed.alpha, {
-          files: impact.files, source: impact.source,
-        });
-        assert.deepEqual(owner.body.receipt.reread.entry, cmdStatus({ root: fixture.root }).result.installed.alpha);
-      }
-      await audit(page, output, `install-${disposition}`);
-      await click(page, button('Return to packs'));
-      if (await evaluate(page, `Boolean(document.querySelector('[data-pack-detail]:modal'))`)) await press(page, 'Escape');
-      await click(page, button('New idea'));
-      assert.equal(await evaluate(page, `${field('Your idea')}.value`), 'Keep this unsent idea while changing a pack.');
-      await click(page, button('Now'));
-      assert.equal(await evaluate(page, `document.querySelector('[data-task-key="T001@a1111111"]')
-        ?.getAttribute('aria-expanded')`), 'true');
-      await click(page, `document.querySelector('#dude-tab-settings')`);
-      await click(page, `document.querySelector('[aria-label="Reload packs"]')`);
-      await click(page, button('View pack request'));
-      await packPhase(page, disposition);
-      assert.equal(fixture.sends.length, 1, 'navigation and read refresh never replay the operation');
-    });
-  });
-});
-
-test('T004 Settings permission acknowledgment is not a pack result in either Needs you view', {
-  timeout: 120_000, concurrency: false,
-}, async context => {
-  if (!browserReady(context)) return;
-  await withPackJourney(context, 'install', { name: 'permission-applied' }, async ({ fixture, page, output }) => {
-    await openPack(page, 'install');
-    const before = packTree(fixture.root);
-    const receipt = await requestPackFromUi(page, fixture);
-    const impact = await packImpact(fixture);
-    const permission = await publishPackPermission(fixture, receipt, impact);
-    await answerPackPermission(page, fixture, permission, false, 'applied');
-    const permissionRecord = fixture.provider.read().requests.find(item =>
-      item.requestHandle === permission.record.requestHandle);
-    assert.equal(permissionRecord.receipt.acknowledgment.outcome, 'applied',
-      'the real provider accepts ordinary applied acknowledgment with its session source');
-    assert.equal(fixture.provider.read().packRequests[0].phase, 'waiting_owner');
-    assert.equal(fixture.provider.read().packRequests[0].receipt.acknowledgment, null);
-    assert.deepEqual(packTree(fixture.root), before, 'permission acknowledgment did not install anything');
-
-    const permissionViews = async stage => {
-      if (await evaluate(page, `Boolean(document.querySelector('[data-pack-request-dialog]:modal'))`)) {
-        await press(page, 'Escape');
-      }
-      await click(page, `document.querySelector('#dude-tab-needs')`);
-      await visible(page, 'Owner applied this exact response after rereading.');
-      const selected = await evaluate(page, `(() => {
-        const node = document.querySelector('[aria-label="Response status"]');
-        return {title:node.querySelector('.fui-MessageBarTitle')?.textContent, text:node.textContent};
-      })()`);
-      await click(page, button('All requests'));
-      const listing = await evaluate(page, `document.querySelector('[aria-label="Request receipts"]').innerText`);
-      output.results.push({ case: 'permission-result-distinction', stage, selected, listing,
-        permission: fixture.provider.read().requests.find(item => item.requestHandle === permission.record.requestHandle),
-        pack: fixture.provider.read().packRequests[0] });
-      writeEvidenceJson(output, 'permission-result-distinction', output.results);
-      assert.equal(selected.title, 'Permission acknowledged',
-        'ordinary permission acknowledgment cannot claim that the pack operation was applied');
-      assert.match(listing, /Permission acknowledged · dude/);
-      assert.doesNotMatch(listing, /(?:^|\n)Applied · dude/);
-      await click(page, `document.querySelector('[aria-label="Request receipts"] button')`);
-      // Explicit tab navigation intentionally clears the nested return link.
-      // Reopen the retained request through Settings, as an ordinary caller.
-      await click(page, `document.querySelector('#dude-tab-settings')`);
-      await click(page, button('View pack request'));
+  await withPackJourney(context, 'refresh', { name: '083-pack-actions' }, async ({ fixture, page, output, network }) => {
+    const state = () => evaluate(page, `(() => {
+      const dialog = document.querySelector('[data-pack-action-dialog]'), at = document.activeElement;
+      return { open: dialog.open, phase: dialog.getAttribute('data-pack-action-phase'),
+        focus: at?.getAttribute('data-pack-operation') ?? at?.tagName ?? null };
+    })()`);
+    const phase = value => until(async () => (await state()).phase === value, `the pack action ${value} state`);
+    const rows = () => evaluate(page, `[...document.querySelectorAll('[data-pack-row]')]
+      .map(node => node.getAttribute('data-pack-row').replace(/@src_[0-9a-f]{32}$/, ''))`);
+    const run = async (operation, ready, done) => {
+      await click(page, `document.querySelector('[data-pack-operation="${operation}"]')`);
+      await phase('ready');
+      if (ready) { await viewport(page, ready.width, ready.theme, ready.height, ready.scale); await audit(page, output, `083-${operation}-ready-${ready.name}`); }
+      await click(page, `document.querySelector('[data-pack-action-primary]')`);
+      await phase('success');
+      // An install's success view settles when the automatic read lists the pack.
+      if (operation === 'install') await until(() => evaluate(page, `document.querySelector('[data-pack-action-show]')?.disabled === false`), 'Installed lists the pack');
+      await viewport(page, done.width, done.theme, done.height, done.scale);
+      await audit(page, output, `083-${operation}-success-${done.name}`);
     };
-    await permissionViews('no pack result or installed facts');
-    await packPhase(page, 'waiting_owner');
-
-    assert.deepEqual(packImpactBasis(fixture, impact), permission.basis);
-    const result = await cmdAdd(fixture.args);
-    assert.equal(result.ok, true, result.error);
-    assert.deepEqual(result.result.files, impact.files);
-    fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
-    await packPhase(page, 'waiting_owner');
-    const exactResult = packOwnerAcknowledgment(fixture, receipt, result);
-    // Keep the successful Compose result and every authority field valid.
-    // Only the receipt differs, so an earlier payload guard cannot confound
-    // the correlation oracle. Membership alone still proves no acknowledgment.
-    const mismatched = await packOwnerTool(fixture, {
-      ...exactResult, receiptId: randomUUID(),
-    });
-    assert.equal(mismatched.type, 'failure');
-    assert.equal(mismatched.body.reason, 'unknown_receipt');
-    assert.equal(fixture.provider.read().packRequests[0].receipt.acknowledgment, null);
-    await packPhase(page, 'waiting_owner');
-    await permissionViews('mismatched result refused');
-
-    const owner = await packOwnerTool(fixture, exactResult);
-    assert.equal(owner.type, 'success');
-    await packPhase(page, 'applied');
-    await permissionViews('validated result after actual Compose install');
-    await packPhase(page, 'applied');
-
-    // Keep the same successful receipt but change the current authority. A
-    // read must remove the business-success claim without replaying the send.
-    fs.appendFileSync(fixture.profilePath, '\nChanged profile commentary after the verified install.\n');
-    await press(page, 'Escape');
-    await click(page, `document.querySelector('[aria-label="Reload packs"]')`);
-    await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
-      .getAttribute('aria-busy') === 'false'`), 'changed installed authority read');
-    await click(page, button('View pack request'));
-    await packPhase(page, 'stale');
-    await permissionViews('successful receipt no longer agrees with current authority');
-    assert.equal(fixture.sends.length, 1);
-    await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
-      .getAttribute('aria-busy') === 'false'`), 'final permission regression pack read completes');
-    await settleFocusPaint(page);
-    await audit(page, output, 'permission-acknowledgment-distinct-from-pack-result');
-  });
-});
-
-test('T004 Settings remove: recorded files only, with and without a catalog', {
-  timeout: 180_000, concurrency: false,
-}, async context => {
-  if (!browserReady(context)) return;
-  for (const offline of [false, true]) await context.test(offline ? 'catalog unavailable' : 'catalog current', async t => {
-    await withPackJourney(t, 'remove', { name: offline ? 'offline' : 'local', offline }, async ({ fixture, page, output }) => {
-      await openPack(page, 'remove');
-      assert.equal(await evaluate(page, `document.querySelector('[data-pack-operation="remove"]').disabled`), false);
-      assert.equal(await evaluate(page, `document.querySelector('[data-pack-operation="refresh"]').disabled`), offline);
-      if (offline) {
-        assert.equal(await evaluate(page, `document.querySelector('[data-pack-total="available"]').textContent`), '?');
-        await visible(page, 'Catalog: unavailable');
-      }
-      const before = packTree(fixture.root), impact = await packImpact(fixture);
-      assert.equal(impact.files.some(file => /residue|unrelated/.test(file)), false);
-      const receipt = await requestPackFromUi(page, fixture);
-      const permission = await publishPackPermission(fixture, receipt, impact);
-      await answerPackPermission(page, fixture, permission);
-      assert.deepEqual(packTree(fixture.root), before);
-      assert.deepEqual(packImpactBasis(fixture, impact), permission.basis);
-      const result = cmdRemove(fixture.args);
-      assert.equal(result.ok, true, result.error);
-      assert.deepEqual(result.result.files, impact.files);
-      assert.equal(fixture.provider.read().packRequests[0].applied, false);
-      const owner = await packOwnerTool(fixture, packOwnerAcknowledgment(fixture, receipt, result));
-      assert.equal(owner.type, 'success');
-      await packPhase(page, 'applied');
-      assert.equal(Object.hasOwn(cmdStatus({ root: fixture.root }).result.installed, 'alpha'), false);
-      for (const file of impact.files) assert.equal(fs.existsSync(path.join(fixture.root, ...file.split('/'))), false);
-      const after = packTree(fixture.root);
-      for (const file of ['dude-pack-alpha-residue.agent.md', 'dude-local-unrelated.agent.md']) {
-        assert.equal(after['.github'].agents[file], before['.github'].agents[file]);
-      }
-      assert.equal(fixture.sends.length, 1);
-      await audit(page, output, `remove-${offline ? 'without-catalog' : 'with-catalog'}`);
-    });
-  });
-});
-
-test('T004 Settings refresh: complete impact, overwrite warning, fresh consent on drift, and unchanged-membership control', {
-  timeout: 240_000, concurrency: false,
-}, async context => {
-  if (!browserReady(context)) return;
-  for (const variant of ['changed', 'drift', 'unchanged']) await context.test(variant, async t => {
-    await withPackJourney(t, 'refresh', { name: variant, changed: variant !== 'unchanged' }, async ({ fixture, page, output }) => {
-      await openPack(page, 'refresh');
-      const before = packTree(fixture.root), profileBefore = fs.readFileSync(fixture.profilePath);
-      const receipt = await requestPackFromUi(page, fixture);
-      let impact = await packImpact(fixture);
-      assert.deepEqual(packTree(fixture.root), before, 'Compose dry-run does not write profile or projected artifacts');
-      if (variant !== 'unchanged') {
-        assert.ok(impact.replaced.includes('.github/agents/dude-pack-alpha-worker.agent.md'));
-        assert.deepEqual(impact.added, ['.github/instructions/dude-pack-alpha-new.instructions.md']);
-        assert.deepEqual(impact.removed, ['.github/instructions/dude-pack-alpha-old.instructions.md']);
-      } else {
-        assert.deepEqual(impact.added, []);
-        assert.deepEqual(impact.removed, []);
-      }
-      let permission = await publishPackPermission(fixture, receipt, impact);
-      await packPhase(page, 'waiting_permission');
-      await click(page, button('Open Needs you'));
-      await visible(page, 'Generated installed edits can be overwritten');
-      await visible(page, 'dude-local-*');
-      for (const kind of ['replaced', 'added', 'removed']) {
-        assert.equal(await evaluate(page, `document.querySelector('#dude-panel-needs').textContent
-          .includes(${JSON.stringify(`"${kind}"`)})`), true);
-      }
-      await audit(page, output, `refresh-${variant}-permission`);
-      await click(page, button('Back to pack request'));
-      await answerPackPermission(page, fixture, permission);
-      assert.deepEqual(packTree(fixture.root), before);
-      if (variant === 'drift') {
-        const source = path.join(fixture.library, 'alpha', 'agents', 'dude-pack-alpha-worker.agent.md');
-        fs.writeFileSync(source, fs.readFileSync(source, 'utf8').replace('Fixture v2.', 'Fixture v3.'));
-        fs.appendFileSync(path.join(fixture.root, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), '\nLater target edit.\n');
-        assert.notDeepEqual(packImpactBasis(fixture, impact), permission.basis, 'owner detects actual source and target drift');
-        const drifted = packTree(fixture.root), oldPermission = permission;
-        impact = await packImpact(fixture);
-        permission = await publishPackPermission(fixture, receipt, impact, 'Source or target changed. Fresh confirmation required. ');
-        assert.notEqual(permission.request.revision, oldPermission.request.revision);
-        assert.notEqual(permission.record.requestHandle, oldPermission.record.requestHandle);
-        await packPhase(page, 'waiting_permission');
-        await click(page, button('Open Needs you'));
-        await visible(page, 'Fresh confirmation required.');
-        assert.equal(await evaluate(page, `${field('Enter the exact confirmation')}.value`), '');
-        assert.equal(await evaluate(page, `${field('I grant permission for this operation on these exact targets.')}.checked`), false);
-        await click(page, button('Send permission'));
-        assert.deepEqual(packTree(fixture.root), drifted, 'earlier consent does not authorize the changed basis');
-        await click(page, button('Back to pack request'));
-        await answerPackPermission(page, fixture, permission);
-      }
-      assert.deepEqual(packImpactBasis(fixture, impact), permission.basis);
-      const result = await cmdRefresh(fixture.args);
-      assert.equal(result.ok, true, result.error);
-      assert.deepEqual(result.result.files, impact.files);
-      assert.deepEqual(result.result.replaced, impact.replaced);
-      assert.deepEqual(result.result.added, impact.added);
-      assert.deepEqual(result.result.removed, impact.removed);
-      fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
-      await packPhase(page, 'waiting_owner');
-      assert.equal(fixture.provider.read().packRequests[0].applied, false, 'membership and actual writes alone do not prove the request');
-      if (variant === 'unchanged') {
-        assert.deepEqual(fs.readFileSync(fixture.profilePath), profileBefore);
-        assert.deepEqual(packTree(fixture.root), before, 'the unchanged refresh still requires its actual result');
-      } else {
-        const installed = fs.readFileSync(path.join(fixture.root, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), 'utf8');
-        assert.match(installed, variant === 'drift' ? /Fixture v3/ : /Fixture v2/);
-        assert.doesNotMatch(installed, /Edited generated destination|Later target edit/);
-      }
-      const owner = await packOwnerTool(fixture, packOwnerAcknowledgment(fixture, receipt, result));
-      assert.equal(owner.type, 'success');
-      await packPhase(page, 'applied');
-      assert.deepEqual(owner.body.receipt.acknowledgment.result, result);
-      assert.deepEqual(owner.body.receipt.reread.entry, cmdStatus({ root: fixture.root }).result.installed.alpha);
-      assert.equal(fixture.sends.length, 1, 'fresh permission does not resend the pack request');
-      await audit(page, output, `refresh-${variant}-applied`);
-    });
-  });
-});
-
-test('T004 Settings boundaries: busy, queue, waiter, uncertainty, stale results, and degraded lifetime never fake success or replay', {
-  timeout: 240_000, concurrency: false,
-}, async context => {
-  if (!browserReady(context)) return;
-  for (const boundary of ['busy', 'queue', 'waiter', 'uncertain', 'stale', 'profile unavailable', 'provider ended']) {
-    await context.test(boundary, async t => {
-      await withPackJourney(t, boundary === 'stale' ? 'refresh' : 'install', { name: boundary.replaceAll(' ', '-') },
-        async ({ fixture, page, output, network }) => {
-          await openPack(page, fixture.operation);
-          const before = packTree(fixture.root);
-          const action = `document.querySelector('[data-pack-operation="${fixture.operation}"]')`;
-          if (boundary === 'waiter') {
-            const waiting = await publish(fixture, requestFor(fixture, 'fact', { input: { kind: 'text' } }));
-            // The replacement read keeps the selected row's details (FR-090) while
-            // the waiting request withholds Install.
-            await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
-              .getAttribute('aria-busy') === 'false'
-              && document.querySelector('[data-pack-detail]')?.getAttribute('data-pack-detail')?.startsWith('pack:alpha@') === true
-              && document.querySelector('[data-pack-operation="install"]')?.disabled === true`),
-            'replacement read keeps the selection and withholds Install');
-            assert.equal(await evaluate(page, `${action}.disabled`), true);
-            await evaluate(page, `${action}.click()`);
-            assert.equal(network.filter(item => item.path === '/api/packs/request').length, 0);
-            assert.equal(fixture.sends.length, 0);
-            assert.deepEqual(packTree(fixture.root), before);
-            await audit(page, output, 'waiter-withholds-install');
-            waiting.controller.abort();
-            await waiting.result;
-            return;
-          }
-          if (boundary === 'busy') fixture.provider.onEvent({ id: randomUUID(), type: 'assistant.turn_start', data: {} });
-          if (boundary === 'queue') fixture.session.rpc.queue.pendingItems = async () => ({
-            items: [{ id: 'owned-queued-input' }], steeringMessages: [], inFlightSteeringCount: 0,
-          });
-          if (['busy', 'queue'].includes(boundary)) {
-            await click(page, action);
-            await packPhase(page, 'unavailable');
-            await visible(page, 'no waiting request or queued input');
-            assert.deepEqual(network.filter(item => item.path === '/api/packs/request').map(item => item.body),
-              [{ op: 'prepare', operation: 'install', name: 'alpha' }]);
-            assert.equal(fixture.sends.length, 0);
-            assert.deepEqual(packTree(fixture.root), before);
-            await audit(page, output, `${boundary}-refusal`);
-            return;
-          }
-          if (boundary === 'uncertain') fixture.session.send = async input => {
-            fixture.sends.push(input);
-            fixture.provider.onEvent({ id: randomUUID(), type: 'user.message',
-              data: { content: input.prompt, messageId: randomUUID(), delivery: 'idle' } });
-            throw new Error('Owned possible-delivery failure; not safe to repeat.');
-          };
-          const receipt = await requestPackFromUi(page, fixture);
-          if (boundary === 'stale') {
-            const impact = await packImpact(fixture);
-            const permission = await publishPackPermission(fixture, receipt, impact);
-            await answerPackPermission(page, fixture, permission);
-            const result = await cmdRefresh(fixture.args);
-            assert.equal(result.ok, true, result.error);
-            assert.deepEqual(packTree(fixture.root), before, 'unchanged membership/bytes cannot validate a mismatched result');
-            const owner = await packOwnerTool(fixture, {
-              ...packOwnerAcknowledgment(fixture, receipt, result), profileRevision: hash('different profile basis'),
-            });
-            assert.equal(owner.type, 'failure');
-            assert.equal(owner.body.reason, 'pack_state_mismatch');
-          } else if (boundary === 'profile unavailable') {
-            await packPhase(page, 'delivered');
-            fs.writeFileSync(fixture.profilePath, '# Invalid profile\n\n```json\nnot json\n```\n');
-            const owner = await packOwnerTool(fixture, packOwnerAcknowledgment(fixture, receipt, null,
-              'unavailable', 'none', 'The profile became unreadable. No pack operation ran.'));
-            assert.equal(owner.type, 'success');
-          } else if (boundary === 'provider ended') {
-            await packPhase(page, 'delivered');
-            let pendingRead;
-            page.on('Fetch.requestPaused', event => { pendingRead = event; });
-            await page.send('Fetch.enable', { patterns: [{ urlPattern: '*/api/packs', requestStage: 'Response' }] });
-            fixture.provider.dispose('session_ended');
-            await until(() => pendingRead, 'real lifetime-replacement pack read held before adoption');
-            assert.equal(await evaluate(page, `document.querySelector('[aria-label="Reload packs"]').getAttribute('aria-busy')`), 'true',
-              'a provider-lifetime reread reports loading until its actual response is adopted');
-            await page.send('Fetch.continueRequest', { requestId: pendingRead.requestId });
-            await page.send('Fetch.disable');
-          }
-          const phase = boundary === 'stale' ? 'stale' : boundary === 'uncertain' ? 'uncertain' : 'unavailable';
-          await packPhase(page, phase);
-          assert.equal(fixture.provider.read().packRequests[0].applied, false);
-          if (boundary !== 'profile unavailable') assert.deepEqual(packTree(fixture.root), before);
-          await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
-            .getAttribute('aria-busy') === 'false'`), 'pack facts settle after the provider outcome');
-          await audit(page, output, `${boundary.replaceAll(' ', '-')}-outcome`);
-          await click(page, button('Return to packs'));
-          if (await evaluate(page, `Boolean(document.querySelector('[data-pack-detail]:modal'))`)) await press(page, 'Escape');
-          await click(page, `document.querySelector('[aria-label="Reload packs"]')`);
-          await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]').getAttribute('aria-busy') === 'false'`),
-            'explicit read completes without operation replay');
-          await click(page, button('View pack request'));
-          await packPhase(page, phase);
-          await navigate(page, fixture);
-          await click(page, `document.querySelector('#dude-tab-settings')`);
-          await click(page, button('View pack request'));
-          await packPhase(page, phase);
-          assert.equal(fixture.sends.length, 1);
-          assert.equal(network.filter(item => item.path === '/api/packs/request').length, 2,
-            'tab reload and navigation acquire facts only, never a new prepare/submit');
-        });
-    });
-  }
-});
-
-test('T004 Settings races: cross-tab prepare exclusion and a late old-root response cannot resend or retarget', {
-  timeout: 180_000, concurrency: false,
-}, async context => {
-  if (!browserReady(context)) return;
-  for (const boundary of ['cross-tab', 'root replacement']) await context.test(boundary, async t => {
-    await withPackJourney(t, 'install', { name: boundary.replaceAll(' ', '-') }, async ({ fixture, page, output, network }) => {
-      await openPack(page, 'install');
-      const before = packTree(fixture.root);
-      let prepared, peer;
-      const peerRequests = [];
-      page.on('Fetch.requestPaused', event => {
-        if (JSON.parse(event.request.postData || '{}').op === 'prepare') prepared = event;
-        else void page.send('Fetch.continueRequest', { requestId: event.requestId });
-      });
-      try {
-        if (boundary === 'cross-tab') {
-          peer = await startBrowser(1, true);
-          peer.page.on('Network.requestWillBeSent', event => {
-            if (event.request.url.endsWith('/api/packs/request')) peerRequests.push(JSON.parse(event.request.postData));
-          });
-          await navigate(peer.page, fixture);
-          await openPack(peer.page, 'install');
-          await peer.page.send('Fetch.enable', { patterns: [{ urlPattern: '*/api/needs-you', requestStage: 'Response' }] });
-        }
-        await page.send('Fetch.enable', { patterns: [{ urlPattern: '*/api/packs/request', requestStage: 'Response' }] });
-        await click(page, `document.querySelector('[data-pack-operation="install"]')`);
-        await until(() => prepared, 'real prepared response held at the transport boundary');
-        assert.equal(fixture.provider.read().packRequests[0].phase, 'prepared');
-        assert.equal(fixture.sends.length, 0);
-        if (peer) {
-          await click(peer.page, `document.querySelector('[data-pack-operation="install"]')`);
-          await packPhase(peer.page, 'unavailable');
-          await visible(peer.page, 'Another pack request needs owner reconciliation');
-          assert.equal(fixture.sends.length, 0);
-          assert.equal(fixture.provider.read().packRequests.length, 1);
-          assert.deepEqual(peerRequests, [{ op: 'prepare', operation: 'install', name: 'alpha' }]);
-          await peer.page.send('Fetch.disable');
-        } else {
-          await until(() => !fixture.instance.packRead, 'owned pack reader is idle before replacing its root');
-          const previousRoot = path.join(fixture.directory, 'previous-root');
-          fs.renameSync(fixture.root, previousRoot);
-          fs.cpSync(previousRoot, fixture.root, { recursive: true });
-          await fixture.provider.refresh();
-          await until(() => evaluate(page, `Boolean(document.querySelector('#dude-panel-overview h1'))
-            && !document.querySelector('[data-settings]')`), 'new inode invalidates old workspace UI authority');
-        }
-        await page.send('Fetch.continueRequest', { requestId: prepared.requestId });
-        await page.send('Fetch.disable');
-        if (peer) {
-          await packPhase(page, 'delivered');
-          assert.equal(fixture.sends.length, 1);
-          assert.deepEqual(JSON.parse(fixture.sends[0].prompt.split('\n').at(-1)), {
-            receiptId: fixture.provider.read().packRequests[0].packReceipt, owner: 'dude',
-            operation: 'install', name: 'alpha', workspaceId: fixture.provider.read().workspaceId,
-            sessionId: fixture.session.sessionId, providerGeneration: fixture.provider.read().providerGeneration,
-          });
-          assert.equal(network.filter(item => item.path === '/api/packs/request').length, 2);
-          await audit(page, output, 'cross-tab-single-delivery');
-          await click(page, button('Return to packs'));
-          await click(page, button('New idea'));
-          await fill(page, field('Your idea'), 'Retain this draft; do not race the pack request.');
-          for (const label of ['Save', 'Submit']) assert.equal(await evaluate(page, `${button(label)}.disabled`), true);
-          assert.equal(network.filter(item => item.path.startsWith('/api/needs-you/capture')).length, 0);
-          await click(page, `document.querySelector('#dude-tab-settings')`);
-          await click(page, button('View pack request'));
-          await packPhase(page, 'delivered');
-          assert.equal(fixture.sends.length, 1, 'an unrelated draft cannot replace or resend the admitted pack target');
-        } else {
-          await click(page, `document.querySelector('#dude-tab-settings')`);
-          await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]').getAttribute('aria-busy') === 'false'`),
-            'replacement root reread without old request authority');
-          assert.equal(fixture.sends.length, 0);
-          assert.deepEqual(network.filter(item => item.path === '/api/packs/request').map(item => item.body),
-            [{ op: 'prepare', operation: 'install', name: 'alpha' }]);
-          assert.equal(await evaluate(page, `document.querySelectorAll('[data-pack-request-phase="applied"]').length`), 0);
-          await audit(page, output, 'old-root-not-submitted');
-        }
-        assert.deepEqual(packTree(fixture.root), before);
-      } finally {
-        if (peer) {
-          await peer.page.send('Fetch.disable').catch(() => {});
-          await cleanupBrowserDriver(peer);
-        }
-      }
-    });
-  });
-});
-
-test('T004 Settings transport loss: a known-unsent request recovers by explicit action, and a possibly delivered submit stays locked without replay', {
-  timeout: 300_000, concurrency: false,
-}, async context => {
-  if (!browserReady(context)) return;
-  for (const loss of ['prepare request', 'prepare response', 'submit request', 'submit response']) await context.test(loss, async t => {
-    await withPackJourney(t, 'install', { name: `${loss.replace(' ', '-')}-loss` }, async ({ fixture, page, output, network }) => {
-      const [op, stage] = loss.split(' ');
-      const unsent = op === 'prepare', delivered = loss === 'submit response';
-      const draft = 'Keep this idea draft through a lost pack request.';
-      const action = `document.querySelector('[data-pack-operation="install"]')`;
-      const locked = /Another pack request needs owner reconciliation/;
-      const packPosts = () => network.filter(item => item.path === '/api/packs/request').map(item => item.body.op);
-      const reloadPacks = async label => {
-        const reads = network.filter(item => item.method === 'GET' && item.path === '/api/packs').length;
-        await click(page, `document.querySelector('[aria-label="Reload packs"]')`);
-        await until(() => network.filter(item => item.method === 'GET' && item.path === '/api/packs').length > reads, label);
-      };
-      // The provider's operation bound reads this clock. Hold it for a lost
-      // submit, so checks before the bound cannot race real time. Whole
-      // milliseconds keep a later advance of one bound exact.
-      let clock = Math.ceil(performance.now());
-      if (op === 'submit') t.mock.method(performance, 'now', () => clock);
-      await click(page, `document.querySelector('#dude-tab-new')`);
-      await fill(page, field('Your idea'), draft);
-      await openPack(page, 'install');
-      const before = packTree(fixture.root);
-      let failed = null;
-      const stopFailing = page.on('Fetch.requestPaused', event => {
-        if (!failed && JSON.parse(event.request.postData || '{}').op === op) {
-          failed = { at: Date.now(), stage: event.responseStatusCode === undefined ? 'request' : 'response' };
-          void page.send('Fetch.failRequest', { requestId: event.requestId, errorReason: 'ConnectionReset' });
-        } else void page.send('Fetch.continueRequest', { requestId: event.requestId });
-      });
-      await page.send('Fetch.enable', { patterns: [{ urlPattern: '*/api/packs/request',
-        requestStage: stage === 'request' ? 'Request' : 'Response' }] });
-      await click(page, action);
-      await until(() => failed, `ConnectionReset on the ${loss}`);
-      const [phase, message] = unsent ? ['unavailable', 'Nothing was sent; you can request it again.']
-        : delivered ? ['delivered', 'Waiting for the owner to preview the impact and request permission.']
-          : ['uncertain', 'Delivery may be uncertain; nothing will be resent.'];
-      await packPhase(page, phase);
-      await visible(page, message);
-      await page.send('Fetch.disable');
-      stopFailing();
-      assert.equal(failed.stage, stage);
-      const lostPosts = unsent ? ['prepare'] : ['prepare', 'submit'];
-      assert.deepEqual(packPosts(), lostPosts);
-      assert.deepEqual(fixture.provider.read().packRequests.map(item => item.phase),
-        loss === 'prepare request' ? [] : [delivered ? 'delivered' : 'prepared'],
-        'only a request-stage prepare loss leaves no provider receipt');
-      assert.equal(fixture.sends.length, delivered ? 1 : 0);
-      await audit(page, output, `${loss.replace(' ', '-')}-loss`);
-
-      // The explicit way back: close the request, then reload and navigate.
-      await click(page, button('Return to packs'));
-      assert.equal(await evaluate(page, `${action}.disabled`), !unsent);
-      if (unsent) assert.doesNotMatch(await evaluate(page, describedText(action)), locked);
-      else assert.match(await evaluate(page, describedText(action)), locked);
-      if (loss === 'prepare response') {
-        assert.equal(fixture.provider.read().packRequests[0].phase, 'prepared',
-          'the tab does not wait on the unsent receipt that the provider still holds');
-      }
-      await reloadPacks('explicit pack reread');
-      await openPack(page, 'install');
-      assert.equal(await evaluate(page, `${action}.disabled`), !unsent);
-      await click(page, `document.querySelector('#dude-tab-overview')`);
-      await click(page, `document.querySelector('#dude-tab-new')`);
-      assert.equal(await evaluate(page, `${field('Your idea')}.value`), draft);
-      for (const label of ['Save', 'Submit']) assert.equal(await evaluate(page, `${button(label)}.disabled`), !unsent);
-      if (!unsent) await visible(page, 'A pack request is in progress or needs owner reconciliation.');
-      await openPack(page, 'install');
-      assert.equal(await evaluate(page, `${action}.disabled`), !unsent);
-      assert.deepEqual(packPosts(), lostPosts, 'recovery, reload, and navigation never resubmit');
-      assert.equal(fixture.sends.length, delivered ? 1 : 0);
-      assert.deepEqual(packTree(fixture.root), before);
-
-      if (op === 'submit') {
-        // One operation bound later, only the retired record of a receipt that
-        // never left prepared proves this lost submit was never sent. A
-        // delivered receipt keeps the same uncertain attempt locked.
-        clock += NEEDS_YOU_LIMITS.operationMs;
-        await reloadPacks('explicit reread after the operation bound');
-        await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
-          .getAttribute('aria-busy') === 'false'`), 'the reread after the operation bound is adopted');
-        assert.deepEqual(fixture.provider.read().packRequests.map(item => [item.phase, item.reason]),
-          [delivered ? ['delivered', null] : ['stale', 'pack_receipt_expired']]);
-        await click(page, button('View pack request'));
-        await packPhase(page, delivered ? 'delivered' : 'stale');
-        if (!delivered) await visible(page, 'This prepared request was never submitted and has expired. Nothing was sent.');
-        await audit(page, output, `${loss.replace(' ', '-')}-loss-after-bound`);
-        await click(page, button('Return to packs'));
-        await openPack(page, 'install');
-        assert.equal(await evaluate(page, `${action}.disabled`), delivered);
-        if (delivered) assert.match(await evaluate(page, describedText(action)), locked);
-        else assert.doesNotMatch(await evaluate(page, describedText(action)), locked);
-        await click(page, `document.querySelector('#dude-tab-new')`);
-        assert.equal(await evaluate(page, `${field('Your idea')}.value`), draft);
-        for (const label of ['Save', 'Submit']) assert.equal(await evaluate(page, `${button(label)}.disabled`), delivered);
-        assert.deepEqual(packPosts(), lostPosts, 'the reread after the bound never resubmits');
-        assert.equal(fixture.sends.length, delivered ? 1 : 0);
-        assert.deepEqual(packTree(fixture.root), before);
-        if (delivered) return;
-        await openPack(page, 'install');
-      }
-
-      // Only the user's new request sends. An unsent provider receipt excludes
-      // until its operation bound, then retires when this admission observes it.
-      if (loss === 'prepare response') {
-        await new Promise(resolve => setTimeout(resolve, Math.max(0, failed.at + NEEDS_YOU_LIMITS.operationMs - Date.now())));
-      }
-      await click(page, action);
-      await packPhase(page, 'delivered');
-      assert.deepEqual(packPosts(), [...lostPosts, 'prepare', 'submit']);
-      const feed = fixture.provider.read().packRequests;
-      assert.deepEqual(feed.map(item => [item.phase, item.reason]),
-        [...(loss === 'prepare request' ? [] : [['stale', 'pack_receipt_expired']]), ['delivered', null]]);
-      assert.equal(fixture.sends.length, 1);
-      assert.equal(JSON.parse(fixture.sends[0].prompt.split('\n').at(-1)).receiptId, feed.at(-1).packReceipt);
-      assert.deepEqual(packTree(fixture.root), before);
-    });
-  });
-});
-
-test('T004 Settings caught Compose failures distinguish verified restoration from uncertain state', {
-  timeout: 180_000, concurrency: false,
-}, async context => {
-  if (!browserReady(context)) return;
-  for (const mutation of ['restored', 'uncertain']) await context.test(mutation, async t => {
-    await withPackJourney(t, 'refresh', { name: mutation, changed: true }, async ({ fixture, page, output }) => {
-      await openPack(page, 'refresh');
-      const receipt = await requestPackFromUi(page, fixture);
-      const impact = await packImpact(fixture);
-      const permission = await publishPackPermission(fixture, receipt, impact);
-      await answerPackPermission(page, fixture, permission);
-      assert.deepEqual(packImpactBasis(fixture, impact), permission.basis);
-      const before = packTree(fixture.root);
-      const originalWrite = fs.writeFileSync, originalCopy = fs.copyFileSync;
-      let result, applicationFailures = 0, restorationFailures = 0;
-      try {
-        fs.writeFileSync = (file, ...args) => {
-          if (path.dirname(String(file)) === path.dirname(fixture.profilePath)
-            && path.basename(String(file)).startsWith('profile.md.tmp-')) {
-            applicationFailures += 1;
-            throw new Error('Owned disposable profile-write failure.');
-          }
-          return originalWrite(file, ...args);
-        };
-        if (mutation === 'uncertain') fs.copyFileSync = (source, destination, ...args) => {
-          if (String(source).includes('dude-compose-refresh-alpha-txn-')
-            && String(destination) === path.join(fixture.root, '.github', 'agents', 'dude-pack-alpha-worker.agent.md')) {
-            restorationFailures += 1;
-            throw new Error('Owned disposable restoration-copy failure.');
-          }
-          return originalCopy(source, destination, ...args);
-        };
-        result = await cmdRefresh(fixture.args);
-      } finally {
-        fs.writeFileSync = originalWrite;
-        fs.copyFileSync = originalCopy;
-      }
-      assert.equal(result.ok, false);
-      assert.equal(result.mutation, mutation);
-      assert.equal(applicationFailures, 1, 'the fault reaches the real profile transaction');
-      assert.equal(restorationFailures, mutation === 'uncertain' ? 1 : 0);
-      if (mutation === 'restored') assert.deepEqual(packTree(fixture.root), before);
-      else assert.notDeepEqual(packTree(fixture.root), before);
-      const phase = mutation === 'restored' ? 'failed' : 'uncertain';
-      const owner = await packOwnerTool(fixture, packOwnerAcknowledgment(fixture, receipt, result, phase, mutation,
-        mutation === 'restored' ? 'Verified restoration of the pre-operation files after the caught failure.'
-          : 'A restoration copy failed; the resulting state is uncertain.'));
-      assert.equal(owner.type, 'success');
-      await packPhase(page, phase);
-      assert.equal(owner.body.applied, false);
-      await visible(page, mutation === 'restored' ? 'not a crash-recovery guarantee' : 'could not establish the resulting state');
-      await audit(page, output, `refresh-${mutation}`);
-      assert.equal(fixture.sends.length, 1);
-    });
-  });
-});
-
-/** The Available or Installed rows of one pack, as a person reads them: key, then each cell. @param {any} page @param {string} selector */
-const t009Rows = (page, selector) => evaluate(page, `[...document.querySelectorAll(${JSON.stringify(selector)})]
-  .map(row => [row.getAttribute('data-pack-row'), ...[...row.querySelectorAll('[role="gridcell"]')].map(cell => cell.innerText.replace(/\\s+/g, ' ').trim())])`);
-
-/** The opaque key of one source, read from the Sources view by the name its row shows. @param {any} page @param {string} name */
-async function t009SourceKey(page, name) {
-  await click(page, `document.querySelector('[data-pack-context="sources"]')`);
-  const row = `[...document.querySelectorAll('[data-source-row]')].find(row => row.getAttribute('aria-label').startsWith(${JSON.stringify(`${name}. `)}))`;
-  await until(() => evaluate(page, `Boolean(${row})`), `the ${name} source row`);
-  return evaluate(page, `(${row}).getAttribute('data-source-row')`);
-}
-
-/** How many explicit catalog discoveries this tab has made since its resource buffer was last cleared. @param {any} page */
-const t009Discoveries = page => evaluate(page, `performance.getEntriesByType('resource').filter(entry => {
-  const url = new URL(entry.name); return url.pathname === '/api/packs' && url.search === '?discover=1'; }).length`);
-
-/** The Sources view's details for one source, by the name its row shows. @param {any} page @param {string} name */
-async function t009SourceDetails(page, name) {
-  await click(page, `document.querySelector('[data-pack-context="sources"]')`);
-  await click(page, `[...document.querySelectorAll('[data-source-row]')].find(row => row.getAttribute('aria-label').startsWith(${JSON.stringify(`${name}. `)}))`);
-  return evaluate(page, `({
-    reason: document.querySelector('[data-source-reason]').textContent,
-    remove: (button => button ? { disabled: button.disabled, label: button.getAttribute('aria-label') } : null)(document.querySelector('[data-source-remove]')),
-    facts: Object.fromEntries([...document.querySelectorAll('[data-pack-detail-body] dl dt')].map(dt => [dt.textContent, dt.nextElementSibling.innerText.replace(/\\s+/g, ' ').trim()])),
-  })`);
-}
-
-test('T009 source-bound install: the added folder\'s own row, its key in both bodies, the source first in the permission, and Applied only from that folder', {
-  timeout: 300_000, concurrency: false,
-}, async context => {
-  if (!browserReady(context)) return;
-  await withPackJourney(context, 'install', { name: 'source-bound-install', team: true }, async ({ fixture, page, output, network }) => {
     await click(page, `document.querySelector('#dude-tab-settings')`);
-    await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
-      ?.getAttribute('aria-busy') === 'false' && Boolean(document.querySelector('[data-settings]'))`), 'current Settings read');
-    assert.equal(await evaluate(page, `document.querySelector('[data-pack-total="available"]').textContent`), '?',
-      'entering Settings read no catalog, so Available is unknown and the added source has no count');
+    await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')?.getAttribute('aria-busy') === 'false'
+      && Boolean(document.querySelector('[data-pack-row="pack:alpha"]'))`), 'Installed lists alpha');
     await reloadPacks(page);
-    assert.equal(await t009Discoveries(page), 1, 'one explicit Reload is one discovery');
-    await click(page, `document.querySelector('[data-pack-context="available"]')`);
 
-    // Both sources offer alpha: two rows, two keys, each saying where it comes from.
-    const rows = await t009Rows(page, '[data-pack-row^="pack:alpha@"]');
-    assert.deepEqual(rows.map(([, ...cells]) => cells), [['alpha', 'Local library - Local folder', 'ui'], ['alpha', 'team-packs - Local folder', 'ui']]);
-    assert.equal(new Set(rows.map(([key]) => key)).size, 2);
-    const [defaultKey, teamKey] = rows.map(([key]) => key);
-    const sourceKey = teamKey.split('@')[1];
-    await click(page, `document.querySelector('[data-pack-row="${teamKey}"]')`);
-    assert.deepEqual(await evaluate(page, `({ title: document.querySelector('[data-pack-detail] h2').textContent,
-      selected: [...document.querySelectorAll('[data-pack-row][aria-selected="true"]')].map(row => row.getAttribute('data-pack-row')),
-      description: document.querySelector('[data-pack-description]').textContent,
-      source: document.querySelector('[data-pack-source]').textContent, location: document.querySelector('[data-pack-origin]').textContent })`),
-    { title: 'alpha - team-packs', selected: [teamKey], description: 'Added team source alpha', source: 'team-packs - Local folder', location: fixture.team },
-    'selecting the added folder\'s alpha selects only it, with its own description and location');
-    assert.notEqual(teamKey, defaultKey);
-
-    // One click names the saved source by its opaque key, in both bodies, and the provider binds it. The first body is held
-    // unsent: this tab's own attempt already holds its source, before the provider has any receipt to name it.
-    const before = packTree(fixture.root);
-    let paused = null;
-    const stopHolding = page.on('Fetch.requestPaused', event => {
-      if (!paused && event.request.postData && JSON.parse(event.request.postData).op === 'prepare') paused = event;
-      else void page.send('Fetch.continueRequest', { requestId: event.requestId });
-    });
-    await page.send('Fetch.enable', { patterns: [{ urlPattern: '*/api/packs/request', requestStage: 'Request' }] });
-    await click(page, `document.querySelector('[data-pack-operation="install"]')`);
-    await until(() => paused, 'the prepare request held before it is sent');
-    await click(page, button('Return to packs'));
-    const held = await t009SourceDetails(page, 'team-packs');
-    assert.deepEqual([held.remove, held.reason.replace(/\(.*?\)/, '(phase)')], [{ disabled: true, label: 'Remove team-packs' },
-      'Cannot remove while in use. Pack request in progress: Install alpha (phase). Finish the request first.']);
-    assert.match(held.reason, /Install alpha \(preparing request\)/, 'the attempt is named while it is still preparing');
-    assert.equal(fixture.provider.read().packRequests.length, 0, 'no receipt exists yet');
-    await click(page, `document.querySelector('[data-pack-context="available"]')`);
-    await page.send('Fetch.continueRequest', { requestId: paused.requestId });
-    await page.send('Fetch.disable');
-    stopHolding();
-    const receipt = await until(() => fixture.provider.read().packRequests.at(-1), 'real prepared pack receipt');
-    await click(page, button('View pack request'));
-    await packPhase(page, 'delivered');
-    assert.deepEqual(network.filter(item => item.path === '/api/packs/request').map(item => item.body), [
-      { op: 'prepare', operation: 'install', name: 'alpha', source: sourceKey },
-      { op: 'submit', operation: 'install', name: 'alpha', source: sourceKey, packReceipt: receipt.packReceipt }]);
-    const binding = receipt.receipt.catalogSource;
-    assert.deepEqual(Object.keys(binding), ['key', 'sourcesRevision', 'source']);
-    assert.equal(binding.key, sourceKey);
-    assert.match(binding.sourcesRevision, /^sha256:[0-9a-f]{64}$/);
-    assert.deepEqual(binding.source, { type: 'local', location: fs.realpathSync(fixture.team) });
-    const handoff = fixture.sends[0].prompt.split('\n');
-    assert.deepEqual(JSON.parse(handoff.at(-1)).catalogSource, binding, 'the handoff carries the exact binding');
-    assert.equal(handoff.filter(line => /bound to one source the project added/.test(line)).length, 1);
-    assert.equal(await evaluate(page, `document.querySelector('[data-pack-request-dialog] [data-pack-request-source]').innerText.replace(/\\s+/g, ' ')`),
-      'Requested from team-packs - Local folder');
-    assert.deepEqual(packTree(fixture.root), before, 'admission and delivery change no pack file');
-
-    // The permission names the source first, as a third-party source pinned by a digest, and fits every size.
-    const impact = await packImpact(fixture);
-    assert.deepEqual(impact.source, { type: 'local', location: fs.realpathSync(fixture.team) }, 'the preview reads the bound folder');
-    const permission = await publishPackPermission(fixture, receipt, impact);
-    assert.equal(permission.request.fields.targets[0].target, `Third-party source ${binding.source.location}`);
-    assert.match(permission.request.fields.targets[0].revision, /^sha256:[0-9a-f]{64}$/);
-    await packPhase(page, 'waiting_permission');
-
-    // While it waits, the source cannot be removed: the reason names the live request.
-    await click(page, button('Return to packs'));
-    let details = await t009SourceDetails(page, 'team-packs');
-    assert.deepEqual([details.remove, details.reason.replace(/\(.*?\)/, '(phase)')], [{ disabled: true, label: 'Remove team-packs' },
-      'Cannot remove while in use. Pack request in progress: Install alpha (phase). Finish the request first.']);
-    assert.equal(details.facts['Installed from this source'].startsWith('0'), true);
-    await click(page, `document.querySelector('[data-pack-context="available"]')`);
-    await click(page, button('View pack request'));
-    await packPhase(page, 'waiting_permission');
-    await click(page, button('Open Needs you'));
-    await visible(page, permission.request.prompt);
-    const card = await evaluate(page, `document.querySelector('#dude-panel-needs').innerText`);
-    assert.ok(card.indexOf(`Third-party source ${binding.source.location}`) >= 0, 'Needs you names the third-party source');
-    assert.ok(card.indexOf('Third-party source') < card.indexOf('.dude/metadata/profile.md'), 'and names it first');
-    for (const target of permission.request.fields.targets) assert.ok(card.includes(target.target.split('\n')[0]), `Needs you shows ${target.target}`);
-    // The longer source-first permission fits at 360x900, at 180x450, and at 200% (an effective 180x450).
-    for (const [width, height, scale] of [[360, 900, 1], [180, 450, 1], [180, 450, 2]]) for (const theme of /** @type {const} */ (['light', 'dark'])) {
-      await viewport(page, width, theme, height, scale);
-      await audit(page, output, `source-first-permission-${width}x${height}-${scale === 2 ? 'dpr2-' : ''}${theme}`);
-    }
-    await viewport(page, 1440, 'light');
-    await click(page, button('Back to pack request'));
-    await answerPackPermission(page, fixture, permission);
-
-    // Only an install from that folder is Applied, and the owner echoes the binding whole.
-    const result = await cmdAdd(fixture.args);
-    assert.equal(result.ok, true, result.error);
-    assert.match(fs.readFileSync(path.join(fixture.root, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), 'utf8'), /Team v1\./,
-      'the installed pack came from the added folder, not the default library');
-    fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
-    await until(() => evaluate(page, `document.querySelector('[data-pack-total="installed"]')?.textContent === '2'`),
-      'authoritative membership reread before owner acknowledgment');
-    const owner = await packOwnerTool(fixture, packOwnerAcknowledgment(fixture, receipt, result));
-    assert.equal(owner.type, 'success', JSON.stringify(owner.body));
-    await packPhase(page, 'applied');
-    const applied = fixture.provider.read().packRequests[0];
-    assert.deepEqual(applied.receipt.catalogSource, binding);
-    assert.deepEqual(applied.receipt.reread.entry.source, { type: 'local', location: fs.realpathSync(fixture.team) });
-    await audit(page, output, 'source-bound-install-applied');
-    await click(page, button('Return to packs'));
-
-    // Lists and Sources now agree: alpha is installed from the added folder, and neither source offers it again.
-    await click(page, `document.querySelector('[data-pack-context="installed"]')`);
-    assert.deepEqual((await t009Rows(page, '[data-pack-row="pack:alpha"]')).map(([, ...cells]) => cells), [['alpha', 'Pack', 'team-packs - Local folder', 'ui']]);
-    await click(page, `document.querySelector('[data-pack-context="available"]')`);
-    assert.deepEqual(await t009Rows(page, '[data-pack-row^="pack:alpha@"]'), [], 'an installed name leaves Available for every source');
-    details = await t009SourceDetails(page, 'team-packs');
-    assert.deepEqual([details.remove.disabled, details.reason, details.facts['Installed from this source'].startsWith('1: alpha')],
-      [true, 'All packs from this source are installed. Cannot remove while in use. Installed from it: alpha. Remove those installed packs first.', true]);
-    assert.equal(await t009Discoveries(page), 1, 'permission, result and reads acquired no further catalog');
-    assert.equal(fixture.sends.length, 1, 'nothing was replayed');
-    output.results.push({ case: 'source-bound-install', binding, requests: network.filter(item => item.path === '/api/packs/request').map(item => item.body) });
-  });
-});
-
-test('T009 source-bound refresh: the installed record picks its saved source, no source rides the request, and Applied is checked against that folder', {
-  timeout: 300_000, concurrency: false,
-}, async context => {
-  if (!browserReady(context)) return;
-  await withPackJourney(context, 'refresh', { name: 'source-bound-refresh', team: true, changed: true }, async ({ fixture, page, output, network }) => {
-    await click(page, `document.querySelector('#dude-tab-settings')`);
-    await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
-      ?.getAttribute('aria-busy') === 'false' && Boolean(document.querySelector('[data-settings]'))`), 'current Settings read');
-    // The installed record already names its source, before any catalog is read; Refresh needs the catalog entry.
-    assert.deepEqual((await t009Rows(page, '[data-pack-row="pack:alpha"]')).map(([, ...cells]) => cells), [['alpha', 'Pack', 'team-packs - Local folder', 'Not read']]);
     await click(page, `document.querySelector('[data-pack-row="pack:alpha"]')`);
-    assert.equal(await evaluate(page, `document.querySelector('[data-pack-operation="refresh"]').disabled`), true, 'Refresh waits for the catalog entry');
+    await run('refresh', { name: '1440x900-light', width: 1440, height: 900, theme: 'light', scale: 1 },
+      { name: '200pct-dark', width: 720, height: 450, theme: 'dark', scale: 2 });
     await press(page, 'Escape');
-    await reloadPacks(page);
-    const sourceKey = await t009SourceKey(page, 'team-packs');
-    await click(page, `document.querySelector('[data-pack-context="installed"]')`);
-    await click(page, `document.querySelector('[data-pack-row="pack:alpha"]')`);
-    assert.equal(await evaluate(page, `document.querySelector('[data-pack-description]').textContent`), 'Added team source alpha',
-      'the description comes from the source the record matches, not the default library');
-    assert.equal(await evaluate(page, `document.querySelector('[data-pack-operation="refresh"]').disabled`), false);
-    const before = packTree(fixture.root);
-    const receipt = await requestPackFromUi(page, fixture);
-    await packPhase(page, 'delivered');
-    assert.deepEqual(network.filter(item => item.path === '/api/packs/request').map(item => item.body), [
-      { op: 'prepare', operation: 'refresh', name: 'alpha' },
-      { op: 'submit', operation: 'refresh', name: 'alpha', packReceipt: receipt.packReceipt }], 'a refresh never carries a source choice from the browser');
-    const binding = receipt.receipt.catalogSource;
-    assert.deepEqual([binding.key, binding.source], [sourceKey, { type: 'local', location: fs.realpathSync(fixture.team) }],
-      'the provider selected the saved source that matches the installed record');
-    assert.deepEqual(packTree(fixture.root), before);
+    assert.deepEqual(await state(), { open: false, phase: null, focus: 'refresh' }, 'Escape is Done, and focus returns to Refresh');
 
-    const impact = await packImpact(fixture);
-    assert.ok(impact.files.length > 0);
-    const permission = await publishPackPermission(fixture, receipt, impact);
-    assert.equal(permission.request.fields.targets[0].target, `Third-party source ${binding.source.location}`);
-    await packPhase(page, 'waiting_permission');
-    await click(page, button('Open Needs you'));
-    await visible(page, permission.request.prompt);
-    for (const [width, height, scale] of [[360, 900, 1], [180, 450, 1], [180, 450, 2]]) for (const theme of /** @type {const} */ (['light', 'dark'])) {
-      await viewport(page, width, theme, height, scale);
-      await audit(page, output, `source-first-refresh-permission-${width}x${height}-${scale === 2 ? 'dpr2-' : ''}${theme}`);
-    }
+    await run('remove', { name: '360x900-dark', width: 360, height: 900, theme: 'dark', scale: 1 },
+      { name: '360x900-dark', width: 360, height: 900, theme: 'dark', scale: 1 });
+    await click(page, `document.querySelector('[data-pack-action-primary]')`);
+    await until(async () => !(await rows()).includes('pack:alpha'), 'Installed no longer lists alpha');
+    assert.deepEqual(await state(), { open: false, phase: null, focus: 'H1' }, 'the row is gone, so focus goes to the heading');
+
+    // The automatic read keeps the last catalog, so alpha returns to Available with the next Reload packs.
     await viewport(page, 1440, 'light');
-    await click(page, button('Back to pack request'));
-    await answerPackPermission(page, fixture, permission);
-    const result = await cmdRefresh(fixture.args);
-    assert.equal(result.ok, true, result.error);
-    assert.match(fs.readFileSync(path.join(fixture.root, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), 'utf8'), /Team v2\./, 'refreshed from the added folder');
-    fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
-    const owner = await packOwnerTool(fixture, packOwnerAcknowledgment(fixture, receipt, result));
-    assert.equal(owner.type, 'success', JSON.stringify(owner.body));
-    await packPhase(page, 'applied');
-    assert.deepEqual(fixture.provider.read().packRequests[0].receipt.catalogSource, binding);
-    await click(page, button('Return to packs'));
-    assert.equal(await t009Discoveries(page), 1, 'the journey made one discovery, its Reload');
-    assert.equal(fixture.sends.length, 1);
+    await click(page, `document.querySelector('[data-pack-context="available"]')`);
+    assert.equal((await rows()).includes('pack:alpha'), false, 'not before Reload packs');
+    await reloadPacks(page);
+    assert.equal((await rows()).includes('pack:alpha'), true, 'and back after it');
+    await click(page, `document.querySelector('[data-pack-row^="pack:alpha@"]')`);
+    await viewport(page, 180, 'light', 450);
+    await run('install', { name: '180x450-light', width: 180, height: 450, theme: 'light', scale: 1 },
+      { name: '768x900-dark', width: 768, height: 900, theme: 'dark', scale: 1 });
+    assert.equal(cmdStatus({ root: fixture.root }).result.installed.alpha.files.length, 3);
+    assert.deepEqual(network.filter(item => item.path === '/api/packs/action').map(item => item.body.op),
+      ['preview', 'apply', 'preview', 'apply', 'preview', 'apply'], 'one preview and one apply per action, and nothing else');
+    assert.deepEqual([fixture.sends.length, fixture.provider.read().requests.length], [0, 0], 'no chat message and no Needs you request');
   });
-});
-
-/**
- * Rewrite responses of one route on their way to the page, through the DevTools Fetch domain. The production
- * server and provider answer truthfully; the page receives what a substituting or confused provider would have
- * sent. `rewrite(value, request)` edits the parsed JSON and returns true to deliver the edit; any other answer
- * passes the response through untouched. `delivered` keeps every edited body the page was given.
- * @param {any} page @param {string} urlPattern @param {(value:any, request:any)=>boolean} rewrite
- */
-async function t010Rewrite(page, urlPattern, rewrite) {
-  const delivered = [];
-  const stop = page.on('Fetch.requestPaused', async event => {
-    try {
-      const body = await page.send('Fetch.getResponseBody', { requestId: event.requestId });
-      const value = JSON.parse(body.base64Encoded ? Buffer.from(body.body, 'base64').toString('utf8') : body.body);
-      if (!rewrite(value, event.request.postData ? JSON.parse(event.request.postData) : null)) {
-        await page.send('Fetch.continueRequest', { requestId: event.requestId });
-        return;
-      }
-      delivered.push(structuredClone(value));
-      await page.send('Fetch.fulfillRequest', {
-        requestId: event.requestId,
-        responseCode: event.responseStatusCode,
-        responseHeaders: (event.responseHeaders || []).filter(header => !['content-length', 'transfer-encoding'].includes(header.name.toLowerCase())),
-        body: Buffer.from(JSON.stringify(value)).toString('base64'),
-      });
-    } catch {
-      await page.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {});
-    }
-  });
-  await page.send('Fetch.enable', { patterns: [{ urlPattern, requestStage: 'Response' }] });
-  return { delivered, async stop() { stop(); await page.send('Fetch.disable'); } };
-}
-
-test('T010 source substitution: a provider answer that names another source (prepare or submit), a feed record bound to another source, and a source gone since the read are each refused or never joined', {
-  timeout: 420_000, concurrency: false,
-}, async context => {
-  if (!browserReady(context)) return;
-  const variants = ['prepare echo names another source', 'prepare echo names no source', 'submit echo names another source',
-    'feed record names another source', 'saved source removed after the read'];
-  for (const variant of variants) {
-    await context.test(variant, async t => {
-      await withPackJourney(t, 'install', { name: `t010-${variant.replaceAll(' ', '-')}`, team: true }, async ({ fixture, page, output, network }) => {
-        // A second saved folder that also offers alpha, so a substituted answer names a real configured source.
-        const second = path.join(fixture.directory, 'second-packs');
-        write(second, 'library/packs/alpha/pack.md',
-          '---\nname: alpha\ndescription: "Second source alpha"\nuse-cases: [ui]\nrequires:\n  tools: [node]\n---\n# Alpha\n');
-        write(second, 'library/packs/alpha/agents/dude-pack-alpha-worker.agent.md',
-          '---\nname: Alpha Worker\ndescription: "Second worker"\ntools: [read, search]\nmodel-class: balanced\n---\nSecond v1.\n');
-        write(second, 'library/packs/alpha/skills/dude-pack-alpha-helper/SKILL.md',
-          '---\nname: dude-pack-alpha-helper\ndescription: "Second helper"\n---\n# Helper\n');
-        const { serializePackSourcesDocument } = await import('../../src/skills/dude-engine/lib/pack-sources.mjs');
-        const sourcesFile = path.join(fixture.root, '.dude', 'metadata', 'pack-sources.md');
-        fs.writeFileSync(sourcesFile, serializePackSourcesDocument([{ type: 'local', location: fixture.team }, { type: 'local', location: second }]));
-
-        await click(page, `document.querySelector('#dude-tab-settings')`);
-        await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
-          ?.getAttribute('aria-busy') === 'false' && Boolean(document.querySelector('[data-settings]'))`), 'current Settings read');
-        await reloadPacks(page);
-        const teamKey = await t009SourceKey(page, 'team-packs');
-        const secondKey = await t009SourceKey(page, 'second-packs');
-        await click(page, `document.querySelector('[data-pack-context="available"]')`);
-        assert.deepEqual((await t009Rows(page, '[data-pack-row^="pack:alpha@"]')).map(([, ...cells]) => cells), [
-          ['alpha', 'Local library - Local folder', 'ui'], ['alpha', 'team-packs - Local folder', 'ui'], ['alpha', 'second-packs - Local folder', 'ui']]);
-        // The person chooses the team's alpha.
-        await click(page, `document.querySelector('[data-pack-row="pack:alpha@${teamKey}"]')`);
-        const before = packTree(fixture.root);
-        const install = `document.querySelector('[data-pack-operation="install"]')`;
-        const requests = () => network.filter(item => item.path === '/api/packs/request').map(item => item.body);
-        const prepareChoosingTeam = { op: 'prepare', operation: 'install', name: 'alpha', source: teamKey };
-        const substituted = binding => ({ key: secondKey, sourcesRevision: binding.sourcesRevision, source: { type: 'local', location: fs.realpathSync(second) } });
-        /** What the open request dialog claims about the request. */
-        const claims = () => evaluate(page, `({
-          phase: document.querySelector('[data-pack-request-dialog][open] [data-pack-request-phase]')?.getAttribute('data-pack-request-phase') ?? null,
-          source: document.querySelector('[data-pack-request-dialog] [data-pack-request-source]')?.innerText.replace(/\\s+/g, ' ').trim() ?? null,
-          receipt: [...document.querySelectorAll('[data-pack-request-dialog] .fui-Text')].map(node => node.textContent).find(text => text.startsWith('Receipt:')) ?? null,
-          permission: Boolean(document.querySelector('[data-pack-request-dialog] [data-pack-permission]')),
-        })`);
-
-        if (variant.startsWith('prepare echo')) {
-          // The real provider binds the team's alpha. The page is told another source, or none: it must not submit.
-          const rewrite = await t010Rewrite(page, '*/api/packs/request', (value, request) => {
-            if (request?.op !== 'prepare') return false;
-            if (variant === 'prepare echo names another source') value.receipt.catalogSource = substituted(value.receipt.catalogSource);
-            else delete value.receipt.catalogSource;
-            return true;
-          });
-          await click(page, install);
-          await packPhase(page, 'stale');
-          await rewrite.stop();
-          assert.deepEqual(rewrite.delivered.map(value => value.receipt.catalogSource?.key ?? null),
-            [variant === 'prepare echo names another source' ? secondKey : null], 'the page was given the substituted echo');
-          const records = fixture.provider.read().packRequests;
-          assert.deepEqual(records.map(record => [record.phase, record.receipt.catalogSource.key]), [['prepared', teamKey]],
-            'the provider really bound the chosen source, and the receipt was never submitted');
-          assert.deepEqual(requests(), [prepareChoosingTeam], 'the page sent no submit for a receipt that does not name the chosen source');
-          assert.equal(fixture.sends.length, 0, 'so nothing reached the owner');
-          await visible(page, 'The workspace or joined provider changed. This request will not be sent again.');
-          assert.equal((await claims()).source, 'Requested from team-packs - Local folder', 'the dialog still names the source that was chosen');
-          assert.deepEqual(packTree(fixture.root), before);
-          await audit(page, output, `substitution-${variant.replaceAll(' ', '-')}`);
-        } else if (variant === 'submit echo names another source') {
-          // The provider really delivers the request, and the page is told its receipt names another source. That is not
-          // a delivery it can vouch for: it says delivery is uncertain, and nothing is sent again. The feed is held, so the
-          // page cannot yet learn the truth from its own record of the request.
-          await evaluate(page, `(() => {
-            const original = window.fetch;
-            window.t010 = { hold: true, held: [] };
-            window.fetch = (...args) => new URL(args[0], location.href).pathname === '/api/needs-you' && window.t010.hold
-              ? new Promise(resolve => window.t010.held.push(() => resolve(original(...args)))) : original(...args);
-          })()`);
-          const rewrite = await t010Rewrite(page, '*/api/packs/request', (value, request) => {
-            if (request?.op !== 'submit') return false;
-            value.receipt.catalogSource = substituted(value.receipt.catalogSource);
-            return true;
-          });
-          await click(page, install);
-          await packPhase(page, 'uncertain');
-          await rewrite.stop();
-          assert.deepEqual(rewrite.delivered.map(value => value.receipt.catalogSource.key), [secondKey], 'the page was given the substituted echo');
-          const [record] = fixture.provider.read().packRequests;
-          assert.equal(record.receipt.catalogSource.key, teamKey, 'the provider bound, and delivered, the chosen source');
-          assert.deepEqual(requests(), [prepareChoosingTeam, { ...prepareChoosingTeam, op: 'submit', packReceipt: record.packReceipt }]);
-          assert.equal(fixture.sends.length, 1, 'the owner was sent the request once');
-          await visible(page, 'Delivery is uncertain. Wait for owner reconciliation; do not repeat this request.');
-          await audit(page, output, 'substitution-submit-uncertain');
-          // Control: once the feed is read, the request is joined to its own record and shows its real phase, still unrepeated.
-          await evaluate(page, `(() => { window.t010.hold = false; window.t010.held.splice(0).forEach(release => release()); })()`);
-          await packPhase(page, 'delivered');
-          assert.equal(requests().length, 2, 'nothing was replayed');
-          assert.equal(fixture.sends.length, 1);
-        } else if (variant === 'feed record names another source') {
-          // The request is genuine, and the feed's record of it names another source: it is not this request's record.
-          const rewrite = await t010Rewrite(page, '*/api/needs-you', value => {
-            let changed = false;
-            for (const record of value.packRequests ?? []) {
-              if (record.receipt?.catalogSource) { record.receipt.catalogSource = substituted(record.receipt.catalogSource); changed = true; }
-            }
-            return changed;
-          });
-          const receipt = await requestPackFromUi(page, fixture);
-          assert.equal(receipt.receipt.catalogSource.key, teamKey, 'the provider bound the chosen source');
-          const shownFeed = phase => rewrite.delivered.some(feed => feed.packRequests.some(record => record.packReceipt === receipt.packReceipt && record.phase === phase));
-          await until(() => shownFeed('delivered'), 'the page was shown the delivered request, bound to another source');
-          const impact = await packImpact(fixture);
-          const permission = await publishPackPermission(fixture, receipt, impact);
-          await until(() => shownFeed('waiting_permission'), 'the page was shown the waiting permission, bound to another source');
-          await evaluate(page, `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
-          const unjoined = await claims();
-          assert.deepEqual([unjoined.source, unjoined.receipt, unjoined.permission], ['Requested from team-packs - Local folder', null, false],
-            'a record bound to another source is not joined: no source it was not asked for, no receipt, and no permission shortcut');
-          assert.notEqual(unjoined.phase, 'waiting_permission', 'and its phase is not shown as this request\'s');
-          await audit(page, output, 'substitution-feed-unjoined');
-          // Control: the same request, once the feed is truthful again, is joined and shows its real phase.
-          await rewrite.stop();
-          await evaluate(page, `window.dispatchEvent(new Event('focus'))`);
-          await packPhase(page, 'waiting_permission');
-          assert.deepEqual([(await claims()).source, (await claims()).permission], ['Requested from team-packs - Local folder', true]);
-          assert.equal(requests().length, 2, 'one prepare and one submit, never replayed');
-          assert.equal(fixture.sends.length, 1);
-          permission.controller.abort();
-          await permission.result;
-        } else {
-          // The saved list changed after the page read it: the key it holds names nothing now, so nothing is prepared.
-          const replaced = serializePackSourcesDocument([{ type: 'local', location: second }]);
-          fs.writeFileSync(sourcesFile, replaced);
-          const unchanged = packTree(fixture.root);
-          await click(page, install);
-          await packPhase(page, 'stale');
-          assert.deepEqual(requests(), [prepareChoosingTeam]);
-          assert.equal(fixture.provider.read().packRequests.length, 0, 'no receipt was allocated for a source that is gone');
-          assert.equal(fixture.sends.length, 0);
-          await visible(page, 'The pack authority changed. Reload packs; any changed impact needs fresh confirmation.');
-          assert.equal(fs.readFileSync(sourcesFile, 'utf8'), replaced, 'the refusal saved nothing');
-          assert.deepEqual(packTree(fixture.root), unchanged, 'and changed no pack file, profile, or saved source');
-          await audit(page, output, 'substitution-source-removed');
-        }
-      });
-    });
-  }
 });
 
 test('T011 browser: published blank capture, ordinary-chat refresh, local state, root identity, and responsive shell', {
@@ -19727,7 +18418,6 @@ test('073 Add/import: with the production provider an open import excludes every
     // The provider itself refuses every other send while this import is unreconciled, not only the UI's copy.
     const refusals = {
       import: await post('/api/imports/request', { op: 'prepare', importSource: T005_SAMPLES.clean.source }),
-      pack: await post('/api/packs/request', { op: 'prepare', operation: 'install', name: 'alpha' }),
       capture: await post('/api/needs-you/capture-receipt', { requestHandle: null }),
     };
     for (const [kind, refusal] of Object.entries(refusals)) {

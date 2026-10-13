@@ -3334,7 +3334,7 @@ test('T012 anchoring regression: nested-scroll Open comment clips then recovers 
         )));
         assert.equal(
           productAppSha256,
-          '7223f8c918d2686e103e8dbef5a118c0be6e1c48a713552103676419a72af7a1',
+          'be30db45dd5e002bc643de4e01b99f599f0006c9242f164e83ba41a16fbe17ba',
           'the exact-source regression executes the current published product UI',
         );
         const exactHarnessOptions = {
@@ -12082,10 +12082,10 @@ test('T002 Settings reads real local and configured-remote pack authorities only
       assert.equal(await evaluate(page, `document.querySelector('[data-pack-detail]').textContent.includes('Not acquired in this snapshot.')`), true);
       assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-pack-actions] button')]
         .map(node => ({ action: node.textContent.trim(), disabled: node.disabled }))`),
-      [{ action: 'Install', disabled: true }],
-      'only the visible available selection owns Install; the existing waiting request withholds it');
-      assert.equal(network.filter(entry => entry.path === '/api/packs/request').length, 0,
-        'read-only browsing never prepares or submits a pack operation');
+      [{ action: 'Install', disabled: false }],
+      'only the visible available selection owns Install, and a waiting Needs you request does not withhold it');
+      assert.equal(network.filter(entry => entry.path === '/api/packs/action').length, 0,
+        'read-only browsing never previews or applies a pack action');
       await click('[aria-label="Close pack details"]');
       assert.match(await evaluate(page, `document.activeElement?.getAttribute('data-pack-row')`), /^pack:constructor@src_[0-9a-f]{32}$/);
       await selectTag('ui-tools');
@@ -12626,7 +12626,7 @@ test('T002 Settings reads real local and configured-remote pack authorities only
           comparisons.push({ width: entry.width, height: entry.height, theme: entry.theme, approved, approvedHash,
             reference, referenceDetail, installedImage, availableImage, detailImage,
             product: { installed: entry.image, available: entry.availableImage, detail: entry.detailImage },
-            differences: 'Product retains the live command bar and omits mock-only chrome and state selectors. Real pack actions are withheld while this fixture has a waiting request. Fluent controls wrap at short reflow; data comes from the test workspace, not the mock.' });
+            differences: 'Product retains the live command bar and omits mock-only chrome and state selectors. Fluent controls wrap at short reflow; data comes from the test workspace, not the mock.' });
         }
         assert.deepEqual(runtimeErrors, []);
       }
@@ -16217,8 +16217,483 @@ test('080 Documentation: project Details show documents at 64 KiB, list a larger
 });
 
 // ---------------------------------------------------------------------------
-// 073 Phase B (T009): Sources, multi-source discovery, the Source column and
-// filter, and source-bound pack requests. Every case runs the production
+// 083 Pack actions: Install, Remove, and Refresh pack in one dialog, over the
+// real Canvas server, provider, pack action child, and Compose. Each case
+// installs into its own disposable workspace from the local library, a saved
+// local folder, or offline GitHub (the loopback stand-in above), so no case
+// reaches a network. Screenshots take the approved mock's names, so each pairs
+// with `.dude/specs/083-one-step-pack-actions/design/screenshots/<name>.png`.
+// ---------------------------------------------------------------------------
+
+const T083_SCREENSHOTS = path.join(ROOT, '.dude', 'specs', '083-one-step-pack-actions', 'design', 'screenshots');
+const T083_SIZES = Object.freeze([
+  { name: '1440x900', width: 1440, height: 900, scale: 1 },
+  { name: '768x900', width: 768, height: 900, scale: 1 },
+  { name: '360x900', width: 360, height: 900, scale: 1 },
+  { name: '180x450', width: 180, height: 450, scale: 1 },
+  { name: '200pct-1440x900', width: 720, height: 450, scale: 2 },
+]);
+const T083_NEW_SESSION = 'New agents or skills may not be available until you start a new session.';
+
+/** Compose's projection modules and model configuration, which every install loads from the workspace. @param {ReturnType<typeof createReviewWorkspaceFixture>} workspace */
+function t083Engine(workspace) {
+  for (const name of ['agent-model-map.mjs', 'agent-projection.mjs']) {
+    workspace.write(`.github/skills/dude-engine/lib/${name}`, fs.readFileSync(path.join(ROOT, 'src', 'skills', 'dude-engine', 'lib', name)));
+  }
+  workspace.write('.github/skills/dude-engine/config/agent-models.json', fs.readFileSync(path.join(ROOT, 'src', 'config', 'agent-models.json')));
+}
+
+/**
+ * An installable pack at `<catalog>/library/packs/<name>`: an agent, a skill, and
+ * an instructions file, or at `version` 2 the agent and skill changed, a prompt
+ * added, and the instructions gone.
+ * @param {string} catalog @param {string} name @param {{ tools?: string[], version?: 1 | 2 }} [options]
+ */
+function t083Pack(catalog, name, { tools = [], version = 1 } = {}) {
+  const pack = path.join(catalog, 'library', 'packs', name);
+  fs.rmSync(pack, { recursive: true, force: true });
+  const write = (relative, text) => {
+    const file = path.join(pack, ...relative.split('/'));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text);
+  };
+  write('pack.md', ['---', `name: ${name}`, `description: ${JSON.stringify(`${name} fixture pack`)}`, 'use-cases: ["ui"]',
+    ...(tools.length ? ['requires:', `  tools: [${tools.join(', ')}]`] : []), '---', '', `# ${name}`, ''].join('\n'));
+  write(`agents/dude-pack-${name}-writer.agent.md`,
+    `---\nname: ${name} writer\ndescription: "Writes for ${name}"\ntools: [read]\nmodel-class: balanced\n---\nWriter v${version}.\n`);
+  write(`skills/dude-pack-${name}-helper/SKILL.md`, `---\nname: dude-pack-${name}-helper\ndescription: "Helps ${name}"\n---\n# Helper v${version}\n`);
+  if (version === 1) write(`instructions/dude-pack-${name}-style.instructions.md`, '# Style v1\n');
+  else write(`prompts/dude-pack-${name}-start.prompt.md`, `---\ndescription: "Start ${name}"\n---\nStart v2.\n`);
+}
+
+/** Commit everything in a published stand-in repository, and answer the new commit. @param {string} directory @param {string} message */
+function t083Commit(directory, message) {
+  const git = (...args) => {
+    const result = spawnSync('git', ['--no-pager', '-c', 'commit.gpgsign=false', ...args], { cwd: directory, encoding: 'utf8', windowsHide: true });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    return result.stdout.trim();
+  };
+  git('add', '-A');
+  git('-c', 'user.email=fixture@example.test', '-c', 'user.name=Canvas Fixture', 'commit', '-qm', message);
+  return git('rev-parse', 'HEAD');
+}
+
+/** The installed profile record of one pack, or undefined. @param {ReturnType<typeof createReviewWorkspaceFixture>} workspace @param {string} name */
+function t083Record(workspace, name) {
+  const text = fs.readFileSync(path.join(workspace.root, '.dude', 'metadata', 'profile.md'), 'utf8');
+  return JSON.parse(/```json\n([\s\S]*?)\n```/.exec(text)[1]).installed[name];
+}
+
+/**
+ * The 073 driver, plus a page-side hook on the pack action route that can hold
+ * the requests of chosen ops before they leave, or answer one op itself with a
+ * documented route answer, as a lost or failed apply would arrive.
+ * @param {Awaited<ReturnType<typeof openAboutCanvas>>} canvas
+ */
+async function t083Driver(canvas) {
+  await canvas.page.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+    const original = window.fetch;
+    window.t083 = { hold: [], held: [], answer: null, sent: [] };
+    window.fetch = async (...args) => {
+      if (new URL(args[0], location.href).pathname !== '/api/packs/action') return original(...args);
+      const op = JSON.parse(args[1].body).op;
+      if (window.t083.hold.includes(op)) await new Promise(resolve => window.t083.held.push(resolve));
+      if (args[1].signal?.aborted) return original(...args);
+      window.t083.sent.push(op);
+      const answer = window.t083.answer;
+      if (answer?.op === op) {
+        window.t083.answer = null;
+        return new Response(JSON.stringify(answer.body), { status: answer.status, headers: { 'content-type': 'application/json' } });
+      }
+      return original(...args);
+    };
+  })()` });
+  const p = await t073Driver(canvas);
+  return Object.assign(p, {
+    /** Everything the dialog shows, and where focus is. */
+    dialog: () => p.q(`(() => {
+      const dialog = document.querySelector('[data-pack-action-dialog]'), body = dialog.querySelector('[data-pack-action-body]');
+      const text = node => node ? node.innerText.replace(/\\s+/g, ' ').trim() : null;
+      const at = document.activeElement, r = dialog.getBoundingClientRect();
+      const header = dialog.querySelector('header')?.getBoundingClientRect(), footer = dialog.querySelector('footer')?.getBoundingClientRect();
+      const inside = node => node && node.top >= r.top - 0.5 && node.bottom <= r.bottom + 0.5;
+      const mark = ['primary', 'cancel', 'show', 'close', 'body'].find(name => at?.hasAttribute('data-pack-action-' + name));
+      return { open: dialog.open, modal: dialog.open && dialog.matches(':modal'), op: dialog.getAttribute('data-pack-action'),
+        phase: dialog.getAttribute('data-pack-action-phase'), title: text(dialog.querySelector('h2')), body: text(body),
+        reason: text(dialog.querySelector('[data-pack-action-reason]')),
+        buttons: [...dialog.querySelectorAll('footer button')].map(node => [node.textContent.trim(), node.disabled]),
+        close: dialog.querySelector('[data-pack-action-close]') ? dialog.querySelector('[data-pack-action-close]').disabled : null,
+        focus: mark ?? (dialog.contains(at) ? at.tagName.toLowerCase() : at?.getAttribute('data-pack-operation')
+          ?? (at?.getAttribute('aria-label') || at?.tagName.toLowerCase() || null)),
+        items: [...(body?.querySelectorAll('li') ?? [])].map(li => text(li)),
+        fields: dialog.querySelectorAll('input, textarea, select, [role="checkbox"], [contenteditable]').length,
+        live: dialog.querySelector('[role="status"]')?.textContent ?? null,
+        width: r.width, top: r.top, bottom: r.bottom, innerWidth, innerHeight,
+        pageWide: document.documentElement.scrollWidth > innerWidth,
+        dialogWide: dialog.scrollWidth > dialog.clientWidth + 1 || Boolean(body && body.scrollWidth > body.clientWidth + 1),
+        chromeShown: Boolean(inside(header) && (!footer || inside(footer))) };
+    })()`),
+    /** @param {string} phase */
+    phase: phase => until(() => p.q(`document.querySelector('[data-pack-action-dialog]').getAttribute('data-pack-action-phase') === ${JSON.stringify(phase)}`),
+      `the ${phase} state`),
+    /** Open the dialog from the selected row's details. @param {'install'|'remove'|'refresh'} operation */
+    async open(operation) {
+      await p.click(`[data-pack-operation="${operation}"]`);
+      await until(() => p.q(`document.querySelector('[data-pack-action-dialog]').open`), 'the pack action dialog opens');
+    },
+    /** @param {string[]} ops */
+    hold: ops => p.q(`window.t083.hold = ${JSON.stringify(ops)}`),
+    release: () => p.q(`window.t083.hold = []; window.t083.held.splice(0).forEach(resolve => resolve())`),
+    /** @param {string} op @param {number} status @param {unknown} body */
+    answer: (op, status, body) => p.q(`window.t083.answer = ${JSON.stringify({ op, status, body })}`),
+  });
+}
+
+/** Computed text colors in the open dialog, each against its painted background. @param {Awaited<ReturnType<typeof t083Driver>>} p */
+async function t083Contrast(p) {
+  const samples = await p.q(`(() => {
+    const background = node => {
+      for (let n = node; n; n = n.parentElement) {
+        const color = getComputedStyle(n).backgroundColor;
+        if (color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') return color;
+      }
+      return 'rgb(255, 255, 255)';
+    };
+    const dialog = document.querySelector('[data-pack-action-dialog]');
+    return [...dialog.querySelectorAll('h2, h3, p, span, code, dt, dd, summary, li, button:not(:disabled)')]
+      .filter(node => node.getClientRects().length && [...node.childNodes].some(child => child.nodeType === 3 && child.textContent.trim()))
+      .map(node => ({ text: node.textContent.trim().slice(0, 40), color: getComputedStyle(node).color, background: background(node) }));
+  })()`);
+  return samples.filter(sample => contrast(sample.color, sample.background) < 4.5)
+    .map(sample => `${sample.text}: ${contrast(sample.color, sample.background).toFixed(2)}`);
+}
+
+/** The words a person should never meet in the dialog: protocol, hashes, and the old request path. */
+const T083_PROTOCOL = /\b(token|sha256|receipt|request|permission|envelope|json|needs you|acknowledg\w*)\b|\b[0-9a-f]{64}\b/i;
+
+test('083 Pack actions: Install previews items and tools, installs with one click in under 10 seconds, and shows the pack in Installed, with no Needs you request or chat message', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '083-install', { packs: {}, prepare: workspace => {
+    t083Engine(workspace);
+    t083Pack(workspace.root, 'kit', { tools: ['git'] });
+    t083Pack(workspace.root, 'needy', { tools: ['dude-fixture-missing-tool'] });
+  } }, async canvas => {
+    const { page, output, workspace } = canvas;
+    const p = await t083Driver(canvas);
+    await p.enter();
+    await discoverCatalog(canvas);
+    await p.chooseContext('available');
+    const profile = fs.readFileSync(path.join(workspace.root, '.dude', 'metadata', 'profile.md'));
+
+    // A missing required tool blocks Install, with the reason beside the disabled verb, and Close only.
+    await p.click('[data-pack-row^="pack:needy@"]');
+    assert.equal(await p.q(`document.querySelector('[data-pack-operation="install"]').getAttribute('aria-haspopup')`), 'dialog');
+    await p.open('install');
+    await p.phase('blocked');
+    let dialog = await p.dialog();
+    assert.deepEqual([dialog.modal, dialog.title, dialog.reason, dialog.buttons, dialog.focus],
+      [true, 'Install needy', 'needy needs dude-fixture-missing-tool, which is not on PATH.', [['Close', false], ['Install', true]], 'cancel']);
+    assert.ok(dialog.body.includes('Required tools dude-fixture-missing-tool: missing'), dialog.body);
+    await aboutScreenshot(page, output, 'install-blocked-tool-1440x900-light');
+    await key(page, 'Escape');
+    assert.deepEqual([(await p.dialog()).open, (await p.dialog()).focus], [false, 'install'], 'Escape is Close, and focus returns to Install');
+
+    // Loading shows at once, with Cancel, and Cancel there changes nothing.
+    await p.click('[data-pack-row^="pack:kit@"]');
+    await p.hold(['preview']);
+    await p.open('install');
+    dialog = await p.dialog();
+    assert.deepEqual([dialog.phase, dialog.body, dialog.buttons, dialog.focus, dialog.close],
+      ['loading', 'Checking Local library...', [['Cancel', false]], 'cancel', false]);
+    await aboutScreenshot(page, output, 'install-loading-1440x900-light');
+    await p.click('[data-pack-action-cancel]');
+    await p.release();
+    assert.deepEqual([(await p.dialog()).open, (await p.dialog()).focus], [false, 'install']);
+
+    // Ready: items by name and kind, the tools, the source, the note, and the files behind a disclosure.
+    await p.open('install');
+    await p.phase('ready');
+    dialog = await p.dialog();
+    assert.deepEqual([dialog.title, dialog.buttons, dialog.focus, dialog.fields], ['Install kit', [['Cancel', false], ['Install', false]], 'cancel', 0]);
+    assert.deepEqual(dialog.items.slice(0, 3), ['dude-pack-kit-writer Agent', 'dude-pack-kit-style Instructions', 'dude-pack-kit-helper Skill']);
+    for (const text of ['Adds 3 items', 'Required tools git: found', 'Source Local library', T083_NEW_SESSION, 'Show files (3)']) {
+      assert.ok(dialog.body.includes(text), `${text} in ${dialog.body}`);
+    }
+    assert.equal(await p.q(`document.querySelector('[data-pack-action-body] details').open`), false, 'the files start collapsed');
+    assert.doesNotMatch(dialog.body, T083_PROTOCOL);
+    await aboutScreenshot(page, output, 'install-tools-found-1440x900-light');
+    for (const shift of [false, true]) for (let step = 0; step < 5; step += 1) {
+      await key(page, 'Tab', 'Tab', { shift });
+      assert.equal(await p.q(`document.querySelector('[data-pack-action-dialog]').contains(document.activeElement)`), true, 'Tab stays in the dialog');
+    }
+    assert.deepEqual(await t083Contrast(p), [], 'every dialog text meets 4.5:1');
+    const tree = await t005Accessibility(page);
+    assert.deepEqual([tree.has('dialog', 'Install kit'), tree.has('button', 'Install'), tree.has('button', 'Cancel'), tree.has('button', 'Close')],
+      [true, true, true, true]);
+    assert.deepEqual(fs.readFileSync(path.join(workspace.root, '.dude', 'metadata', 'profile.md')), profile, 'a preview writes nothing');
+
+    // One click on Install is the only confirmation.
+    await focus(page, '[data-pack-action-primary]');
+    const started = Date.now();
+    await key(page, 'Enter');
+    await p.phase('success');
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 10_000, `Install reached its success view in ${elapsed}ms`);
+    dialog = await p.dialog();
+    assert.deepEqual([dialog.title, dialog.focus, dialog.items], ['Install kit', 'primary',
+      ['dude-pack-kit-writer Agent', 'dude-pack-kit-style Instructions', 'dude-pack-kit-helper Skill']]);
+    assert.ok(dialog.body.startsWith(`Installed kit ${T083_NEW_SESSION} Added 3 items`), dialog.body);
+    await until(async () => (await p.dialog()).buttons.some(([text, disabled]) => text === 'Show in Installed' && !disabled), 'Installed lists the pack');
+    assert.deepEqual((await p.dialog()).buttons, [['Show in Installed', false], ['Done', false]]);
+    await aboutScreenshot(page, output, 'install-success-1440x900-light');
+    assert.deepEqual(Object.keys(t083Record(workspace, 'kit').source), ['type', 'location']);
+    assert.ok(fs.existsSync(path.join(workspace.root, '.github', 'agents', 'dude-pack-kit-writer.agent.md')));
+    assert.equal(canvas.provider.read().requests.length, 0, 'no Needs you request');
+    assert.equal(canvas.sends.length, 0, 'no chat message');
+
+    // Show in Installed: Installed opens on the pack, selected, with the details' Close focused.
+    await p.click('[data-pack-action-show]');
+    const state = await p.state();
+    assert.deepEqual([state.context, state.selected, state.detail, (await p.dialog()).open,
+      await p.q(`document.activeElement?.getAttribute('aria-label')`)], ['installed', ['pack:kit'], 'pack:kit', false, 'Close pack details']);
+    assert.deepEqual(await p.q('window.t083.sent'), ['preview', 'preview', 'apply'],
+      'the blocked preview, the ready preview, and its one apply; the cancelled preview never left');
+
+    // Remove it and choose Done at once, while the automatic read that drops its row is still out:
+    // focus still ends on the Settings heading, not on nothing.
+    await p.open('remove');
+    await p.phase('ready');
+    await p.q('window.t073.hold = true');
+    await p.click('[data-pack-action-primary]');
+    await p.phase('success');
+    await until(() => p.q('window.t073.held.length > 0'), 'the automatic read is held');
+    await p.click('[data-pack-action-primary]');
+    assert.deepEqual([(await p.dialog()).open, (await p.state()).keys.includes('pack:kit')], [false, true],
+      'Done closed the dialog before the read dropped the row');
+    await p.q('window.t073.hold = false; window.t073.held.splice(0).forEach(resolve => resolve())');
+    await until(async () => !(await p.state()).keys.includes('pack:kit'), 'Installed no longer lists the pack');
+    assert.deepEqual([(await p.state()).detail, await p.q(`document.activeElement?.tagName`)], [null, 'H1'],
+      'the row is gone, so focus goes to the view heading');
+  });
+});
+
+test('083 Pack actions: Remove lists every recorded file with no Cancel, and Refresh shows Replaced, Added, Removed, the overwrite warning, and Source changes', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await runAboutCase(context, '083-remove-refresh', { packs: {}, prepare: workspace => {
+    t083Engine(workspace);
+    t083Pack(workspace.root, 'kit');
+    const added = spawnSync(process.execPath, [path.join(ROOT, 'src', 'skills', 'dude-compose', 'compose.mjs'), 'add', 'kit', '--json'],
+      { cwd: workspace.root, encoding: 'utf8', windowsHide: true });
+    assert.equal(added.status, 0, added.stderr || added.stdout);
+    // The record names a folder that matches no source, so Refresh reads the default catalog and says so.
+    const file = path.join(workspace.root, '.dude', 'metadata', 'profile.md'), recorded = fs.readFileSync(file, 'utf8');
+    const moved = recorded.replace(JSON.stringify(path.join(workspace.root, 'library', 'packs')), JSON.stringify('/recorded/elsewhere/library/packs'));
+    assert.notEqual(moved, recorded, 'the record names the local library before it is moved');
+    fs.writeFileSync(file, moved);
+    t083Pack(workspace.root, 'kit', { version: 2 });
+  } }, async canvas => {
+    const { page, output, workspace } = canvas;
+    const p = await t083Driver(canvas);
+    await p.enter();
+    await p.click('[data-pack-row="pack:kit"]');
+
+    await p.open('refresh');
+    await p.phase('ready');
+    let dialog = await p.dialog();
+    assert.deepEqual([dialog.title, dialog.buttons, dialog.focus], ['Refresh kit', [['Cancel', false], ['Refresh', false]], 'cancel']);
+    assert.match(dialog.body, /^Source Local library - Local folder Source changes \/recorded\/elsewhere\/library\/packs -> Local library \(.+\) Local edits are overwritten /);
+    for (const text of ["Refresh replaces the files below with the source's copies. Keep lasting changes in dude-local-* files.",
+      'Replaced (2) .github/agents/dude-pack-kit-writer.agent.md .github/skills/dude-pack-kit-helper',
+      'Added (1) .github/prompts/dude-pack-kit-start.prompt.md', 'Removed (1) .github/instructions/dude-pack-kit-style.instructions.md', T083_NEW_SESSION]) {
+      assert.ok(dialog.body.includes(text), `${text} in ${dialog.body}`);
+    }
+    await aboutScreenshot(page, output, 'refresh-ready-1440x900-light');
+    await p.click('[data-pack-action-primary]');
+    await p.phase('success');
+    dialog = await p.dialog();
+    assert.deepEqual([dialog.body, dialog.buttons, dialog.focus],
+      [`Refreshed kit Replaced 2 files, added 1, and removed 1. ${T083_NEW_SESSION}`, [['Done', false]], 'primary']);
+    assert.match(fs.readFileSync(path.join(workspace.root, '.github', 'agents', 'dude-pack-kit-writer.agent.md'), 'utf8'), /Writer v2\./);
+    await key(page, 'Escape');
+    assert.deepEqual([(await p.dialog()).open, (await p.dialog()).focus], [false, 'refresh'], 'Escape is Done, and focus returns to Refresh');
+    // The automatic read after the Refresh moves the details' buttons while it is out, so let it land before clicking.
+    await packsSettled(page);
+
+    // Remove reads no source: every recorded file, then Removing... with no Cancel and Close disabled.
+    await p.open('remove');
+    await p.phase('ready');
+    dialog = await p.dialog();
+    const files = t083Record(workspace, 'kit').files;
+    assert.deepEqual([dialog.title, dialog.body, dialog.buttons],
+      ['Remove kit', `Deletes 3 recorded files ${files.join(' ')}`, [['Cancel', false], ['Remove', false]]]);
+    await aboutScreenshot(page, output, 'remove-ready-1440x900-light');
+    await p.hold(['apply']);
+    await p.click('[data-pack-action-primary]');
+    await p.phase('applying');
+    dialog = await p.dialog();
+    assert.deepEqual([dialog.body, dialog.buttons, dialog.close, dialog.focus], ['Removing...', [], true, 'body']);
+    await key(page, 'Escape');
+    assert.equal((await p.dialog()).phase, 'applying', 'Escape does nothing while Removing');
+    await aboutScreenshot(page, output, 'remove-applying-1440x900-light');
+    await p.release();
+    await p.phase('success');
+    dialog = await p.dialog();
+    assert.deepEqual([dialog.body, dialog.buttons], ['Removed kit Deleted 3 recorded files. Returns to Available after Reload packs.', [['Done', false]]]);
+    await aboutScreenshot(page, output, 'remove-success-1440x900-light');
+    assert.equal(t083Record(workspace, 'kit'), undefined);
+    assert.equal(files.some(file => fs.existsSync(path.join(workspace.root, ...file.split('/')))), false, 'every recorded file is gone');
+    await p.click('[data-pack-action-primary]');
+    await until(async () => !(await p.state()).keys.includes('pack:kit'), 'Installed no longer lists the pack');
+    assert.deepEqual([(await p.dialog()).open, (await p.state()).detail, await p.q(`document.activeElement?.tagName`)], [false, null, 'H1'],
+      'the row is gone, so focus goes to the view heading');
+    assert.deepEqual([canvas.provider.read().requests.length, canvas.sends.length], [0, 0]);
+  });
+});
+
+test('083 Pack actions: a saved folder and GitHub warn as third-party sources, a changed install writes nothing, Cancel stops before writing, and each failure says what happened', {
+  timeout: 420_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  /** @type {{ url: string, directory: string }} */
+  let published;
+  /** @type {ReturnType<typeof offlineGitHub>} */
+  let github;
+  let team = '', first = '';
+  await runAboutCase(context, '083-third-party', { packs: {}, prepare: async workspace => {
+    t083Engine(workspace);
+    team = addLocalSource(workspace, 'team-packs', []);
+    t083Pack(team, 'teamkit');
+    github = offlineGitHub(workspace);
+    published = github.publish('acme/kits', ['hubkit']);
+    t083Pack(published.directory, 'hubkit');
+    first = t083Commit(published.directory, 'hubkit v1');
+    await saveSources(workspace, [localSource(team), remoteSource('acme/kits')]);
+    return github.restore;
+  } }, async canvas => {
+    const { page, output, workspace } = canvas;
+    const p = await t083Driver(canvas);
+    const profileFile = path.join(workspace.root, '.dude', 'metadata', 'profile.md');
+    await p.enter();
+    await discoverCatalog(canvas);
+    await p.chooseContext('available');
+
+    // A saved folder: the warning names the folder with "no commit", and nothing asks for a checkbox.
+    await p.click('[data-pack-row^="pack:teamkit@"]');
+    await p.open('install');
+    await p.phase('ready');
+    let dialog = await p.dialog();
+    assert.match(dialog.body, /^Third-party source This pack is not part of the Dude bundle\. It can add agents and instructions to this project\. Folder: \S*team-packs\S* \(no commit\) Adds 3 items /);
+    assert.equal(dialog.fields, 0, 'no checkbox or field');
+    await aboutScreenshot(page, output, 'install-third-folder-1440x900-light');
+    for (const size of T083_SIZES) for (const theme of ['light', 'dark']) {
+      await aboutViewport(page, size, theme);
+      dialog = await p.dialog();
+      assert.equal(dialog.width, Math.min(480, size.width - 16), `the dialog is min(480px, 100vw - 16px) at ${size.name}`);
+      assert.deepEqual([dialog.modal, dialog.pageWide, dialog.dialogWide, dialog.chromeShown, dialog.top >= 0, dialog.bottom <= dialog.innerHeight],
+        [true, false, false, true, true, true], `the dialog fits with its title and buttons shown at ${size.name} ${theme}`);
+      assert.deepEqual(await t083Contrast(p), [], `contrast at ${size.name} ${theme}`);
+      if (size.name !== '1440x900' || theme === 'dark') await aboutScreenshot(page, output, `install-third-folder-${size.name}-${theme}`);
+    }
+    await aboutViewport(page, T083_SIZES[0], 'light');
+
+    // Changed: the installed packs change after the preview, so Install writes nothing and offers Preview again.
+    fs.writeFileSync(profileFile, fs.readFileSync(profileFile, 'utf8').replace('"installed": {', '"installed": {\n    "other": { "files": '
+      + '[".github/agents/dude-pack-other-worker.agent.md"], "source": { "type": "local", "location": "/recorded/other" } },'));
+    const profile = fs.readFileSync(profileFile);
+    await p.click('[data-pack-action-primary]');
+    await p.phase('changed');
+    dialog = await p.dialog();
+    assert.deepEqual([dialog.body, dialog.buttons, dialog.focus],
+      ['Installed packs or sources changed since this preview. Nothing changed.', [['Cancel', false], ['Preview again', false]], 'primary']);
+    assert.deepEqual(fs.readFileSync(profileFile), profile, 'a changed install leaves the profile byte-identical');
+    assert.equal(fs.existsSync(path.join(workspace.root, '.github', 'agents', 'dude-pack-teamkit-writer.agent.md')), false);
+    await aboutScreenshot(page, output, 'install-changed-1440x900-light');
+
+    // A pack folder gone after its preview: Compose refuses before writing, and says why.
+    await p.click('[data-pack-action-primary]');
+    await p.phase('ready');
+    fs.renameSync(path.join(team, 'library', 'packs', 'teamkit'), path.join(team, 'teamkit-away'));
+    await p.click('[data-pack-action-primary]');
+    await p.phase('failed');
+    dialog = await p.dialog();
+    assert.ok(dialog.body.startsWith("Install failed Nothing changed Compose's message"), dialog.body);
+    assert.deepEqual([dialog.buttons, dialog.focus], [[['Close', false]], 'cancel']);
+    assert.deepEqual(fs.readFileSync(profileFile), profile);
+    await aboutScreenshot(page, output, 'install-failed-none-1440x900-light');
+    await p.click('[data-pack-action-cancel]');
+    fs.renameSync(path.join(team, 'teamkit-away'), path.join(team, 'library', 'packs', 'teamkit'));
+
+    // Restored and unconfirmed failures arrive as the route answers them; each has its own sentence.
+    for (const [mutation, body] of [['restored', 'Install failed Failed; your files were restored'],
+      ['uncertain', 'Install failed Failed; restoration unconfirmed. Check Installed.']]) {
+      await p.open('install');
+      await p.phase('ready');
+      await p.answer('apply', 200, { ok: false, error: `Compose stopped (${mutation}).`, mutation });
+      await p.click('[data-pack-action-primary]');
+      await p.phase('failed');
+      dialog = await p.dialog();
+      assert.ok(dialog.body.startsWith(`${body} Compose's message`), dialog.body);
+      await focus(page, '[data-pack-action-body] details summary');
+      await key(page, 'Enter');
+      assert.ok((await p.dialog()).body.endsWith(`Compose stopped (${mutation}).`));
+      await aboutScreenshot(page, output, `install-failed-${mutation}-1440x900-light`);
+      await key(page, 'Escape');
+    }
+
+    // GitHub: the repository and its full commit; the apply installs that commit even after the branch moved.
+    await p.click('[data-pack-row^="pack:hubkit@"]');
+    await p.open('install');
+    await p.phase('ready');
+    dialog = await p.dialog();
+    assert.ok(dialog.body.startsWith('Third-party source This pack is not part of the Dude bundle. It can add agents and instructions to this project. '
+      + `Repository: https://github.com/acme/kits Commit: ${first}`), dialog.body);
+    await aboutScreenshot(page, output, 'install-third-github-1440x900-light');
+    t083Pack(published.directory, 'hubkit', { version: 2 });
+    const moved = t083Commit(published.directory, 'hubkit v2');
+    await p.click('[data-pack-action-primary]');
+    await p.phase('success');
+    assert.equal(t083Record(workspace, 'hubkit').source.resolved_commit, first, 'the previewed commit is recorded');
+    assert.match(fs.readFileSync(path.join(workspace.root, '.github', 'agents', 'dude-pack-hubkit-writer.agent.md'), 'utf8'), /Writer v1\./);
+    await until(async () => (await p.dialog()).buttons.some(([text, disabled]) => text === 'Show in Installed' && !disabled), 'Installed lists hubkit');
+    await p.click('[data-pack-action-show]');
+
+    // The next preview from that source warns again, now at the moved commit; Cancel while refreshing writes nothing.
+    await p.open('refresh');
+    await p.phase('ready');
+    dialog = await p.dialog();
+    assert.ok(dialog.body.startsWith(`Third-party source This pack is not part of the Dude bundle. It can add agents and instructions to this project. Repository: https://github.com/acme/kits Commit: ${moved}`), dialog.body);
+    assert.equal(dialog.body.includes('Source changes'), false, 'the record and the refresh name the same source');
+    await aboutScreenshot(page, output, 'refresh-third-1440x900-light');
+    const installed = fs.readFileSync(profileFile);
+    github.hold('acme/kits');
+    await p.click('[data-pack-action-primary]');
+    await p.phase('applying');
+    dialog = await p.dialog();
+    assert.deepEqual([dialog.body, dialog.buttons, dialog.close], ['Refreshing...', [['Cancel', false]], true]);
+    await p.click('[data-pack-action-cancel]');
+    await p.phase('cancelled');
+    dialog = await p.dialog();
+    assert.deepEqual([dialog.body, dialog.buttons, dialog.focus], ['Nothing changed.', [['Close', false]], 'cancel']);
+    assert.deepEqual(fs.readFileSync(profileFile), installed, 'a cancelled refresh leaves the profile byte-identical');
+    await aboutScreenshot(page, output, 'refresh-cancelled-1440x900-light');
+    await key(page, 'Escape');
+    assert.equal((await p.dialog()).focus, 'refresh');
+    assert.deepEqual([canvas.provider.read().requests.length, canvas.sends.length], [0, 0]);
+    output.json('approved-screenshots.json', Object.fromEntries(fs.readdirSync(T083_SCREENSHOTS)
+      .map(name => [name, sha256(fs.readFileSync(path.join(T083_SCREENSHOTS, name)))])));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 073 Phase B (T009): Sources, multi-source discovery, and the Source column and
+// filter. Every case runs the production
 // provider, HTTP routes and bundle over disposable workspaces. Local folders and
 // offline GitHub (a loopback stand-in for GitHub's HTTP reads) are the only
 // sources, so no case reaches a network.
@@ -16973,7 +17448,7 @@ test('073 Sources: Remove is advisory when a source is in use, confirms in a dia
       await p.click('[data-source-remove-confirm]');
       await until(async () => (await t073Removal(p)).status !== null, 'a late refusal inside the confirmation');
       let dialog = await t073Removal(p);
-      assert.equal(dialog.status, 'Not removed: this source is in use Nothing was changed. A source stays while an installed pack records it or a pack request uses it. '
+      assert.equal(dialog.status, 'Not removed: this source is in use Nothing was changed. A source stays while an installed pack records it. '
         + 'Installed packs recorded from this source (1) rm-pack');
       assert.deepEqual([dialog.open, dialog.focus, dialog.cancel, dialog.confirmDisabled, dialog.statusButtons], [true, 'status', 'Close', true, []],
         'the refusal stays in the dialog, takes focus, and leaves only Close');
@@ -18506,8 +18981,7 @@ test('073 Add/import: exact exclusion reasons, an editable idea draft, queued in
     await discoverCatalog(canvas);
     await d.click(`[data-pack-row^="${pack}@"]`);
     let action = await t005PackAction(d);
-    assert.deepEqual([action.buttons.every(([, disabled]) => disabled), action.reason],
-      [true, 'An artifact import needs owner reconciliation before a pack request can be sent.']);
+    assert.deepEqual(action, { buttons: [['Install', false]], reason: null }, 'an open import never withholds a pack action');
     await key(page, 'Escape');
 
     // A reconciled result releases every send.
@@ -18518,7 +18992,7 @@ test('073 Add/import: exact exclusion reasons, an editable idea draft, queued in
     idea = await t005Idea(d);
     assert.deepEqual([idea.buttons.Submit.described, idea.buttons.Save.described], [[], []]);
 
-    // A sent capture needs owner reconciliation: it excludes Request import and pack sends, with their own words.
+    // A sent capture needs owner reconciliation: it excludes Request import, with its own words, and no pack action.
     await clickSettingsControl(page, `[...document.querySelectorAll('#dude-panel-new button')].find(node => node.innerText.trim() === 'Submit')`);
     await until(() => canvas.sends.length === 2, 'the capture is sent');
     await d.openImport();
@@ -18529,28 +19003,8 @@ test('073 Add/import: exact exclusion reasons, an editable idea draft, queued in
     await d.chooseSub('available');
     await d.click(`[data-pack-row^="${pack}@"]`);
     action = await t005PackAction(d);
-    assert.deepEqual([action.buttons.every(([, disabled]) => disabled), action.reason],
-      [true, 'An idea capture needs owner reconciliation before a pack request can be sent.']);
+    assert.deepEqual(action, { buttons: [['Install', false]], reason: null }, 'an open capture never withholds a pack action');
     assert.deepEqual(d.importPosts().map(entry => JSON.parse(entry.body).op), ['prepare', 'prepare', 'submit'], 'a refused prepare, then one accepted request, and nothing else');
-  });
-
-  // A sent pack request excludes an import in the other direction.
-  await runImportCase(context, '073-import-after-pack', {}, async ({ canvas, d }) => {
-    const { page, packs } = canvas;
-    await d.enter();
-    await d.chooseSub('available');
-    await discoverCatalog(canvas);
-    await d.click(`[data-pack-row^="${packKeys(packs.availableNames)[0]}@"]`);
-    await d.click('[data-pack-operation="install"]');
-    await until(() => canvas.sends.length === 1, 'the pack request is sent');
-    await key(page, 'Escape');
-    await key(page, 'Escape');
-    await d.openImport();
-    const status = await d.status();
-    assert.deepEqual(status.request, { disabled: true, note: 'A pack request needs owner reconciliation before an import can be requested.' });
-    await d.click('#dude-tab-new');
-    assert.ok((await t005Idea(d)).text.includes('A pack request is in progress or needs owner reconciliation. Your idea draft stays here.'));
-    assert.equal(d.importPosts().length, 0, 'a disabled Request import prepares nothing');
   });
 });
 

@@ -27,13 +27,8 @@ import {
 } from './lib/needs-you.mjs';
 import { createReview, REVIEW_LIMITS, ReviewError } from './lib/review.mjs';
 import { closeInstance, openInstance } from './lib/canvas-server.mjs';
-import { packReadRevision, readPacks } from './lib/packs.mjs';
-import { readProjectArtifacts } from './lib/project-artifacts.mjs';
-import { cmdStatus } from '../../skills/dude-compose/compose.mjs';
 import { validateDirectoryImportResult } from '../../skills/dude-bundle-import/lib/directory-import.mjs';
-import { classifyPath, TIER } from '../../skills/dude-engine/lib/ownership.mjs';
 import { serializeProfileDocument } from '../../skills/dude-engine/lib/profile.mjs';
-import { PACK_SOURCES_PATH, serializePackSourcesDocument } from '../../skills/dude-engine/lib/pack-sources.mjs';
 
 let fixtureSequence = 0;
 let invocationSequence = 0;
@@ -403,897 +398,29 @@ function createProviderFixture(root, options = {}) {
   return { provider, ...sessionFixture };
 }
 
-/** Admission fixtures seed read authority; only the HTTP/Compose integration
- * tests below canvas-server.test.mjs claim an actual pack application.
- * @param {'install'|'remove'|'refresh'} [operation]
+/**
+ * A provider over a workspace seeded with an installed profile and a pack
+ * catalog: bytes an import request must never read. The session's send is
+ * observed as correlated idle delivery, and the provider starts idle.
  */
-function packProviderFixture(operation = 'install') {
+function seededProviderFixture() {
   const root = temporaryRoot();
-  const source = { type: 'local', location: path.join(root, 'library/packs') };
-  const entry = { files: ['.github/agents/dude-pack-alpha-worker.agent.md'], source };
-  const profile = installed => write(root, '.dude/metadata/profile.md', serializeProfileDocument({ installed }, { root }));
+  write(root, '.dude/metadata/profile.md', serializeProfileDocument({ installed: {} }, { root }));
   write(root, 'library/packs/alpha/pack.md', '---\nname: alpha\ndescription: "Inert pack metadata"\n---\n');
-  profile(operation === 'install' ? {} : { alpha: entry });
-  if (operation !== 'install') write(root, entry.files[0], 'Existing installed fixture.\n');
   const fixture = createProviderFixture(root);
   const idle = () => fixture.provider.onEvent(/** @type {any} */ ({
     id: randomUUID(), type: 'session.idle', data: { aborted: false },
   }));
   fixture.state.send = async ({ prompt }) => {
-    const messageId = `pack-message-${fixture.calls.sends.length}`;
+    const messageId = `message-${fixture.calls.sends.length}`;
     fixture.provider.onEvent(/** @type {any} */ ({ type: 'user.message', data: { content: prompt, messageId, delivery: 'idle' } }));
     return messageId;
   };
   idle();
-  return { ...fixture, root, operation, source, entry, profile, idle,
-    prepare: () => fixture.provider.requestPack({ op: 'prepare', operation, name: 'alpha' }),
-    submit: receipt => fixture.provider.requestPack({ op: 'submit', operation, name: 'alpha', packReceipt: receipt.packReceipt }),
+  return { ...fixture, root, idle,
     cleanup() { fixture.provider.dispose(); fs.rmSync(root, { recursive: true, force: true }); },
   };
 }
-
-/** @param {ReturnType<typeof packProviderFixture>} fixture @param {any} view @param {object} [overrides] */
-function packAcknowledgment(fixture, view, overrides = {}) {
-  const { receiptId, owner, operation, name, workspaceId, sessionId, providerGeneration } = view.receipt;
-  const status = cmdStatus({ root: fixture.root });
-  assert.equal(status.ok, true);
-  return {
-    receiptId, owner, operation, name, workspaceId, sessionId, providerGeneration,
-    recognizes: 'pack_result', outcome: 'declined', mutation: 'none', result: null,
-    profileRevision: revision(bytes(fixture.root, '.dude/metadata/profile.md')),
-    source: Object.hasOwn(status.result.installed, name) ? status.result.installed[name].source : null,
-    note: 'The owner declined this request without applying a change.',
-    ...overrides,
-  };
-}
-
-test('T003 pack HTTP payloads and receipt targets are closed, bounded, and never accept command data', async () => {
-  const fixture = packProviderFixture();
-  const before = snapshotFiles(fixture.root);
-  try {
-    const valid = { op: 'prepare', operation: 'install', name: 'alpha' };
-    const invalid = [
-      { ...valid, op: 'execute' }, { ...valid, operation: 'upgrade' }, { ...valid, operation: 'INSTALL' },
-      { ...valid, name: '../alpha' }, { ...valid, name: 'alpha;echo nope' }, { ...valid, name: 'alpha\n' },
-      { ...valid, name: 'a'.repeat(161) }, { ...valid, packReceipt: randomUUID() },
-      ...['root', 'path', 'source', 'ref', 'force', 'prompt', 'shell', 'command', 'owner', 'providerGeneration']
-        .map(key => ({ ...valid, [key]: 'not authority' })),
-    ];
-    for (const body of invalid) {
-      await assert.rejects(fixture.provider.requestPack(body), { code: 'invalid_input' }, JSON.stringify(body));
-      assert.equal(fixture.provider.read().packRequests.length, 0);
-    }
-    await assert.rejects(fixture.provider.requestPack({ ...valid, prompt: 'x'.repeat(NEEDS_YOU_LIMITS.bodyBytes) }),
-      { code: 'invalid_input' });
-    const prepared = await fixture.prepare();
-    const submit = { op: 'submit', operation: 'install', name: 'alpha', packReceipt: prepared.packReceipt };
-    await assert.rejects(fixture.provider.requestPack({ ...submit, operation: 'remove' }), { code: 'identity_mismatch' });
-    await assert.rejects(fixture.provider.requestPack({ ...submit, name: 'beta' }), { code: 'identity_mismatch' });
-    await assert.rejects(fixture.provider.requestPack({ ...submit, force: true }), { code: 'invalid_input' });
-    await assert.rejects(fixture.provider.requestPack({ ...submit, packReceipt: randomUUID() }), { code: 'unknown_receipt' });
-    assert.equal(fixture.provider.read().packRequests[0].phase, 'prepared', 'invalid companion data cannot burn the valid receipt');
-    assert.equal((await fixture.submit(prepared)).phase, 'delivered');
-    assert.equal(fixture.calls.sends.length, 1);
-    assert.deepEqual(snapshotFiles(fixture.root), before);
-  } finally { fixture.cleanup(); }
-});
-
-test('T003 pack admission checks idle, live waiters, queues, eligibility, and valid installed authority before allocation', async t => {
-  const cases = [
-    ['busy', f => f.provider.onEvent({ type: 'assistant.turn_start', data: {} }), 'idle_required'],
-    ['aborted idle', f => f.provider.onEvent({ type: 'session.idle', data: { aborted: true } }), 'idle_required'],
-    ['live waiter', async f => { await publishRequest(f.provider, sessionRequest('fact'), f.session.sessionId); }, 'idle_required'],
-    ['queued input', f => { f.state.pendingItems = () => ({ items: [{}], steeringMessages: [] }); }, 'idle_required'],
-    ['queued steering', f => { f.state.pendingItems = () => ({ items: [], steeringMessages: [{}], inFlightSteeringCount: 0 }); }, 'idle_required'],
-    ['queue unavailable', f => { f.state.pendingItems = () => { throw new Error('Private queue detail'); }; }, 'operation_unavailable'],
-    ['installed install', f => f.profile({ alpha: f.entry }), 'pack_ineligible'],
-    ['invalid profile', f => write(f.root, '.dude/metadata/profile.md', 'invalid profile'), 'source_unavailable'],
-    ['invalid catalog', f => write(f.root, 'library/packs/alpha/pack.md', '---\nuse-cases: invalid\n---\n'), 'source_unavailable'],
-    ['missing exact pack', f => fs.rmSync(path.join(f.root, 'library/packs/alpha'), { recursive: true }), 'pack_ineligible'],
-    ['hyphen collision', f => f.profile({ 'alpha-child': {
-      files: ['.github/agents/dude-pack-alpha-child-worker.agent.md'], source: f.source,
-    } }), 'pack_ineligible'],
-  ];
-  for (const [label, arrange, reason] of cases) await t.test(label, async () => {
-    const f = packProviderFixture();
-    try {
-      await arrange(f);
-      const before = snapshotFiles(f.root);
-      await assert.rejects(f.prepare(), { code: reason });
-      assert.equal(f.calls.sends.length, 0);
-      assert.equal(f.provider.read().packRequests.length, 0);
-      assert.deepEqual(snapshotFiles(f.root), before);
-    } finally { f.cleanup(); }
-  });
-  for (const operation of ['remove', 'refresh']) await t.test(`${operation} needs own installed membership`, async () => {
-    const f = packProviderFixture();
-    try {
-      for (const name of ['alpha', 'constructor']) {
-        await assert.rejects(f.provider.requestPack({ op: 'prepare', operation, name }), { code: 'pack_ineligible' });
-      }
-      assert.equal(f.calls.sends.length, 0);
-    } finally { f.cleanup(); }
-  });
-  await t.test('remove remains admissible without catalog authority', async () => {
-    const f = packProviderFixture('remove');
-    try {
-      write(f.root, 'library/packs/alpha/pack.md', '---\nuse-cases: invalid\n---\n');
-      assert.equal((await f.submit(await f.prepare())).phase, 'delivered');
-      assert.equal(f.calls.sends.length, 1);
-    } finally { f.cleanup(); }
-  });
-});
-
-test('T003 capture and pack preparation share one exclusion, including interleaved queue reads', async t => {
-  await t.test('capture receipt already issued', async () => {
-    const f = packProviderFixture();
-    try {
-      await f.provider.issueCaptureReceipt({ requestHandle: null });
-      await assert.rejects(f.prepare(), { code: 'capture_unreconciled' });
-      assert.equal(f.provider.read().packRequests.length, 0);
-    } finally { f.cleanup(); }
-  });
-  await t.test('pack acquisition excludes a capture that started earlier and twenty other tabs', async () => {
-    const f = packProviderFixture();
-    const firstQueue = deferred(), entered = deferred();
-    f.state.pendingItems = () => {
-      if (f.calls.queue === 1) { entered.resolve(); return firstQueue.promise; }
-      return { items: [], steeringMessages: [] };
-    };
-    const capture = f.provider.issueCaptureReceipt({ requestHandle: null });
-    const rejectedCapture = assert.rejects(capture, { code: 'pack_unreconciled' });
-    try {
-      await entered.promise;
-      const pack = f.prepare();
-      const tabs = Array.from({ length: 20 }, () => assert.rejects(f.prepare(), { code: 'pack_unreconciled' }));
-      firstQueue.resolve({ items: [], steeringMessages: [] });
-      await rejectedCapture;
-      const prepared = await pack;
-      await Promise.all(tabs);
-      assert.equal(f.provider.read().captures.length, 0);
-      assert.equal(f.provider.read().packRequests.length, 1);
-      await assert.rejects(f.provider.issueCaptureReceipt({ requestHandle: null }), { code: 'pack_unreconciled' });
-      const results = await Promise.allSettled([f.submit(prepared), f.submit(prepared)]);
-      assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
-      assert.equal(results.find(result => result.status === 'rejected').reason.code, 'already_consumed');
-      f.idle();
-      await assert.rejects(f.prepare(), { code: 'pack_unreconciled' }, 'a new idle hint cannot clear an unacknowledged send');
-      await assert.rejects(f.provider.issueCaptureReceipt({ requestHandle: null }), { code: 'pack_unreconciled' });
-      assert.equal(f.calls.sends.length, 1);
-    } finally {
-      firstQueue.resolve({ items: [], steeringMessages: [] });
-      f.cleanup();
-    }
-  });
-});
-
-test('T004 an unsubmitted prepared pack receipt excludes while fresh, then retires lazily and never sends', async t => {
-  // The provider allocated this receipt, but its tab lost the response and
-  // never submitted it. Only an observation after one operation bound retires it.
-  const abandon = async (f, context) => {
-    // Whole milliseconds keep the held clock's arithmetic exact: from a fractional
-    // start, (start + operationMs) - start can round just under the retirement bound.
-    let now = Math.ceil(performance.now());
-    context.mock.method(performance, 'now', () => now);
-    const abandoned = await f.prepare();
-    assert.equal(abandoned.phase, 'prepared');
-    const start = now;
-    for (const elapsed of [0, NEEDS_YOU_LIMITS.operationMs - 1]) {
-      now = start + elapsed;
-      await assert.rejects(f.prepare(), { code: 'pack_unreconciled' }, 'a fresh receipt still excludes other tabs');
-      await assert.rejects(f.provider.issueCaptureReceipt({ requestHandle: null }), { code: 'pack_unreconciled' });
-      assert.equal((await f.provider.refresh()).packRequests[0].phase, 'prepared');
-    }
-    now = start + NEEDS_YOU_LIMITS.operationMs;
-    assert.equal(f.provider.read().packRequests[0].phase, 'prepared', 'no timer changed it before an observation');
-    return abandoned;
-  };
-  const assertRetired = f => {
-    const view = f.provider.read().packRequests[0];
-    assert.equal(view.phase, 'stale');
-    assert.equal(view.reason, 'pack_receipt_expired');
-    assert.equal(view.receipt.freshness, 'stale');
-    assert.equal(view.receipt.acknowledgment, null);
-    assert.equal(view.applied, false);
-  };
-  for (const observer of ['feed refresh', 'late submit', 'pack admission', 'idea capture']) await t.test(observer, async t => {
-    const f = packProviderFixture();
-    try {
-      const abandoned = await abandon(f, t);
-      if (observer === 'feed refresh') await f.provider.refresh();
-      if (observer === 'late submit') await assert.rejects(f.submit(abandoned), { code: 'already_consumed' });
-      if (observer === 'idea capture') {
-        assert.equal((await f.provider.issueCaptureReceipt({ requestHandle: null })).status, 'prepared');
-        assertRetired(f);
-        await assert.rejects(f.submit(abandoned), { code: 'already_consumed' });
-        assert.equal(f.calls.sends.length, 0);
-        return;
-      }
-      // A new explicit request is admitted and sends once; the old one never can.
-      const fresh = await f.prepare();
-      assertRetired(f);
-      await assert.rejects(f.submit(abandoned), { code: 'already_consumed' });
-      assert.equal((await f.submit(fresh)).phase, 'delivered');
-      await assert.rejects(f.submit(abandoned), { code: 'already_consumed' });
-      await assert.rejects(f.prepare(), { code: 'pack_unreconciled' }, 'the live request keeps the exclusion');
-      assert.equal(f.calls.sends.length, 1);
-      assert.equal(JSON.parse(f.calls.sends[0].prompt.split('\n').at(-1)).receiptId, fresh.packReceipt);
-    } finally { f.cleanup(); }
-  });
-});
-
-test('T003 install and refresh outlast the five-second operation bound for their catalog phase, and removal keeps it', { timeout: 60_000 }, async t => {
-  // Two queue checks of 3.5 seconds: each within its own short bound, together past five seconds.
-  /** @param {ReturnType<typeof packProviderFixture>} f */
-  const slowQueue = f => {
-    f.state.pendingItems = () => new Promise(resolve => setTimeout(() => resolve({ items: [], steeringMessages: [] }), 3_500));
-  };
-  for (const operation of /** @type {const} */ (['install', 'refresh'])) await t.test(operation, async () => {
-    const f = packProviderFixture(operation);
-    try {
-      slowQueue(f);
-      const started = performance.now();
-      const prepared = await f.prepare();
-      const elapsed = performance.now() - started;
-      assert.equal(prepared.phase, 'prepared');
-      assert.ok(elapsed > 6_500, `the preparation ran past five seconds: ${elapsed.toFixed(0)} ms`);
-      assert.equal((await f.submit(prepared)).phase, 'delivered');
-      assert.equal(f.calls.sends.length, 1);
-    } finally { f.cleanup(); }
-  });
-  await t.test('remove', async () => {
-    const f = packProviderFixture('remove');
-    try {
-      slowQueue(f);
-      const started = performance.now();
-      await assert.rejects(f.prepare(), { code: 'operation_unavailable' });
-      const elapsed = performance.now() - started;
-      assert.ok(elapsed >= 4_900 && elapsed < 6_500, `a removal, which reads no catalog, keeps five seconds in all: ${elapsed.toFixed(0)} ms`);
-      assert.equal(f.provider.read().packRequests.length, 0);
-      assert.equal(f.calls.sends.length, 0);
-    } finally { f.cleanup(); }
-  });
-});
-
-test('T003 install and refresh keep five-second queue and send bounds inside their longer request ceiling', { timeout: 60_000 }, async t => {
-  /**
-   * The provider's own bounds are unreferenced timers, which alone would let this process's event loop end
-   * before they fire, so a referenced timer keeps it alive while `work` waits on them.
-   * @template T @param {() => Promise<T>} work
-   */
-  const whileAlive = async work => {
-    const alive = setInterval(() => {}, 1_000);
-    try { return await work(); } finally { clearInterval(alive); }
-  };
-  await t.test('a queue check that never answers', async () => {
-    const f = packProviderFixture();
-    try {
-      f.state.pendingItems = () => new Promise(() => {});
-      const started = performance.now();
-      await whileAlive(() => assert.rejects(f.prepare(), { code: 'operation_unavailable' }));
-      const elapsed = performance.now() - started;
-      assert.ok(elapsed >= 4_900 && elapsed < 6_500, `the queue check kept its own bound: ${elapsed.toFixed(0)} ms`);
-      assert.equal(f.provider.read().packRequests.length, 0, 'no receipt was allocated');
-    } finally { f.cleanup(); }
-  });
-  await t.test('a send that never confirms', async () => {
-    const f = packProviderFixture('refresh');
-    try {
-      const prepared = await f.prepare();
-      f.state.send = () => new Promise(() => {});
-      const started = performance.now();
-      await whileAlive(() => assert.rejects(f.submit(prepared), { code: 'pack_send_uncertain' }));
-      const elapsed = performance.now() - started;
-      assert.ok(elapsed >= 4_900 && elapsed < 6_500, `the send kept its own bound: ${elapsed.toFixed(0)} ms`);
-      assert.equal(f.provider.read().packRequests[0].phase, 'uncertain');
-      assert.equal(f.calls.sends.length, 1, 'sent once and never replayed');
-      await assert.rejects(f.submit(prepared), { code: 'already_consumed' });
-    } finally { f.cleanup(); }
-  });
-});
-
-test('T003 pack receipt is burned on every final-queue refusal, with fresh valid companion inputs', async t => {
-  const cases = [
-    ['queued input', f => { f.queueResult = { items: [{}], steeringMessages: [] }; }, 'idle_required'],
-    ['new waiter', async f => { await publishRequest(f.provider, sessionRequest('permission'), f.session.sessionId); }, 'idle_required'],
-    ['new turn', f => f.provider.onEvent({ type: 'assistant.turn_start', data: {} }), 'idle_required'],
-    ['root abort', f => f.provider.onEvent({ type: 'abort', data: {} }), 'idle_required'],
-    ['provider ends', f => f.provider.dispose(), 'operation_unavailable'],
-    ['session identity', f => { f.session.sessionId = 'replacement-session'; }, 'identity_mismatch'],
-    ['profile bytes', f => write(f.root, '.dude/metadata/profile.md', `${bytes(f.root, '.dude/metadata/profile.md')}\nChanged basis.\n`), 'source_changed'],
-    ['source configuration', f => write(f.root, '.dude/metadata/bundle-manifest.md', '# Changed source configuration\n'), 'source_changed'],
-    ['catalog metadata', f => write(f.root, 'library/packs/alpha/pack.md', '---\nname: alpha\ndescription: "Changed during final queue read"\n---\n'), 'source_changed'],
-    ['unsafe profile destination', f => {
-      // This is a removal fixture so changing the recorded destination alone
-      // must be caught; profile bytes and every identity input remain current.
-      fs.rmSync(path.join(f.root, f.entry.files[0]));
-      fs.mkdirSync(path.join(f.root, 'linked-target'));
-      fs.symlinkSync(path.join(f.root, 'linked-target'), path.join(f.root, f.entry.files[0]), 'junction');
-    }, 'source_unavailable', 'remove'],
-  ];
-  for (const [label, arrange, reason, operation] of cases) await t.test(label, async () => {
-    const f = packProviderFixture(operation ?? 'install');
-    const entered = deferred(), released = deferred();
-    try {
-      const prepared = await f.prepare();
-      let once = true;
-      f.state.pendingItems = () => {
-        if (once) { once = false; entered.resolve(); return released.promise; }
-        return { items: [], steeringMessages: [] };
-      };
-      const submitting = assert.rejects(f.submit(prepared), { code: reason });
-      await entered.promise;
-      await arrange(f);
-      released.resolve(f.queueResult ?? { items: [], steeringMessages: [] });
-      await submitting;
-      assert.equal(f.calls.sends.length, 0);
-      assert.ok(['unavailable', 'stale'].includes(f.provider.read().packRequests[0].phase));
-      await assert.rejects(f.submit(prepared), { code: 'already_consumed' });
-    } finally { released.resolve({ items: [], steeringMessages: [] }); f.cleanup(); }
-  });
-});
-
-test('T003 profile and catalog drift between prepare and submit cannot be retargeted or undone into authority', async t => {
-  for (const change of ['profile', 'metadata', 'source', 'root']) await t.test(change, async () => {
-    const f = packProviderFixture();
-    const moved = `${f.root}-previous`;
-    try {
-      const prepared = await f.prepare();
-      if (change === 'profile') f.profile({ alpha: f.entry });
-      if (change === 'metadata') write(f.root, 'library/packs/alpha/pack.md', '---\nname: alpha\ndescription: "Changed metadata"\n---\n');
-      if (change === 'source') write(f.root, '.dude/metadata/bundle-manifest.md', '# Changed configuration\n');
-      if (change === 'root') {
-        fs.renameSync(f.root, moved);
-        fs.cpSync(moved, f.root, { recursive: true });
-      }
-      await assert.rejects(f.submit(prepared),
-        error => error instanceof NeedsYouError && ['source_changed', 'pack_ineligible', 'identity_mismatch'].includes(error.code));
-      assert.equal(f.calls.sends.length, 0);
-      assert.equal(f.provider.read().packRequests[0].phase, 'stale');
-      await assert.rejects(f.submit(prepared), { code: 'already_consumed' });
-    } finally {
-      f.cleanup();
-      fs.rmSync(moved, { recursive: true, force: true });
-    }
-  });
-});
-
-/**
- * Project agents and skills share names, folders and prefixes with pack
- * artifacts. These files are the strongest lookalikes: a local agent and skill
- * named like the pack, and a local file spelled like the pack's own worker.
- * @param {string} root
- */
-function writeProjectLookalikes(root) {
-  write(root, '.github/agents/dude-local-alpha.agent.md', '---\nname: "Alpha"\ndescription: "A project agent named like the pack."\n---\n');
-  write(root, '.github/agents/dude-local-alpha.support/NOTICE', 'notice\n');
-  write(root, '.github/agents/dude-local-alpha-worker.agent.md', '---\nname: "Worker"\ndescription: "Spelled like the pack worker."\n---\n');
-  write(root, '.github/skills/dude-local-alpha/SKILL.md', '---\nname: "alpha"\ndescription: "A project skill named like the pack."\n---\n');
-  write(root, '.github/skills/dude-local-alpha/refs/guide.md', 'guide\n');
-}
-
-// Source-removal blockers arrive with Phase B (T008). Nothing here asserts them.
-test('T003 project agents and skills cannot change pack membership, request binding, freshness or results', async t => {
-  const signal = new AbortController().signal;
-  for (const operation of /** @type {const} */ (['install', 'remove', 'refresh'])) await t.test(operation, async () => {
-    const f = packProviderFixture(operation);
-    try {
-      const authority = async () => {
-        const { readAt, ...rest } = await readPacks(f.root, signal);
-        return rest;
-      };
-      const freshness = () => [packReadRevision(f.root, true, 'alpha'), packReadRevision(f.root, false)];
-      const baseline = { read: await authority(), freshness: freshness(), status: cmdStatus({ root: f.root }) };
-      writeProjectLookalikes(f.root);
-      assert.deepEqual(await authority(), baseline.read, 'membership, Available rows, coverage and revisions are unchanged');
-      assert.deepEqual(freshness(), baseline.freshness, 'the freshness inputs ignore project artifacts');
-      assert.deepEqual(cmdStatus({ root: f.root }), baseline.status);
-
-      const prepared = await f.prepare();
-      // Project files change in every way between prepare and submit; the request's binding does not notice.
-      write(f.root, '.github/agents/dude-local-alpha.agent.md', 'changed bytes, no frontmatter');
-      write(f.root, '.github/skills/dude-local-extra/SKILL.md', 'a new project skill');
-      fs.rmSync(path.join(f.root, '.github/skills/dude-local-alpha'), { recursive: true });
-      assert.deepEqual(freshness(), baseline.freshness);
-      const delivered = await f.submit(prepared);
-      assert.equal(delivered.phase, 'delivered');
-      assert.equal(f.calls.sends.length, 1);
-      assert.equal(JSON.parse(f.calls.sends[0].prompt.split('\n').at(-1)).receiptId, prepared.packReceipt);
-
-      // The result is checked against pack authority alone, never against a project row.
-      const result = await acknowledge(f.provider, packAcknowledgment(f, prepared), f.session.sessionId);
-      assert.equal(result.resultType, 'success', result.textResultForLlm);
-      assert.equal(f.provider.read().packRequests[0].phase, 'declined');
-      assert.equal(f.provider.read().packRequests[0].applied, false);
-      assert.deepEqual(await authority(), baseline.read, 'still unchanged after every project change and the result');
-
-      const project = await readProjectArtifacts(f.root, signal);
-      assert.deepEqual(project.items?.map(item => item.key),
-        ['project:agent:dude-local-alpha', 'project:agent:dude-local-alpha-worker', 'project:skill:dude-local-extra'],
-        'the project read does list those files, separately');
-    } finally { f.cleanup(); }
-  });
-  await t.test('control: the same project churn plus one profile change is refused, so the check above is not vacuous', async () => {
-    const f = packProviderFixture();
-    try {
-      writeProjectLookalikes(f.root);
-      const prepared = await f.prepare();
-      write(f.root, '.github/skills/dude-local-extra/SKILL.md', 'a new project skill');
-      write(f.root, '.dude/metadata/profile.md', `${bytes(f.root, '.dude/metadata/profile.md')}\nChanged basis.\n`);
-      await assert.rejects(f.submit(prepared), { code: 'source_changed' });
-      assert.equal(f.calls.sends.length, 0);
-    } finally { f.cleanup(); }
-  });
-});
-
-test('T003 project keys and local artifacts are never pack names, Available exclusions or namespace authority', async () => {
-  const signal = new AbortController().signal;
-  const f = packProviderFixture();
-  try {
-    writeProjectLookalikes(f.root);
-    write(f.root, '.github/agents/dude-pack-alpha-worker.agent.md', 'A pack-owned file, never a project row.\n');
-    // A project key carries a colon, which no pack name may; it can never bind a request.
-    for (const name of ['project:skill:dude-local-alpha', 'project:agent:dude-local-alpha', 'project:skill:alpha']) {
-      await assert.rejects(f.provider.requestPack({ op: 'prepare', operation: 'install', name }), { code: 'invalid_input' }, name);
-    }
-    // The local identity is not a catalog pack and not installed: no operation is eligible.
-    for (const operation of ['install', 'remove', 'refresh']) {
-      await assert.rejects(f.provider.requestPack({ op: 'prepare', operation, name: 'dude-local-alpha' }), { code: 'pack_ineligible' }, operation);
-    }
-    assert.equal(f.provider.read().packRequests.length, 0);
-    assert.equal(f.calls.sends.length, 0);
-    // Available is the catalog less the profile's installed packs: a same-named project artifact removes nothing from it.
-    const read = await readPacks(f.root, signal);
-    assert.deepEqual(read.items?.map(({ name, installed }) => ({ name, installed })), [{ name: 'alpha', installed: false }]);
-    assert.deepEqual(read.installed, { enabled_packs: [], installed: {} });
-    assert.equal(read.coverage.installed.state, 'empty');
-    // Namespace authority stays with the shared classifier: no row or file is pack-owned or core.
-    const project = await readProjectArtifacts(f.root, signal);
-    assert.equal(project.items?.length, 3);
-    for (const item of project.items ?? []) {
-      assert.equal(item.name.startsWith('dude-local-'), true);
-      for (const file of [item.location, ...(item.files.paths ?? [])]) {
-        assert.equal([TIER.PACK, TIER.CORE].includes(classifyPath(file)), false, `${file} is neither pack-owned nor core`);
-      }
-    }
-    assert.equal(project.items?.some(item => item.files.paths?.some(file => file.includes('dude-pack-'))), false,
-      'a pack-owned file in the same folder is never a project row or file');
-  } finally { f.cleanup(); }
-});
-
-test('T003 send admission, correlated idle delivery and uncertainty never imply application or authorize replay', async t => {
-  const cases = [
-    ['SDK rejects before observed delivery', () => { throw new Error('Private SDK message'); }],
-    ['SDK rejects after possible delivery', (f, prompt) => {
-      f.provider.onEvent({ type: 'user.message', data: { content: prompt, messageId: 'expected', delivery: 'idle' } });
-      throw new Error('Response lost after delivery');
-    }],
-    ['wrong message id', (f, prompt) => {
-      f.provider.onEvent({ type: 'user.message', data: { content: prompt, messageId: 'other', delivery: 'idle' } });
-      return 'expected';
-    }],
-    ['queued rather than idle delivery', (f, prompt) => {
-      f.provider.onEvent({ type: 'user.message', data: { content: prompt, messageId: 'expected', delivery: 'queued' } });
-      return 'expected';
-    }],
-    ['missing message id', (f, prompt) => {
-      f.provider.onEvent({ type: 'user.message', data: { content: prompt, delivery: 'idle' } });
-      return 'expected';
-    }],
-  ];
-  for (const [label, send] of cases) await t.test(label, async () => {
-    const f = packProviderFixture();
-    try {
-      const prepared = await f.prepare();
-      f.state.send = ({ prompt }) => send(f, prompt);
-      await assert.rejects(f.submit(prepared), { code: 'pack_send_uncertain' });
-      f.idle();
-      assert.equal(f.provider.read().packRequests[0].phase, 'uncertain');
-      await assert.rejects(f.submit(prepared), { code: 'already_consumed' });
-      await assert.rejects(f.prepare(), { code: 'pack_unreconciled' });
-      await assert.rejects(f.provider.issueCaptureReceipt({ requestHandle: null }), { code: 'pack_unreconciled' });
-      assert.equal(f.calls.sends.length, 1);
-      assert.equal(f.provider.read().packRequests[0].applied, false);
-      const result = await acknowledge(f.provider, packAcknowledgment(f, prepared, {
-        outcome: 'uncertain', mutation: 'uncertain', note: 'The send may have been delivered; do not replay it.',
-      }), f.session.sessionId);
-      assert.equal(result.resultType, 'success');
-      assert.equal(details(result).phase, 'uncertain');
-      assert.equal(details(result).applied, false);
-    } finally { f.cleanup(); }
-  });
-  await t.test('late matching event establishes delivery only', async () => {
-    const f = packProviderFixture();
-    try {
-      const prepared = await f.prepare();
-      f.state.send = () => 'late-message';
-      const admitted = await f.submit(prepared);
-      assert.equal(admitted.phase, 'admitted');
-      assertRefused(await acknowledge(f.provider, packAcknowledgment(f, prepared), f.session.sessionId), 'pack_unreconciled');
-      f.provider.onEvent(/** @type {any} */ ({ type: 'user.message', data: {
-        content: f.calls.sends[0].prompt, messageId: 'late-message', delivery: 'idle',
-      } }));
-      assert.equal(f.provider.read().packRequests[0].phase, 'delivered');
-      assert.equal(f.provider.read().packRequests[0].applied, false);
-      f.provider.onEvent(/** @type {any} */ ({ type: 'assistant.turn_start', data: {} }));
-      assert.equal(f.provider.read().packRequests[0].phase, 'waiting_owner');
-      assert.equal(f.calls.sends.length, 1);
-    } finally { f.cleanup(); }
-  });
-  await t.test('cancellation after calling send cannot claim no change', async () => {
-    const f = packProviderFixture(), controller = new AbortController();
-    try {
-      const prepared = await f.prepare();
-      f.state.send = () => { controller.abort(); return new Promise(() => {}); };
-      await assert.rejects(f.provider.requestPack({ op: 'submit', operation: 'install', name: 'alpha',
-        packReceipt: prepared.packReceipt }, { signal: controller.signal }), { code: 'pack_send_uncertain' });
-      assert.equal(f.provider.read().packRequests[0].phase, 'uncertain');
-      assert.equal(f.calls.sends.length, 1);
-    } finally { f.cleanup(); }
-  });
-});
-
-test('T003 outstanding pack send does not block its exact permission reply or ordinary acknowledgment', async () => {
-  const f = packProviderFixture();
-  const before = snapshotFiles(f.root);
-  try {
-    const prepared = await f.prepare();
-    await f.submit(prepared);
-    const request = sessionRequest('permission', {
-      requestRef: `pack:${prepared.packReceipt}`,
-      source: { kind: 'session', revision: prepared.receipt.providerGeneration },
-      fields: { operation: 'pack:install', targets: [{ target: 'pack:alpha', revision: 'preview-revision' }],
-        consequences: 'Install the exact previewed files. Required tools remain user-managed.',
-        eligibility: 'Profile, source and targets will be rechecked before application.',
-        confirmation: 'INSTALL PACK alpha' },
-    });
-    const invalid = invocation(f.session.sessionId);
-    assertRefused(await f.provider.tool.handler({ op: 'request', request: {
-      ...request, fields: { ...request.fields, operation: 'pack:remove' },
-    } }, invalid.invocation), 'identity_mismatch');
-    const pending = await publishRequest(f.provider, request, f.session.sessionId);
-    assert.equal(f.provider.read().packRequests[0].phase, 'waiting_permission');
-    assert.equal(f.provider.read().packRequests[0].permissionRequest, pending.record.requestHandle);
-    const response = { class: 'permission', action: 'consent', ...request.fields };
-    delete response.consequences; delete response.eligibility;
-    await assert.rejects(f.provider.respond({ requestHandle: pending.record.requestHandle, revision: request.revision,
-      response: { ...response, confirmation: 'install alpha' } }), { code: 'invalid_input' });
-    assert.equal(f.provider.read().requests[0].phase, 'pending');
-    const delivered = await f.provider.respond({
-      requestHandle: pending.record.requestHandle, revision: request.revision, response,
-    });
-    assert.equal(delivered.applied, false);
-    const ownerReply = details(await pending.result);
-    assert.deepEqual(ownerReply.response, response);
-    const recognized = await acknowledge(f.provider,
-      acknowledgment(delivered.receipt, 'accepted', request.source), f.session.sessionId);
-    assert.equal(recognized.resultType, 'success');
-    assert.equal(f.provider.read().packRequests[0].phase, 'waiting_owner');
-    assert.equal(f.provider.read().packRequests[0].applied, false);
-    assert.equal(f.calls.sends.length, 1, 'a permission reply returns the waiting tool, not another idle send');
-    assert.deepEqual(snapshotFiles(f.root), before);
-  } finally { f.cleanup(); }
-});
-
-test('T003 pack result binding is exact; wrong fields and concurrent or duplicate acknowledgments cannot win', async () => {
-  const f = packProviderFixture();
-  try {
-    const prepared = await f.prepare();
-    await f.submit(prepared);
-    const ack = packAcknowledgment(f, prepared);
-    const invalid = [
-      ['operation', 'refresh', 'acknowledgment_conflict'], ['name', 'beta', 'acknowledgment_conflict'],
-      ['owner', 'another-owner', 'invalid_input'], ['workspaceId', revision('other-root'), 'acknowledgment_conflict'],
-      ['sessionId', 'other-session', 'acknowledgment_conflict'], ['providerGeneration', randomUUID(), 'acknowledgment_conflict'],
-      ['receiptId', randomUUID(), 'unknown_receipt'], ['evidence', '.dude/made-up-result.json', 'invalid_input'],
-      ['source', { kind: 'file', path: '.dude/made-up-result.json', revision: revision('payload') }, 'invalid_input'],
-      ['recognizes', 'capture', 'invalid_input'],
-    ];
-    for (const [key, value, reason] of invalid) {
-      assertRefused(await acknowledge(f.provider, { ...ack, [key]: value }, f.session.sessionId), reason);
-      assert.equal(f.provider.read().packRequests[0].receipt.acknowledgment, null);
-    }
-    assertRefused(await acknowledge(f.provider, ack, 'wrong-invocation-session'), 'identity_mismatch');
-    const first = invocation(f.session.sessionId), second = invocation(f.session.sessionId);
-    const results = await Promise.all([
-      f.provider.tool.handler({ op: 'acknowledge', acknowledgment: ack }, first.invocation),
-      f.provider.tool.handler({ op: 'acknowledge', acknowledgment: ack }, second.invocation),
-    ]);
-    assert.equal(results.filter(result => result.resultType === 'success').length, 1);
-    assertRefused(results.find(result => result.resultType === 'failure'), 'acknowledgment_conflict');
-    assertRefused(await acknowledge(f.provider, ack, f.session.sessionId), 'acknowledgment_conflict');
-    const result = f.provider.read().packRequests[0];
-    assert.equal(result.phase, 'declined');
-    assert.equal(result.applied, false);
-    assert.equal(result.receipt.reread.entry, null);
-    assert.equal(result.receipt.reread.profileRevision, ack.profileRevision);
-    assert.equal(f.calls.sends.length, 1);
-  } finally { f.cleanup(); }
-});
-
-test('T003 stale profile or recorded-source acknowledgment is refused independently of transport and schema', async t => {
-  for (const change of ['profile', 'source']) await t.test(change, async () => {
-    const f = packProviderFixture('refresh');
-    try {
-      const prepared = await f.prepare();
-      await f.submit(prepared);
-      const ack = packAcknowledgment(f, prepared);
-      if (change === 'profile') {
-        write(f.root, '.dude/metadata/profile.md', `${bytes(f.root, '.dude/metadata/profile.md')}\nChanged after owner read.\n`);
-      } else ack.source = { type: 'local', location: 'different-source' };
-      // The source-only negative keeps the profile revision exactly correct;
-      // the profile-only negative keeps the source and every binding correct.
-      assertRefused(await acknowledge(f.provider, ack, f.session.sessionId), 'pack_state_mismatch');
-      const view = f.provider.read().packRequests[0];
-      assert.equal(view.phase, 'stale');
-      assert.equal(view.applied, false);
-      assert.equal(view.receipt.acknowledgment, null);
-      assert.equal(cmdStatus({ root: f.root }).result.enabled_packs.includes('alpha'), true);
-      assert.equal(f.calls.sends.length, 1);
-    } finally { f.cleanup(); }
-  });
-});
-
-test('T003 unavailable pack profiles preserve correlated non-success owner outcomes', async t => {
-  for (const outcome of ['unavailable', 'uncertain']) {
-    for (const failure of ['directory', 'read denied']) await t.test(`${outcome}: ${failure}`, async t => {
-      const f = packProviderFixture('refresh');
-      let readMock;
-      try {
-        const receipt = await f.prepare();
-        await f.submit(receipt);
-        const ack = packAcknowledgment(f, receipt, {
-          outcome, mutation: outcome === 'uncertain' ? 'uncertain' : 'none',
-          profileRevision: null, source: null, note: 'The owner cannot establish the current installed authority.',
-        });
-        const pending = await publishRequest(f.provider, sessionRequest('permission', {
-          requestRef: `pack:${receipt.packReceipt}`,
-          source: { kind: 'session', revision: receipt.receipt.providerGeneration },
-          fields: { operation: 'pack:refresh', targets: [{ target: 'pack:alpha', revision: 'preview-revision' }],
-            consequences: 'Refresh can overwrite installed edits.', eligibility: 'Recheck profile, source and targets.',
-            confirmation: 'REFRESH PACK alpha' },
-        }), f.session.sessionId);
-        assert.equal(f.provider.read().packRequests[0].phase, 'waiting_permission');
-        const rootStat = fs.lstatSync(f.root);
-        const rootIdentity = revision(JSON.stringify([fs.realpathSync(f.root), rootStat.dev, rootStat.ino]));
-        const profilePath = path.join(f.root, '.dude/metadata/profile.md');
-        let deniedReads = 0;
-        if (failure === 'directory') {
-          fs.rmSync(profilePath);
-          fs.mkdirSync(profilePath);
-        } else {
-          const read = fs.readFileSync;
-          readMock = t.mock.method(fs, 'readFileSync', (file, ...rest) => {
-            if (file === profilePath) {
-              deniedReads += 1;
-              throw Object.assign(new Error('Fixture profile read denied.'), { code: 'EACCES' });
-            }
-            return read(file, ...rest);
-          });
-        }
-        const response = await acknowledge(f.provider, ack, f.session.sessionId);
-        if (failure === 'read denied') assert.equal(deniedReads, 1);
-        assert.equal(response.resultType, 'success', response.textResultForLlm);
-        const view = details(response);
-        assert.equal(view.phase, outcome);
-        assert.equal(view.applied, false);
-        assert.deepEqual(view.receipt.acknowledgment, ack);
-        assert.equal(view.receipt.freshness, 'unavailable');
-        assert.equal(view.receipt.current, false);
-        assert.deepEqual(view.receipt.reread, {
-          workspaceId: receipt.receipt.workspaceId, rootIdentity,
-          profileRevision: null, readRevision: null, entry: null, state: 'unavailable', reason: 'installed_unavailable',
-        });
-        assert.equal(f.provider.read().requests.find(entry => entry.requestHandle === pending.record.requestHandle).phase, 'pending',
-          'a non-success result does not require or consume application consent');
-        assert.equal(f.provider.read().packRequests[0].phase, outcome);
-        await assert.rejects(f.submit(receipt), { code: 'already_consumed' });
-        assert.equal(f.calls.sends.length, 1);
-      } finally {
-        readMock?.mock.restore();
-        f.cleanup();
-      }
-    });
-  }
-});
-
-test('T003 unavailable pack profiles cannot mask root replacement or removal', async t => {
-  for (const change of ['replacement', 'removal']) await t.test(change, async () => {
-    const f = packProviderFixture('refresh');
-    const moved = `${f.root}-previous`;
-    try {
-      const receipt = await f.prepare();
-      await f.submit(receipt);
-      const ack = packAcknowledgment(f, receipt, {
-        outcome: 'unavailable', mutation: 'none', profileRevision: null, source: null,
-        note: 'Current installed authority is unavailable.',
-      });
-      fs.renameSync(f.root, moved);
-      if (change === 'replacement') fs.mkdirSync(path.join(f.root, '.dude/metadata/profile.md'), { recursive: true });
-      assertRefused(await acknowledge(f.provider, ack, f.session.sessionId), 'identity_mismatch');
-      const view = f.provider.read().packRequests[0];
-      assert.equal(view.applied, false);
-      assert.equal(view.receipt.acknowledgment, null);
-      assert.equal(view.receipt.ackToolCallId, null);
-      assert.equal(view.receipt.reread, null);
-      assert.equal(f.calls.sends.length, 1);
-    } finally {
-      f.cleanup();
-      fs.rmSync(moved, { recursive: true, force: true });
-    }
-  });
-});
-
-test('T003 replacement provider cannot recover pack authority from a receipt, profile, or prior delivery', async () => {
-  const f = packProviderFixture();
-  let replacement;
-  try {
-    const prepared = await f.prepare();
-    await f.submit(prepared);
-    const ack = packAcknowledgment(f, prepared);
-    f.provider.dispose();
-    replacement = createProviderFixture(f.root);
-    assertRefused(await acknowledge(f.provider, ack, f.session.sessionId), 'provider_unavailable');
-    assertRefused(await acknowledge(replacement.provider, ack, replacement.session.sessionId), 'unknown_receipt');
-    await assert.rejects(replacement.provider.requestPack({ op: 'submit', operation: 'install', name: 'alpha',
-      packReceipt: prepared.packReceipt }), { code: 'unknown_receipt' });
-    assert.equal(replacement.provider.read().packRequests.length, 0);
-    assert.equal(replacement.calls.sends.length, 0);
-    assert.equal(f.provider.read().packRequests[0].phase, 'unavailable');
-  } finally { replacement?.provider.dispose(); f.cleanup(); }
-});
-
-test('T003 a waiter racing pack preparation refuses before receipt allocation', async () => {
-  const f = packProviderFixture();
-  const entered = deferred(), release = deferred();
-  let once = true;
-  f.state.pendingItems = () => {
-    if (once) { once = false; entered.resolve(); return release.promise; }
-    return { items: [], steeringMessages: [] };
-  };
-  try {
-    const preparing = assert.rejects(f.prepare(), { code: 'idle_required' });
-    await entered.promise;
-    await publishRequest(f.provider, sessionRequest('fact'), f.session.sessionId);
-    release.resolve({ items: [], steeringMessages: [] });
-    await preparing;
-    assert.equal(f.provider.read().packRequests.length, 0);
-    assert.equal(f.calls.sends.length, 0);
-  } finally { release.resolve({ items: [], steeringMessages: [] }); f.cleanup(); }
-});
-
-test('T003 root abort during a pack result reread cannot commit a late owner result', async () => {
-  const f = packProviderFixture();
-  try {
-    const prepared = await f.prepare();
-    await f.submit(prepared);
-    const call = invocation(f.session.sessionId);
-    const result = f.provider.tool.handler({ op: 'acknowledge', acknowledgment: packAcknowledgment(f, prepared) }, call.invocation);
-    f.provider.onEvent(/** @type {any} */ ({ type: 'abort', data: {} }));
-    assert.equal(call.invocation.signal.aborted, false, 'the root abort is independent of invocation cancellation');
-    assertRefused(await result, 'operation_unavailable');
-    assert.equal(f.provider.read().packRequests[0].receipt.acknowledgment, null);
-    assert.equal(f.provider.read().packRequests[0].phase, 'uncertain');
-    const reconciled = await acknowledge(f.provider, packAcknowledgment(f, prepared, {
-      outcome: 'uncertain', mutation: 'uncertain', note: 'The owner stopped; no repeat is authorized.',
-    }), f.session.sessionId);
-    assert.equal(reconciled.resultType, 'success');
-    assert.equal(details(reconciled).applied, false);
-    assert.equal(f.calls.sends.length, 1);
-  } finally { f.cleanup(); }
-});
-
-test('T003 profile drift after the result reread and before acknowledgment cannot commit a stale verdict', async () => {
-  const f = packProviderFixture('remove');
-  try {
-    const receipt = await f.prepare();
-    await f.submit(receipt);
-    const ack = packAcknowledgment(f, receipt);
-    const result = acknowledge(f.provider, ack, f.session.sessionId);
-    // All payload fields are valid for the completed read. Change only the
-    // profile in the await continuation window, not the invocation/lifecycle.
-    write(f.root, '.dude/metadata/profile.md', `${bytes(f.root, '.dude/metadata/profile.md')}\nAfter reread.\n`);
-    assertRefused(await result, 'pack_state_mismatch');
-    assert.equal(f.provider.read().packRequests[0].receipt.acknowledgment, null);
-    assert.equal(f.provider.read().packRequests[0].phase, 'stale');
-    assert.equal(f.calls.sends.length, 1);
-  } finally { f.cleanup(); }
-});
-
-test('T003 configured local catalog metadata stays source-bound through the last queue check', async () => {
-  const f = packProviderFixture();
-  const sourceRoot = path.join(f.root, 'configured-source');
-  const entered = deferred(), release = deferred();
-  try {
-    fs.mkdirSync(path.join(sourceRoot, 'library'), { recursive: true });
-    fs.renameSync(path.join(f.root, 'library/packs'), path.join(sourceRoot, 'library/packs'));
-    write(f.root, '.dude/metadata/bundle-manifest.md',
-      `# Manifest\n\n\`\`\`json\n${JSON.stringify({ source_repo: sourceRoot, source_ref: 'main' })}\n\`\`\`\n`);
-    const receipt = await f.prepare();
-    f.state.pendingItems = () => { entered.resolve(); return release.promise; };
-    const submitting = assert.rejects(f.submit(receipt), { code: 'source_changed' });
-    await entered.promise;
-    write(sourceRoot, 'library/packs/alpha/pack.md', '---\nname: alpha\ndescription: "New configured metadata"\n---\n');
-    release.resolve({ items: [], steeringMessages: [] });
-    await submitting;
-    assert.equal(f.calls.sends.length, 0);
-    assert.equal(f.provider.read().packRequests[0].phase, 'stale');
-  } finally { release.resolve({ items: [], steeringMessages: [] }); f.cleanup(); }
-});
-
-test('T003 selected source preimage cannot follow a linked configured catalog ancestor', async () => {
-  const f = packProviderFixture();
-  const sourceRoot = path.join(f.root, 'configured-source'), outside = path.join(f.root, 'outside-source');
-  try {
-    fs.mkdirSync(sourceRoot);
-    fs.renameSync(path.join(f.root, 'library'), outside);
-    fs.symlinkSync(outside, path.join(sourceRoot, 'library'), 'junction');
-    write(f.root, '.dude/metadata/bundle-manifest.md',
-      `# Manifest\n\n\`\`\`json\n${JSON.stringify({ source_repo: sourceRoot, source_ref: 'main' })}\n\`\`\`\n`);
-    await assert.rejects(f.prepare(), { code: 'source_unavailable' });
-    assert.equal(f.provider.read().packRequests.length, 0);
-    assert.equal(f.calls.sends.length, 0);
-    // Repair only the link condition. The same profile, root, name and manifest
-    // must now admit, so an earlier invalid-input guard cannot satisfy the test.
-    fs.rmSync(path.join(sourceRoot, 'library'));
-    fs.renameSync(outside, path.join(sourceRoot, 'library'));
-    assert.equal((await f.prepare()).phase, 'prepared');
-  } finally { f.cleanup(); }
-});
-
-test('T003 pack result and idea-capture acknowledgments cannot cross-consume the other receipt kind', async () => {
-  const f = packProviderFixture();
-  try {
-    const prepared = await f.prepare();
-    await f.submit(prepared);
-    assertRefused(await acknowledge(f.provider, {
-      receiptId: prepared.packReceipt, owner: 'dude', requestRef: `pack:${prepared.packReceipt}`,
-      scope: { kind: 'session' }, previousRevision: prepared.receipt.providerGeneration,
-      recognizes: 'canvas_response', outcome: 'applied', note: 'Not pack evidence.',
-      source: { kind: 'session', revision: prepared.receipt.providerGeneration },
-    }, f.session.sessionId), 'acknowledgment_conflict');
-    assert.equal((await acknowledge(f.provider, packAcknowledgment(f, prepared), f.session.sessionId)).resultType, 'success');
-    f.idle();
-    const capture = await f.provider.issueCaptureReceipt({ requestHandle: null });
-    const wrongKind = packAcknowledgment(f, prepared, { receiptId: capture.captureReceipt });
-    assertRefused(await acknowledge(f.provider, wrongKind, f.session.sessionId), 'unknown_receipt');
-    assert.equal(f.provider.read().captures[0].phase, 'issued');
-    assert.equal(f.provider.read().captures[0].receipt.acknowledgment, null);
-  } finally { f.cleanup(); }
-});
-
-test('T003 pack receipts consume the existing record budget without eviction or a second registry', async () => {
-  const f = packProviderFixture('remove');
-  try {
-    const handles = [];
-    for (let i = 0; i < NEEDS_YOU_LIMITS.records; i++) {
-      handles.push((await f.prepare()).packReceipt);
-      f.provider.onEvent(/** @type {any} */ ({ type: 'assistant.turn_start', data: {} }));
-      f.idle();
-    }
-    await assert.rejects(f.prepare(), { code: 'capacity' });
-    assert.deepEqual(f.provider.read().packRequests.map(record => record.packReceipt), handles);
-    assert.equal(f.provider.read().packRequests.length, NEEDS_YOU_LIMITS.records);
-    assert.equal(f.calls.sends.length, 0);
-  } finally { f.cleanup(); }
-});
-
-test('T003 owner cannot upgrade a refresh failure to restoration but may downgrade it to uncertainty', async () => {
-  const f = packProviderFixture('refresh');
-  try {
-    const receipt = await f.prepare();
-    await f.submit(receipt);
-    const result = { ok: false, code: 2, mutation: 'uncertain', error: 'Fixture models an engine-reported restoration failure.' };
-    const incorrect = packAcknowledgment(f, receipt, { outcome: 'failed', mutation: 'restored', result });
-    assertRefused(await acknowledge(f.provider, incorrect, f.session.sessionId), 'invalid_input');
-    const doubtfulRestoration = { ...result, mutation: 'restored', error: 'Engine reported restoration, but owner verification was unavailable.' };
-    const uncertain = packAcknowledgment(f, receipt, { outcome: 'uncertain', mutation: 'uncertain', result: doubtfulRestoration });
-    const accepted = await acknowledge(f.provider, uncertain, f.session.sessionId);
-    assert.equal(accepted.resultType, 'success');
-    assert.equal(details(accepted).phase, 'uncertain');
-    assert.equal(details(accepted).applied, false);
-  } finally { f.cleanup(); }
-});
 
 // ---------------------------------------------------------------------------
 // Feature 073 T001: the closed Canvas artifact-import provider.
@@ -1307,12 +434,12 @@ const IMPORT_SOURCE = 'C:\\Users\\Example\\skills\\dude-local-demo\\SKILL.md';
 const GITHUB_SOURCE = 'https://github.com/example/skills/blob/main/skills/demo/SKILL.md';
 
 /**
- * The pack fixture also seeds the profile and catalog bytes an import request
- * must never read, and shares the provider that capture and pack requests use.
+ * The seeded fixture holds the profile and catalog bytes an import request
+ * must never read, and shares the provider that capture requests use.
  * @param {string} [source]
  */
 function importFixture(source = IMPORT_SOURCE) {
-  const f = packProviderFixture();
+  const f = seededProviderFixture();
   const prepareImport = (importSource = source) => f.provider.requestImport({ op: 'prepare', importSource });
   const submitImport = (view, importSource = source) => f.provider.requestImport({
     op: 'submit', importSource, importReceipt: view.importReceipt,
@@ -1596,15 +723,13 @@ test('T001 import prepare, submit, read and refresh touch no source, profile or 
   });
 });
 
-test('T001 capture, pack and import exclude each other in both directions while prepared or sent', async t => {
+test('T001 capture and import exclude each other in both directions while prepared or sent', async t => {
   const states = {
     'prepared capture': [async f => { await f.provider.issueCaptureReceipt({ requestHandle: null }); }, 'capture'],
     'sent capture': [async f => {
       const { captureReceipt } = await f.provider.issueCaptureReceipt({ requestHandle: null });
       await f.provider.captureIdea({ captureReceipt, intent: 'Keep this idea.', continuation: 'capture_only' });
     }, 'capture'],
-    'prepared pack': [async f => { await f.prepare(); }, 'pack'],
-    'sent pack': [async f => { await f.submit(await f.prepare()); }, 'pack'],
     'prepared import': [async f => { await f.prepareImport(); }, 'import'],
     'sent import': [async f => { await f.submitImport(await f.prepareImport()); }, 'import'],
   };
@@ -1615,7 +740,6 @@ test('T001 capture, pack and import exclude each other in both directions while 
       const sends = f.calls.sends.length;
       const code = `${kind}_unreconciled`;
       await assert.rejects(f.prepareImport(), { code }, 'import admission');
-      if (kind !== 'pack') await assert.rejects(f.prepare(), { code }, 'pack admission');
       if (kind !== 'capture') {
         await assert.rejects(f.provider.issueCaptureReceipt({ requestHandle: null }), { code }, 'capture admission');
       }
@@ -1625,7 +749,7 @@ test('T001 capture, pack and import exclude each other in both directions while 
   });
 });
 
-test('T001 an import preparation in flight excludes capture, pack and import until it allocates, and races lose without allocation', async t => {
+test('T001 an import preparation in flight excludes capture and import until it allocates, and races lose without allocation', async t => {
   const emptyQueue = { items: [], steeringMessages: [] };
   /** Hold exactly the queue read numbered `which`; later reads are empty. */
   const holdQueue = (f, which = 1) => {
@@ -1643,25 +767,12 @@ test('T001 an import preparation in flight excludes capture, pack and import unt
       const preparing = f.prepareImport();
       await held.entered;
       await assert.rejects(f.prepareImport(), { code: 'import_unreconciled' });
-      await assert.rejects(f.prepare(), { code: 'import_unreconciled' });
       await assert.rejects(f.provider.issueCaptureReceipt({ requestHandle: null }), { code: 'import_unreconciled' });
       assert.equal(f.provider.read().importRequests.length, 0, 'nothing allocates before the queue check completes');
       held.release();
       assert.equal((await preparing).phase, 'prepared');
       assert.equal(f.provider.read().importRequests.length, 1);
-      assert.equal(f.provider.read().packRequests.length + f.provider.read().captures.length, 0);
-    } finally { held.release(); f.cleanup(); }
-  });
-  await t.test('a pack preparation in flight excludes an import', async () => {
-    const f = importFixture();
-    const held = holdQueue(f);
-    try {
-      const packing = f.prepare();
-      await held.entered;
-      await assert.rejects(f.prepareImport(), { code: 'pack_unreconciled' });
-      held.release();
-      assert.equal((await packing).phase, 'prepared');
-      assert.equal(f.provider.read().importRequests.length, 0);
+      assert.equal(f.provider.read().captures.length, 0);
     } finally { held.release(); f.cleanup(); }
   });
   await t.test('an earlier capture queue read loses to an import and to twenty other tabs', async () => {
@@ -1765,7 +876,6 @@ test('T001 an unsubmitted prepared import excludes while fresh, then retires laz
     for (const elapsed of [0, NEEDS_YOU_LIMITS.operationMs - 1]) {
       now = start + elapsed;
       await assert.rejects(f.prepareImport(), { code: 'import_unreconciled' }, 'a fresh receipt still excludes other tabs');
-      await assert.rejects(f.prepare(), { code: 'import_unreconciled' });
       await assert.rejects(f.provider.issueCaptureReceipt({ requestHandle: null }), { code: 'import_unreconciled' });
       assert.equal((await f.provider.refresh()).importRequests[0].phase, 'prepared');
     }
@@ -1782,19 +892,12 @@ test('T001 an unsubmitted prepared import excludes while fresh, then retires laz
     assert.equal(view.receipt.acknowledgment, null);
     assert.equal(view.applied, false);
   };
-  for (const observer of ['feed refresh', 'late submit', 'import admission', 'pack admission', 'idea capture']) await t.test(observer, async t => {
+  for (const observer of ['feed refresh', 'late submit', 'import admission', 'idea capture']) await t.test(observer, async t => {
     const f = importFixture();
     try {
       const abandoned = await abandon(f, t);
       if (observer === 'feed refresh') await f.provider.refresh();
       if (observer === 'late submit') await assert.rejects(f.submitImport(abandoned), { code: 'already_consumed' });
-      if (observer === 'pack admission') {
-        assert.equal((await f.prepare()).phase, 'prepared');
-        assertRetired(f);
-        await assert.rejects(f.submitImport(abandoned), { code: 'already_consumed' });
-        assert.equal(f.calls.sends.length, 0);
-        return;
-      }
       if (observer === 'idea capture') {
         assert.equal((await f.provider.issueCaptureReceipt({ requestHandle: null })).status, 'prepared');
         assertRetired(f);
@@ -1913,7 +1016,6 @@ test('T001 correlated idle delivery is the only delivery; possible delivery stay
       assert.equal(view.applied, false);
       await assert.rejects(f.submitImport(prepared), { code: 'already_consumed' });
       await assert.rejects(f.prepareImport(), { code: 'import_unreconciled' });
-      await assert.rejects(f.prepare(), { code: 'import_unreconciled' });
       await assert.rejects(f.provider.issueCaptureReceipt({ requestHandle: null }), { code: 'import_unreconciled' });
       assert.equal(f.calls.sends.length, 1, 'never requeued or replayed');
       const result = await importAck(f, prepared, {
@@ -2369,7 +1471,7 @@ test('T001 an import result needs the exact live receipt, binding, delivery and 
       assert.equal(f.provider.read().importRequests[0].phase, 'unavailable');
     } finally { f.cleanup(); }
   });
-  await t.test('capture, pack and import acknowledgments cannot cross-consume one another', async () => {
+  await t.test('capture and import acknowledgments cannot cross-consume one another, and a pack result is no kind at all', async () => {
     const f = importFixture();
     try {
       const view = await f.deliver();
@@ -2384,9 +1486,12 @@ test('T001 an import result needs the exact live receipt, binding, delivery and 
         scope: { kind: 'session' }, previousRevision: view.receipt.providerGeneration,
         recognizes: 'capture', outcome: 'unavailable', note: 'Not a capture.', source: null,
       }, f.session.sessionId), 'acknowledgment_conflict');
-      assertRefused(await acknowledge(f.provider, packAcknowledgment(f, {
-        receipt: { ...view.receipt, operation: 'install', name: 'alpha' },
-      }), f.session.sessionId), 'unknown_receipt');
+      const { workspaceId, sessionId, providerGeneration } = view.receipt;
+      assertRefused(await acknowledge(f.provider, {
+        receiptId: view.importReceipt, owner: 'dude', operation: 'install', name: 'alpha', workspaceId, sessionId, providerGeneration,
+        recognizes: 'pack_result', outcome: 'declined', mutation: 'none', result: null, profileRevision: null, source: null,
+        note: 'A pack result is not an acknowledgment this provider knows.',
+      }, f.session.sessionId), 'invalid_input');
       assert.equal((await importAck(f, view)).resultType, 'success');
       f.idle();
       const capture = await f.provider.issueCaptureReceipt({ requestHandle: null });
@@ -2538,7 +1643,7 @@ test('T001 Applied needs every reported file to be canonical, local, contained, 
 });
 
 test('T001 a refusal before permission is a terminal result that releases the exclusion without replay', async t => {
-  for (const [outcome, next] of [['failed', 'pack'], ['unavailable', 'capture'], ['stale', 'import'], ['declined', 'pack']]) {
+  for (const [outcome, next] of [['failed', 'import'], ['unavailable', 'capture'], ['stale', 'import'], ['declined', 'capture']]) {
     await t.test(`${outcome}/none releases a new ${next} request`, async () => {
       const f = importFixture();
       try {
@@ -2551,7 +1656,6 @@ test('T001 a refusal before permission is a terminal result that releases the ex
         f.idle();
         await assert.rejects(f.submitImport(view), { code: 'already_consumed' }, 'the burned receipt is never replayed');
         assert.equal(f.calls.sends.length, 1);
-        if (next === 'pack') assert.equal((await f.prepare()).phase, 'prepared');
         if (next === 'capture') assert.equal((await f.provider.issueCaptureReceipt({ requestHandle: null })).status, 'prepared');
         if (next === 'import') assert.equal((await f.prepareImport()).phase, 'prepared');
       } finally { f.cleanup(); }
@@ -2717,19 +1821,6 @@ test('T001 publishes workspace exactly when an accepted import mutation is not n
       assert.equal(JSON.stringify(f.provider.read().importRequests[0]), before);
     } finally { unsubscribe(); f.cleanup(); }
   });
-  await t.test('default pack behavior is unchanged: a pack result still publishes workspace even when nothing changed', async () => {
-    const f = importFixture();
-    const hints = [];
-    const unsubscribe = f.provider.subscribe(hint => hints.push(hint));
-    try {
-      const prepared = await f.prepare();
-      await f.submit(prepared);
-      hints.length = 0;
-      assert.equal((await acknowledge(f.provider, packAcknowledgment(f, prepared), f.session.sessionId)).resultType, 'success');
-      assert.deepEqual(hints, ['workspace']);
-      assert.equal(f.provider.read().importRequests.length, 0);
-    } finally { unsubscribe(); f.cleanup(); }
-  });
 });
 
 test('T001 imports use the existing record and byte budgets and never evict an unresolved receipt', async t => {
@@ -2777,7 +1868,7 @@ test('T001 imports use the existing record and byte budgets and never evict an u
 test('T001 the tool schema registers one closed import_result branch beside the existing acknowledgments', () => {
   const branches = NEEDS_YOU_PARAMETERS.properties.acknowledgment.oneOf;
   assert.deepEqual(branches.flatMap(branch => branch.properties.recognizes.enum ?? [branch.properties.recognizes.const]),
-    ['canvas_response', 'outside_answer', 'capture', 'pack_result', 'import_result']);
+    ['canvas_response', 'outside_answer', 'capture', 'import_result']);
   const branch = branches.find(entry => entry.properties.recognizes.const === 'import_result');
   assert.equal(branch.additionalProperties, false);
   const fields = ['importSource', 'mutation', 'note', 'outcome', 'owner', 'providerGeneration', 'receiptId', 'recognizes',
@@ -7037,188 +6128,4 @@ test('T009 review regression: resolved canonical idea can acknowledge an explici
     fixture.provider.dispose();
     fs.rmSync(root, { recursive: true, force: true });
   }
-});
-
-/* -------------------------------------------------------------------------
- * T008: pack requests bound to a saved source, at the provider boundary.
- * ------------------------------------------------------------------------- */
-
-/**
- * A pack fixture whose workspace also saves a local source folder holding its own alpha.
- * @param {'install'|'remove'|'refresh'} [operation]
- */
-async function sourcedPackFixture(operation = 'install') {
-  const f = packProviderFixture(operation);
-  const team = temporaryRoot();
-  write(team, 'library/packs/alpha/pack.md', '---\nname: alpha\ndescription: "A saved folder\'s alpha"\n---\n');
-  const saveSources = (/** @type {any[]} */ entries) => write(f.root, PACK_SOURCES_PATH, serializePackSourcesDocument(entries));
-  saveSources([{ type: 'local', location: team }]);
-  const read = async () => readPacks(f.root, new AbortController().signal, { sources: true });
-  const first = await read();
-  const row = first.sources.items.find((/** @type {any} */ item) => item.scope === 'project');
-  return { ...f, team, key: row.key, sourcesRevision: first.sources.sourcesRevision, saveSources, read,
-    prepareFrom: (/** @type {unknown} */ source) => f.provider.requestPack({ op: 'prepare', operation: 'install', name: 'alpha', source }),
-    submitFrom: (/** @type {any} */ receipt, /** @type {unknown} */ source) => f.provider.requestPack({
-      op: 'submit', operation: 'install', name: 'alpha', packReceipt: receipt.packReceipt, ...(source === undefined ? {} : { source }) }),
-    cleanup() { f.cleanup(); fs.rmSync(team, { recursive: true, force: true }); } };
-}
-
-test('T008 the pack_result schema carries one optional, closed catalogSource and the other branches gain nothing', () => {
-  const branches = NEEDS_YOU_PARAMETERS.properties.acknowledgment.oneOf;
-  const branch = branches.find((/** @type {any} */ entry) => entry.properties.recognizes.const === 'pack_result');
-  assert.equal(branch.additionalProperties, false);
-  assert.ok(Object.hasOwn(branch.properties, 'catalogSource'));
-  assert.equal(branch.required.includes('catalogSource'), false, 'optional: absent, never null, for the default catalog');
-  const source = branch.properties.catalogSource;
-  assert.equal(source.additionalProperties, false);
-  assert.deepEqual(Object.keys(source.properties).sort(), ['key', 'source', 'sourcesRevision']);
-  assert.deepEqual([...source.required].sort(), ['key', 'source', 'sourcesRevision']);
-  assert.match(`src_${'a'.repeat(32)}`, new RegExp(source.properties.key.pattern));
-  for (const notAKey of ['../x', 'C:\\packs', 'src_', `src_${'A'.repeat(32)}`, 'https://github.com/acme/x']) {
-    assert.doesNotMatch(notAKey, new RegExp(source.properties.key.pattern), `${notAKey} is not a key`);
-  }
-  assert.deepEqual(source.properties.source.oneOf.map((/** @type {any} */ entry) => entry.additionalProperties), [false, false]);
-  assert.deepEqual(source.properties.source.oneOf.map((/** @type {any} */ entry) => Object.keys(entry.properties).sort()),
-    [['ref', 'repository', 'type'], ['location', 'type']], 'only the configured repository and ref, or the validated root');
-  for (const other of branches.filter((/** @type {any} */ entry) => entry !== branch)) {
-    assert.equal(Object.hasOwn(other.properties, 'catalogSource'), false);
-  }
-});
-
-test('T008 a source key is accepted only for an install, must match at submit, and binds one closed value into the receipt and handoff', async () => {
-  const f = await sourcedPackFixture();
-  try {
-    const before = snapshotFiles(f.root);
-    // A key names a saved source; nothing else is a source choice.
-    for (const bad of ['x', 'src_', `src_${'E'.repeat(32)}`, `src_${'e'.repeat(33)}`, f.team, 'https://github.com/acme/x', null, 5, {}, [], '']) {
-      await assert.rejects(f.prepareFrom(bad), { code: 'invalid_input' }, JSON.stringify(bad));
-    }
-    await assert.rejects(f.prepareFrom(`src_${'e'.repeat(32)}`), { code: 'source_changed' }, 'no saved source has this key');
-    for (const operation of ['refresh', 'remove']) {
-      await assert.rejects(f.provider.requestPack({ op: 'prepare', operation, name: 'alpha', source: f.key }), { code: 'invalid_input' });
-    }
-    assert.equal(f.provider.read().packRequests.length, 0);
-    const prepared = await f.prepareFrom(f.key);
-    assert.deepEqual(prepared.receipt.catalogSource, { key: f.key, sourcesRevision: f.sourcesRevision,
-      source: { type: 'local', location: fs.realpathSync(f.team) } });
-    assert.deepEqual(Object.keys(prepared.receipt.catalogSource), ['key', 'sourcesRevision', 'source']);
-    // The submit names the receipt's own source: not none, not another key, not null.
-    await assert.rejects(f.submitFrom(prepared), { code: 'identity_mismatch' });
-    await assert.rejects(f.submitFrom(prepared, `src_${'e'.repeat(32)}`), { code: 'identity_mismatch' });
-    await assert.rejects(f.submitFrom(prepared, null), { code: 'invalid_input' });
-    await assert.rejects(f.provider.requestPack({ op: 'submit', operation: 'install', name: 'alpha', packReceipt: prepared.packReceipt,
-      source: f.key, root: f.root }), { code: 'invalid_input' });
-    assert.equal(f.provider.read().packRequests[0].phase, 'prepared', 'refused companions never burn the receipt');
-    assert.equal((await f.submitFrom(prepared, f.key)).phase, 'delivered');
-    const lines = f.calls.sends[0].prompt.split('\n');
-    assert.deepEqual(JSON.parse(lines.at(-1)).catalogSource, prepared.receipt.catalogSource);
-    assert.equal(lines.filter(line => line.includes('bound to one source the project added')).length, 1);
-    assert.deepEqual([...snapshotFiles(f.root).keys()].filter(file => !before.has(file)), [], 'admission writes nothing');
-    // A default receipt carries no binding, and cannot take one at submit.
-    const other = await sourcedPackFixture();
-    try {
-      const plain = await other.prepare();
-      assert.equal(Object.hasOwn(plain.receipt, 'catalogSource'), false);
-      await assert.rejects(other.submitFrom(plain, other.key), { code: 'identity_mismatch' });
-      assert.equal((await other.submit(plain)).phase, 'delivered');
-      assert.equal(other.calls.sends[0].prompt.includes('bound to one source'), false);
-      assert.deepEqual(Object.keys(JSON.parse(other.calls.sends[0].prompt.split('\n').at(-1))).sort(),
-        ['name', 'operation', 'owner', 'providerGeneration', 'receiptId', 'sessionId', 'workspaceId']);
-    } finally { other.cleanup(); }
-  } finally { f.cleanup(); }
-});
-
-test('T008 a source stays in use for every unreconciled request bound to it, and is released only by a result, a retirement or never started', async t => {
-  await t.test('preparing, prepared, delivered, then reconciled', async () => {
-    const f = await sourcedPackFixture();
-    try {
-      assert.deepEqual(f.provider.sourceUses(f.key), []);
-      const held = deferred(), entered = deferred();
-      f.state.pendingItems = () => { entered.resolve(undefined); return held.promise; };
-      const preparing = f.prepareFrom(f.key);
-      await entered.promise;
-      assert.deepEqual(f.provider.sourceUses(f.key), [{ name: 'alpha', operation: 'install', phase: 'preparing' }]);
-      assert.deepEqual(f.provider.sourceUses(`src_${'e'.repeat(32)}`), [], 'another key is not in use');
-      f.state.pendingItems = () => ({ items: [], steeringMessages: [] });
-      held.resolve({ items: [], steeringMessages: [] });
-      const prepared = await preparing;
-      assert.deepEqual(f.provider.sourceUses(f.key), [{ name: 'alpha', operation: 'install', phase: 'prepared' }]);
-      await f.submitFrom(prepared, f.key);
-      assert.deepEqual(f.provider.sourceUses(f.key), [{ name: 'alpha', operation: 'install', phase: 'delivered' }]);
-      const declined = await acknowledge(f.provider, packAcknowledgment(f, prepared, { catalogSource: prepared.receipt.catalogSource }), f.session.sessionId);
-      assert.equal(declined.resultType, 'success', declined.textResultForLlm);
-      assert.deepEqual(f.provider.sourceUses(f.key), [], 'an acknowledged result releases the source');
-    } finally { f.cleanup(); }
-  });
-  await t.test('a default request never holds a saved source', async () => {
-    const f = await sourcedPackFixture();
-    try {
-      await f.submit(await f.prepare());
-      assert.deepEqual(f.provider.sourceUses(f.key), []);
-    } finally { f.cleanup(); }
-  });
-  await t.test('an abandoned prepared receipt retires lazily and releases its source, and sent-then-lost never does', async t => {
-    const f = await sourcedPackFixture();
-    try {
-      let now = Math.ceil(performance.now());
-      t.mock.method(performance, 'now', () => now);
-      const abandoned = await f.prepareFrom(f.key);
-      assert.equal(f.provider.sourceUses(f.key).length, 1);
-      now += NEEDS_YOU_LIMITS.operationMs;
-      assert.deepEqual(f.provider.sourceUses(f.key), [], 'the observation retires an unsubmitted receipt');
-      await assert.rejects(f.submitFrom(abandoned, f.key), { code: 'already_consumed' });
-      assert.equal(f.calls.sends.length, 0);
-    } finally { f.cleanup(); }
-  });
-  await t.test('a send whose outcome is uncertain keeps the source in use', async () => {
-    const f = await sourcedPackFixture();
-    try {
-      const prepared = await f.prepareFrom(f.key);
-      f.state.send = async () => { throw new Error('transport closed'); };
-      await assert.rejects(f.submitFrom(prepared, f.key), { code: 'pack_send_uncertain' });
-      assert.deepEqual(f.provider.sourceUses(f.key), [{ name: 'alpha', operation: 'install', phase: 'uncertain' }]);
-    } finally { f.cleanup(); }
-  });
-  await t.test('a closed provider cannot say what is unused', async () => {
-    const f = await sourcedPackFixture();
-    try {
-      f.provider.dispose();
-      assert.throws(() => f.provider.sourceUses(f.key), { code: 'provider_unavailable' });
-    } finally { f.cleanup(); }
-  });
-});
-
-test('T008 the saved sources are part of what a bound request is fresh against, at prepare and submit', async t => {
-  const arrangements = /** @type {Array<[string, (f: Awaited<ReturnType<typeof sourcedPackFixture>>) => void, string]>} */ ([
-    ['another source is saved', f => f.saveSources([{ type: 'local', location: f.team }, { type: 'remote', repository: 'https://github.com/acme/x', ref: 'main' }]), 'source_changed'],
-    ['the entry is removed', f => f.saveSources([]), 'source_changed'],
-    ['the saved folder\'s catalog changes', f => write(f.team, 'library/packs/alpha/pack.md', '---\nname: alpha\ndescription: "Changed"\n---\n'), 'source_changed'],
-    ['the saved folder is gone', f => fs.rmSync(f.team, { recursive: true }), 'source_unavailable'],
-    ['the saved sources become unreadable', f => write(f.root, PACK_SOURCES_PATH, '# Pack Sources\n\nunreadable\n'), 'source_unavailable'],
-  ]);
-  for (const [label, arrange, code] of arrangements) await t.test(label, async () => {
-    const f = await sourcedPackFixture();
-    try {
-      const prepared = await f.prepareFrom(f.key);
-      arrange(f);
-      await assert.rejects(f.submitFrom(prepared, f.key), { code }, 'the submit refuses and sends nothing');
-      assert.equal(f.calls.sends.length, 0);
-      const view = f.provider.read().packRequests[0];
-      assert.equal(view.receipt.freshness, code === 'source_changed' ? 'stale' : 'unavailable');
-      assert.deepEqual(f.provider.sourceUses(f.key), [], 'a request that never sent holds no source');
-      // The default catalog has alpha too, but a bound request never falls back to it.
-      assert.equal(f.provider.read().packRequests.length, 1);
-    } finally { f.cleanup(); }
-  });
-  await t.test('the default read revision follows the saved sources too', async () => {
-    const f = await sourcedPackFixture();
-    try {
-      const first = packReadRevision(f.root, true, 'alpha');
-      f.saveSources([]);
-      assert.notEqual(packReadRevision(f.root, true, 'alpha'), first, 'a default request is stale after the saved sources change');
-      const second = packReadRevision(f.root, true, 'alpha');
-      write(f.root, PACK_SOURCES_PATH, '# Pack Sources\n\nunreadable\n');
-      assert.notEqual(packReadRevision(f.root, true, 'alpha'), second, 'an unreadable document is a different state');
-    } finally { f.cleanup(); }
-  });
 });

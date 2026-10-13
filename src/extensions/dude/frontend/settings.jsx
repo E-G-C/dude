@@ -1,7 +1,8 @@
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Button, createTableColumn, DataGrid, DataGridBody, DataGridCell, DataGridHeader,
-  DataGridHeaderCell, DataGridRow, Dropdown, Field, Option, Tab, TabList, Text,
+  DataGridHeaderCell, DataGridRow, Dropdown, Field, MessageBar, MessageBarBody, MessageBarTitle, Option, Spinner,
+  Tab, TabList, Text,
 } from '@fluentui/react-components';
 import { ArrowClockwiseRegular, ChevronLeftRegular, ChevronRightRegular, DismissRegular, bundleIcon, Info20Filled, Info20Regular,
   PuzzlePiece20Filled, PuzzlePiece20Regular } from '@fluentui/react-icons';
@@ -11,7 +12,7 @@ import { catalogCoverageText, RemoveSourceDialog, removalRefusal, blockersOf, So
   sourceStatus, sourceWriteReason } from './pack-sources.jsx';
 import { Markdown } from './markdown.jsx';
 import { mergeClasses, useCanvasStyles } from './styles.js';
-import { importRequestStatus, packActionReason, packPermission, packRequestStatus } from './use-canvas-data.js';
+import { importRequestStatus, packActionReason } from './use-canvas-data.js';
 
 // Installed and Available list 25 rows per page. Filtering always runs first.
 const PAGE_SIZE = 25;
@@ -28,28 +29,25 @@ const PROJECT_NOTE = 'Read only. Project agents and skills are project files, no
 const DETAILS_NONE = 'No details found.';
 const DETAILS_TOO_LARGE = 'Not shown: larger than 64 KiB';
 const DETAILS_GITHUB_NOTE = 'Member READMEs are not read from GitHub before installation.';
-const PHASES = {
-  preparing: ['Preparing request', 'Checking the exact pack and joined session. This does not grant permission.'],
-  prepared: ['Request prepared', 'Nothing has been sent. This receipt will not be submitted automatically on reload or return.'],
-  submitting: ['Requesting owner action', 'Submitting this receipt once. Delivery and application are not yet confirmed.'],
-  admitted: ['Admitted; delivery unconfirmed', 'The provider admitted this request. Delivery is not confirmed; nothing will be resent.'],
-  delivered: ['Delivered to Dude', 'Waiting for the owner to preview the impact and request permission. No application is confirmed.'],
-  waiting_permission: ['Permission requested', 'Inspect the actual impact and respond to this exact request in Needs you.'],
-  waiting_owner: ['Waiting for owner result', 'A permission response is not an applied result. The owner must check, apply, and verify the operation.'],
-  reading_result: ['Reading current pack facts', 'The owner reported success. Waiting for the current installed authority before displaying the result.'],
-  applied: ['Applied', 'The provider validated the exact owner result and a fresh installed-state read. Current pack facts agree.'],
-  declined: ['Declined', 'The owner recorded a decline. This request will not be repeated.'],
-  failed: ['Failed', 'The owner did not establish a successful result. This request will not be repeated.'],
-  unavailable: ['Unavailable', 'Current request authority is unavailable. Nothing will be retried automatically.'],
-  stale: ['Stale request or result', 'The reviewed authority changed. A changed impact requires a fresh preview and confirmation.'],
-  uncertain: ['Uncertain', 'Delivery or the resulting state is uncertain. Wait for owner reconciliation; do not repeat this request.'],
-};
-const MUTATIONS = {
-  none: 'The owner reports no pack change.',
-  restored: 'The owner verified restoration after a caught failure. This is not a crash-recovery guarantee.',
-  uncertain: 'The owner could not establish the resulting state or restoration.',
-  applied: 'The engine changed files; the owner did not establish a successful verified outcome.',
-};
+// 083: the pack action dialog's words, as the approved mock gives them.
+const VERBS = { install: 'Install', remove: 'Remove', refresh: 'Refresh' };
+const DOING = { install: 'Installing...', remove: 'Removing...', refresh: 'Refreshing...' };
+const DONE = { install: 'Installed', remove: 'Removed', refresh: 'Refreshed' };
+// FR-019: exactly one of these follows "<Verb> failed", which states the failure in words.
+const FAILURES = { none: 'Nothing changed', restored: 'Failed; your files were restored',
+  uncertain: 'Failed; restoration unconfirmed. Check Installed.' };
+const CHANGED = 'Installed packs or sources changed since this preview.';
+const NOTHING = 'Nothing changed.';
+const CANCELLING = 'Cancelling...';
+const REMOVE_RETURN = 'Returns to Available after Reload packs.';
+const THIRD_PARTY = 'This pack is not part of the Dude bundle. It can add agents and instructions to this project.';
+const OVERWRITE = "Refresh replaces the files below with the source's copies. Keep lasting changes in dude-local-* files.";
+// Where focus goes when a phase starts: the safe Cancel first, the body while an action runs, the result's own button.
+const ACTION_FOCUS = { loading: 'cancel', ready: 'cancel', blocked: 'cancel', applying: 'body', cancelling: 'body',
+  success: 'primary', failed: 'cancel', cancelled: 'cancel', changed: 'primary' };
+// An installed file names its item the way Compose's preview does: `.github/<kind>/<entry>`, less the kind's suffix.
+const ITEM_KINDS = { agents: ['Agent', '.agent.md'], skills: ['Skill', ''], prompts: ['Prompt', '.prompt.md'],
+  instructions: ['Instructions', '.instructions.md'] };
 const isCurrent = coverage => ['current', 'empty'].includes(coverage?.state);
 // A catalog the last discovery read, even in part: a partial read lists what its readable sources found.
 const isReadable = coverage => ['current', 'empty', 'partial'].includes(coverage?.state);
@@ -302,9 +300,330 @@ function trapTab(event, dialog) {
   else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
 }
 
+/* ---------------------------------------------------------- 083: the pack action dialog */
+
+const plural = (count, one, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+const listWords = words => (words.length < 3 ? words.join(' and ') : `${words.slice(0, -1).join(', ')}, and ${words.at(-1)}`);
+/** @param {string} file */
+function fileItem(file) {
+  const [, kind = '', entry = file] = /^\.github\/([^/]+)\/(.+)$/.exec(file) ?? [];
+  const [word = '', suffix = ''] = ITEM_KINDS[kind] ?? [];
+  return { kind: word, name: suffix && entry.endsWith(suffix) ? entry.slice(0, -suffix.length) : entry };
+}
+// The recorded source in words: its folder, or its repository at the recorded ref.
+const recordedText = source => !source ? 'an unreadable record'
+  : source.type === 'local' ? source.location : `${source.repository} @ ${source.requested_ref}`;
+
+/**
+ * Why a preview cannot be applied, in the order a person can act on it: a
+ * missing tool, a conflicting file, or Compose's own reason when it could make
+ * no preview at all (an unreachable source, a pack no longer listed or installed).
+ */
+function blockedReason(name, value) {
+  if (!value.preview) return value.message || 'Compose could not preview this action. Nothing changed.';
+  const missing = (value.preview.tools ?? []).filter(tool => !tool.found).map(tool => tool.name);
+  if (missing.length) return `${name} needs ${listWords(missing)}, which ${missing.length === 1 ? 'is' : 'are'} not on PATH.`;
+  const conflicts = value.preview.conflicts ?? [];
+  if (conflicts.length) {
+    return conflicts.length === 1 ? `A file this pack adds already exists: ${conflicts[0]}`
+      : `Files this pack adds already exist: ${conflicts.join(', ')}`;
+  }
+  return value.message || 'This preview cannot be applied. Nothing changed.';
+}
+
+/** Why the route answered without a preview or a Compose result. `applying` says whether a write may have begun. */
+function routeProblem(code, applying) {
+  if (code === 'connection_lost') {
+    return applying ? 'The connection to Canvas was interrupted before the result arrived.'
+      : 'The connection to Canvas was interrupted. Nothing changed.';
+  }
+  if (code === 'busy') return 'Another pack action is running in this Canvas. Nothing changed.';
+  if (code === 'identity_mismatch') return 'The workspace changed or this Canvas closed. Nothing changed.';
+  return 'Canvas could not run this action. Nothing changed.';
+}
+
+// The mock's bar: the title, then its lines 4px apart, with no gap between title and lines.
+function ActionBar({ intent, title, lines = [] }) {
+  const s = useCanvasStyles();
+  return <MessageBar intent={intent} layout="multiline" className={mergeClasses(s.notice, s.packActionBar)}>
+    <MessageBarBody>
+      <MessageBarTitle>{title}</MessageBarTitle>
+      {lines.length > 0 && <div className={s.tight}>{lines.map((line, index) => <span key={index}>{line}</span>)}</div>}
+    </MessageBarBody>
+  </MessageBar>;
+}
+
+// FR-009: a source the project added, named in words with its commit, or its folder and "no commit".
+function ThirdPartyBar({ source }) {
+  const s = useCanvasStyles();
+  const remote = source?.type === 'remote';
+  return <ActionBar intent="warning" title="Third-party source" lines={[THIRD_PARTY, ...(remote
+    ? [<>Repository: <code className={s.code}>{source.repository}</code></>,
+      <>Commit: <code className={s.code}>{source.resolved_commit}</code></>]
+    : [<>Folder: <code className={s.code}>{source?.location}</code> (no commit)</>])]} />;
+}
+
+function ItemList({ items }) {
+  const s = useCanvasStyles();
+  return <ul className={s.packActionItems}>{items.map((item, index) => <li key={`${index}:${item.kind}:${item.name}`}>
+    <span className={s.packActionItemName}>{item.name}</span><span className={s.packActionItemKind}>{item.kind}</span>
+  </li>)}</ul>;
+}
+
+function FileList({ files }) {
+  const s = useCanvasStyles();
+  return <ul>{files.map(file => <li key={file}><code className={s.code}>{file}</code></li>)}</ul>;
+}
+
+function FileGroup({ heading, files }) {
+  const s = useCanvasStyles();
+  return <div className={mergeClasses(s.tight, s.packFiles)}>
+    <h3 className={s.packMetadataHeading}>{heading}</h3>
+    {files.length > 0 && <FileList files={files} />}
+  </div>;
+}
+
+/** What a ready or blocked preview shows (FR-004 to FR-006, FR-009); a preview Compose could not make shows only the source. */
+function PreviewBody({ action, step }) {
+  const s = useCanvasStyles();
+  const { preview } = step;
+  const third = step.thirdParty && preview ? <ThirdPartyBar source={preview.source} /> : null;
+  if (action.operation === 'remove') {
+    return preview ? <FileGroup heading={`Deletes ${plural(preview.files.length, 'recorded file')}`} files={preview.files} />
+      : <p className={s.prose}>No recorded files to delete.</p>;
+  }
+  if (action.operation === 'install') {
+    const tools = preview?.tools ?? [];
+    return <>
+      {third}
+      {preview && <div className={s.tight}>
+        <h3 className={s.packMetadataHeading}>{`Adds ${plural(preview.items.length, 'item')}`}</h3>
+        <ItemList items={preview.items} />
+      </div>}
+      <dl className={s.packMetadata}>
+        {preview && <><dt>Required tools</dt><dd>{tools.length
+          ? tools.map(tool => `${tool.name}: ${tool.found ? 'found' : 'missing'}`).join(', ') : 'None'}</dd></>}
+        <dt>Source</dt><dd>{action.label}</dd>
+      </dl>
+      {preview && <>
+        <Text className={s.eyebrow}>{NEW_SESSION}</Text>
+        <details className={s.packFiles}>
+          <summary>{`Show files (${preview.files.length})`}</summary>
+          <FileList files={preview.files} />
+        </details>
+      </>}
+    </>;
+  }
+  return <>
+    {third}
+    <dl className={s.packMetadata}>
+      <dt>Source</dt><dd>{action.label}</dd>
+      {preview && action.changes && <><dt>Source changes</dt><dd>{action.changes}</dd></>}
+    </dl>
+    {preview && <>
+      <ActionBar intent="warning" title="Local edits are overwritten" lines={[OVERWRITE]} />
+      <FileGroup heading={`Replaced (${preview.replaced.length})`} files={preview.replaced} />
+      <FileGroup heading={`Added (${preview.added.length})`} files={preview.added} />
+      <FileGroup heading={`Removed (${preview.removed.length})`} files={preview.removed} />
+      <Text className={s.eyebrow}>{NEW_SESSION}</Text>
+    </>}
+  </>;
+}
+
+/** What an apply ended in: what Compose installed, removed, or refreshed, or why nothing or not everything changed. */
+function ResultBody({ action, step }) {
+  const s = useCanvasStyles();
+  const { operation, name } = action;
+  if (step.phase === 'cancelled') return <ActionBar intent="info" title={NOTHING} />;
+  if (step.phase === 'changed') return <ActionBar intent="warning" title={CHANGED} lines={[NOTHING]} />;
+  if (step.phase === 'failed') {
+    return <>
+      <ActionBar intent="error" title={`${VERBS[operation]} failed`} lines={[FAILURES[step.failure]]} />
+      {step.message && <details className={s.packFiles}>
+        <summary>Compose&apos;s message</summary>
+        <p className={mergeClasses(s.code, s.packActionMessage)}>{step.message}</p>
+      </details>}
+    </>;
+  }
+  const result = step.result ?? {};
+  if (operation === 'install') {
+    // The files Compose actually installed, which a folder changed since the preview may have changed (FR-018).
+    const items = Array.isArray(result.files) ? result.files.map(fileItem) : step.preview?.items ?? [];
+    return <>
+      <ActionBar intent="success" title={`Installed ${name}`} lines={[NEW_SESSION]} />
+      <div className={s.tight}>
+        <h3 className={s.packMetadataHeading}>{`Added ${plural(items.length, 'item')}`}</h3>
+        <ItemList items={items} />
+      </div>
+    </>;
+  }
+  if (operation === 'remove') {
+    const files = result.files ?? step.preview?.files ?? [];
+    return <ActionBar intent="success" title={`Removed ${name}`}
+      lines={[`Deleted ${plural(files.length, 'recorded file')}.`, REMOVE_RETURN]} />;
+  }
+  const replaced = result.replaced ?? [], added = result.added ?? [], removed = result.removed ?? [];
+  const summary = listWords([`replaced ${plural(replaced.length, 'file')}`,
+    ...(added.length ? [`added ${added.length}`] : []), ...(removed.length ? [`removed ${removed.length}`] : [])]);
+  return <ActionBar intent="success" title={`Refreshed ${name}`}
+    lines={[`${summary[0].toUpperCase()}${summary.slice(1)}.`, NEW_SESSION]} />;
+}
+
+/**
+ * The pack action dialog (FR-001 to FR-020): Install, Remove, or Refresh pack in
+ * one native modal over the pack's details. It is the 080 reader's surface,
+ * header, and body, with the Remove source dialog's footer, so the title and
+ * buttons stay in place and only the body scrolls. Compose previews the change,
+ * one click on the verb applies that preview, and Compose's own result shows in
+ * place. No request, receipt, Needs you, or chat message is involved.
+ *
+ * `action` is what the details' button asked for, or null when closed. Escape
+ * is Cancel, Close, or Done where the state offers one, and does nothing while
+ * Removing or Cancelling. `onClose()` and `onShow(key)` belong to Settings,
+ * which owns the details the focus returns to.
+ */
+function PackActionDialog({ action, shown, data, showKey, showReason, onClose, onShow }) {
+  const s = useCanvasStyles(), ids = useId();
+  const dialog = useRef(null), body = useRef(null), cancelButton = useRef(null), primaryButton = useRef(null);
+  const [step, setStep] = useState({ id: null, phase: 'loading' });
+  // The live run: its preview's abort, and the token its one apply and Cancel use.
+  const run = useRef(null), focusNext = useRef(null);
+  const current = action && step.id === action.id ? step : { id: action?.id ?? null, phase: 'loading' };
+  const { phase } = current;
+
+  // Each change names where focus goes, or keeps it where it is while that control still works.
+  const go = (change, focus = null) => {
+    focusNext.current = focus ?? 'keep';
+    setStep(previous => ({ ...(previous.id === change.id ? previous : {}), ...change }));
+  };
+  // Loading shows at once with Cancel, and nothing changes while Compose checks (FR-002). Preview again starts here too.
+  const preview = () => {
+    run.current?.controller.abort();
+    const live = { controller: new AbortController(), token: null };
+    run.current = live;
+    const { id, operation, name, source } = action;
+    go({ id, phase: 'loading', preview: null, thirdParty: false, reason: null, result: null, failure: null, message: null }, 'cancel');
+    void data.packAction({ op: 'preview', operation, name, ...(source ? { source } : {}) }, live.controller.signal).then(answer => {
+      if (run.current !== live || live.controller.signal.aborted) return;
+      if (!answer.ok) { go({ id, phase: 'blocked', reason: routeProblem(answer.code, false) }); return; }
+      const value = answer.value;
+      live.token = value.token;
+      go(value.token ? { id, phase: 'ready', preview: value.preview, thirdParty: value.thirdParty }
+        : { id, phase: 'blocked', preview: value.preview, thirdParty: value.thirdParty, reason: blockedReason(name, value) });
+    });
+  };
+  // One click on the verb is the only confirmation (FR-011), and it applies this preview once (FR-012).
+  const apply = () => {
+    const live = run.current;
+    if (phase !== 'ready' || !live?.token) return;
+    const { id } = action;
+    go({ id, phase: 'applying' }, 'body');
+    void data.packAction({ op: 'apply', token: live.token }).then(answer => {
+      if (run.current !== live) return;
+      const outcome = answer.ok ? answer.value : null;
+      if (outcome?.ok) go({ id, phase: 'success', result: outcome.result }, 'primary');
+      else if (outcome) {
+        go({ id, phase: 'failed', failure: FAILURES[outcome.mutation] ? outcome.mutation : 'uncertain',
+          message: outcome.error }, 'cancel');
+      } else if (answer.code === 'changed') go({ id, phase: 'changed' }, 'primary');
+      else if (answer.code === 'cancelled') go({ id, phase: 'cancelled' }, 'cancel');
+      // A lost answer may follow a write; every other refusal came before one.
+      else {
+        go({ id, phase: 'failed', failure: answer.code === 'connection_lost' ? 'uncertain' : 'none',
+          message: routeProblem(answer.code, true) }, 'cancel');
+      }
+    });
+  };
+  // Cancel while Install or Refresh applies (FR-017). The apply answers either way: cancelled, or, once
+  // writing has started, its real result. Remove offers no Cancel.
+  const cancelApply = () => {
+    if (phase !== 'applying' || action.operation === 'remove' || !run.current?.token) return;
+    go({ id: action.id, phase: 'cancelling' }, 'body');
+    void data.packAction({ op: 'cancel', token: run.current.token });
+  };
+  const dismiss = () => {
+    if (phase === 'applying' || phase === 'cancelling') return;
+    run.current?.controller.abort();   // a preview still loading is cancelled with its request
+    onClose();
+  };
+  const escape = () => { if (phase === 'applying') cancelApply(); else dismiss(); };
+
+  useLayoutEffect(() => {
+    const node = dialog.current;
+    if (action && shown) { if (!node.open) node.showModal(); }
+    else if (node.open) node.close();
+  }, [action, shown]);
+  useLayoutEffect(() => {
+    if (!action) return undefined;
+    preview();
+    return () => { run.current?.controller.abort(); run.current = null; };
+  }, [action]);
+  useLayoutEffect(() => {
+    const target = focusNext.current;
+    focusNext.current = null;
+    if (!target || !dialog.current?.open) return;
+    const usable = node => Boolean(node?.isConnected && !node.disabled && node.getClientRects().length);
+    if (target === 'keep' && dialog.current.contains(document.activeElement) && usable(document.activeElement)) return;
+    const node = { cancel: cancelButton, primary: primaryButton, body }[target === 'keep' ? ACTION_FOCUS[phase] : target]?.current;
+    (usable(node) ? node : body.current)?.focus({ preventScroll: true });
+  }, [step]);
+
+  const op = action?.operation;
+  const verb = op ? VERBS[op] : '';
+  const title = action ? `${verb} ${action.name}` : '';
+  const running = phase === 'applying' || phase === 'cancelling';
+  const cancelText = { loading: 'Cancel', ready: 'Cancel', changed: 'Cancel', applying: 'Cancel', blocked: 'Close',
+    failed: 'Close', cancelled: 'Close' }[phase];
+  const cancelShown = Boolean(cancelText) && !(phase === 'applying' && op === 'remove');
+  const primaryText = { ready: verb, blocked: verb, changed: 'Preview again', success: 'Done' }[phase];
+  const showShown = phase === 'success' && op === 'install';
+  // The reason for a disabled button sits beside it (FR-008), tied to it for assistive technology.
+  const reason = phase === 'blocked' ? current.reason : showShown && !showKey ? showReason : '';
+  const status = phase === 'loading' ? action?.checking : phase === 'applying' ? DOING[op] : phase === 'cancelling' ? CANCELLING : null;
+  const live = !action ? '' : {
+    loading: action.checking, ready: `${title}: preview ready.`, blocked: `${verb} is not available. ${current.reason}`,
+    applying: DOING[op], cancelling: CANCELLING, cancelled: NOTHING, changed: `${CHANGED} ${NOTHING}`,
+    failed: `${verb} failed. ${FAILURES[current.failure]}`,
+    success: `${DONE[op]} ${action.name}.${showShown && !showKey ? ` ${showReason}` : ''}`,
+  }[phase];
+
+  return <dialog ref={dialog} className={mergeClasses(s.packDialog, s.packActionDialog)} aria-labelledby={`${ids}-title`}
+    data-pack-action-dialog="" data-pack-action={action ? op : undefined} data-pack-action-phase={action ? phase : undefined}
+    onCancel={event => { event.preventDefault(); escape(); }}
+    onKeyDown={event => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); escape(); }
+      else trapTab(event, dialog.current);
+    }}>
+    {action && <>
+      <header className={s.packDetailHeader}>
+        <h2 id={`${ids}-title`} className={mergeClasses(s.subheading, s.grow)}>{title}</h2>
+        <Button appearance="subtle" icon={<DismissRegular />} aria-label="Close" title="Close" disabled={running}
+          data-pack-action-close onClick={() => dismiss()} />
+      </header>
+      <div ref={body} className={mergeClasses(s.packDetailBody, s.packActionBody)} tabIndex={0} role="region"
+        aria-labelledby={`${ids}-title`} data-pack-action-body>
+        {status ? <div className={s.packActionStatus}><Spinner size="extra-tiny" aria-hidden="true" /><Text>{status}</Text></div>
+          : phase === 'ready' || phase === 'blocked' ? <PreviewBody action={action} step={current} />
+            : <ResultBody action={action} step={current} />}
+      </div>
+      {(cancelShown || primaryText) && <footer className={mergeClasses(s.packDetailFooter, s.sourceDialogFooter, s.packActionFooter)}>
+        {reason && <Text id={`${ids}-reason`} className={mergeClasses(s.eyebrow, s.packActionNote)} data-pack-action-reason>{reason}</Text>}
+        {cancelShown && <Button ref={cancelButton} data-pack-action-cancel
+          onClick={() => (phase === 'applying' ? cancelApply() : dismiss())}>{cancelText}</Button>}
+        {showShown && <Button disabled={!showKey} aria-describedby={showKey ? undefined : `${ids}-reason`}
+          data-pack-action-show onClick={() => { if (showKey) onShow(showKey); }}>Show in Installed</Button>}
+        {primaryText && <Button ref={primaryButton} appearance="primary" disabled={phase === 'blocked'}
+          aria-describedby={phase === 'blocked' ? `${ids}-reason` : undefined} data-pack-action-primary
+          onClick={() => (phase === 'changed' ? preview() : phase === 'success' ? dismiss() : apply())}>{primaryText}</Button>}
+      </footer>}
+      <p className={s.visuallyHidden} role="status" aria-live="polite" aria-atomic="true">{live}</p>
+    </>}
+  </dialog>;
+}
+
 /**
  * Settings holds two local sections. Packs stays mounted while About is shown,
- * so its view, selection, and request survive a section switch; only its
+ * so its view, selection, and pack action survive a section switch; only its
  * dialogs close, and they reopen on return under the existing focus rules.
  * The Packs view (sub: Installed, Available, or Add/import) belongs to the
  * shell, which names it in the footer and header, and clears it with the section.
@@ -317,10 +636,11 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
   const packsShown = active && section === 'packs';
   const onSources = sub === 'sources';
   // The open list or Sources owns the one shared details pane and, for a list,
-  // the request dialog. Add/import owns neither.
+  // the pack action dialog. Add/import owns neither.
   const listShown = packsShown && sub !== 'import';
   const [view, setView] = useState(() => ({ ...INITIAL_VIEW, snapshot: packs }));
-  const [requestView, setRequestView] = useState(null);
+  // The open pack action: what a details button asked for, until its dialog closes.
+  const [action, setAction] = useState(null);
   // Sources keeps its own selection beside the list view, so a trip to Sources
   // and back keeps the filters, page, and selected pack, and the reverse.
   const [sourceKey, setSourceKey] = useState(null);
@@ -333,7 +653,7 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
   const heading = useRef(null), results = useRef(null), panel = useRef(null), filter = useRef(null), detail = useRef(null);
   const closeButton = useRef(null), returnToRow = useRef(false), reveal = useRef(null), strip = useRef(null);
   const last = useRef({ list: null, sources: null });
-  const requestDialog = useRef(null), requestClose = useRef(null), requestTrigger = useRef(null);
+  const actionSequence = useRef(0), actionReturn = useRef(null);
   const reader = useRef(null), readerBody = useRef(null), readerTrigger = useRef(null), readerReturn = useRef(false);
   const sourcesScroll = useRef(null), sourcesHeading = useRef(null), addSource = useRef(null), noteRef = useRef(null);
   const removeRef = useRef(null), reasonRef = useRef(null), focusAvailable = useRef(false);
@@ -428,28 +748,42 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
   const pageLabel = !shown ? 'Unavailable' : !pages ? 'No pages' : `Page ${page} of ${pages}`;
   const viewLabel = value => value === 'import' ? 'Add/import' : value === 'sources' ? 'Sources'
     : `${CONTEXTS.find(([context]) => context === value)[1]} ${totals[value] ?? '?'}`;
-  const latestRequest = packRequestStatus(data);
-  const shownRequest = requestView ? packRequestStatus(data, requestView) : null;
-  const permission = shownRequest && packPermission(data, shownRequest.record?.packReceipt);
-  const outcome = shownRequest?.record?.receipt.acknowledgment;
-  // The saved source a request is bound to, by the key this tab chose or the
-  // provider's own echo; its words come from the source rows, else the echo.
-  const requestSourceOf = status => {
-    const bound = status?.catalogSource ?? null, key = bound?.key ?? status?.binding?.source ?? null;
-    if (!key) return null;
-    const item = sourcesByKey.get(key);
-    if (item) return { name: item.name, label: sourceLabel(item) };
-    const where = bound ? bound.source.repository ?? bound.source.location : null;
-    return where ? { name: where, label: where } : null;
-  };
-  // Only a pack row owns operations, and each is keyed by the pack's name. An
-  // install from a source this project added names that source's key; the
-  // default catalog's rows, a refresh and a removal name none.
+  // Only a pack row owns operations, and each is keyed by the pack's name.
   const actions = selected?.pack ? selected.pack.installed ? ['refresh', 'remove'] : ['install'] : [];
-  const actionReasons = Object.fromEntries(actions.map(operation =>
-    [operation, packActionReason(data, operation, selected.name, selected.key)]));
-  const installSource = selected?.pack && !selected.pack.installed && sourcesByKey.get(selected.pack.sourceKey)?.scope === 'project'
-    ? selected.pack.sourceKey : null;
+  const actionReasons = Object.fromEntries(actions.map(operation => [operation, packActionReason(data, operation)]));
+  const actionWhy = [...new Set(Object.values(actionReasons).filter(Boolean))].join(' ');
+  // A pack action reads what the action itself reads: an install, its row's source (naming it only when the
+  // project added it); a refresh, the saved source its record matches, else the default catalog (packs.mjs
+  // chooseSource); a removal, only the installed record. `changes` says when the refresh's source is not
+  // the recorded one, as the server matched them by type and repository or folder, never by a ref.
+  const openAction = (operation, trigger) => {
+    const pack = selected.pack;
+    const key = operation === 'install' ? pack.sourceKey : operation === 'remove' ? null
+      : sourcesByKey.get(pack.sourceKey)?.scope === 'project' ? pack.sourceKey : packs?.sources?.defaultKey ?? null;
+    const source = key ? sourcesByKey.get(key) ?? null : null;
+    setAction({
+      id: ++actionSequence.current, operation, name: selected.name, trigger,
+      source: operation === 'install' && source?.scope === 'project' ? key : null,
+      checking: operation === 'remove' ? 'Checking installed files...' : `Checking ${source?.name ?? 'the default catalog'}...`,
+      label: source ? sourceLabel(source) : operation === 'install' ? selected.label : 'Default catalog',
+      changes: operation === 'refresh' && key !== pack.sourceKey
+        ? `${recordedText(pack.source)} -> ${source ? `${source.name} (${source.repository ?? source.location})` : 'the default catalog'}`
+        : null,
+    });
+  };
+  // Closing returns focus to the button that opened the dialog, else the view's heading (see the effect below).
+  const closeAction = () => {
+    actionReturn.current = action && { trigger: action.trigger, operation: action.operation };
+    setAction(null);
+  };
+  // Show in Installed after an install: the same local view change as Add/import's, which focuses the details' Close.
+  const showActionPack = key => {
+    actionReturn.current = null;
+    setAction(null);
+    showInstalled(key);
+  };
+  const actionShowKey = action?.operation === 'install' && !loading
+    ? lists.installed.rows.find(row => row.pack && row.name === action.name)?.key ?? null : null;
   // Add/import's Show in Installed. Only an Applied result offers it, and only
   // for a project row the Installed list holds right now: the project read must
   // be current, and a pending or failed one says so instead of guessing.
@@ -476,9 +810,11 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
     if (scroller) scroller.scrollTop = 0;
   };
   // Focus a row and bring it into view below the sticky header (the row's own
-  // scroll margin), whether the rows or the whole panel scroll.
+  // scroll margin), whether the rows or the whole panel scroll. Only a row this
+  // render still lists counts: the grid drops a gone row's node one render
+  // later, so focusing that node would leave focus on nothing.
   const focusRow = key => {
-    const row = key === null ? undefined : rowFor(key);
+    const row = (onSources ? sourceRows : visible).some(item => item.key === key) ? rowFor(key) : undefined;
     if (!row) return false;
     row.focus({ preventScroll: true });
     row.scrollIntoView({ block: 'nearest' });
@@ -503,10 +839,6 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
     if (onSources) setSourceKey(null);
     else setView(previous => ({ ...previous, selected: null }));
   };
-  const showRequest = binding => {
-    requestTrigger.current = document.activeElement;
-    setRequestView(binding);
-  };
   const closeReader = () => {
     readerReturn.current = true;
     setReading(null);
@@ -514,8 +846,8 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
   // The reader is a second native modal, stacked over the details at any
   // width, that opens on its scrolling body. Closing it by Escape or Close
   // returns focus to the button that opened it, or to the details' Close if
-  // that button is gone (the request dialog's rule). It runs before the details
-  // effect, so details closing with it still find focus inside them.
+  // that button is gone (the pack action dialog's rule). It runs before the
+  // details effect, so details closing with it still find focus inside them.
   useLayoutEffect(() => {
     const dialog = reader.current;
     if (reading) {
@@ -533,32 +865,32 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
   // The one details pane serves the lists and Sources, each with its own last
   // selection, so a trip to the other keeps this one's focus rules intact.
   useLayoutEffect(() => {
-    const dialog = detail.current, request = requestDialog.current;
+    const dialog = detail.current;
     const focused = document.activeElement;
     if (!listShown) {
-      if (request.open) request.close();
       if (dialog.open) dialog.close();
       return;
     }
-    // The request is the top layer. Keep the native detail mode underneath it
-    // until it closes; CSS removes a retained wide pane from narrow grid flow.
-    if (requestView) {
-      if (!request.open) {
-        request.showModal();
-        requestClose.current.focus({ preventScroll: true });
-      }
+    // The pack action dialog is the top layer. Keep the native detail mode
+    // underneath it until it closes, and never reopen the details over it;
+    // details whose row left the list (after an install or a removal) close now.
+    if (action) {
+      if (!detailKey && dialog.open) dialog.close();
       return;
     }
     // So is an open reader, which belongs to these details.
     if (reading) return;
-    const closingRequest = request.open;
-    if (closingRequest) request.close();
+    // A pack action dialog that just closed returns focus to the button that
+    // opened it, else that button re-rendered, else the view's heading.
+    const closing = actionReturn.current;
+    actionReturn.current = null;
     if (!detailKey) {
-      const restore = closingRequest || returnToRow.current || (last.current[owner]
+      const restore = Boolean(closing) || returnToRow.current || (last.current[owner]
         && (dialog.contains(focused) || focused === document.body));
       // Native modal inertness ends before restoring a surviving row/heading.
       if (dialog.open) dialog.close();
-      if (restore) { if (!focusRow(last.current[owner])) (onSources ? sourcesHeading : heading).current?.focus({ preventScroll: true }); }
+      if (closing) heading.current?.focus({ preventScroll: true });
+      else if (restore) { if (!focusRow(last.current[owner])) (onSources ? sourcesHeading : heading).current?.focus({ preventScroll: true }); }
       else if (focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
       last.current[owner] = null;
       returnToRow.current = false;
@@ -571,21 +903,21 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
       if (narrow) dialog.showModal();
       else dialog.show();
     }
-    const trigger = requestTrigger.current;
+    const usable = node => Boolean(node?.isConnected && node.getClientRects().length && !node.disabled);
+    const trigger = closing && [closing.trigger, dialog.querySelector(`[data-pack-operation="${closing.operation}"]`)].find(usable);
     // Show in Installed, or a source just added: Close takes focus, and the row
     // is brought into view below the sticky header, whichever page and scroller hold it.
     if (reveal.current === detailKey) {
       reveal.current = null;
       closeButton.current?.focus({ preventScroll: true });
       revealRow(detailKey);
-    } else if (closingRequest && trigger?.isConnected && trigger.getClientRects().length && !trigger.disabled
-      && (!narrow || dialog.contains(trigger))) trigger.focus({ preventScroll: true });
-    else if (closingRequest || last.current[owner] !== detailKey || changedMode) closeButton.current?.focus({ preventScroll: true });
+    } else if (trigger) trigger.focus({ preventScroll: true });
+    else if (closing || last.current[owner] !== detailKey || changedMode) closeButton.current?.focus({ preventScroll: true });
     // A retained wide pane reopens beside the results without taking focus
     // from the section tab that revealed it; show() alone would move focus in.
     else if (!narrow && focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
     last.current[owner] = detailKey;
-  }, [listShown, detailKey, onSources, narrow, current.snapshot, requestView, reading]);
+  }, [listShown, detailKey, onSources, narrow, current.snapshot, action, reading]);
 
   const changeFilters = patch => {
     setView(previous => {
@@ -646,26 +978,13 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
   const projectPending = projectCoverage?.reason === 'read_pending';
 
   // What this tab already knows uses a source: the installed packs the server
-  // matched to it, the live pack requests bound to its key, this tab's own
-  // attempt, and every blocker an earlier refusal named. It is advisory; the
-  // server decides again at the write, and no state feed makes it authoritative.
+  // matched to it, and every installed pack an earlier refusal named. It is
+  // advisory; the server decides again at the write, and no state feed makes it
+  // authoritative.
   const usesOf = item => {
-    const requests = [];
-    const text = (operation, name, phase) => `${OPERATIONS[operation] ?? operation} ${name} (${phase})`;
-    for (const record of data.needs?.packRequests ?? []) {
-      if (record.receipt?.catalogSource?.key !== item.key || record.receipt.acknowledgment
-        || ['unavailable', 'stale'].includes(record.phase)) continue;
-      requests.push(text(record.operation, record.name, (PHASES[record.phase]?.[0] ?? record.phase).toLowerCase()));
-    }
-    const attempt = data.packAttempt;
-    if (attempt?.source === item.key && ['preparing', 'submitting', 'uncertain'].includes(attempt.phase)) {
-      const own = text(attempt.operation, attempt.name, (PHASES[attempt.phase]?.[0] ?? attempt.phase).toLowerCase());
-      if (!requests.some(entry => entry.startsWith(`${OPERATIONS[attempt.operation]} ${attempt.name} (`))) requests.push(own);
-    }
     // A refusal's blockers hold only until the next snapshot: a fresh read is the better authority.
     const named = learned[item.key]?.at === packs ? learned[item.key] : null;
-    return { installed: [...new Set([...(item.installedNames ?? []), ...(named?.installed ?? [])])],
-      requests: [...new Set([...requests, ...(named?.requests ?? [])])] };
+    return { installed: [...new Set([...(item.installedNames ?? []), ...(named?.installed ?? [])])] };
   };
   const selectSource = key => setSourceKey(key);
   const askRemove = (item, trigger) => {
@@ -796,13 +1115,6 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
           <Button className={s.packClear} onClick={() => { changeFilters({ tag: '', source: '' }); filter.current?.focus(); }}>Clear</Button>
         </div>
         <div ref={results} className={s.packScroll} data-pack-scroll aria-busy={loading}>
-          {latestRequest && <div className={s.packReadNotice} data-pack-request-summary>
-            <Text role="status" aria-live="polite" aria-atomic="true">
-              {OPERATIONS[latestRequest.operation]} {latestRequest.name}{requestSourceOf(latestRequest)
-                ? ` from ${requestSourceOf(latestRequest).name}` : ''}: {PHASES[latestRequest.phase][0]}
-            </Text>
-            <Button className={s.back} onClick={() => showRequest(latestRequest.binding)}>View pack request</Button>
-          </div>}
           {(issue || !installedCurrent || !catalogCurrent) && <div className={s.packReadNotice} role="status" data-pack-coverage>
             <Text weight="semibold">Installed: {coverage('installed')} · Catalog: {catalogText}</Text>
             <Text>{issue || (loading ? 'Reading pack information. Retained records are for inspection only.'
@@ -903,7 +1215,6 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
         }
       }}
       onKeyDown={event => {
-        if (requestDialog.current.open) return;
         if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
         if (narrow) trapTab(event, detail.current);
       }}>
@@ -926,20 +1237,12 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
             : selected.pack.description || 'No description declared.'}</p>
           <div className={s.tight}>
             <div className={s.actions} data-pack-actions>
-              {actions.map(operation => <Button key={operation} data-pack-operation={operation}
+              {actions.map(operation => <Button key={operation} data-pack-operation={operation} aria-haspopup="dialog"
                 appearance={operation === 'install' ? 'primary' : 'secondary'}
-                disabled={Boolean(actionReasons[operation])} aria-describedby={`${id}-action-reason`}
-                onClick={() => {
-                  const attempt = operation === 'install'
-                    ? data.requestPack(operation, selected.name, packs, installSource, selected.key)
-                    : data.requestPack(operation, selected.name, packs);
-                  if (attempt) showRequest(attempt);
-                }}>{OPERATIONS[operation]}</Button>)}
+                disabled={Boolean(actionReasons[operation])} aria-describedby={actionWhy ? `${id}-action-reason` : undefined}
+                onClick={event => openAction(operation, event.currentTarget)}>{OPERATIONS[operation]}</Button>)}
             </div>
-            <Text id={`${id}-action-reason`} className={s.eyebrow}>
-              {[...new Set(Object.values(actionReasons).filter(Boolean))].join(' ')
-                || 'Request this exact operation from Dude. The owner previews its impact and asks for literal permission before changing files.'}
-            </Text>
+            {actionWhy && <Text id={`${id}-action-reason`} className={s.eyebrow} data-pack-action-why>{actionWhy}</Text>}
           </div>
           <dl className={s.packMetadata}>
             <dt>Use cases</dt><dd>{selected.tags}</dd>
@@ -973,44 +1276,9 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
         <footer className={s.packDetailFooter}><Button onClick={close}>Back to results</Button></footer>
       </>}
     </dialog>
-    <dialog ref={requestDialog} className={s.packRequestDialog} aria-labelledby={`${id}-request-heading`}
-      aria-describedby={`${id}-request-status`} data-pack-request-dialog
-      onCancel={event => { event.preventDefault(); setRequestView(null); }}
-      onKeyDown={event => {
-        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setRequestView(null); }
-        else trapTab(event, requestDialog.current);
-      }}>
-      {shownRequest && <>
-        <header className={s.packDetailHeader}>
-          <div className={s.grow}><Text className={s.eyebrow}>Workspace pack request</Text>
-            <h2 id={`${id}-request-heading`} className={s.subheading}>
-              {OPERATIONS[shownRequest.operation]} {shownRequest.name}
-            </h2></div>
-          <Button ref={requestClose} appearance="subtle" icon={<DismissRegular />} aria-label="Close pack request"
-            onClick={() => setRequestView(null)} />
-        </header>
-        <div className={s.packDetailBody} tabIndex={0} role="region" aria-label="Pack request outcome">
-          {requestSourceOf(shownRequest) && <dl className={s.packMetadata} data-pack-request-source>
-            <dt>{shownRequest.operation === 'install' ? 'Requested from' : 'Source'}</dt>
-            <dd>{requestSourceOf(shownRequest).label}</dd>
-          </dl>}
-          <div id={`${id}-request-status`} role="status" aria-live="polite" aria-atomic="true"
-            className={s.tight} data-pack-request-phase={shownRequest.phase}>
-            <Text weight="semibold">{PHASES[shownRequest.phase][0]}</Text>
-            <p className={s.prose}>{shownRequest.message || PHASES[shownRequest.phase][1]}</p>
-            {outcome && <p className={s.prose}>{outcome.note}</p>}
-            {outcome?.result?.ok === false && <p className={s.prose}>{outcome.result.error}</p>}
-            {outcome && outcome.outcome !== 'applied' && <Text>{MUTATIONS[outcome.mutation]}</Text>}
-          </div>
-          {permission && <Button className={s.back} appearance="primary" data-pack-permission={permission.requestHandle}
-            onClick={() => onPermission('pack', shownRequest.record.packReceipt)}>Open Needs you</Button>}
-          {shownRequest.record && <Text className={s.code}>Receipt: {shownRequest.record.packReceipt}</Text>}
-          <Text className={s.eyebrow}>Closing or navigating away does not cancel an admitted request. Reading pack information never repeats it.</Text>
-        </div>
-        <footer className={s.packDetailFooter}><Button onClick={() => setRequestView(null)}>Return to packs</Button></footer>
-      </>}
-    </dialog>
-    <dialog ref={reader} className={mergeClasses(s.packRequestDialog, s.packReader)} aria-labelledby={`${id}-reader-heading`}
+    <PackActionDialog action={action} shown={listShown && !onSources} data={data} showKey={actionShowKey}
+      showReason={loading ? SHOW_REASONS.pending : SHOW_REASONS.absent} onClose={closeAction} onShow={showActionPack} />
+    <dialog ref={reader} className={mergeClasses(s.packDialog, s.packReader)} aria-labelledby={`${id}-reader-heading`}
       data-pack-reader onCancel={event => { event.preventDefault(); closeReader(); }}
       onKeyDown={event => {
         if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeReader(); }

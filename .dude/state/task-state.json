@@ -686,5 +686,13 @@
       "T004@d3087fa2": "x"
     },
     "updated_at": "2026-10-10T20:35:08.000Z"
+  },
+  ".dude/specs/083-one-step-pack-actions/tasks.md": {
+    "glyphs": {
+      "T001@4e7b0c92": "x",
+      "T002@9a1f6d35": "x",
+      "T003@c38e5b17": "x"
+    },
+    "updated_at": "2026-10-13T09:53:25.000Z"
   }
 }
