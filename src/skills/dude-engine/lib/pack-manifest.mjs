@@ -36,6 +36,9 @@ const COLUMN_ZERO_FENCE_RE = /^---[ \t]*$/;
 const USE_CASES_KEY_RE = /^use-cases[ \t]*:(.*)$/;
 const TOP_LEVEL_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]*[ \t]*:/;
 const USE_CASES_BLOCK_ITEM_RE = /^  -(?: +(.*)|[ \t]*)$/;
+const REQUIRES_KEY_RE = /^requires[ \t]*:[ \t]*$/;
+const REQUIRED_TOOLS_KEY_RE = /^[ \t]+tools[ \t]*:(.*)$/;
+const REQUIRED_TOOLS_ITEM_RE = /^[ \t]+-[ \t]+(.+)$/;
 
 /**
  * Read only a leading, closed, column-zero frontmatter block. This is separate
@@ -153,6 +156,38 @@ export function parsePackManifestMetadata(content) {
     description: topLevelScalar(lines, 'description') || '',
     useCases: parseUseCases(lines),
   };
+}
+
+/**
+ * Parse the optional `requires.tools` list: the commands a pack expects on
+ * PATH. It is separate from the discovery metadata above, so only a caller that
+ * reports tools reads it. Accepts `tools: [a, b]` or a block of `- a` items.
+ * @param {string} content
+ * @returns {string[]}
+ */
+export function parseRequiredTools(content) {
+  const lines = closedFrontmatterLines(content) ?? [];
+  const start = lines.findIndex((line) => REQUIRES_KEY_RE.test(line));
+  if (start === -1) return [];
+  for (let index = start + 1; index < lines.length && !TOP_LEVEL_KEY_RE.test(lines[index]); index += 1) {
+    const declaration = REQUIRED_TOOLS_KEY_RE.exec(lines[index]);
+    if (!declaration) continue;
+    const value = declaration[1].trim();
+    if (value) {
+      const inline = /^\[(.*)\]$/.exec(value);
+      if (!inline) throw new Error('pack.md requires.tools must be a list');
+      return inline[1].split(',').map(decodeSimpleScalar).filter(Boolean);
+    }
+    /** @type {string[]} */
+    const tools = [];
+    for (let item = index + 1; item < lines.length; item += 1) {
+      const match = REQUIRED_TOOLS_ITEM_RE.exec(lines[item]);
+      if (!match) break;
+      tools.push(decodeSimpleScalar(match[1]));
+    }
+    return tools.filter(Boolean);
+  }
+  return [];
 }
 
 /** @param {string[]} items @returns {string[]} sorted unique */

@@ -15,9 +15,9 @@
  * projection delegates staging/revision work to the exact installed Spec Lead;
  * those agents use offered skill/create/view/edit/shell tools, and Dude invokes/acknowledges the
  * shipped handoff. A separate disposable pack fixture drives Settings through
- * owner preview, exact permission, Compose application, pack-result
- * acknowledgment, and the provider's authoritative reread. The model fixture
- * itself performs no post-seed canonical write. The Git blank install is
+ * the pack action dialog: the installed extension's Compose preview, one click,
+ * the install, and the automatic reread, with no agent turn, Needs you request,
+ * or chat message. The model fixture itself performs no post-seed canonical write. The Git blank install is
  * pre-seeded, before its host starts, as a development install with a recorded
  * base release; its unsent first idea waits through one Settings > About visit
  * that the installed extension serves. The pack fixture keeps the builder's
@@ -38,12 +38,10 @@
  * A third disposable workspace drives 073 Phase B, a pack source. The browser
  * adds a local folder (library/packs/<name>/pack.md) through Settings > Packs >
  * Sources, shows its packs in Available, selects its source-qualified pack, and
- * requests the install. The scripted installed Dude previews that source,
- * publishes the literal permission naming it first as a third-party source,
- * recognizes consent, rechecks the saved sources, runs Compose with exactly the
- * bound --source, verifies, and acknowledges the pack_result with the exact
- * catalogSource echoed. The test saves, installs, and applies nothing after
- * seeding, and contacts no network source. The recorded source, the installed
+ * installs it through the pack action dialog, whose preview names that folder
+ * as a third-party source with no commit. The installed extension runs Compose
+ * with exactly that saved folder, after one click. The test saves and installs
+ * nothing after seeding, and contacts no network source. The recorded source, the installed
  * bytes, the Available rows of both same-named packs, the source facts, and the
  * installed-use removal blocker are then observed where they landed. Every
  * fixture's installed core modules, including the saved-sources parser and the
@@ -248,7 +246,7 @@ const DEVELOPMENT_ABOUT = Object.freeze({
   baseRelease: 'v1.3.0',
   rows: installedAboutRows('Development (main), based on v1.3.0', 'Development (main)'),
 });
-const SOURCE_APP_SHA256 = '7223f8c918d2686e103e8dbef5a118c0be6e1c48a713552103676419a72af7a1';
+const SOURCE_APP_SHA256 = 'be30db45dd5e002bc643de4e01b99f599f0006c9242f164e83ba41a16fbe17ba';
 const TASKS_PATH = path.posix.join(path.posix.dirname(SPEC_PATH), 'tasks.md');
 const DONE_IDEA_PATH = '.dude/ideas/052-dude-canvas-ui.md';
 const DONE_SPEC_PATH = '.dude/specs/052-dude-canvas-ui/spec.md';
@@ -1231,8 +1229,6 @@ function packFixture(root) {
     'This inert fixture proves the actual installed Compose projection.',
     '',
   ].join('\n'));
-  const compose = path.join(root, '.github/skills/dude-compose/compose.mjs');
-  const lint = path.join(root, '.github/skills/dude-lint/lint.mjs');
   const library = path.join(root, 'library', 'packs');
   const profile = path.join(root, ...PROFILE_PATH.split('/'));
   const destination = path.join(root, ...PACK_DESTINATION.split('/'));
@@ -1240,58 +1236,7 @@ function packFixture(root) {
     type: 'local',
     location: path.resolve(library),
   };
-  const listCommand = shellCommand([
-    shellArg(process.execPath),
-    shellArg(compose),
-    'list',
-    '--root',
-    shellArg(root),
-    '--library',
-    shellArg(library),
-    '--no-fetch',
-    '--json',
-  ]);
-  const addCommand = shellCommand([
-    shellArg(process.execPath),
-    shellArg(compose),
-    'add',
-    PACK_NAME,
-    '--root',
-    shellArg(root),
-    '--library',
-    shellArg(library),
-    '--no-fetch',
-    '--envelope',
-  ]);
-  const lintCommand = shellCommand([
-    shellArg(process.execPath),
-    shellArg(lint),
-    shellArg(root),
-  ]);
-  return {
-    root,
-    manifest,
-    instruction,
-    compose,
-    lint,
-    library,
-    profile,
-    destination,
-    source,
-    listCommand,
-    addCommand,
-    lintCommand,
-    files: [PACK_DESTINATION],
-    result: {
-      ok: true,
-      code: 0,
-      result: {
-        added: PACK_NAME,
-        files: [PACK_DESTINATION],
-        origin: 'local',
-      },
-    },
-  };
+  return { root, manifest, instruction, library, profile, destination, source, files: [PACK_DESTINATION] };
 }
 
 /** @param {string} root */
@@ -1516,7 +1461,6 @@ function sourceFixture(root) {
     [`${catalog}/${SOURCE_EXTRA_PACK}/instructions/dude-pack-${SOURCE_EXTRA_PACK}-notes.instructions.md`, extraInstruction],
   ]);
   assert.equal(instruction.equals(defaults.instruction), false, 'the added source offers different bytes than the default library');
-  const compose = path.join(root, '.github/skills/dude-compose/compose.mjs');
   return {
     root,
     team,
@@ -1525,24 +1469,8 @@ function sourceFixture(root) {
     manifest,
     instruction,
     defaults,
-    compose,
     destination: path.join(root, ...PACK_DESTINATION.split('/')),
     sourcesFile: path.join(root, ...SOURCES_PATH.split('/')),
-    // The pack's own files as one source revision: a local folder has no commit.
-    packRevision: revision(Buffer.concat([manifest, instruction])),
-    /** Compose in the joined workspace, bound to the folder the request names and to nothing else. @param {string} location */
-    listCommand: (location) => shellCommand([
-      shellArg(process.execPath), shellArg(compose), 'list', '--root', shellArg(root), '--source', shellArg(location), '--json',
-    ]),
-    /** @param {string} location */
-    addCommand: (location) => shellCommand([
-      shellArg(process.execPath), shellArg(compose), 'add', PACK_NAME, '--root', shellArg(root), '--source', shellArg(location), '--envelope',
-    ]),
-    lintCommand: lintCommand(root),
-    /** The raw-bytes SHA-256 of a file, as the platform's own shell reports it. @param {string} file */
-    digestCommand: (file) => (WINDOWS
-      ? `(Get-FileHash -Algorithm SHA256 -LiteralPath ${shellArg(file)}).Hash.ToLower()`
-      : `shasum -a 256 ${shellArg(file)} | cut -d ' ' -f 1`),
     written: [PACK_DESTINATION],
   };
 }
@@ -1550,7 +1478,7 @@ function sourceFixture(root) {
 /**
  * Seed the Phase B workspace before its host starts: the default library's one pack, and the folder the
  * project will add through Settings. Nothing here saves the source, installs a pack, or writes the sources
- * file; the browser adds the source and the installed owner installs the pack.
+ * file; the browser adds the source and installs the pack through the pack action dialog.
  * @param {string} root
  */
 function seedSourceFixture(root) {
@@ -1559,7 +1487,7 @@ function seedSourceFixture(root) {
   write(root, PACK_SOURCE_PATH, fixture.defaults.instruction);
   for (const [relative, bytes] of fixture.files) write(fixture.team, relative, bytes);
   assert.equal(fs.existsSync(fixture.sourcesFile), false, 'no saved sources before the browser adds one');
-  assert.equal(fs.existsSync(fixture.destination), false, 'no pack destination before the owner acts');
+  assert.equal(fs.existsSync(fixture.destination), false, 'no pack destination before the dialog installs it');
   return { ...fixture, realTeam: fs.realpathSync(fixture.team) };
 }
 
@@ -1913,43 +1841,16 @@ function createBlankModel(options) {
  * Every read and mutation is made through an actually offered owner tool.
  * @param {string} root
  */
-function createPackModel(root) {
-  const fixture = packFixture(root);
-  const beforeProfile = installedProfile(root);
-  assert.equal(Object.hasOwn(beforeProfile.value.installed, PACK_NAME), false);
-  assert.equal(fs.existsSync(fixture.destination), false);
-  const state = {
-    phase: 'bootstrap',
-    requests: 0,
-    packPromptRequests: 0,
-    toolName: null,
-    offeredTools: [],
-    binding: null,
-    preview: null,
-    permission: null,
-    permissionAcknowledgment: null,
-    compose: null,
-    verification: null,
-    result: null,
-    ownerToolCalls: [],
-    beforeProfileRevision: revision(beforeProfile.bytes),
-    modelError: null,
-  };
-  const call = {
-    skill: 'call_t012_pack_skill',
-    list: 'call_t012_pack_list',
-    manifest: 'call_t012_pack_manifest',
-    source: 'call_t012_pack_source',
-    permission: 'call_t012_pack_permission',
-    permissionAck: 'call_t012_pack_permission_ack',
-    add: 'call_t012_pack_add',
-    lint: 'call_t012_pack_lint',
-    profile: 'call_t012_pack_profile',
-    result: 'call_t012_pack_result',
-  };
-  const recordCall = (callId, tool, details = {}) => {
-    state.ownerToolCalls.push({ callId, tool, ...details });
-  };
+/**
+ * The pack and source hosts' model. It answers the bootstrap turn with `reply`
+ * and refuses anything after it: a pack action runs Compose in the installed
+ * extension with no agent turn, so a second request would mean Canvas asked the
+ * session for something.
+ * @param {string} label
+ * @param {string} reply
+ */
+function createIdleModel(label, reply) {
+  const state = { requests: 0, offeredTools: [], modelError: null };
   const server = http.createServer(async (req, res) => {
     try {
       assert.equal(req.socket.remoteAddress, '127.0.0.1');
@@ -1962,325 +1863,21 @@ function createPackModel(root) {
       }
       const body = JSON.parse(raw);
       state.requests += 1;
-      assert.ok(state.requests <= 32, 'installed pack model request bound exceeded');
-      assert.equal(isSpecLeadTurn(body), false, 'the selected Dude owns the pack workflow');
-      recordToolSchemas('selected-dude-pack', body);
-      const offered = offeredDudeTool(body);
-      state.toolName = offered.name;
-      state.offeredTools = offered.offered;
-      const lastUser = [...(body.messages ?? [])].reverse().find((message) => message?.role === 'user');
-      const prompt = contentText(lastUser?.content);
-      const lastTool = [...(body.messages ?? [])].reverse().find((message) => message?.role === 'tool');
-      const lastId = lastTool?.tool_call_id ?? null;
-
-      if (state.phase === 'bootstrap') {
-        state.phase = 'idle';
-        answerModel(res, body, {
-          role: 'assistant',
-          content: 'T012_PACK_HOST_IDLE',
-        }, 'stop');
-        return;
-      }
-      if (state.phase === 'idle') {
-        assert.ok(prompt.includes('Dude Canvas explicit pack request in this joined workspace/session.'));
-        const jsonLine = prompt.split(/\r?\n/).reverse().find((line) => line.trim().startsWith('{'));
-        assert.ok(jsonLine, 'pack request omitted its exact receipt binding');
-        const binding = JSON.parse(jsonLine);
-        assert.equal(binding.owner, 'dude');
-        assert.equal(binding.operation, 'install');
-        assert.equal(binding.name, PACK_NAME);
-        // The default catalog's handoff is the contract from before sources existed: no bound-source line, and a
-        // binding of exactly seven keys with no catalogSource.
-        assert.deepEqual(Object.keys(binding),
-          ['receiptId', 'owner', 'operation', 'name', 'workspaceId', 'sessionId', 'providerGeneration']);
-        assert.equal(prompt.split(/\r?\n/).some((line) => /catalogSource|bound to one source/.test(line)), false,
-          'a default-catalog handoff mentions no bound source');
-        state.packPromptRequests += 1;
-        assert.equal(state.packPromptRequests, 1, 'the installed request is sent exactly once');
-        state.binding = binding;
-        const skill = requireToolSchema(body, 'skill', ['skill']);
-        recordCall(call.skill, skill, { skill: 'dude-compose' });
-        state.phase = 'pack-skill';
-        answerModel(res, body, toolCall(call.skill, skill, {
-          skill: 'dude-compose',
-        }), 'tool_calls');
-        return;
-      }
-      if (state.phase === 'pack-skill') {
-        assert.equal(lastId, call.skill);
-        const shell = requireToolSchema(body, SHELL_TOOL, ['command', 'description']);
-        recordCall(call.list, shell, { command: fixture.listCommand, mutation: false });
-        state.phase = 'pack-list';
-        answerModel(res, body, toolCall(call.list, shell, {
-          command: fixture.listCommand,
-          description: 'Read installed pack eligibility from Compose',
-          mode: 'sync',
-          initial_wait: 30,
-        }), 'tool_calls');
-        return;
-      }
-      if (state.phase === 'pack-list') {
-        assert.equal(lastId, call.list);
-        const listing = toolMessageText(body, lastId);
-        assert.ok(listing.includes(PACK_NAME), 'Compose list omitted the fixture pack');
-        assert.match(listing, /"installed"\s*:\s*false/,
-          'Compose list did not establish uninstalled eligibility');
-        assert.equal(fs.existsSync(fixture.destination), false,
-          'read-only eligibility performed no projected write');
-        assert.deepEqual(installedProfile(root).value, beforeProfile.value,
-          'read-only eligibility performed no profile write');
-        const view = requireToolSchema(body, 'view', ['path']);
-        const target = path.join(root, ...PACK_MANIFEST_PATH.split('/'));
-        recordCall(call.manifest, view, { path: target, mutation: false });
-        state.phase = 'pack-manifest';
-        answerModel(res, body, toolCall(call.manifest, view, { path: target }), 'tool_calls');
-        return;
-      }
-      if (state.phase === 'pack-manifest') {
-        assert.equal(lastId, call.manifest);
-        const manifest = toolMessageText(body, lastId);
-        assert.ok(manifest.includes(`name: ${PACK_NAME}`));
-        assert.ok(manifest.includes('tools: [node]'));
-        const view = requireToolSchema(body, 'view', ['path']);
-        const target = path.join(root, ...PACK_SOURCE_PATH.split('/'));
-        recordCall(call.source, view, { path: target, mutation: false });
-        state.phase = 'pack-source';
-        answerModel(res, body, toolCall(call.source, view, { path: target }), 'tool_calls');
-        return;
-      }
-      if (state.phase === 'pack-source') {
-        assert.equal(lastId, call.source);
-        const source = toolMessageText(body, lastId);
-        assert.ok(source.includes('actual installed Compose projection'));
-        assert.equal(fs.existsSync(fixture.destination), false,
-          'owner preview performed no projected write');
-        assert.deepEqual(installedProfile(root).value, beforeProfile.value,
-          'owner preview performed no profile write');
-        state.preview = {
-          operation: 'install',
-          name: PACK_NAME,
-          source: fixture.source,
-          files: fixture.files,
-          tools: [{ name: 'node', available: true, version: process.version }],
-          profileRevision: revision(beforeProfile.bytes),
-          sourceRevision: revision(Buffer.concat([fixture.manifest, fixture.instruction])),
-          targetRevision: 'absent',
-        };
-        requireToolSchema(body, offered.name, ['op']);
-        const request = {
-          owner: 'dude',
-          requestRef: `pack:${state.binding.receiptId}`,
-          scope: { kind: 'session' },
-          source: { kind: 'session', revision: state.binding.providerGeneration },
-          revision: `t012-pack-permission-${sha256(JSON.stringify(state.preview)).slice(0, 16)}`,
-          class: 'permission',
-          prompt: `Install ${PACK_NAME} from the reviewed local source into this disposable workspace.`,
-          whyHuman: 'The actual Compose projection writes the named installed pack artifact and profile membership.',
-          unblocks: 'The owner can recheck the reviewed basis, apply Compose once, and report the correlated result.',
-          blocking: true,
-          fields: {
-            operation: 'pack:install',
-            targets: [
-              { target: PROFILE_PATH, revision: state.preview.profileRevision },
-              { target: `pack:${PACK_NAME} source`, revision: state.preview.sourceRevision },
-              { target: PACK_DESTINATION, revision: state.preview.targetRevision },
-            ],
-            consequences: `Install ${PACK_DESTINATION} from ${fixture.source.location}. Required tool: node (${process.version}); no prerequisite is installed.`,
-            eligibility: 'Compose reported the exact pack available and not installed; the owner will recheck profile, source, and destination before applying.',
-            confirmation: `INSTALL PACK ${PACK_NAME}`,
-          },
-        };
-        state.permissionRequest = request;
-        recordCall(call.permission, offered.name, {
-          op: 'request',
-          requestRef: request.requestRef,
-          operation: request.fields.operation,
-        });
-        state.phase = 'permission-waiting';
-        answerModel(res, body, toolCall(call.permission, offered.name, {
-          op: 'request',
-          request,
-        }), 'tool_calls');
-        return;
-      }
-      if (state.phase === 'permission-waiting') {
-        assert.equal(lastId, call.permission);
-        const details = toolDetails(body, lastId);
-        assert.equal(details.status, 'awaiting_acknowledgment');
-        assert.equal(details.acceptedAnswer, false);
-        assert.equal(details.response.class, 'permission');
-        assert.equal(details.response.action, 'consent');
-        assert.equal(details.response.operation, 'pack:install');
-        assert.equal(details.response.confirmation, `INSTALL PACK ${PACK_NAME}`);
-        assert.deepEqual(details.response.targets, state.permissionRequest.fields.targets);
-        assert.equal(fs.existsSync(fixture.destination), false,
-          'accepted permission still performs no frontend or provider write');
-        assert.deepEqual(installedProfile(root).value, beforeProfile.value,
-          'accepted permission alone performs no profile write');
-        state.permission = details;
-        requireToolSchema(body, offered.name, ['op']);
-        const receipt = details.receipt;
-        const acknowledgment = {
-          receiptId: receipt.receiptId,
-          owner: receipt.owner,
-          requestRef: receipt.requestRef,
-          scope: receipt.scope,
-          previousRevision: receipt.previousRevision,
-          recognizes: receipt.recognizes,
-          outcome: 'accepted',
-          note: 'The owner recognized the exact installed-host pack permission response.',
-          source: receipt.source,
-        };
-        recordCall(call.permissionAck, offered.name, {
-          op: 'acknowledge',
-          recognizes: acknowledgment.recognizes,
-        });
-        state.phase = 'permission-ack';
-        answerModel(res, body, toolCall(call.permissionAck, offered.name, {
-          op: 'acknowledge',
-          acknowledgment,
-        }), 'tool_calls');
-        return;
-      }
-      if (state.phase === 'permission-ack') {
-        assert.equal(lastId, call.permissionAck);
-        const details = toolDetails(body, lastId);
-        assert.equal(details.status, 'accepted');
-        state.permissionAcknowledgment = details;
-        assert.equal(fs.existsSync(fixture.destination), false,
-          'owner recognition alone performs no Compose write');
-        const shell = requireToolSchema(body, SHELL_TOOL, ['command', 'description']);
-        recordCall(call.add, shell, { command: fixture.addCommand, mutation: true });
-        state.phase = 'pack-add';
-        answerModel(res, body, toolCall(call.add, shell, {
-          command: fixture.addCommand,
-          description: 'Apply exact consented pack with Compose',
-          mode: 'sync',
-          initial_wait: 30,
-        }), 'tool_calls');
-        return;
-      }
-      if (state.phase === 'pack-add') {
-        assert.equal(lastId, call.add);
-        const composeText = toolMessageText(body, lastId);
-        assert.ok(composeText.includes(PACK_NAME), 'Compose add result omitted the exact pack');
-        assert.ok(composeText.includes(PACK_DESTINATION),
-          'Compose add result omitted the actual projected artifact');
-        assert.equal(fs.readFileSync(fixture.destination).equals(fixture.instruction), true,
-          'Compose did not project the exact reviewed source bytes');
-        const profile = installedProfile(root);
-        assert.deepEqual(profile.value.installed[PACK_NAME], {
-          files: fixture.files,
-          source: fixture.source,
-        });
-        // The owner forwards what this tool call actually printed, never a
-        // predetermined result. The fixture value is only the expected oracle.
-        const observed = shellToolOutput(composeText);
-        assert.ok(observed.exitCode === null || observed.exitCode === 0,
-          `Compose add exited with ${observed.exitCode}`);
-        const envelope = JSON.parse(observed.stdout);
-        assert.deepEqual(envelope, fixture.result,
-          'Compose add --envelope printed the exact engine result envelope');
-        state.compose = {
-          command: fixture.addCommand,
-          toolResult: composeText,
-          stdout: observed.stdout,
-          exitCode: observed.exitCode,
-          result: envelope,
-          destinationRevision: revision(fs.readFileSync(fixture.destination)),
-        };
-        const shell = requireToolSchema(body, SHELL_TOOL, ['command', 'description']);
-        recordCall(call.lint, shell, { command: fixture.lintCommand, mutation: false });
-        state.phase = 'pack-lint';
-        answerModel(res, body, toolCall(call.lint, shell, {
-          command: fixture.lintCommand,
-          description: 'Verify installed pack projection with shipped lint',
-          mode: 'sync',
-          initial_wait: 30,
-        }), 'tool_calls');
-        return;
-      }
-      if (state.phase === 'pack-lint') {
-        assert.equal(lastId, call.lint);
-        const lintText = toolMessageText(body, lastId);
-        assert.match(lintText, /0 failure\(s\)/,
-          'post-Compose installed verification did not report zero failures');
-        state.verification = {
-          command: fixture.lintCommand,
-          toolResult: lintText,
-        };
-        const view = requireToolSchema(body, 'view', ['path']);
-        recordCall(call.profile, view, { path: fixture.profile, mutation: false });
-        state.phase = 'pack-profile';
-        answerModel(res, body, toolCall(call.profile, view, {
-          path: fixture.profile,
-        }), 'tool_calls');
-        return;
-      }
-      if (state.phase === 'pack-profile') {
-        assert.equal(lastId, call.profile);
-        const profileText = toolMessageText(body, lastId);
-        assert.ok(profileText.includes(PACK_NAME));
-        assert.ok(profileText.includes(PACK_DESTINATION));
-        const profile = installedProfile(root);
-        assert.deepEqual(profile.value.installed[PACK_NAME], {
-          files: fixture.files,
-          source: fixture.source,
-        });
-        requireToolSchema(body, offered.name, ['op']);
-        const acknowledgment = {
-          recognizes: 'pack_result',
-          ...state.binding,
-          outcome: 'applied',
-          mutation: 'applied',
-          result: state.compose.result,
-          profileRevision: revision(profile.bytes),
-          source: fixture.source,
-          note: 'Installed Dude applied Compose once, verified zero lint failures, reread the profile, and reported the exact local source and file.',
-        };
-        recordCall(call.result, offered.name, {
-          op: 'acknowledge',
-          recognizes: acknowledgment.recognizes,
-          operation: acknowledgment.operation,
-          name: acknowledgment.name,
-        });
-        state.phase = 'pack-result';
-        answerModel(res, body, toolCall(call.result, offered.name, {
-          op: 'acknowledge',
-          acknowledgment,
-        }), 'tool_calls');
-        return;
-      }
-      assert.equal(state.phase, 'pack-result');
-      assert.equal(lastId, call.result);
-      const details = toolDetails(body, lastId);
-      assert.equal(details.phase, 'applied');
-      assert.equal(details.applied, true);
-      assert.equal(details.receipt.freshness, 'current');
-      assert.deepEqual(details.receipt.reread.entry, {
-        files: fixture.files,
-        source: fixture.source,
-      });
-      assert.equal(details.receipt.reread.profileRevision,
-        revision(installedProfile(root).bytes));
-      assert.deepEqual(details.receipt.acknowledgment.result, JSON.parse(state.compose.stdout),
-        'the provider accepted the observed Compose stdout as the pack result');
-      state.result = details;
-      state.phase = 'complete';
-      answerModel(res, body, {
-        role: 'assistant',
-        content: 'T012_INSTALLED_PACK_COMPLETE',
-      }, 'stop');
+      assert.equal(state.requests, 1, `the ${label} host's session receives its bootstrap turn and nothing else`);
+      recordToolSchemas(`selected-dude-${label}`, body);
+      // The import and capture paths keep the Needs you tool, so the selected Dude is still offered it.
+      state.offeredTools = offeredDudeTool(body).offered;
+      answerModel(res, body, { role: 'assistant', content: reply }, 'stop');
     } catch (error) {
       state.modelError = safeError(error);
-      note('pack-model-refusal', { error: state.modelError });
+      note(`${label}-model-refusal`, { error: state.modelError });
       res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: { message: 'Bounded T012 pack fixture refused request' } }));
+      res.end(JSON.stringify({ error: { message: `Bounded T012 ${label} fixture refused request` } }));
     }
   });
   server.requestTimeout = 10_000;
   server.headersTimeout = 10_000;
-  return { server, state, fixture };
+  return { server, state };
 }
 
 /**
@@ -2768,340 +2365,6 @@ function createImportModel(fixture, importer) {
       note('import-model-refusal', { error: state.modelError });
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: { message: 'Bounded T012 import fixture refused request' } }));
-    }
-  });
-  server.requestTimeout = 10_000;
-  server.headersTimeout = 10_000;
-  return { server, state, approve, hold };
-}
-
-/**
- * Deterministic selected-Dude model for the Phase B case. It scripts what the installed owner does with one
- * source-bound install handoff, one tool call at a time, through the tools the CLI actually offers: load
- * dude-compose and its Sources procedure, preview the bound folder with Compose, read its pack and the saved
- * sources and their raw-bytes revision, publish the literal permission naming the third-party source first,
- * recognize consent, check source freshness again, run Compose with exactly the bound `--source`, verify with
- * the shipped lint, reread the profile, and acknowledge the pack_result with the exact binding echoed. The
- * model writes nothing in the workspace; Compose does. Each owner script is a generator that yields its next
- * tool call and receives that tool's actual result.
- * @param {ReturnType<typeof seedSourceFixture>} fixture
- * @param {{parsePackSourcesDocument:(value:Buffer)=>unknown[]}} sources the installed module's own parser
- */
-function createSourceModel(fixture, sources) {
-  const { root } = fixture;
-  const beforeProfile = installedProfile(root);
-  const state = {
-    phase: 'bootstrap',
-    requests: 0,
-    toolName: null,
-    offeredTools: [],
-    /** @type {any} */
-    record: null,
-    /** @type {any[]} */
-    ownerToolCalls: [],
-    modelError: null,
-  };
-  /** The calls the owner made, by id. The host approves exactly these, as made. @type {Map<string, any>} */
-  const calls = new Map();
-  /** @type {{generator:Generator<any, string, any>, callId:string|null}|null} */
-  let active = null;
-  /** Armed gates by name: the owner's call that names one waits for the browser to release it. @type {Map<string, ReturnType<typeof createGate>>} */
-  const gates = new Map();
-  const hold = (name) => {
-    const gate = createGate();
-    gates.set(name, gate);
-    return gate;
-  };
-  const required = { skill: ['skill'], view: ['path'], shell: ['command', 'description'], needs: ['op'] };
-  const skill = (id, name) => ({ tool: 'skill', id, args: { skill: name } });
-  const view = (id, file) => ({ tool: 'view', id, args: { path: file } });
-  const shell = (id, command, description, writes = null) => ({
-    tool: 'shell', id, args: { command, description, mode: 'sync', initial_wait: 30 }, writes,
-  });
-  const needs = (id, args) => ({ tool: 'needs', id, args });
-  /** A shell result's stdout, which must have exited zero. */
-  const stdoutOf = (text, label) => {
-    const output = shellToolOutput(text);
-    assert.ok(output.exitCode === null || output.exitCode === 0,
-      `${label} exited ${output.exitCode}: ${text.slice(0, 2_000)}`);
-    return output.stdout.trim();
-  };
-  /** Nothing the owner does before applying changes the workspace: no pack file, profile, or saved sources. */
-  const assertUntouched = (label, sourcesBytes) => {
-    assert.equal(fs.existsSync(fixture.destination), false, `${label} performed no projected write`);
-    assert.deepEqual(installedProfile(root).value, beforeProfile.value, `${label} performed no profile write`);
-    assert.equal(fs.readFileSync(fixture.sourcesFile).equals(sourcesBytes), true, `${label} performed no saved-sources write`);
-  };
-
-  function* install(binding, record) {
-    const id = (name) => `call_t012_source_${name}`;
-    const bound = binding.catalogSource;
-    const location = bound.source.location;
-    const sourcesBytes = fs.readFileSync(fixture.sourcesFile);
-    const inSource = (relative) => path.join(location, 'library', 'packs', PACK_NAME, ...relative.split('/'));
-    // 1. The installed skill's Canvas procedure, including how a source-bound request is handled.
-    const procedure = yield skill(id('skill'), 'dude-compose');
-    assert.ok(procedure.text.includes('loaded successfully'), `dude-compose did not load: ${procedure.text.slice(0, 600)}`);
-    const context = (procedure.body.messages ?? []).map((message) => contentText(message?.content)).join('\n');
-    for (const heading of ['Canvas Pack Requests And Results', 'Sources In Pack Requests']) {
-      assert.ok(context.includes(heading), `the installed skill context carries ${heading}`);
-    }
-    record.procedureSha256 = sha256(procedure.text);
-    // 2. The actual preview: Compose lists exactly the bound folder, never the default library or a fallback.
-    const listed = yield shell(id('list'), fixture.listCommand(location), 'Read installed pack eligibility from the bound source (read only)');
-    const listing = JSON.parse(stdoutOf(listed.text, 'compose list --source'));
-    assert.equal(listing.ok, true);
-    assert.equal(listing.origin, `source ${location}`, 'Compose listed the bound source');
-    assert.deepEqual(listing.packs.map((pack) => [pack.name, pack.installed, pack.description]), [
-      [PACK_NAME, false, 'Added-source variant of the installed-host pack round trip.'],
-      [SOURCE_EXTRA_PACK, false, 'A second pack only the added source offers.'],
-    ], 'the bound source offers its own pack, uninstalled');
-    assertUntouched('owner preview', sourcesBytes);
-    // 3. The pack as the install would project it, read from the bound folder.
-    const manifest = yield view(id('manifest'), inSource('pack.md'));
-    assert.ok(manifest.text.includes('Added-source variant') && manifest.text.includes('tools: [node]'), 'the owner read the bound pack manifest');
-    const instruction = yield view(id('instruction'), inSource(`instructions/dude-pack-${PACK_NAME}-owner.instructions.md`));
-    assert.ok(instruction.text.includes('not from the default library'), 'the owner read the bound pack source file');
-    // 4. The saved source this request is bound to, and the raw-bytes revision of the file that holds it.
-    const saved = yield view(id('sources'), fixture.sourcesFile);
-    assert.ok(saved.text.includes('"type": "local"') && saved.text.includes(fixture.label), 'the owner read the saved source entry');
-    const digest = yield shell(id('sources-digest'), fixture.digestCommand(fixture.sourcesFile), 'Read the raw-bytes revision of the saved sources (read only)');
-    assert.equal(`sha256:${stdoutOf(digest.text, 'sources digest').toLowerCase()}`, bound.sourcesRevision,
-      'the saved sources are still the revision this request was bound to');
-    assertUntouched('reading the saved sources', sourcesBytes);
-    const preview = {
-      operation: 'install',
-      name: PACK_NAME,
-      source: bound,
-      files: fixture.written,
-      tools: [{ name: 'node', available: true, version: process.version }],
-      profileRevision: revision(beforeProfile.bytes),
-      packRevision: fixture.packRevision,
-      targetRevision: 'absent',
-    };
-    record.preview = preview;
-    // 5. The literal permission names the third-party source first, pinned by the digest of its pack files.
-    const request = {
-      owner: 'dude',
-      requestRef: `pack:${binding.receiptId}`,
-      scope: { kind: 'session' },
-      source: { kind: 'session', revision: binding.providerGeneration },
-      revision: `t012-source-permission-${sha256(JSON.stringify(preview)).slice(0, 16)}`,
-      class: 'permission',
-      prompt: `Install ${PACK_NAME} from the third-party source ${location} into this disposable workspace.`,
-      whyHuman: 'The actual Compose projection writes the named installed pack artifact and profile membership from the source this project added.',
-      unblocks: 'The owner can recheck the reviewed basis, apply Compose once with the bound source, and report the correlated result.',
-      blocking: true,
-      fields: {
-        operation: 'pack:install',
-        targets: [
-          {
-            target: `Third-party source ${location}\nSource type: local folder (a remote commit is not applicable)\nSaved in ${SOURCES_PATH}`,
-            revision: fixture.packRevision,
-          },
-          { target: PROFILE_PATH, revision: preview.profileRevision },
-          { target: `pack:${PACK_NAME} source`, revision: fixture.packRevision },
-          { target: PACK_DESTINATION, revision: preview.targetRevision },
-        ],
-        consequences: `Install ${PACK_DESTINATION} from the third-party source ${location}, which is not part of the Dude bundle: its packs can add agents and instructions. Required tool: node (${process.version}); no prerequisite is installed.`,
-        eligibility: 'Compose reported the exact pack available and not installed from the bound source; the owner will recheck the profile, the saved sources revision, the source, and the destination before applying.',
-        confirmation: `INSTALL PACK ${PACK_NAME}`,
-      },
-    };
-    record.permission = { request, response: null, acknowledgment: null };
-    record.stage = 'permission-waiting';
-    const answered = yield needs(id('permission'), { op: 'request', request });
-    const details = toolDetails(answered.body, answered.callId);
-    assert.equal(details.status, 'awaiting_acknowledgment');
-    assert.equal(details.acceptedAnswer, false);
-    assert.deepEqual(
-      [details.response.class, details.response.action, details.response.operation, details.response.confirmation],
-      ['permission', 'consent', 'pack:install', `INSTALL PACK ${PACK_NAME}`],
-    );
-    assert.deepEqual(details.response.targets, request.fields.targets);
-    assertUntouched('accepted permission alone', sourcesBytes);
-    record.permission.response = details;
-    record.stage = 'permission-consented';
-    const receipt = details.receipt;
-    const recognized = yield needs(id('permission-ack'), {
-      op: 'acknowledge',
-      acknowledgment: {
-        receiptId: receipt.receiptId,
-        owner: receipt.owner,
-        requestRef: receipt.requestRef,
-        scope: receipt.scope,
-        previousRevision: receipt.previousRevision,
-        recognizes: receipt.recognizes,
-        outcome: 'accepted',
-        note: 'The owner recognized the exact installed-host source-bound pack permission response.',
-        source: receipt.source,
-      },
-    });
-    const acknowledged = toolDetails(recognized.body, recognized.callId);
-    assert.equal(acknowledged.status, 'accepted');
-    record.permission.acknowledgment = acknowledged;
-    assertUntouched('owner recognition alone', sourcesBytes);
-    // 6. Freshness again before writing: the saved sources, the bound source, and the reviewed pack bytes.
-    const again = yield shell(id('sources-digest-again'), fixture.digestCommand(fixture.sourcesFile), 'Recheck the raw-bytes revision of the saved sources (read only)');
-    assert.equal(`sha256:${stdoutOf(again.text, 'sources digest recheck').toLowerCase()}`, bound.sourcesRevision);
-    const relisted = yield shell(id('list-again'), fixture.listCommand(location), 'Recheck the bound source before applying (read only)');
-    assert.deepEqual(JSON.parse(stdoutOf(relisted.text, 'compose list recheck')).packs.map((pack) => pack.name), [PACK_NAME, SOURCE_EXTRA_PACK]);
-    assert.equal(revision(Buffer.concat([fs.readFileSync(inSource('pack.md')), fs.readFileSync(inSource(`instructions/dude-pack-${PACK_NAME}-owner.instructions.md`))])),
-      fixture.packRevision, 'the reviewed pack bytes are unchanged');
-    assert.deepEqual(sources.parsePackSourcesDocument(sourcesBytes), [bound.source], 'the saved entry for the key is still the bound source');
-    record.freshness = { sourcesRevision: bound.sourcesRevision, packRevision: fixture.packRevision };
-    // 7. Apply with exactly the bound source, and nothing else.
-    const addCommand = fixture.addCommand(location);
-    const applied = yield shell(id('add'), addCommand, 'Apply the exact consented pack with Compose from the bound source', 'workspace, by Compose');
-    const stdout = stdoutOf(applied.text, 'compose add --source');
-    const envelope = JSON.parse(stdout);
-    assert.deepEqual(envelope, { ok: true, code: 0, result: { added: PACK_NAME, files: fixture.written, origin: `source ${location}` } },
-      'Compose add --envelope printed the exact engine result envelope for the bound source');
-    const destination = fs.readFileSync(fixture.destination);
-    assert.equal(destination.equals(fixture.instruction), true, 'Compose projected the bound folder\'s exact pack bytes');
-    assert.equal(destination.equals(fixture.defaults.instruction), false, 'and not the default library\'s same-named pack');
-    const profile = installedProfile(root);
-    assert.deepEqual(profile.value.installed[PACK_NAME], { files: fixture.written, source: { type: 'local', location: fixture.realTeam } });
-    record.compose = {
-      command: addCommand, toolResult: applied.text, stdout, result: envelope,
-      destination: { bytes: destination.length, sha256: sha256(destination) },
-    };
-    // 8. Ordinary verification, then the profile as the provider will reread it.
-    const linted = yield shell(id('lint'), fixture.lintCommand, 'Verify the installed pack projection with the shipped lint');
-    assert.match(linted.text, /\b0 failure\(s\)/, 'post-Compose installed verification reports zero failures');
-    record.verification = { command: fixture.lintCommand, toolResult: linted.text };
-    const reread = yield view(id('profile'), path.join(root, ...PROFILE_PATH.split('/')));
-    assert.ok(reread.text.includes(PACK_NAME) && reread.text.includes(PACK_DESTINATION));
-    // 9. The result, with the exact bound selection echoed. The owner reports what its own command printed.
-    record.stage = 'result-ready';
-    const accepted = yield {
-      ...needs(id('result'), {
-        op: 'acknowledge',
-        acknowledgment: {
-          recognizes: 'pack_result',
-          ...binding,
-          outcome: 'applied',
-          mutation: 'applied',
-          result: envelope,
-          profileRevision: revision(profile.bytes),
-          source: profile.value.installed[PACK_NAME].source,
-          note: 'Installed Dude previewed the bound folder, published the third-party permission, recognized consent, rechecked the saved sources revision, ran Compose once with exactly the bound source, verified zero lint failures, reread the profile, and reports the recorded folder and file.',
-        },
-      }),
-      gate: 'source-before-result',
-    };
-    record.stage = 'result-acknowledged';
-    const result = toolDetails(accepted.body, accepted.callId);
-    assert.equal(result.phase, 'applied', `the provider refused the pack result: ${JSON.stringify(result)}`);
-    assert.equal(result.applied, true);
-    assert.equal(result.receipt.freshness, 'current');
-    assert.deepEqual(result.receipt.catalogSource, bound, 'the provider kept the exact binding');
-    assert.deepEqual(result.receipt.reread.entry, { files: fixture.written, source: { type: 'local', location: fixture.realTeam } });
-    assert.equal(result.receipt.reread.profileRevision, revision(installedProfile(root).bytes));
-    assert.deepEqual(result.receipt.acknowledgment.result, envelope, 'the provider accepted the observed Compose stdout as the pack result');
-    record.result = result;
-    record.stage = 'complete';
-    return 'T012_SOURCE_PACK_COMPLETE';
-  }
-
-  /** The host's decision for one permission request: only the calls made above, exactly as made. */
-  const approve = (request) => {
-    const call = calls.get(String(request.toolCallId));
-    if (!call) return false;
-    switch (call.tool) {
-      case 'view': return request.kind === 'read' && request.path === call.args.path;
-      case 'shell': return request.kind === 'shell' && request.fullCommandText === call.args.command;
-      case 'needs': return request.kind === 'custom-tool' && request.toolName === 'dude_needs_you'
-        && isDeepStrictEqual(request.args, call.args);
-      default: return false;
-    }
-  };
-
-  const server = http.createServer(async (req, res) => {
-    try {
-      assert.equal(req.socket.remoteAddress, '127.0.0.1');
-      assert.equal(req.method, 'POST');
-      assert.equal(req.url, '/v1/chat/completions');
-      let raw = '';
-      for await (const chunk of req) {
-        raw += chunk;
-        assert.ok(Buffer.byteLength(raw) <= MAX_MODEL_BODY);
-      }
-      const body = JSON.parse(raw);
-      state.requests += 1;
-      assert.ok(state.requests <= 48, 'installed source model request bound exceeded');
-      assert.equal(isSpecLeadTurn(body), false, 'the selected Dude owns the pack workflow');
-      recordToolSchemas('selected-dude-source', body);
-      const offered = offeredDudeTool(body);
-      state.toolName = offered.name;
-      state.offeredTools = offered.offered;
-      if (state.phase === 'bootstrap') {
-        state.phase = 'idle';
-        answerModel(res, body, { role: 'assistant', content: 'T012_SOURCE_HOST_IDLE' }, 'stop');
-        return;
-      }
-      let step;
-      if (active) {
-        step = active.generator.next({
-          body, callId: active.callId, text: toolMessageText(body, /** @type {string} */ (active.callId)),
-        });
-      } else {
-        assert.equal(state.phase, 'idle', 'a handoff arrives only while the owner is idle');
-        assert.equal(state.record, null, 'the one source-bound request is sent exactly once');
-        const lastUser = [...(body.messages ?? [])].reverse().find((message) => message?.role === 'user');
-        const prompt = contentText(lastUser?.content);
-        const lines = prompt.split(/\r?\n/);
-        // The installed CLI may put its own timestamp tag ahead of the message; nothing else precedes the handoff.
-        const headerAt = lines.indexOf('Dude Canvas explicit pack request in this joined workspace/session.');
-        assert.ok(headerAt >= 0, 'the foreground message is the pack handoff');
-        assert.deepEqual(lines.slice(0, headerAt).map((line) => line.trim()).filter((line) => line && !/^<current_datetime>[^<>]*<\/current_datetime>$/.test(line)), [],
-          'only the CLI timestamp tag precedes the handoff');
-        lines.splice(0, headerAt);
-        assert.equal(lines.filter((line) => /^This request is bound to one source the project added \(catalogSource in the final JSON\)\./.test(line)).length, 1,
-          'the handoff tells the owner to use exactly the bound source');
-        const jsonLine = lines.reverse().find((line) => line.trim().startsWith('{'));
-        assert.ok(jsonLine, 'the pack handoff omitted its exact receipt binding');
-        const binding = JSON.parse(jsonLine);
-        assert.deepEqual(Object.keys(binding),
-          ['receiptId', 'owner', 'operation', 'name', 'workspaceId', 'sessionId', 'providerGeneration', 'catalogSource']);
-        assert.deepEqual([binding.owner, binding.operation, binding.name], ['dude', 'install', PACK_NAME]);
-        assert.deepEqual(Object.keys(binding.catalogSource), ['key', 'sourcesRevision', 'source']);
-        assert.deepEqual(binding.catalogSource.source, { type: 'local', location: fixture.realTeam },
-          'the binding names the real folder the project added');
-        assert.equal(binding.catalogSource.sourcesRevision, revision(fs.readFileSync(fixture.sourcesFile)),
-          'the binding carries the raw-bytes revision of the saved sources');
-        state.record = {
-          binding, promptSha256: sha256(prompt), stage: 'started', preview: null, permission: null, freshness: null,
-          compose: null, verification: null, result: null, procedureSha256: null,
-        };
-        state.phase = 'installing';
-        active = { generator: install(binding, state.record), callId: null };
-        step = active.generator.next();
-      }
-      if (step.done) {
-        active = null;
-        state.phase = 'complete';
-        answerModel(res, body, { role: 'assistant', content: step.value }, 'stop');
-        return;
-      }
-      const call = step.value;
-      const tool = requireToolSchema(body,
-        call.tool === 'needs' ? offered.name : call.tool === 'shell' ? SHELL_TOOL : call.tool, required[call.tool]);
-      const gate = call.gate ? gates.get(call.gate) : undefined;
-      if (gate) {
-        gate.reached = true;
-        await gate.wait();
-      }
-      assert.equal(calls.has(call.id), false, `owner call ids are unique: ${call.id}`);
-      calls.set(call.id, call);
-      state.ownerToolCalls.push({ callId: call.id, tool, writes: call.writes ?? null, args: call.args });
-      /** @type {NonNullable<typeof active>} */ (active).callId = call.id;
-      answerModel(res, body, toolCall(call.id, tool, call.args), 'tool_calls');
-    } catch (error) {
-      state.modelError = safeError(error);
-      note('source-model-refusal', { error: state.modelError });
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: { message: 'Bounded T012 source fixture refused request' } }));
     }
   });
   server.requestTimeout = 10_000;
@@ -5650,32 +4913,14 @@ async function createInstalledHost(options) {
         && request.fullCommandText === publisherCommand(blankPlan, options.root)
         && !/[\n\r`;]|&&|\|\||\$\(/.test(request.fullCommandText)
         && request.toolCallId === `call_${options.caseName}_publish_capture`;
-      const installedPack = packFixture(options.root);
-      const exactPackRead = request.kind === 'read'
-        && (
-          (request.toolCallId === 'call_t012_pack_manifest'
-            && request.path === path.join(options.root, ...PACK_MANIFEST_PATH.split('/')))
-          || (request.toolCallId === 'call_t012_pack_source'
-            && request.path === path.join(options.root, ...PACK_SOURCE_PATH.split('/')))
-          || (request.toolCallId === 'call_t012_pack_profile'
-            && request.path === installedPack.profile)
-        );
-      const packShells = new Map([
-        ['call_t012_pack_list', installedPack.listCommand],
-        ['call_t012_pack_add', installedPack.addCommand],
-        ['call_t012_pack_lint', installedPack.lintCommand],
-      ]);
-      const exactPackShell = request.kind === 'shell'
-        && packShells.get(String(request.toolCallId)) === request.fullCommandText
-        && !/[\n\r`;]|&&|\|\||\$\(/.test(String(request.fullCommandText));
       const exactHandoff = request.kind === 'custom-tool'
         && toolName === 'dude_needs_you'
         && request.args && typeof request.args === 'object'
         && ['request', 'acknowledge'].includes(request.args.op)
-        && /^(?:call_blank-(?:non-git|git)_capture_ack|call_t012_(?:review_[abc]|ack_[abc]|permission|cancel|outside|pack_(?:permission|permission_ack|result)))$/
+        && /^(?:call_blank-(?:non-git|git)_capture_ack|call_t012_(?:review_[abc]|ack_[abc]|permission|cancel|outside))$/
           .test(String(request.toolCallId));
       const accepted = (exactSession
-        && (exactHandoff || exactPublisher || exactPackRead || exactPackShell
+        && (exactHandoff || exactPublisher
           || Boolean(options.approve?.(request))))
         || exactStageCreate || exactStageRead || exactCanonicalRead
         || exactSkillRead || exactMockEdit || exactMockRead;
@@ -5982,7 +5227,9 @@ async function readWorkIndex(canvasUrl) {
 /**
  * Observe one real installed-host About read and its rendered installation
  * record: the release case by default, or a pre-seeded development base.
- * Settings is already open and its request dialog, if any, has been closed.
+ * Settings is already open with no modal dialog over it (after an install,
+ * Show in Installed has closed the pack action dialog), so About takes a real
+ * pointer click.
  * @param {Cdp} page
  * @param {string} canvasUrl
  * @param {string} root
@@ -6098,6 +5345,7 @@ function installedParity(root) {
     'lib/canvas-server.mjs',
     'lib/projection.mjs',
     'lib/packs.mjs',
+    'lib/pack-action.mjs',
     'lib/catalog-reader.mjs',
     'lib/needs-you.mjs',
     'lib/project-artifacts.mjs',
@@ -6245,16 +5493,17 @@ async function driveBlankCapture(page, canvasUrl, intent, modelState, developmen
 }
 
 /**
- * Drive the complete installed Settings request while the deterministic owner
- * above performs preview, permission recognition, Compose, verification, and
- * result acknowledgment through the installed CLI.
+ * Drive the installed Settings pack install through the pack action dialog:
+ * the installed extension's Compose preview, one Install click, the success
+ * view, and Show in Installed after the automatic reread, with no agent turn,
+ * Needs you request, or chat message. About visits before and after the
+ * install keep the current work and the Packs selection.
  * @param {Cdp} page
  * @param {string} canvasUrl
  * @param {ReturnType<typeof seedPackFixture>} fixture
- * @param {ReturnType<typeof createPackModel>['state']} model
  * @param {string[]} cliVersions
  */
-async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, model, cliVersions) {
+async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, cliVersions) {
   const network = [], foreignNetwork = [];
   const runtimeErrors = [];
   page.on('Runtime.exceptionThrown', (event) => runtimeErrors.push(event));
@@ -6360,116 +5609,43 @@ async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, model, cliV
   ))`), 'installed-host available pack row after About');
   await click(page, `document.querySelector('[data-pack-row^="pack:${PACK_NAME}@"]')`);
 
-  const action = `document.querySelector('[data-pack-operation="install"]')`;
-  assert.equal(await evaluate(page, `${action}.disabled`), false);
-  await evaluate(page, `(() => { const action = ${action}; action.click(); action.click(); })()`);
-  await until(() => model.phase === 'permission-waiting' || model.modelError,
-    'installed owner permission publication', 45_000);
-  if (model.modelError) throw new Error(model.modelError);
-  await until(() => evaluate(page, `document.querySelector(
-    '[data-pack-request-dialog][open] [data-pack-request-phase]'
-  )?.getAttribute('data-pack-request-phase') === 'waiting_permission'`),
-  'installed pack request waits for exact permission', 45_000);
-  assert.equal(model.packPromptRequests, 1);
-  assert.equal(fs.existsSync(fixture.destination), false,
-    'no projected artifact exists before exact consent');
-  assert.equal(fs.readFileSync(fixture.profile).equals(beforeProfile), true,
-    'profile bytes remain exact before consent');
-  assert.deepEqual(model.preview, {
-    operation: 'install',
-    name: PACK_NAME,
-    source: fixture.source,
-    files: fixture.files,
-    tools: [{ name: 'node', available: true, version: process.version }],
-    profileRevision: revision(beforeProfile),
-    sourceRevision: revision(Buffer.concat([fixture.manifest, fixture.instruction])),
-    targetRevision: 'absent',
-  });
-  const pending = await readNeedsYou(canvasUrl);
-  assert.equal(pending.packRequests.length, 1);
-  assert.equal(pending.packRequests[0].operation, 'install');
-  assert.equal(pending.packRequests[0].name, PACK_NAME);
-  assert.equal(pending.packRequests[0].phase, 'waiting_permission');
-  const permissionAuthority = {
-    packReceipt: pending.packRequests[0].packReceipt,
-    receiptId: pending.packRequests[0].receipt.receiptId,
-    requestHandle: pending.packRequests[0].permissionRequest,
-  };
-  await click(page, button('Return to packs'));
-  const aboutWaitingPermission = await observeInstalledAbout(
-    page,
-    canvasUrl,
-    fixture.root,
-    'waiting-permission',
-    cliVersions,
-  );
-  const pendingAfterAbout = (await readNeedsYou(canvasUrl)).packRequests[0];
-  assert.equal(pendingAfterAbout.phase, 'waiting_permission');
-  assert.deepEqual({
-    packReceipt: pendingAfterAbout.packReceipt,
-    receiptId: pendingAfterAbout.receipt.receiptId,
-    requestHandle: pendingAfterAbout.permissionRequest,
-  }, permissionAuthority, 'About does not replace installed request or permission authority');
-  await returnInstalledPacks(page);
-  await click(page, button('View pack request'));
-  await until(() => evaluate(page, `document.querySelector(
-    '[data-pack-request-dialog][open] [data-pack-request-phase]'
-  )?.getAttribute('data-pack-request-phase') === 'waiting_permission'`),
-  'installed pack request returns after About');
-  await click(page, button('Open Needs you'));
-  await visible(page, model.permissionRequest.prompt);
-  await fill(page, field('Enter the exact confirmation'), `INSTALL PACK ${PACK_NAME}`);
-  await click(page, field('I grant permission for this operation on these exact targets.'));
-  await click(page, button('Send permission'));
-  await visible(page, 'Awaiting acknowledgment');
-  await until(() => model.phase === 'complete' || model.modelError,
-    'installed Compose result acknowledgment', 60_000);
-  if (model.modelError) throw new Error(model.modelError);
-  await until(async () => !(await evaluate(page, `document.body.innerText.includes('Reading repository state')`))
-    && (await readNeedsYou(canvasUrl)).packRequests[0]?.phase === 'applied',
-  'installed authoritative pack reread', 45_000);
-  if (await evaluate(page, `Boolean(${button('Back to pack request')})`)) {
-    await click(page, button('Back to pack request'));
-  } else {
-    await click(page, `document.querySelector('#dude-tab-settings')`);
-    await click(page, button('View pack request'));
+  // The pack action dialog: the installed extension previews with Compose, and one click installs.
+  const phase = (value) => until(() => evaluate(page, `document.querySelector('[data-pack-action-dialog]')
+    ?.getAttribute('data-pack-action-phase') === ${JSON.stringify(value)}`), `installed pack action ${value}`, 45_000);
+  const body = () => evaluate(page, `document.querySelector('[data-pack-action-body]')?.innerText.replace(/\\s+/g, ' ').trim() ?? null`);
+  await click(page, `document.querySelector('[data-pack-operation="install"]')`);
+  await phase('ready');
+  const preview = await body();
+  const item = path.posix.basename(PACK_DESTINATION).replace(/\.instructions\.md$/, '');
+  for (const text of ['Adds 1 item', `${item} Instructions`, 'Required tools node: found', 'Source Local library - Local folder', 'Show files (1)']) {
+    assert.equal(preview.includes(text), true, `the preview shows ${JSON.stringify(text)}: ${preview}`);
   }
-  await until(() => evaluate(page, `document.querySelector(
-    '[data-pack-request-dialog][open] [data-pack-request-phase]'
-  )?.getAttribute('data-pack-request-phase') === 'applied'`),
-  'installed pack dialog displays correlated Applied');
-  const provider = await readNeedsYou(canvasUrl);
-  assert.equal(provider.packRequests.length, 1);
-  const result = provider.packRequests[0];
-  assert.equal(result.applied, true);
-  assert.equal(result.receipt.freshness, 'current');
-  assert.deepEqual(result.receipt.acknowledgment.result, JSON.parse(model.compose.stdout),
-    'the Applied receipt carries the observed Compose --envelope stdout, not a predetermined result');
-  assert.deepEqual(result.receipt.reread.entry, {
-    files: fixture.files,
-    source: fixture.source,
-  });
-  assert.equal(result.receipt.reread.profileRevision,
-    revision(fs.readFileSync(fixture.profile)));
+  assert.equal(preview.includes('Third-party source'), false, 'the default catalog is not a third-party source');
+  assert.equal(fs.existsSync(fixture.destination), false, 'no projected artifact exists before the click');
+  assert.equal(fs.readFileSync(fixture.profile).equals(beforeProfile), true, 'profile bytes remain exact before the click');
+  const started = Date.now();
+  await click(page, `document.querySelector('[data-pack-action-primary]')`);
+  await phase('success');
+  const elapsedMs = Date.now() - started;
+  const success = await body();
+  assert.equal(success.startsWith(`Installed ${PACK_NAME} `), true, success);
   assert.equal(fs.readFileSync(fixture.destination).equals(fixture.instruction), true);
   assert.deepEqual(installedProfile(fixture.root).value.installed[PACK_NAME], {
     files: fixture.files,
     source: fixture.source,
   });
-  assert.equal(model.ownerToolCalls.filter(entry => entry.callId === 'call_t012_pack_add').length, 1);
-  assert.equal(network.filter(entry => entry.path === '/api/packs/request').length, 2);
-  // Default-only evidence, unchanged by sources: neither body names a source, the receipt binds none, and
-  // the owner's handoff carried the seven-key binding and nothing else (checked as it arrived).
-  assert.deepEqual(network.filter(entry => entry.path === '/api/packs/request').map(entry => entry.body), [
-    { op: 'prepare', operation: 'install', name: PACK_NAME },
-    { op: 'submit', operation: 'install', name: PACK_NAME, packReceipt: permissionAuthority.packReceipt },
-  ], 'a default-catalog request names no source in either body');
-  assert.equal(Object.hasOwn(result.receipt, 'catalogSource'), false, 'and its receipt binds no source');
-  assert.deepEqual(Object.keys(model.binding),
-    ['receiptId', 'owner', 'operation', 'name', 'workspaceId', 'sessionId', 'providerGeneration']);
-  assert.equal(model.permissionRequest.fields.targets.some((entry) => /Third-party source/.test(entry.target)), false,
-    'a default-catalog permission names no third-party source');
-  await click(page, button('Return to packs'));
+  await until(() => evaluate(page, `document.querySelector('[data-pack-action-show]')?.disabled === false`),
+    'the automatic read lists the installed pack', 45_000);
+  await click(page, `document.querySelector('[data-pack-action-show]')`);
+  await until(() => evaluate(page, `Boolean(document.querySelector('[data-pack-row="pack:${PACK_NAME}"][aria-selected="true"]'))`),
+    'Show in Installed selects the pack');
+  const provider = await readNeedsYou(canvasUrl);
+  assert.deepEqual([provider.requests.length, Object.hasOwn(provider, 'packRequests')], [0, false],
+    'the install published no Needs you request, and the provider has no pack half');
+  const actions = network.filter(entry => entry.path === '/api/packs/action');
+  assert.deepEqual(actions.map(entry => entry.body.op), ['preview', 'apply']);
+  assert.deepEqual(actions[0].body, { op: 'preview', operation: 'install', name: PACK_NAME },
+    'a default-catalog preview names no source');
   const aboutApplied = await observeInstalledAbout(
     page,
     canvasUrl,
@@ -6477,17 +5653,8 @@ async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, model, cliV
     'applied-result',
     cliVersions,
   );
-  const appliedAfterAbout = (await readNeedsYou(canvasUrl)).packRequests[0];
-  assert.equal(appliedAfterAbout.phase, 'applied');
-  assert.equal(appliedAfterAbout.packReceipt, permissionAuthority.packReceipt);
-  assert.equal(appliedAfterAbout.receipt.receiptId, permissionAuthority.receiptId);
   await returnInstalledPacks(page);
-  await click(page, button('View pack request'));
-  await until(() => evaluate(page, `document.querySelector(
-    '[data-pack-request-dialog][open] [data-pack-request-phase]'
-  )?.getAttribute('data-pack-request-phase') === 'applied'`),
-  'installed applied result returns after About');
-  assert.equal(network.filter(entry => entry.method === 'GET' && entry.path === '/api/about').length, 3);
+  assert.equal(network.filter(entry => entry.method === 'GET' && entry.path === '/api/about').length, 2);
   assert.deepEqual(foreignNetwork, [], 'installed About rendering makes no GitHub request');
   assert.deepEqual(runtimeErrors, []);
   return {
@@ -6495,24 +5662,15 @@ async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, model, cliV
     foreignNetwork,
     provider,
     currentWork,
+    elapsedMs,
+    preview,
+    success,
     about: {
       beforeRequest: aboutBeforeRequest,
-      waitingPermission: aboutWaitingPermission,
       applied: aboutApplied,
-      permissionAuthority,
-      appliedAuthority: {
-        packReceipt: appliedAfterAbout.packReceipt,
-        receiptId: appliedAfterAbout.receipt.receiptId,
-      },
       browserRequests: network.filter(entry => entry.path === '/api/about'),
       embeddedDesktopLinkObserved: false,
     },
-    preview: model.preview,
-    permission: model.permission,
-    permissionAcknowledgment: model.permissionAcknowledgment,
-    compose: model.compose,
-    verification: model.verification,
-    result: model.result,
     screenshot: await screenshot(page, 'installed-pack-applied'),
   };
 }
@@ -6521,7 +5679,6 @@ const IMPORT_READY_NOTE = 'Dude previews the import and asks for your permission
 const IMPORT_NEW_SESSION = 'New agents or skills may not be available until you start a new session.';
 const IMPORT_REASON_PERMISSION = 'This import request is waiting for your permission response in Needs you.';
 const IMPORT_IDEA_REASON = 'An artifact import is in progress or needs owner reconciliation. Your idea draft stays here.';
-const IMPORT_PACK_REASON = 'An artifact import needs owner reconciliation before a pack request can be sent.';
 const PROJECT_READ_ONLY = 'Read only. Project agents and skills are project files, not packs: Canvas offers no install, refresh, or remove for them here.';
 
 /**
@@ -6913,7 +6070,6 @@ async function driveInstalledImportRoundTrip(page, canvasUrl, fixture, ownerMode
   // Shared exclusion: the real provider refuses every other send while this import is unreconciled.
   const exclusion = {
     import: await postCanvas(canvasUrl, '/api/imports/request', { op: 'prepare', importSource: fixture.directory.source }),
-    pack: await postCanvas(canvasUrl, '/api/packs/request', { op: 'prepare', operation: 'install', name: PACK_NAME }),
     capture: await postCanvas(canvasUrl, '/api/needs-you/capture-receipt', { requestHandle: null }),
   };
   for (const [kind, response] of Object.entries(exclusion)) {
@@ -6942,17 +6098,16 @@ async function driveInstalledImportRoundTrip(page, canvasUrl, fixture, ownerMode
   assert.deepEqual([status.phase, status.source, status.sheet.Receipt], ['waiting_permission', '', fileReceipt],
     'the request status survives the departure; the typed Source does not');
   assert.equal(status.request.disabled, true);
-  // The pack Install control carries the same reason.
+  // A pack action runs no agent turn, so the open import withholds no pack Install.
   await click(page, `document.querySelector('[data-pack-context="available"]')`);
   await click(page, `document.querySelector('[data-pack-row="${packKey}"]')`);
   assert.deepEqual(await evaluate(page, `({
     install: document.querySelector('[data-pack-operation="install"]').disabled,
-    reason: [...document.querySelectorAll('[data-pack-detail] .fui-Text')].map(node => node.textContent)
-      .includes(${JSON.stringify(IMPORT_PACK_REASON)}),
-  })`), { install: true, reason: true });
+    reason: Boolean(document.querySelector('[data-pack-action-why]')),
+  })`), { install: false, reason: false });
   await pressKey(page, 'Escape');
   await click(page, `document.querySelector('[data-pack-context="import"]')`);
-  step('pointer', 'Available pack Install while the import waits: disabled with the import reason');
+  step('pointer', 'Available pack Install while the import waits: enabled, with no reason');
 
   // Consent through the real Needs you view, then return to Add/import.
   await click(page, `document.querySelector('[data-import-permission]')`);
@@ -7247,22 +6402,20 @@ async function driveInstalledImportRoundTrip(page, canvasUrl, fixture, ownerMode
 }
 
 /**
- * Drive the 073 Phase B journey in the owned Edge while the installed owner model above previews, publishes
- * the literal permission, applies with Compose, verifies, and acknowledges. The browser adds the folder as a
- * pack source through Settings, shows that source's packs in Available, selects its source-qualified pack,
- * requests the install, and consents through Needs you; it applies nothing. The source and its pack are
- * then observed where they landed: the saved sources file, the recorded profile source, the installed bytes,
- * the Available rows of both same-named packs, the source facts, and the installed-use removal blocker.
- * Catalogs are acquired only by the explicit read that follows the save.
+ * Drive the 073 Phase B journey in the owned Edge. The browser adds the folder as a pack source through
+ * Settings, shows that source's packs in Available, selects its source-qualified pack, and installs it through
+ * the pack action dialog. The installed extension's Compose preview names the folder as a third-party source
+ * with no commit, and one Install click applies it, with no agent turn, Needs you request, or chat message.
+ * The source and its pack are then observed where they landed: the saved sources file, the recorded profile
+ * source, the installed bytes, the Available rows of both same-named packs, the source facts, and the
+ * installed-use removal blocker. Catalogs are acquired only by the explicit read that follows the save.
  * @param {Cdp} page
  * @param {string} canvasUrl
  * @param {ReturnType<typeof seedSourceFixture>} fixture
- * @param {ReturnType<typeof createSourceModel>} ownerModel
  * @param {{parsePackSourcesDocument:(value:Buffer)=>unknown[], serializePackSourcesDocument:(value:unknown[])=>string}} sources
- *   the installed module, which is also what Compose and lint ran
+ *   the installed module, which the installed Canvas and lint read the saved list with
  */
-async function driveInstalledSourceRoundTrip(page, canvasUrl, fixture, ownerModel, sources) {
-  const model = ownerModel.state;
+async function driveInstalledSourceRoundTrip(page, canvasUrl, fixture, sources) {
   const network = [], foreignNetwork = [], runtimeErrors = [];
   /** The saved-sources route's own answers, as the browser received them. */
   const sourceResponses = [];
@@ -7296,12 +6449,9 @@ async function driveInstalledSourceRoundTrip(page, canvasUrl, fixture, ownerMode
     && entry.query === '?discover=1').length;
   const steps = [], audits = [];
   const step = (input, target, details = {}) => steps.push({ input, target, ...details });
-  const failed = () => { if (model.modelError) throw new Error(model.modelError); };
-  const settled = async (label, ready, ms = 60_000) => {
-    await until(async () => { failed(); return ready(); }, label, ms);
-  };
-  const phaseOf = () => evaluate(page, `document.querySelector('[data-pack-request-dialog][open] [data-pack-request-phase]')
-    ?.getAttribute('data-pack-request-phase') ?? null`);
+  const settled = (label, ready, ms = 60_000) => until(ready, label, ms);
+  const phaseOf = () => evaluate(page, `document.querySelector('[data-pack-action-dialog]')?.getAttribute('data-pack-action-phase') ?? null`);
+  const dialogText = () => evaluate(page, `document.querySelector('[data-pack-action-body]')?.innerText.replace(/\\s+/g, ' ').trim() ?? null`);
   /** Each row of a list as a person reads it: its opaque key, then its cells. @param {string} selector */
   const rowsOf = (selector) => evaluate(page, `[...document.querySelectorAll(${JSON.stringify(selector)})].map(row =>
     [row.getAttribute('data-pack-row'), ...[...row.querySelectorAll('[role="gridcell"]')].map(cell => cell.innerText.replace(/\\s+/g, ' ').trim())])`);
@@ -7444,7 +6594,7 @@ async function driveInstalledSourceRoundTrip(page, canvasUrl, fixture, ownerMode
   assert.equal(discoveries(), 1, 'Show packs acquires nothing');
   audits.push(await auditInstalledWorkspace(page, 'source-available-filtered'));
 
-  // ----- Select the source-qualified pack and request its installation.
+  // ----- Select the source-qualified pack and install it through the pack action dialog.
   const packKey = `pack:${PACK_NAME}@${teamKey}`;
   await click(page, `document.querySelector('[data-pack-row="${packKey}"]')`);
   await settled('pack details', async () => (await packListView(page)).detail === packKey);
@@ -7455,81 +6605,34 @@ async function driveInstalledSourceRoundTrip(page, canvasUrl, fixture, ownerMode
       fixture.realTeam, [['install', false]]],
     'the details name the pack and the source it is read from, and offer only Install',
   );
-  const gate = ownerModel.hold('source-before-result');
   await click(page, `document.querySelector('[data-pack-operation="install"]')`);
   step('pointer', 'Available: Install on the source-qualified pack', { key: packKey });
-  await settled('owner permission', () => model.record?.stage === 'permission-waiting');
-  await settled('the request waits for exact permission', async () => (await phaseOf()) === 'waiting_permission');
-  const pending = await readNeedsYou(canvasUrl);
-  assert.equal(pending.packRequests.length, 1);
-  const waiting = pending.packRequests[0];
-  assert.deepEqual([waiting.operation, waiting.name, waiting.phase], ['install', PACK_NAME, 'waiting_permission']);
-  const binding = { key: teamKey, sourcesRevision: revision(savedBytes), source: { type: 'local', location: fixture.realTeam } };
-  assert.deepEqual(waiting.receipt.catalogSource, binding, 'the provider bound the added source, its saved revision, and its real folder');
-  assert.deepEqual(model.record.binding.catalogSource, binding, 'and handed the owner exactly that binding');
-  assert.deepEqual(network.filter((entry) => entry.path === '/api/packs/request').map((entry) => entry.body), [
-    { op: 'prepare', operation: 'install', name: PACK_NAME, source: teamKey },
-    { op: 'submit', operation: 'install', name: PACK_NAME, source: teamKey, packReceipt: waiting.packReceipt },
-  ], 'both bodies name the configured source key, never a path, repository, or ref');
-  assert.equal(await evaluate(page, `document.querySelector('[data-pack-request-dialog] [data-pack-request-source]')
-    ?.innerText.replace(/\\s+/g, ' ').trim()`), `Requested from ${sourceLabel}`);
-  assert.equal(fs.existsSync(fixture.destination), false, 'no projected artifact exists before exact consent');
-  assert.deepEqual(model.record.preview.source, binding);
-  audits.push(await auditInstalledWorkspace(page, 'source-request-waiting-permission'));
-
-  // ----- Consent through the real Needs you view: the source is the first target, as a third-party source.
-  const permission = model.record.permission.request;
-  await click(page, button('Open Needs you'));
-  await visible(page, permission.prompt);
-  const card = await evaluate(page, `document.querySelector('#dude-panel-needs').innerText`);
-  for (const part of [
-    permission.fields.operation,
-    ...permission.fields.targets.flatMap((entry) => [...entry.target.split('\n'), `Revision: ${entry.revision}`]),
-    ...permission.fields.consequences.split('\n'),
-    ...permission.fields.eligibility.split('\n'),
-    'Required literal confirmation',
-    permission.fields.confirmation,
-  ]) assert.equal(card.includes(part), true, `Needs you shows ${JSON.stringify(part)} without truncation`);
-  assert.equal(card.indexOf(`Third-party source ${fixture.realTeam}`) >= 0, true, 'Needs you names the third-party source');
-  assert.equal(card.indexOf('Third-party source') < card.indexOf(PROFILE_PATH), true, 'and names it first');
-  assert.equal(permission.fields.targets[0].revision, fixture.packRevision, 'a local folder is pinned by its files\' digest, not a commit');
-  assert.match(permission.fields.targets[0].revision, /^sha256:[0-9a-f]{64}$/);
-  audits.push(await auditInstalledWorkspace(page, 'source-needs-you-permission'));
-  await fill(page, field('Enter the exact confirmation'), permission.fields.confirmation);
-  await click(page, field('I grant permission for this operation on these exact targets.'));
-  await click(page, button('Send permission'));
-  step('pointer', 'Needs you: confirmation typed, consent checked, Send permission', { confirmation: permission.fields.confirmation });
-  await visible(page, 'Awaiting acknowledgment');
-  await settled('owner recognizes the consent', () => Boolean(model.record.permission.acknowledgment));
-  assert.equal(fs.existsSync(fixture.destination), false, 'consent alone writes nothing');
-  await click(page, button('Back to pack request'));
-  await settled('the request waits for the owner', async () => (await phaseOf()) === 'waiting_owner');
-
-  // ----- The owner applies and verifies; Canvas shows no Applied until the owner's verified result arrives.
-  await settled('owner ready to report', () => gate.reached);
+  await settled('the preview is ready', async () => (await phaseOf()) === 'ready');
+  const preview = await dialogText();
+  assert.equal(preview.startsWith('Third-party source This pack is not part of the Dude bundle. It can add agents and instructions to this project. '
+    + `Folder: ${fixture.realTeam} (no commit)`), true, `the preview names the added folder as a third-party source: ${preview}`);
+  assert.equal(await evaluate(page, `document.querySelectorAll('[data-pack-action-dialog] input, [data-pack-action-dialog] textarea').length`), 0,
+    'no checkbox or field');
+  const actions = () => network.filter((entry) => entry.path === '/api/packs/action');
+  assert.deepEqual(actions()[0].body, { op: 'preview', operation: 'install', name: PACK_NAME, source: teamKey },
+    'the preview names the configured source key, never a path, repository, or ref');
+  assert.equal(fs.existsSync(fixture.destination), false, 'the preview writes nothing');
+  audits.push(await auditInstalledWorkspace(page, 'source-install-ready'));
+  await click(page, `document.querySelector('[data-pack-action-primary]')`);
+  step('pointer', 'Pack action dialog: Install', { key: packKey });
+  await settled('the install succeeds', async () => (await phaseOf()) === 'success');
   const installedBytes = fs.readFileSync(fixture.destination);
   assert.equal(installedBytes.equals(fixture.instruction), true, 'the installed bytes are the added folder\'s');
   assert.equal(installedBytes.equals(defaultBytes.instruction), false, 'not the default library\'s same-named pack');
-  const unreported = (await readNeedsYou(canvasUrl)).packRequests[0];
-  assert.deepEqual([unreported.phase, unreported.applied, unreported.receipt.acknowledgment], ['waiting_owner', false, null],
-    'the applied files alone are not an Applied pack');
-  assert.equal(await phaseOf(), 'waiting_owner');
-  gate.release();
-  await settled('owner result acknowledged', () => model.record.stage === 'complete');
-  await settled('authoritative reread of the installed state', async () => !(await evaluate(page,
-    `document.body.innerText.includes('Reading repository state')`)) && (await readNeedsYou(canvasUrl)).packRequests[0]?.phase === 'applied');
-  await settled('the dialog shows the correlated Applied', async () => (await phaseOf()) === 'applied');
+  assert.deepEqual(actions().map((entry) => entry.body.op), ['preview', 'apply']);
   const provider = await readNeedsYou(canvasUrl);
-  assert.equal(provider.packRequests.length, 1);
-  const result = provider.packRequests[0];
-  assert.deepEqual([result.applied, result.receipt.freshness, result.receipt.current], [true, 'current', true]);
-  assert.deepEqual(result.receipt.catalogSource, binding, 'the Applied receipt keeps the exact binding');
-  assert.deepEqual(result.receipt.acknowledgment.catalogSource, binding, 'and the owner echoed it whole');
-  assert.deepEqual(result.receipt.reread.entry, { files: fixture.written, source: { type: 'local', location: fixture.realTeam } });
-  assert.deepEqual(result.receipt.acknowledgment.result, JSON.parse(model.record.compose.stdout),
-    'the receipt carries the observed Compose --envelope stdout, not a predetermined result');
-  audits.push(await auditInstalledWorkspace(page, 'source-request-applied'));
-  await click(page, button('Return to packs'));
+  assert.deepEqual([provider.requests.length, Object.hasOwn(provider, 'packRequests')], [0, false],
+    'the install published no Needs you request, and the provider has no pack half');
+  // The settled success view: the automatic read lists the pack, so Show in Installed is enabled.
+  await settled('the automatic read lists the pack', () => evaluate(page, `document.querySelector('[data-pack-action-show]')?.disabled === false`));
+  audits.push(await auditInstalledWorkspace(page, 'source-install-success'));
+  await click(page, `document.querySelector('[data-pack-action-primary]')`);
+  step('pointer', 'Pack action dialog: Done');
 
   // ----- What landed: the recorded source, the installed bytes, and every same-name Available row gone.
   const profile = installedProfile(fixture.root);
@@ -7583,7 +6686,7 @@ async function driveInstalledSourceRoundTrip(page, canvasUrl, fixture, ownerMode
   assert.equal(refused.status, 409);
   assert.deepEqual([refused.body.error, refused.body.blockers], ['source_in_use', [{ kind: 'installed', name: PACK_NAME }]]);
   assert.equal(fs.readFileSync(fixture.sourcesFile).equals(savedBytes), true, 'the refused removal saved nothing');
-  assert.equal(discoveries(), 1, 'permission, result, rereads, filtering and Show packs acquired no further catalog');
+  assert.equal(discoveries(), 1, 'the install, its rereads, filtering and Show packs acquired no further catalog');
 
   // ----- The same details below 1100px are a modal overlay, in both themes.
   await click(page, `document.querySelector('[aria-label="Close source details"]')`);
@@ -7603,9 +6706,9 @@ async function driveInstalledSourceRoundTrip(page, canvasUrl, fixture, ownerMode
   }
   await installedViewport(page, 1440, 'light', 900);
 
-  // ----- The browser saved exactly one source, requested exactly one install, and reached no other origin.
+  // ----- The browser saved exactly one source, installed exactly one pack, and reached no other origin.
   assert.deepEqual(network.filter((entry) => entry.path === '/api/packs/sources').length, 1);
-  assert.equal(network.filter((entry) => entry.path === '/api/packs/request').length, 2);
+  assert.deepEqual(actions().map((entry) => entry.body.op), ['preview', 'apply']);
   assert.deepEqual(foreignNetwork, [], 'no source or network request leaves the Canvas origin');
   assert.deepEqual(runtimeErrors, []);
   const after = workspaceFiles(fixture.root);
@@ -7634,6 +6737,7 @@ async function driveInstalledSourceRoundTrip(page, canvasUrl, fixture, ownerMode
     addedDetails,
     libraryDetails,
     removalRefusal: refused,
+    preview,
     provider,
     delta,
     screenshot: await screenshot(page, 'installed-source-final'),
@@ -8720,9 +7824,9 @@ try {
       'Open the Dude panel in the disposable installed workspace.',
       'Confirm usable current panel sizing, current light/dark theme, and keyboard focus entry.',
       'Open the visible bottom Settings destination; confirm the embedded panel keeps its left rail, toolbar, pager, and current-theme contrast without host-chrome clipping.',
-      `Select ${PACK_NAME} under Available, activate Install once, inspect the exact preview, enter INSTALL PACK ${PACK_NAME}, and confirm the correlated Applied result after the authoritative installed-state refresh.`,
+      `Select ${PACK_NAME} under Available, choose Install, inspect the preview in the dialog, confirm with its one Install button, and confirm the success view; Show in Installed then selects the pack after the automatic reread.`,
       'Open Settings > Packs > Add/import, request one local skill import, consent in Needs you, and confirm Applied, then Show in Installed lists the new project skill; confirm the imported agent or skill needs a new session before the host loads it.',
-      'Open Settings > Packs > Sources, add one local folder that contains library/packs, choose Show packs in Available, install its pack, consent in Needs you, and confirm Applied; confirm the source row then shows the pack as installed from it and its Remove names that use.',
+      'Open Settings > Packs > Sources, add one local folder that contains library/packs, choose Show packs in Available, choose Install on its pack, check that the preview names the folder as a third-party source, confirm with one Install click, and confirm the success view; confirm the source row then shows the pack as installed from it and its Remove names that use.',
       'With the work finder set to Closed, enter Review design and return; confirm the Closed finder context remains.',
       'Reload once, then close and reopen the panel; confirm the current Canvas reconnects.',
     ],
@@ -8880,7 +7984,7 @@ try {
   const installedPack = seedPackFixture(packRoot);
   const realHostPackProbe = WINDOWS ? await probeRealHostPackRead(packRoot) : null;
   const realHostPackStallProbe = WINDOWS ? await probeRealHostPackStall() : null;
-  const packModel = createPackModel(packRoot);
+  const packModel = createIdleModel('pack', 'T012_PACK_HOST_IDLE');
   modelServers.push(packModel.server);
   const packModelUrl = await listen(packModel.server);
   const packHost = await createInstalledHost({
@@ -8894,7 +7998,7 @@ try {
     prompt: 'T012 installed pack round trip bootstrap.',
   }, 30_000);
   assert.equal(packIdle?.data.content, 'T012_PACK_HOST_IDLE');
-  assert.equal(packModel.state.phase, 'idle');
+  assert.equal(packModel.state.requests, 1);
   // The installed extension's own pack reads, before Settings drives it. Phase B reads a catalog only on
   // explicit discovery (`?discover=1`): the plain read answers installed state and the saved sources and
   // acquires no catalog, so it needs no reader process, and only the discovery read exercises the
@@ -8913,13 +8017,12 @@ try {
     browserState.page,
     packHost.canvas.url,
     installedPack,
-    packModel.state,
     Object.values(manifest.installedCliVersion),
   );
   await until(async () => !(await packHost.session.rpc.metadata.isProcessing()).processing,
     'installed pack session idle', 30_000);
-  assert.equal(packModel.state.phase, 'complete');
-  assert.equal(packModel.state.packPromptRequests, 1);
+  assert.deepEqual([packModel.state.requests, packModel.state.modelError], [1, null],
+    'the pack action asked the session nothing after its bootstrap turn');
   assert.equal(packHost.record.permissions.filter((entry) => entry.decision === 'reject').length, 0);
   assert.equal(packHost.record.agentAfterSelectionCheck.agent?.name, 'Dude');
   assert.equal(packHost.record.events['subagent.deselected'] ?? 0, 0);
@@ -8944,16 +8047,16 @@ try {
     about: packBrowser.about,
     installedEntry: installedProfile(packRoot).value.installed[PACK_NAME],
     actualComposeApplication: true,
-    authoritativeProviderReread: true,
+    automaticPackReread: true,
     realModelReasoning: false,
     desktopAppRendererObserved: false,
-    ownerRoute: 'selected installed Dude loaded dude-compose, read actual eligibility/manifest/source, published and recognized exact permission, ran the installed Compose add --envelope and lint commands once, reread the profile through view, then acknowledged with the observed Compose stdout unchanged as the pack result for the provider reread',
+    ownerRoute: 'none: Settings ran the installed extension\'s pack action route, whose child process ran the installed Compose preview and then its one apply after one click, with no agent turn, Needs you request, or chat message',
   };
   note('pack-case-passed', {
     sessionId: packHost.record.sessionId,
     name: PACK_NAME,
     destination: PACK_DESTINATION,
-    packReceipt: packBrowser.provider.packRequests[0].packReceipt,
+    elapsedMs: packBrowser.elapsedMs,
     about: packBrowser.about.applied.api.body,
   });
   manifest.extensionHost = {
@@ -9070,11 +8173,11 @@ try {
   await closeInstalledHost(importHost);
   await closeServer(importModel.server);
 
-  // 073 Phase B: the installed owner installs a pack from a source added through Settings. The browser adds a
+  // 073 Phase B: Settings installs a pack from a source it added. The browser adds a
   // local folder as a pack source, shows its packs in Available, selects the source-qualified pack, and
-  // requests the install; the installed Dude previews that source, obtains literal permission, runs Compose
-  // with exactly that source, and acknowledges the source-bound result. The test saves, installs, and applies
-  // nothing after seeding, and no network source is contacted. Its own release fixture and host start fresh.
+  // installs it through the pack action dialog, whose preview names that folder as a third-party source; the
+  // installed extension runs Compose with exactly that saved folder. The test saves and installs nothing after
+  // seeding, and no network source is contacted. Its own release fixture and host start fresh.
   const sourceRoot = path.join(RUN, 'source-roundtrip');
   const sourceData = path.join(RUN, 'source-roundtrip-runtime');
   const sourceRelease = buildRelease({
@@ -9088,7 +8191,7 @@ try {
     sourceRoot,
     '.github/skills/dude-engine/lib/pack-sources.mjs',
   )));
-  const sourceModel = createSourceModel(sourceSeed, installedSources);
+  const sourceModel = createIdleModel('source', 'T012_SOURCE_HOST_IDLE');
   modelServers.push(sourceModel.server);
   const sourceModelUrl = await listen(sourceModel.server);
   const sourceHost = await createInstalledHost({
@@ -9096,36 +8199,26 @@ try {
     data: sourceData,
     modelUrl: sourceModelUrl,
     caseName: 'source-roundtrip',
-    approve: sourceModel.approve,
   });
   hosts.push(sourceHost);
   const sourceIdle = await sourceHost.session.sendAndWait({
     prompt: 'T012 installed source round trip bootstrap.',
   }, 30_000);
   assert.equal(sourceIdle?.data.content, 'T012_SOURCE_HOST_IDLE');
-  assert.equal(sourceModel.state.phase, 'idle');
+  assert.equal(sourceModel.state.requests, 1);
   const sourceServed = await servedIdentity(sourceHost.canvas.url);
   const sourceBrowser = await driveInstalledSourceRoundTrip(
     browserState.page,
     sourceHost.canvas.url,
     sourceSeed,
-    sourceModel,
     installedSources,
   );
   await until(async () => !(await sourceHost.session.rpc.metadata.isProcessing()).processing,
     'installed source session idle', 30_000);
-  assert.equal(sourceModel.state.phase, 'complete');
-  assert.equal(sourceHost.record.permissions.filter((entry) => entry.decision === 'reject').length, 0);
+  assert.deepEqual([sourceModel.state.requests, sourceModel.state.modelError], [1, null],
+    'the install asked the session nothing after its bootstrap turn');
   assert.equal(sourceHost.record.agentAfterSelectionCheck.agent?.name, 'Dude');
   assert.equal(sourceHost.record.events['subagent.deselected'] ?? 0, 0);
-  // Every owner call that asks the host for permission was approved as made, and Compose was run exactly once.
-  const sourceApproved = new Set(sourceHost.record.permissions.map((entry) => entry.toolCallId));
-  assert.deepEqual(
-    sourceModel.state.ownerToolCalls.filter((entry) => entry.tool !== 'skill' && !sourceApproved.has(entry.callId)),
-    [],
-  );
-  assert.equal(sourceModel.state.ownerToolCalls.filter((entry) => entry.writes !== null).length, 1,
-    'one owner call wrote the workspace: Compose');
   manifest.sourceCase = {
     root: sourceRoot,
     data: sourceData,
@@ -9142,13 +8235,12 @@ try {
     networkSourceContacted: false,
     realModelReasoning: false,
     desktopAppRendererObserved: false,
-    ownerRoute: 'selected installed Dude loaded dude-compose and its Sources procedure, previewed the bound local folder with Compose, read its pack and the saved sources revision, published and had recognized the exact third-party permission, rechecked the saved sources, ran Compose add --source --envelope once with exactly the bound folder, verified lint and the profile, then acknowledged the pack_result with the exact catalogSource echoed; the model fixture made no workspace write',
+    ownerRoute: 'none: Settings saved the folder through the sources route, and the pack action dialog previewed the pack from exactly that saved folder as a third-party source and installed it after one click, with no agent turn, Needs you request, or chat message',
   };
   note('source-case-passed', {
     sessionId: sourceHost.record.sessionId,
     key: sourceBrowser.keys.teamKey,
-    receipt: sourceModel.state.record.binding.receiptId,
-    destination: sourceModel.state.record.compose.destination,
+    destination: PACK_DESTINATION,
   });
   await browserState.page.send('Page.navigate', { url: 'about:blank' });
   await closeInstalledHost(sourceHost);
@@ -9817,9 +8909,9 @@ try {
       elapsedMs: manifest.defaultSourceCase.reload.elapsedMs,
     },
     blankCases: manifest.blankCases.length,
-    packRoundTrip: manifest.packCase?.browser?.provider?.packRequests?.[0]?.phase ?? null,
+    packRoundTrip: manifest.packCase?.browser?.success ?? null,
     importRoundTrips: manifest.importCase?.browser?.provider?.importRequests?.map((entry) => entry.phase) ?? [],
-    sourceRoundTrip: manifest.sourceCase?.browser?.provider?.packRequests?.[0]?.phase ?? null,
+    sourceRoundTrip: manifest.sourceCase?.browser?.delta ?? null,
     about: manifest.packCase?.about?.applied?.api?.body ?? null,
     developmentAbout: manifest.blankCases.find((entry) => entry.development)?.browser?.about?.api?.body ?? null,
     extensionHost: manifest.extensionHost,

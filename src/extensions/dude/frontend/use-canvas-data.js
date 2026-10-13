@@ -9,26 +9,19 @@ export function requestKey(feed, record) {
   return `${authorityKey(feed)}|${record.requestHandle}|${record.request.revision}`;
 }
 
-const PACK_MESSAGES = {
-  idle_required: 'The joined agent must be idle, with no waiting request or queued input. This request was not sent.',
-  pack_unreconciled: 'Another pack request needs owner reconciliation. Nothing will be resent.',
-  capture_unreconciled: 'An idea capture needs owner reconciliation before a pack request can be sent.',
-  pack_ineligible: 'This pack is no longer eligible for this operation. Reload packs before making a new request.',
-  source_changed: 'The pack authority changed. Reload packs; any changed impact needs fresh confirmation.',
-  source_unavailable: 'The required pack authority is unavailable. No change is confirmed.',
-  identity_mismatch: 'The workspace or joined provider changed. This request will not be sent again.',
-  pack_send_uncertain: 'Delivery is uncertain. Wait for owner reconciliation; do not repeat this request.',
-  already_consumed: 'This receipt has already been used. It will not be sent again.',
-  not_sent: 'The connection failed before this request was submitted. Nothing was sent; you can request it again.',
-  pack_receipt_expired: 'This prepared request was never submitted and has expired. Nothing was sent.',
-  import_unreconciled: 'An artifact import needs owner reconciliation before a pack request can be sent.',
+// Why Install, Remove, or Refresh pack is unavailable in a pack's details. They
+// wait only for the workspace, in the words Sources uses, and Refresh also for a
+// readable saved source list. No joined session, idle agent, or request is involved.
+const PACK_REASONS = {
+  unavailable: 'The current workspace must be available to change packs. Nothing is sent.',
+  disconnected: 'Canvas is reconnecting to the workspace. Nothing changes until the connection is current.',
+  config: 'The saved source list is unreadable, so Refresh cannot choose a source. Remove does not need it.',
 };
 // Add/import wording. Every refusal before a send says so ("not sent"); only an
 // uncertain delivery is ever described as possibly sent.
 const IMPORT_MESSAGES = {
   idle_required: 'The joined agent must be idle, with no waiting request or queued input. This request was not sent.',
   import_unreconciled: 'Another artifact import needs owner reconciliation. Nothing will be resent.',
-  pack_unreconciled: 'A pack request needs owner reconciliation before an import can be requested.',
   capture_unreconciled: 'An idea capture needs owner reconciliation before an import can be requested.',
   import_send_uncertain: 'Delivery could not be confirmed. Wait for Dude to reconcile this request, and do not repeat it.',
   identity_mismatch: 'The workspace or joined provider changed. This request will not be sent again.',
@@ -43,83 +36,23 @@ export const IMPORT_REASONS = {
   open: 'This import request is still open. Wait for its result; nothing will be resent.',
   permission: 'This import request is waiting for your permission response in Needs you.',
   uncertain: 'Delivery of this import request is uncertain. Wait for Dude to reconcile it; nothing will be resent.',
-  pack: 'A pack request needs owner reconciliation before an import can be requested.',
   capture: 'An idea capture needs owner reconciliation before an import can be requested.',
   waiter: 'A request is waiting in Needs you. Respond to it before requesting an import.',
   busy: 'The joined agent is busy. Request import becomes available when the session is idle.',
 };
 // The New idea reason, and the refusal of a capture sent while an import is open.
 export const IMPORT_IN_PROGRESS = 'An artifact import is in progress or needs owner reconciliation. Your idea draft stays here.';
-const currentCoverage = value => ['current', 'empty'].includes(value?.state);
-// A catalog the last discovery read, even in part: its rows may be browsed and
-// requested, because each request is checked against a fresh read of its source.
-const readableCatalog = value => ['current', 'empty', 'partial'].includes(value?.state);
-const packBindingMatches = (record, feed) => Boolean(record?.packReceipt
-  && record.receipt?.receiptId === record.packReceipt && record.receipt.owner === 'dude'
-  && record.operation === record.receipt.operation && record.name === record.receipt.name
-  && authorityKey(record.receipt) === authorityKey(feed));
 
-// A prepared feed record was never sent. The provider excludes other idle
-// actions while it is fresh and retires it lazily; a tab that lost its receipt
-// must not wait for that retirement before it can ask again.
-export function packRequestPending(data) {
-  const attempt = data.packAttempt, feed = data.needs;
-  const own = feed?.packRequests?.find(record => record.packReceipt === attempt?.packReceipt);
-  // Only a receipt that never left prepared is retired, so this exact record
-  // proves that a lost submit was never sent. Any other state, or no record,
-  // keeps an uncertain attempt pending. Nothing is resent in either case.
-  const expired = attempt?.phase === 'uncertain' && packBindingMatches(own, feed)
-    && own.operation === attempt.operation && own.name === attempt.name
-    && own.phase === 'stale' && own.reason === 'pack_receipt_expired';
-  return Boolean(attempt && !own?.receipt.acknowledgment && !expired
-    && ['preparing', 'submitting', 'uncertain'].includes(attempt.phase)
-    && attempt.authority === authorityKey(feed))
-    || Boolean(feed?.packRequests?.some(record => !record.receipt.acknowledgment
-      && !['prepared', 'unavailable', 'stale'].includes(record.phase)));
-}
-
-const CATALOG_ENTRY_REASON = 'This operation needs a current catalog entry. Recorded installed files can still be removed.';
-const CATALOG_NOT_READ_REASON = 'This operation needs a catalog entry, and no catalog has been read yet. Choose Reload packs, then try again. Recorded installed files can still be removed.';
-// Whether the displayed read holds the catalog entry an install or refresh
-// needs. An install is chosen from one Available row, so that exact row must
-// still be listed. A refresh needs the pack in the catalog of the source its
-// record matches, and the metadata the read matched to that source proves it.
-function catalogEntry(packs, operation, name, key) {
-  if (!readableCatalog(packs.coverage.catalog) || !packs.items) return false;
-  if (operation === 'install') return packs.items.some(item => item.key === key && item.name === name && item.installed === false);
-  return typeof packs.items.find(item => item.installed && item.name === name)?.description === 'string';
-}
-
-// `name` is a pack's name: the operation target and the installed-membership
-// vocabulary. It is never a list row key, which is only UI identity: a project
-// row's key is no member and no catalog entry, so no operation can be asked
-// of it, and the checks below stay exactly the name-keyed pack authority. An
-// install also names the Available row it was chosen from (`key`), because two
-// sources may list the same pack name.
-export function packActionReason(data, operation, name, key = null) {
-  const packs = data.packs, feed = data.needs;
-  if (!['install', 'remove', 'refresh'].includes(operation)) return 'This pack operation is unavailable.';
-  if (!packs?.rootIdentity || !packs.profileRevision || !packs.installed || !currentCoverage(packs.coverage.installed)) {
-    return 'Current installed authority is required. Reload packs before requesting a change.';
-  }
-  if (!feed || data.issues.needs || feed.coverage.state === 'unavailable' || !data.connected
-    || packs.workspaceId !== feed.workspaceId
-    || (data.index?.rootIdentity && data.index.rootIdentity !== packs.rootIdentity)) {
-    return 'The current workspace and joined provider must be available before requesting a change.';
-  }
-  const installed = packs.installed?.installed;
-  const member = installed && Object.hasOwn(installed, name);
-  if ((operation === 'install' && member) || (operation !== 'install' && !member)) return PACK_MESSAGES.pack_ineligible;
-  if (operation !== 'remove' && !catalogEntry(packs, operation, name, key)) {
-    return packs.coverage.catalog?.state === 'not_read' ? CATALOG_NOT_READ_REASON : CATALOG_ENTRY_REASON;
-  }
-  if (operation === 'install' && Object.keys(installed).some(other => name.startsWith(`${other}-`) || other.startsWith(`${name}-`))) {
-    return 'This pack overlaps an installed pack namespace and cannot be installed.';
-  }
-  if (importRequestPending(data)) return PACK_MESSAGES.import_unreconciled;
-  if (packRequestPending(data)) return PACK_MESSAGES.pack_unreconciled;
-  if (captureUnreconciled(data)) return PACK_MESSAGES.capture_unreconciled;
-  if (!feed.capture.idle || feed.capture.waitingRequests.length) return PACK_MESSAGES.idle_required;
+/**
+ * Why Install, Remove, or Refresh pack is unavailable, or null. Compose's own
+ * preview decides everything about the pack itself (FR-003), so only the
+ * workspace, and for Refresh a readable saved source list, are judged here.
+ */
+export function packActionReason(data, operation) {
+  const feed = data.needs;
+  if (!feed || data.issues.needs || feed.coverage.state === 'unavailable') return PACK_REASONS.unavailable;
+  if (!data.connected) return PACK_REASONS.disconnected;
+  if (operation === 'refresh' && data.packs?.sources?.state === 'unavailable') return PACK_REASONS.config;
   return null;
 }
 
@@ -177,86 +110,10 @@ export function importActionReason(data) {
     return phase === 'waiting_permission' ? IMPORT_REASONS.permission
       : phase === 'uncertain' ? IMPORT_REASONS.uncertain : IMPORT_REASONS.open;
   }
-  if (packRequestPending(data)) return IMPORT_REASONS.pack;
   if (captureUnreconciled(data)) return IMPORT_REASONS.capture;
   if (feed.capture.waitingRequests.length) return IMPORT_REASONS.waiter;
   if (!feed.capture.idle) return IMPORT_REASONS.busy;
   return null;
-}
-
-// A local attempt is joined only by its exact receipt, never by pack membership
-// or the latest similarly named request from another tab.
-export function packRequestStatus(data, binding = null) {
-  const feed = data.needs;
-  const attempt = data.packAttempt && (!binding || binding.attemptId === data.packAttempt.attemptId)
-    ? data.packAttempt : null;
-  const receiptId = binding?.packReceipt || attempt?.packReceipt;
-  const record = receiptId ? feed?.packRequests?.find(item => item.packReceipt === receiptId)
-    : !binding && !attempt ? feed?.packRequests?.at(-1) : null;
-  const target = binding || attempt || record;
-  if (!target) return null;
-  // The source an install was bound to (a saved source's key), or none for the
-  // default catalog. Two sources may list one pack name, so an install is joined
-  // to its record by the exact source as well as by name and operation. A refresh
-  // and a removal name no source: the provider selects it from the installed
-  // record, so their join is the receipt, name and operation alone.
-  const recordSource = value => value?.receipt?.catalogSource?.key ?? null;
-  const source = target === record ? recordSource(record) : target.source ?? null;
-  const result = record && packBindingMatches(record, feed)
-    && record.name === target.name && record.operation === target.operation
-    && (target.operation !== 'install' || recordSource(record) === source) ? record : null;
-  const authority = attempt?.authority || binding?.authority || authorityKey(result?.receipt);
-  const identityChanged = authority !== authorityKey(feed)
-    || (attempt?.rootKey && attempt.rootKey !== data.rootKey);
-  let phase = result?.phase || attempt?.phase || 'unavailable';
-  if (attempt && (result?.phase === 'prepared' && attempt.phase !== 'preparing'
-    || result?.phase === 'admitted' && ['delivered', 'uncertain'].includes(attempt.phase))) phase = attempt.phase;
-  let message = result?.reason ? PACK_MESSAGES[result.reason] || `The provider refused this request: ${result.reason}.`
-    : !result || phase === attempt?.phase ? attempt?.message : null;
-  if (identityChanged || !feed || data.issues.needs || feed.coverage.state === 'unavailable' || !data.connected) {
-    phase = 'unavailable';
-    message = identityChanged ? PACK_MESSAGES.identity_mismatch
-      : 'Current request authority is unavailable. Nothing will be retried or replayed.';
-  } else if (result?.phase === 'applied') {
-    const reread = result.receipt.reread;
-    if (!result.applied || !result.receipt.current || result.receipt.acknowledgment?.outcome !== 'applied'
-      || reread?.state !== 'current' || reread.workspaceId !== feed.workspaceId
-      || (data.index?.rootIdentity && reread.rootIdentity !== data.index.rootIdentity)) {
-      phase = 'stale';
-      message = 'This receipt no longer establishes a current applied result.';
-    } else if (data.packsLoading) {
-      phase = 'reading_result';
-    } else if (!currentCoverage(data.packs?.coverage.installed)) {
-      phase = 'unavailable';
-      message = 'The owner reported a result, but current pack information is unavailable. Reload packs to read it; no operation will be repeated.';
-    } else if (data.packs.rootIdentity !== reread.rootIdentity || data.packs.profileRevision !== reread.profileRevision) {
-      phase = 'stale';
-      message = 'The installed authority no longer agrees with this result. Reloading does not repeat the operation.';
-    }
-  }
-  return {
-    name: target.name, operation: target.operation, phase, message,
-    record: identityChanged ? null : result,
-    // The saved source this request is bound to, echoed by the provider's own
-    // receipt, or null for the default catalog. It names nothing this tab chose.
-    catalogSource: identityChanged ? null : result?.receipt.catalogSource ?? null,
-    binding: attempt ? { attemptId: attempt.attemptId, name: attempt.name, operation: attempt.operation, authority,
-      source: attempt.source ?? null }
-      : binding || { packReceipt: record.packReceipt, name: record.name, operation: record.operation, authority,
-        source: recordSource(record) },
-  };
-}
-
-export function packPermission(data, packReceipt) {
-  const feed = data.needs;
-  if (!feed || data.issues.needs || feed.coverage.state === 'unavailable' || !data.connected) return null;
-  const pack = feed.packRequests?.find(item => item.packReceipt === packReceipt);
-  if (!packBindingMatches(pack, feed) || !pack.receipt.current || pack.phase !== 'waiting_permission') return null;
-  return feed.requests.find(item => item.requestHandle === pack.permissionRequest && item.phase === 'pending'
-    && item.request.owner === 'dude' && item.request.class === 'permission' && item.request.scope.kind === 'session'
-    && item.request.requestRef === `pack:${packReceipt}` && item.request.source.kind === 'session'
-    && item.request.source.revision === feed.providerGeneration
-    && item.request.fields.operation === `pack:${pack.operation}`) || null;
 }
 
 /**
@@ -345,7 +202,7 @@ async function json(path, { body, signal } = {}) {
 
 const initial = {
   projection: null, freshness: null, index: null, needs: null,
-  packs: null, packsLoading: false, discovering: false, packAttempt: null, importAttempt: null,
+  packs: null, packsLoading: false, discovering: false, importAttempt: null,
   rootKey: null, loading: true, selecting: false, connected: false,
   issues: {}, attempts: {}, authorityChanged: false,
 };
@@ -450,7 +307,6 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
   const work = useRef({ epoch: 0, running: false, workspace: false, needs: false,
     packs: false, packController: null, timer: null, discoverController: null, discoverWaiters: [] });
   const locks = useRef(new Set());
-  const packSequence = useRef(0);
   const importSequence = useRef(0);
   const update = useCallback(change => {
     const previous = current.current;
@@ -524,7 +380,7 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
                   : previous.rootKey || value.rootIdentity || value.workspaceId;
                 if (rootChanged) {
                   next.needs = null; next.projection = null; next.attempts = {}; next.authorityChanged = false;
-                  next.packs = null; next.packAttempt = null; next.importAttempt = null;
+                  next.packs = null; next.importAttempt = null;
                 }
                 if (['current', 'partial'].includes(value.coverage?.inventory?.state)
                   || !previous.index || rootKey !== previous.rootKey) {
@@ -544,7 +400,7 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
                 }
                 if (previous.needs?.workspaceId && previous.needs.workspaceId !== value.workspaceId) {
                   next.index = null; next.projection = null; next.rootKey = value.workspaceId; next.attempts = {};
-                  next.packs = null; next.packAttempt = null; next.importAttempt = null;
+                  next.packs = null; next.importAttempt = null;
                 }
                 next.needs = value;
               }
@@ -697,9 +553,9 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
       return null;
     } finally {
       locks.current.delete(key);
-      // A pack or import permission reply changes no workspace fact. Only the
+      // An import permission reply changes no workspace fact. Only the
       // provider's own result hint rereads packs, never a catalog acquisition here.
-      queue(false, !/^(?:pack|import):/.test(record.request.requestRef));
+      queue(false, !/^import:/.test(record.request.requestRef));
     }
   }, [markAttempt, queue]);
 
@@ -707,11 +563,6 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
     const feed = current.current.needs;
     const key = `${authorityKey(feed)}|capture|${record?.requestHandle || 'new'}`;
     if (!intent.trim() || locks.current.has('capture') || !feed || current.current.issues.needs) return;
-    if (locks.current.has('pack') || packRequestPending(current.current)) {
-      markAttempt(key, { phase: 'unavailable', intent, continuation,
-        message: PACK_MESSAGES.pack_unreconciled, retryable: true });
-      return;
-    }
     if (locks.current.has('import') || importRequestPending(current.current)) {
       markAttempt(key, { phase: 'unavailable', intent, continuation,
         message: IMPORT_IN_PROGRESS, retryable: true });
@@ -750,75 +601,32 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
     }
   }, [markAttempt, queue]);
 
-  // `name` is the pack's name (see packActionReason), never a row key: the
-  // prepare/submit bodies and every receipt binding keep the operation's name.
-  // `source` is a saved source's key, only for an install from a source the
-  // project added: it is the one choice a browser can make, it binds both bodies
-  // and the receipt, and a default-catalog request carries no source at all.
-  const requestPack = useCallback((operation, name, snapshot, source = null, key = null) => {
-    if (locks.current.has('pack')) return null;
-    const before = current.current, owner = lifetime.current;
-    const attempt = { attemptId: ++packSequence.current, name, operation, source,
-      authority: authorityKey(before.needs), rootKey: before.rootKey, packReceipt: null, phase: 'preparing' };
-    const reason = locks.current.has('capture') ? PACK_MESSAGES.capture_unreconciled
-      : locks.current.has('import') ? PACK_MESSAGES.import_unreconciled
-      : snapshot !== before.packs ? 'The displayed pack read changed. Reload packs before requesting a change.'
-        : packActionReason(before, operation, name, key);
-    update({ packAttempt: reason ? { ...attempt, phase: 'unavailable', message: reason } : attempt });
-    if (reason) return attempt;
-    locks.current.add('pack');
-    work.current.epoch += 1;
-    const mark = change => update(previous => previous.packAttempt?.attemptId === attempt.attemptId
-      ? { ...previous, packAttempt: { ...previous.packAttempt, ...change } } : previous);
-    const chosen = source ? { source } : {};
-    // The saved source a receipt must be bound to. An install names it, so it is the chosen key. A refresh
-    // never names one: the provider takes the added source that matches the installed record, so the
-    // expected binding is the one the displayed read matched, and none for a built-in, unlisted or unknown record.
-    // Nothing else is bound, and a receipt that names another source is not this request's.
-    const expected = (() => {
-      if (operation === 'install') return source;
-      if (operation !== 'refresh') return null;
-      const row = before.packs?.items?.find(item => item.installed && item.name === name);
-      return before.packs?.sources?.items?.find(item => item.scope === 'project' && item.key === row?.sourceKey)?.key ?? null;
-    })();
-    const boundTo = record => (record.receipt?.catalogSource?.key ?? null) === expected;
-    let submitted = false;
-    void (async () => {
-      try {
-        const prepared = await json('/api/packs/request', {
-          body: { op: 'prepare', operation, name, ...chosen }, signal: owner.signal,
-        });
-        if (lifetime.current !== owner || before.rootKey !== current.current.rootKey
-          || attempt.authority !== authorityKey(current.current.needs)
-          || current.current.needs?.coverage.state === 'unavailable' || current.current.issues.needs
-          || !packBindingMatches(prepared, before.needs) || prepared.phase !== 'prepared'
-          || prepared.operation !== operation || prepared.name !== name || !boundTo(prepared)) {
-          throw Object.assign(new Error(PACK_MESSAGES.identity_mismatch), { code: 'identity_mismatch' });
-        }
-        mark({ packReceipt: prepared.packReceipt, phase: 'submitting' });
-        submitted = true;
-        const result = await json('/api/packs/request', {
-          body: { op: 'submit', operation, name, ...chosen, packReceipt: prepared.packReceipt }, signal: owner.signal,
-        });
-        if (!packBindingMatches(result, before.needs) || result.packReceipt !== prepared.packReceipt
-          || result.operation !== operation || result.name !== name || !boundTo(result)) {
-          throw Object.assign(new Error(PACK_MESSAGES.pack_send_uncertain), { code: 'pack_send_uncertain' });
-        }
-        mark({ phase: result.phase });
-      } catch (error) {
-        // Only submit can send. A lost prepare is known-unsent, never uncertain.
-        const unsent = error.code === 'connection_lost' && !submitted;
-        mark({ phase: unsent ? 'unavailable'
-          : ['connection_lost', 'pack_send_uncertain'].includes(error.code) ? 'uncertain'
-            : ['identity_mismatch', 'source_changed'].includes(error.code) ? 'stale' : 'unavailable',
-        message: unsent ? PACK_MESSAGES.not_sent : PACK_MESSAGES[error.code] || error.message });
-      } finally {
-        locks.current.delete('pack');
-        queue(false, false);
-      }
-    })();
-    return attempt;
-  }, [queue, update]);
+  /**
+   * One closed body of the pack action route: a preview, the one apply its
+   * token allows, or Cancel (see canvas-server.mjs). It never throws and never
+   * retries: the answer is `{ ok: true, value }`, or `{ ok: false, code }` with
+   * the route's refusal code, `connection_lost` when no answer arrived. Any
+   * apply answer is followed by the automatic pack read, which reads no catalog,
+   * so Installed and Available show what Compose did (FR-020). `signal`, and
+   * the hook's lifetime, abort the request; they are linked by hand, as
+   * readAbout's are.
+   */
+  const packAction = useCallback(async (body, signal = null) => {
+    const owner = lifetime.current, request = new AbortController(), abort = () => request.abort();
+    const owners = [owner.signal, ...(signal ? [signal] : [])];
+    for (const each of owners) {
+      if (each.aborted) abort();
+      else each.addEventListener('abort', abort, { once: true });
+    }
+    try {
+      return { ok: true, value: await json('/api/packs/action', { body, signal: request.signal }) };
+    } catch (error) {
+      return { ok: false, code: error.code || 'connection_lost' };
+    } finally {
+      owners.forEach(each => each.removeEventListener('abort', abort));
+      if (body.op === 'apply' && lifetime.current === owner) queue();
+    }
+  }, [queue]);
 
   /**
    * Prepare then submit one explicit import, once. `source` is the exact
@@ -833,8 +641,7 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
     const before = current.current, owner = lifetime.current;
     const attempt = { attemptId: ++importSequence.current, source,
       authority: authorityKey(before.needs), rootKey: before.rootKey, importReceipt: null, phase: 'preparing' };
-    const reason = locks.current.has('pack') ? IMPORT_MESSAGES.pack_unreconciled
-      : locks.current.has('capture') ? IMPORT_MESSAGES.capture_unreconciled : importActionReason(before);
+    const reason = locks.current.has('capture') ? IMPORT_MESSAGES.capture_unreconciled : importActionReason(before);
     update({ importAttempt: reason ? { ...attempt, phase: 'unavailable', message: reason } : attempt });
     if (reason) return attempt;
     locks.current.add('import');
@@ -948,5 +755,5 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
     refresh: () => queue(true), reconcile: () => queue(),
     // Reload packs is the existing full workspace refresh plus the one explicit catalog discovery.
     reloadPacks: () => { if (!packsWanted.current) return Promise.resolve(null); queue(true, false); return discover(); }, addSource, removeSource,
-    respond, capture, requestPack, requestImport, openReview, readHistory, readAbout };
+    respond, capture, packAction, requestImport, openReview, readHistory, readAbout };
 }

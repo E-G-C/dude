@@ -8,7 +8,7 @@ A read-only view built from idea files, linked feature files, task records, and 
 - Ready / Next: **0**
 - Ideas awaiting definition: **7**
 - Defined awaiting work: **0**
-- Completed: **77**
+- Completed: **78**
 
 ## Current
 
@@ -107,6 +107,7 @@ No current work to diagram.
 - `080` · `dude-canvas-pack-documentation` — Dude Canvas Pack Documentation (`.dude/ideas/080-dude-canvas-pack-documentation.md`)
 - `081` · `animation-short-video-pack` — Animation and Short-Video Pack (`.dude/ideas/081-animation-short-video-pack.md`)
 - `082` · `targeted-pack-acquisition` — Targeted Pack Acquisition (`.dude/ideas/082-targeted-pack-acquisition.md`)
+- `083` · `one-step-pack-actions` — Dude Canvas One-Step Pack Actions (`.dude/ideas/083-one-step-pack-actions.md`)
 
 ## Dependency and order notes
 

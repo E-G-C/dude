@@ -5,8 +5,8 @@
  *
  * Every catalog read runs in a short-lived helper process (catalog-reader.mjs),
  * and there are three reads: the default catalog (the local library, else the
- * recorded upstream), one saved source, and an explicit discovery of the default
- * plus each saved source. At most four helpers are ever active in this process,
+ * recorded upstream), a source being added, and an explicit discovery of the
+ * default plus each saved source. At most four helpers are ever active in this process,
  * and at most sixteen more wait for one. A helper's deadline follows from what it
  * reads: a folder, a public GitHub catalog, or another host's whole clone. Every
  * helper one operation starts, and every wait for a helper, also ends within that
@@ -19,8 +19,9 @@
  * folder deadline. A folder that does not answer costs only its own slot, and an
  * operation that does not need it does not wait for it:
  *
- * - a request that names a source by key describes every saved folder at once and
- *   stops at the first answer that carries the key, which stops the others;
+ * - a pack action or a removal that names a source by key describes every saved
+ *   folder at once and stops at the first answer that carries the key, which
+ *   stops the others;
  * - adding a repository never looks at a saved folder, because a repository can
  *   only repeat another repository;
  * - only an operation that must know every folder (the source rows, a refresh
@@ -29,9 +30,10 @@
  *
  * A folder that did not answer keeps the key the shared module gives any folder
  * it cannot resolve, the one from its spelling, so its saved entry stays
- * addressable and removable. The one later exception to "never resolved here" is
- * the synchronous final recheck of a bound local source's pack manifest, which
- * runs only right after a helper proved the folder reachable.
+ * addressable and removable.
+ *
+ * A pack action (`runPackAction`) runs one Compose preview or apply in a child of
+ * its own (pack-action.mjs), launched as a reader is, outside the reader slots.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -40,7 +42,6 @@ import childProcess from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { cmdStatus, readManifestSource } from '../../../skills/dude-compose/compose.mjs';
-import { PACK_NAME_RE } from '../../../skills/dude-engine/lib/profile.mjs';
 import {
   MAX_ADDED_SOURCES,
   PACK_SOURCES_PATH,
@@ -55,6 +56,7 @@ import {
 } from '../../../skills/dude-engine/lib/pack-sources.mjs';
 import { resolveMutationPath, WORKSPACE_PATHS } from '../../../skills/dude-engine/lib/workspace-paths.mjs';
 import { CANDIDATE_DOCUMENT, CATALOG_GIT_HOME_ENV, CATALOG_REQUEST_ENV, CATALOG_STOP_MARKER, readDocument } from './catalog-reader.mjs';
+import { PACK_ACTION_REQUEST_ENV } from './pack-action.mjs';
 
 // How long one reader may run before it is stopped, by what it reads, counted
 // from its slot's admission rather than its launch. Each budget follows from the
@@ -88,6 +90,11 @@ const MAX_WAITING_READERS = 16;
 const ROOT_LIMITS = Object.freeze({ bytes: 1_073_741_824, entries: 65_536, intervalMs: 250 });
 // Each read runs this module in its own helper process.
 const READER = fileURLToPath(new URL('./catalog-reader.mjs', import.meta.url));
+// Each pack action runs this module in its own child process.
+const PACK_ACTION = fileURLToPath(new URL('./pack-action.mjs', import.meta.url));
+// A pack action child has this long to reach its write gate, or to answer its
+// preview: above Compose's own 120-second bound for one selected GitHub pack.
+const PACK_ACTION_DEADLINE_MS = 130_000;
 const CATALOG_FAILURES = Object.freeze({
   catalog_timeout: 'The catalog read timed out. Reload to try a fresh read.',
   catalog_cleanup_failed: 'The catalog reader could not confirm process cleanup.',
@@ -103,7 +110,7 @@ const URL_SCHEME_RE = /^[A-Za-z][A-Za-z0-9+.-]+:/;
 /** @typedef {import('../../../skills/dude-engine/lib/pack-sources.mjs').DescribedSource} DescribedSource */
 /** What a reader reads, which alone decides its budget. @typedef {keyof typeof READER_BUDGET_MS} ReaderPurpose */
 /** @typedef {{ type: 'remote', repository: string, ref: string } | { type: 'local', location: string }} BoundSource */
-/** The closed value a pack request carries for a source the project added. @typedef {{ key: string, sourcesRevision: string, source: BoundSource }} CatalogSource */
+/** The closed value a pack action binds for a source the project added. @typedef {{ key: string, sourcesRevision: string, source: BoundSource }} CatalogSource */
 /** @typedef {{ status: 'read' | 'unavailable', reason: string | null, message: string | null,
  *   result: { packs: any[], enabled_packs: string[], origin: string } | null }} SourceRead */
 /**
@@ -151,10 +158,10 @@ function profilePreimage(root, rootIdentity = readRootIdentity(root)) {
 }
 
 /**
- * The saved sources file as one input to a request's basis: its raw-byte
- * revision (`absent` when missing), or, when it cannot be trusted, a stamp that
- * still changes whenever the file does. Whether it parses never decides this
- * input, so a request is bound to the document even while it is unreadable.
+ * The saved sources file as one input to a revision: its raw-byte revision
+ * (`absent` when missing), or, when it cannot be trusted, a stamp that still
+ * changes whenever the file does. Whether it parses never decides this input, so
+ * a pack action's token is bound to the document even while it is unreadable.
  * @param {string} root
  */
 function sourcesInput(root) {
@@ -168,16 +175,12 @@ function sourcesInput(root) {
 
 /**
  * Local acquisition inputs, not an integrity claim about installed/source
- * bytes. The Compose owner must still bind its actual preview and apply.
- * A request also binds its one selected local manifest across async queue
- * checks, and the saved sources file, so a saved-source change is a basis change
- * for every request that reads a catalog. Remote content/commit and projected
- * targets belong to the later owner preview; this synchronous check never
- * fetches or scans a catalog. A bound source replaces the default inputs: the
- * default catalog is not what it reads.
- * @param {string} root @param {string} [name] @param {CatalogSource | null} [selection]
+ * bytes: the bundle manifest, the local library and the saved sources file, so
+ * a saved-source change is an input change for every read of a catalog. This
+ * synchronous check never fetches or scans a catalog.
+ * @param {string} root
  */
-function catalogInputsRevision(root, name, selection = null) {
+function catalogInputsRevision(root) {
   const inspect = absolute => {
     let stat;
     try { stat = fs.lstatSync(absolute); }
@@ -189,48 +192,10 @@ function catalogInputsRevision(root, name, selection = null) {
       stamp: [stat.dev, stat.ino, stat.mtimeMs, stat.ctimeMs],
       revision: stat.isFile() ? identity(fs.readFileSync(absolute)) : null };
   };
-  /** @type {unknown[]} */
-  const inputs = [];
-  if (name !== undefined && !PACK_NAME_RE.test(name)) throw new Error('Invalid selected pack name.');
-  if (!selection) {
-    const manifest = inspect(resolveMutationPath(root, WORKSPACE_PATHS.BUNDLE_MANIFEST));
-    if (manifest && !manifest.file) throw new Error('The bundle manifest must be a regular file.');
-    const library = inspect(resolveMutationPath(root, 'library/packs'));
-    inputs.push(manifest, library);
-    if (name !== undefined) {
-      let sourceRoot = library?.directory ? root : null;
-      if (!sourceRoot) {
-        const configured = readManifestSource(root)?.source_repo;
-        if (configured) {
-          const candidate = path.resolve(root, configured);
-          try {
-            // Compose uses local directory sources in place, relative to its
-            // workspace cwd. A URL/non-directory remains the remote reader's job.
-            if (fs.statSync(candidate).isDirectory()) sourceRoot = fs.realpathSync(candidate);
-          } catch (error) {
-            if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') throw error;
-          }
-        }
-      }
-      if (sourceRoot) {
-        inputs.push(inspect(resolveMutationPath(sourceRoot, `library/packs/${name}/pack.md`)));
-      }
-    }
-  } else if (name !== undefined && selection.source.type === 'local') {
-    // A helper has just read this folder, so it answers; an unreachable one is a refusal.
-    inputs.push(inspect(resolveMutationPath(selection.source.location, `library/packs/${name}/pack.md`)));
-  }
-  inputs.push(['sources', sourcesInput(root)]);
-  return identity(JSON.stringify(inputs));
-}
-
-/** Synchronous final admission check after the provider's queue read.
- * @param {string} root @param {boolean} [catalog] @param {string} [name] @param {CatalogSource | null} [selection]
- */
-export function packReadRevision(root, catalog = true, name, selection = null) {
-  const status = cmdStatus({ root });
-  if (!status.ok) throw new Error(status.error);
-  return identity(JSON.stringify([profilePreimage(root), catalog ? catalogInputsRevision(root, name, selection) : null]));
+  const manifest = inspect(resolveMutationPath(root, WORKSPACE_PATHS.BUNDLE_MANIFEST));
+  if (manifest && !manifest.file) throw new Error('The bundle manifest must be a regular file.');
+  const library = inspect(resolveMutationPath(root, 'library/packs'));
+  return identity(JSON.stringify([manifest, library, ['sources', sourcesInput(root)]]));
 }
 
 /** @param {string} reason */
@@ -248,22 +213,24 @@ function catalogFailure(reason) {
  * name alone. The CLI's single executable runs a script only through that
  * bootstrap: for an argument with the bootstrap's file name, it runs the
  * bootstrap its runtime ships, whatever the argument's folder or the working
- * directory. So relaunch the reader the same way, as this process's child,
- * with the argument as the CLI spelled it. Override both variables: otherwise
- * the bootstrap imports the extension again, or exits because its parent is
- * not the CLI. Use a path only if it exists, because under plain Node execPath
- * runs that file. A bare name is never checked: Node lists the script it runs
- * by its full path, so a bare name comes only from the CLI, which resolves it
- * itself. Otherwise, under plain Node, execPath runs the reader directly.
+ * directory. So relaunch a helper `script` (the reader, or the pack action) the
+ * same way, as this process's child, with the argument as the CLI spelled it.
+ * Override both variables: otherwise the bootstrap imports the extension again,
+ * or exits because its parent is not the CLI. Use a path only if it exists,
+ * because under plain Node execPath runs that file. A bare name is never
+ * checked: Node lists the script it runs by its full path, so a bare name comes
+ * only from the CLI, which resolves it itself. Otherwise, under plain Node,
+ * execPath runs the script directly.
  * @param {string} root
+ * @param {string} script the helper module's absolute path
  * @returns {{ args: string[], env: Record<string, string> }}
  */
-function readerLaunch(root) {
+function readerLaunch(root, script) {
   const bootstrap = process.argv.find(arg => path.basename(arg) === 'extension_bootstrap.mjs');
   return bootstrap && (bootstrap === path.basename(bootstrap) || fs.existsSync(bootstrap))
-    ? { args: [bootstrap, READER, root],
-      env: { EXTENSION_PATH: READER, COPILOT_EXTENSION_PARENT_PID: String(process.pid) } }
-    : { args: [READER, root], env: {} };
+    ? { args: [bootstrap, script, root],
+      env: { EXTENSION_PATH: script, COPILOT_EXTENSION_PARENT_PID: String(process.pid) } }
+    : { args: [script, root], env: {} };
 }
 
 /** An empty `credential.helper` in `GIT_CONFIG_PARAMETERS`' oldest format, which every Git reads. */
@@ -649,7 +616,7 @@ async function runReader(root, signal, deadlineAt, request, prepare) {
     try { await prepare(temporary); }
     catch { return unstarted('catalog_unavailable'); }
   }
-  const launch = readerLaunch(root);
+  const launch = readerLaunch(root, READER);
   /** @type {Record<string, string>} */
   let git;
   try { git = await readerGitEnvironment(process.env, temporary); }
@@ -986,8 +953,8 @@ function usesSource(root, source, recorded) {
     && sameFolder(recorded.location, path.resolve(root, source.location));
 }
 
-/** The closed public value a request binds for a saved source. @param {SavedSource} item @param {string} revision @returns {CatalogSource} */
-function bindingFor(item, revision) {
+/** The closed value a pack action binds for a saved source. @param {SavedSource} item @param {string} revision @returns {CatalogSource} */
+export function bindingFor(item, revision) {
   const source = /** @type {DescribedSource} */ (item.source);
   return { key: source.key, sourcesRevision: revision,
     source: source.type === 'remote'
@@ -996,9 +963,9 @@ function bindingFor(item, revision) {
 }
 
 /**
- * The source a provider request reads. An install names a saved source by its
- * key. A refresh takes the saved source that matches its installed record, else
- * the default; it never takes a choice from the browser. A source that is gone,
+ * The source a pack action reads. An install names a saved source by its key.
+ * A refresh takes the saved source that matches its installed record, else the
+ * default; it never takes a choice from the browser. A source that is gone,
  * unreadable or unresolved is a refusal, never a quiet use of another catalog.
  * @param {string} root
  * @param {AbortSignal} signal
@@ -1009,7 +976,7 @@ function bindingFor(item, revision) {
  * @returns {Promise<{ ok: true, selection: CatalogSource | null, item: SavedSource | null }
  *   | { ok: false, state: 'stale' | 'unavailable', reason: string, message: string }>}
  */
-async function chooseSource(root, signal, until, configuration, select, recorded) {
+export async function chooseSource(root, signal, until, configuration, select, recorded) {
   const { saved, builtins } = configuration;
   /** @param {'stale' | 'unavailable'} state @param {string} reason @param {string} message */
   const refuse = (state, reason, message) => ({ ok: /** @type {const} */ (false), state, reason, message });
@@ -1227,25 +1194,21 @@ function projectSources({ root, configuration, items, invalid, reads, defaultKey
  * Which catalogs a read acquires is explicit:
  * - default: the default catalog (the local library, else the recorded upstream);
  * - `catalog: false`: none, an installed-only check;
- * - `select`: exactly one saved source for a provider request, bound by its key
- *   (`{ source }` for an install) or derived from the installed record (`{ refresh }`);
  * - `discover`: the default plus every saved source, each once.
  * `sources` adds the source rows and every item's source key and provenance;
  * discovery implies it. Without a catalog read those rows say "not read".
  * @param {string} root
  * @param {AbortSignal} signal
- * @param {{ catalog?: boolean, name?: string, select?: { source: string } | { refresh: true } | null,
- *   discover?: boolean, sources?: boolean }} [options]
- *   `name` binds local metadata to the provider-selected pack.
+ * @param {{ catalog?: boolean, discover?: boolean, sources?: boolean }} [options]
  */
-export async function readPacks(root, signal, { catalog: includeCatalog = true, name, select = null, discover = false, sources: includeSources = false } = {}) {
+export async function readPacks(root, signal, { catalog: includeCatalog = true, discover = false, sources: includeSources = false } = {}) {
   root = path.resolve(root);
   signal.throwIfAborted();
   const until = acquisitionWindow();
   const projected = includeSources || discover;
   const snapshot = {
     workspaceId: identity(root), rootIdentity: null, profileRevision: null, readRevision: null, readAt: null,
-    installed: null, catalog: null, items: null, selection: /** @type {CatalogSource | null} */ (null),
+    installed: null, catalog: null, items: null,
     coverage: {
       installed: coverage('unavailable', 'installed_unavailable', 'The installed profile could not be read.'),
       catalog: coverage('unavailable', 'installed_unavailable', 'Catalog membership requires a readable installed profile.'),
@@ -1284,7 +1247,7 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
   // The saved sources are described before any catalog is read, so every row and
   // every installed match in this read uses the same keys. A discovery describes
   // them while it reads them.
-  const configuration = projected || select ? readConfiguration(root) : null;
+  const configuration = projected ? readConfiguration(root) : null;
   /** @type {SavedSource[] | null} */
   let savedItems = null;
   /** @type {string | null} */
@@ -1312,22 +1275,8 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
       catalog = defaultOutcome;
       savedItems = saved?.ok ? saved.items : null;
       savedInvalid = saved && !saved.ok ? saved.error : null;
-    } else if (select && configuration) {
-      const recorded = name !== undefined && Object.hasOwn(installed.result.installed, name)
-        ? installed.result.installed[name].source : null;
-      const chosen = await chooseSource(root, signal, until, configuration, select, recorded);
-      if (!chosen.ok) catalog = { ok: false, reason: chosen.reason, error: chosen.message, state: chosen.state };
-      else {
-        snapshot.selection = chosen.selection;
-        inputs = catalogInputsRevision(root, name, chosen.selection);
-        catalog = chosen.item && chosen.selection
-          ? await acquireCatalog(root, signal, until, purposeOf(/** @type {DescribedSource} */ (chosen.item.source)), {
-            op: 'source', index: chosen.item.index, key: chosen.selection.key, revision: chosen.selection.sourcesRevision,
-            document: 'configured', list: true })
-          : await acquireCatalog(root, signal, until, defaultPurpose(configuration.builtins));
-      }
     } else {
-      inputs = catalogInputsRevision(root, name);
+      inputs = catalogInputsRevision(root);
       catalog = await acquireCatalog(root, signal, until, defaultPurpose(readBuiltins(root)));
     }
   }
@@ -1360,7 +1309,7 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
   // file, are what they were when it began. Nothing it read is returned otherwise.
   let discardedReads = false;
   try {
-    if (includeCatalog && inputs !== null && inputs !== catalogInputsRevision(root, name, snapshot.selection)) {
+    if (includeCatalog && inputs !== null && inputs !== catalogInputsRevision(root)) {
       catalog = { ok: false, reason: 'catalog_changed', error: 'Catalog inputs changed during the read. Reload before requesting a pack change.' };
       discardedReads = true;
     } else snapshot.readRevision = identity(JSON.stringify([after, inputs]));
@@ -1408,8 +1357,8 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
   } else if (catalog.ok) {
     snapshot.catalog = catalog.result;
     snapshot.coverage.catalog = coverage(catalog.result.packs.length ? 'current' : 'empty');
-    const key = snapshot.selection ? snapshot.selection.key : defaultSource?.key ?? null;
-    catalogs.push({ key: projected || snapshot.selection ? key : null, packs: catalog.result.packs });
+    const key = defaultSource?.key ?? null;
+    catalogs.push({ key: projected ? key : null, packs: catalog.result.packs });
     if (key) reads.set(key, normalizeRead(catalog));
   } else {
     snapshot.coverage.catalog = coverage(
@@ -1574,22 +1523,16 @@ export async function addPackSource(root, signal, { location, ref = null, source
 }
 
 /**
- * @param {Array<{ kind: 'installed', name: string } | { kind: 'request', name: string, operation: string, phase: string }>} blockers
+ * @param {Array<{ kind: 'installed', name: string }>} blockers
  */
 function describeBlockers(blockers) {
-  const installed = blockers.filter(blocker => blocker.kind === 'installed').map(blocker => blocker.name);
-  const requests = blockers.filter(blocker => blocker.kind === 'request')
-    .map(blocker => `${/** @type {any} */ (blocker).operation} ${blocker.name} (${/** @type {any} */ (blocker).phase})`);
-  return [installed.length ? `Installed packs from this source: ${installed.join(', ')}.` : '',
-    requests.length ? `Pack requests that use it: ${requests.join(', ')}.` : ''].filter(Boolean).join(' ');
+  return `Installed packs from this source: ${blockers.map(blocker => blocker.name).join(', ')}.`;
 }
 
 /**
  * Remove one saved source, which deletes only its entry. It is refused while an
- * installed pack records the source or a live pack request is bound to it, and
- * every blocker is named. The final check is synchronous from the installed
- * authority and the provider's live requests through the write, so a request
- * that is being prepared cannot slip between the check and the write. Whether a
+ * installed pack records the source, and every such pack is named. The final
+ * check is synchronous from the installed authority through the write. Whether a
  * catalog was ever read, or can be, never matters, and neither does a different
  * saved folder that does not answer. A folder that does not answer is itself
  * removable by the key its row shows; an installed pack that records its
@@ -1597,9 +1540,9 @@ function describeBlockers(blockers) {
  * @param {string} root
  * @param {AbortSignal} signal
  * @param {{ key: string, sourcesRevision: string }} input
- * @param {{ liveUses: (key: string) => Array<{ name: string, operation: string, phase: string }>, beforeCommit?: () => void }} hooks
+ * @param {{ beforeCommit?: () => void }} [hooks]
  */
-export async function removePackSource(root, signal, { key, sourcesRevision }, { liveUses, beforeCommit }) {
+export async function removePackSource(root, signal, { key, sourcesRevision }, { beforeCommit } = {}) {
   root = path.resolve(root);
   signal.throwIfAborted();
   const until = acquisitionWindow();
@@ -1643,11 +1586,6 @@ export async function removePackSource(root, signal, { key, sourcesRevision }, {
   const blockers = Object.entries(status.result.installed)
     .filter(([, record]) => usesSource(root, source, /** @type {any} */ (record).source))
     .map(([name]) => ({ kind: /** @type {const} */ ('installed'), name }));
-  try {
-    for (const use of liveUses(key)) blockers.push({ kind: 'request', name: use.name, operation: use.operation, phase: use.phase });
-  } catch {
-    return refusal('authority_unavailable', 'Pack requests could not be checked, so this source cannot be shown to be unused.');
-  }
   if (blockers.length) {
     return refusal('source_in_use', `This source is in use. ${describeBlockers(blockers)}`, { blockers });
   }
@@ -1664,5 +1602,233 @@ export async function removePackSource(root, signal, { key, sourcesRevision }, {
         error.code === 'stale' ? 'The saved sources changed. Reload packs and try again.' : error.message);
     }
     return refusal('write_failed', 'The sources file could not be saved. Nothing was changed.');
+  }
+}
+
+/* ------------------------------------------------------------------- pack actions */
+
+/** @typedef {'install' | 'remove' | 'refresh'} PackOperation */
+/**
+ * Compose's own answer, without its exit code. A failure says whether anything
+ * changed: `none`, `restored` or `uncertain`.
+ * @typedef {{ ok: true, result: any } | { ok: false, error: string, mutation: 'none' | 'restored' | 'uncertain' }} PackOutcome
+ */
+/**
+ * What a preview binds for its one apply: the saved source it read (null for the
+ * default catalog or a removal), the source identity Compose resolved (null for a
+ * removal), and what its child reads, which decides how Cancel stops it.
+ * @typedef {{ sourceKey: string | null, identity: any, purpose: ReaderPurpose }} PackBinding
+ */
+
+const ACTION_UNSTARTED = 'The pack action could not start. Nothing changed.';
+const ACTION_CANCELLED = 'The pack action was cancelled before it wrote anything. Nothing changed.';
+
+/**
+ * The workspace a pack action's token binds, as one revision: the root's
+ * identity, and the exact bytes, or the absence, of the installed profile and of
+ * the saved sources file.
+ * @param {string} root
+ */
+export function packActionRevision(root) {
+  root = path.resolve(root);
+  const rootIdentity = readRootIdentity(root);
+  return identity(JSON.stringify([rootIdentity, profilePreimage(root, rootIdentity).profileRevision, sourcesInput(root)]));
+}
+
+/**
+ * Run one Compose preview or apply of one pack in a child process of its own
+ * (pack-action.mjs). It is launched as a reader is, with a reader's Git
+ * environment and its own temporary root, and takes no reader slot. Compose
+ * makes every check and every write; the child is told only a closed request.
+ *
+ * A preview chooses its source first: an install may name a saved source by its
+ * key, a refresh takes the saved source its installed record matches, else the
+ * default, and a removal reads none. It answers Compose's dry run and, when
+ * Compose made one, the binding that its one apply must be given back.
+ *
+ * An apply is pinned to that binding: a repository at the previewed commit, a
+ * folder read in place, or the workspace library alone, never a fallback. An
+ * install or a refresh asks `gate` once, after Compose staged it and before any
+ * write, and writes only on `true`. A removal has no gate, so it may write from
+ * its start.
+ *
+ * Until a child may write, `signal` stops one that reads a folder or GitHub at
+ * once, while one that runs Git finishes Git and then hears no; and a child that
+ * has not reached its gate, or answered its preview, within 130 seconds is
+ * stopped. Once it may write nothing stops it, and a child that then ends without
+ * an answer has an uncertain outcome.
+ * @param {string} root
+ * @param {AbortSignal} signal
+ * @param {{ op: 'preview', operation: PackOperation, name: string, source: string | null }
+ *   | { op: 'apply', operation: PackOperation, name: string, binding: PackBinding }} request
+ * @param {{ gate?: () => boolean }} [hooks]
+ * @returns {Promise<{ outcome: PackOutcome, binding: PackBinding | null }>}
+ */
+export async function runPackAction(root, signal, request, { gate } = {}) {
+  root = path.resolve(root);
+  const { operation, name } = request;
+  if (request.op === 'apply') {
+    const { binding } = request;
+    const outcome = await runActionChild(root, signal, { op: 'apply', operation, name, ...pinnedTo(root, binding.identity) },
+      binding.purpose, operation === 'remove', gate);
+    return { outcome, binding: null };
+  }
+  /** @type {string | null} */
+  let sourceKey = null;
+  /** @type {ReaderPurpose} */
+  let purpose = 'local';
+  /** @type {{ source: string | null, ref: string | null }} */
+  let read = { source: null, ref: null };
+  if (operation !== 'remove') {
+    const configuration = readConfiguration(root);
+    purpose = defaultPurpose(configuration.builtins);
+    const select = operation === 'refresh' ? { refresh: /** @type {const} */ (true) }
+      : request.source !== null ? { source: request.source } : null;
+    if (select) {
+      let recorded = null;
+      if (operation === 'refresh') {
+        const status = cmdStatus({ root });
+        if (status.ok && Object.hasOwn(status.result.installed, name)) recorded = status.result.installed[name].source;
+      }
+      const chosen = await chooseSource(root, signal, acquisitionWindow(), configuration, select, recorded);
+      if (!chosen.ok) return { outcome: { ok: false, error: chosen.message, mutation: 'none' }, binding: null };
+      if (chosen.selection && chosen.item?.source) {
+        const { key, source } = chosen.selection;
+        sourceKey = key;
+        purpose = purposeOf(chosen.item.source);
+        read = source.type === 'remote' ? { source: source.repository, ref: source.ref } : { source: source.location, ref: null };
+      }
+    }
+  }
+  const outcome = await runActionChild(root, signal, { op: 'preview', operation, name, ...read, fetch: true }, purpose, false);
+  return { outcome, binding: outcome.ok ? { sourceKey, identity: outcome.result?.source ?? null, purpose } : null };
+}
+
+/**
+ * Compose's source arguments for an apply, pinned to what its preview resolved:
+ * a repository at the previewed commit, a folder read in place, or the workspace
+ * library alone, so that the apply can never fall back to another catalog.
+ * @param {string} root
+ * @param {any} resolved Compose's source identity, or null for a removal
+ * @returns {{ source: string | null, ref: string | null, fetch: boolean }}
+ */
+function pinnedTo(root, resolved) {
+  if (!resolved) return { source: null, ref: null, fetch: false };
+  if (resolved.type === 'remote') return { source: resolved.repository, ref: resolved.resolved_commit, fetch: true };
+  const library = readBuiltins(root).find(source => source.builtin === 'local-library');
+  return library && matchesRecordedSource(library, resolved) ? { source: null, ref: null, fetch: false }
+    : { source: resolved.location, ref: null, fetch: true };
+}
+
+/**
+ * Compose's answer without its exit code. A failure that names no mutation is
+ * judged by whether the child was allowed to write.
+ * @param {any} answer @param {boolean} went @returns {PackOutcome}
+ */
+function packOutcome(answer, went) {
+  if (answer.ok === true) return { ok: true, result: answer.result ?? null };
+  const mutation = ['none', 'restored', 'uncertain'].includes(answer.mutation) ? answer.mutation : went ? 'uncertain' : 'none';
+  return { ok: false, error: typeof answer.error === 'string' ? answer.error : 'Compose did not say why the pack action failed.', mutation };
+}
+
+/**
+ * One pack action child, run to its answer (see `runPackAction`).
+ * @param {string} root
+ * @param {AbortSignal} signal
+ * @param {import('./pack-action.mjs').PackActionRequest} request
+ * @param {ReaderPurpose} purpose
+ * @param {boolean} writable whether the child may write from its start, as a removal may
+ * @param {() => boolean} [gate]
+ * @returns {Promise<PackOutcome>}
+ */
+async function runActionChild(root, signal, request, purpose, writable, gate) {
+  /** @param {string} error @returns {PackOutcome} */
+  const unchanged = error => ({ ok: false, error, mutation: 'none' });
+  if (signal.aborted) return unchanged(ACTION_CANCELLED);
+  const temporary = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'dude-canvas-pack-action-'));
+  try {
+    /** @type {Record<string, string>} */
+    let git;
+    try { git = await readerGitEnvironment(process.env, temporary); }
+    catch { return unchanged(ACTION_UNSTARTED); }
+    // Nothing has started, so a cancellation meanwhile still changes nothing.
+    if (signal.aborted) return unchanged(ACTION_CANCELLED);
+    const launch = readerLaunch(root, PACK_ACTION);
+    /** @type {import('node:child_process').ChildProcess} */
+    let child;
+    try {
+      child = childProcess.spawn(process.execPath, launch.args, {
+        // Compose resolves a relative configured source against its cwd.
+        cwd: root, windowsHide: true,
+        // On POSIX an owned process group, so that a stop reaches its descendants.
+        detached: process.platform !== 'win32',
+        // stdout carries the extension's JSON-RPC; the child reports over IPC.
+        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+        env: { ...process.env, ...launch.env, TMPDIR: temporary, TMP: temporary, TEMP: temporary, ...git,
+          [PACK_ACTION_REQUEST_ENV]: JSON.stringify(request) },
+      });
+    } catch { return unchanged(ACTION_UNSTARTED); }
+    return await new Promise(resolve => {
+      let went = writable, asked = false, settled = false;
+      /** @type {any} */
+      let answer = null;
+      /** @type {string | null} */
+      let stopped = null;
+      /** @type {NodeJS.Timeout | undefined} */
+      let stopWindow;
+      /** @param {PackOutcome} value */
+      const settle = value => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        clearTimeout(stopWindow);
+        signal.removeEventListener('abort', cancel);
+        resolve(value);
+      };
+      /** Stop a child that may not write yet. @param {string} error */
+      const stop = error => {
+        if (went || stopped || settled) return;
+        stopped = error;
+        clearTimeout(deadline);
+        // The last resort for a child that outlives its tree stop.
+        stopWindow = setTimeout(() => { child.kill('SIGKILL'); settle(unchanged(error)); }, STOP_CONFIRM_MS);
+        stopTree(child, () => {});
+      };
+      // A child that runs Git is left to finish it, and then hears no at its
+      // gate; the answer of its preview is the caller's to discard.
+      const cancel = () => { if (purpose !== 'git') stop(ACTION_CANCELLED); };
+      const deadline = went ? undefined : setTimeout(() => stop(
+        `The pack action did not finish reading its source within ${PACK_ACTION_DEADLINE_MS / 1_000} seconds. Nothing changed.`),
+      PACK_ACTION_DEADLINE_MS);
+      signal.addEventListener('abort', cancel, { once: true });
+      child.on('message', (/** @type {any} */ message) => {
+        if (message?.type === 'result') { answer = message.result; return; }
+        if (message?.type !== 'gate' || asked || went || stopped) return;
+        asked = true;
+        clearTimeout(deadline);
+        // A gate that fails is a no, as is any answer but its literal go.
+        try { went = !signal.aborted && gate?.() === true; } catch { went = false; }
+        // A child that is already gone cannot write, and its close settles this action.
+        child.send({ type: 'gate', go: went }, () => {});
+      });
+      child.once('error', () => {
+        // The child never started, so there is no process to stop or wait for.
+        if (child.pid === undefined) settle(unchanged(ACTION_UNSTARTED));
+      });
+      child.once('close', () => {
+        if (stopped) settle(unchanged(stopped));
+        else if (answer && typeof answer.ok === 'boolean') settle(packOutcome(answer, went));
+        else {
+          settle(went ? { ok: false, mutation: 'uncertain', error: 'The pack action ended after it was allowed to write, without saying what it changed.' }
+            : unchanged('The pack action ended before it wrote anything. Nothing changed.'));
+        }
+      });
+      if (signal.aborted) cancel();
+    });
+  } finally {
+    // Compose removes its own staging, so this root holds only the child's Git
+    // home and what a stopped child left. A removal that fails leaves those in the
+    // system's temporary folder rather than change what the action did.
+    await fs.promises.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {});
   }
 }

@@ -1,4 +1,4 @@
-import { buttonClassNames, makeStyles, messageBarClassNames, tabClassNames, tokens } from '@fluentui/react-components';
+import { buttonClassNames, makeStyles, messageBarBodyClassNames, messageBarClassNames, tabClassNames, tokens } from '@fluentui/react-components';
 export { mergeClasses } from '@fluentui/react-components';
 
 // The shortest vertical palette that still works: one complete 36px tool slot
@@ -332,7 +332,7 @@ export const useCanvasStyles = makeStyles({
     borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground2,
     '@container (max-width: 479px)': { paddingInline: tokens.spacingHorizontalS },
   },
-  // The Add and Remove dialogs use the pack request dialog's geometry.
+  // The Add and Remove dialogs use the shared pack dialog's geometry.
   sourceDialog: { '&[open]': { maxHeight: 'calc(100dvh - 16px)' } },
   sourceDialogFooter: { display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: tokens.spacingHorizontalS },
   formNotes: {
@@ -354,7 +354,8 @@ export const useCanvasStyles = makeStyles({
       position: 'fixed', inset: '0 0 0 auto', width: 'min(420px, calc(100vw - 16px))', height: '100dvh',
     },
   },
-  packRequestDialog: {
+  // The modal surface the source, pack action, and document reader dialogs share.
+  packDialog: {
     padding: 0, boxSizing: 'border-box', width: 'min(560px, calc(100vw - 16px))',
     maxWidth: 'none', maxHeight: 'calc(100dvh - 16px)', overflow: 'hidden',
     color: tokens.colorNeutralForeground1, backgroundColor: tokens.colorNeutralBackground1,
@@ -395,9 +396,55 @@ export const useCanvasStyles = makeStyles({
     '& > li': { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS, maxWidth: '100%', minWidth: 0, overflowWrap: 'anywhere' },
   },
   packDocument: { maxWidth: '100%', textAlign: 'start', overflowWrap: 'anywhere' },
-  // The document reader: the pack request dialog, widened. It stays as tall as
+  // The document reader: the shared pack dialog, widened. It stays as tall as
   // its document up to the viewport less 16px, and only its body scrolls.
   packReader: { width: 'min(880px, calc(100vw - 16px))' },
+  // The pack action dialog (083): the shared pack dialog with the reader's header
+  // and body and the source dialogs' footer, at the approved mock's width. These
+  // add only what those lack: a container for the narrow rules, the mock's 12px
+  // body gap and footer sides, the status line, the items by kind, and the
+  // reason beside a disabled button. At 300px or less the parts keep their
+  // words' width: less padding, message bar icons above their text, and each
+  // footer button on its own row.
+  packActionDialog: {
+    width: 'min(480px, calc(100vw - 16px))',
+    containerType: 'inline-size',
+    '@container (max-width: 300px)': {
+      '& > header, & > div, & > footer': { paddingInline: tokens.spacingHorizontalS },
+      '& > footer button': { flex: '1 1 100%', minWidth: 0, maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere' },
+    },
+  },
+  // 12px between parts, where the details have 16px. Each part keeps its
+  // height; the body scrolls instead.
+  packActionBody: { gap: tokens.spacingVerticalM, '& > *': { flexShrink: 0 } },
+  packActionStatus: { display: 'flex', alignItems: 'flex-start', gap: tokens.spacingHorizontalS, minWidth: 0, overflowWrap: 'anywhere' },
+  packActionItems: {
+    listStyleType: 'none', margin: 0, padding: 0, minWidth: 0,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '& > li': {
+      display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', columnGap: tokens.spacingHorizontalM,
+      minWidth: 0, paddingBlock: tokens.spacingVerticalXS, borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    },
+  },
+  packActionItemName: { minWidth: 0, overflowWrap: 'anywhere' },
+  // The kind stays at the end of its line when a long name wraps.
+  packActionItemKind: { marginInlineStart: 'auto', color: tokens.colorNeutralForeground2 },
+  // 8px above and below, and 12px at the sides, in line with the body. This is
+  // the details footer's padding shorthand restated, so mergeClasses keeps only
+  // this one; the 300px rule above outranks it with its child selector.
+  packActionFooter: { alignItems: 'center', padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}` },
+  packActionNote: { flex: '1 1 14em', minWidth: 0 },
+  packActionMessage: { marginTop: tokens.spacingVerticalS },
+  packActionBar: {
+    '@container (max-width: 300px)': {
+      gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateAreas: '"icon" "body" "secondaryActions"',
+      paddingLeft: tokens.spacingHorizontalS,
+      [`& .${messageBarClassNames.icon}`]: { marginRight: 0, marginBottom: tokens.spacingVerticalXS },
+      // The mock's 8px after the text. The body's own 12px is a one-class
+      // reset style, which this two-class selector outranks in either order.
+      [`& .${messageBarBodyClassNames.root}`]: { paddingRight: tokens.spacingHorizontalS },
+    },
+  },
   // A rendered document: Markdown as elements in the details' type and tokens,
   // with no syntax colors. Headings sit under the reader's h2 (# is h3).
   markdown: {

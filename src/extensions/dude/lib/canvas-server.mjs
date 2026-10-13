@@ -17,9 +17,11 @@
  */
 
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PACK_NAME_RE } from '../../../skills/dude-engine/lib/profile.mjs';
 import { resolveMutationPath } from '../../../skills/dude-engine/lib/workspace-paths.mjs';
 import {
   checkProjectionFreshness,
@@ -30,7 +32,7 @@ import {
 } from './projection.mjs';
 import { NEEDS_YOU_LIMITS, NeedsYouError } from './needs-you.mjs';
 import { REVIEW_LIMITS, ReviewError } from './review.mjs';
-import { addPackSource, readPacks, removePackSource } from './packs.mjs';
+import { addPackSource, packActionRevision, readPacks, removePackSource, runPackAction } from './packs.mjs';
 import { readProjectArtifacts } from './project-artifacts.mjs';
 import { readInstallationRecord } from './about.mjs';
 
@@ -79,7 +81,6 @@ const MAX_BODY_BYTES = 4 * 1024;
  * provider. The provider alone allocates receipts, sends once and judges results.
  */
 const PROVIDER_REQUEST_ROUTES = Object.freeze({
-  '/api/packs/request': 'requestPack',
   '/api/imports/request': 'requestImport',
 });
 
@@ -144,6 +145,65 @@ function parseSourceBody(value) {
 }
 
 /**
+ * The one pack action route: Compose's own dry run of an install, removal or
+ * refresh, the one apply that preview allows, and Cancel. It involves no Needs
+ * You request, idle gate or session message. The closed bodies:
+ *
+ *   {"op":"preview","operation":"install"|"remove"|"refresh","name":<pack>,"source"?:<saved source key; install only>}
+ *   {"op":"apply","token":<token>}
+ *   {"op":"cancel","token":<token>}
+ *
+ * The answers, all plain JSON:
+ * - preview 200 {token, thirdParty, preview, message}. `preview` is Compose's dry
+ *   run (install: items, files, source, conflicts, tools; remove: files; refresh:
+ *   previewed, replaced, added, removed, files, source), or null with `message`
+ *   saying why none could be made. `token` is null for a blocked preview: none,
+ *   a missing tool or a conflict. `thirdParty` marks a saved source the project
+ *   added. A new preview replaces the instance's one token. A loading preview
+ *   has no token: closing its request cancels it, and its answer is discarded.
+ * - apply 200 {ok:true, result} or {ok:false, error, mutation}: Compose's own
+ *   result. `mutation` is none, restored or uncertain, and a child that ended
+ *   after it was allowed to write is uncertain.
+ * - apply 409 {error}: `changed` (an unknown or spent token, or installed packs,
+ *   saved sources or the workspace changed since the preview; nothing was
+ *   written), `busy` (another apply runs; the token is kept), or `cancelled`
+ *   (stopped before writing; nothing changed).
+ * - cancel 200 {cancelled:true} before writing starts, which also discards an
+ *   unused token, else 409 {error:'too_late'}, and the apply answers its real
+ *   result.
+ * - Any op: the guards refuse with 403, 404 or 415, a malformed or oversized body
+ *   is 400 or 413 {error:'invalid_input'}, and an ended Canvas lifetime or a
+ *   replaced workspace is 409 {error:'identity_mismatch'}.
+ */
+const ACTION_ROUTE = '/api/packs/action';
+const TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * The closed bodies of the pack action route. Only an install names a saved
+ * source, by its key; no body names a path, repository, ref, flag or root.
+ * @param {unknown} value
+ * @returns {{ op: 'preview', operation: 'install' | 'remove' | 'refresh', name: string, source: string | null }
+ *   | { op: 'apply' | 'cancel', token: string }}
+ */
+function parseActionBody(value) {
+  const invalid = () => new NeedsYouError('invalid_input', 400);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid();
+  const body = /** @type {Record<string, unknown>} */ (value);
+  if (body.op === 'apply' || body.op === 'cancel') {
+    if (Object.keys(body).length !== 2 || typeof body.token !== 'string' || !TOKEN_RE.test(body.token)) throw invalid();
+    return { op: body.op, token: body.token };
+  }
+  const operation = body.operation === 'install' || body.operation === 'remove' || body.operation === 'refresh' ? body.operation : null;
+  const allowed = operation === 'install' ? ['op', 'operation', 'name', 'source'] : ['op', 'operation', 'name'];
+  if (body.op !== 'preview' || !operation || Object.keys(body).some(key => !allowed.includes(key))
+    || typeof body.name !== 'string' || !PACK_NAME_RE.test(body.name)
+    || (Object.hasOwn(body, 'source') && (typeof body.source !== 'string' || !/^src_[0-9a-f]{32}$/.test(body.source)))) {
+    throw invalid();
+  }
+  return { op: 'preview', operation, name: body.name, source: typeof body.source === 'string' ? body.source : null };
+}
+
+/**
  * @typedef {object} CanvasInstance
  * @property {string} instanceId
  * @property {import('node:http').Server} server
@@ -158,8 +218,20 @@ function parseSourceBody(value) {
  * @property {(()=>void)|null} unsubscribeNeedsYou
  * @property {PackReadSlot|null} packRead The coalesced automatic read: installed packs, sources and project rows.
  * @property {PackReadSlot|null} catalogRead The coalesced explicit discovery, which also acquires catalogs.
+ * @property {PackToken|null} packToken The one pack action token: the last unblocked preview's, until used or replaced.
+ * @property {PackApply|null} packApply The one pack action apply that runs, if any.
  */
 /** @typedef {{root:string,controller:AbortController,readers:number,promise:Promise<Awaited<ReturnType<typeof readPacks>> & {project: Awaited<ReturnType<typeof readProjectArtifacts>>}>}} PackReadSlot */
+/**
+ * A preview's single-use token and what it binds: the operation and pack, the
+ * workspace revision (root, profile and saved sources), and the source key,
+ * resolved identity and child kind of the preview.
+ * @typedef {{ token: string, operation: 'install' | 'remove' | 'refresh', name: string, revision: string,
+ *   binding: import('./packs.mjs').PackBinding }} PackToken
+ */
+/**
+ * @typedef {{ token: string, went: boolean, changed: boolean, cancel: () => void, promise: Promise<unknown> | null }} PackApply
+ */
 
 /**
  * Open instances keyed by host `instanceId`. Each entry owns its in-flight
@@ -296,6 +368,100 @@ async function readInstalledSurface(instance, root, signal, discover) {
   if (packs.status === 'rejected') throw packs.reason;
   if (project.status === 'rejected') throw project.reason;
   return { ...packs.value, project: project.value };
+}
+
+/**
+ * One closed body of the pack action route (see `ACTION_ROUTE`). The preview's
+ * token binds what the apply must still find, and is spent before anything else
+ * happens. The child's write gate answers go only while the workspace is still
+ * the previewed one, nothing was cancelled and the Canvas lifetime goes on.
+ * @param {CanvasInstance} instance
+ * @param {import('node:http').ServerResponse} res
+ * @param {ReturnType<typeof parseActionBody>} body
+ */
+async function handlePackAction(instance, res, body) {
+  const provider = /** @type {NonNullable<CanvasInstance['needsYou']>} */ (instance.needsYou);
+  const root = /** @type {NonNullable<CanvasInstance['readInput']>} */ (instance.readInput).root;
+  /** Root and lifetime, checked as the sources route checks them. */
+  const current = () => {
+    if (instance.signal.aborted || instance.readInput?.root !== root || !provider.matchesRoot(root)) {
+      throw new NeedsYouError('identity_mismatch');
+    }
+  };
+  current();
+  if (body.op === 'cancel') {
+    const running = instance.packApply;
+    if (instance.packToken?.token === body.token) instance.packToken = null;
+    else if (running?.token === body.token && !running.went) running.cancel();
+    else {
+      sendJson(res, 409, { error: 'too_late' });
+      return;
+    }
+    sendJson(res, 200, { cancelled: true });
+    return;
+  }
+  // A browser that goes away cancels what has not started writing.
+  const disconnected = new AbortController();
+  const onClose = () => disconnected.abort();
+  res.once('close', onClose);
+  try {
+    if (body.op === 'preview') {
+      const revision = packActionRevision(root);
+      const { outcome, binding } = await runPackAction(root, AbortSignal.any([instance.signal, disconnected.signal]),
+        { op: 'preview', operation: body.operation, name: body.name, source: body.source });
+      // A cancelled preview's result is discarded.
+      if (res.destroyed || disconnected.signal.aborted) return;
+      current();
+      const preview = outcome.ok ? outcome.result : null;
+      const blocked = !binding || preview?.tools?.some((/** @type {any} */ tool) => !tool.found) || preview?.conflicts?.length > 0;
+      const token = blocked ? null : randomUUID();
+      instance.packToken = token && binding ? { token, operation: body.operation, name: body.name, revision, binding } : null;
+      sendJson(res, 200, { token, thirdParty: Boolean(binding?.sourceKey), preview, message: outcome.ok ? null : outcome.error });
+      return;
+    }
+    if (instance.packApply) {
+      sendJson(res, 409, { error: 'busy' });
+      return;
+    }
+    const bound = instance.packToken;
+    if (!bound || bound.token !== body.token) {
+      sendJson(res, 409, { error: 'changed' });
+      return;
+    }
+    // Single use: the token is spent before anything else can happen.
+    instance.packToken = null;
+    const unchanged = () => {
+      try { return packActionRevision(root) === bound.revision; } catch { return false; }
+    };
+    if (!unchanged()) {
+      sendJson(res, 409, { error: 'changed' });
+      return;
+    }
+    const stop = new AbortController();
+    const signal = AbortSignal.any([instance.signal, disconnected.signal, stop.signal]);
+    /** @type {PackApply} */
+    const apply = { token: bound.token, went: bound.operation === 'remove', changed: false, cancel: () => stop.abort(), promise: null };
+    const running = runPackAction(root, signal, { op: 'apply', operation: bound.operation, name: bound.name, binding: bound.binding }, {
+      gate: () => {
+        if (signal.aborted) return false;
+        try { current(); } catch { apply.changed = true; return false; }
+        if (!unchanged()) { apply.changed = true; return false; }
+        apply.went = true;
+        return true;
+      },
+    });
+    apply.promise = running;
+    instance.packApply = apply;
+    try {
+      const { outcome } = await running;
+      if (res.destroyed) return;
+      if (!apply.went && apply.changed) sendJson(res, 409, { error: 'changed' });
+      else if (!apply.went && signal.aborted) sendJson(res, 409, { error: 'cancelled' });
+      else sendJson(res, 200, outcome);
+    } finally {
+      if (instance.packApply === apply) instance.packApply = null;
+    }
+  } finally { res.off('close', onClose); }
 }
 
 /**
@@ -437,7 +603,7 @@ async function handleRequest(instance, req, res) {
     const body = await readJsonBody(req, NEEDS_YOU_LIMITS.bodyBytes);
     if (instance.signal.aborted || !provider.matchesRoot(instance.readInput.root)) throw new NeedsYouError('identity_mismatch');
     // Only a provider-issued prepare/submit receipt crosses this boundary.
-    // Compose and import previews, consent, and all writes remain with the owner.
+    // The import's preview, consent, and all writes remain with the owner.
     sendJson(res, 202, await provider[PROVIDER_REQUEST_ROUTES[pathname]](body, { signal: instance.signal }));
     return;
   }
@@ -477,7 +643,7 @@ async function handleRequest(instance, req, res) {
       const signal = AbortSignal.any([instance.signal, disconnected.signal]);
       const result = body.op === 'add'
         ? await addPackSource(root, signal, body, { beforeCommit: current })
-        : await removePackSource(root, signal, body, { liveUses: key => provider.sourceUses(key), beforeCommit: current });
+        : await removePackSource(root, signal, body, { beforeCommit: current });
       if (res.destroyed) return;
       if (result.ok) {
         const { ok, ...saved } = result;
@@ -490,6 +656,24 @@ async function handleRequest(instance, req, res) {
       if (res.destroyed || disconnected.signal.aborted) return;
       throw error;
     } finally { res.off('close', onClose); }
+    return;
+  }
+
+  if (pathname === ACTION_ROUTE && instance.readInput && instance.needsYou) {
+    // One Compose preview or apply, behind the sources route's guards.
+    if (req.method !== 'POST' || req.url !== pathname) {
+      sendJson(res, 404, { error: 'Not found.' });
+      return;
+    }
+    if (req.headers.origin !== new URL(instance.url).origin) {
+      sendJson(res, 403, { error: 'Same-origin action required.' });
+      return;
+    }
+    if (req.headers['content-type']?.split(';', 1)[0].trim().toLowerCase() !== 'application/json') {
+      sendJson(res, 415, { error: 'JSON action required.' });
+      return;
+    }
+    await handlePackAction(instance, res, parseActionBody(await readJsonBody(req)));
     return;
   }
 
@@ -705,6 +889,8 @@ async function startInstance(instanceId, log, projection, readInput, signal, nee
     unsubscribeNeedsYou: null,
     packRead: null,
     catalogRead: null,
+    packToken: null,
+    packApply: null,
   };
 
   instance.server.on('request', (req, res) => {
@@ -723,7 +909,8 @@ async function startInstance(instanceId, log, projection, readInput, signal, nee
       // code, so a possible delivery is never reported as a generic no-change error.
       // The sources route follows the same discipline without any send semantics.
       const sourcesRoute = req.url?.startsWith(SOURCES_ROUTE) ?? false;
-      const providerRequest = sourcesRoute || Object.keys(PROVIDER_REQUEST_ROUTES).some((route) => req.url?.startsWith(route));
+      const actionRoute = req.url?.startsWith(ACTION_ROUTE) ?? false;
+      const providerRequest = sourcesRoute || actionRoute || Object.keys(PROVIDER_REQUEST_ROUTES).some((route) => req.url?.startsWith(route));
       if (res.headersSent) res.end();
       else if (error instanceof ReviewError && (req.url?.startsWith('/api/needs-you/review/')
         || req.url?.startsWith('/api/needs-you/respond') || req.url?.startsWith('/review-source/'))) {
@@ -830,6 +1017,10 @@ async function stopInstance(instance) {
   // Also await an acquisition whose last HTTP reader already disconnected.
   await instance.packRead?.promise.catch(() => null);
   await instance.catalogRead?.promise.catch(() => null);
+  // The token ends with the instance. The ended lifetime already cancelled an
+  // apply that had not started writing; one that had finishes first.
+  instance.packToken = null;
+  await instance.packApply?.promise?.catch(() => null);
   if (!instance.server.listening) return;
   await new Promise((resolve) => instance.server.close(() => resolve(undefined)));
 }

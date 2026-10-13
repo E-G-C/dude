@@ -16,7 +16,6 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { Worker } from 'node:worker_threads';
 import {
   ASSET_ROUTES,
   REVIEW_ASSET_ROUTES,
@@ -29,7 +28,7 @@ import { readInstallationRecord } from './lib/about.mjs';
 import { createNeedsYou, NEEDS_YOU_LIMITS } from './lib/needs-you.mjs';
 import { readPacks, unresolvedSourceKey } from './lib/packs.mjs';
 import { readProjectArtifacts } from './lib/project-artifacts.mjs';
-import { cmdAdd, cmdPreviewRefresh, cmdRefresh, cmdRemove, cmdStatus } from '../../skills/dude-compose/compose.mjs';
+import { cmdStatus } from '../../skills/dude-compose/compose.mjs';
 import { renderDevelopmentBaseRelease } from '../../skills/dude-engine/lib/development-base-release.mjs';
 import { PACK_SOURCES_PATH, describePackSources, readPackSources, serializePackSourcesDocument } from '../../skills/dude-engine/lib/pack-sources.mjs';
 import { serializeProfileDocument } from '../../skills/dude-engine/lib/profile.mjs';
@@ -305,36 +304,6 @@ function remotePackCatalog(fixture, names) {
   return { repository, source, git };
 }
 
-/**
- * Run the owner's real Compose install off this thread, as the real owner runs
- * Compose outside the Canvas process. Remote installs block on `spawnSync` git
- * for as long as the clone takes. In-process, that also freezes this test's
- * `fetch` client and the loopback server past the server's keep-alive deadline:
- * the next request is written to a pooled socket that the server's overdue timer
- * then destroys unread (`fetch failed`, cause `ECONNRESET`).
- * @param {Parameters<typeof cmdAdd>[0]} args
- * @returns {ReturnType<typeof cmdAdd>}
- */
-function cmdAddOffLoop(args) {
-  // A worker shares this process, which started without the offline GitHub preload, so it imports that preload itself.
-  const worker = new Worker([
-    "const { parentPort, workerData } = require('node:worker_threads');",
-    '(workerData.preload ? import(workerData.preload) : Promise.resolve())',
-    '  .then(() => import(workerData.compose)).then(async compose => parentPort.postMessage(await compose.cmdAdd(workerData.args)));',
-  ].join('\n'), {
-    eval: true,
-    workerData: { compose: new URL('../../skills/dude-compose/compose.mjs', import.meta.url).href, args,
-      preload: process.env[GITHUB_PRELOAD_ENV] ?? null },
-  });
-  return new Promise((resolve, reject) => {
-    let received = false, result;
-    worker.once('message', value => { received = true; result = value; });
-    worker.once('error', reject);
-    worker.once('exit', code => received && code === 0 ? resolve(result)
-      : reject(new Error(`Compose worker exited with code ${code} before returning a result`)));
-  });
-}
-
 /** @param {string|Buffer} value */
 const packRevision = value => `sha256:${createHash('sha256').update(value).digest('hex')}`;
 
@@ -384,623 +353,15 @@ async function packHttpFixture(fixture) {
   const tool = async input => provider.tool.handler(input, {
     sessionId, toolName: 'dude_needs_you', toolCallId: randomUUID(), signal: new AbortController().signal,
   });
-  const post = (body, pathname = '/api/packs/request') => call(instance.url, {
+  const post = (body, pathname) => call(instance.url, {
     path: pathname, method: 'POST', headers: { origin: new URL(instance.url).origin, 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
-  // A saved source is named by its key, in both bodies, only for an install.
-  const admission = async (operation, source) => {
-    const choice = source ? { source } : {};
-    const prepared = await post({ op: 'prepare', operation, name: 'alpha', ...choice });
-    assert.equal(prepared.status, 202);
-    const receipt = await prepared.json();
-    const delivered = await post({ op: 'submit', operation, name: 'alpha', ...choice, packReceipt: receipt.packReceipt });
-    assert.equal(delivered.status, 202);
-    assert.equal((await delivered.json()).phase, 'delivered');
-    return receipt;
-  };
-  const acknowledgment = (receipt, result, outcome = 'applied', mutation = 'applied', note = 'Owner verified the actual Compose result.') => {
-    const { receiptId, owner, operation, name, workspaceId, sessionId, providerGeneration } = receipt.receipt;
-    const status = cmdStatus({ root: fixture.root });
-    return {
-      receiptId, owner, operation, name, workspaceId, sessionId, providerGeneration,
-      recognizes: 'pack_result', outcome, mutation, result, note,
-      // A source-bound receipt is acknowledged with its exact binding echoed back whole; a default one has none.
-      ...(receipt.receipt.catalogSource ? { catalogSource: receipt.receipt.catalogSource } : {}),
-      profileRevision: status.ok ? packRevision(fs.readFileSync(fixture.profilePath)) : null,
-      source: status.ok && Object.hasOwn(status.result.installed, name) ? status.result.installed[name].source : null,
-    };
-  };
-  // `targets` replaces the default two targets, as a source-bound request's source-first targets do.
-  const permission = async (receipt, impact, { targets } = {}) => {
-    const operation = receipt.operation;
-    const request = {
-      owner: 'dude', requestRef: `pack:${receipt.packReceipt}`, scope: { kind: 'session' },
-      source: { kind: 'session', revision: receipt.receipt.providerGeneration }, revision: packRevision(JSON.stringify(impact)),
-      class: 'permission', blocking: true, prompt: `Preview ${operation} alpha: ${JSON.stringify(impact)}`,
-      whyHuman: 'This exact operation requires literal user consent.', unblocks: 'The Compose owner can recheck and apply.',
-      fields: { operation: `pack:${operation}`, targets: targets ?? [
-        { target: 'pack:alpha', revision: packRevision(JSON.stringify(impact)) },
-        { target: '.dude/metadata/profile.md', revision: packRevision(fs.readFileSync(fixture.profilePath)) },
-      ], consequences: operation === 'refresh' ? 'Generated edits can be overwritten; keep customization under dude-local-*.'
-        : operation === 'remove' ? 'Delete only these recorded safe paths; leave residue and unrelated files.'
-          : 'Install only these artifacts. Required tools are not installed automatically.',
-      eligibility: 'The owner rechecks source, profile, targets and required tools before applying.',
-      confirmation: `${operation.toUpperCase()} PACK alpha` },
-    };
-    let unsubscribe;
-    const waiting = new Promise(resolve => {
-      unsubscribe = provider.subscribe(() => {
-        const record = provider.read().requests.find(entry => entry.request.requestRef === request.requestRef && entry.phase === 'pending');
-        if (record) resolve(record);
-      });
-    });
-    const result = tool({ op: 'request', request });
-    let record;
-    try { record = await Promise.race([waiting, result.then(value => { throw new Error(JSON.stringify(value)); })]); }
-    finally { unsubscribe(); }
-    return {
-      request, record, result,
-      async reply(consent = true) {
-        const response = consent ? { class: 'permission', action: 'consent', operation: request.fields.operation,
-          targets: request.fields.targets, confirmation: request.fields.confirmation }
-          : { class: 'permission', action: 'decline', text: 'Do not change this pack.' };
-        const delivered = await post({ requestHandle: record.requestHandle, revision: request.revision, response }, '/api/needs-you/respond');
-        assert.equal(delivered.status, 202);
-        const reply = await delivered.json();
-        assert.equal(reply.applied, false);
-        assert.deepEqual(JSON.parse((await result).textResultForLlm).response, response);
-        const r = reply.receipt;
-        const recognized = await tool({ op: 'acknowledge', acknowledgment: {
-          receiptId: r.receiptId, owner: r.owner, requestRef: r.requestRef, scope: r.scope,
-          previousRevision: r.previousRevision, recognizes: r.recognizes,
-          outcome: consent ? 'accepted' : 'declined', note: 'Owner recognized the exact permission reply.', source: request.source,
-        } });
-        assert.equal(recognized.resultType, 'success', recognized.textResultForLlm);
-      },
-    };
-  };
-  return { provider, instance, instanceId, session, sends, post, tool, admission, acknowledgment, permission,
+  return { provider, instance, instanceId, session, sends, post, tool,
     feed: async () => (await call(instance.url, { path: '/api/needs-you' })).json(),
     async close() { provider.dispose(); await closeInstance(instanceId); },
   };
 }
-
-test('T003 pack prepare/submit is root-bound, sends one fixed handoff, and performs no Compose writes', async () => {
-  const fixture = packFixture();
-  fixture.profile({});
-  fixture.catalog(['alpha']);
-  const provider = createNeedsYou({ root: fixture.root });
-  const sends = [];
-  provider.bindSession(/** @type {any} */ ({
-    sessionId: 'pack-http-session',
-    rpc: { queue: { pendingItems: async () => ({ items: [], steeringMessages: [] }) } },
-    send: async input => {
-      sends.push(input);
-      provider.onEvent(/** @type {any} */ ({ type: 'user.message', data: {
-        content: input.prompt, messageId: 'pack-message', delivery: 'idle',
-      } }));
-      return 'pack-message';
-    },
-  }));
-  provider.onEvent(/** @type {any} */ ({ id: 'pack-idle', type: 'session.idle', data: {} }));
-  const instance = await openInstance('pack-http-request', () => {}, { complete: true }, { root: fixture.root }, provider);
-  const post = body => call(instance.url, { path: '/api/packs/request', method: 'POST',
-    headers: { origin: new URL(instance.url).origin, 'content-type': 'application/json' }, body: JSON.stringify(body) });
-  const before = snapshotFiles(fixture.root);
-  try {
-    const prepared = await post({ op: 'prepare', operation: 'install', name: 'alpha' });
-    assert.equal(prepared.status, 202);
-    const preparation = await prepared.json();
-    assert.equal(preparation.phase, 'prepared');
-    assert.equal(preparation.applied, false);
-    assert.equal(sends.length, 0);
-    const submit = { op: 'submit', operation: 'install', name: 'alpha', packReceipt: preparation.packReceipt };
-    const delivered = await post(submit);
-    assert.equal(delivered.status, 202);
-    assert.equal((await delivered.json()).phase, 'delivered');
-    assert.equal((await post(submit)).status, 409);
-    assert.equal(sends.length, 1);
-    assert.equal(sends[0].mode, 'immediate');
-    const handoff = JSON.parse(sends[0].prompt.split('\n').at(-1));
-    assert.deepEqual(Object.keys(handoff).sort(),
-      ['name', 'operation', 'owner', 'providerGeneration', 'receiptId', 'sessionId', 'workspaceId']);
-    assert.equal(handoff.operation, 'install');
-    assert.equal(handoff.name, 'alpha');
-    assert.equal(handoff.receiptId, preparation.packReceipt);
-    assert.doesNotMatch(sends[0].prompt, /full description|<script>|shell|force/);
-    assert.deepEqual(snapshotFiles(fixture.root), before);
-    const feed = await (await call(instance.url, { path: '/api/needs-you' })).json();
-    assert.equal(feed.packRequests[0].phase, 'delivered');
-    assert.equal(feed.packRequests[0].applied, false);
-  } finally {
-    provider.dispose();
-    await closeInstance('pack-http-request');
-    fixture.cleanup();
-  }
-});
-
-test('T003 pack request HTTP gates reject alternate routes, origins, payloads, roots and read-only providers', async () => {
-  const fixture = packFixture();
-  fixture.profile({});
-  fixture.catalog(['alpha']);
-  const f = await packHttpFixture(fixture);
-  const readOnlyId = `pack-read-only-${randomUUID()}`;
-  const readOnly = await openInstance(readOnlyId, () => {}, { complete: true }, { root: fixture.root });
-  const host = new URL(f.instance.url).host, origin = new URL(f.instance.url).origin;
-  const body = { op: 'prepare', operation: 'install', name: 'alpha' };
-  const valid = { path: '/api/packs/request', method: 'POST',
-    headers: { host, origin, 'content-type': 'application/json' }, body: JSON.stringify(body) };
-  const expectStatus = async (request, expected, label) => {
-    let status;
-    try { status = await rawStatus(f.instance.server, request); }
-    catch (error) { throw new Error(`Pack HTTP case failed: ${label}`, { cause: error }); }
-    assert.equal(status, expected, label);
-  };
-  const before = snapshotFiles(fixture.root);
-  try {
-    assert.equal(await rawStatus(readOnly.server, { ...valid,
-      headers: { host: new URL(readOnly.url).host, origin: new URL(readOnly.url).origin, 'content-type': 'application/json' } }), 404);
-    for (const suffix of ['/', '?root=elsewhere', '/apply', '#submit']) {
-      await expectStatus({ ...valid, path: `/api/packs/request${suffix}` }, 404, `route ${suffix}`);
-    }
-    for (const method of ['GET', 'PUT', 'PATCH', 'DELETE']) {
-      await expectStatus({ ...valid, method, body: undefined }, 404, `method ${method}`);
-    }
-    for (const headers of [
-      { ...valid.headers, origin: undefined }, { ...valid.headers, origin: 'null' },
-      { ...valid.headers, origin: 'https://foreign.invalid' }, { ...valid.headers, host: 'foreign.invalid' },
-      { ...valid.headers, 'sec-fetch-site': 'cross-site' },
-    ]) {
-      const supplied = Object.fromEntries(Object.entries(headers).filter(([, value]) => value !== undefined));
-      await expectStatus({ ...valid, headers: supplied }, 403, `headers ${JSON.stringify(supplied)}`);
-    }
-    await expectStatus({ ...valid, headers: { ...valid.headers, 'content-type': 'text/plain' } }, 415, 'non-JSON');
-    await expectStatus({ ...valid, body: '{invalid' }, 400, 'malformed JSON');
-    await expectStatus({ ...valid, body: Buffer.from([0xc3, 0x28]) }, 400, 'invalid UTF-8');
-    await expectStatus({ ...valid, body: 'x'.repeat(NEEDS_YOU_LIMITS.bodyBytes + 1) }, 413, 'oversized streamed body');
-    for (const key of ['root', 'path', 'source', 'ref', 'force', 'prompt', 'command']) {
-      const response = await f.post({ ...body, [key]: 'not allowed' });
-      assert.equal(response.status, 400);
-      assert.deepEqual(await response.json(), { error: 'invalid_input' });
-    }
-    for (const operation of ['upgrade', 'list', 'add', 'install alpha']) {
-      assert.equal((await f.post({ ...body, operation })).status, 400);
-    }
-    const oldInput = f.instance.readInput;
-    f.instance.readInput = { root: fixture.temporary };
-    const wrongRoot = await f.post(body);
-    assert.equal(wrongRoot.status, 409);
-    assert.deepEqual(await wrongRoot.json(), { error: 'identity_mismatch' }, 'otherwise-valid body reaches the root guard');
-    f.instance.readInput = oldInput;
-    assert.equal(f.provider.read().packRequests.length, 0);
-    assert.equal((await f.post(body)).status, 202, 'the valid control reaches allocation');
-    assert.equal(f.sends.length, 0);
-    assert.deepEqual(snapshotFiles(fixture.root), before);
-  } finally {
-    await f.close();
-    await closeInstance(readOnlyId);
-    fixture.cleanup();
-  }
-});
-
-test('T003 install, safe remove, changed refresh and unchanged refresh need owner result plus authoritative reread', async t => {
-  for (const scenario of ['install', 'remove', 'refresh', 'unchanged refresh']) await t.test(scenario, async () => {
-    const fixture = packEngineFixture();
-    const operation = scenario === 'unchanged refresh' ? 'refresh' : scenario;
-    const args = { root: fixture.root, library: fixture.library, name: 'alpha', fetch: false };
-    let f;
-    try {
-      if (operation !== 'install') {
-        const added = await cmdAdd(args);
-        assert.equal(added.ok, true, added.error);
-      }
-      if (scenario === 'refresh') {
-        fixture.write('library/packs/alpha/agents/dude-pack-alpha-worker.agent.md',
-          fs.readFileSync(path.join(fixture.library, 'alpha/agents/dude-pack-alpha-worker.agent.md'), 'utf8').replace('Fixture v1.', 'Fixture v2.'));
-        fs.rmSync(path.join(fixture.library, 'alpha/instructions/dude-pack-alpha-old.instructions.md'));
-        fixture.write('library/packs/alpha/instructions/dude-pack-alpha-new.instructions.md', '# New instruction\n');
-      }
-      if (operation === 'remove') fs.rmSync(fixture.library, { recursive: true });
-      f = await packHttpFixture(fixture);
-      const before = snapshotFiles(fixture.root);
-      const receipt = await f.admission(operation);
-      assert.equal(f.sends.length, 1);
-      assert.deepEqual(snapshotFiles(fixture.root), before, 'HTTP cannot apply Compose');
-      const status = cmdStatus({ root: fixture.root });
-      const impact = operation === 'refresh' ? await cmdPreviewRefresh(args)
-        : operation === 'remove' ? status.result.installed.alpha
-          : { source: { type: 'local', location: fixture.library }, files: [
-            '.github/agents/dude-pack-alpha-worker.agent.md',
-            '.github/instructions/dude-pack-alpha-old.instructions.md',
-            '.github/skills/dude-pack-alpha-helper',
-          ], tools: [] };
-      if (operation === 'refresh') {
-        assert.equal(impact.ok, true, impact.error);
-        const insufficient = await f.tool({ op: 'acknowledge', acknowledgment: f.acknowledgment(receipt, null) });
-        assert.equal(insufficient.resultType, 'failure');
-        assert.equal(JSON.parse(insufficient.textResultForLlm).reason, 'invalid_input');
-        const previewOnly = await f.tool({ op: 'acknowledge', acknowledgment: f.acknowledgment(receipt, impact) });
-        assert.equal(previewOnly.resultType, 'failure');
-        assert.equal(JSON.parse(previewOnly.textResultForLlm).reason, 'invalid_input', 'a preview is not a refresh result');
-      }
-      const permission = await f.permission(receipt, impact);
-      assert.equal((await f.feed()).packRequests[0].phase, 'waiting_permission');
-      await permission.reply();
-      assert.equal((await f.feed()).packRequests[0].phase, 'waiting_owner');
-      assert.deepEqual(snapshotFiles(fixture.root), before, 'even literal consent alone performs no browser write');
-      const result = operation === 'install' ? await cmdAdd(args)
-        : operation === 'remove' ? cmdRemove(args) : await cmdRefresh(args);
-      assert.equal(result.ok, true, result.error);
-      assert.equal((await f.feed()).packRequests[0].applied, false, 'membership alone is never a result acknowledgment');
-      const ack = f.acknowledgment(receipt, result);
-      const acknowledged = await f.tool({ op: 'acknowledge', acknowledgment: ack });
-      assert.equal(acknowledged.resultType, 'success', acknowledged.textResultForLlm);
-      const view = (await f.feed()).packRequests[0];
-      assert.equal(view.phase, 'applied');
-      assert.equal(view.applied, true);
-      assert.equal(view.receipt.reread.profileRevision, ack.profileRevision);
-      assert.deepEqual(view.receipt.reread.entry, cmdStatus({ root: fixture.root }).result.installed.alpha ?? null);
-      assert.deepEqual(view.receipt.acknowledgment.result, result);
-      if (scenario === 'unchanged refresh') {
-        assert.equal(packRevision(before.get(path.normalize('.dude/metadata/profile.md'))), ack.profileRevision);
-        assert.deepEqual(result.result.added, []);
-        assert.deepEqual(result.result.removed, []);
-        assert.deepEqual(result.result.files, status.result.installed.alpha.files);
-      }
-      if (operation === 'remove') assert.equal(Object.hasOwn(cmdStatus({ root: fixture.root }).result.installed, 'alpha'), false);
-      for (const relative of ['.github/agents/dude-pack-alpha-residue.agent.md', '.github/agents/dude-local-unrelated.agent.md']) {
-        assert.deepEqual(fs.readFileSync(path.join(fixture.root, relative)), before.get(path.normalize(relative)));
-      }
-      assert.equal(f.sends.length, 1);
-      const duplicate = await f.tool({ op: 'acknowledge', acknowledgment: ack });
-      assert.equal(JSON.parse(duplicate.textResultForLlm).reason, 'acknowledgment_conflict');
-      // A later profile change invalidates, but undo does not restore result authority.
-      const appliedBytes = fs.readFileSync(fixture.profilePath);
-      fs.appendFileSync(fixture.profilePath, '\nA later profile revision.\n');
-      assert.equal((await f.feed()).packRequests[0].phase, 'stale');
-      fs.writeFileSync(fixture.profilePath, appliedBytes);
-      assert.equal((await f.feed()).packRequests[0].applied, false);
-    } finally { await f?.close(); fixture.cleanup(); }
-  });
-});
-
-test('T003 pack result finalization rechecks replacement permission while publishing or pending', async t => {
-  for (const phase of ['publishing', 'pending']) await t.test(phase, async t => {
-    const fixture = packEngineFixture();
-    const args = { root: fixture.root, library: fixture.library, name: 'alpha', fetch: false };
-    let f, replacement, readMock;
-    try {
-      const installed = await cmdAdd(args);
-      assert.equal(installed.ok, true, installed.error);
-      f = await packHttpFixture(fixture);
-      const receipt = await f.admission('refresh');
-      const impact = await cmdPreviewRefresh(args);
-      assert.equal(impact.ok, true, impact.error);
-      const permission = await f.permission(receipt, impact);
-      await permission.reply();
-      assert.equal(f.provider.read().requests[0].receipt.acknowledgment.outcome, 'accepted');
-      const before = snapshotFiles(fixture.root);
-      const result = await cmdRefresh(args);
-      assert.equal(result.ok, true, result.error);
-      assert.deepEqual(snapshotFiles(fixture.root), before, 'the actual refresh leaves the profile and artifacts unchanged');
-      const acknowledgment = f.acknowledgment(receipt, result);
-      const input = { op: 'acknowledge', acknowledgment };
-      const invocation = { sessionId: f.session.sessionId, toolName: 'dude_needs_you',
-        toolCallId: randomUUID(), signal: new AbortController().signal };
-      let replacementHandle, published = false;
-      const publishReplacement = () => {
-        published = true;
-        replacement = f.permission(receipt, { ...impact, note: 'The owner renewed this exact preview.' });
-        const current = f.provider.read().requests.at(-1);
-        assert.equal(current.phase, 'publishing');
-        assert.notEqual(current.request.revision, permission.request.revision);
-        replacementHandle = current.requestHandle;
-        assert.equal(f.provider.read().packRequests[0].permissionRequest, replacementHandle);
-      };
-      const read = fs.readFileSync, profileReadPhases = [];
-      readMock = t.mock.method(fs, 'readFileSync', (file, ...rest) => {
-        const value = read(file, ...rest);
-        if (file === fixture.profilePath) {
-          // Publishing during the synchronous reread queues the permission's
-          // continuation first, so it is pending when result finalization resumes.
-          if (phase === 'pending' && !published) publishReplacement();
-          if (replacementHandle) profileReadPhases.push(f.provider.read().requests.at(-1).phase);
-        }
-        return value;
-      });
-      const acknowledging = f.provider.tool.handler(input, invocation);
-      // This same-turn publication lands after the permission check and before
-      // the installed-only reread's await continuation, without a lifecycle event.
-      if (phase === 'publishing') publishReplacement();
-      const response = await acknowledging;
-      const currentPermission = await replacement;
-      readMock.mock.restore();
-      assert.equal(profileReadPhases.at(-1), phase, 'the final profile check reaches the intended permission state');
-      assert.equal(response.resultType, 'failure', response.textResultForLlm);
-      assert.equal(JSON.parse(response.textResultForLlm).reason, 'acknowledgment_conflict');
-      const waiting = f.provider.read().packRequests[0];
-      assert.equal(waiting.permissionRequest, currentPermission.record.requestHandle);
-      assert.equal(waiting.phase, 'waiting_permission');
-      assert.equal(waiting.applied, false);
-      assert.equal(waiting.receipt.acknowledgment, null);
-      assert.equal(waiting.receipt.ackToolCallId, null);
-      assert.equal(waiting.receipt.reread, null);
-      const replay = await f.post({ op: 'submit', operation: 'refresh', name: 'alpha', packReceipt: receipt.packReceipt });
-      assert.equal(replay.status, 409);
-      assert.deepEqual(await replay.json(), { error: 'already_consumed' });
-      assert.equal(f.sends.length, 1);
-      await currentPermission.reply();
-      const recognized = await f.provider.tool.handler(input, invocation);
-      assert.equal(recognized.resultType, 'success', recognized.textResultForLlm);
-      assert.equal(JSON.parse(recognized.textResultForLlm).applied, true);
-      assert.equal(f.provider.read().packRequests[0].receipt.ackToolCallId, invocation.toolCallId,
-        'the refused result did not consume its acknowledgment invocation');
-      assert.equal(f.sends.length, 1);
-      assert.deepEqual(snapshotFiles(fixture.root), before);
-    } finally {
-      readMock?.mock.restore();
-      await f?.close();
-      fixture.cleanup();
-    }
-  });
-});
-
-test('T003 declined permission makes no change and remains declined after an independent installed-state change', async () => {
-  const fixture = packEngineFixture();
-  const f = await packHttpFixture(fixture);
-  try {
-    const before = snapshotFiles(fixture.root);
-    const receipt = await f.admission('install');
-    const permission = await f.permission(receipt, { files: ['.github/agents/dude-pack-alpha-worker.agent.md'], tools: [] });
-    await permission.reply(false);
-    const outcome = await f.tool({ op: 'acknowledge',
-      acknowledgment: f.acknowledgment(receipt, null, 'declined', 'none', 'The user declined; nothing was applied.') });
-    assert.equal(outcome.resultType, 'success', outcome.textResultForLlm);
-    assert.equal((await f.feed()).packRequests[0].phase, 'declined');
-    assert.deepEqual(snapshotFiles(fixture.root), before);
-    const separateOperation = await cmdAdd({ root: fixture.root, library: fixture.library, name: 'alpha', fetch: false });
-    assert.equal(separateOperation.ok, true);
-    const feed = await f.feed();
-    assert.equal(feed.packRequests[0].phase, 'declined');
-    assert.equal(feed.packRequests[0].applied, false);
-    assert.equal(feed.packRequests[0].receipt.freshness, 'stale');
-    assert.equal(f.sends.length, 1);
-  } finally { await f.close(); fixture.cleanup(); }
-});
-
-test('T003 actual caught Compose failures preserve none, restored and uncertain owner outcomes', async t => {
-  for (const scenario of ['install restored', 'remove restored', 'refresh restored', 'refresh none', 'refresh uncertain']) {
-    await t.test(scenario, async () => {
-      const fixture = packEngineFixture();
-      const [operation, mutation] = scenario.split(' ');
-      const args = { root: fixture.root, library: fixture.library, name: 'alpha', fetch: false };
-      let f;
-      let restorationFailures = 0;
-      const originalWrite = fs.writeFileSync, originalCopy = fs.copyFileSync;
-      try {
-        if (operation !== 'install') assert.equal((await cmdAdd(args)).ok, true);
-        f = await packHttpFixture(fixture);
-        const receipt = await f.admission(operation);
-        if (mutation === 'none') fixture.write('library/packs/alpha/pack.md', '---\nuse-cases: invalid\n---\n');
-        const before = snapshotFiles(fixture.root);
-        if (mutation !== 'none') {
-          fs.writeFileSync = (file, ...rest) => {
-            if (path.basename(String(file)).startsWith('profile.md.tmp-')) throw new Error('Owned profile-write failure');
-            return originalWrite(file, ...rest);
-          };
-        }
-        if (mutation === 'uncertain') {
-          fs.copyFileSync = (source, destination, ...rest) => {
-            if (String(source).includes('dude-compose-refresh-alpha-txn-')
-              && String(destination).endsWith('dude-pack-alpha-worker.agent.md')) {
-              restorationFailures += 1;
-              throw new Error('Owned restoration failure');
-            }
-            return originalCopy(source, destination, ...rest);
-          };
-        }
-        const result = operation === 'install' ? await cmdAdd(args)
-          : operation === 'remove' ? cmdRemove(args) : await cmdRefresh(args);
-        fs.writeFileSync = originalWrite;
-        fs.copyFileSync = originalCopy;
-        assert.equal(result.ok, false);
-        if (operation === 'refresh') assert.equal(result.mutation, mutation);
-        if (mutation === 'restored') assert.match(result.error, /rolled back/);
-        if (mutation === 'uncertain') {
-          assert.equal(restorationFailures, 1, 'the injected fault must reach an actual restoration copy');
-          assert.match(result.error, /rollback failed/);
-          assert.notDeepEqual(snapshotFiles(fixture.root), before);
-        } else assert.deepEqual(snapshotFiles(fixture.root), before);
-        const outcome = mutation === 'uncertain' ? 'uncertain' : 'failed';
-        const ack = f.acknowledgment(receipt, result, outcome, mutation,
-          mutation === 'restored' ? 'The caught failure restored the observed pre-operation bytes. This is not crash recovery.'
-            : mutation === 'none' ? 'The operation refused before mutation.' : 'Restoration failed; the state is uncertain.');
-        const response = await f.tool({ op: 'acknowledge', acknowledgment: ack });
-        assert.equal(response.resultType, 'success', response.textResultForLlm);
-        const view = (await f.feed()).packRequests[0];
-        assert.equal(view.phase, outcome);
-        assert.equal(view.receipt.acknowledgment.mutation, mutation);
-        assert.equal(view.applied, false);
-        assert.equal(f.sends.length, 1);
-      } finally {
-        fs.writeFileSync = originalWrite; fs.copyFileSync = originalCopy;
-        await f?.close(); fixture.cleanup();
-      }
-    });
-  }
-});
-
-test('T003 an install result needs existing safe files and refresh needs the exact resulting file set', async t => {
-  for (const scenario of ['missing installed artifact', 'wrong refresh files']) await t.test(scenario, async () => {
-    const fixture = packEngineFixture();
-    const args = { root: fixture.root, library: fixture.library, name: 'alpha', fetch: false };
-    let f;
-    try {
-      const operation = scenario === 'wrong refresh files' ? 'refresh' : 'install';
-      if (operation === 'refresh') assert.equal((await cmdAdd(args)).ok, true);
-      f = await packHttpFixture(fixture);
-      const receipt = await f.admission(operation);
-      const result = operation === 'install' ? await cmdAdd(args) : await cmdRefresh(args);
-      assert.equal(result.ok, true);
-      const ack = f.acknowledgment(receipt, result);
-      if (operation === 'install') fs.rmSync(path.join(fixture.root, result.result.files[0]));
-      else {
-        const different = '.github/agents/dude-pack-alpha-different.agent.md';
-        // Keep all result set invariants, source, profile revision and binding
-        // valid: only agreement with the authoritative resulting files is wrong.
-        ack.result = { ok: true, code: 0, result: { refreshed: 'alpha', files: [different],
-          replaced: [], added: [different], removed: result.result.files } };
-      }
-      const response = await f.tool({ op: 'acknowledge', acknowledgment: ack });
-      assert.equal(response.resultType, 'failure');
-      assert.equal(JSON.parse(response.textResultForLlm).reason, 'pack_state_mismatch');
-      assert.equal((await f.feed()).packRequests[0].applied, false);
-      assert.equal(f.sends.length, 1);
-    } finally { await f?.close(); fixture.cleanup(); }
-  });
-});
-
-test('T003 pack result preserves a complete list larger than the human-reference limit', async () => {
-  const fixture = packEngineFixture();
-  fixture.write('library/packs/alpha/instructions/dude-pack-alpha-inert%23name.instructions.md',
-    '# Inert filename supported by Compose; never URL-decode it.\n');
-  for (let i = 0; i < 40; i++) fixture.write(
-    `library/packs/alpha/instructions/dude-pack-alpha-rule-${String(i).padStart(2, '0')}.instructions.md`, `# Rule ${i}\n`);
-  const f = await packHttpFixture(fixture);
-  try {
-    const receipt = await f.admission('install');
-    const result = await cmdAdd({ root: fixture.root, library: fixture.library, name: 'alpha', fetch: false });
-    assert.equal(result.ok, true, result.error);
-    assert.ok(result.result.files.length > NEEDS_YOU_LIMITS.references);
-    const response = await f.tool({ op: 'acknowledge', acknowledgment: f.acknowledgment(receipt, result) });
-    assert.equal(response.resultType, 'success', response.textResultForLlm);
-    const view = (await f.feed()).packRequests[0];
-    assert.deepEqual(view.receipt.reread.entry.files, result.result.files);
-    assert.equal(view.applied, true);
-  } finally { await f.close(); fixture.cleanup(); }
-});
-
-test('T003 the owner forwards Compose --envelope stdout unchanged; flattened --json stdout is refused', async t => {
-  const compose = path.resolve(ENGINE_SOURCE_ROOT, '../dude-compose/compose.mjs');
-  /** Run the real source CLI as the owner does, outside this process. */
-  const cli = (fixture, ...args) => {
-    const child = spawnSync(process.execPath, [compose, ...args,
-      '--root', fixture.root, '--library', fixture.library, '--no-fetch'], { cwd: fixture.root, encoding: 'utf8', windowsHide: true });
-    assert.equal(child.error, undefined);
-    assert.equal(child.stderr, '');
-    return child;
-  };
-  for (const scenario of ['install', 'remove', 'refresh', 'refresh failure']) await t.test(scenario, async () => {
-    const fixture = packEngineFixture();
-    const operation = scenario === 'refresh failure' ? 'refresh' : scenario;
-    const failure = scenario === 'refresh failure';
-    const args = { root: fixture.root, library: fixture.library, name: 'alpha', fetch: false };
-    let f;
-    try {
-      if (operation !== 'install') assert.equal((await cmdAdd(args)).ok, true);
-      if (failure) {
-        // A source-only addition whose destination is already foreign refuses
-        // before mutation, with exit code 2 and the engine's `mutation: none`.
-        fixture.write('library/packs/alpha/instructions/dude-pack-alpha-new.instructions.md', '# New instruction\n');
-        fixture.write('.github/instructions/dude-pack-alpha-new.instructions.md', '# Foreign destination\n');
-      }
-      f = await packHttpFixture(fixture);
-      const receipt = await f.admission(operation);
-      const command = operation === 'install' ? 'add' : operation;
-      if (operation === 'refresh') {
-        const flattened = cli(fixture, command, 'alpha', '--json');
-        assert.equal(flattened.status, failure ? 2 : 0);
-        const refused = await f.tool({ op: 'acknowledge', acknowledgment: f.acknowledgment(receipt, JSON.parse(flattened.stdout),
-          failure ? 'failed' : 'applied', failure ? 'none' : 'applied', 'Forwarded the flattened --json stdout unchanged.') });
-        assert.equal(refused.resultType, 'failure');
-        assert.equal(JSON.parse(refused.textResultForLlm).reason, 'invalid_input');
-        const unresolved = (await f.feed()).packRequests[0];
-        assert.equal(unresolved.phase, 'delivered');
-        assert.equal(unresolved.receipt.acknowledgment, null, 'the refused result consumed nothing');
-      }
-      const child = cli(fixture, command, 'alpha', '--envelope');
-      assert.equal(child.status, failure ? 2 : 0);
-      const stdout = JSON.parse(child.stdout);
-      assert.deepEqual(Object.keys(stdout).sort(), failure ? ['code', 'error', 'mutation', 'ok'] : ['code', 'ok', 'result']);
-      const ack = f.acknowledgment(receipt, stdout, failure ? 'failed' : 'applied', failure ? 'none' : 'applied',
-        failure ? 'Compose refused before mutation; nothing changed.' : 'Owner verified the actual Compose result.');
-      const response = await f.tool({ op: 'acknowledge', acknowledgment: ack });
-      assert.equal(response.resultType, 'success', response.textResultForLlm);
-      const view = (await f.feed()).packRequests[0];
-      assert.equal(view.phase, failure ? 'failed' : 'applied');
-      assert.equal(view.applied, !failure);
-      assert.deepEqual(view.receipt.acknowledgment.result, stdout, 'the provider retained the forwarded stdout exactly');
-      assert.equal(view.receipt.reread.profileRevision, ack.profileRevision);
-      assert.deepEqual(view.receipt.reread.entry, cmdStatus({ root: fixture.root }).result.installed.alpha ?? null);
-      if (failure) {
-        assert.deepEqual(stdout, { ok: false, code: 2, mutation: 'none', error: stdout.error });
-        assert.match(stdout.error, /destination ownership conflict/);
-      }
-      assert.equal(f.sends.length, 1);
-    } finally { await f?.close(); fixture.cleanup(); }
-  });
-});
-
-test('T003 configured remote admission and actual install result retain the recorded exact source', async () => {
-  const fixture = packEngineFixture();
-  const sourceFiles = snapshotFiles(path.join(fixture.library, 'alpha'));
-  const remote = remotePackCatalog(fixture, ['alpha']);
-  for (const [relative, content] of sourceFiles) {
-    const target = path.join(remote.repository, 'library/packs/alpha', relative);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, content);
-  }
-  remote.git('add', '-A');
-  remote.git('-c', 'user.email=fixture@example.test', '-c', 'user.name=Canvas Fixture', 'commit', '-qm', 'pack artifacts');
-  const commit = remote.git('rev-parse', 'HEAD');
-  const f = await packHttpFixture(fixture);
-  try {
-    const receipt = await f.admission('install');
-    const permission = await f.permission(receipt, { source: remote.source, reviewedCommit: commit,
-      artifacts: [...sourceFiles.keys()], tools: [] });
-    await permission.reply();
-    const result = await cmdAddOffLoop({ root: fixture.root, library: fixture.library, name: 'alpha',
-      source: remote.source, ref: commit });
-    assert.equal(result.ok, true, result.error);
-    const ack = f.acknowledgment(receipt, result);
-    assert.deepEqual(ack.source, { type: 'remote', repository: remote.source, requested_ref: commit, resolved_commit: commit });
-    const response = await f.tool({ op: 'acknowledge', acknowledgment: ack });
-    assert.equal(response.resultType, 'success', response.textResultForLlm);
-    const view = (await f.feed()).packRequests[0];
-    assert.equal(view.applied, true);
-    assert.deepEqual(view.receipt.reread.entry.source, ack.source);
-    assert.equal(f.sends.length, 1);
-  } finally { await f.close(); fixture.cleanup(); }
-});
-
-test('T003 unreadable authority and failed owner verification cannot become Applied', async t => {
-  for (const scenario of ['unavailable', 'failed verification', 'already installed']) await t.test(scenario, async () => {
-    const fixture = packEngineFixture(), f = await packHttpFixture(fixture);
-    try {
-      const receipt = await f.admission('install');
-      let ack;
-      if (scenario === 'unavailable') {
-        fs.writeFileSync(fixture.profilePath, 'The profile became invalid.');
-        ack = f.acknowledgment(receipt, null, 'unavailable', 'none', 'Current installed authority is unreadable.');
-      } else {
-        const result = await cmdAdd({ root: fixture.root, library: fixture.library, name: 'alpha', fetch: false });
-        assert.equal(result.ok, true);
-        if (scenario === 'already installed') {
-          const duplicate = await cmdAdd({ root: fixture.root, library: fixture.library, name: 'alpha', fetch: false });
-          assert.deepEqual(duplicate.result, { added: 'alpha', files: [], alreadyInstalled: true });
-          ack = f.acknowledgment(receipt, duplicate, 'stale', 'none', 'Membership changed before this add; it made no change.');
-        } else ack = f.acknowledgment(receipt, result, 'failed', 'applied', 'The command returned success, but owner verification failed.');
-      }
-      const response = await f.tool({ op: 'acknowledge', acknowledgment: ack });
-      assert.equal(response.resultType, 'success', response.textResultForLlm);
-      const view = (await f.feed()).packRequests[0];
-      assert.equal(view.phase, scenario === 'unavailable' ? 'unavailable' : scenario === 'already installed' ? 'stale' : 'failed');
-      assert.equal(view.applied, false);
-      assert.equal(view.receipt.reread.state, scenario === 'unavailable' ? 'unavailable' : 'current');
-    } finally { await f.close(); fixture.cleanup(); }
-  });
-});
 
 test('T003 pack reads retain current root identity when the profile cannot be acquired', async t => {
   for (const scenario of ['profile directory', 'profile read denied', 'replacement root', 'missing root']) {
@@ -1048,27 +409,6 @@ test('T003 pack reads retain current root identity when the profile cannot be ac
       }
     });
   }
-});
-
-test('T003 cross-tab HTTP submit consumes one shared receipt and sends at most once', async () => {
-  const fixture = packFixture();
-  fixture.profile({}); fixture.catalog(['alpha']);
-  const f = await packHttpFixture(fixture);
-  const otherId = `pack-second-tab-${randomUUID()}`;
-  const other = await openInstance(otherId, () => {}, { complete: true }, { root: fixture.root }, f.provider);
-  try {
-    const prepared = await (await f.post({ op: 'prepare', operation: 'install', name: 'alpha' })).json();
-    const body = { op: 'submit', operation: 'install', name: 'alpha', packReceipt: prepared.packReceipt };
-    const results = await Promise.all([
-      f.post(body),
-      call(other.url, { path: '/api/packs/request', method: 'POST',
-        headers: { origin: new URL(other.url).origin, 'content-type': 'application/json' }, body: JSON.stringify(body) }),
-    ]);
-    assert.deepEqual(results.map(response => response.status).sort(), [202, 409]);
-    assert.equal(f.sends.length, 1);
-    assert.equal((await f.feed()).packRequests.length, 1);
-    assert.equal(cmdStatus({ root: fixture.root }).result.enabled_packs.length, 0);
-  } finally { await closeInstance(otherId); await f.close(); fixture.cleanup(); }
 });
 
 // Feature 073 T001: `/api/imports/request` mirrors the pack route's guards over the
@@ -1148,7 +488,7 @@ test('T001 import prepare/submit is root-bound, sends one fixed handoff, and rea
       assert.equal(feed.importRequests.length, 1);
       assert.equal(feed.importRequests[0].phase, 'delivered');
       assert.equal(feed.importRequests[0].applied, false);
-      assert.equal(feed.packRequests.length, 0);
+      assert.equal(Object.hasOwn(feed, 'packRequests'), false, 'the feed holds no pack requests');
 
       const marked = ['dude-local-demo', 'incoming', 'profile.md', 'library', 'bundle-manifest'];
       const reads = inspected.flatMap(spy => spy.mock.calls.filter(call => call.arguments
@@ -1320,8 +660,6 @@ test('T001 import route failures keep explicit refusal and send-uncertainty stat
       'unknown_receipt', 'unknown receipt');
     await expectRefusal(await post({ ...submit, importSource: `${IMPORT_SOURCE}2` }), 409, 'identity_mismatch', 'other Source');
     await expectRefusal(await post({ op: 'prepare', importSource: IMPORT_SOURCE }), 409, 'import_unreconciled', 'second preparation');
-    await expectRefusal(await f.post({ op: 'prepare', operation: 'install', name: 'alpha' }), 409, 'import_unreconciled',
-      'pack preparation while an import is outstanding');
     // The SDK fails after the send began: possible delivery, never a generic no-change error.
     f.session.send = async () => { throw new Error('Private SDK failure with the prompt'); };
     const uncertain = await post(submit);
@@ -1403,36 +741,6 @@ test('T001 an Applied import result leaves /api/packs authority untouched and bu
     assert.deepEqual(feed.importRequests[0].receipt.acknowledgment.written, [skill]);
     assert.deepEqual(cmdStatus({ root: fixture.root }).result.enabled_packs, []);
   } finally { await f.close(); fixture.cleanup(); }
-});
-
-test('T003 pack acquisition is single-flight across tabs and stops its owned reader tree on Canvas close', { timeout: 15_000 }, async t => {
-  const fixture = packFixture();
-  fixture.profile({});
-  const listener = await silentGitListener(t);
-  const spy = spawnSpy(t);
-  const kills = taskkillSpy(t);
-  stallCatalog(fixture, listener.url('git'));
-  const f = await packHttpFixture(fixture);
-  let tree = /** @type {ProcessRow[]} */ ([]);
-  try {
-    const reading = f.post({ op: 'prepare', operation: 'install', name: 'alpha' });
-    await listener.connected();
-    tree = await readerTree(spy.readers()[0]?.child.pid);
-    const otherRequests = await Promise.all(Array.from({ length: 16 }, () => f.post({ op: 'prepare', operation: 'install', name: 'alpha' })));
-    assert.ok(otherRequests.every(response => response.status === 409));
-    assert.equal(listener.connections, 1, 'refused tabs cannot each start a catalog read');
-    const launched = spy.readers().length;
-    assert.equal(f.provider.read().packRequests.length, 0, 'no receipt is allocated before a readable eligible snapshot');
-    assert.equal(await closeInstance(f.instanceId), true);
-    assert.equal((await reading).status, 503);
-    assert.equal(listener.open, 0, 'no Git process still holds the stalled connection');
-    await assertTreeStops({ t, spy, kills, trees: [tree], scratch: fs.readdirSync(fixture.scratch) });
-    assert.equal(f.provider.read().packRequests.length, 0);
-    assert.equal(f.sends.length, 0);
-    // Launch evidence last: the spy cannot see a fork-launched reader.
-    assert.equal(launched, 1, 'refused tabs cannot each start a catalog reader');
-    assert.notEqual(spy.readers()[0]?.exitedAt ?? null, null, 'the reader stopped before the cancelled prepare reported');
-  } finally { await f.close(); await stopRecorded(tree); fixture.cleanup(); }
 });
 
 /**
@@ -1819,6 +1127,7 @@ function shapeOf(folder) {
 /**
  * Run `readPacks` in a plain-Node driver that stands in for a Copilot CLI
  * extension host, so no global in this test process is patched. With
+ * `action`, the driver runs that one `runPackAction` request instead. With
  * `executable: 'git'`, the driver's execPath is a real binary whose own parser
  * rejects a script path, like the CLI's single executable. A spawn of it runs
  * `cli/index.mjs`, as that executable runs only its own entry. The entry
@@ -1832,9 +1141,9 @@ function shapeOf(folder) {
  * the home it starts with, before it imports the extension, as the CLI's own
  * loader and bootstrap would find it.
  * @param {ReturnType<typeof packFixture>} fixture
- * @param {{executable: 'git'|'node', bootstrap?: 'current'|'changed'|'missing'|'bare'}} options
+ * @param {{executable: 'git'|'node', bootstrap?: 'current'|'changed'|'missing'|'bare', action?: Record<string, unknown>}} options
  */
-function simulatedCliHost(fixture, { executable, bootstrap }) {
+function simulatedCliHost(fixture, { executable, bootstrap, action }) {
   const cli = path.join(fixture.temporary, 'cli');
   const cliBootstrap = path.join(cli, 'preloads', 'extension_bootstrap.mjs');
   const entry = path.join(cli, 'index.mjs');
@@ -1895,12 +1204,18 @@ function simulatedCliHost(fixture, { executable, bootstrap }) {
     '    : spawn.call(this, command, args, options);',
     '};',
     'syncBuiltinESMExports();',
-    `const { readPacks } = await import(${JSON.stringify(PACKS_MODULE)});`,
-    'const started = performance.now();',
-    `const snapshot = await readPacks(${JSON.stringify(fixture.root)}, AbortSignal.timeout(20_000));`,
-    'process.stdout.write(JSON.stringify({ execPath: process.execPath, hostPid: process.pid, home,',
-    '  elapsedMs: performance.now() - started, coverage: snapshot.coverage,',
-    '  packs: snapshot.catalog?.packs.map(pack => pack.name) ?? null, items: snapshot.items, launches }));',
+    ...(action ? [
+      `const { runPackAction } = await import(${JSON.stringify(PACKS_MODULE)});`,
+      `const action = await runPackAction(${JSON.stringify(fixture.root)}, AbortSignal.timeout(20_000), ${JSON.stringify(action)});`,
+      'process.stdout.write(JSON.stringify({ execPath: process.execPath, hostPid: process.pid, home, action, launches }));',
+    ] : [
+      `const { readPacks } = await import(${JSON.stringify(PACKS_MODULE)});`,
+      'const started = performance.now();',
+      `const snapshot = await readPacks(${JSON.stringify(fixture.root)}, AbortSignal.timeout(20_000));`,
+      'process.stdout.write(JSON.stringify({ execPath: process.execPath, hostPid: process.pid, home,',
+      '  elapsedMs: performance.now() - started, coverage: snapshot.coverage,',
+      '  packs: snapshot.catalog?.packs.map(pack => pack.name) ?? null, items: snapshot.items, launches }));',
+    ]),
   ].join('\n'));
   const child = spawnSync(process.execPath, [driver], {
     cwd: fixture.root, encoding: 'utf8', timeout: 25_000, windowsHide: true,
@@ -2348,7 +1663,7 @@ test('T001 packs GET preserves complete catalog metadata and profile-ordered ins
   let sends = 0;
   const provider = /** @type {any} */ ({
     matchesRoot: root => root === fixture.root, subscribe: () => () => {},
-    respond() { sends += 1; }, captureIdea() { sends += 1; }, requestPack() { sends += 1; },
+    respond() { sends += 1; }, captureIdea() { sends += 1; }, requestImport() { sends += 1; },
   });
   const instance = await openInstance('packs-local', () => {}, { complete: true }, { root: fixture.root }, provider);
   try {
@@ -2865,65 +2180,6 @@ isolatedTest('T001 packs GET stops a stalled Git transfer\'s whole reader tree a
       await stopRecorded(tree);
       fixture.cleanup();
     }
-  });
-});
-
-test('T001 Install and Refresh prepare and submit rechecks proceed at once beside a stalled Git read, which then stops on cancellation', { timeout: 45_000 }, async t => {
-  for (const operation of ['install', 'refresh']) await t.test(operation, async t => {
-    const fixture = packEngineFixture();
-    const args = { root: fixture.root, library: fixture.library, name: 'alpha', fetch: false };
-    const manifestPath = path.join(fixture.root, '.dude/metadata/bundle-manifest.md');
-    const aside = path.join(fixture.temporary, 'library-aside');
-    let f;
-    let tree = /** @type {ProcessRow[]} */ ([]);
-    try {
-      if (operation === 'refresh') {
-        const added = await cmdAdd(args);
-        assert.equal(added.ok, true, added.error);
-      }
-      const listener = await silentGitListener(t);
-      const spy = spawnSpy(t);
-      const kills = taskkillSpy(t);
-      const manifest = fs.existsSync(manifestPath) ? fs.readFileSync(manifestPath) : null;
-      fs.renameSync(fixture.library, aside);
-      stallCatalog(fixture, listener.url('git'));
-      f = await packHttpFixture(fixture);
-      const controller = new AbortController();
-      const pending = call(f.instance.url, { path: DISCOVER, signal: controller.signal }).catch(error => error);
-      await listener.connected();
-      tree = await readerTree(spy.readers()[0]?.child.pid);
-      fs.renameSync(aside, fixture.library);
-      if (manifest) fs.writeFileSync(manifestPath, manifest);
-      else fs.rmSync(manifestPath);
-      /** @param {Record<string, unknown>} body */
-      const timedPost = async body => {
-        const started = performance.now();
-        const response = await f.post(body);
-        const value = await response.json();
-        return { status: response.status, value, elapsed: performance.now() - started };
-      };
-      // The stalled clone holds one reader slot; the request's own local read takes another.
-      const prepared = await timedPost({ op: 'prepare', operation, name: 'alpha' });
-      assert.equal(prepared.status, 202, JSON.stringify(prepared.value));
-      assert.equal(prepared.value.phase, 'prepared');
-      assert.ok(prepared.elapsed < 5_000, `prepare waited on nothing: ${prepared.elapsed} ms`);
-      const delivered = await timedPost({ op: 'submit', operation, name: 'alpha', packReceipt: prepared.value.packReceipt });
-      assert.equal(delivered.status, 202, JSON.stringify(delivered.value));
-      assert.equal(delivered.value.phase, 'delivered');
-      assert.ok(delivered.elapsed < 5_000, `submit waited on nothing: ${delivered.elapsed} ms`);
-      assert.equal(f.sends.length, 1);
-      assert.equal(spy.readers()[0].exitedAt, null, 'the stalled clone was still running beside both');
-      assert.equal(listener.open, 1);
-      // Its last subscriber leaves, so the read is cancelled and its whole tree stopped.
-      controller.abort();
-      assert.ok((await pending) instanceof Error);
-      const until = performance.now() + 5_000;
-      while (f.instance.catalogRead && performance.now() < until) await new Promise(resolve => setTimeout(resolve, 25));
-      assert.equal(f.instance.catalogRead, null, 'the cancelled read settled');
-      assert.ok(listener.connections >= 1);
-      assert.equal(listener.open, 0);
-      await assertTreeStops({ t, spy, kills, trees: [tree], scratch: fs.readdirSync(fixture.scratch) });
-    } finally { await f?.close(); await stopRecorded(tree); fixture.cleanup(); }
   });
 });
 
@@ -4226,7 +3482,7 @@ test('extension lifecycle contains rejected session logs without touching stdout
     assert.deepEqual(result.sessionRegistration, {
       toolNames: ['dude_needs_you', 'dude_a2a_propose', 'dude_a2a_ask', 'dude_a2a_receive', 'dude_a2a_reply', 'dude_a2a_verify'],
       operationNames: ['request', 'acknowledge'],
-      acknowledgmentKinds: ['canvas_response', 'outside_answer', 'capture', 'pack_result', 'import_result'],
+      acknowledgmentKinds: ['canvas_response', 'outside_answer', 'capture', 'import_result'],
       hasOnEvent: true,
       canvasCount: 1,
     }, 'the existing Canvas, one closed two-operation handoff, and the opt-in A2A ask, receive, reply, and verify tools share the joined session');
@@ -7293,7 +6549,7 @@ test('T008 the sources route admits only the exact same-origin JSON POST with cl
     assert.equal(/** @type {any} */ (control.body).error, 'unreachable');
     assert.equal(spy.readers().length, 1, 'one candidate read, with no separate validation helper');
     assert.equal(fs.existsSync(sourcesFile(fixture)), false, 'nothing was saved');
-    assert.equal(f.provider.read().requests.length + f.provider.read().packRequests.length, 0, 'no Needs You record');
+    assert.equal(f.provider.read().requests.length, 0, 'no Needs You record');
     assert.equal(f.sends.length, 0, 'nothing was sent to the session');
     assert.deepEqual(snapshotFiles(fixture.root), before);
     assert.deepEqual(fs.readdirSync(fixture.scratch), [], 'the candidate read left no root behind');
@@ -7355,7 +6611,7 @@ test('T008 add saves one validated public GitHub source after exactly one candid
     assert.deepEqual(fs.readdirSync(fixture.scratch), [], 'the reader\'s root, with the prospective document, was removed');
     const changed = [...snapshotFiles(fixture.root).keys()].filter(file => !before.has(file));
     assert.deepEqual(changed, [path.normalize(PACK_SOURCES_PATH)], 'only the sources file was written');
-    assert.equal(f.provider.read().requests.length + f.provider.read().packRequests.length, 0, 'no Needs You class or request');
+    assert.equal(f.provider.read().requests.length, 0, 'no Needs You class or request');
     assert.equal(f.sends.length, 0);
     // The returned key is the source's key in every later read.
     const read = await discover(f);
@@ -8756,8 +8012,8 @@ test('T008 cancelling a discovery stops every active reader\'s tree and never st
 
 /* -------------------------------------------------------------------------
  * T008: removing a saved source. A source is removable unless an installed
- * pack records it or a live pack request is bound to it, and removing deletes
- * only its entry: no catalog is read and nothing installed is touched.
+ * pack records it, and removing deletes only its entry: no catalog is read and
+ * nothing installed is touched.
  * ------------------------------------------------------------------------- */
 
 /** The automatic read: installed, project and source rows, with no catalog. @param {Awaited<ReturnType<typeof packHttpFixture>>} f */
@@ -8848,7 +8104,7 @@ isolatedTest('T008 remove deletes only the one saved entry, whether the source w
       'removal only describes folders; it never lists a catalog');
     assert.deepEqual(filesBesidesSources(fixture), others, 'nothing but the sources entry changed');
     assert.equal(f.sends.length, 0);
-    assert.equal(f.provider.read().packRequests.length, 0, 'removal is not a Needs You class or request');
+    assert.equal(f.provider.read().requests.length, 0, 'removal is not a Needs You class or request');
     // Finding a folder describes every saved folder at once and cancels the others at the first answer, and on Windows a
     // cancelled reader that is already exiting can make its tree kill fail: its stop is then unconfirmed and its root stays.
     if (process.platform === 'win32') await assertRetainedRoots({ t, fixture, spy, kills });
@@ -8907,7 +8163,7 @@ isolatedTest('T008 on Windows a failed tree kill of the stalled sibling that a r
       'the healthy folder\'s entry alone was removed, and the rest keep their order');
     assert.deepEqual(filesBesidesSources(s.fixture), others, 'every other project byte is unchanged');
     assert.equal(s.f.sends.length, 0);
-    assert.equal(s.f.provider.read().packRequests.length, 0);
+    assert.equal(s.f.provider.read().requests.length, 0);
     assert.equal(s.spy.readers().length, 2, 'one describing reader for each saved folder');
     const sibling = s.stalledReader();
     assert.ok(sibling, 'the stalled folder\'s reader was launched');
@@ -9043,117 +8299,6 @@ test('T008 an installed pack from a source blocks its removal and is named; proj
   } finally { await f.close(); fixture.cleanup(); }
 });
 
-/**
- * The permission targets of a source-bound request: the source first, then the pack and
- * the profile, as the owner publishes them.
- * @param {ReturnType<typeof packFixture>} fixture
- * @param {{ source: any }} binding the receipt's `catalogSource`
- * @param {string} revision the source's revision: `commit:<hex>` or a file digest
- * @param {string} [pack]
- */
-function sourceFirstTargets(fixture, binding, revision, pack = 'alpha') {
-  const { source } = binding;
-  const label = source.type === 'remote' ? `${source.repository} @ ${source.ref}` : source.location;
-  return [
-    { target: `Third-party source ${label}`, revision },
-    { target: `pack:${pack}`, revision: packRevision(`${pack}:${revision}`) },
-    { target: '.dude/metadata/profile.md', revision: packRevision(fs.readFileSync(fixture.profilePath)) },
-  ];
-}
-
-test('T008 a live request bound to a source blocks its removal until it is reconciled, and each request is named', { timeout: 30_000 }, async () => {
-  const fixture = packFixture();
-  fixture.profile({});
-  fixture.catalog(['alpha']);
-  const team = localSource(fixture, 'team-packs', ['alpha']);
-  saveSources(fixture, [localEntry(team)]);
-  const f = await packHttpFixture(fixture);
-  try {
-    const key = sourceRows(await plainRead(f)).get('team-packs').key;
-    /** @param {string} phase */
-    const blockedBy = async phase => {
-      const refused = await removeSource(f, fixture, key);
-      assert.deepEqual([refused.status, /** @type {any} */ (refused.body).error], [409, 'source_in_use'], phase);
-      assert.deepEqual(/** @type {any} */ (refused.body).blockers, [{ kind: 'request', name: 'alpha', operation: 'install', phase }]);
-      assert.match(/** @type {any} */ (refused.body).message, new RegExp(`install alpha \\(${phase}\\)`));
-    };
-    const prepared = await f.post({ op: 'prepare', operation: 'install', name: 'alpha', source: key });
-    assert.equal(prepared.status, 202);
-    const receipt = await prepared.json();
-    await blockedBy('prepared');
-    const delivered = await f.post({ op: 'submit', operation: 'install', name: 'alpha', source: key, packReceipt: receipt.packReceipt });
-    assert.equal(delivered.status, 202);
-    await blockedBy('delivered');
-    const binding = receipt.receipt.catalogSource;
-    const permission = await f.permission(receipt, { source: binding.source }, {
-      targets: sourceFirstTargets(fixture, binding, packRevision(fs.readFileSync(path.join(team, 'library/packs/alpha/pack.md')))) });
-    await blockedBy('waiting_permission');
-    await permission.reply(false);
-    await blockedBy('waiting_owner');
-    // The owner's acknowledged result reconciles the request, so it no longer holds the source.
-    const outcome = await f.tool({ op: 'acknowledge',
-      acknowledgment: f.acknowledgment(receipt, null, 'declined', 'none', 'The user declined; nothing was applied.') });
-    assert.equal(outcome.resultType, 'success', outcome.textResultForLlm);
-    const removed = await removeSource(f, fixture, key);
-    assert.equal(removed.status, 200, JSON.stringify(removed.body));
-    assert.deepEqual(readPackSources(fixture.root).sources, []);
-  } finally { await f.close(); fixture.cleanup(); }
-});
-
-test('T008 a request that is still being prepared holds its source, and a removal that won leaves nothing to prepare against', { timeout: 45_000 }, async t => {
-  const fixture = packFixture();
-  fixture.profile({});
-  fixture.catalog(['alpha']);
-  const github = offlineGitHub(t, fixture);
-  // A network that stalls: the reader's own 15-second request bound ends the preparation's read.
-  github.hold('acme/slow');
-  github.publish('acme/spare', ['alpha']);
-  saveSources(fixture, [remoteEntry('acme/slow'), remoteEntry('acme/spare')]);
-  const f = await packHttpFixture(fixture);
-  try {
-    const rows = sourceRows(await plainRead(f));
-    const slow = rows.get('acme/slow').key, spare = rows.get('acme/spare').key;
-    // The preparation is stalled in its source's read, so it is in flight while the removal runs.
-    const preparing = f.post({ op: 'prepare', operation: 'install', name: 'alpha', source: slow });
-    await github.connected('acme/slow');
-    const refused = await removeSource(f, fixture, slow);
-    assert.deepEqual([refused.status, /** @type {any} */ (refused.body).error], [409, 'source_in_use']);
-    assert.deepEqual(/** @type {any} */ (refused.body).blockers, [{ kind: 'request', name: 'alpha', operation: 'install', phase: 'preparing' }]);
-    assert.equal(readPackSources(fixture.root).sources.length, 2, 'the source stayed while it was being used');
-    // The preparation ends at its read's bound without a receipt, and the source is then free.
-    const outcome = await preparing;
-    assert.deepEqual([outcome.status, (await outcome.json()).error], [409, 'source_unavailable'], 'a stalled source never yields a prepared receipt');
-    assert.equal(f.provider.read().packRequests.length, 0);
-    assert.equal((await removeSource(f, fixture, slow)).status, 200);
-    // The other order: the source is already removed, so a preparation for its key is stale and sends nothing.
-    assert.equal((await removeSource(f, fixture, spare)).status, 200);
-    const late = await f.post({ op: 'prepare', operation: 'install', name: 'alpha', source: spare });
-    assert.equal(late.status, 409);
-    assert.equal((await late.json()).error, 'source_changed');
-    assert.equal(f.sends.length, 0);
-    assert.equal(f.provider.read().packRequests.length, 0, 'no receipt exists for a removed source');
-  } finally { await f.close(); fixture.cleanup(); }
-});
-
-test('T008 a provider that cannot report its requests refuses removal instead of assuming the source is unused', async t => {
-  const fixture = packFixture();
-  fixture.profile({});
-  fixture.catalog(['alpha']);
-  const github = offlineGitHub(t, fixture);
-  github.publish('acme/spare', ['alpha']);
-  saveSources(fixture, [remoteEntry('acme/spare')]);
-  const f = await packHttpFixture(fixture);
-  try {
-    const key = sourceRows(await plainRead(f)).get('acme/spare').key;
-    const saved = fs.readFileSync(sourcesFile(fixture));
-    // Disposing the provider ends the lifetime that its live requests are answered from.
-    f.provider.dispose();
-    const refused = await removeSource(f, fixture, key);
-    assert.deepEqual([refused.status, /** @type {any} */ (refused.body).error], [409, 'authority_unavailable']);
-    assert.deepEqual(fs.readFileSync(sourcesFile(fixture)), saved);
-  } finally { await f.close(); fixture.cleanup(); }
-});
-
 /* -------------------------------------------------------------------------
  * T008: a saved folder that never answers. Resolving a saved folder's real path
  * can block for as long as the OS waits on an unreachable share, so each folder
@@ -9221,9 +8366,8 @@ isolatedTest('T008 a saved folder that never answers delays no other source', { 
    * @param {import('node:test').TestContext} t
    */
   const scenario = async t => {
-    const fixture = packFixture();
-    fixture.profile({});
-    fixture.catalog(['alpha']);
+    // The default library's alpha is installable, so only the sibling's bare alpha can answer as below.
+    const fixture = packEngineFixture();
     const github = offlineGitHub(t, fixture);
     github.publish('acme/elsewhere', ['rust']);
     const stalled = fs.realpathSync(localSource(fixture, 'stalled-share', ['stuck']));
@@ -9238,16 +8382,16 @@ isolatedTest('T008 a saved folder that never answers delays no other source', { 
     return { fixture, f, spy, entries, first, key: (/** @type {number} */ index) => sharedKey(fixture, entries[index]) };
   };
 
-  await t.test('an install that names a good sibling is prepared inside the operation bound, with its bound receipt', async t => {
-    const { fixture, f, entries, first, key } = await scenario(t);
-    const prepare = await timed(() => f.post({ op: 'prepare', operation: 'install', name: 'alpha', source: key(1) }));
-    const receipt = await prepare.value.json();
-    assert.equal(prepare.value.status, 202, JSON.stringify(receipt));
-    assert.deepEqual(receipt.receipt.catalogSource,
-      { key: key(1), sourcesRevision: savedRevision(fixture), source: { type: 'local', location: first } });
-    assert.ok(prepare.ms < ISOLATED_MS, `prepared in ${prepare.ms.toFixed(0)} ms, not after the stalled folder's deadline`);
-    assert.deepEqual(readPackSources(fixture.root).sources, entries, 'preparing saves nothing');
-    t.diagnostic(`prepare ${prepare.ms.toFixed(0)} ms (limit ${ISOLATED_MS} ms)`);
+  await t.test('an install preview that names a good sibling answers inside the operation bound, from that sibling', async t => {
+    const { fixture, f, entries, key } = await scenario(t);
+    const preview = await timed(() => postAction(f, { op: 'preview', operation: 'install', name: 'alpha', source: key(1) }));
+    assert.equal(preview.value.status, 200, JSON.stringify(preview.value.body));
+    // The sibling's alpha has only its pack.md, so Compose itself answers from it; the default library's alpha would preview.
+    assert.deepEqual(preview.value.body, { token: null, thirdParty: false, preview: null,
+      message: 'pack "alpha" ships no installable artifacts' });
+    assert.ok(preview.ms < ISOLATED_MS, `answered in ${preview.ms.toFixed(0)} ms, not after the stalled folder's deadline`);
+    assert.deepEqual(readPackSources(fixture.root).sources, entries, 'previewing saves nothing');
+    t.diagnostic(`preview ${preview.ms.toFixed(0)} ms (limit ${ISOLATED_MS} ms)`);
   });
 
   await t.test('removing a good sibling does not wait for it, and deletes only that entry', async t => {
@@ -9300,10 +8444,11 @@ test('T008 a saved folder that never answers keeps its key and row, refuses a re
   const kills = taskkillSpy(t);
   const f = await packHttpFixture(fixture);
   try {
-    const refresh = await f.post({ op: 'prepare', operation: 'refresh', name: 'alpha' });
-    assert.notEqual(refresh.status, 202, 'a refresh is refused, never answered from the default catalog by guessing');
-    assert.ok(['source_unavailable', 'operation_unavailable'].includes((await refresh.json()).error));
-    assert.equal(f.provider.read().packRequests.length, 0, 'no receipt exists');
+    const refresh = await postAction(f, { op: 'preview', operation: 'refresh', name: 'alpha' });
+    assert.equal(refresh.status, 200, JSON.stringify(refresh.body));
+    assert.deepEqual(refresh.body, { token: null, thirdParty: false, preview: null,
+      message: 'A saved source did not answer, so the source of this pack cannot be established.' },
+    'a refresh is blocked, never answered from the default catalog by guessing');
     // Its row: unavailable, with the key the shared module gives a folder it cannot resolve, and every saved folder in order.
     // A read that must describe every folder waits for the stalled one for exactly its reader deadline and stop window, once.
     // Each operation's own kills decide its reason; an earlier failed stop does not change a later clean one.
@@ -9462,183 +8607,7 @@ const folderRevision = folder => packRevision(fs.readFileSync(path.join(folder, 
 
 const LEGACY_HANDOFF_KEYS = ['name', 'operation', 'owner', 'providerGeneration', 'receiptId', 'sessionId', 'workspaceId'];
 
-test('T008 an install bound to a saved folder carries its binding through the handoff and permission, and is Applied only from that folder', { timeout: 60_000 }, async t => {
-  const fixture = packEngineFixture();
-  const team = artifactSource(fixture);
-  saveSources(fixture, [localEntry(team)]);
-  const spy = spawnSpy(t);
-  const f = await packHttpFixture(fixture);
-  try {
-    const plain = await plainRead(f);
-    const key = sourceRows(plain).get('team-packs').key;
-    const before = snapshotFiles(fixture.root);
-    const receipt = await f.admission('install', key);
-    const binding = receipt.receipt.catalogSource;
-    assert.deepEqual(binding, { key, sourcesRevision: plain.sources.sourcesRevision, source: { type: 'local', location: fs.realpathSync(team) } });
-    assert.deepEqual(Object.keys(binding), ['key', 'sourcesRevision', 'source']);
-    assert.deepEqual(snapshotFiles(fixture.root), before, 'admission writes nothing');
-    // The handoff keeps its fixed prefix and adds the one sentence and the binding, only for this request.
-    assert.equal(f.sends.length, 1);
-    const lines = f.sends[0].prompt.split('\n');
-    assert.deepEqual(Object.keys(JSON.parse(lines.at(-1))).sort(), [...LEGACY_HANDOFF_KEYS, 'catalogSource'].sort());
-    assert.deepEqual(JSON.parse(lines.at(-1)).catalogSource, binding);
-    assert.equal(lines.filter(line => /bound to one source the project added/.test(line)).length, 1);
-    assert.match(lines.find(line => /bound to one source/.test(line)) ?? '', /exactly that source and its configured ref with Compose --source and --ref/);
-    // The permission must name the bound source first, as a third-party source, pinned by its file digest.
-    const impact = { source: binding.source, files: ['.github/agents/dude-pack-alpha-worker.agent.md'], tools: [] };
-    const good = sourceFirstTargets(fixture, binding, folderRevision(team));
-    for (const [label, targets] of /** @type {Array<[string, any[]]>} */ ([
-      ['the pack first, with no source', good.slice(1)],
-      ['a source without the third-party label', [{ ...good[0], target: binding.source.location }, ...good.slice(1)]],
-      ['another folder', [{ ...good[0], target: 'Third-party source C:\\elsewhere\\packs' }, ...good.slice(1)]],
-      // A different source whose text merely contains the bound folder is not the bound folder.
-      ['a folder that only extends the bound one', [{ ...good[0], target: `Third-party source ${binding.source.location}-EVIL` }, ...good.slice(1)]],
-      ['a folder inside the bound one', [{ ...good[0], target: `Third-party source ${binding.source.location}${path.sep}extra` }, ...good.slice(1)]],
-      ['a longer path that ends with the bound folder', [{ ...good[0], target: `Third-party source X${binding.source.location}` }, ...good.slice(1)]],
-      ['a commit revision for a folder', [{ ...good[0], revision: `commit:${'a'.repeat(40)}` }, ...good.slice(1)]],
-      ['a revision that is not a digest', [{ ...good[0], revision: 'latest' }, ...good.slice(1)]],
-      ['the source listed second', [good[1], good[0], good[2]]],
-    ])) {
-      await assert.rejects(() => f.permission(receipt, impact, { targets }), /identity_mismatch/, label);
-    }
-    const permission = await f.permission(receipt, impact, { targets: good });
-    await permission.reply();
-    const result = await cmdAdd({ root: fixture.root, library: fixture.library, name: 'alpha', source: binding.source.location, fetch: false });
-    assert.equal(result.ok, true, result.error);
-    assert.match(fs.readFileSync(path.join(fixture.root, '.github/agents/dude-pack-alpha-worker.agent.md'), 'utf8'), /Team v1\./,
-      'the installed pack came from the bound folder, not the default library');
-    const exact = f.acknowledgment(receipt, result);
-    const launchedBeforeResult = spy.readers().length;
-    assert.deepEqual(exact.catalogSource, binding);
-    assert.deepEqual(exact.source, { type: 'local', location: fs.realpathSync(team) });
-    // The exact echo is the only one accepted: absent, null, another value or an extra field never reconciles.
-    for (const [label, mutate, reason] of /** @type {Array<[string, (ack: any) => void, string]>} */ ([
-      ['a missing echo', ack => { delete ack.catalogSource; }, 'acknowledgment_conflict'],
-      ['a null echo', ack => { ack.catalogSource = null; }, 'invalid_input'],
-      ['another key', ack => { ack.catalogSource.key = `src_${'f'.repeat(32)}`; }, 'acknowledgment_conflict'],
-      ['another configuration revision', ack => { ack.catalogSource.sourcesRevision = `sha256:${'1'.repeat(64)}`; }, 'acknowledgment_conflict'],
-      ['another folder', ack => { ack.catalogSource.source.location = path.join(fixture.temporary, 'elsewhere'); }, 'acknowledgment_conflict'],
-      ['a remote source', ack => { ack.catalogSource.source = { type: 'remote', repository: 'https://github.com/acme/x', ref: 'main' }; }, 'acknowledgment_conflict'],
-      ['an extra field', ack => { ack.catalogSource.extra = true; }, 'invalid_input'],
-      ['an extra source field', ack => { ack.catalogSource.source.ref = 'main'; }, 'invalid_input'],
-    ])) {
-      const variant = structuredClone(exact);
-      mutate(variant);
-      const refused = await f.tool({ op: 'acknowledge', acknowledgment: variant });
-      assert.equal(refused.resultType, 'failure', label);
-      assert.equal(JSON.parse(refused.textResultForLlm).reason, reason, label);
-    }
-    assert.equal((await f.feed()).packRequests[0].phase, 'waiting_owner', 'a refused echo leaves the request unreconciled');
-    const accepted = await f.tool({ op: 'acknowledge', acknowledgment: exact });
-    assert.equal(accepted.resultType, 'success', accepted.textResultForLlm);
-    assert.equal(spy.readers().length, launchedBeforeResult, 'the result reread is installed-only: it launches no catalog reader');
-    const view = (await f.feed()).packRequests[0];
-    assert.equal(view.phase, 'applied');
-    assert.equal(view.applied, true);
-    assert.deepEqual(view.receipt.catalogSource, binding);
-    assert.deepEqual(view.receipt.reread.entry.source, { type: 'local', location: fs.realpathSync(team) });
-    assert.equal(f.sends.length, 1);
-    assert.equal(JSON.parse((await f.tool({ op: 'acknowledge', acknowledgment: exact })).textResultForLlm).reason, 'acknowledgment_conflict');
-  } finally { await f.close(); fixture.cleanup(); }
-});
-
-test('T008 an echoed key or a pack name never makes a wrong source Applied: the fresh profile source must be the bound one', { timeout: 150_000 }, async t => {
-  for (const scenario of ['the default library', 'another saved folder', 'another repository', 'another commit']) {
-    await t.test(`installed from ${scenario}`, { timeout: 60_000 }, async t => {
-      const fixture = packEngineFixture();
-      const remote = ['another repository', 'another commit'].includes(scenario);
-      const github = remote ? offlineGitHub(t, fixture) : null;
-      const team = remote ? null : artifactSource(fixture);
-      const other = scenario === 'another saved folder' ? artifactSource(fixture, 'other-packs', 'Other v1.') : null;
-      const repo = github ? publishAlpha(github, fixture, 'acme/dude-packs') : null;
-      const reviewed = repo?.commit() ?? null;
-      const stranger = scenario === 'another repository' && github ? publishAlpha(github, fixture, 'acme/other-packs') : null;
-      saveSources(fixture, [repo ? remoteEntry('acme/dude-packs') : localEntry(/** @type {string} */ (team)), ...(other ? [localEntry(other)] : [])]);
-      const f = await packHttpFixture(fixture);
-      try {
-        const key = sourceRows(await plainRead(f)).get(repo ? 'acme/dude-packs' : 'team-packs').key;
-        const receipt = await f.admission('install', key);
-        const binding = receipt.receipt.catalogSource;
-        const permission = await f.permission(receipt, { source: binding.source }, {
-          targets: sourceFirstTargets(fixture, binding, reviewed ? `commit:${reviewed}` : folderRevision(/** @type {string} */ (team))) });
-        await permission.reply();
-        /** @type {Awaited<ReturnType<typeof cmdAdd>>} */
-        let result;
-        if (scenario === 'the default library') result = await cmdAdd({ root: fixture.root, library: fixture.library, name: 'alpha', fetch: false });
-        else if (other) result = await cmdAdd({ root: fixture.root, library: fixture.library, name: 'alpha', source: fs.realpathSync(other), fetch: false });
-        else if (stranger) result = await cmdAddOffLoop({ root: fixture.root, library: fixture.library, name: 'alpha', source: stranger.url, ref: /** @type {string} */ (stranger.commit()) });
-        else {
-          const later = /** @type {NonNullable<typeof repo>} */ (repo);
-          fs.writeFileSync(path.join(later.directory, 'CHANGELOG.md'), 'A later commit.\n');
-          later.git('add', '-A');
-          later.git('-c', 'user.email=fixture@example.test', '-c', 'user.name=Canvas Fixture', 'commit', '-qm', 'later');
-          assert.notEqual(later.commit(), reviewed);
-          result = await cmdAddOffLoop({ root: fixture.root, library: fixture.library, name: 'alpha', source: later.url, ref: later.commit() });
-        }
-        assert.equal(result.ok, true, result.error);
-        const ack = f.acknowledgment(receipt, result);
-        assert.deepEqual(ack.catalogSource, binding, 'the echo is exact, so only the profile source can refuse this');
-        const refused = await f.tool({ op: 'acknowledge', acknowledgment: ack });
-        assert.equal(refused.resultType, 'failure');
-        assert.equal(JSON.parse(refused.textResultForLlm).reason, 'pack_state_mismatch');
-        const view = (await f.feed()).packRequests[0];
-        assert.deepEqual([view.applied, view.phase], [false, 'stale']);
-        assert.equal(view.receipt.acknowledgment, null);
-      } finally { await f.close(); fixture.cleanup(); }
-    });
-  }
-});
-
-test('T008 an install bound to a saved GitHub source is reviewed at a commit, pinned to it, and Applied only from that repository at that commit', { timeout: 90_000 }, async t => {
-  const fixture = packEngineFixture();
-  const github = offlineGitHub(t, fixture);
-  const repo = publishAlpha(github, fixture, 'acme/dude-packs');
-  const commit = repo.commit();
-  saveSources(fixture, [remoteEntry('acme/dude-packs')]);
-  const f = await packHttpFixture(fixture);
-  try {
-    const plain = await plainRead(f);
-    const key = sourceRows(plain).get('acme/dude-packs').key;
-    const receipt = await f.admission('install', key);
-    const binding = receipt.receipt.catalogSource;
-    assert.deepEqual(binding, { key, sourcesRevision: plain.sources.sourcesRevision,
-      source: { type: 'remote', repository: repo.url, ref: 'main' } });
-    assert.match(f.sends[0].prompt.split('\n').at(-1), /"catalogSource":\{"key":"src_[0-9a-f]{32}","sourcesRevision":"sha256:[0-9a-f]{64}","source":\{"type":"remote","repository":"https:\/\/github\.com\/acme\/dude-packs","ref":"main"\}\}/);
-    const impact = { source: binding.source, reviewedCommit: commit };
-    // A remote source is pinned by the commit that was reviewed, never by a folder digest or a moving ref.
-    const good = sourceFirstTargets(fixture, binding, `commit:${commit}`);
-    for (const [label, targets] of /** @type {Array<[string, any[]]>} */ ([
-      ['a digest instead of a commit', [{ ...good[0], revision: packRevision('a folder digest') }, ...good.slice(1)]],
-      ['a branch instead of a commit', [{ ...good[0], revision: 'main' }, ...good.slice(1)]],
-      ['another repository', [{ ...good[0], target: 'Third-party source https://github.com/acme/other-packs @ main' }, ...good.slice(1)]],
-      // A different source whose text merely contains the bound repository is not the bound repository.
-      ['a repository whose name extends the bound one', [{ ...good[0], target: `Third-party source ${binding.source.repository}-evil @ main` }, ...good.slice(1)]],
-      ['a path below the bound repository', [{ ...good[0], target: `Third-party source ${binding.source.repository}/extra @ main` }, ...good.slice(1)]],
-      ['the bound repository with a suffix', [{ ...good[0], target: `Third-party source ${binding.source.repository}.git @ main` }, ...good.slice(1)]],
-      ['a longer address that ends with the bound repository', [{ ...good[0], target: `Third-party source x${binding.source.repository} @ main` }, ...good.slice(1)]],
-      ['no third-party label', [{ ...good[0], target: `${binding.source.repository} @ main` }, ...good.slice(1)]],
-    ])) {
-      await assert.rejects(() => f.permission(receipt, impact, { targets }), /identity_mismatch/, label);
-    }
-    const permission = await f.permission(receipt, impact, { targets: good });
-    await permission.reply();
-    const result = await cmdAddOffLoop({ root: fixture.root, library: fixture.library, name: 'alpha', source: repo.url, ref: commit });
-    assert.equal(result.ok, true, result.error);
-    const ack = f.acknowledgment(receipt, result);
-    assert.deepEqual(ack.source, { type: 'remote', repository: repo.url, requested_ref: commit, resolved_commit: commit });
-    const accepted = await f.tool({ op: 'acknowledge', acknowledgment: ack });
-    assert.equal(accepted.resultType, 'success', accepted.textResultForLlm);
-    const view = (await f.feed()).packRequests[0];
-    assert.deepEqual([view.phase, view.applied], ['applied', true]);
-    assert.deepEqual(view.receipt.catalogSource, binding);
-    assert.deepEqual(view.receipt.reread.entry.source, ack.source);
-    assert.equal(f.sends.length, 1);
-    // The configured ref stays the branch to track; the install pinned the reviewed commit.
-    assert.equal(readPackSources(fixture.root).sources[0].ref, 'main');
-  } finally { await f.close(); fixture.cleanup(); }
-});
-
-test('T008 a request for a missing, unavailable or unreadable source is refused at prepare, with no receipt and no fallback to another catalog', { timeout: 60_000 }, async t => {
+test('083 Pack actions: a preview from a missing, unavailable or unreadable saved source is blocked with its reason and never falls back to another catalog', { timeout: 90_000 }, async t => {
   const fixture = packEngineFixture();
   const team = artifactSource(fixture);
   const bare = path.join(fixture.temporary, 'bare-packs');
@@ -9646,268 +8615,43 @@ test('T008 a request for a missing, unavailable or unreadable source is refused 
   const gone = artifactSource(fixture, 'gone-packs');
   saveSources(fixture, [localEntry(team), localEntry(bare), localEntry(gone)]);
   fs.rmSync(gone, { recursive: true });
-  const spy = spawnSpy(t);
   const f = await packHttpFixture(fixture);
   try {
     const rows = sourceRows(await plainRead(f));
     const before = snapshotFiles(fixture.root);
-    /** @param {unknown} source @param {number} status @param {string} error @param {string} label */
-    const refused = async (source, status, error, label) => {
-      const response = await f.post({ op: 'prepare', operation: 'install', name: 'alpha', source });
-      assert.deepEqual([response.status, (await response.json()).error], [status, error], label);
+    /** @param {unknown} source @param {string} label @returns {Promise<string>} the reason */
+    const blocked = async (source, label) => {
+      const answer = await postAction(f, { op: 'preview', operation: 'install', name: 'alpha', source });
+      assert.equal(answer.status, 200, `${label}: ${JSON.stringify(answer.body)}`);
+      const body = /** @type {any} */ (answer.body);
+      // The default library has alpha, so a quiet fallback would have answered with a preview and a token.
+      assert.deepEqual([body.token, body.thirdParty, body.preview], [null, false, null], label);
+      assert.equal(typeof body.message, 'string', label);
+      return body.message;
     };
-    // The default library has alpha, so a quiet fallback would have prepared this request.
-    await refused(`src_${'e'.repeat(32)}`, 409, 'source_changed', 'a key that no saved source has');
-    await refused(rows.get('bare-packs').key, 409, 'pack_ineligible', 'a saved source that lacks the pack');
-    await refused(rows.get('gone-packs').key, 409, 'source_unavailable', 'a saved folder that is gone');
-    await refused(rows.get('Local library').key, 400, 'invalid_input', 'a built-in key, which names no added source');
-    for (const malformed of ['x', 'src_', `src_${'E'.repeat(32)}`, `src_${'e'.repeat(31)}`, `src_${'e'.repeat(33)}`, `${rows.get('team-packs').key} `, null, 5, {}, []]) {
-      await refused(malformed, 400, 'invalid_input', `malformed ${JSON.stringify(malformed)}`);
+    assert.equal(await blocked(`src_${'e'.repeat(32)}`, 'a key that no saved source has'),
+      'The selected source is no longer in the saved sources.');
+    assert.match(await blocked(rows.get('bare-packs').key, 'a saved source that lacks the pack'), /pack "alpha" not found in source/);
+    assert.ok(await blocked(rows.get('gone-packs').key, 'a saved folder that is gone'));
+    assert.equal(await blocked(rows.get('Local library').key, 'a built-in key, which names no added source'),
+      'Built-in sources are the default catalog and take no source selection.');
+    for (const malformed of ['x', 'src_', `src_${'E'.repeat(32)}`, `src_${'e'.repeat(31)}`, `${rows.get('team-packs').key} `, null, 5, {}, []]) {
+      const refused = await postAction(f, { op: 'preview', operation: 'install', name: 'alpha', source: malformed });
+      assert.deepEqual([refused.status, refused.body], [400, { error: 'invalid_input' }], `malformed ${JSON.stringify(malformed)}`);
     }
-    // An unreadable document leaves no source to select, but the default catalog and profile removal stay usable.
+    // An unreadable document leaves no source to select, but the default catalog stays usable.
     fs.writeFileSync(sourcesFile(fixture), '# Pack Sources\n\nnot a sources document\n');
-    await refused(rows.get('team-packs').key, 409, 'source_unavailable', 'an unreadable sources document');
-    assert.equal(f.provider.read().packRequests.length, 0, 'no refusal left a receipt');
+    assert.ok(await blocked(rows.get('team-packs').key, 'an unreadable sources document'));
+    assert.equal(f.provider.read().requests.length, 0, 'no Needs You request');
     assert.equal(f.sends.length, 0);
     assert.deepEqual(snapshotFiles(fixture.root).get(path.normalize(PACK_SOURCES_PATH)), Buffer.from('# Pack Sources\n\nnot a sources document\n'));
     for (const [path_, value] of before) {
       if (path_ !== path.normalize(PACK_SOURCES_PATH)) assert.deepEqual(snapshotFiles(fixture.root).get(path_), value, `${path_} is unchanged`);
     }
-    const defaultReceipt = await f.admission('install');
-    assert.equal(Object.hasOwn(defaultReceipt.receipt, 'catalogSource'), false, 'the default install is unaffected by the unreadable document');
-    assert.equal(spy.readers().length > 0, true);
+    const fallback = await postAction(f, { op: 'preview', operation: 'install', name: 'alpha' });
+    assert.match(/** @type {any} */ (fallback.body).token, /^[0-9a-f-]{36}$/, 'the default install is unaffected by the unreadable document');
   } finally { await f.close(); fixture.cleanup(); }
 });
-
-test('T008 a source that changes between prepare and submit is a refusal that sends nothing and never falls back', { timeout: 120_000 }, async t => {
-  /** @type {Array<[string, (c: { fixture: ReturnType<typeof packEngineFixture>, team: string, other: string }) => void, number, string]>} */
-  const scenarios = [
-    ['its entry was removed', ({ fixture }) => { saveSources(fixture, []); }, 409, 'source_changed'],
-    ['its entry was replaced by another folder', ({ fixture, other }) => { saveSources(fixture, [localEntry(other)]); }, 409, 'source_changed'],
-    ['another source was saved beside it, which changes the configuration revision', ({ fixture, team, other }) => { saveSources(fixture, [localEntry(team), localEntry(other)]); }, 409, 'source_changed'],
-    ['its folder is gone', ({ team }) => { fs.rmSync(team, { recursive: true }); }, 409, 'source_unavailable'],
-    ['its pack is gone from its catalog', ({ team }) => { fs.rmSync(path.join(team, 'library/packs/alpha'), { recursive: true }); }, 409, 'pack_ineligible'],
-    ['its catalog metadata changed', ({ team }) => { fs.appendFileSync(path.join(team, 'library/packs/alpha/pack.md'), '\nA later edit.\n'); }, 409, 'source_changed'],
-    ['the saved sources became unreadable', ({ fixture }) => { fs.writeFileSync(sourcesFile(fixture), '# Pack Sources\n\nnot a sources document\n'); }, 409, 'source_unavailable'],
-  ];
-  for (const [scenario, change, status, error] of scenarios) {
-    await t.test(scenario, async () => {
-      const fixture = packEngineFixture();
-      const team = artifactSource(fixture);
-      const other = artifactSource(fixture, 'other-packs', 'Other v1.');
-      saveSources(fixture, [localEntry(team)]);
-      const f = await packHttpFixture(fixture);
-      try {
-        const key = sourceRows(await plainRead(f)).get('team-packs').key;
-        const prepared = await f.post({ op: 'prepare', operation: 'install', name: 'alpha', source: key });
-        assert.equal(prepared.status, 202);
-        const receipt = await prepared.json();
-        change({ fixture, team, other });
-        const before = snapshotFiles(fixture.root);
-        const submit = await f.post({ op: 'submit', operation: 'install', name: 'alpha', source: key, packReceipt: receipt.packReceipt });
-        assert.deepEqual([submit.status, (await submit.json()).error], [status, error]);
-        assert.equal(f.sends.length, 0, 'nothing was sent for a source that is not the one prepared');
-        assert.deepEqual(snapshotFiles(fixture.root), before);
-        const view = (await f.feed()).packRequests[0];
-        assert.equal(view.receipt.current, false);
-        assert.equal(view.applied, false);
-        // The receipt is used and cannot be resubmitted; the request must be prepared again.
-        const again = await f.post({ op: 'submit', operation: 'install', name: 'alpha', source: key, packReceipt: receipt.packReceipt });
-        assert.equal(again.status, 409);
-        assert.equal(f.sends.length, 0);
-      } finally { await f.close(); fixture.cleanup(); }
-    });
-  }
-});
-
-test('T008 a submit must name the same source as its receipt, or none, and a default request never carries a binding', { timeout: 60_000 }, async () => {
-  const fixture = packEngineFixture();
-  const team = artifactSource(fixture);
-  saveSources(fixture, [localEntry(team)]);
-  const f = await packHttpFixture(fixture);
-  try {
-    const key = sourceRows(await plainRead(f)).get('team-packs').key;
-    const bound = await (await f.post({ op: 'prepare', operation: 'install', name: 'alpha', source: key })).json();
-    for (const submit of [{ }, { source: `src_${'e'.repeat(32)}` }, { source: null }]) {
-      const refused = await f.post({ op: 'submit', operation: 'install', name: 'alpha', packReceipt: bound.packReceipt, ...submit });
-      assert.equal(refused.status, submit.source === null ? 400 : 409, JSON.stringify(submit));
-    }
-    assert.equal(f.sends.length, 0);
-    // The receipt survived those refusals and is still prepared for exactly its own source.
-    const delivered = await f.post({ op: 'submit', operation: 'install', name: 'alpha', source: key, packReceipt: bound.packReceipt });
-    assert.equal(delivered.status, 202, JSON.stringify(await delivered.json()));
-    assert.equal(f.sends.length, 1);
-  } finally { await f.close(); fixture.cleanup(); }
-});
-
-test('T008 a default request keeps the exact handoff text, receipt and acknowledgment, with no binding, however many sources are saved', { timeout: 60_000 }, async () => {
-  const fixture = packEngineFixture();
-  const team = artifactSource(fixture);
-  saveSources(fixture, [localEntry(team)]);
-  const f = await packHttpFixture(fixture);
-  try {
-    const key = sourceRows(await plainRead(f)).get('team-packs').key;
-    const prepared = await f.post({ op: 'prepare', operation: 'install', name: 'alpha' });
-    assert.equal(prepared.status, 202);
-    const receipt = await prepared.json();
-    assert.equal(Object.hasOwn(receipt.receipt, 'catalogSource'), false, 'the field is absent, not null');
-    // A default receipt cannot be submitted against a saved source.
-    const mismatched = await f.post({ op: 'submit', operation: 'install', name: 'alpha', source: key, packReceipt: receipt.packReceipt });
-    assert.deepEqual([mismatched.status, (await mismatched.json()).error], [409, 'identity_mismatch']);
-    const delivered = await f.post({ op: 'submit', operation: 'install', name: 'alpha', packReceipt: receipt.packReceipt });
-    assert.equal(delivered.status, 202);
-    const { receiptId, owner, operation, name, workspaceId, sessionId, providerGeneration } = receipt.receipt;
-    assert.equal(f.sends[0].prompt, [
-      'Dude Canvas explicit pack request in this joined workspace/session.',
-      'Use dude-compose for this exact operation and pack only. This request is not application consent.',
-      'The coordinator owns the actual impact preview, exact literal permission, source/profile/target freshness, Compose application and verification.',
-      'Use the existing Needs You session permission: requestRef=pack:<receiptId>, source.revision=<providerGeneration>, fields.operation=pack:<operation>.',
-      'After the owner result, use dude_needs_you acknowledge with recognizes=pack_result, the exact binding below, actual Compose result and current profile source/revision. Delivery never means Applied.',
-      JSON.stringify({ receiptId, owner, operation, name, workspaceId, sessionId, providerGeneration }),
-    ].join('\n'), 'the default handoff is byte-for-byte the 063 text and final JSON');
-    const impact = { files: ['.github/agents/dude-pack-alpha-worker.agent.md'], tools: [] };
-    const permission = await f.permission(receipt, impact);
-    await permission.reply();
-    const result = await cmdAdd({ root: fixture.root, library: fixture.library, name: 'alpha', fetch: false });
-    assert.equal(result.ok, true, result.error);
-    const exact = f.acknowledgment(receipt, result);
-    assert.equal(Object.hasOwn(exact, 'catalogSource'), false);
-    // An echo that no binding was prepared for is a conflict, never an extra accepted field.
-    const invented = { ...structuredClone(exact), catalogSource: { key, sourcesRevision: savedRevision(fixture), source: { type: 'local', location: fs.realpathSync(team) } } };
-    const conflict = await f.tool({ op: 'acknowledge', acknowledgment: invented });
-    assert.equal(JSON.parse(conflict.textResultForLlm).reason, 'acknowledgment_conflict');
-    const nulled = await f.tool({ op: 'acknowledge', acknowledgment: { ...structuredClone(exact), catalogSource: null } });
-    assert.equal(JSON.parse(nulled.textResultForLlm).reason, 'invalid_input', 'the field is absent, never null');
-    const accepted = await f.tool({ op: 'acknowledge', acknowledgment: exact });
-    assert.equal(accepted.resultType, 'success', accepted.textResultForLlm);
-    const feed = await f.feed();
-    assert.equal(feed.packRequests[0].applied, true);
-    assert.equal(JSON.stringify(feed.packRequests).includes('catalogSource'), false, 'nothing in the default request mentions a binding');
-  } finally { await f.close(); fixture.cleanup(); }
-});
-
-test('T008 a refresh takes its source from the installed record and accepts no choice; a removal reads no source', { timeout: 90_000 }, async t => {
-  /** @param {ReturnType<typeof packEngineFixture>} fixture @param {any} installed */
-  const recorded = (fixture, installed) => fixture.profile({ alpha: fixture.entry('alpha', installed) });
-  await t.test('an installed record from a saved folder selects that folder', async () => {
-    const fixture = packEngineFixture();
-    const team = artifactSource(fixture);
-    saveSources(fixture, [localEntry(team)]);
-    recorded(fixture, { type: 'local', location: fs.realpathSync(team) });
-    const f = await packHttpFixture(fixture);
-    try {
-      const plain = await plainRead(f);
-      const key = sourceRows(plain).get('team-packs').key;
-      const refused = await f.post({ op: 'prepare', operation: 'refresh', name: 'alpha', source: key });
-      assert.deepEqual([refused.status, (await refused.json()).error], [400, 'invalid_input'], 'a refresh takes no browser choice');
-      const removing = await f.post({ op: 'prepare', operation: 'remove', name: 'alpha', source: key });
-      assert.deepEqual([removing.status, (await removing.json()).error], [400, 'invalid_input'], 'a removal takes no source');
-      const receipt = await f.admission('refresh');
-      assert.deepEqual(receipt.receipt.catalogSource, { key, sourcesRevision: plain.sources.sourcesRevision,
-        source: { type: 'local', location: fs.realpathSync(team) } });
-      assert.deepEqual(JSON.parse(f.sends[0].prompt.split('\n').at(-1)).catalogSource, receipt.receipt.catalogSource);
-      assert.equal(f.sends.length, 1);
-    } finally { await f.close(); fixture.cleanup(); }
-  });
-  await t.test('an installed record from the default library, or from nowhere listed, selects the default catalog', async () => {
-    for (const installed of [{ type: 'local', location: 'LIBRARY' }, { type: 'local', location: '/recorded/catalog' }]) {
-      const fixture = packEngineFixture();
-      const team = artifactSource(fixture);
-      saveSources(fixture, [localEntry(team)]);
-      recorded(fixture, installed.location === 'LIBRARY' ? { type: 'local', location: fs.realpathSync(fixture.library) } : installed);
-      const f = await packHttpFixture(fixture);
-      try {
-        const receipt = await f.admission('refresh');
-        assert.equal(Object.hasOwn(receipt.receipt, 'catalogSource'), false,
-          'the by-name default is explicit policy for an unmatched record, and it never picks the saved folder that also has this name');
-        assert.equal(f.sends[0].prompt.includes('bound to one source'), false);
-      } finally { await f.close(); fixture.cleanup(); }
-    }
-  });
-  await t.test('a matching saved folder that is gone is a refusal, never the default catalog that also has the pack', async t => {
-    const fixture = packEngineFixture();
-    const team = artifactSource(fixture);
-    saveSources(fixture, [localEntry(team)]);
-    recorded(fixture, { type: 'local', location: fs.realpathSync(team) });
-    const spy = spawnSpy(t);
-    const f = await packHttpFixture(fixture);
-    try {
-      await plainRead(f);
-      fs.rmSync(team, { recursive: true });
-      const refused = await f.post({ op: 'prepare', operation: 'refresh', name: 'alpha' });
-      assert.deepEqual([refused.status, (await refused.json()).error], [409, 'source_unavailable']);
-      assert.equal(f.provider.read().packRequests.length, 0);
-      // Removal reads no source, so it stays usable, from the recorded installed authority alone.
-      const launched = spy.readers().length;
-      const removal = await f.post({ op: 'prepare', operation: 'remove', name: 'alpha' });
-      const prepared = await removal.json();
-      assert.equal(removal.status, 202, JSON.stringify(prepared));
-      assert.equal(spy.readers().length, launched, 'a removal admission reads no catalog and describes no source');
-      assert.equal(Object.hasOwn(prepared.receipt, 'catalogSource'), false, 'a removal is bound to no source');
-    } finally { await f.close(); fixture.cleanup(); }
-  });
-  await t.test('unreadable saved sources refuse a refresh and an install of a source, but not a default install or a removal', async () => {
-    const fixture = packEngineFixture();
-    const team = artifactSource(fixture);
-    saveSources(fixture, [localEntry(team)]);
-    recorded(fixture, { type: 'local', location: fs.realpathSync(team) });
-    const f = await packHttpFixture(fixture);
-    try {
-      const key = sourceRows(await plainRead(f)).get('team-packs').key;
-      fs.writeFileSync(sourcesFile(fixture), '# Pack Sources\n\nnot a sources document\n');
-      for (const body of [{ op: 'prepare', operation: 'refresh', name: 'alpha' }, { op: 'prepare', operation: 'install', name: 'alpha', source: key }]) {
-        const refused = await f.post(body);
-        assert.deepEqual([refused.status, (await refused.json()).error], [409, 'source_unavailable'], JSON.stringify(body));
-      }
-      assert.equal(f.provider.read().packRequests.length, 0);
-      const removal = await f.post({ op: 'prepare', operation: 'remove', name: 'alpha' });
-      assert.equal(removal.status, 202, 'profile-authorized removal needs no source');
-    } finally { await f.close(); fixture.cleanup(); }
-  });
-});
-
-test('T008 cancelling a request that is reading its source stops that source\'s reader tree and frees the source', { timeout: 60_000 }, async t => {
-  const fixture = packFixture();
-  fixture.profile({});
-  fixture.catalog(['alpha']);
-  const github = offlineGitHub(t, fixture);
-  // A reader that stops progressing, so only its owner can end it.
-  github.hang('acme/slow');
-  saveSources(fixture, [remoteEntry('acme/slow')]);
-  const spy = spawnSpy(t);
-  const kills = taskkillSpy(t);
-  const f = await packHttpFixture(fixture);
-  const controller = new AbortController();
-  /** @type {ProcessRow[]} */
-  let tree = [];
-  try {
-    const key = sourceRows(await plainRead(f)).get('acme/slow').key;
-    const origin = new URL(f.instance.url).origin;
-    const reading = call(f.instance.url, { path: '/api/packs/request', method: 'POST', signal: controller.signal,
-      headers: { origin, 'content-type': 'application/json' },
-      body: JSON.stringify({ op: 'prepare', operation: 'install', name: 'alpha', source: key }) }).catch(error => error);
-    await github.connected('acme/slow');
-    const reader = spy.readers().find(launch => readerRequest(launch).op === 'source' && readerRequest(launch).list === true);
-    assert.ok(reader, 'the source\'s own reader is the one that is stalled');
-    tree = await readerTree(/** @type {number} */ (reader.child.pid));
-    const refused = await removeSource(f, fixture, key);
-    assert.equal(/** @type {any} */ (refused.body).error, 'source_in_use', 'a preparation in flight holds its source');
-    controller.abort();
-    assert.ok((await reading) instanceof Error);
-    // The provider request is bound to the Canvas lifetime, not to its browser request, so the preparation runs on
-    // until its read's 30-second GitHub deadline stops the reader tree. Only then is the source released.
-    const until = Date.now() + 40_000;
-    while (f.provider.sourceUses(key).length && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 25));
-    assert.deepEqual(f.provider.sourceUses(key), []);
-    const reaping = performance.now() + 3_000;
-    while (github.open && performance.now() < reaping) await new Promise(resolve => setTimeout(resolve, 25));
-    if (!kills.failed.size) assert.equal(github.open, 0, 'no reader still holds the stalled connection');
-    await assertTreeStops({ t, spy, kills, trees: [tree].filter(members => members.length), scratch: fs.readdirSync(fixture.scratch) });
-    assert.equal(f.provider.read().packRequests.length, 0, 'a cancelled preparation leaves no receipt');
-    assert.equal((await removeSource(f, fixture, key)).status, 200, 'the freed source can now be removed');
-  } finally { await f.close(); await stopRecorded(tree); fixture.cleanup(); }
-});
-
 test('T008 discovery acquires each remote source exactly once: another host is cloned once and GitHub is read once without Git', { timeout: 45_000 }, async t => {
   const fixture = packFixture();
   fixture.profile({});
@@ -10108,35 +8852,6 @@ test('T003 an upstream that names a folder is read within a folder\'s five secon
         + `host's 55: ${fromRoot.toFixed(0)} ms after its root, ${fromRequest.toFixed(0)} ms after the request`);
     } finally { fixture.cleanup(); }
   });
-});
-
-test('T003 an install from a saved GitHub source is prepared and submitted when each catalog read outlasts five seconds', { timeout: 90_000 }, async t => {
-  const fixture = packEngineFixture();
-  const github = offlineGitHub(t, fixture);
-  publishAlpha(github, fixture, 'acme/dude-packs');
-  saveSources(fixture, [remoteEntry('acme/dude-packs')]);
-  const f = await packHttpFixture(fixture);
-  try {
-    const key = sourceRows(await plainRead(f)).get('acme/dude-packs').key;
-    // The install reads the one saved source's catalog for its preparation and again for its submission.
-    github.slow('acme/dude-packs', 800);
-    /** @param {Record<string, unknown>} body */
-    const timedPost = async body => {
-      const started = performance.now();
-      const response = await f.post(body);
-      return { status: response.status, value: await response.json(), elapsed: performance.now() - started };
-    };
-    const prepared = await timedPost({ op: 'prepare', operation: 'install', name: 'alpha', source: key });
-    assert.equal(prepared.status, 202, JSON.stringify(prepared.value));
-    assert.equal(prepared.value.phase, 'prepared');
-    assert.ok(prepared.elapsed > 5_000, `the preparation's read took ${prepared.elapsed.toFixed(0)} ms`);
-    const delivered = await timedPost({ op: 'submit', operation: 'install', name: 'alpha', source: key, packReceipt: prepared.value.packReceipt });
-    assert.equal(delivered.status, 202, JSON.stringify(delivered.value));
-    assert.equal(delivered.value.phase, 'delivered');
-    assert.ok(delivered.elapsed > 5_000, `the submission's read took ${delivered.elapsed.toFixed(0)} ms`);
-    assert.equal(f.sends.length, 1, 'the one handoff was sent');
-    assert.deepEqual(github.requests.filter(request => request.authorization !== null), []);
-  } finally { await f.close(); fixture.cleanup(); }
 });
 
 isolatedTest('T003 an unconfirmed stop keeps its root and its reader slot, at most sixteen reads wait, and a wait ends with its window', { timeout: 120_000 }, async t => {
@@ -10429,4 +9144,433 @@ test('080 Documents: a project skill or agent lists its entrypoint text, then th
       assert.deepEqual(seen.open.filter(file => file === path.join(f.root, '.github', ...unread.split('/'))), [], `${unread} is never opened`);
     }
   });
+});
+
+/* -------------------------------------------------------------------------
+ * 083 Pack actions: one closed route runs Compose in a child of its own. A
+ * preview issues the instance's single-use token, and its apply asks the server
+ * at Compose's write gate, pinned to what the preview resolved.
+ * ------------------------------------------------------------------------- */
+
+const ACTION_ROUTE = '/api/packs/action';
+const PACK_ACTION = fileURLToPath(new URL('./lib/pack-action.mjs', import.meta.url));
+
+/** @param {Awaited<ReturnType<typeof packHttpFixture>>} f @param {unknown} body */
+const postAction = (f, body) => rawJson(f.instance.server, {
+  path: ACTION_ROUTE, method: 'POST',
+  headers: { host: new URL(f.instance.url).host, origin: new URL(f.instance.url).origin, 'content-type': 'application/json' },
+  body: JSON.stringify(body),
+});
+/**
+ * One answered preview of alpha; `source` names a saved source for an install.
+ * @param {Awaited<ReturnType<typeof packHttpFixture>>} f @param {'install' | 'remove' | 'refresh'} operation @param {string} [source]
+ * @returns {Promise<any>}
+ */
+async function previewAlpha(f, operation, source) {
+  const response = await postAction(f, { op: 'preview', operation, name: 'alpha', ...(source ? { source } : {}) });
+  assert.equal(response.status, 200, JSON.stringify(response.body));
+  return response.body;
+}
+/** The pack action children a spy saw. @param {ReturnType<typeof spawnSpy>} spy */
+const actionChildren = spy => spy.calls.filter(call => Array.isArray(call.args) && call.args.includes(PACK_ACTION));
+/** Wait for what another process brings about. @param {() => boolean} probe @param {string} label */
+async function eventually(probe, label) {
+  const deadline = performance.now() + 30_000;
+  while (!probe()) {
+    if (performance.now() > deadline) assert.fail(`timed out waiting for ${label}`);
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+}
+
+/**
+ * Hold, or end, every pack action child at its first write into the workspace's
+ * .github, which Compose makes only after its write gate said go. Node preloads
+ * this module into each child through NODE_OPTIONS; a preview writes nothing
+ * there and never meets it. A held child goes on once `release` runs, or after
+ * 30 seconds.
+ * @param {import('node:test').TestContext} t
+ * @param {ReturnType<typeof packFixture>} fixture
+ * @param {'hold' | 'end'} mode
+ */
+function atFirstPackWrite(t, fixture, mode) {
+  const folder = path.join(fixture.temporary, 'first-write');
+  fs.mkdirSync(folder);
+  const reached = path.join(folder, 'reached');
+  const released = path.join(folder, 'released');
+  const preload = path.join(folder, 'first-write.mjs');
+  fs.writeFileSync(preload, [
+    "import fs from 'node:fs';",
+    "import path from 'node:path';",
+    "const same = value => process.platform === 'win32' ? value.toLowerCase() : value;",
+    `const github = same(${JSON.stringify(path.join(fixture.root, '.github') + path.sep)});`,
+    'const copy = fs.copyFileSync;',
+    'fs.copyFileSync = function (source, target, ...rest) {',
+    "  if (typeof target === 'string' && same(path.resolve(target)).startsWith(github)) {",
+    `    fs.writeFileSync(${JSON.stringify(reached)}, '');`,
+    mode === 'end' ? '    process.exit(1);'
+      : `    for (let waited = 0; waited < 30_000 && !fs.existsSync(${JSON.stringify(released)}); waited += 20) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);`,
+    '  }',
+    '  return copy.call(this, source, target, ...rest);',
+    '};',
+    '',
+  ].join('\n'));
+  t.after(preloadIntoChildren(preload));
+  return { reached: () => fs.existsSync(reached), release: () => fs.writeFileSync(released, '') };
+}
+
+test('083 Pack actions: the route admits only the exact same-origin JSON POST with a closed body, and runs nothing otherwise', async t => {
+  const fixture = packEngineFixture();
+  const f = await packHttpFixture(fixture);
+  const spy = spawnSpy(t);
+  const readOnlyId = `actions-read-only-${randomUUID()}`;
+  const readOnly = await openInstance(readOnlyId, () => {}, { complete: true }, { root: fixture.root });
+  const host = new URL(f.instance.url).host, origin = new URL(f.instance.url).origin;
+  const body = { op: 'preview', operation: 'install', name: 'alpha' };
+  const valid = { path: ACTION_ROUTE, method: 'POST', headers: { host, origin, 'content-type': 'application/json' }, body: JSON.stringify(body) };
+  const before = snapshotFiles(fixture.root);
+  try {
+    assert.equal(await rawStatus(readOnly.server, { ...valid, headers: {
+      host: new URL(readOnly.url).host, origin: new URL(readOnly.url).origin, 'content-type': 'application/json' } }), 404,
+    'a read-only Canvas has no pack actions');
+    for (const suffix of ['/', '?x=1', '/apply']) {
+      assert.equal(await rawStatus(f.instance.server, { ...valid, path: `${ACTION_ROUTE}${suffix}` }), 404, `route suffix ${suffix}`);
+    }
+    for (const method of ['GET', 'PUT', 'DELETE']) {
+      assert.equal(await rawStatus(f.instance.server, { ...valid, method, body: undefined }), 404, `method ${method}`);
+    }
+    for (const headers of [
+      { host, 'content-type': 'application/json' }, { host, origin: 'https://foreign.invalid', 'content-type': 'application/json' },
+      { ...valid.headers, 'sec-fetch-site': 'cross-site' },
+    ]) {
+      assert.equal(await rawStatus(f.instance.server, { ...valid, headers }), 403, JSON.stringify(headers));
+    }
+    assert.equal(await rawStatus(f.instance.server, { ...valid, headers: { ...valid.headers, 'content-type': 'text/plain' } }), 415, 'not JSON');
+    for (const [label, rejected, status] of /** @type {Array<[string, string, number]>} */ ([
+      ['malformed JSON', '{invalid', 400], ['over 4 KiB', JSON.stringify({ ...body, pad: 'x'.repeat(4_096) }), 413],
+    ])) {
+      const refused = await rawJson(f.instance.server, { ...valid, body: rejected });
+      assert.deepEqual([refused.status, refused.body], [status, { error: 'invalid_input' }], label);
+    }
+    const key = `src_${'a'.repeat(32)}`;
+    for (const rejected of [
+      {}, [], null, 'preview', { ...body, extra: 1 }, { ...body, root: fixture.root }, { ...body, operation: 'add' },
+      { ...body, name: '../alpha' }, { ...body, source: 'library/packs' },
+      { op: 'preview', operation: 'remove', name: 'alpha', source: key }, { op: 'preview', operation: 'refresh', name: 'alpha', source: key },
+      { op: 'apply' }, { op: 'apply', token: 'not-a-token' }, { op: 'apply', token: randomUUID(), name: 'alpha' }, { op: 'cancel', token: 5 },
+    ]) {
+      const refused = await postAction(f, rejected);
+      assert.deepEqual([refused.status, refused.body], [400, { error: 'invalid_input' }], JSON.stringify(rejected));
+    }
+    assert.deepEqual([actionChildren(spy).length, spy.readers().length], [0, 0], 'no refusal started a child or a reader');
+    assert.deepEqual(snapshotFiles(fixture.root), before, 'nothing was written');
+    // The same request, well formed, runs one preview.
+    assert.equal((await postAction(f, body)).status, 200);
+    assert.equal(actionChildren(spy).length, 1);
+  } finally {
+    await f.close();
+    await closeInstance(readOnlyId);
+    fixture.cleanup();
+  }
+});
+
+test('083 Pack actions: install, refresh and remove each take one preview and one apply in a child, and a spent token writes nothing', { timeout: 120_000 }, async t => {
+  const fixture = packEngineFixture();
+  const f = await packHttpFixture(fixture);
+  const spy = spawnSpy(t);
+  try {
+    const library = fs.realpathSync(fixture.library);
+    const install = await previewAlpha(f, 'install');
+    assert.match(install.token, /^[0-9a-f-]{36}$/);
+    assert.deepEqual([install.thirdParty, install.message], [false, null], 'the workspace library is not a source the project added');
+    assert.deepEqual(install.preview.source, { type: 'local', location: library });
+    assert.deepEqual(install.preview.items.map(/** @param {any} item */ item => `${item.kind} ${item.name}`).sort(),
+      ['Agent dude-pack-alpha-worker', 'Instructions dude-pack-alpha-old', 'Skill dude-pack-alpha-helper']);
+    assert.deepEqual([install.preview.conflicts, install.preview.tools], [[], []]);
+    const { files } = install.preview;
+    const installed = await postAction(f, { op: 'apply', token: install.token });
+    assert.deepEqual([installed.status, installed.body], [200, { ok: true, result: { added: 'alpha', files, origin: 'local' } }]);
+    const status = cmdStatus({ root: fixture.root });
+    assert.deepEqual(status.ok && status.result.installed.alpha, { files, source: { type: 'local', location: library } });
+    // The apply spent its token, so the same token again writes nothing.
+    const spent = snapshotFiles(fixture.root);
+    const again = await postAction(f, { op: 'apply', token: install.token });
+    assert.deepEqual([again.status, again.body], [409, { error: 'changed' }]);
+    assert.deepEqual(snapshotFiles(fixture.root), spent, 'byte-identical');
+
+    const agent = path.join(fixture.library, 'alpha/agents/dude-pack-alpha-worker.agent.md');
+    fs.writeFileSync(agent, fs.readFileSync(agent, 'utf8').replace('Fixture v1.', 'Fixture v2.'));
+    const refresh = await previewAlpha(f, 'refresh');
+    assert.deepEqual({ replaced: refresh.preview.replaced, added: refresh.preview.added, removed: refresh.preview.removed,
+      thirdParty: refresh.thirdParty }, { replaced: files, added: [], removed: [], thirdParty: false });
+    const refreshed = await postAction(f, { op: 'apply', token: refresh.token });
+    assert.deepEqual([refreshed.status, /** @type {any} */ (refreshed.body).ok], [200, true], JSON.stringify(refreshed.body));
+    assert.match(fs.readFileSync(path.join(fixture.root, '.github/agents/dude-pack-alpha-worker.agent.md'), 'utf8'), /Fixture v2\./);
+
+    const remove = await previewAlpha(f, 'remove');
+    assert.deepEqual(remove.preview, { files });
+    const removed = await postAction(f, { op: 'apply', token: remove.token });
+    assert.deepEqual([removed.status, removed.body], [200, { ok: true, result: { removed: 'alpha', files } }]);
+    const after = cmdStatus({ root: fixture.root });
+    assert.equal(after.ok && Object.hasOwn(after.result.installed, 'alpha'), false);
+
+    assert.equal(actionChildren(spy).length, 6, 'each preview and each apply ran in its own child; the spent token started none');
+    assert.equal(f.provider.read().requests.length, 0, 'no Needs You request');
+    assert.equal(f.sends.length, 0, 'no session message');
+    assert.deepEqual(fs.readdirSync(fixture.scratch), [], 'every child\'s root was removed');
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+test('083 Pack actions: an apply after the profile or the saved sources changed writes nothing and spends its token', { timeout: 60_000 }, async () => {
+  const fixture = packEngineFixture();
+  const f = await packHttpFixture(fixture);
+  const profile = fs.readFileSync(fixture.profilePath);
+  try {
+    for (const [label, change, undo] of /** @type {Array<[string, () => void, () => void]>} */ ([
+      ['another install edited the profile', () => fixture.profile({ beta: fixture.entry('beta') }),
+        () => fs.writeFileSync(fixture.profilePath, profile)],
+      ['a source was saved', () => { saveSources(fixture, [localEntry(localSource(fixture, 'team-packs', ['beta']))]); },
+        () => fs.rmSync(sourcesFile(fixture))],
+    ])) {
+      const { token } = await previewAlpha(f, 'install');
+      assert.equal(typeof token, 'string', label);
+      change();
+      const before = snapshotFiles(fixture.root);
+      const applied = await postAction(f, { op: 'apply', token });
+      assert.deepEqual([applied.status, applied.body], [409, { error: 'changed' }], label);
+      assert.deepEqual(snapshotFiles(fixture.root), before, `${label}: byte-identical, nothing was written`);
+      // The refused apply spent the token, so even the previewed workspace does not revive it.
+      undo();
+      const restored = snapshotFiles(fixture.root);
+      const again = await postAction(f, { op: 'apply', token });
+      assert.deepEqual([again.status, again.body], [409, { error: 'changed' }], `${label}: single use`);
+      assert.deepEqual(snapshotFiles(fixture.root), restored, `${label}: the spent token wrote nothing`);
+    }
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+test('083 Pack actions: the write gate answers no when the profile changed while the source was read, and nothing is written', { timeout: 60_000 }, async t => {
+  const fixture = packEngineFixture();
+  const github = offlineGitHub(t, fixture);
+  publishAlpha(github, fixture, 'acme/team-packs');
+  saveSources(fixture, [remoteEntry('acme/team-packs')]);
+  const f = await packHttpFixture(fixture);
+  try {
+    const preview = await previewAlpha(f, 'install', sharedKey(fixture, remoteEntry('acme/team-packs')));
+    // Each GitHub answer of the apply now waits, so the profile changes before its gate is reached.
+    github.slow('acme/team-packs', 500);
+    const asked = github.connections('acme/team-packs');
+    const applying = postAction(f, { op: 'apply', token: preview.token });
+    await eventually(() => github.connections('acme/team-packs') > asked, 'the apply to read GitHub');
+    fixture.profile({ beta: fixture.entry('beta') });
+    const before = snapshotFiles(fixture.root);
+    const applied = await applying;
+    assert.deepEqual([applied.status, applied.body], [409, { error: 'changed' }]);
+    assert.deepEqual(snapshotFiles(fixture.root), before, 'byte-identical');
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+test('083 Pack actions: once the write gate said go, Cancel is too late and the real result comes back, and another apply meanwhile is busy', { timeout: 90_000 }, async t => {
+  const fixture = packEngineFixture();
+  const writes = atFirstPackWrite(t, fixture, 'hold');
+  const f = await packHttpFixture(fixture);
+  /** @type {ReturnType<typeof postAction> | null} */
+  let applying = null;
+  try {
+    const first = await previewAlpha(f, 'install');
+    applying = postAction(f, { op: 'apply', token: first.token });
+    await eventually(writes.reached, 'the apply to reach its first write');
+    const late = await postAction(f, { op: 'cancel', token: first.token });
+    assert.deepEqual([late.status, late.body], [409, { error: 'too_late' }]);
+    // The held write has created nothing yet: Compose writes the agent first, into a folder that exists.
+    const second = await previewAlpha(f, 'install');
+    assert.equal(typeof second.token, 'string', 'a preview still runs beside the apply');
+    const busy = await postAction(f, { op: 'apply', token: second.token });
+    assert.deepEqual([busy.status, busy.body], [409, { error: 'busy' }]);
+    writes.release();
+    const applied = await applying;
+    assert.deepEqual([applied.status, /** @type {any} */ (applied.body).ok], [200, true], 'the real result came back');
+    const status = cmdStatus({ root: fixture.root });
+    assert.equal(status.ok && Object.hasOwn(status.result.installed, 'alpha'), true);
+  } finally {
+    writes.release();
+    await applying?.catch(() => null);
+    await f.close();
+    fixture.cleanup();
+  }
+});
+
+test('083 Pack actions: a child that ends after its write gate said go reports an uncertain outcome', { timeout: 60_000 }, async t => {
+  const fixture = packEngineFixture();
+  const writes = atFirstPackWrite(t, fixture, 'end');
+  const f = await packHttpFixture(fixture);
+  try {
+    const { token } = await previewAlpha(f, 'install');
+    const applied = await postAction(f, { op: 'apply', token });
+    assert.equal(writes.reached(), true, 'the child was allowed to write');
+    const body = /** @type {any} */ (applied.body);
+    assert.deepEqual([applied.status, body.ok, body.mutation], [200, false, 'uncertain']);
+    assert.equal(typeof body.error, 'string');
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+test('083 Pack actions: Cancel before the write gate stops a child that reads a saved folder at once, and nothing changes', { timeout: 60_000 }, async t => {
+  const fixture = packEngineFixture();
+  const team = artifactSource(fixture);
+  saveSources(fixture, [localEntry(team)]);
+  const f = await packHttpFixture(fixture);
+  const spy = spawnSpy(t);
+  try {
+    const preview = await previewAlpha(f, 'install', sharedKey(fixture, localEntry(team)));
+    assert.equal(preview.thirdParty, true, 'a source the project added is third-party');
+    assert.deepEqual(preview.preview.source, { type: 'local', location: fs.realpathSync(team) });
+    // From here every child blocks while it resolves the folder, before Compose's write gate.
+    stallResolutionOf(t, fixture, fs.realpathSync(team));
+    const before = snapshotFiles(fixture.root);
+    const started = performance.now();
+    const applying = postAction(f, { op: 'apply', token: preview.token });
+    await eventually(() => actionChildren(spy).length === 2, 'the apply child');
+    const cancelled = await postAction(f, { op: 'cancel', token: preview.token });
+    assert.deepEqual([cancelled.status, cancelled.body], [200, { cancelled: true }]);
+    const applied = await applying;
+    assert.deepEqual([applied.status, applied.body], [409, { error: 'cancelled' }]);
+    assert.ok(performance.now() - started < 20_000, 'the child was stopped, not waited for');
+    assert.notEqual(actionChildren(spy)[1].exitedAt, null);
+    assert.deepEqual(snapshotFiles(fixture.root), before, 'byte-identical');
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+test('083 Pack actions: Cancel before the write gate stops a child that reads GitHub at once, and nothing changes', { timeout: 60_000 }, async t => {
+  const fixture = packEngineFixture();
+  const github = offlineGitHub(t, fixture);
+  publishAlpha(github, fixture, 'acme/team-packs');
+  saveSources(fixture, [remoteEntry('acme/team-packs')]);
+  const f = await packHttpFixture(fixture);
+  try {
+    const preview = await previewAlpha(f, 'install', sharedKey(fixture, remoteEntry('acme/team-packs')));
+    assert.equal(preview.thirdParty, true);
+    // GitHub now accepts the apply's requests and never answers them.
+    github.hold('acme/team-packs');
+    const before = snapshotFiles(fixture.root);
+    const applying = postAction(f, { op: 'apply', token: preview.token });
+    await github.connected('acme/team-packs');
+    const started = performance.now();
+    const cancelled = await postAction(f, { op: 'cancel', token: preview.token });
+    assert.deepEqual([cancelled.status, cancelled.body], [200, { cancelled: true }]);
+    const applied = await applying;
+    assert.deepEqual([applied.status, applied.body], [409, { error: 'cancelled' }]);
+    assert.ok(performance.now() - started < 10_000, 'stopped at once, well before its 30-second request bound');
+    assert.deepEqual(snapshotFiles(fixture.root), before, 'byte-identical');
+    await eventually(() => github.open === 0, 'the stopped child to drop its held request');
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+test('083 Pack actions: an install from a repository records the commit its preview showed after the branch moved, and the next preview warns again', { timeout: 60_000 }, async t => {
+  const fixture = packEngineFixture();
+  const github = offlineGitHub(t, fixture);
+  const repository = publishAlpha(github, fixture, 'acme/team-packs');
+  saveSources(fixture, [remoteEntry('acme/team-packs')]);
+  const f = await packHttpFixture(fixture);
+  try {
+    const previewed = repository.commit();
+    const preview = await previewAlpha(f, 'install', sharedKey(fixture, remoteEntry('acme/team-packs')));
+    assert.equal(preview.thirdParty, true);
+    assert.deepEqual(preview.preview.source,
+      { type: 'remote', repository: 'https://github.com/acme/team-packs', requested_ref: 'main', resolved_commit: previewed });
+    // The branch moves on after the preview.
+    const agent = path.join(repository.directory, 'library/packs/alpha/agents/dude-pack-alpha-worker.agent.md');
+    fs.writeFileSync(agent, fs.readFileSync(agent, 'utf8').replace('Fixture v1.', 'Fixture v2.'));
+    repository.git('-c', 'user.email=fixture@example.test', '-c', 'user.name=Canvas Fixture', 'commit', '-qam', 'move main');
+    assert.notEqual(repository.commit(), previewed);
+    const applied = await postAction(f, { op: 'apply', token: preview.token });
+    assert.deepEqual([applied.status, /** @type {any} */ (applied.body).ok], [200, true], JSON.stringify(applied.body));
+    const status = cmdStatus({ root: fixture.root });
+    assert.deepEqual(status.ok && status.result.installed.alpha.source,
+      { type: 'remote', repository: 'https://github.com/acme/team-packs', requested_ref: previewed, resolved_commit: previewed });
+    assert.match(fs.readFileSync(path.join(fixture.root, '.github/agents/dude-pack-alpha-worker.agent.md'), 'utf8'), /Fixture v1\./);
+    const next = await previewAlpha(f, 'refresh');
+    assert.equal(next.thirdParty, true, 'the next preview from that source warns again');
+    assert.equal(next.preview.source.resolved_commit, repository.commit());
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+test('083 Pack actions: a host executable that cannot run a Node script runs the pack action child through its extension bootstrap', { timeout: 30_000 }, () => {
+  const fixture = packFixture();
+  fixture.profile({ alpha: fixture.entry('alpha') });
+  try {
+    const observed = simulatedCliHost(fixture, { executable: 'git', bootstrap: 'current',
+      action: { op: 'preview', operation: 'remove', name: 'alpha', source: null } });
+    assert.equal(observed.execPath, observed.host, 'the child ran under a host executable that is not Node');
+    assert.deepEqual(observed.action, {
+      outcome: { ok: true, result: { files: ['.github/agents/dude-pack-alpha-worker.agent.md'] } },
+      binding: { sourceKey: null, identity: null, purpose: 'local' },
+    });
+    assert.equal(fs.existsSync(observed.marker), false, 'the child never imported the inherited extension entry');
+    assert.equal(observed.launches.length, 1, 'one child, launched through the host bootstrap');
+    const [launch] = observed.launches;
+    assert.equal(launch.command, observed.host);
+    assert.deepEqual(launch.args, [observed.cliBootstrap, PACK_ACTION, fixture.root]);
+    assert.equal(launch.env.EXTENSION_PATH, PACK_ACTION);
+    assert.equal(launch.env.COPILOT_EXTENSION_PARENT_PID, String(observed.hostPid));
+    assert.deepEqual([launch.stdio, launch.windowsHide, launch.cwd], [['ignore', 'ignore', 'ignore', 'ipc'], true, fixture.root]);
+    assert.equal(path.dirname(String(launch.env.TMP)), fixture.scratch);
+    assert.equal(path.dirname(String(launch.env[CATALOG_GIT_HOME_ENV])), launch.env.TMP, 'its own Git home, in its own root');
+    assert.deepEqual(fs.readdirSync(fixture.scratch), [], 'its root was removed');
+  } finally { fixture.cleanup(); }
+});
+
+test('083 Pack actions: the old pack request address is gone, so every call answers 404, runs nothing and publishes nothing', async t => {
+  const fixture = packEngineFixture();
+  const f = await packHttpFixture(fixture);
+  const spy = spawnSpy(t);
+  const before = snapshotFiles(fixture.root);
+  const headers = { host: new URL(f.instance.url).host, origin: new URL(f.instance.url).origin, 'content-type': 'application/json' };
+  try {
+    for (const body of [
+      { op: 'prepare', operation: 'install', name: 'alpha' },
+      { op: 'submit', operation: 'install', name: 'alpha', packReceipt: randomUUID() },
+      { op: 'prepare', operation: 'remove', name: 'alpha' },
+    ]) {
+      const answer = await rawJson(f.instance.server, { path: '/api/packs/request', method: 'POST', headers, body: JSON.stringify(body) });
+      assert.deepEqual([answer.status, answer.body], [404, { error: 'Not found.' }], JSON.stringify(body));
+    }
+    assert.equal(await rawStatus(f.instance.server, { path: '/api/packs/request', method: 'GET', headers: { host: headers.host } }), 404);
+    const feed = await f.feed();
+    assert.equal(Object.hasOwn(feed, 'packRequests'), false, 'the feed has no pack requests');
+    assert.deepEqual([feed.requests.length, f.sends.length], [0, 0], 'no Needs You request and no session message');
+    assert.deepEqual([actionChildren(spy).length, spy.readers().length], [0, 0], 'no child and no reader started');
+    assert.deepEqual(snapshotFiles(fixture.root), before, 'nothing was written');
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+test('083 Pack actions: a saved source is removed while a preview of it is open, and only an installed pack that records it blocks removal', { timeout: 90_000 }, async () => {
+  const fixture = packEngineFixture();
+  const team = artifactSource(fixture);
+  saveSources(fixture, [localEntry(team)]);
+  const f = await packHttpFixture(fixture);
+  try {
+    const key = sourceRows(await plainRead(f)).get('team-packs').key;
+    // A preview, or its token, never holds the source: there is no request to wait for.
+    const open = await previewAlpha(f, 'install', key);
+    assert.match(open.token, /^[0-9a-f-]{36}$/);
+    const removed = await removeSource(f, fixture, key);
+    assert.equal(removed.status, 200, JSON.stringify(removed.body));
+    assert.deepEqual(readPackSources(fixture.root).sources, []);
+    // The token was bound to the saved sources, so its apply now writes nothing.
+    const profile = fs.readFileSync(fixture.profilePath);
+    const spent = await postAction(f, { op: 'apply', token: open.token });
+    assert.deepEqual([spent.status, spent.body], [409, { error: 'changed' }]);
+    assert.deepEqual(fs.readFileSync(fixture.profilePath), profile, 'the profile is byte-identical');
+
+    // An installed pack that records the source is the one thing that keeps it.
+    saveSources(fixture, [localEntry(team)]);
+    const install = await previewAlpha(f, 'install', key);
+    const installed = await postAction(f, { op: 'apply', token: install.token });
+    assert.equal(/** @type {any} */ (installed.body).ok, true, JSON.stringify(installed.body));
+    const refused = await removeSource(f, fixture, key);
+    assert.deepEqual([refused.status, /** @type {any} */ (refused.body).error], [409, 'source_in_use']);
+    assert.deepEqual(/** @type {any} */ (refused.body).blockers, [{ kind: 'installed', name: 'alpha' }]);
+    assert.equal(/** @type {any} */ (refused.body).message, 'This source is in use. Installed packs from this source: alpha.');
+    assert.deepEqual(readPackSources(fixture.root).sources, [localEntry(team)], 'the refused removal saved nothing');
+    assert.equal(f.provider.read().requests.length + f.sends.length, 0, 'no Needs You request and no session message');
+  } finally { await f.close(); fixture.cleanup(); }
 });

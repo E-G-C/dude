@@ -1203,8 +1203,8 @@ returns to that row. Details show the full description, use cases, and source,
 with the location and tracked ref of an Available pack's source, plus an
 installed pack's recorded source and exact recorded files. A recorded source
 says where the files came from; it does not verify installed bytes. Settings
-does not read required tools or projected files; Dude shows them in its impact
-preview. Changing the tab or page closes the detail. A filter change keeps it
+does not read required tools or projected files; the preview of an Install
+shows them. Changing the tab or page closes the detail. A filter change keeps it
 only while that pack is still on the first page of the results.
 
 Pack, project, and source details keep one order: the heading, a coverage notice
@@ -1274,88 +1274,82 @@ reread can list it again. Reloading the page, closing the tab, or changing
 workspace discards the snapshot, and nothing is written to disk. The snapshot
 keeps the coverage it had when it was read, such as `current`, and Settings
 shows no age or staleness cue for it, so choose Reload packs to read the sources
-again after a long time away. Each install or refresh request still checks its
-chosen source again before it goes to Dude.
+again after a long time away. Each install or refresh preview reads its source
+again.
 
 Installed details offer Refresh pack and Remove; Available details offer
-Install. Each action is a request to Dude, not an operation. Canvas checks the
-joined workspace, session, and pack eligibility, then sends one fixed request
-for that exact operation and pack to the joined session. It refuses before
-sending while the session is busy, a request is waiting, chat input is queued,
-or an earlier capture or pack request is unreconciled. It never queues,
-retries, or resends a pack request, including after a reload or reconnect.
-Preparing and submitting an install or refresh each read its catalog again, so
-either can take as long as that read, and never more than 90 seconds. A removal
-reads no catalog and keeps its 5-second bound.
-Closing the request dialog or navigating away does not cancel an admitted
-request; View pack request reopens its status.
+Install. Choose one to open its dialog over the details. Canvas runs Compose,
+Dude's pack installer, itself: the dialog previews the change, one click on
+Install, Remove, or Refresh applies it, and the result shows in the same dialog.
+No agent turn, Needs you request, or chat message is involved. The buttons are
+unavailable only while the workspace is unavailable or reconnecting, and Refresh
+also while the saved source list cannot be read.
 
-An install from a source this project added is bound to that exact source. The
-request names the source row you chose, never a repository, folder, or ref typed
-anywhere else, and the status line reads, for example,
-`Install rust from acme/dude-packs: Request prepared`. Refresh takes no source
-from you: Dude uses the added source whose repository or folder matches the
-pack's recorded source, and the default catalog when none matches. Remove takes
-no source and depends on no catalog, only on the pack's recorded safe files. An
-install from the default catalog, a refresh of a pack recorded from it, and a
-removal use the same request, permission, and result as before.
+The dialog opens at once with `Checking <source>...`, or
+`Checking installed files...` for Remove, and Cancel. Nothing changes while it
+checks. Compose builds the preview from the same source, file list, and checks
+the action itself uses:
 
-Dude then follows the ordinary `dude-compose` flow. Its impact preview shows the
-install source, namespaced artifacts, destination conflicts, and required
-tools; only the pack's recorded safe files for removal; or the replaced, added,
-and removed sets for refresh. A refresh warns that installed edits can be
-overwritten; keep persistent customizations under `dude-local-*`. Dude then asks
-for permission in Needs you with an exact phrase such as `INSTALL PACK <name>`,
-`REMOVE PACK <name>`, or `REFRESH PACK <name>`. Open Needs you goes to that
-request, and Back to pack request returns to Settings. Only that literal
-confirmation consents. A decline changes nothing, and a changed source,
-installed state, or target requires a fresh preview and confirmation. Missing
-tools refuse an install; Settings never installs prerequisites.
+- Install lists each item the pack adds by name and kind, each required tool as
+  found or missing, the source, and the note that new agents or skills may not
+  be available until you start a new session. Show files lists the file paths.
+- Remove lists every recorded file it deletes. It reads no source and needs no
+  catalog.
+- Refresh shows the source it will use and groups the files as Replaced, Added,
+  and Removed. It warns that local edits to those files are overwritten; keep
+  lasting changes in `dude-local-*` files. It uses the added source whose
+  repository or folder matches the pack's recorded source, and the default
+  catalog when none matches. When that differs from the recorded source, it
+  shows `Source changes: A -> B`. The same repository at a new commit is not a
+  source change.
 
-For an install or refresh, Dude's permission lists the source first, before the
-files. It gives the source's type, its repository or folder, the configured ref
-for a GitHub source, and a revision. A GitHub source's revision is
-`commit:<hash>`, the commit the preview resolved. A local folder has no commit,
-so its revision is `sha256:<hash>`, a digest of the pack's files in that folder.
-A source this project added is labeled `Third-party source`: it is not part of
-the Dude bundle, and its packs can add agents and instructions. The two built-in
-sources carry no such label. Canvas refuses a permission for an added-source
-request unless it names that source first.
+The action button is disabled, with the reason beside it, when a required tool
+is missing, a destination file already exists, the source cannot be read, or the
+pack is no longer listed or installed. A blocked dialog offers only Close.
+Settings never installs a missing tool.
 
-When a refresh would use a different source than the one recorded, Dude's
-permission begins with `Source changes: A -> B`, where A is the recorded source
-and B the selected one, before you consent. The same repository at a new commit
-or ref is not a source change. A GitHub source is applied at the reviewed
-commit, so a branch that moves after the preview is not followed, while the
-saved ref keeps tracking the branch for the next refresh.
+An Install from a source this project added, or a Refresh of a pack recorded
+from one, shows a `Third-party source` warning: the pack is not part of the Dude
+bundle and can add agents and instructions. The warning names the repository
+and its full commit, or the folder with "no commit". It has no checkbox, and
+Canvas stores no trust decision, so every preview from that source shows it. The
+two built-in sources carry no warning.
 
-The request status separates prepared, admitted (delivery unconfirmed),
-delivered, permission requested, and waiting for the owner result. A click, a
-delivery, or an acknowledged permission reply is not Applied. Settings shows
-Applied only when Dude's result for that exact request reports success and a
-fresh read of the installed profile agrees. Declined, Failed, Unavailable,
-Stale, and Uncertain keep their meaning even if the profile later shows that
-pack. After a caught failure, the result states whether Dude verified
-restoration or the state is uncertain; neither is recovery from process or
-machine failure. After provider replacement, a reread shows current membership
-but cannot establish whether the earlier request succeeded.
+One click on the action button is the only confirmation, and each preview
+allows one apply. An Install or Refresh applies what the preview read: a GitHub
+source at the commit the preview showed, even if its branch moved since. If
+installed packs or saved sources changed after the preview, the click writes
+nothing and the dialog says `Installed packs or sources changed since this
+preview.`; choose Preview again. While an action runs, the dialog shows
+`Installing...`, `Removing...`, or `Refreshing...`. Install and Refresh keep
+Cancel until writing starts. Cancel stops a folder or GitHub read at once and a
+read from another Git host when Git returns, within 60 seconds, and then the
+dialog says `Nothing changed.`. Once writing has started, the action finishes
+and the dialog shows its real result. Remove has no Cancel. A GitHub read takes
+at most 120 seconds.
 
-A request bound to an added source needs more before Settings shows Applied.
-Dude's result must echo the exact source the request was bound to, and the fresh
-installed profile must record the pack from it: the same repository at the
-reviewed commit, or the same real folder. A matching pack name or an echoed
-source key alone is not enough, and a result that names another source is never
-joined to the request.
+On success, the dialog says what was installed, removed, or refreshed, with
+Done. After Install, Show in Installed selects the pack in Installed once the
+list shows it. When an action ends, Canvas rereads installed packs without
+reading any catalog: an installed pack leaves Available at once, and a removed
+pack returns to Available after Reload packs. On failure, the dialog names the
+failed action and says `Nothing changed`, `Failed; your files were restored`,
+or `Failed; restoration unconfirmed. Check Installed.`, with Compose's message
+in a disclosure. Canvas runs no lint after an action; the next lint run checks
+the new files, and Remove undoes an Install.
 
-Permission, the result, the listed files, and host loading are four separate
-facts. Permission is your literal consent in Needs you, and replying changes no
-file. The result is Dude's report of what it did and verified at one moment, and
-Applied describes that moment, not later file integrity. The listed files are
-what Installed shows now: a pack's recorded files, or the files found in the
-project folders. A listing proves no operation, and a recorded source does not
-verify installed bytes. Whether the host has loaded a new agent, skill, or
-instruction is a fourth question. Canvas does not observe it, and new items may
-not be available until you start a new session.
+Escape acts as Cancel, Close, or Done where the dialog offers one, and Tab stays
+inside the dialog. Closing it returns focus to the button that opened it, or to
+the Settings heading when that row has left the list. In chat,
+`@dude add pack <name>` and `@dude remove pack <name>` show the same Compose
+preview before they ask you to confirm.
+
+The listed files and host loading are separate facts. The listed files are what
+Installed shows now: a pack's recorded files, or the files found in the project
+folders. A listing proves no operation, and a recorded source does not verify
+installed bytes. Whether the host has loaded a new agent, skill, or instruction
+is another question. Canvas does not observe it, and new items may not be
+available until you start a new session.
 
 #### Settings: importing an agent or skill
 
@@ -1372,9 +1366,11 @@ Request import only asks Dude to run the ordinary `dude-bundle-import` workflow
 not read the source, choose between a single file and a directory, or execute the
 import. Dude chooses from the source you entered and previews the whole import
 before anything changes. The request is sent once to the joined session and is
-never queued, retried, or resent, including after a reload or reconnect. It uses
-the same checks and refusals as a pack request, and an unreconciled import blocks
-other capture, pack, and import requests until Dude reports a result.
+never queued, retried, or resent, including after a reload or reconnect. Canvas
+refuses it before sending while the session is busy, a request is waiting, chat
+input is queued, or an earlier capture or import is unreconciled, and an
+unreconciled import blocks other capture and import requests until Dude reports
+a result.
 
 Dude then asks for permission in Needs you. A file import lists each destination
 file, including a reviewed license or notice file, and whether it is created or
@@ -1419,7 +1415,7 @@ Type column reads Pack, Agent, or Skill, and the Source column reads
 `This project`. These rows are read-only: they offer no Remove or other action,
 claim no origin, and are not packs. Their Use cases read `Not applicable`, which
 matches no use-case filter and does not count as incomplete tag coverage. They
-never affect pack membership, Available, pack requests, or source removal.
+never affect pack membership, Available, pack actions, or source removal.
 Details show the description, type, location, declared name, file count, and
 exact files, including an agent's `.support/` companions. The read is local and
 follows no links. It lists at most 256 artifacts, reads an entrypoint of at
@@ -1508,7 +1504,7 @@ Enterprise, and then without prompts, credential helpers, or a `.netrc` login.
 A credential you wrote into your own Git configuration, such as an
 `http.extraHeader` value, still applies there. A source is third-party content: its
 packs can add agents and instructions, so add only sources you trust. Every
-install still asks for your permission first.
+install or refresh preview from it shows a `Third-party source` warning first.
 
 Add source reads the source's catalog once before it saves anything. It stops
 that read at 30 seconds for a GitHub repository, and each check and read of a
@@ -1533,8 +1529,7 @@ Read again checks the saved list. Neither replays the save.
 
 Added sources are saved in `.dude/metadata/pack-sources.md`, a project file meant
 to be committed and shared with your team. Saving or removing a source is a
-direct save, the one exception to the rule that Settings only asks Dude to make
-changes: it needs no Needs you request or permission. Canvas rewrites the whole
+direct save that needs no Needs you request or permission. Canvas rewrites the whole
 file on each change, so text outside its one JSON block is not kept, and it
 refuses to save over bytes that changed after it read them. It never merges and
 never retries. A relative folder is kept as typed and resolves against the
@@ -1578,14 +1573,15 @@ unavailable, has no packs, or has all its packs installed.
 Remove appears only for an added source and asks for confirmation. It deletes
 that source's entry and nothing else: no pack is uninstalled, no file is
 deleted, and the source's packs stop appearing under Available. Canvas refuses
-the removal while an installed pack records the source or a live pack request,
-including one still being prepared, is bound to it, and it names every blocker.
-The disabled button shows the blockers this tab already knows. That reason is
-advice, because a request from another tab can appear later; the final check at
-the write decides, and a refusal stays inside the confirmation with all blockers
-named. Catalog status never blocks Remove, so it works before the first Reload
-and for an unavailable source when no pack or request uses it. A successful
-removal shows `Removed`, and one read of the catalogs follows.
+the removal while an installed pack records the source, and it names every such
+pack. The disabled button shows the packs this tab already knows. That reason is
+advice, because another tab can install from the source later; the final check
+at the write decides, and a refusal stays inside the confirmation with every
+pack named. Catalog status never blocks Remove, so it works before the first
+Reload and for an unavailable source that no installed pack records. An open
+pack action preview never holds a source: once the source is removed, that
+preview's Install writes nothing. A successful removal shows `Removed`, and one
+read of the catalogs follows.
 
 #### Settings: About
 
@@ -2309,18 +2305,20 @@ configured-remote catalogs; the remote case clones a disposable `file://` Git
 source, not a network host. Its Sources cases add, read, and remove saved
 sources through the real provider and HTTP routes. They reach public GitHub
 sources only through a loopback stand-in for GitHub's API and raw-file hosts
-that serves local repositories, so no case needs a network. `t011-browser.test.mjs` drives
-Install, Remove, and Refresh through the real provider, HTTP routes, and Compose
-commands in disposable bundles, including installs and refreshes from an added
-source, while test code acts as the owner that previews, confirms, and
-acknowledges. These suites do not exercise a model-driven coordinator. The
-installed-host driver below adds deterministic round trips through the
-installed selected-Dude owner, exact permission, Compose or the importer, result
-acknowledgment, and authoritative provider reread: one for a local pack, two
-for local imports, and one for a pack from an added local folder. It also reads
-a core-only install's default catalog from public GitHub. The recorded
-Windows runs below executed them; macOS behavior of the current driver is
-unverified.
+that serves local repositories, so no case needs a network. The
+`083 Pack actions:` cases in `browser.test.mjs` and `t011-browser.test.mjs`
+drive Install, Remove, and Refresh through the pack action dialog, the real
+HTTP route, the pack action child process, and Compose in disposable
+workspaces. They cover a saved folder and the GitHub stand-in as third-party
+sources. One click applies each preview, with no Needs you request or chat
+message. These suites do not exercise a model-driven coordinator. The
+installed-host driver below adds deterministic round trips. It installs a local
+pack, and a pack from an added local folder, through the pack action dialog
+with one Install click. It runs two local imports through the installed
+selected-Dude owner, exact permission, the importer, result acknowledgment, and
+authoritative provider reread. It also reads a core-only install's default
+catalog from public GitHub. The recorded Windows runs below predate the pack
+action dialog, and macOS behavior of the current driver is unverified.
 
 ##### Installed Copilot host
 
@@ -2491,13 +2489,12 @@ of current C. Only actual owner tools make post-seed canonical writes. Fixture
 responses are automation evidence, not approval of repository work.
 
 The pack case seeds one inert local catalog pack in its disposable release
-fixture. Settings sends that exact install once; installed Dude reads
-eligibility and source, publishes literal permission, runs the installed
-Compose `add --envelope` and lint commands after consent, rereads the profile,
-and reports that Compose stdout unchanged as the owner result. The provider
-independently rereads the installed authority before the UI may show Applied.
-The scripted local model establishes that exact owner/tool path, not unscripted
-planning quality or behavior for a remote catalog.
+fixture. Settings installs it through the pack action dialog: the installed
+extension runs the installed Compose preview and then the install in a child
+process, after one click, with no agent turn, Needs you request, or chat
+message. The driver checks the preview, the success view, Installed after the
+automatic reread, and the recorded profile. The model takes no part in the
+install.
 
 On Windows, every host also checks that the extension process and its parent
 run the configured launcher. Before Settings drives the pack case, the driver
@@ -2577,12 +2574,11 @@ Show in Installed then follows each Applied result without a Reload.
 The second drives Sources. The browser adds a local folder that contains
 `library/packs/<name>/pack.md` through Settings > Packs > Sources and observes
 the validated pack count and the save. It then uses Show packs in Available,
-selects the source-qualified pack, and requests the install. The scripted owner
-previews that source, publishes the permission with the source first and labeled
-`Third-party source`, recognizes consent, rechecks the saved sources, runs
-Compose with exactly the bound `--source`, and acknowledges the result with the
-exact `catalogSource` echoed. The test saves, installs, and applies nothing
-after seeding, and it contacts no network source. The driver then observes what
+selects the source-qualified pack, and installs it through the pack action
+dialog. The preview shows the `Third-party source` warning with that folder and
+"no commit", and one click installs the pack from exactly that folder. The test
+saves and installs nothing itself after seeding, and it contacts no network
+source. The driver then observes what
 landed: the saved sources file, the recorded profile source, the installed
 bytes, the removal of both same-named Available rows after the install, the
 source facts, and the refusal to remove the source while the installed pack uses
@@ -2594,7 +2590,8 @@ This case adds a local folder only. The provider and browser suites cover
 added public GitHub sources through their loopback stand-in; the installed host
 reads public GitHub only in the default-source case above.
 Every fixture also compares the installed runtime modules, including the project
-reader (`lib/project-artifacts.mjs`) and the pack reader and provider, and the
+reader (`lib/project-artifacts.mjs`), the pack reader, the pack action child
+(`lib/pack-action.mjs`), and the provider, and the
 installed saved-sources parser, Compose with its remote acquisition and GitHub
 transport modules, lint, upgrade, and import skill files
 with `src/` byte for byte. It checks that a fresh install holds no
@@ -2674,14 +2671,12 @@ be induced in any run; the provider/browser negative controls cover that
 case, not a fresh installed occurrence.
 
 The recorded source and import runs are Windows only. macOS behavior of the
-current driver is unverified, including the POSIX file-digest command
-(`shasum -a 256`) that the scripted owner uses there to read the saved sources'
-revision. No CI job runs this driver, which needs an installed Copilot CLI. A
-Linux container without a browser, such as the `node:22-bookworm` image used for
-the recorded Linux runs, runs only the checks that need no browser. The
-`canvas-browser` job described under [Releases and CI](#releases-and-ci) is the
-Linux path for the browser suites, and no Linux run of those suites is recorded
-for the source and import work.
+current driver is unverified. No CI job runs this driver, which needs an
+installed Copilot CLI. A Linux container without a browser, such as the
+`node:22-bookworm` image used for the recorded Linux runs, runs only the checks
+that need no browser. The `canvas-browser` job described under
+[Releases and CI](#releases-and-ci) is the Linux path for the browser suites,
+and no Linux run of those suites is recorded for the source and import work.
 
 Passing this driver does not waive other required suites or fixture
 prerequisites. In particular, selecting the app SDK does not resolve missing

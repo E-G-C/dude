@@ -44,8 +44,6 @@
  *   --ref <ref>       upstream ref for source resolution (default: manifest / main)
  *   --no-fetch        never fetch; require the pack in the local catalog
  *   --json            machine-readable output
- *   --envelope        for add/remove/refresh, print the unchanged engine result
- *                     envelope in place of --json output (a Canvas pack result)
  *   --force           overwrite existing destination files on add
  *
  * Exit codes: 0 ok, 1 usage error, 2 operation error.
@@ -64,7 +62,7 @@ import {
   resolveProfileArtifact,
   serializeProfileDocument,
 } from '../dude-engine/lib/profile.mjs';
-import { parsePackManifestMetadata, USE_CASE_ID_RE } from '../dude-engine/lib/pack-manifest.mjs';
+import { parsePackManifestMetadata, parseRequiredTools, USE_CASE_ID_RE } from '../dude-engine/lib/pack-manifest.mjs';
 import { normalizePath } from '../dude-engine/lib/text.mjs';
 import {
   WORKSPACE_PATHS,
@@ -85,6 +83,18 @@ const PACK_INSTALL_LOCATIONS = Object.freeze([
   '.github/instructions',
   '.github/prompts',
 ]);
+
+/**
+ * How an add preview names each artifact category: its kind, and the suffix
+ * its destination name drops.
+ * @type {Readonly<Record<string, readonly [string, string]>>}
+ */
+const PREVIEW_KINDS = Object.freeze({
+  agents: ['Agent', AGENT_SOURCE_SUFFIX],
+  skills: ['Skill', ''],
+  prompts: ['Prompt', '.prompt.md'],
+  instructions: ['Instructions', '.instructions.md'],
+});
 
 /** @typedef {{ kind: string, srcAbs: string, destRel: string, name: string }} PackArtifact */
 /** @typedef {{ artifact: PackArtifact, destRel: string, stagedAbs: string }} StagedArtifact */
@@ -149,6 +159,30 @@ function copyRecursive(src, dest) {
 /** @param {string} abs */
 function removePath(abs) {
   fs.rmSync(abs, { recursive: true, force: true });
+}
+
+/**
+ * Whether a command resolves on this process's PATH: an executable file in a
+ * PATH folder, tried with each PATHEXT extension on Windows.
+ * @param {string} tool
+ * @returns {boolean}
+ */
+function toolOnPath(tool) {
+  const extensions = process.platform === 'win32'
+    ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
+    : [''];
+  for (const folder of (process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
+    for (const extension of extensions) {
+      const candidate = path.join(folder, `${tool}${extension}`);
+      try {
+        fs.accessSync(candidate, fs.constants.X_OK);
+        if (fs.statSync(candidate).isFile()) return true;
+      } catch {
+        // not in this folder
+      }
+    }
+  }
+  return false;
 }
 
 /**
@@ -566,8 +600,10 @@ function artifactInNamespace(artifact, packName) {
  * a staging failure the helper removes its own stage directory before returning.
  * A remote source's acquired copy is removed before this returns, whether the
  * pack staged or not, so it never outlives the call or reaches a transaction.
+ * The returned `manifest` is the pack's `pack.md` text, for a caller that reads
+ * more of it after that copy is gone.
  * @param {{ root: string, library: string, name: string, projection: any, stagePrefix: string, fetch?: boolean, source?: string, ref?: string, validateDiscoveryMetadata?: boolean }} args
- * @returns {Promise<{ origin: string, sourceIdentity: SourceIdentity, staged: StagedArtifact[], stageRoot: string } | { error: string }>}
+ * @returns {Promise<{ origin: string, sourceIdentity: SourceIdentity, staged: StagedArtifact[], stageRoot: string, manifest: string } | { error: string }>}
  */
 async function stagePackFromSource({
   root,
@@ -601,20 +637,23 @@ async function stagePackFromSource({
  * The synchronous part of staging, over a resolved pack directory.
  * @param {{ packDir: string, origin: string, sourceIdentity: SourceIdentity }} resolved
  * @param {{ name: string, projection: any, stagePrefix: string, validateDiscoveryMetadata: boolean }} options
- * @returns {{ origin: string, sourceIdentity: SourceIdentity, staged: StagedArtifact[], stageRoot: string } | { error: string }}
+ * @returns {{ origin: string, sourceIdentity: SourceIdentity, staged: StagedArtifact[], stageRoot: string, manifest: string } | { error: string }}
  */
 function stageResolvedPack({ packDir, origin, sourceIdentity }, { name, projection, stagePrefix, validateDiscoveryMetadata }) {
+  let manifest;
   let manifestName;
   if (validateDiscoveryMetadata) {
     try {
-      manifestName = parsePackManifestMetadata(fs.readFileSync(path.join(packDir, 'pack.md'), 'utf8')).name;
+      manifest = fs.readFileSync(path.join(packDir, 'pack.md'), 'utf8');
+      manifestName = parsePackManifestMetadata(manifest).name;
     } catch (error) {
       return {
         error: `pack "${name}" has invalid metadata: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
   } else {
-    manifestName = frontmatterName(fs.readFileSync(path.join(packDir, 'pack.md'), 'utf8'));
+    manifest = fs.readFileSync(path.join(packDir, 'pack.md'), 'utf8');
+    manifestName = frontmatterName(manifest);
   }
   if (manifestName && manifestName !== name) {
     return { error: `pack.md name "${manifestName}" does not match directory "${name}"` };
@@ -679,7 +718,7 @@ function stageResolvedPack({ packDir, origin, sourceIdentity }, { name, projecti
       if (origin !== 'local') normalizePath(stagedAbs);
       staged.push({ artifact, destRel: output.relPath, stagedAbs });
     }
-    return { origin, sourceIdentity, staged, stageRoot };
+    return { origin, sourceIdentity, staged, stageRoot, manifest };
   } catch (error) {
     removePath(stageRoot);
     return { error: error instanceof Error ? error.message : String(error) };
@@ -687,35 +726,38 @@ function stageResolvedPack({ packDir, origin, sourceIdentity }, { name, projecti
 }
 
 /**
- * @param {{ root: string, library: string, name: string, force: boolean, validateDiscoveryMetadata?: boolean }} args
- * @returns {Promise<{ ok: boolean, code: number, result?: any, error?: string }>}
+ * Prepare an add up to its first write: the name, the projection dependencies,
+ * the profile that authorizes it, the hyphen-prefix guard, and the staged pack.
+ * `cmdAdd` and `cmdPreviewAdd` share it, so a preview resolves, stages, and
+ * checks what its add would. The caller owns a returned `stageRoot`.
+ * @param {{ root: string, library: string, name: string, fetch?: boolean, source?: string, ref?: string, validateDiscoveryMetadata?: boolean }} args
+ * @returns {Promise<{ ok: boolean, code: number, mutation?: 'none', result?: any, error?: string }>}
  */
-async function cmdAdd({
+async function prepareAdd({
   root,
   library,
   name,
-  force,
   fetch = true,
   source,
   ref,
   validateDiscoveryMetadata = true,
 }) {
   if (!PACK_NAME_RE.test(name)) {
-    return { ok: false, code: 1, error: `invalid pack name: ${name}` };
+    return { ok: false, code: 1, mutation: 'none', error: `invalid pack name: ${name}` };
   }
   let projection;
   try {
     projection = await loadProjectionDependencies(root);
     resolveMutationPath(root, WORKSPACE_PATHS.PROFILE);
   } catch (error) {
-    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+    return { ok: false, code: 2, mutation: 'none', error: error instanceof Error ? error.message : String(error) };
   }
 
   // The exact profile bytes read here, or their absence, authorize this add.
   // Staging can wait on a remote source, so they are compared again before any
   // write, and a changed profile is refused rather than overwritten.
   const loadedProfile = loadProfile(root);
-  if ('error' in loadedProfile) return { ok: false, code: 2, error: loadedProfile.error };
+  if ('error' in loadedProfile) return { ok: false, code: 2, mutation: 'none', error: loadedProfile.error };
   const { profile, bytes: authorizedProfileBytes } = loadedProfile;
   if (Object.hasOwn(profile.installed, name)) {
     return { ok: true, code: 0, result: { added: name, files: [], alreadyInstalled: true } };
@@ -727,65 +769,116 @@ async function cmdAdd({
   // any staging (no stage directory is created when a name collides).
   for (const other of Object.keys(profile.installed)) {
     if (name.startsWith(`${other}-`) || other.startsWith(`${name}-`)) {
-      return { ok: false, code: 2, error: `pack name "${name}" collides with installed pack "${other}" (hyphen-prefix)` };
+      return { ok: false, code: 2, mutation: 'none', error: `pack name "${name}" collides with installed pack "${other}" (hyphen-prefix)` };
     }
   }
 
+  const stagedResult = await stagePackFromSource({
+    root,
+    library,
+    name,
+    projection,
+    stagePrefix: path.join(os.tmpdir(), `dude-compose-add-${name}-`),
+    fetch,
+    source,
+    ref,
+    validateDiscoveryMetadata,
+  });
+  if ('error' in stagedResult) {
+    return { ok: false, code: 2, mutation: 'none', error: stagedResult.error };
+  }
+  return {
+    ok: true,
+    code: 0,
+    result: {
+      ...stagedResult,
+      profile,
+      authorizedProfileBytes,
+      files: stagedResult.staged.map((item) => item.destRel).sort(),
+    },
+  };
+}
+
+/**
+ * Classify a staged add's destinations against other packs' recorded files and
+ * what already exists. `cmdAdd` refuses any conflict and `cmdPreviewAdd` reports
+ * them. `force` lets an add replace an existing agent or skill, never an
+ * instruction or prompt.
+ * @param {{ root: string, name: string, profile: Profile, staged: StagedArtifact[], force: boolean }} args
+ * @returns {{ targets: { relPath: string, destination: string, stagedAbs: string }[], conflicts: { relPath: string, reason: string }[] }}
+ */
+function addTargets({ root, name, profile, staged, force }) {
+  const claimedBy = new Map();
+  for (const [packName, entry] of Object.entries(profile.installed)) {
+    for (const relPath of entry.files) claimedBy.set(relPath, packName);
+  }
+
+  /** @type {{ relPath: string, reason: string }[]} */
+  const conflicts = [];
+  /** @type {{ relPath: string, destination: string, stagedAbs: string }[]} */
+  const targets = [];
+  for (const item of staged) {
+    const { artifact, destRel, stagedAbs } = item;
+    const owner = claimedBy.get(destRel);
+    if (owner && owner !== name) {
+      conflicts.push({ relPath: destRel, reason: `claimed by pack "${owner}"` });
+      continue;
+    }
+    const destination = resolveProfileArtifact(root, destRel, name);
+    if (exists(destination)
+      && (!force || artifact.kind === 'instructions' || artifact.kind === 'prompts')) {
+      conflicts.push({ relPath: destRel, reason: 'already exists as a core, project, or foreign artifact' });
+    }
+    targets.push({ relPath: destRel, destination, stagedAbs });
+  }
+  return { targets, conflicts };
+}
+
+/**
+ * Install one pack as one transaction. An optional async `beforeWrite` is
+ * awaited after staging and before the final recheck and writes; any answer
+ * other than `true` writes nothing.
+ * @param {{ root: string, library: string, name: string, force: boolean, fetch?: boolean, source?: string, ref?: string, validateDiscoveryMetadata?: boolean, beforeWrite?: () => Promise<boolean> }} args
+ * @returns {Promise<{ ok: boolean, code: number, mutation?: 'none' | 'restored' | 'uncertain', result?: any, error?: string }>}
+ */
+async function cmdAdd({
+  root,
+  library,
+  name,
+  force,
+  fetch = true,
+  source,
+  ref,
+  validateDiscoveryMetadata = true,
+  beforeWrite,
+}) {
   /** @type {string | null} */
   let stageRoot = null;
   try {
-    const stagedResult = await stagePackFromSource({
-      root,
-      library,
-      name,
-      projection,
-      stagePrefix: path.join(os.tmpdir(), `dude-compose-add-${name}-`),
-      fetch,
-      source,
-      ref,
-      validateDiscoveryMetadata,
-    });
-    if ('error' in stagedResult) {
-      return { ok: false, code: 2, error: stagedResult.error };
-    }
-    stageRoot = stagedResult.stageRoot;
-    const { origin, sourceIdentity, staged } = stagedResult;
+    const prepared = await prepareAdd({ root, library, name, fetch, source, ref, validateDiscoveryMetadata });
+    if (!prepared.ok || prepared.result.alreadyInstalled) return prepared;
+    stageRoot = prepared.result.stageRoot;
+    const { origin, sourceIdentity, staged, profile, authorizedProfileBytes, files } = prepared.result;
     const backupRoot = path.join(stageRoot, 'backup');
+
+    // The optional write gate is the last await, so everything below rechecks
+    // what may have changed while it waited.
+    if (beforeWrite && (await beforeWrite()) !== true) {
+      return { ok: false, code: 2, mutation: 'none', error: `write not confirmed for add of pack "${name}"; refusing add` };
+    }
 
     // From this reauthorization through the profile write nothing awaits, so no
     // other operation in this process can change the profile or a destination
     // between these checks and the writes they authorize.
     const authorityError = reauthorizeAdd(root, name, authorizedProfileBytes);
-    if (authorityError) return { ok: false, code: 2, error: authorityError };
+    if (authorityError) return { ok: false, code: 2, mutation: 'none', error: authorityError };
 
-    const claimedBy = new Map();
-    for (const [packName, entry] of Object.entries(profile.installed)) {
-      for (const relPath of entry.files) claimedBy.set(relPath, packName);
-    }
-
-    /** @type {string[]} */
-    const conflicts = [];
-    /** @type {{ relPath: string, destination: string, stagedAbs: string }[]} */
-    const targets = [];
-    for (const item of staged) {
-      const { artifact, destRel, stagedAbs } = item;
-      const owner = claimedBy.get(destRel);
-      if (owner && owner !== name) {
-        conflicts.push(`${destRel} (claimed by pack "${owner}")`);
-        continue;
-      }
-      const destination = resolveProfileArtifact(root, destRel, name);
-      if (exists(destination)
-        && (!force || artifact.kind === 'instructions' || artifact.kind === 'prompts')) {
-        conflicts.push(`${destRel} (already exists as a core, project, or foreign artifact)`);
-      }
-      targets.push({ relPath: destRel, destination, stagedAbs });
-    }
+    const { targets, conflicts } = addTargets({ root, name, profile, staged, force });
     if (conflicts.length > 0) {
-      return { ok: false, code: 2, error: `destination ownership conflict:\n  ${conflicts.join('\n  ')}` };
+      const listed = conflicts.map((conflict) => `${conflict.relPath} (${conflict.reason})`);
+      return { ok: false, code: 2, mutation: 'none', error: `destination ownership conflict:\n  ${listed.join('\n  ')}` };
     }
 
-    const files = staged.map((item) => item.destRel).sort();
     const nextProfile = structuredClone(profile);
     nextProfile.installed[name] = {
       files,
@@ -839,15 +932,60 @@ async function cmdAdd({
         return {
           ok: false,
           code: 2,
+          mutation: 'uncertain',
           error: `pack add failed (${error instanceof Error ? error.message : String(error)}); rollback failed: ${rollbackErrors.join('; ')}`,
         };
       }
-      return { ok: false, code: 2, error: `pack add failed and was rolled back: ${error instanceof Error ? error.message : String(error)}` };
+      return { ok: false, code: 2, mutation: 'restored', error: `pack add failed and was rolled back: ${error instanceof Error ? error.message : String(error)}` };
     }
 
     return { ok: true, code: 0, result: { added: name, files: files.sort(), origin } };
   } catch (error) {
-    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+    // The transaction above catches its own failures, so this is before any write.
+    return { ok: false, code: 2, mutation: 'none', error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    if (stageRoot) removePath(stageRoot);
+  }
+}
+
+/**
+ * Preview an add without writing: `cmdAdd`'s own preparation, profile recheck,
+ * and destination checks, reported instead of applied. Conflicts and required
+ * tools are reported rather than refused, and the stage is always removed.
+ * @param {{ root: string, library: string, name: string, force?: boolean, fetch?: boolean, source?: string, ref?: string }} args
+ * @returns {Promise<{ ok: boolean, code: number, mutation?: 'none', result?: any, error?: string }>}
+ */
+async function cmdPreviewAdd({ root, library, name, force = false, fetch = true, source, ref }) {
+  /** @type {string | null} */
+  let stageRoot = null;
+  try {
+    const prepared = await prepareAdd({ root, library, name, fetch, source, ref });
+    if (!prepared.ok) return prepared;
+    if (prepared.result.alreadyInstalled) {
+      return { ok: false, code: 2, mutation: 'none', error: `pack "${name}" is already installed` };
+    }
+    stageRoot = prepared.result.stageRoot;
+    const { sourceIdentity, staged, profile, authorizedProfileBytes, files, manifest } = prepared.result;
+    const authorityError = reauthorizeAdd(root, name, authorizedProfileBytes);
+    if (authorityError) return { ok: false, code: 2, mutation: 'none', error: authorityError };
+    const { conflicts } = addTargets({ root, name, profile, staged, force });
+    return {
+      ok: true,
+      code: 0,
+      result: {
+        items: staged.map(({ artifact, destRel }) => {
+          const [kind, suffix] = PREVIEW_KINDS[artifact.kind];
+          const base = path.posix.basename(destRel);
+          return { kind, name: base.slice(0, base.length - suffix.length) };
+        }),
+        files,
+        source: sourceIdentity,
+        conflicts: conflicts.map((conflict) => conflict.relPath),
+        tools: parseRequiredTools(manifest).map((tool) => ({ name: tool, found: toolOnPath(tool) })),
+      },
+    };
+  } catch (error) {
+    return { ok: false, code: 2, mutation: 'none', error: error instanceof Error ? error.message : String(error) };
   } finally {
     if (stageRoot) removePath(stageRoot);
   }
@@ -901,18 +1039,22 @@ function sweepProfileTransactionResidue(profileAbsolutePath) {
 }
 
 /**
- * @param {{ root: string, name: string }} args
- * @returns {{ ok: boolean, code: number, result?: any, error?: string }}
+ * The checks a removal makes before it deletes anything: a safe profile path, a
+ * valid name, an installed entry, and a safe path for every recorded file.
+ * `cmdRemove` and `cmdPreviewRemove` share them.
+ * @param {string} root
+ * @param {string} name
+ * @returns {{ ok: boolean, code: number, mutation?: 'none', result?: any, error?: string }}
  */
-function cmdRemove({ root, name }) {
+function prepareRemove(root, name) {
   const currentProfilePath = profilePath(root);
   try {
     resolveMutationPath(root, WORKSPACE_PATHS.PROFILE);
   } catch (error) {
-    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+    return { ok: false, code: 2, mutation: 'none', error: error instanceof Error ? error.message : String(error) };
   }
   if (!PACK_NAME_RE.test(name)) {
-    return { ok: false, code: 1, error: `invalid pack name: ${name}` };
+    return { ok: false, code: 1, mutation: 'none', error: `invalid pack name: ${name}` };
   }
   /** @type {Buffer | null} */
   let authorizedProfileBytes = null;
@@ -924,12 +1066,12 @@ function cmdRemove({ root, name }) {
       profile = parseProfileDocument(authorizedProfileBytes, { root });
     }
   } catch (error) {
-    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+    return { ok: false, code: 2, mutation: 'none', error: error instanceof Error ? error.message : String(error) };
   }
 
   const entry = profile.installed[name];
   if (!entry || !authorizedProfileBytes) {
-    return { ok: false, code: 2, error: `pack "${name}" is not installed` };
+    return { ok: false, code: 2, mutation: 'none', error: `pack "${name}" is not installed` };
   }
 
   const targets = entry.files.slice();
@@ -941,9 +1083,32 @@ function cmdRemove({ root, name }) {
       const abs = resolveProfileArtifact(root, t, name);
       resolvedTargets.push({ relPath: t, absolutePath: abs });
     } catch (error) {
-      return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+      return { ok: false, code: 2, mutation: 'none', error: error instanceof Error ? error.message : String(error) };
     }
   }
+  return { ok: true, code: 0, result: { currentProfilePath, authorizedProfileBytes, profile, resolvedTargets } };
+}
+
+/**
+ * Preview a removal without deleting: the pack's recorded files, after the same
+ * checks `cmdRemove` makes.
+ * @param {{ root: string, name: string }} args
+ * @returns {{ ok: boolean, code: number, mutation?: 'none', result?: any, error?: string }}
+ */
+function cmdPreviewRemove({ root, name }) {
+  const prepared = prepareRemove(root, name);
+  if (!prepared.ok) return prepared;
+  return { ok: true, code: 0, result: { files: prepared.result.resolvedTargets.map((target) => target.relPath) } };
+}
+
+/**
+ * @param {{ root: string, name: string }} args
+ * @returns {{ ok: boolean, code: number, mutation?: 'none' | 'restored' | 'uncertain', result?: any, error?: string }}
+ */
+function cmdRemove({ root, name }) {
+  const prepared = prepareRemove(root, name);
+  if (!prepared.ok) return prepared;
+  const { currentProfilePath, authorizedProfileBytes, profile, resolvedTargets } = prepared.result;
 
   const nextProfile = structuredClone(profile);
   delete nextProfile.installed[name];
@@ -951,17 +1116,17 @@ function cmdRemove({ root, name }) {
   try {
     nextProfileBody = serializeProfile(root, nextProfile);
   } catch (error) {
-    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+    return { ok: false, code: 2, mutation: 'none', error: error instanceof Error ? error.message : String(error) };
   }
 
   try {
     resolveMutationPath(root, WORKSPACE_PATHS.PROFILE);
     const currentProfileBytes = exists(currentProfilePath) ? fs.readFileSync(currentProfilePath) : null;
     if (!currentProfileBytes || !authorizedProfileBytes.equals(currentProfileBytes)) {
-      return { ok: false, code: 2, error: `profile changed after authorizing removal of pack "${name}"; refusing deletion` };
+      return { ok: false, code: 2, mutation: 'none', error: `profile changed after authorizing removal of pack "${name}"; refusing deletion` };
     }
   } catch (error) {
-    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+    return { ok: false, code: 2, mutation: 'none', error: error instanceof Error ? error.message : String(error) };
   }
 
   const transactionRoot = fs.mkdtempSync(path.join(os.tmpdir(), `dude-compose-remove-${name}-`));
@@ -1002,6 +1167,7 @@ function cmdRemove({ root, name }) {
       return {
         ok: false,
         code: 2,
+        mutation: rollbackErrors.length > 0 ? 'uncertain' : 'restored',
         error: rollbackErrors.length > 0
           ? `pack removal failed (${error instanceof Error ? error.message : String(error)}); rollback failed: ${rollbackErrors.join('; ')}`
           : `pack removal failed and was rolled back: ${error instanceof Error ? error.message : String(error)}`,
@@ -1257,6 +1423,12 @@ async function cmdPreviewRefresh(args) {
   }
 }
 
+/**
+ * Refresh an installed pack as one transaction. An optional async `beforeWrite`
+ * is awaited after staging and before the final recheck and writes; any answer
+ * other than `true` writes nothing.
+ * @param {{ root: string, library: string, name: string, fetch?: boolean, source?: string, ref?: string, beforeWrite?: () => Promise<boolean> }} args
+ */
 async function cmdRefresh(args) {
   const prepared = await prepareRefresh(args);
   if (!prepared.ok) return prepared;
@@ -1264,9 +1436,13 @@ async function cmdRefresh(args) {
   let transactionRoot = null;
   let mutationStarted = false;
   try {
-    // `prepareRefresh` was the last await. Recheck the profile bytes and every
-    // destination path here, before the first backup or write; nothing below
-    // awaits until the transaction ends.
+    if (args.beforeWrite && (await args.beforeWrite()) !== true) {
+      return { ok: false, code: 2, mutation: 'none', error: `write not confirmed for refresh of pack "${data.name}"; refusing refresh` };
+    }
+
+    // `prepareRefresh` and the optional write gate were the last awaits. Recheck
+    // the profile bytes and every destination path here, before the first backup
+    // or write; nothing below awaits until the transaction ends.
     const authorityError = reauthorizeRefresh({ ...data, root: args.root });
     if (authorityError) return { ok: false, code: 2, mutation: 'none', error: authorityError };
 
@@ -1566,26 +1742,23 @@ Flags:
   --ref <ref>       upstream ref for source resolution (default: manifest / main)
   --no-fetch        never fetch; require the pack in the local catalog
   --json            machine-readable output
-  --envelope        unchanged engine result envelope for add/remove/refresh,
-                    in place of --json output
-  --dry-run         preview refresh without writing
+  --dry-run         preview add, remove, or refresh without writing
   --force           overwrite existing files on add
   --use-case <id>   exact discovery filter for list
 `;
 
 /**
  * @param {string[]} argv
- * @returns {{ cmd?: string, name?: string, root: string, library?: string, json: boolean, envelope: boolean, force: boolean, dryRun: boolean, help: boolean, useCase?: string, useCaseSeen?: boolean, usageError?: string }}
+ * @returns {{ cmd?: string, name?: string, root: string, library?: string, json: boolean, force: boolean, dryRun: boolean, help: boolean, useCase?: string, useCaseSeen?: boolean, usageError?: string }}
  */
 function parseArgs(argv) {
   /** @type {any} */
-  const out = { root: process.cwd(), json: false, envelope: false, force: false, dryRun: false, fetch: true, help: false };
+  const out = { root: process.cwd(), json: false, force: false, dryRun: false, fetch: true, help: false };
   /** @type {string[]} */
   const positionals = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') out.json = true;
-    else if (a === '--envelope') out.envelope = true;
     else if (a === '--dry-run') out.dryRun = true;
     else if (a === '--force') out.force = true;
     else if (a === '--no-fetch') out.fetch = false;
@@ -1617,31 +1790,15 @@ function parseArgs(argv) {
   }
   out.cmd = positionals[0];
   out.name = positionals[1];
-  if (out.dryRun && out.cmd !== 'refresh') out.help = true;
+  if (out.dryRun && !['add', 'remove', 'refresh'].includes(out.cmd)) out.help = true;
   if (out.useCaseSeen && out.cmd !== 'list') {
     out.usageError ||= '--use-case is only supported by list';
-  }
-  if (out.envelope && !['add', 'remove', 'refresh'].includes(out.cmd)) {
-    out.usageError ||= '--envelope is only supported by add, remove, and refresh';
   }
   return out;
 }
 
-/** @param {any} r @param {boolean} json @param {string | undefined} useCase @param {boolean} [envelope] */
-function report(r, json, useCase, envelope = false) {
-  if (envelope) {
-    // The engine's own result envelope, which a Canvas pack acknowledgment
-    // forwards unchanged. Unlike --json, it keeps `code` and refresh's
-    // `mutation` and never flattens `result` or adds a plan.
-    process.stdout.write(JSON.stringify(
-      r.ok
-        ? { ok: true, code: r.code, result: r.result }
-        : { ok: false, code: r.code, error: r.error, ...(r.mutation === undefined ? {} : { mutation: r.mutation }) },
-      null,
-      2,
-    ) + '\n');
-    return;
-  }
+/** @param {any} r @param {boolean} json @param {string | undefined} useCase */
+function report(r, json, useCase) {
   if (json) {
     process.stdout.write(JSON.stringify(
       r.ok
@@ -1702,13 +1859,20 @@ function report(r, json, useCase, envelope = false) {
         : `${v.warnings} warning(s), ${v.failures} failure(s), ${v.leftovers} leftover(s)`;
       process.stdout.write(`${bad ? '[FAIL]' : '[OK]  '} ${v.name} — ${detail}\n`);
     }
+  } else if (res.items) {
+    const missing = res.tools.filter((tool) => !tool.found).map((tool) => tool.name);
+    process.stdout.write(
+      `[OK] add preview: ${res.items.length} item(s), ${res.conflicts.length} conflict(s), ${missing.length ? `missing tools: ${missing.join(', ')}` : 'no missing tools'}\n`
+    );
+  } else if (res.files) {
+    process.stdout.write(`[OK] remove preview: ${res.files.length} recorded file(s)\n`);
   }
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.usageError) {
-    report({ ok: false, code: 1, error: args.usageError }, args.json, args.useCase, args.envelope);
+    report({ ok: false, code: 1, error: args.usageError }, args.json, args.useCase);
     process.exit(1);
   }
   if (args.help || !args.cmd) {
@@ -1738,14 +1902,15 @@ async function main() {
       if (!args.name) {
         r = { ok: false, code: 1, error: 'add requires a pack name' };
       } else {
-        r = await cmdAdd({ root, library, name: args.name, force: args.force, fetch: args.fetch, source: args.source, ref: args.ref });
+        const addArgs = { root, library, name: args.name, force: args.force, fetch: args.fetch, source: args.source, ref: args.ref };
+        r = args.dryRun ? await cmdPreviewAdd(addArgs) : await cmdAdd(addArgs);
       }
       break;
     case 'remove':
       if (!args.name) {
         r = { ok: false, code: 1, error: 'remove requires a pack name' };
       } else {
-        r = cmdRemove({ root, name: args.name });
+        r = args.dryRun ? cmdPreviewRemove({ root, name: args.name }) : cmdRemove({ root, name: args.name });
       }
       break;
     case 'refresh':
@@ -1764,7 +1929,7 @@ async function main() {
       r = { ok: false, code: 1, error: `unknown command: ${args.cmd}` };
   }
 
-  report(r, args.json, args.useCase, args.envelope);
+  report(r, args.json, args.useCase);
   process.exit(r.code);
 }
 
@@ -1793,7 +1958,9 @@ if (isMainModule(import.meta.url, process.argv[1])) {
 
 export {
   cmdAdd,
+  cmdPreviewAdd,
   cmdRemove,
+  cmdPreviewRemove,
   cmdRefresh,
   cmdPreviewRefresh,
   cmdList,

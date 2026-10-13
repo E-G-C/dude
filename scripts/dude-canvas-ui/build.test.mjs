@@ -832,10 +832,10 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   assert.ok(application.length > 100_000, 'the application bundle must contain the browser runtime');
   const gzip = gzipSync(applicationBytes, { level: 9 });
   const repeatedGzip = gzipSync(applicationBytes, { level: 9 });
-  assert.equal(applicationBytes.length, 1_107_721, 'committed app.js raw byte size');
+  assert.equal(applicationBytes.length, 1_107_777, 'committed app.js raw byte size');
   assert.equal(
     sha256(applicationBytes),
-    '7223f8c918d2686e103e8dbef5a118c0be6e1c48a713552103676419a72af7a1',
+    'be30db45dd5e002bc643de4e01b99f599f0006c9242f164e83ba41a16fbe17ba',
     'committed app.js raw SHA-256',
   );
   assertPortableGzip(gzip, repeatedGzip, applicationBytes, 'Node zlib level-9 app.js');
@@ -921,7 +921,7 @@ test('metafile-derived legal inventory contains every contributing package and c
       name: '@fluentui/react-tooltip',
       version: '9.10.5',
       inputCount: 6,
-      bytesInOutput: 8_313,
+      bytesInOutput: 8_316,
     },
   ], 'the shipped menu, motion implementation, and tooltip contribute real app.js bytes');
   for (const { name, version } of menuGraphPackages) {
@@ -1161,8 +1161,7 @@ function assertT011WorkspaceContract() {
       '/api/needs-you/respond',
       '/api/needs-you/review/open',
       '/api/packs',
-      '/api/packs/request',
-      '/api/packs/request',
+      '/api/packs/action',
       // Phase B: the one explicit catalog discovery and the one fixed source-write route.
       '/api/packs/sources',
       '/api/packs?discover=1',
@@ -1470,7 +1469,7 @@ test('074 About reads through the shared helper, bound to the hook lifetime and 
     'either the hook lifetime or the caller exit aborts the read');
   assert.match(reader, /return json\('\/api\/about', \{ signal: read\.signal \}\)/);
   assert.match(reader, /\}, \[\]\);/, 'a stable reader cannot rerun an entry read');
-  assert.match(hook, /respond, capture, requestPack, requestImport, openReview, readHistory, readAbout \};/);
+  assert.match(hook, /respond, capture, packAction, requestImport, openReview, readHistory, readAbout \};/);
   for (const exact of ['About · Read only', 'Settings sections', 'Recorded installation metadata; installed files are not verified.',
     'Recorded installation metadata is unavailable, so no version is shown.', 'https://github.com/E-G-C/dude',
     'Development (main), based on ', '["installedRef","sourceRef","baseRelease"]']) {
@@ -1489,8 +1488,8 @@ test('073 Add/import: one closed import route with exact bodies, four Packs view
   assert.deepEqual(requests, ["{ op: 'prepare', importSource: source }",
     "{ op: 'submit', importSource: source, importReceipt: prepared.importReceipt }"],
   'only the closed prepare and submit bodies reach the one import route');
-  assert.match(hook, /queue\(false, !\/\^\(\?:pack\|import\):\/\.test\(record\.request\.requestRef\)\);/,
-    'a pack or import permission acknowledgment never triggers catalog acquisition');
+  assert.match(hook, /queue\(false, !\/\^import:\/\.test\(record\.request\.requestRef\)\);/,
+    'an import permission acknowledgment never triggers catalog acquisition');
   assert.match(settings, /const SUBS = \[\.\.\.CONTEXTS, \['import', 'Add\/import'\], \['sources', 'Sources'\]\];/, 'Add/import joins Installed and Available, and Phase B appends Sources');
   assert.doesNotMatch(view, /['"]sources['"]|>Sources</i, 'the import panel holds nothing about sources');
   assert.doesNotMatch(view, /type="file"|Browse|<Dropdown|<Checkbox|<Radio|<Switch|<Link\b|<a /,

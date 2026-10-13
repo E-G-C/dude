@@ -174,7 +174,7 @@ export function ArtifactImport({ id, labelledBy, shown, data, show, onShow, onPe
           </MessageBarBody>
           {permission && <MessageBarActions className={s.importStatusActions}>
             <Button appearance="primary" data-import-permission={permission.requestHandle}
-              onClick={() => onPermission('import', status.receipt)}>Open Needs you</Button>
+              onClick={() => onPermission(status.receipt)}>Open Needs you</Button>
           </MessageBarActions>}
         </MessageBar>
         {status.phase === 'applied' && ack?.outcome === 'applied' && <div className={s.importAction} data-import-show>

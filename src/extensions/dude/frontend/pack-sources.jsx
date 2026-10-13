@@ -86,22 +86,14 @@ function typedName(location) {
   return location.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || location;
 }
 
-/** The blockers a server refusal named, in the words of the advisory reason. */
+/** The installed packs a server refusal named, in the words of the advisory reason. */
 export function blockersOf(list) {
-  const installed = list.filter(blocker => blocker.kind === 'installed').map(blocker => blocker.name);
-  const requests = list.filter(blocker => blocker.kind === 'request')
-    .map(blocker => `${blocker.operation === 'refresh' ? 'Refresh' : blocker.operation === 'remove' ? 'Remove' : 'Install'} ${blocker.name} (${String(blocker.phase).replaceAll('_', ' ')})`);
-  return { installed, requests };
+  return { installed: list.filter(blocker => blocker.kind === 'installed').map(blocker => blocker.name) };
 }
-const inUse = uses => Boolean(uses.installed.length || uses.requests.length);
+const inUse = uses => Boolean(uses.installed.length);
 /** Why Remove is disabled while a source is in use: advisory, since the server decides at the write. */
 function inUseReason(uses) {
-  const parts = [];
-  if (uses.installed.length) parts.push(`Installed from it: ${uses.installed.join(', ')}.`);
-  if (uses.requests.length) parts.push(`Pack request in progress: ${uses.requests.join('; ')}.`);
-  const fix = uses.installed.length && uses.requests.length ? 'Remove those installed packs and finish the request first.'
-    : uses.installed.length ? 'Remove those installed packs first.' : 'Finish the request first.';
-  return `Cannot remove while in use. ${parts.join(' ')} ${fix}`;
+  return `Cannot remove while in use. Installed from it: ${uses.installed.join(', ')}. Remove those installed packs first.`;
 }
 
 /**
@@ -206,7 +198,7 @@ function refusalOf({ code, message }, sources, key, location) {
 /* ------------------------------------------------------------------ shared pieces */
 
 // A native modal keeps focus inside, but a wrap makes Tab behave the same in
-// every host, as the pack request dialog does; inputs are stops too.
+// every host, as the pack action dialog does; inputs are stops too.
 function trapFocus(event, dialog) {
   if (event.key !== 'Tab') return;
   const stops = [...dialog.querySelectorAll('button:not(:disabled), input:not(:disabled), summary, [tabindex="0"]')]
@@ -399,7 +391,7 @@ function AddSourceDialog({ open, reading, reason, onClose, ...form }) {
     else if (!open && node.open) node.close();
   }, [open]);
   const dismiss = () => { if (!reading) onClose(); };
-  return <dialog ref={dialog} className={mergeClasses(s.packRequestDialog, s.sourceDialog)} aria-labelledby={names.heading}
+  return <dialog ref={dialog} className={mergeClasses(s.packDialog, s.sourceDialog)} aria-labelledby={names.heading}
     aria-describedby={names.note} data-source-add-dialog
     onCancel={event => { event.preventDefault(); dismiss(); }}
     onKeyDown={event => {
@@ -616,7 +608,7 @@ export function RemoveSourceDialog({ source, busy, refusal, onConfirm, onClose, 
   useLayoutEffect(() => { if (refusal) bar.current?.focus({ preventScroll: true }); }, [refusal]);
   const dismiss = () => { if (!busy) onClose(); };
   const ref = source?.type === 'remote' ? source.ref : null;
-  return <dialog ref={dialog} className={mergeClasses(s.packRequestDialog, s.sourceDialog)} aria-labelledby={`${ids}-title`}
+  return <dialog ref={dialog} className={mergeClasses(s.packDialog, s.sourceDialog)} aria-labelledby={`${ids}-title`}
     aria-describedby={`${ids}-text`} data-source-remove-dialog
     onCancel={event => { event.preventDefault(); dismiss(); }}
     onKeyDown={event => {
@@ -634,14 +626,9 @@ export function RemoveSourceDialog({ source, busy, refusal, onConfirm, onClose, 
         {refusal && <Outcome barRef={bar} intent="error" title={refusal.title} text={refusal.text}
           actions={refusal.reload ? <Button appearance="primary" onClick={onReload}>{refusal.lost ? 'Read again' : 'Reload packs'}</Button> : null}
           data-source-remove-status>
-          {refusal.blockers && <div className={s.tight}>
-            {refusal.blockers.installed.length > 0 && <div className={s.tight}>
-              <Text weight="semibold">Installed packs recorded from this source ({refusal.blockers.installed.length})</Text>
-              <ul className={s.formNotes}>{refusal.blockers.installed.map(name => <li key={name}>{name}</li>)}</ul></div>}
-            {refusal.blockers.requests.length > 0 && <div className={s.tight}>
-              <Text weight="semibold">Pack requests in progress ({refusal.blockers.requests.length})</Text>
-              <ul className={s.formNotes}>{refusal.blockers.requests.map(text => <li key={text}>{text}</li>)}</ul></div>}
-          </div>}
+          {refusal.blockers && refusal.blockers.installed.length > 0 && <div className={s.tight}>
+            <Text weight="semibold">Installed packs recorded from this source ({refusal.blockers.installed.length})</Text>
+            <ul className={s.formNotes}>{refusal.blockers.installed.map(name => <li key={name}>{name}</li>)}</ul></div>}
         </Outcome>}
         {!refusal?.blockers && <p id={`${ids}-text`} className={s.prose}>
           This removes the source from this project's saved source list. Packs already installed from it stay installed, no files are deleted,
@@ -666,7 +653,7 @@ export function RemoveSourceDialog({ source, busy, refusal, onConfirm, onClose, 
 export function removalRefusal(result) {
   if (result.code === 'source_in_use' && Array.isArray(result.blockers)) {
     return { title: 'Not removed: this source is in use', blockers: blockersOf(result.blockers),
-      text: 'Nothing was changed. A source stays while an installed pack records it or a pack request uses it.' };
+      text: 'Nothing was changed. A source stays while an installed pack records it.' };
   }
   const lost = result.code === 'connection_lost';
   return { title: lost ? 'The response was lost' : 'The source was not removed', reload: lost || result.code === 'sources_changed', lost,
