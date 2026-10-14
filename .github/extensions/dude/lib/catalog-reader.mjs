@@ -11,8 +11,11 @@
  * repository or ref in a request. A source is named by its position in the saved
  * (or prospective) sources document and checked against its derived key and the
  * document's revision, and the document itself is parsed by the shared parser.
+ * The bundle upstream is named by nothing: this helper derives it from the
+ * bundle manifest, exactly as the parent does.
  *
  * - default:  read the default catalog once (the local library, else the upstream).
+ * - upstream: read the bundle upstream once, as its own source, beside a local library.
  * - source:   resolve one saved source once, then optionally enumerate its catalog.
  * - validate: the shared checks for one new source, which may resolve a local
  *   folder. They run here, behind the parent's deadline, because a path on an
@@ -92,6 +95,7 @@ const KEPT_MATERIAL = '; its process tree could not be confirmed stopped, so its
  * @typedef {{ op: 'source', index: number, key: string | null, revision: string,
  *   document: 'configured' | 'candidate', list: boolean }} SourceRequest
  * @typedef {{ op: 'validate', location: string, ref: string | null, revision: string }} ValidateRequest
+ * @typedef {{ op: 'upstream' }} UpstreamRequest
  */
 
 /** @param {string | Buffer} bytes */
@@ -103,7 +107,7 @@ function revisionOf(bytes) {
  * The closed request, or null for the default read. Anything else is a refusal,
  * never a best-effort read.
  * @param {string | undefined} text
- * @returns {SourceRequest | ValidateRequest | null}
+ * @returns {SourceRequest | ValidateRequest | UpstreamRequest | null}
  */
 function parseRequest(text) {
   if (text === undefined) return null;
@@ -123,6 +127,8 @@ function parseRequest(text) {
     && typeof value.revision === 'string' && REVISION_RE.test(value.revision)) {
     return value;
   }
+  // The upstream is the bundle manifest's, so its request carries the operation alone.
+  if (value?.op === 'upstream' && exact(['op'])) return value;
   throw new Error('The catalog request is not one of the fixed operations.');
 }
 
@@ -295,8 +301,7 @@ function loadSources(root, request) {
 
 /**
  * Describe one saved source, and with `list` resolve it once and enumerate its
- * catalog once. An explicit source is exclusive, and the resolved directory is
- * passed on as a local input, so this never acquires twice.
+ * catalog once (see `listSource`).
  * @param {string} root
  * @param {SourceRequest} request
  */
@@ -318,10 +323,22 @@ async function readSource(root, request) {
   if (!request.list) return { ok: true, source: summary };
   // From here a failure still reports who the source is, so a source whose catalog
   // cannot be read keeps its row, its key and its place in the saved list.
-  /** @param {string} reason @param {string} error */
-  const unread = (reason, error) => ({ ...failure(reason, error), source: summary });
+  return { ...(await listSource(root, source)), source: summary };
+}
+
+/**
+ * Resolve one described source once and enumerate its catalog once. An explicit
+ * source is exclusive, and the resolved directory is passed on as a local input,
+ * so this never acquires twice. A failure carries its reason: material Compose
+ * kept, no catalog, a source that could not be fetched, or a catalog that could
+ * not be listed.
+ * @param {string} root
+ * @param {import('../../../skills/dude-engine/lib/pack-sources.mjs').DescribedSource} source
+ */
+async function listSource(root, source) {
+  // A folder that did not resolve is no source at all, which Compose would read as the default catalog.
   if (source.type === 'local' && !source.root) {
-    return unread('source_unavailable', 'The saved folder is not available.');
+    return failure('source_unavailable', 'The saved folder is not available.');
   }
   try {
     resolveMutationPath(root, WORKSPACE_PATHS.PROFILE);
@@ -331,18 +348,29 @@ async function readSource(root, request) {
       ? await resolveCatalogDir({ root, library, fetch: true, source: source.repository, ref: source.ref })
       : await resolveCatalogDir({ root, library, fetch: true, source: /** @type {string} */ (source.root) });
     if ('error' in catalog) {
-      if (keptMaterial(catalog.error)) return { ...unread('catalog_cleanup_failed', catalog.error), kept: true };
-      return unread(/^no pack catalog found in /.test(catalog.error) ? 'catalog_missing' : 'catalog_unreachable', catalog.error);
+      if (keptMaterial(catalog.error)) return { ...failure('catalog_cleanup_failed', catalog.error), kept: true };
+      return failure(/^no pack catalog found in /.test(catalog.error) ? 'catalog_missing' : 'catalog_unreachable', catalog.error);
     }
     const listed = await listAndRelease(root, catalog, source.type === 'remote' && source.identity.startsWith('github:'));
     if (!listed.ok) {
       const error = listed.error ?? 'The catalog could not be read.';
-      return unread(/ has invalid metadata/.test(error) ? 'catalog_metadata' : 'catalog_unavailable', error);
+      return failure(/ has invalid metadata/.test(error) ? 'catalog_metadata' : 'catalog_unavailable', error);
     }
-    return { ok: true, result: listed.result, source: summary };
+    return { ok: true, result: listed.result };
   } catch (error) {
-    return unread('catalog_unavailable', error instanceof Error ? error.message : 'The catalog could not be read.');
+    return failure('catalog_unavailable', error instanceof Error ? error.message : 'The catalog could not be read.');
   }
+}
+
+/**
+ * Read the bundle upstream once, as its own source: the one the bundle manifest
+ * names, derived here as the parent derives it. A manifest that names none
+ * leaves nothing to read.
+ * @param {string} root
+ */
+async function readUpstream(root) {
+  const upstream = builtinSources(root).find(source => source.builtin === 'bundle-upstream');
+  return upstream ? listSource(root, upstream) : failure('catalog_unavailable', 'The bundle manifest names no upstream.');
 }
 
 /**
@@ -378,6 +406,7 @@ async function handle(root) {
   try {
     const request = parseRequest(process.env[CATALOG_REQUEST_ENV]);
     if (request === null) return await readCatalog(root);
+    if (request.op === 'upstream') return await readUpstream(root);
     return request.op === 'validate' ? validateSource(root, request) : await readSource(root, request);
   } catch (error) {
     return failure('catalog_unavailable', error instanceof Error ? error.message : 'The catalog could not be read.');

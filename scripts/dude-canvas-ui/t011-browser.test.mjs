@@ -40,7 +40,7 @@ const BROWSER = process.env.DUDE_CANVAS_BROWSER
   ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
 const REQUIRED = process.env.DUDE_CANVAS_BROWSER_REQUIRED === '1';
 const DEADLINE = 20_000;
-const PUBLISHED_APP_SHA256 = 'be30db45dd5e002bc643de4e01b99f599f0006c9242f164e83ba41a16fbe17ba';
+const PUBLISHED_APP_SHA256 = '6d6db4c02ca519153a03774546a7b386281295c751804fce48b343ac77c7af89';
 
 /** @param {string|Buffer} value */
 function hash(value) {
@@ -3677,14 +3677,15 @@ const ABOUT_KNOWN_BASE = 'Development (main), based on v1.3.0';
  * producers' own renderer, exactly as a development build or `main` upgrade
  * leaves it, and associated with the manifest's source.
  * @param {string} root @param {string} [installedRef] @param {string} [sourceRef] @param {string|null} [baseRelease]
+ * @param {string} [sourceRepo] the recorded upstream
  */
-function seedAboutManifest(root, installedRef = 'main', sourceRef = 'main', baseRelease = null) {
+function seedAboutManifest(root, installedRef = 'main', sourceRef = 'main', baseRelease = null, sourceRepo = ABOUT_SOURCE_REPO) {
   write(root, '.dude/metadata/bundle-manifest.md', [
     '# Bundle Manifest',
     '',
     '```json',
     JSON.stringify({
-      source_repo: ABOUT_SOURCE_REPO,
+      source_repo: sourceRepo,
       source_ref: sourceRef,
       installed_ref: installedRef,
     }, null, 2),
@@ -3693,7 +3694,7 @@ function seedAboutManifest(root, installedRef = 'main', sourceRef = 'main', base
   ].join('\n'));
   if (baseRelease !== null) {
     write(root, '.dude/metadata/development-base-release.md',
-      renderDevelopmentBaseRelease({ source_repo: ABOUT_SOURCE_REPO, base_release: baseRelease }));
+      renderDevelopmentBaseRelease({ source_repo: sourceRepo, base_release: baseRelease }));
   }
 }
 
@@ -3801,7 +3802,9 @@ async function withPackJourney(context, operation, options, run) {
       '---\nname: dude-pack-alpha-helper\ndescription: "Disposable helper"\n---\n# Helper\n');
     write(root, 'library/packs/alpha/instructions/dude-pack-alpha-old.instructions.md', '# Old instruction\n');
     if (options.about) {
-      seedAboutManifest(root, 'main', 'main', 'v1.3.0');
+      // A checkout's Reload also reads the upstream its bundle manifest names (084), so this one names the
+      // workspace itself: an owned stand-in whose catalog is the local library, read in place, never GitHub.
+      seedAboutManifest(root, 'main', 'main', 'v1.3.0', root);
       // Twenty more `ui` packs fill Available past one 25-row page: with the
       // seven named ones and alpha, twenty-eight packs make a second page of three.
       const bulk = Array.from({ length: 20 }, (_, index) => `bulk-${String(index + 1).padStart(2, '0')}`);

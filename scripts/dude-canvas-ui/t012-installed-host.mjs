@@ -21,7 +21,9 @@
  * pre-seeded, before its host starts, as a development install with a recorded
  * base release; its unsent first idea waits through one Settings > About visit
  * that the installed extension serves. The pack fixture keeps the builder's
- * release metadata. This proves installed owner execution and waiter
+ * release refs; like every fixture here that seeds a local catalog, it names its
+ * own workspace as the bundle upstream, which a checkout's Reload also reads, so
+ * no Reload contacts the public repository. This proves installed owner execution and waiter
  * correlation, not unscripted model reasoning or desktop-app rendering.
  *
  * A further disposable workspace drives 073 Add/import. The shipped route hands
@@ -225,9 +227,10 @@ const installedAboutRows = (version, channel) => [
 ];
 /**
  * The two installed records About is observed with. The release case is the
- * builder's own release metadata, which carries no base record; the
- * development case is pre-seeded before its host starts, as a confirmed
- * `main` upgrade leaves it.
+ * builder's own release metadata, which carries no base record; the pack
+ * fixture that observes it names its own workspace as the upstream
+ * (`seedLocalUpstream`). The development case is pre-seeded before its host
+ * starts, as a confirmed `main` upgrade leaves it.
  */
 const RELEASE_ABOUT = Object.freeze({
   label: 'release',
@@ -246,7 +249,7 @@ const DEVELOPMENT_ABOUT = Object.freeze({
   baseRelease: 'v1.3.0',
   rows: installedAboutRows('Development (main), based on v1.3.0', 'Development (main)'),
 });
-const SOURCE_APP_SHA256 = 'be30db45dd5e002bc643de4e01b99f599f0006c9242f164e83ba41a16fbe17ba';
+const SOURCE_APP_SHA256 = '6d6db4c02ca519153a03774546a7b386281295c751804fce48b343ac77c7af89';
 const TASKS_PATH = path.posix.join(path.posix.dirname(SPEC_PATH), 'tasks.md');
 const DONE_IDEA_PATH = '.dude/ideas/052-dude-canvas-ui.md';
 const DONE_SPEC_PATH = '.dude/specs/052-dude-canvas-ui/spec.md';
@@ -1239,11 +1242,35 @@ function packFixture(root) {
   return { root, manifest, instruction, library, profile, destination, source, files: [PACK_DESTINATION] };
 }
 
+/**
+ * A checkout's Reload, and the one read after a source save, also reads the
+ * upstream its bundle manifest names (084). The builder's release metadata names
+ * the public GitHub repository, which only the 082 T004 case may contact, so a
+ * fixture that seeds a local catalog names its own workspace as that upstream
+ * instead: an owned stand-in whose catalog is the local library itself, read in
+ * place, so it lists the same packs and Available gains no row from it. Only
+ * `source_repo` changes; the refs and the prose stay the builder's.
+ * @param {string} root
+ * @returns {string} the upstream the manifest now names
+ */
+function seedLocalUpstream(root) {
+  const manifestPath = path.join(root, '.dude', 'metadata', 'bundle-manifest.md');
+  const release = fs.readFileSync(manifestPath, 'utf8');
+  const data = parseManifestDocument(Buffer.from(release), 'release fixture bundle manifest').data;
+  assert.equal(data.source_repo, INSTALLED_SOURCE_REPO, 'the builder names the public upstream');
+  const seeded = release.replace(/```json\r?\n[\s\S]*?\r?\n```/,
+    `\`\`\`json\n${JSON.stringify({ ...data, source_repo: root }, null, 2)}\n\`\`\``);
+  assert.notEqual(seeded, release);
+  write(root, '.dude/metadata/bundle-manifest.md', seeded);
+  return root;
+}
+
 /** @param {string} root */
 function seedPackFixture(root) {
   const fixture = packFixture(root);
   write(root, PACK_MANIFEST_PATH, fixture.manifest);
   write(root, PACK_SOURCE_PATH, fixture.instruction);
+  const upstream = seedLocalUpstream(root);
   write(root, PACK_WORK_IDEA_PATH, [
     '---',
     'title: Installed pack host continuity',
@@ -1273,6 +1300,8 @@ function seedPackFixture(root) {
   assert.equal(fs.existsSync(fixture.destination), false);
   return {
     ...fixture,
+    // The release About case, recorded with the stand-in upstream in place of the builder's.
+    about: { ...RELEASE_ABOUT, recorded: { ...RELEASE_ABOUT.recorded, sourceRepo: upstream } },
     work: {
       ideaPath: PACK_WORK_IDEA_PATH,
       specPath: PACK_WORK_SPEC_PATH,
@@ -1391,6 +1420,7 @@ function seedImportFixture(root) {
   const pack = packFixture(root);
   write(root, PACK_MANIFEST_PATH, pack.manifest);
   write(root, PACK_SOURCE_PATH, pack.instruction);
+  seedLocalUpstream(root);
   for (const name of fixture.fillNames) {
     write(root, `.github/skills/${name}/SKILL.md`,
       `---\nname: ${name}\ndescription: "Hand-made ${name}."\n---\n# ${name}\n`);
@@ -1485,10 +1515,11 @@ function seedSourceFixture(root) {
   const fixture = sourceFixture(root);
   write(root, PACK_MANIFEST_PATH, fixture.defaults.manifest);
   write(root, PACK_SOURCE_PATH, fixture.defaults.instruction);
+  const upstream = seedLocalUpstream(root);
   for (const [relative, bytes] of fixture.files) write(fixture.team, relative, bytes);
   assert.equal(fs.existsSync(fixture.sourcesFile), false, 'no saved sources before the browser adds one');
   assert.equal(fs.existsSync(fixture.destination), false, 'no pack destination before the dialog installs it');
-  return { ...fixture, realTeam: fs.realpathSync(fixture.team) };
+  return { ...fixture, upstream, realTeam: fs.realpathSync(fixture.team) };
 }
 
 /**
@@ -5582,6 +5613,7 @@ async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, cliVersions
     fixture.root,
     'before-request',
     cliVersions,
+    fixture.about,
   );
   await returnInstalledPacks(page);
   assert.deepEqual(await evaluate(page, `({
@@ -5652,6 +5684,7 @@ async function driveInstalledPackRoundTrip(page, canvasUrl, fixture, cliVersions
     fixture.root,
     'applied-result',
     cliVersions,
+    fixture.about,
   );
   await returnInstalledPacks(page);
   assert.equal(network.filter(entry => entry.method === 'GET' && entry.path === '/api/about').length, 2);
@@ -6489,7 +6522,7 @@ async function driveInstalledSourceRoundTrip(page, canvasUrl, fixture, sources) 
   let view = await sourcesView(page);
   assert.deepEqual(view.rows.map((row) => row.label), [
     `Local library. Local folder. ${libraryLocation}. Not read. Built in.`,
-    `Bundle upstream. GitHub. ${INSTALLED_SOURCE_REPO}, ref latest. Not read while library/packs exists. Built in.`,
+    `Bundle upstream. GitHub. ${fixture.upstream}, ref latest. Not read. Built in.`,
   ]);
   assert.deepEqual([view.count, view.add.disabled, view.dialogOpen],
     ['2 sources · 2 built in · 0 of 8 added', false, false]);
@@ -6533,9 +6566,11 @@ async function driveInstalledSourceRoundTrip(page, canvasUrl, fixture, sources) 
   await settled('post-add details', async () => (await sourceDetailView(page))?.key === teamKey);
   assert.equal(discoveries(), 1, 'exactly one catalog read follows the save');
   view = await sourcesView(page);
+  // The read that follows the save reads Bundle upstream too, beside the local library: it lists that library's
+  // one pack, which Available therefore lists once, from Local library.
   assert.deepEqual(view.rows.map((row) => [row.label, row.selected]), [
     [`Local library. Local folder. ${libraryLocation}. Read - 1 pack. Built in.`, false],
-    [`Bundle upstream. GitHub. ${INSTALLED_SOURCE_REPO}, ref latest. Not read while library/packs exists. Built in.`, false],
+    [`Bundle upstream. GitHub. ${fixture.upstream}, ref latest. Read - 1 pack. Built in.`, false],
     [`${fixture.label}. Local folder. ${fixture.realTeam}. Read - 2 packs. This project.`, true],
   ]);
   assert.equal(view.rows[2].key, teamKey, 'the row carries the key the save returned');

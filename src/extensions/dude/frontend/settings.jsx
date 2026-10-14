@@ -8,8 +8,8 @@ import { ArrowClockwiseRegular, ChevronLeftRegular, ChevronRightRegular, Dismiss
   PuzzlePiece20Filled, PuzzlePiece20Regular } from '@fluentui/react-icons';
 import { AboutPanel } from './about.jsx';
 import { ArtifactImport, NEW_SESSION } from './artifact-import.jsx';
-import { catalogCoverageText, RemoveSourceDialog, removalRefusal, blockersOf, SourceBody, sourceLabel, SourcesPanel,
-  sourceStatus, sourceWriteReason } from './pack-sources.jsx';
+import { besideLibrary, catalogCoverageText, RemoveSourceDialog, removalRefusal, blockersOf, SourceBody, sourceLabel, sourcePlace,
+  SourcesPanel, sourceStatus, sourceWriteReason } from './pack-sources.jsx';
 import { Markdown } from './markdown.jsx';
 import { mergeClasses, useCanvasStyles } from './styles.js';
 import { importRequestStatus, packActionReason } from './use-canvas-data.js';
@@ -29,6 +29,10 @@ const PROJECT_NOTE = 'Read only. Project agents and skills are project files, no
 const DETAILS_NONE = 'No details found.';
 const DETAILS_TOO_LARGE = 'Not shown: larger than 64 KiB';
 const DETAILS_GITHUB_NOTE = 'Member READMEs are not read from GitHub before installation.';
+// 084: Bundle upstream beside a local library. Before the first Reload, Available says what Reload packs adds;
+// filtered to that source with nothing listed, it says where the packs Local library also has are listed.
+const upstreamNote = upstream => `Reload packs also reads Bundle upstream (${sourcePlace(upstream)}) and adds the packs that Local library does not have.`;
+const LOCAL_WINS = 'Packs that Local library also has are listed from Local library.';
 // 083: the pack action dialog's words, as the approved mock gives them.
 const VERBS = { install: 'Install', remove: 'Remove', refresh: 'Refresh' };
 const DOING = { install: 'Installing...', remove: 'Removing...', refresh: 'Refreshing...' };
@@ -383,6 +387,18 @@ function FileGroup({ heading, files }) {
   </div>;
 }
 
+/**
+ * The source a preview read when the action named no source the project added
+ * (084, FR-026): Compose's default resolution reads Local library when it has
+ * the pack, else Bundle upstream, so a folder is the default row and a
+ * repository is the Bundle upstream row. Null before a preview, or when the
+ * action's own source is the one read.
+ */
+function resolvedSource(action, preview) {
+  if (!action.resolves || !preview?.source) return null;
+  return (preview.source.type === 'remote' ? action.resolves.upstream : action.resolves.fallback) ?? null;
+}
+
 /** What a ready or blocked preview shows (FR-004 to FR-006, FR-009); a preview Compose could not make shows only the source. */
 function PreviewBody({ action, step }) {
   const s = useCanvasStyles();
@@ -392,6 +408,14 @@ function PreviewBody({ action, step }) {
     return preview ? <FileGroup heading={`Deletes ${plural(preview.files.length, 'recorded file')}`} files={preview.files} />
       : <p className={s.prose}>No recorded files to delete.</p>;
   }
+  // 084: the ready view names the source the preview read, with the full commit for Bundle upstream beside a local
+  // library (FR-021), and Source changes compares that source with the recorded one (FR-027).
+  const resolved = resolvedSource(action, preview);
+  const label = resolved ? sourceLabel(resolved) : action.label;
+  const commit = besideLibrary(resolved) ? preview.source.resolved_commit : null;
+  const changes = !resolved ? action.changes : resolved.key === action.resolves.recordedKey ? null
+    : `${recordedText(action.resolves.recorded)} -> ${resolved.name} (${resolved.repository ?? resolved.location})`;
+  const commitFact = commit && <><dt>Commit</dt><dd><code className={s.code}>{commit}</code></dd></>;
   if (action.operation === 'install') {
     const tools = preview?.tools ?? [];
     return <>
@@ -403,7 +427,8 @@ function PreviewBody({ action, step }) {
       <dl className={s.packMetadata}>
         {preview && <><dt>Required tools</dt><dd>{tools.length
           ? tools.map(tool => `${tool.name}: ${tool.found ? 'found' : 'missing'}`).join(', ') : 'None'}</dd></>}
-        <dt>Source</dt><dd>{action.label}</dd>
+        <dt>Source</dt><dd>{label}</dd>
+        {commitFact}
       </dl>
       {preview && <>
         <Text className={s.eyebrow}>{NEW_SESSION}</Text>
@@ -417,8 +442,9 @@ function PreviewBody({ action, step }) {
   return <>
     {third}
     <dl className={s.packMetadata}>
-      <dt>Source</dt><dd>{action.label}</dd>
-      {preview && action.changes && <><dt>Source changes</dt><dd>{action.changes}</dd></>}
+      <dt>Source</dt><dd>{label}</dd>
+      {commitFact}
+      {preview && changes && <><dt>Source changes</dt><dd>{changes}</dd></>}
     </dl>
     {preview && <>
       <ActionBar intent="warning" title="Local edits are overwritten" lines={[OVERWRITE]} />
@@ -742,6 +768,11 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
   const catalogText = catalogCoverageText(packs) === 'unavailable' ? coverage('catalog') : catalogCoverageText(packs);
   const contextLabel = current.context === 'installed' ? 'Installed' : 'Available';
   const filtered = Boolean(filters.tag || filters.source);
+  // 084: Bundle upstream beside a local library. Before the first Reload, Available says what Reload packs adds
+  // (FR-009, FR-010); filtered to that source after a read that left it no Available row, it says why (FR-016).
+  const upstream = sourceRows.find(item => besideLibrary(item)) ?? null;
+  const filteredSource = filters.source ? sourcesByKey.get(filters.source) : null;
+  const localWins = current.context === 'available' && besideLibrary(filteredSource) && filteredSource.status === 'read';
   const count = !shown ? 'Count unavailable' : !matches.length ? `0${known ? ' known' : ''} matches`
     : `${offset + 1}–${offset + visible.length} of ${matches.length}${known ? (filtered ? ' known matches' : ' known')
       : staleInstalled ? ' last read' : filtered ? ' matches' : ''}`;
@@ -753,22 +784,30 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
   const actionReasons = Object.fromEntries(actions.map(operation => [operation, packActionReason(data, operation)]));
   const actionWhy = [...new Set(Object.values(actionReasons).filter(Boolean))].join(' ');
   // A pack action reads what the action itself reads: an install, its row's source (naming it only when the
-  // project added it); a refresh, the saved source its record matches, else the default catalog (packs.mjs
-  // chooseSource); a removal, only the installed record. `changes` says when the refresh's source is not
-  // the recorded one, as the server matched them by type and repository or folder, never by a ref.
+  // project added it); a refresh, the source its record matches, added or built in, else the default catalog
+  // (084 FR-025; the server matches only added sources, and Compose's default resolution reads the built-ins);
+  // a removal, only the installed record. `changes` says when the refresh's source is not the recorded one, as
+  // the server matched them by type and repository or folder, never by a ref. Without a source the project
+  // added, `resolves` lets the ready view name the source the preview actually read (084 FR-026, FR-027).
   const openAction = (operation, trigger) => {
     const pack = selected.pack;
     const key = operation === 'install' ? pack.sourceKey : operation === 'remove' ? null
-      : sourcesByKey.get(pack.sourceKey)?.scope === 'project' ? pack.sourceKey : packs?.sources?.defaultKey ?? null;
+      : sourcesByKey.has(pack.sourceKey) ? pack.sourceKey : packs?.sources?.defaultKey ?? null;
     const source = key ? sourcesByKey.get(key) ?? null : null;
+    const added = source?.scope === 'project';
     setAction({
       id: ++actionSequence.current, operation, name: selected.name, trigger,
-      source: operation === 'install' && source?.scope === 'project' ? key : null,
+      source: operation === 'install' && added ? key : null,
       checking: operation === 'remove' ? 'Checking installed files...' : `Checking ${source?.name ?? 'the default catalog'}...`,
       label: source ? sourceLabel(source) : operation === 'install' ? selected.label : 'Default catalog',
       changes: operation === 'refresh' && key !== pack.sourceKey
         ? `${recordedText(pack.source)} -> ${source ? `${source.name} (${source.repository ?? source.location})` : 'the default catalog'}`
         : null,
+      resolves: operation === 'remove' || added ? null : {
+        upstream: sourceRows.find(item => item.builtin === 'bundle-upstream') ?? null,
+        fallback: sourcesByKey.get(packs?.sources?.defaultKey) ?? null,
+        recordedKey: pack.sourceKey ?? null, recorded: pack.source ?? null,
+      },
     });
   };
   // Closing returns focus to the button that opened the dialog, else the view's heading (see the effect below).
@@ -1169,6 +1208,7 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
             {current.context === 'available' && catalogState === 'not_read' && !loading ? <>
               <Text weight="semibold">Catalog not read yet</Text>
               <Text>Available packs come from your sources, so this list is empty and its count is unknown until they are read.</Text>
+              {upstream && <Text>{upstreamNote(upstream)}</Text>}
               <Button appearance="primary" icon={<ArrowClockwiseRegular />} data-pack-reload onClick={() => data.reloadPacks()}>Reload packs</Button>
             </> : <>
               <Text weight="semibold">{!shown ? `${contextLabel} ${loading ? 'loading' : 'unavailable'}`
@@ -1178,8 +1218,7 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
                 : filtered && partialCatalog ? (filters.source && sourcesByKey.get(filters.source)?.status === 'unavailable'
                   ? `${sourceLabel(sourcesByKey.get(filters.source))}: ${sourceStatus(sourcesByKey.get(filters.source)).text.replace(/[.\s]+$/, '')}. Its packs are not listed, so this is not a confirmed empty list.`
                   : 'This is not a confirmed empty list: some sources could not be read. Clear the filters to see every known pack in this context.')
-                  : filtered ? `${filters.source && sourcesByKey.get(filters.source)?.reason === 'not_read_by_design'
-                    ? 'Bundle upstream is not read while library/packs exists. ' : ''}Clear the filters to see all packs in this context.`
+                  : filtered ? `${localWins ? `${LOCAL_WINS} ` : ''}Clear the filters to see all packs in this context.`
                     : current.context === 'installed' ? 'The installed profile contains no packs.' : 'No catalog packs are outside installed membership.'}</Text>
             </>}
           </div>}

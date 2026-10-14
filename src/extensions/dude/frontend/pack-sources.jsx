@@ -27,7 +27,10 @@ const REMOVE_NOTE = 'Remove takes this entry out of the saved list. It installs 
 const READ_ONLY_NOTE = 'Read only. Built-in sources are derived from this installation and cannot be removed or edited here.';
 const SAVED_FILE = '.dude/metadata/pack-sources.md';
 const DEFAULT_LIMIT = 8;
-const NOT_READ_BY_DESIGN = 'Not read while library/packs exists';
+// 084: Bundle upstream beside a local library, in the approved mock's words.
+const UPSTREAM_DESCRIPTION = ' This development bundle has a local library, which stays the default catalog. Reload packs also reads Bundle upstream, and Available lists only its packs that Local library does not have.';
+const UPSTREAM_FOUND_NOTE = 'Counts include names you already have installed or that Local library also has. Available lists only the others.';
+const UPSTREAM_NONE_LISTED = 'Every pack here is installed or also in Local library.';
 
 const packsWord = count => `${count} ${count === 1 ? 'pack' : 'packs'}`;
 /**
@@ -37,16 +40,24 @@ const packsWord = count => `${count} ${count === 1 ? 'pack' : 'packs'}`;
 const readingSeconds = location => (/^https:/i.test(location) ? 30 : 5);
 /** The written-out type of a source: never an icon or a color alone. */
 const sourceType = item => item.type === 'remote' ? 'GitHub' : 'Local folder';
+/** Where a source is, in words: `GitHub E-G-C/dude` for Bundle upstream on GitHub, else its written-out type. */
+export const sourcePlace = item => item.builtin === 'bundle-upstream' && item.repositoryName
+  ? `GitHub ${item.repositoryName}` : sourceType(item);
 /** `Local library - Local folder`, `owner/repo - GitHub`, `Bundle upstream - GitHub E-G-C/dude`. */
-export const sourceLabel = item => item.builtin === 'bundle-upstream' && item.repositoryName
-  ? `Bundle upstream - GitHub ${item.repositoryName}` : `${item.name} - ${sourceType(item)}`;
+export const sourceLabel = item => `${item.name} - ${sourcePlace(item)}`;
 const whereOf = item => item.type === 'remote' ? item.repository : item.location;
 const scopeOf = item => item.scope === 'builtin' ? 'Built in' : 'This project';
+/**
+ * Bundle upstream beside a local library, which stays the default catalog (084):
+ * a Reload reads it as one more source, and Available lists only its packs that
+ * Local library does not have.
+ */
+export const besideLibrary = item => item?.builtin === 'bundle-upstream' && !item.default;
 
 /**
  * What a source row says about its last read, from what the server projected:
- * read with a count, not read yet, not read by design, or unavailable with the
- * server's own reason. Never a count it does not have.
+ * read with a count, not read yet, or unavailable with the server's own reason.
+ * Never a count it does not have.
  */
 export function sourceStatus(item) {
   if (item.status === 'read') return { kind: 'read', text: `Read - ${packsWord(item.count)}` };
@@ -54,7 +65,6 @@ export function sourceStatus(item) {
     return { kind: 'unavailable', text: `Unavailable - ${item.message || 'The source could not be read.'}`,
       reason: item.message || 'The source could not be read.' };
   }
-  if (item.reason === 'not_read_by_design') return { kind: 'skipped', text: NOT_READ_BY_DESIGN };
   return { kind: 'unread', text: 'Not read' };
 }
 
@@ -98,16 +108,18 @@ function inUseReason(uses) {
 
 /**
  * Whether Show packs in Available can open this source's packs: only a source
- * that was read and still has a pack outside installed membership. Any other
- * state says why, so the disabled control is never a dead end.
+ * that was read and still has a row in Available (`uninstalled`, which for
+ * Bundle upstream beside a local library leaves out the packs that library also
+ * has). Any other state says why, so the disabled control is never a dead end.
  */
 function showPacksState(item, shown) {
   const status = sourceStatus(item);
   if (status.kind === 'unread') return { ok: false, why: 'Not read yet - choose Reload packs.' };
-  if (status.kind === 'skipped') return { ok: false, why: `${NOT_READ_BY_DESIGN}.` };
   if (status.kind === 'unavailable') return { ok: false, why: 'Unavailable - its packs are not listed.' };
   if (!item.count) return { ok: false, why: 'This source has no packs.' };
-  if (!item.uninstalled) return { ok: false, why: 'All packs from this source are installed.' };
+  if (!item.uninstalled) {
+    return { ok: false, why: besideLibrary(item) ? UPSTREAM_NONE_LISTED : 'All packs from this source are installed.' };
+  }
   if (!shown) return { ok: false, why: 'Available is not current. Choose Reload packs.' };
   return { ok: true };
 }
@@ -538,7 +550,7 @@ export function SourceBody({ item, sources, shown, uses, reason: writeReason, on
   const status = sourceStatus(item), show = showPacksState(item, shown), builtin = item.scope === 'builtin';
   const blocked = builtin ? null : writeReason || (inUse(uses) ? inUseReason(uses) : null);
   const reasons = [...new Set([show.ok ? '' : show.why, blocked || ''].filter(Boolean))];
-  const open = item.uninstalled;
+  const open = item.uninstalled, beside = besideLibrary(item);
   const installed = item.installedNames;
   const unlisted = sources?.unmatched?.unlisted ?? 0, unknown = sources?.unmatched?.unknown ?? 0;
   const ref = item.type === 'remote' ? item.ref : null;
@@ -553,7 +565,7 @@ export function SourceBody({ item, sources, shown, uses, reason: writeReason, on
         : builtin ? <>The public GitHub repository <code className={s.code}>{item.repository}</code> at ref <code className={s.code}>{ref}</code>. It is derived from this
           installation each time and managed by bundle upgrade, so it cannot be edited here.{item.default
             ? ' This installation has no local library, so Bundle upstream supplies the default catalog.'
-            : ' This development bundle has a local library, so Bundle upstream is not read.'}</>
+            : UPSTREAM_DESCRIPTION}</>
           : item.type === 'remote' ? <>The public GitHub repository <code className={s.code}>{item.repository}</code>, tracked at ref <code className={s.code}>{ref}</code>.
             Added to this project, so it is saved with the project and can be committed and shared.</>
             : <>The folder <code className={s.code}>{item.location}</code> on this computer, whose root contains <code className={s.code}>library/packs</code>.
@@ -574,9 +586,10 @@ export function SourceBody({ item, sources, shown, uses, reason: writeReason, on
       <dt>Status</dt><dd>{status.text}</dd>
       <dt>Packs found</dt>
       <dd className={s.tight}>{item.status === 'read' ? <>
-        <span>{!item.count ? '0' : open === item.count ? `${item.count} (none installed)` : open === 0 ? `${item.count} (all installed)`
-          : `${item.count} (${open} not installed)`}</span>
-        {item.count > 0 && <Text className={s.eyebrow}>{PACKS_FOUND_NOTE}</Text>}</> : 'Unknown'}</dd>
+        <span>{!item.count ? '0' : beside ? `${item.count} (${open ? `${open} in Available` : 'none in Available'})`
+          : open === item.count ? `${item.count} (none installed)` : open === 0 ? `${item.count} (all installed)`
+            : `${item.count} (${open} not installed)`}</span>
+        {item.count > 0 && <Text className={s.eyebrow}>{beside ? UPSTREAM_FOUND_NOTE : PACKS_FOUND_NOTE}</Text>}</> : 'Unknown'}</dd>
       <dt>Installed from this source</dt>
       <dd className={s.tight}>{installed === null ? 'Unavailable' : <span>{installed.length ? `${installed.length}: ${installed.join(', ')}` : '0'}</span>}
         {unlisted > 0 && <Text className={s.eyebrow}>{`${unlisted} installed ${unlisted === 1 ? 'pack records' : 'packs record'} an unlisted source.`}</Text>}

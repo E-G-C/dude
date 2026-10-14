@@ -6,7 +6,8 @@
  * Every catalog read runs in a short-lived helper process (catalog-reader.mjs),
  * and there are three reads: the default catalog (the local library, else the
  * recorded upstream), a source being added, and an explicit discovery of the
- * default plus each saved source. At most four helpers are ever active in this process,
+ * default, of the recorded upstream too while a local library is the default,
+ * and of each saved source. At most four helpers are ever active in this process,
  * and at most sixteen more wait for one. A helper's deadline follows from what it
  * reads: a folder, a public GitHub catalog, or another host's whole clone. Every
  * helper one operation starts, and every wait for a helper, also ends within that
@@ -433,6 +434,18 @@ function defaultPurpose(builtins) {
   const source = builtins.find(builtin => builtin.builtin === 'local-library')
     ?? builtins.find(builtin => builtin.builtin === 'bundle-upstream');
   return source ? purposeOf(source) : 'local';
+}
+
+/**
+ * The recorded upstream that a discovery also reads, as its own source: only
+ * beside a local library, which stays the default. Elsewhere the upstream is the
+ * default read itself, or there is none.
+ * @param {DescribedSource[]} builtins
+ * @returns {DescribedSource | null}
+ */
+function upstreamBesideLibrary(builtins) {
+  return builtins.some(builtin => builtin.builtin === 'local-library')
+    ? builtins.find(builtin => builtin.builtin === 'bundle-upstream') ?? null : null;
 }
 
 /**
@@ -1048,9 +1061,13 @@ function installedReadmes(root, files) {
  * Profile order first, then each read catalog's uninstalled packs in catalog
  * order. Installed membership is by name alone, so any installation of a name
  * leaves none of its Available rows, but same-named Available rows from different
- * sources stay separate, each with its own key. An installed row's description
+ * sources stay separate, each with its own key. The one exception is a catalog's
+ * `hidden` names: the recorded upstream, read beside a local library, lists no
+ * Available row for a name that library listed in the same read, because the
+ * library's copy is the one Compose installs. An installed row's description
  * comes from the source its record matches (unavailable when that source was not
- * read), and only an unmatched record uses the default catalog by name.
+ * read), whatever that catalog hides, and only an unmatched record uses the
+ * default catalog by name.
  *
  * Each row's `documents` lists its Details in order: the pack's `pack.md`, then
  * each member skill folder's root `README.md`. A document is `{ path, text }`,
@@ -1060,7 +1077,8 @@ function installedReadmes(root, files) {
  * catalog is read; its READMEs are read from its installed skill folders every
  * time. An Available row read from GitHub also has `fromGitHub: true`: GitHub
  * discovery downloads only `pack.md`, so its member READMEs are not read.
- * @param {{ root: string, installed: Record<string, any>, catalogs: Array<{ key: string | null, packs: any[] }>,
+ * @param {{ root: string, installed: Record<string, any>,
+ *   catalogs: Array<{ key: string | null, packs: any[], hidden?: Set<string> | null }>,
  *   defaultCatalog: any[] | null, matches: ReturnType<typeof matchInstalled> | null }} input
  */
 function joinItems({ root, installed, catalogs, defaultCatalog, matches }) {
@@ -1079,7 +1097,7 @@ function joinItems({ root, installed, catalogs, defaultCatalog, matches }) {
   });
   for (const catalog of catalogs) {
     for (const pack of catalog.packs) {
-      if (Object.hasOwn(installed, pack.name)) continue;
+      if (Object.hasOwn(installed, pack.name) || catalog.hidden?.has(pack.name)) continue;
       rows.push({ key: catalog.key ? `pack:${pack.name}@${catalog.key}` : `pack:${pack.name}`, name: pack.name,
         installed: false, files: null, source: null, description: pack.description ?? null, use_cases: pack.use_cases ?? null,
         documents: pack.documents ?? null, ...(pack.fromGitHub ? { fromGitHub: true } : {}),
@@ -1113,27 +1131,43 @@ function discoveryCoverage(reads, configurationProblem) {
 }
 
 /**
+ * How many Available rows the join gave each source, by source key, or null
+ * without a join. Each source row's `uninstalled` is this number.
+ * @param {Array<{ installed: boolean, sourceKey?: string | null }> | null} items
+ * @returns {Map<string | null, number> | null}
+ */
+function availableBySource(items) {
+  if (!items) return null;
+  /** @type {Map<string | null, number>} */
+  const counts = new Map();
+  for (const { installed, sourceKey = null } of items) if (!installed) counts.set(sourceKey, (counts.get(sourceKey) ?? 0) + 1);
+  return counts;
+}
+
+/**
  * The source rows: the two derived built-ins first, then the saved sources in
- * saved order. A source's own catalog outcome, counts and installed matches are
- * independent of every other source's.
+ * saved order. A source's own catalog outcome, count and installed matches are
+ * independent of every other source's. `count` is every pack its read listed,
+ * and `uninstalled` is the number of Available rows from it: its packs that are
+ * not installed, less, for the recorded upstream beside a local library, the
+ * names that library listed (see `joinItems`).
  * @param {{ root: string, configuration: Configuration, items: SavedSource[] | null, invalid: string | null,
  *   reads: Map<string, SourceRead>, defaultKey: string | null,
- *   installedNames: Set<string> | null, matches: ReturnType<typeof matchInstalled> | null }} input
+ *   available: Map<string | null, number> | null, matches: ReturnType<typeof matchInstalled> | null }} input
  */
-function projectSources({ root, configuration, items, invalid, reads, defaultKey, installedNames, matches }) {
+function projectSources({ root, configuration, items, invalid, reads, defaultKey, available, matches }) {
   const { saved, builtins } = configuration;
   /** @param {string | null} key */
   const installedFrom = key => matches && key ? [...matches].filter(([, match]) => match.sourceKey === key).map(([name]) => name) : null;
-  /** @param {string | null} key @param {boolean} byDesign */
-  const outcome = (key, byDesign) => {
-    const read = key ? reads.get(key) : undefined;
+  /** @param {string} key */
+  const outcome = key => {
+    const read = reads.get(key);
     if (read) {
       const packs = read.result?.packs ?? null;
       return { status: read.status, reason: read.reason, message: read.message, count: packs ? packs.length : null,
-        uninstalled: packs && installedNames ? packs.filter(pack => !installedNames.has(pack.name)).length : null };
+        uninstalled: packs && available ? available.get(key) ?? 0 : null };
     }
-    return { status: /** @type {const} */ ('not_read'), count: null, uninstalled: null,
-      reason: byDesign ? 'not_read_by_design' : null, message: byDesign ? 'Not read while library/packs exists.' : null };
+    return { status: /** @type {const} */ ('not_read'), count: null, uninstalled: null, reason: null, message: null };
   };
   /**
    * `known` is false for a folder that did not answer: what is installed from it
@@ -1155,7 +1189,7 @@ function projectSources({ root, configuration, items, invalid, reads, defaultKey
     managedBy: source.builtin === 'bundle-upstream' ? 'bundle-upgrade' : null,
     name: source.builtin === 'local-library' ? 'Local library' : 'Bundle upstream',
     repositoryName: source.type === 'remote' ? repositoryName(source.repository) : null,
-    ...outcome(source.key, source.builtin === 'bundle-upstream' && source.key !== defaultKey),
+    ...outcome(source.key),
   }));
   const savedRows = (invalid ? [] : items ?? []).map(item => {
     // Every saved entry has a source here, even a folder that did not answer: that one
@@ -1169,7 +1203,7 @@ function projectSources({ root, configuration, items, invalid, reads, defaultKey
       ...(unanswered
         ? { status: /** @type {const} */ ('unavailable'), reason: unanswered.reason, message: unanswered.message,
           count: null, uninstalled: null }
-        : outcome(source.key, false)) };
+        : outcome(source.key)) };
   });
   const unmatched = matches ? [...matches.values()] : null;
   return {
@@ -1194,7 +1228,8 @@ function projectSources({ root, configuration, items, invalid, reads, defaultKey
  * Which catalogs a read acquires is explicit:
  * - default: the default catalog (the local library, else the recorded upstream);
  * - `catalog: false`: none, an installed-only check;
- * - `discover`: the default plus every saved source, each once.
+ * - `discover`: the default, the recorded upstream as a source of its own while a
+ *   local library is the default, and every saved source, each once.
  * `sources` adds the source rows and every item's source key and provenance;
  * discovery implies it. Without a catalog read those rows say "not read".
  * @param {string} root
@@ -1226,7 +1261,7 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
       signal.throwIfAborted();
       value.sources = projectSources({ root, configuration, items: described?.ok ? described.items : null,
         invalid: described && !described.ok ? described.error : null, reads: new Map(), defaultKey: null,
-        installedNames: null, matches: null });
+        available: null, matches: null });
     }
     return value;
   };
@@ -1259,6 +1294,8 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
   }
   /** @type {any} */
   let catalog = null;
+  /** @type {{ key: string, read: SourceRead } | null} the recorded upstream's own read beside a local library, in a discovery */
+  let upstreamRead = null;
   /** @type {string | null} */
   let inputs = null;
   let failedAcquisition = false;
@@ -1268,11 +1305,16 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
         error: projected ? 'The catalog is read only when you choose Reload.' : 'This installed-state check does not acquire a catalog.' };
     } else if (discover && configuration) {
       inputs = catalogInputsRevision(root);
-      const [defaultOutcome, saved] = await settleAll([
+      // Beside a local library the recorded upstream is read too, as a source of its own. It asks for its reader
+      // slot after the default and before any saved source, so the built-ins are read first.
+      const upstream = upstreamBesideLibrary(configuration.builtins);
+      const [defaultOutcome, upstreamOutcome, saved] = await settleAll([
         acquireContained(root, signal, until, defaultPurpose(configuration.builtins)),
+        upstream ? acquireContained(root, signal, until, purposeOf(upstream), { op: 'upstream' }) : null,
         configuration.saved.ok ? readSavedSources(root, signal, until, configuration, { list: true }) : null,
       ]);
       catalog = defaultOutcome;
+      upstreamRead = upstream ? { key: upstream.key, read: normalizeRead(upstreamOutcome) } : null;
       savedItems = saved?.ok ? saved.items : null;
       savedInvalid = saved && !saved.ok ? saved.error : null;
     } else {
@@ -1323,7 +1365,7 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
   } else snapshot.coverage.installed = coverage('unavailable', 'installed_unavailable', validated.error);
 
   // The catalogs this read established, each with the source it was read from.
-  /** @type {Array<{ key: string | null, packs: any[] }>} */
+  /** @type {Array<{ key: string | null, packs: any[], hidden?: Set<string> | null }>} */
   const catalogs = [];
   /** @type {Map<string, SourceRead>} */
   const reads = new Map();
@@ -1347,10 +1389,14 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
     // returns is not a source, and it neither covers nor widens the catalog.
     /** @type {Array<{ key: string | null, read: SourceRead }>} */
     const all = defaultSource ? [{ key: defaultSource.key, read: defaultRead }] : [];
+    if (upstreamRead) all.push(upstreamRead);
     for (const item of savedItems ?? []) if (item.read) all.push({ key: item.source?.key ?? null, read: item.read });
+    // Local wins: the upstream offers no name the local library listed in this read, because Compose installs that
+    // name from the library. A library that could not be read listed nothing, so then nothing is hidden.
+    const local = upstreamRead && defaultRead.result ? new Set(defaultRead.result.packs.map(pack => pack.name)) : null;
     for (const { key, read } of all) {
       if (key) reads.set(key, read);
-      if (read.result) catalogs.push({ key, packs: read.result.packs });
+      if (read.result) catalogs.push({ key, packs: read.result.packs, hidden: key === upstreamRead?.key ? local : null });
     }
     snapshot.catalog = defaultRead.result;
     snapshot.coverage.catalog = discoveryCoverage(all, configuration.saved.ok ? savedInvalid : configuration.saved.error);
@@ -1381,8 +1427,7 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
   }
   if (projected && configuration) {
     snapshot.sources = projectSources({ root, configuration, items: savedItems, invalid: savedInvalid, reads,
-      defaultKey: defaultSource?.key ?? null,
-      installedNames: snapshot.installed ? new Set(Object.keys(snapshot.installed.installed)) : null, matches });
+      defaultKey: defaultSource?.key ?? null, available: availableBySource(snapshot.items), matches });
   }
   snapshot.readAt = new Date().toISOString();
   return snapshot;
