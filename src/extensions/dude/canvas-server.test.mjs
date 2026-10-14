@@ -799,6 +799,17 @@ function stallCatalog(fixture, url) {
 }
 
 /**
+ * Turn a stalled workspace into a checkout for a later read: a local library, and no upstream in the bundle
+ * manifest. A checkout's discovery also reads the upstream its manifest names (084), which here would still stall.
+ * @param {ReturnType<typeof packFixture>} fixture
+ * @param {string[]} names
+ */
+function recoverLocally(fixture, names) {
+  fs.rmSync(path.join(fixture.root, '.dude/metadata/bundle-manifest.md'));
+  fixture.catalog(names);
+}
+
+/**
  * Record production's launches without replacing them. Production spawns
  * through the child_process default export, so this method mock sees every
  * reader. execFile (taskkill) and fork use Node's internal spawn and are not seen.
@@ -2160,8 +2171,7 @@ isolatedTest('T001 packs GET stops a stalled Git transfer\'s whole reader tree a
       if (scheme !== 'git') return;
       // A later read recovers at once while the stalled transfer stays unreleased: only the deadline ended it.
       const connections = listener.connections;
-      // Compose prefers a local catalog; the configured stalled source stays in place.
-      fixture.catalog(['alpha', 'bravo']);
+      recoverLocally(fixture, ['alpha', 'bravo']);
       const recoveredAt = performance.now();
       const recovered = await (await call(instance.url, { path: DISCOVER })).json();
       const recovery = performance.now() - recoveredAt;
@@ -2169,7 +2179,7 @@ isolatedTest('T001 packs GET stops a stalled Git transfer\'s whole reader tree a
       assert.equal(recovered.catalog.origin, 'local');
       assert.deepEqual(recovered.catalog.packs.map(/** @param {any} pack */ pack => pack.name), ['alpha', 'bravo']);
       assert.ok(recovery < 5_000, `the later read waited on nothing: ${recovery} ms`);
-      assert.equal(listener.connections, connections, 'the later read did not touch the stalled source');
+      assert.equal(listener.connections, connections, 'the later read did not touch the stalled transport');
       assert.equal(listener.open, 0);
       const readers = spy.readers();
       assert.equal(readers.length, 2);
@@ -2204,7 +2214,7 @@ test('T001 cancelling a stalled pack read stops its reader tree before the repla
     controller.abort();
     assert.ok((await first) instanceof Error, 'the abandoned fetch rejected');
     await firstClosed;
-    fixture.catalog(['alpha']);
+    recoverLocally(fixture, ['alpha']);
     const started = performance.now();
     const second = await (await call(instance.url, { path: DISCOVER })).json();
     const elapsed = performance.now() - started;
@@ -2256,7 +2266,7 @@ test('T001 Canvas close during a stalled pack read stops its reader tree and a r
     const response = await pending;
     assert.equal(response.status, 503);
     assert.equal((await response.json()).error, 'packs_unavailable');
-    fixture.catalog(['alpha']);
+    recoverLocally(fixture, ['alpha']);
     const reopened = await openInstance(instanceId, () => {}, { complete: true }, { root: fixture.root });
     assert.equal(reopened.catalogRead, null);
     const reopenedAt = performance.now();
@@ -7307,10 +7317,11 @@ test('T008 a private source fails visibly: a ~/.netrc login never reaches it, wh
 });
 
 /**
- * Run the real reader as a process of its own on the default read of `fixture`'s workspace, with this process's
- * environment plus `given` and nothing else: no launch from `packs.mjs`, so nothing but `given` names its Git home. A
- * recording preload, which Node loads before the reader's own module as `stallResolutionOf` loads its stall, notes every
- * home variable, and `os.homedir()`, when the reader starts and again at the moment it sends its answer.
+ * Run the real reader as a process of its own on the default read of `fixture`'s workspace, or on the request that
+ * `given` names, with this process's environment plus `given` and nothing else: no launch from `packs.mjs`, so nothing
+ * but `given` names its Git home. A recording preload, which Node loads before the reader's own module as
+ * `stallResolutionOf` loads its stall, notes every home variable, and `os.homedir()`, when the reader starts and again
+ * at the moment it sends its answer.
  * @param {ReturnType<typeof packFixture>} fixture
  * @param {Record<string, string>} given
  */
@@ -7582,8 +7593,7 @@ test('T008 discovery reads the default and every saved source once, with source-
   const upstream = github.publish('acme/upstream', ['alpha']);
   const packs = github.publish('acme/dude-packs', ['twin', 'rust', 'zeta']);
   const team = localSource(fixture, 'team-packs', ['twin', 'ui']);
-  // A development bundle: its library exists, so its upstream is displayed and never acquired.
-  github.hold('acme/upstream');
+  // A development bundle: its library is the default, and its upstream is read beside it as a source of its own.
   fs.writeFileSync(path.join(fixture.root, '.dude/metadata/bundle-manifest.md'),
     `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify({ source_repo: upstream.url, source_ref: 'main' })}\n\`\`\`\n`);
   const commit = 'a'.repeat(40);
@@ -7619,12 +7629,12 @@ test('T008 discovery reads the default and every saved source once, with source-
     assert.deepEqual(rows.map(/** @param {any} row */ row => row.default), [true, false, false, false]);
     assert.deepEqual({ status: library.status, count: library.count, uninstalled: library.uninstalled, installed: library.installedNames, location: library.location },
       { status: 'read', count: 3, uninstalled: 2, installed: ['bravo'], location: 'library/packs' });
-    // The development upstream is read-only, managed by upgrade, and never acquired.
+    // The development upstream is read-only and managed by upgrade. It is read, and it lists no Available row for the
+    // alpha that Local library also lists, so its count is its whole catalog and nothing of it is in Available.
     assert.deepEqual({ status: bundle.status, reason: bundle.reason, message: bundle.message, managedBy: bundle.managedBy,
-      count: bundle.count, repositoryName: bundle.repositoryName, ref: bundle.ref },
-    { status: 'not_read', reason: 'not_read_by_design', message: 'Not read while library/packs exists.', managedBy: 'bundle-upgrade',
-      count: null, repositoryName: 'acme/upstream', ref: 'main' });
-    assert.equal(github.connections('acme/upstream'), 0, 'the development upstream was never contacted');
+      count: bundle.count, uninstalled: bundle.uninstalled, repositoryName: bundle.repositoryName, ref: bundle.ref },
+    { status: 'read', reason: null, message: null, managedBy: 'bundle-upgrade',
+      count: 1, uninstalled: 0, repositoryName: 'acme/upstream', ref: 'main' });
     assert.deepEqual({ type: remote.type, repository: remote.repository, ref: remote.ref, status: remote.status, count: remote.count,
       uninstalled: remote.uninstalled, installed: remote.installedNames },
     { type: 'remote', repository: packs.url, ref: 'main', status: 'read', count: 3, uninstalled: 2, installed: ['rust'] });
@@ -7634,9 +7644,11 @@ test('T008 discovery reads the default and every saved source once, with source-
     assert.equal(body.sources.state, 'current');
     assert.equal(body.sources.savedIn, '.dude/metadata/pack-sources.md');
     assert.equal(body.sources.sourcesRevision, savedRevision(fixture));
-    // One reader per source, once; each saved source is read by key and revision, never by a path or ref.
+    // One reader per source, once; each saved source is read by key and revision, never by a path or ref, and the
+    // upstream by the one closed request that names nothing.
     const requests = spy.readers().map(readerRequest);
     assert.equal(requests.filter(request => request.op === 'default').length, 1);
+    assert.deepEqual(requests.filter(request => request.op === 'upstream'), [{ op: 'upstream' }]);
     assert.deepEqual(requests.filter(request => request.op === 'source').map(request => [request.index, request.document, request.list]).sort(),
       [[0, 'configured', true], [1, 'configured', true]]);
     assert.ok(requests.every(request => request.op !== 'source' || request.revision === body.sources.sourcesRevision));
@@ -9572,5 +9584,303 @@ test('083 Pack actions: a saved source is removed while a preview of it is open,
     assert.equal(/** @type {any} */ (refused.body).message, 'This source is in use. Installed packs from this source: alpha.');
     assert.deepEqual(readPackSources(fixture.root).sources, [localEntry(team)], 'the refused removal saved nothing');
     assert.equal(f.provider.read().requests.length + f.sends.length, 0, 'no Needs You request and no session message');
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+/* ----------------------------------------------------------------------------
+ * 084 Upstream packs: in a development checkout, an explicit discovery also
+ * reads Bundle upstream through one closed reader request, and Available lists
+ * only the upstream packs that Local library lacks. Install, Refresh and Remove
+ * keep Compose's default resolution. Every case serves the upstream from the
+ * offline stand-in, under a repository that exists nowhere else, so no case can
+ * read a real repository's packs.
+ * ------------------------------------------------------------------------- */
+
+const UPSTREAM_REPOSITORY = 'acme/bundle';
+const UPSTREAM_URL = `https://github.com/${UPSTREAM_REPOSITORY}`;
+/** The upstream-only pack's one agent, which makes it installable. */
+const FRESH_AGENT = 'library/packs/fresh/agents/dude-pack-fresh-worker.agent.md';
+/** That agent's text; `copy` names the copy it is, so an installed file shows which copy was installed. @param {string} copy */
+const freshAgent = copy => `---\nname: Fresh Worker\ndescription: "Disposable worker"\ntools: [read, search]\nmodel-class: balanced\n---\nFresh ${copy}.\n`;
+const FRESH_DESCRIPTION = 'fresh full description <script>inert()</script>';
+
+/**
+ * A development checkout that Compose can install into: Local library lists `alpha` and `shared`, and the bundle
+ * manifest names https://github.com/acme/bundle at main. `publish` makes the offline stand-in serve that upstream with
+ * `shared` and the upstream-only `fresh`; until then the stand-in answers as GitHub answers a missing repository.
+ * @param {import('node:test').TestContext} t
+ */
+function upstreamCheckout(t) {
+  const fixture = packEngineFixture();
+  fixture.catalog(['shared']);
+  const github = offlineGitHub(t, fixture);
+  fs.writeFileSync(path.join(fixture.root, '.dude/metadata/bundle-manifest.md'),
+    `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify({ source_repo: UPSTREAM_URL, source_ref: 'main' })}\n\`\`\`\n`);
+  const publish = () => github.publish(UPSTREAM_REPOSITORY, ['shared', 'fresh'], { files: { [FRESH_AGENT]: freshAgent('upstream v1') } });
+  return { fixture, github, publish };
+}
+/** What a source row says about its read. @param {any} row */
+const readOf = row => ({ status: row.status, reason: row.reason, count: row.count, uninstalled: row.uninstalled });
+/** Available rows in order, each as its pack's name and the name of the source that lists it. @param {any} body */
+const availableRows = body => {
+  const sources = new Map(body.sources.items.map(/** @param {any} row */ row => [row.key, row.name]));
+  return body.items.filter(/** @param {any} item */ item => !item.installed)
+    .map(/** @param {any} item */ item => [item.name, sources.get(item.sourceKey)]);
+};
+/**
+ * One answered preview that names no source, as 083's dialog sends it for a built-in row.
+ * @param {Awaited<ReturnType<typeof packHttpFixture>>} f @param {'install' | 'remove' | 'refresh'} operation @param {string} name
+ * @returns {Promise<any>}
+ */
+async function previewDefault(f, operation, name) {
+  const response = await postAction(f, { op: 'preview', operation, name });
+  assert.equal(response.status, 200, JSON.stringify(response.body));
+  return response.body;
+}
+/** Apply a preview's one token, which must succeed. @param {Awaited<ReturnType<typeof packHttpFixture>>} f @param {any} preview */
+async function applyPreview(f, preview) {
+  assert.match(preview.token, /^[0-9a-f-]{36}$/, JSON.stringify(preview));
+  const applied = await postAction(f, { op: 'apply', token: preview.token });
+  assert.deepEqual([applied.status, /** @type {any} */ (applied.body).ok], [200, true], JSON.stringify(applied.body));
+}
+
+test('084 Upstream packs: a plain read in a checkout starts no reader and lists Bundle upstream as not read, with no reason', { timeout: 30_000 }, async t => {
+  const { fixture, github, publish } = upstreamCheckout(t);
+  publish();
+  const spy = spawnSpy(t);
+  const f = await packHttpFixture(fixture);
+  try {
+    // Opening Settings, and every automatic reread after a view, filter or focus change, is this same plain read.
+    for (let reread = 0; reread < 3; reread += 1) {
+      const body = await plainRead(f);
+      assert.deepEqual(body.coverage.catalog, { state: 'not_read', reason: 'catalog_not_read',
+        message: 'The catalog is read only when you choose Reload.' });
+      const rows = sourceRows(body);
+      assert.equal(rows.get('Local library').default, true);
+      const upstream = rows.get('Bundle upstream');
+      assert.deepEqual({ ...readOf(upstream), message: upstream.message, default: upstream.default },
+        { status: 'not_read', reason: null, count: null, uninstalled: null, message: null, default: false },
+        'not read yet, as any source is before a Reload, with no reason of its own');
+    }
+    assert.equal(spy.readers().length, 0, 'no catalog reader started');
+    assert.deepEqual(github.requests, [], 'the upstream was never asked');
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+test('084 Upstream packs: Reload reads Bundle upstream once, as its own source, and Available lists only the packs Local library lacks', { timeout: 30_000 }, async t => {
+  const { fixture, github, publish } = upstreamCheckout(t);
+  publish();
+  const spy = spawnSpy(t);
+  const f = await packHttpFixture(fixture);
+  try {
+    const body = await discover(f);
+    assert.deepEqual(body.coverage.catalog, { state: 'current', reason: null, message: null });
+    const rows = sourceRows(body);
+    const library = rows.get('Local library'), upstream = rows.get('Bundle upstream');
+    assert.equal(body.sources.defaultKey, library.key, 'Local library stays the default catalog');
+    assert.deepEqual(body.catalog.packs.map(/** @param {any} pack */ pack => pack.name), ['alpha', 'shared'], 'and the default read is its own');
+    assert.deepEqual(readOf(library), { status: 'read', reason: null, count: 2, uninstalled: 2 });
+    // The upstream's count is every pack it lists; its Available rows leave out the shared that Local library lists.
+    assert.deepEqual(readOf(upstream), { status: 'read', reason: null, count: 2, uninstalled: 1 });
+    assert.deepEqual(availableRows(body), [['alpha', 'Local library'], ['shared', 'Local library'], ['fresh', 'Bundle upstream']]);
+    const fresh = body.items.find(/** @param {any} item */ item => item.name === 'fresh');
+    assert.deepEqual([fresh.key, fresh.description, fresh.fromGitHub], [`pack:fresh@${upstream.key}`, FRESH_DESCRIPTION, true]);
+    // One reader per source: the default read, and one closed upstream request in a reader's own Git environment.
+    assert.deepEqual(spy.readers().map(readerRequest).map(request => request.op).sort(), ['default', 'upstream']);
+    const reader = /** @type {any} */ (spy.readers().find(launch => readerRequest(launch).op === 'upstream'));
+    assert.deepEqual(readerRequest(reader), { op: 'upstream' }, 'the request names no repository, ref or path');
+    const { env } = reader.options;
+    assert.deepEqual([env.GIT_TERMINAL_PROMPT, env.GIT_ASKPASS, env.SSH_ASKPASS, env.GCM_INTERACTIVE], ['0', '', '', 'never']);
+    assert.equal(path.dirname(String(env[CATALOG_GIT_HOME_ENV])), env.TMP, 'its own Git home, in its own root');
+    assert.ok(github.connections(UPSTREAM_REPOSITORY) > 0, 'the upstream was read from the stand-in');
+    assert.deepEqual(fs.readdirSync(fixture.scratch), [], 'every reader root was removed');
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+test('084 Upstream packs: an upstream-only pack installs at the commit its preview read, with no third-party flag, and Remove returns it to Available', { timeout: 120_000 }, async t => {
+  const { fixture, publish } = upstreamCheckout(t);
+  const repository = publish();
+  const f = await packHttpFixture(fixture);
+  try {
+    const upstreamKey = sourceRows(await discover(f)).get('Bundle upstream').key;
+    // The dialog names no source for a built-in row, so Compose's default resolution fetches what Local library lacks.
+    const previewed = repository.commit();
+    const install = await previewDefault(f, 'install', 'fresh');
+    assert.deepEqual([install.thirdParty, install.message], [false, null], 'Bundle upstream is not a source the project added');
+    assert.deepEqual(install.preview.source, { type: 'remote', repository: UPSTREAM_URL, requested_ref: 'main', resolved_commit: previewed });
+    // The upstream branch moves on after the preview.
+    fs.writeFileSync(path.join(repository.directory, ...FRESH_AGENT.split('/')), freshAgent('upstream v2'));
+    repository.git('-c', 'user.email=fixture@example.test', '-c', 'user.name=Canvas Fixture', 'commit', '-qam', 'move main');
+    assert.notEqual(repository.commit(), previewed);
+    await applyPreview(f, install);
+    const status = cmdStatus({ root: fixture.root });
+    assert.deepEqual(status.ok && status.result.installed.fresh.source,
+      { type: 'remote', repository: UPSTREAM_URL, requested_ref: previewed, resolved_commit: previewed });
+    assert.match(fs.readFileSync(path.join(fixture.root, '.github/agents/dude-pack-fresh-worker.agent.md'), 'utf8'), /Fresh upstream v1\./,
+      'the previewed copy was installed, not the moved branch');
+    // The next discovery lists no fresh in Available, and its installed row matches Bundle upstream.
+    const installed = await discover(f);
+    assert.deepEqual(availableRows(installed), [['alpha', 'Local library'], ['shared', 'Local library']]);
+    const upstream = sourceRows(installed).get('Bundle upstream');
+    assert.deepEqual([readOf(upstream), upstream.installedNames], [{ status: 'read', reason: null, count: 2, uninstalled: 0 }, ['fresh']]);
+    const row = installed.items.find(/** @param {any} item */ item => item.name === 'fresh');
+    assert.deepEqual([row.installed, row.sourceKey, row.provenance, row.description], [true, upstreamKey, 'source', FRESH_DESCRIPTION]);
+    // Remove reads no source, and the next Reload lists fresh from Bundle upstream again.
+    await applyPreview(f, await previewDefault(f, 'remove', 'fresh'));
+    assert.deepEqual(availableRows(await discover(f)), [['alpha', 'Local library'], ['shared', 'Local library'], ['fresh', 'Bundle upstream']]);
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+test('084 Upstream packs: an unreachable upstream is Unavailable, the catalog is partial, and every local row is still listed', { timeout: 60_000 }, async t => {
+  const { fixture, publish } = upstreamCheckout(t);
+  const f = await packHttpFixture(fixture);
+  try {
+    // Nothing is published yet, so the stand-in answers as GitHub answers a missing or private repository.
+    const offline = await discover(f);
+    const upstream = sourceRows(offline).get('Bundle upstream');
+    assert.deepEqual(readOf(upstream), { status: 'unavailable', reason: 'catalog_unreachable', count: null, uninstalled: null });
+    assert.match(upstream.message, /https:\/\/github\.com\/acme\/bundle/, 'Compose\'s own reason');
+    assert.deepEqual(offline.coverage.catalog, { state: 'partial', reason: 'sources_partial',
+      message: '1 of 2 sources were read; counts are the packs known so far. 1 could not be read, which is not a confirmed empty list.' });
+    assert.deepEqual(readOf(sourceRows(offline).get('Local library')), { status: 'read', reason: null, count: 2, uninstalled: 2 });
+    assert.deepEqual(availableRows(offline), [['alpha', 'Local library'], ['shared', 'Local library']]);
+    // Once the upstream answers, the next Reload lists its upstream-only pack.
+    publish();
+    const online = await discover(f);
+    assert.deepEqual(online.coverage.catalog, { state: 'current', reason: null, message: null });
+    assert.deepEqual(availableRows(online), [['alpha', 'Local library'], ['shared', 'Local library'], ['fresh', 'Bundle upstream']]);
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+test('084 Upstream packs: Refresh of a pack installed from Bundle upstream reads it until Local library has the pack, and a built-in key stays refused', { timeout: 120_000 }, async t => {
+  const { fixture, publish } = upstreamCheckout(t);
+  const repository = publish();
+  const f = await packHttpFixture(fixture);
+  try {
+    const upstreamKey = sourceRows(await plainRead(f)).get('Bundle upstream').key;
+    // No action forces the upstream copy of a pack Local library has: a built-in key is no source the project added.
+    const forced = await postAction(f, { op: 'preview', operation: 'install', name: 'shared', source: upstreamKey });
+    assert.deepEqual([forced.status, forced.body], [200, { token: null, thirdParty: false, preview: null,
+      message: 'Built-in sources are the default catalog and take no source selection.' }]);
+    await applyPreview(f, await previewDefault(f, 'install', 'fresh'));
+    // While Local library lacks fresh, Refresh reads Bundle upstream at its current commit, with no third-party flag.
+    const fromUpstream = await previewDefault(f, 'refresh', 'fresh');
+    assert.deepEqual([fromUpstream.thirdParty, fromUpstream.preview.source],
+      [false, { type: 'remote', repository: UPSTREAM_URL, requested_ref: 'main', resolved_commit: repository.commit() }]);
+    // A pull adds fresh to Local library: Refresh now reads that copy, and the refreshed record names Local library.
+    fixture.catalog(['fresh']);
+    fixture.write(FRESH_AGENT, freshAgent('local'));
+    const library = fs.realpathSync(fixture.library);
+    const fromLibrary = await previewDefault(f, 'refresh', 'fresh');
+    assert.deepEqual([fromLibrary.thirdParty, fromLibrary.preview.source], [false, { type: 'local', location: library }]);
+    await applyPreview(f, fromLibrary);
+    const status = cmdStatus({ root: fixture.root });
+    assert.deepEqual(status.ok && status.result.installed.fresh.source, { type: 'local', location: library });
+    assert.match(fs.readFileSync(path.join(fixture.root, '.github/agents/dude-pack-fresh-worker.agent.md'), 'utf8'), /Fresh local\./);
+    const after = await discover(f);
+    const row = after.items.find(/** @param {any} item */ item => item.name === 'fresh');
+    assert.deepEqual([row.installed, row.sourceKey], [true, sourceRows(after).get('Local library').key]);
+    assert.deepEqual(availableRows(after), [['alpha', 'Local library'], ['shared', 'Local library']], 'neither source lists the installed fresh');
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+test('084 Upstream packs: the read after Add source or Remove reads Bundle upstream too, and an added source keeps its same-name rows', { timeout: 60_000 }, async t => {
+  const { fixture, github, publish } = upstreamCheckout(t);
+  publish();
+  github.publish('acme/extra', ['shared', 'fresh']);
+  const spy = spawnSpy(t);
+  const f = await packHttpFixture(fixture);
+  try {
+    const added = await addSource(f, fixture, 'https://github.com/acme/extra');
+    assert.equal(added.status, 200, JSON.stringify(added.body));
+    // A saved change is followed by exactly one discovery, the read that Reload packs makes.
+    let launched = spy.readers().length;
+    const body = await discover(f);
+    assert.deepEqual(spy.readers().slice(launched).map(readerRequest).map(request => request.op).sort(), ['default', 'source', 'upstream']);
+    const rows = sourceRows(body);
+    assert.deepEqual(readOf(rows.get('Bundle upstream')), { status: 'read', reason: null, count: 2, uninstalled: 1 });
+    assert.deepEqual(readOf(rows.get('acme/extra')), { status: 'read', reason: null, count: 2, uninstalled: 2 });
+    // Local wins only over Bundle upstream: the added source's shared and fresh stay rows of their own.
+    assert.deepEqual(availableRows(body), [['alpha', 'Local library'], ['shared', 'Local library'], ['fresh', 'Bundle upstream'],
+      ['fresh', 'acme/extra'], ['shared', 'acme/extra']]);
+    const removed = await removeSource(f, fixture, /** @type {any} */ (added.body).key);
+    assert.equal(removed.status, 200, JSON.stringify(removed.body));
+    launched = spy.readers().length;
+    const after = await discover(f);
+    assert.deepEqual(spy.readers().slice(launched).map(readerRequest).map(request => request.op).sort(), ['default', 'upstream']);
+    assert.deepEqual(availableRows(after), [['alpha', 'Local library'], ['shared', 'Local library'], ['fresh', 'Bundle upstream']]);
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+test('084 Upstream packs: a release-shaped workspace, or a checkout whose manifest names no upstream, starts no upstream read', { timeout: 60_000 }, async t => {
+  const { fixture, publish } = upstreamCheckout(t);
+  publish();
+  const manifest = path.join(fixture.root, '.dude/metadata/bundle-manifest.md');
+  const naming = fs.readFileSync(manifest);
+  const spy = spawnSpy(t);
+  const f = await packHttpFixture(fixture);
+  try {
+    // A checkout whose bundle manifest names no upstream lists Local library alone, and reads only that.
+    fs.writeFileSync(manifest, `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify({ installed_ref: 'main' })}\n\`\`\`\n`);
+    const checkout = await discover(f);
+    assert.deepEqual(spy.readers().map(readerRequest), [{ op: 'default' }]);
+    assert.deepEqual(checkout.sources.items.map(/** @param {any} row */ row => row.name), ['Local library']);
+    // A release has no local library, so its upstream is the default read itself, and nothing more is read.
+    fs.writeFileSync(manifest, naming);
+    fs.rmSync(fixture.library, { recursive: true });
+    const launched = spy.readers().length;
+    const release = await discover(f);
+    assert.deepEqual(spy.readers().slice(launched).map(readerRequest), [{ op: 'default' }]);
+    const [upstream, ...others] = release.sources.items;
+    assert.deepEqual([others.length, upstream.name, upstream.default, readOf(upstream)],
+      [0, 'Bundle upstream', true, { status: 'read', reason: null, count: 2, uninstalled: 2 }]);
+    assert.deepEqual(availableRows(release), [['fresh', 'Bundle upstream'], ['shared', 'Bundle upstream']]);
+  } finally { await f.close(); fixture.cleanup(); }
+});
+
+test('084 Upstream packs: the reader takes exactly {"op":"upstream"}, and refuses one that names a repository, ref or path without connecting', { timeout: 90_000 }, async t => {
+  const { fixture, github, publish } = upstreamCheckout(t);
+  publish();
+  try {
+    // As `packs.mjs` makes it: a folder directly in the reader's own temporary root.
+    const home = path.join(fixture.scratch, 'home');
+    fs.mkdirSync(home);
+    /** @param {unknown} request */
+    const ask = async request => (await runReaderAlone(fixture, {
+      [CATALOG_GIT_HOME_ENV]: home, [CATALOG_REQUEST_ENV]: JSON.stringify(request) })).answer;
+    for (const request of [
+      { op: 'upstream', repository: 'https://github.com/acme/other' },
+      { op: 'upstream', ref: 'release' },
+      { op: 'upstream', path: 'library/packs' },
+      { op: 'upstream', location: fixture.library },
+      { op: 'upstream', repository: UPSTREAM_URL, ref: 'main' },
+    ]) {
+      assert.deepEqual(await ask(request), { ok: false, reason: 'catalog_unavailable',
+        error: 'The catalog request is not one of the fixed operations.' }, JSON.stringify(request));
+    }
+    assert.deepEqual(github.requests, [], 'no refused request reached any repository');
+    // The exact request reads the manifest's upstream, so each refusal above was the request's own.
+    const answer = await ask({ op: 'upstream' });
+    assert.equal(answer.ok, true, JSON.stringify(answer));
+    assert.deepEqual(answer.result.packs.map(/** @param {any} pack */ pack => pack.name), ['fresh', 'shared']);
+    assert.deepEqual([...new Set(github.requests.map(request => request.repository))], [UPSTREAM_REPOSITORY]);
+  } finally { fixture.cleanup(); }
+});
+
+test('084 Upstream packs: when Local library cannot be read, Available hides no Bundle upstream pack', { timeout: 30_000 }, async t => {
+  const { fixture, publish } = upstreamCheckout(t);
+  publish();
+  // An edited pack.md with invalid metadata fails the whole Local library read.
+  fs.writeFileSync(path.join(fixture.library, 'shared/pack.md'), '---\nname: shared\nuse-cases: ui\n---\n');
+  const f = await packHttpFixture(fixture);
+  try {
+    const body = await discover(f);
+    const rows = sourceRows(body);
+    assert.deepEqual(readOf(rows.get('Local library')), { status: 'unavailable', reason: 'catalog_unavailable', count: null, uninstalled: null });
+    assert.match(rows.get('Local library').message, /pack "shared" has invalid metadata/);
+    assert.equal(body.coverage.catalog.state, 'partial');
+    // Its names are unknown, so the upstream hides none of its packs.
+    assert.deepEqual(readOf(rows.get('Bundle upstream')), { status: 'read', reason: null, count: 2, uninstalled: 2 });
+    assert.deepEqual(availableRows(body), [['fresh', 'Bundle upstream'], ['shared', 'Bundle upstream']]);
   } finally { await f.close(); fixture.cleanup(); }
 });

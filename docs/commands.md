@@ -1151,8 +1151,9 @@ A catalog is read only when you choose Reload packs, which replaces Refresh in
 the command bar on Installed, Available, and Sources, and once after you add or
 remove a source. Opening a view, filtering, paging, Show packs in Available,
 Show in Installed, and answering a permission read no catalog. A Reload reads
-the default catalog and each added source once, each in its own helper process,
-at most four at a time. Each read stops at its own bound, counted from when it
+the default catalog, Bundle upstream too when a local library is the default
+catalog, and each added source once, each in its own helper process, at most
+four at a time. Each read stops at its own bound, counted from when it
 gets a helper: 5 seconds for a folder, 30 seconds for a public GitHub
 repository, whose `pack.md` files Canvas downloads without cloning it, and 55
 seconds for a repository on another host, which Git clones whole. Compose and
@@ -1167,9 +1168,12 @@ whose folder reaches 1 GiB or 65,536 files and folders is stopped. Canvas
 checks that size about every quarter second, one check at a time, so a clone
 can grow past it before a check sees it.
 The default catalog is the local `library/packs/` when present; otherwise it is
-the upstream source pinned in the bundle manifest. Reading or reloading never
-requests a pack change. If a Reload fails or is slow, Settings reports it and
-does not show that read as current.
+the upstream source pinned in the bundle manifest. In a development checkout,
+which has that local library, a Reload also reads the upstream as its own
+source, Bundle upstream. Available adds only its packs that the local library
+does not have, and the local copy of a pack in both places stays the one listed
+and installed. Reading or reloading never requests a pack change. If a Reload
+fails or is slow, Settings reports it and does not show that read as current.
 
 Leaving Settings or closing Canvas cancels a Reload and stops its helpers.
 Canvas removes a helper's temporary files only after it has confirmed that the
@@ -1180,9 +1184,12 @@ with one helper fewer until the extension restarts.
 
 Until the first Reload, Available shows `?` and lists nothing, with the heading
 `Catalog not read yet` and a Reload packs button, and the Use case filter is
-disabled. Installed still lists the recorded packs and project agents and
-skills, with `Not read` for use cases, and no source shows a pack count. Canvas
-treats an unread catalog as unknown.
+disabled. In a development checkout whose bundle manifest names an upstream, it
+also says `Reload packs also reads Bundle upstream (GitHub E-G-C/dude) and adds
+the packs that Local library does not have.`, with the manifest's repository.
+Installed still lists the recorded packs and project agents and skills, with
+`Not read` for use cases, and no source shows a pack count. Canvas treats an
+unread catalog as unknown.
 
 Installed and Available are separate tabs. Settings opens on Installed, All use
 cases, All sources, and page 1, with no pack selected. Tab counts are full
@@ -1255,7 +1262,13 @@ details say so.
 The same pack name in two sources is two Available rows, and each row's details
 name both the pack and the source, such as `rust - acme/dude-packs`. Installed
 membership is by name, so installing a name removes every Available row with
-that name, from every source.
+that name, from every source. The one exception is Bundle upstream beside a
+local library: Available lists no Bundle upstream pack whose name the local
+library listed in the same Reload, because Install takes the local copy.
+Filtered to Bundle upstream with none of its packs listed, Available says
+`Packs that Local library also has are listed from Local library.` When the
+local library could not be read, nothing is hidden, and Install still takes a
+local copy first.
 
 A reread, whether a Reload or an automatic one, keeps the filters, page, and
 selection while the selected row is still listed, so it does not close the
@@ -1293,15 +1306,22 @@ the action itself uses:
 - Install lists each item the pack adds by name and kind, each required tool as
   found or missing, the source, and the note that new agents or skills may not
   be available until you start a new session. Show files lists the file paths.
+  For a pack read from Bundle upstream in a development checkout, a `Commit`
+  fact under the source gives the full commit the preview read.
 - Remove lists every recorded file it deletes. It reads no source and needs no
   catalog.
 - Refresh shows the source it will use and groups the files as Replaced, Added,
   and Removed. It warns that local edits to those files are overwritten; keep
   lasting changes in `dude-local-*` files. It uses the added source whose
   repository or folder matches the pack's recorded source, and the default
-  catalog when none matches. When that differs from the recorded source, it
-  shows `Source changes: A -> B`. The same repository at a new commit is not a
-  source change.
+  catalog when none matches: in a development checkout, the local library's
+  copy when it has the pack, else Bundle upstream's. The dialog checks the
+  source the record matches and names the source its preview read, so a pack
+  installed from Bundle upstream refreshes from it, with its commit, until the
+  local library has the pack. When the source differs from the recorded source,
+  it shows `Source changes: A -> B`, such as
+  `https://github.com/E-G-C/dude @ <commit> -> Local library (library/packs)`.
+  The same repository at a new commit is not a source change.
 
 The action button is disabled, with the reason beside it, when a required tool
 is missing, a destination file already exists, the source cannot be read, or the
@@ -1454,15 +1474,16 @@ it is listed only while that folder exists. Bundle upstream is the repository
 and ref in `.dude/metadata/bundle-manifest.md`. Its details say
 `Managed by bundle upgrade`, because only a bundle upgrade changes it. The local
 library is the default catalog when it exists. Otherwise Bundle upstream is the
-default, and Reload reads it. A development checkout has a local library, so its
-Bundle upstream shows `Not read while library/packs exists` and Canvas does not
-read it. Built-in rows have no Remove and cannot be edited.
+default, and Reload reads it. A development checkout has a local library, which
+stays the default catalog, and Reload packs also reads its Bundle upstream as
+one more source. Available then lists only the upstream's packs that the local
+library does not have. Built-in rows have no Remove and cannot be edited.
 
-Apart from that development upstream, a source's status is `Not read` until a
-Reload. After one it shows its pack count, such as `Read - 3 packs`, or
-`Unavailable` and the reason. A source that cannot be read stays listed and
-selectable, and Canvas does not treat its missing packs as an empty catalog.
-Before the first Reload, no source shows a count.
+A source's status is `Not read` until a Reload. After one it shows its pack
+count, such as `Read - 3 packs`, or `Unavailable` and the reason. A source that
+cannot be read stays listed and selectable, and Canvas does not treat its
+missing packs as an empty catalog. Before the first Reload, no source shows a
+count.
 
 Choose Add source to open a dialog with focus on Location and an optional Ref. A
 location takes one of two forms:
@@ -1502,9 +1523,12 @@ or one you can reach only through Git's sign-in or proxy configuration, fails as
 unreachable. Git runs only for a bundle upstream on another host, such as GitHub
 Enterprise, and then without prompts, credential helpers, or a `.netrc` login.
 A credential you wrote into your own Git configuration, such as an
-`http.extraHeader` value, still applies there. A source is third-party content: its
-packs can add agents and instructions, so add only sources you trust. Every
-install or refresh preview from it shows a `Third-party source` warning first.
+`http.extraHeader` value, still applies there. GitHub limits anonymous reads per
+hour for each address, so in a development checkout, frequent Reloads can leave
+Bundle upstream `Unavailable` for a while; the local library is unaffected. A
+source is third-party content: its packs can add agents and instructions, so add
+only sources you trust. Every install or refresh preview from it shows a
+`Third-party source` warning first.
 
 Add source reads the source's catalog once before it saves anything. It stops
 that read at 30 seconds for a GitHub repository, and each check and read of a
@@ -1555,7 +1579,10 @@ Source details show a notice when the source is not read or unavailable, a
 description, the actions with their reason, and four facts in this order. Status
 repeats the row. Packs found gives the source's pack count and how many are not
 installed, for example `2 (1 not installed)`; the count includes names you
-already have installed. Installed from this source lists the installed packs
+already have installed. For Bundle upstream beside a local library, the count
+also includes names that the local library has, and the parenthesis counts the
+packs Available lists, for example `21 (1 in Available)` or
+`18 (none in Available)`. Installed from this source lists the installed packs
 whose recorded source matches this source, by repository or folder and never by
 pack name, and says how many installed packs record an unlisted source or one
 Canvas could not match. A fact Canvas cannot establish reads `Unknown` or
@@ -1566,9 +1593,10 @@ Show packs in Available changes the view and nothing else. It selects that
 source in Available's Source filter, resets Use case to All use cases and the
 page to 1, and moves focus to the Available tab, or to the View dropdown at 300
 px or less. It reads no catalog and requests nothing. It is enabled only for a
-source that was read and still has a pack that is not installed. Otherwise the
-details say why: the source is not read yet, is not read by design, is
-unavailable, has no packs, or has all its packs installed.
+source that was read and still has a pack in Available. Otherwise the details
+say why: the source is not read yet, is unavailable, has no packs, or has all
+its packs installed. For Bundle upstream beside a local library, the reason is
+`Every pack here is installed or also in Local library.`
 
 Remove appears only for an added source and asks for confirmation. It deletes
 that source's entry and nothing else: no pack is uninstalled, no file is
@@ -2305,7 +2333,12 @@ configured-remote catalogs; the remote case clones a disposable `file://` Git
 source, not a network host. Its Sources cases add, read, and remove saved
 sources through the real provider and HTTP routes. They reach public GitHub
 sources only through a loopback stand-in for GitHub's API and raw-file hosts
-that serves local repositories, so no case needs a network. The
+that serves local repositories, so no case needs a network. A development
+checkout's Reload also reads the upstream its bundle manifest names, so the
+About-harness cases serve their recorded upstream from an owned local Git
+repository through a Git URL rewrite, the `084 Upstream packs:` cases serve
+Bundle upstream from the GitHub stand-in, and the `t011-browser.test.mjs`
+About journeys name their own workspace as it. The
 `083 Pack actions:` cases in `browser.test.mjs` and `t011-browser.test.mjs`
 drive Install, Remove, and Refresh through the pack action dialog, the real
 HTTP route, the pack action child process, and Compose in disposable
@@ -2494,7 +2527,9 @@ extension runs the installed Compose preview and then the install in a child
 process, after one click, with no agent turn, Needs you request, or chat
 message. The driver checks the preview, the success view, Installed after the
 automatic reread, and the recorded profile. The model takes no part in the
-install.
+install. The pack, import, and source fixtures each seed a local catalog, so a
+Reload there also reads the upstream that the bundle manifest names. Each names
+its own workspace as that upstream, so their explicit reads stay local.
 
 On Windows, every host also checks that the extension process and its parent
 run the configured launcher. Before Settings drives the pack case, the driver

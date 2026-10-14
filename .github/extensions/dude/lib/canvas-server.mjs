@@ -93,8 +93,9 @@ const ABOUT_UNAVAILABLE = Object.freeze({
 /**
  * The two exact reads of the pack projection. Both return installed packs, the
  * source rows and the separate project rows. Only the second acquires catalogs:
- * the default plus each saved source, once. Browsing, filtering, events and
- * every other automatic read use the first, so nothing is fetched by accident.
+ * the default, the bundle upstream too while a local library is the default,
+ * and each saved source, once. Browsing, filtering, events and every other
+ * automatic read use the first, so nothing is fetched by accident.
  */
 const PACKS_ROUTE = '/api/packs';
 const PACKS_DISCOVERY_URL = '/api/packs?discover=1';
@@ -342,7 +343,8 @@ async function readProject(instance, root, signal) {
  * The one coalesced Installed read: the pack authority plus the separate
  * project projection, under one signal. The project scan starts no process and
  * runs beside the pack read. An automatic read acquires no catalog; an explicit
- * discovery acquires the default plus each saved source, once.
+ * discovery acquires the default, the bundle upstream too while a local library
+ * is the default, and each saved source, once.
  *
  * This settles only once both children have settled. A cancelled pack read still
  * owns its reader process tree and temporary root until its bounded stop

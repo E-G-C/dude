@@ -694,5 +694,12 @@
       "T003@c38e5b17": "x"
     },
     "updated_at": "2026-10-13T09:53:25.000Z"
+  },
+  ".dude/specs/084-upstream-packs-in-checkout/tasks.md": {
+    "glyphs": {
+      "T001@d92bcd4b": "x",
+      "T002@4290a774": "x"
+    },
+    "updated_at": "2026-10-14T07:41:31.000Z"
   }
 }

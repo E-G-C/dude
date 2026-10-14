@@ -3334,7 +3334,7 @@ test('T012 anchoring regression: nested-scroll Open comment clips then recovers 
         )));
         assert.equal(
           productAppSha256,
-          'be30db45dd5e002bc643de4e01b99f599f0006c9242f164e83ba41a16fbe17ba',
+          '6d6db4c02ca519153a03774546a7b386281295c751804fce48b343ac77c7af89',
           'the exact-source regression executes the current published product UI',
         );
         const exactHarnessOptions = {
@@ -13224,16 +13224,53 @@ async function writeAboutBase(workspace, baseRelease, sourceRepo = ABOUT_RECORDE
 }
 
 /**
+ * The recorded upstream of an About case, served offline (084). A checkout's
+ * Reload also reads the upstream its bundle manifest names, and that address is
+ * not GitHub, so Git would clone it. It is served instead from an owned
+ * repository holding the library as the case seeded it: the same packs, as the
+ * real upstream lists today, so Available gains no row from it. A Git URL
+ * rewrite, appended to this process's `GIT_CONFIG_COUNT` entries, reaches every
+ * reader and pack action the case starts and names this one address only.
+ * The returned function puts the environment back.
+ * @param {ReturnType<typeof createReviewWorkspaceFixture>} workspace
+ */
+function serveRecordedUpstream(workspace) {
+  const directory = path.join(workspace.directory, 'recorded-upstream');
+  fs.cpSync(path.join(workspace.root, 'library'), path.join(directory, 'library'), { recursive: true });
+  const git = (/** @type {string[]} */ ...args) => {
+    const result = spawnSync('git', ['--no-pager', '-c', 'commit.gpgsign=false', ...args], { cwd: directory, encoding: 'utf8', windowsHide: true });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  };
+  git('init', '-q', '-b', 'main');
+  git('add', '-A');
+  git('-c', 'user.email=fixture@example.test', '-c', 'user.name=Canvas Fixture', 'commit', '-qm', 'recorded upstream');
+  const declared = process.env.GIT_CONFIG_COUNT;
+  const index = Number(declared ?? 0);
+  Object.assign(process.env, { GIT_CONFIG_COUNT: String(index + 1),
+    [`GIT_CONFIG_KEY_${index}`]: `url.${pathToFileURL(directory).href}.insteadOf`, [`GIT_CONFIG_VALUE_${index}`]: ABOUT_RECORDED_REPO });
+  return () => {
+    delete process.env[`GIT_CONFIG_KEY_${index}`];
+    delete process.env[`GIT_CONFIG_VALUE_${index}`];
+    if (declared === undefined) delete process.env.GIT_CONFIG_COUNT;
+    else process.env.GIT_CONFIG_COUNT = declared;
+  };
+}
+
+/**
  * One disposable production-provider Canvas for a 074 About case: the T002
  * Settings workspace and local catalog plus a recorded installation. It keeps
  * network, cancellation, new-window, navigation, and runtime-error
  * observations; close() reaps only what this case started. A 075 case may
- * also record the development base release for that installation.
+ * also record the development base release for that installation. The bundle
+ * manifest names `upstream`: by default the recorded upstream, served offline
+ * by `serveRecordedUpstream`; otherwise an address the case serves itself, or
+ * no upstream at all when it is null.
  * @param {import('node:test').TestContext} context
  * @param {string} slug
- * @param {{ review?: boolean, deviceScale?: number|null, baseRelease?: string|null, packs?: Parameters<typeof addSettingsPackFixture>[2], prepare?: (workspace: ReturnType<typeof createReviewWorkspaceFixture>) => void | (() => void) | Promise<void | (() => void)> }} [options]
+ * @param {{ review?: boolean, deviceScale?: number|null, baseRelease?: string|null, packs?: Parameters<typeof addSettingsPackFixture>[2], upstream?: string|null, prepare?: (workspace: ReturnType<typeof createReviewWorkspaceFixture>) => void | (() => void) | Promise<void | (() => void)> }} [options]
  */
-async function openAboutCanvas(context, slug, { review = false, deviceScale = null, baseRelease = null, packs: packOptions = {}, prepare = () => {} } = {}) {
+async function openAboutCanvas(context, slug, { review = false, deviceScale = null, baseRelease = null, packs: packOptions = {},
+  upstream = ABOUT_RECORDED_REPO, prepare = () => {} } = {}) {
   const [{ createNeedsYou }, { createReview }, { openInstance, closeInstance }] = await Promise.all([
     import('../../src/extensions/dude/lib/needs-you.mjs'),
     import('../../src/extensions/dude/lib/review.mjs'),
@@ -13245,7 +13282,8 @@ async function openAboutCanvas(context, slug, { review = false, deviceScale = nu
   const prepared = await prepare(workspace);
   const restore = typeof prepared === 'function' ? prepared : () => {};
   workspace.write('.dude/metadata/bundle-manifest.md', aboutManifest({
-    source_repo: ABOUT_RECORDED_REPO, source_ref: 'main', installed_ref: 'main' }));
+    ...(upstream === null ? {} : { source_repo: upstream }), source_ref: 'main', installed_ref: 'main' }));
+  const restoreUpstream = upstream === ABOUT_RECORDED_REPO ? serveRecordedUpstream(workspace) : () => {};
   if (baseRelease !== null) await writeAboutBase(workspace, baseRelease);
   const releaseTracking = emptyTrackedBoardFixture(workspace);
   const output = createT010Evidence(context, slug);
@@ -13281,6 +13319,7 @@ async function openAboutCanvas(context, slug, { review = false, deviceScale = nu
         provider.dispose();
         await releaseTracking();
         restore();
+        restoreUpstream();
         workspace.close();
       }
     }
@@ -13305,7 +13344,7 @@ async function openAboutCanvas(context, slug, { review = false, deviceScale = nu
     cancelled, windows, navigations, ask, close, releaseTracking,
     aboutReads: () => reads('/api/about'),
     packReads: () => reads('/api/packs'),
-    // The only read that acquires catalogs: the default plus each saved source, once.
+    // The only read that acquires catalogs: the default, Bundle upstream beside a local library, and each saved source, once.
     discoveryReads: () => reads('/api/packs?discover=1'),
     sourceWrites: () => requests.filter(entry => entry.url === `${origin}/api/packs/sources`),
     // Every request that left the Canvas origin, such as a repository prefetch.
@@ -16768,7 +16807,7 @@ test('073 Sources: built-ins then added sources show every status before and aft
       assert.equal(new Set(state.rows.map(row => row.key)).size, 5);
       assert.deepEqual(state.rows.map(row => [row.cells[0], row.cells[2], row.cells[3]]), [
         ['Local library Local folder', 'Not read', 'Built in'],
-        ['Bundle upstream GitHub', 'Not read while library/packs exists', 'Built in'],
+        ['Bundle upstream GitHub', 'Not read', 'Built in'],
         ['acme/dude-packs GitHub', 'Not read', 'This project'],
         ['team-packs Local folder', 'Not read', 'This project'],
         ['vanished Local folder', 'Not read', 'This project']], 'built-ins first, then the added sources in saved order, with no count before Reload');
@@ -16801,17 +16840,18 @@ test('073 Sources: built-ins then added sources show every status before and aft
       assert.equal(await p.q(`document.activeElement?.getAttribute('data-source-row')`), t073SourceKey(state, 'acme/dude-packs'));
       assert.equal(canvas.discoveryReads().length, 0, 'selecting a source reads nothing');
 
-      // Reload is the one explicit discovery: each source is read once and keeps its own status and count.
+      // Reload is the one explicit discovery: each source is read once and keeps its own status and count. The
+      // development upstream is read too, beside the local library, and lists the same packs, as it does today.
       await p.reload();
       assert.equal(canvas.discoveryReads().length, 1);
       state = await t073SourcesState(p);
       assert.deepEqual(state.rows.map(row => [row.cells[0], row.cells[2]]), [
         ['Local library Local folder', 'Read - 18 packs'],
-        ['Bundle upstream GitHub', 'Not read while library/packs exists'],
+        ['Bundle upstream GitHub', 'Read - 18 packs'],
         ['acme/dude-packs GitHub', 'Read - 3 packs'],
         ['team-packs Local folder', 'Read - 2 packs'],
         ['vanished Local folder', 'Unavailable - The saved folder is not available.']]);
-      assert.equal(state.footer, 'Sources · Catalog: partial (1 of 4 sources unavailable)');
+      assert.equal(state.footer, 'Sources · Catalog: partial (1 of 5 sources unavailable)');
       assert.equal(state.coverage, null, 'the not-read notice is gone');
       assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-context]')].map(node => node.getAttribute('data-pack-context') + ':' + (node.getAttribute('aria-label') ?? ''))`),
         ['installed:Installed (8)', 'available:Available (15 known)', 'import:', 'sources:']);
@@ -16840,11 +16880,12 @@ test('073 Sources: built-ins then added sources show every status before and aft
       assert.deepEqual([library.remove, library.show, library.scope, library.links], [false, false, 'Pack source · Built in', 0], 'a built-in has no Remove and no repository link');
       assert.equal(library.readOnly, 'Read only. Built-in sources are derived from this installation and cannot be removed or edited here.');
       const upstream = await detailsFor('Bundle upstream');
-      assert.deepEqual(upstream.outline, ['description', 'actions', 'facts'], 'the development upstream explains its non-read in the description, not a coverage notice');
-      assert.match(upstream.description, /This development bundle has a local library, so Bundle upstream is not read\.$/);
+      assert.deepEqual(upstream.outline, ['description', 'actions', 'facts'], 'a read development upstream needs no coverage notice');
+      assert.match(upstream.description, /This development bundle has a local library, which stays the default catalog\. Reload packs also reads Bundle upstream, and Available lists only its packs that Local library does not have\.$/);
       assert.deepEqual([upstream.show, upstream.remove], [true, false]);
-      assert.match(upstream.reason, /^Not read while library\/packs exists\./);
-      assert.deepEqual(upstream.facts.slice(0, 4), ['Status', 'Not read while library/packs exists', 'Packs found', 'Unknown']);
+      assert.equal(upstream.reason, 'Every pack here is installed or also in Local library.');
+      assert.deepEqual(upstream.facts.slice(0, 4), ['Status', 'Read - 18 packs', 'Packs found',
+        '18 (none in Available) Counts include names you already have installed or that Local library also has. Available lists only the others.']);
       assert.equal(upstream.facts.at(-1), 'Not saved. Derived from this installation each time. Managed by bundle upgrade.');
       const acme = await detailsFor('acme/dude-packs');
       assert.deepEqual(acme.outline, ['description', 'actions', 'facts']);
@@ -17809,7 +17850,7 @@ test('073 Sources: Show packs in Available selects only that Source, resets Use 
 
       // Every state that cannot show packs says exactly why, and the control stays disabled.
       const expectations = [
-        ['Bundle upstream', 'Not read while library/packs exists.'],
+        ['Bundle upstream', 'Every pack here is installed or also in Local library.'],
         ['vanished', 'Unavailable - its packs are not listed.'],
         ['empty-source', 'This source has no packs.'],
         ['full-source', 'All packs from this source are installed.'],
@@ -17868,7 +17909,7 @@ test('073 Sources: an automatic read keeps the retained catalog, the surviving s
     const before = { discovery: canvas.discoveryReads().length, plain: canvas.packReads().length };
     const status = () => p.q(`document.querySelector('footer[aria-label="Workspace status"]').innerText.replace(/\\s+/g, ' ').trim()`);
     const footer = await status();
-    assert.match(footer, /^Installed: current · Catalog: partial \(1 of 4 sources unavailable\)/);
+    assert.match(footer, /^Installed: current · Catalog: partial \(1 of 5 sources unavailable\)/);
 
     // Another tool installs onboarding from team-packs; the next automatic read sees it and nothing re-reads a catalog.
     t073InstallFrom(workspace, 'onboarding', path.join(workspace.directory, 'team-packs'));
@@ -17887,7 +17928,7 @@ test('073 Sources: an automatic read keeps the retained catalog, the surviving s
     // Sources still shows each source's read status and count, with the installed facts now current.
     await p.chooseSub('sources');
     state = await t073SourcesState(p);
-    assert.deepEqual(state.rows.map(row => row.cells[2]), ['Read - 18 packs', 'Not read while library/packs exists', 'Read - 3 packs', 'Read - 2 packs',
+    assert.deepEqual(state.rows.map(row => row.cells[2]), ['Read - 18 packs', 'Read - 18 packs', 'Read - 3 packs', 'Read - 2 packs',
       'Unavailable - The saved folder is not available.']);
     await p.click(`[data-source-row="${t073SourceKey(state, 'team-packs')}"]`);
     const details = await t073SourceDetails(p);
@@ -18133,6 +18174,609 @@ test('073 Sources: leaving Settings cancels a Reload in flight, the server stops
     await packsSettled(page);
     assert.equal(canvas.discoveryReads().length, 1, 're-entry starts no discovery');
     assert.equal(await p.q(`document.querySelector('[data-pack-total="available"]').textContent`), '?', 'an aborted read left no catalog behind');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 084 Upstream packs: in a development checkout, Reload packs also reads Bundle
+// upstream, and Available lists only its packs that Local library does not
+// have, through the real Canvas server, catalog readers, pack action child, and
+// Compose. Every case serves Bundle upstream from the offline GitHub stand-in
+// above, as 083's GitHub case does, under a repository that exists nowhere
+// else, so no case reads a real repository. Screenshots take the approved
+// mock's names, so each pairs with
+// `.dude/specs/084-upstream-packs-in-checkout/design/screenshots/<name>.png`.
+// The cases keep the acceptance fixture's pack name, `fresh`, where the mock
+// draws its sample `devops`.
+// ---------------------------------------------------------------------------
+
+const T084_APPROVED = '.dude/specs/084-upstream-packs-in-checkout/design/upstream-packs.html';
+const T084_APPROVED_SHA256 = '3ff5bf87f8b719c42d7e696fc10941504ce20a23f182b953dee5fdd51eda395b';
+const T084_SCREENSHOTS = path.join(ROOT, '.dude', 'specs', '084-upstream-packs-in-checkout', 'design', 'screenshots');
+const T084_REPOSITORY = 'acme/bundle';
+const T084_UPSTREAM = `https://github.com/${T084_REPOSITORY}`;
+const T084_LABEL = `Bundle upstream - GitHub ${T084_REPOSITORY}`;
+const T084_NOT_READ = `Reload packs also reads Bundle upstream (GitHub ${T084_REPOSITORY}) and adds the packs that Local library does not have.`;
+const T084_UNREAD = ['Catalog not read yet', 'Available packs come from your sources, so this list is empty and its count is unknown until they are read.'];
+const T084_DESCRIPTION = 'This development bundle has a local library, which stays the default catalog. Reload packs also reads Bundle upstream, and Available lists only its packs that Local library does not have.';
+const T084_FOUND_NOTE = 'Counts include names you already have installed or that Local library also has. Available lists only the others.';
+const T084_NONE_LISTED = 'Every pack here is installed or also in Local library.';
+const T084_LOCAL_WINS = 'Packs that Local library also has are listed from Local library. Clear the filters to see all packs in this context.';
+/** The by-design state 084 deletes, which no view may show again (its phrases in parts, so a search of the tree finds none). */
+const T084_BY_DESIGN = new RegExp(['Not read while library/packs', 'read by design', 'upstream is not read'].join('|'), 'i');
+/** The local packs Available lists in the About harness: its 18, less the 7 installed ones its catalog has. */
+const T084_LOCAL = ['bravo', 'charlie', 'constructor', 'echo', 'foxtrot', 'hotel', 'india', 'kilo', 'lima', 'november', 'oscar'];
+
+/**
+ * The upstream of an 084 case, which names `upstream: T084_UPSTREAM` for its
+ * bundle manifest: Compose's engine files so the dialog can install, and an
+ * offline GitHub whose `acme/bundle` lists `bravo`, which Local library also
+ * has, and the upstream-only `fresh`, an installable pack. Until `publish()`,
+ * the stand-in answers as GitHub answers a missing repository.
+ * @param {ReturnType<typeof createReviewWorkspaceFixture>} workspace
+ * @param {{ publish?: boolean }} [options]
+ */
+function t084Upstream(workspace, { publish = true } = {}) {
+  t083Engine(workspace);
+  const github = offlineGitHub(workspace);
+  const upstream = {
+    github, directory: '', commit: '',
+    publish() {
+      upstream.directory = github.publish(T084_REPOSITORY, ['bravo']).directory;
+      t083Pack(upstream.directory, 'fresh');
+      upstream.commit = t083Commit(upstream.directory, 'fresh v1');
+    },
+    /** How many requests reached the upstream. */
+    requests: () => github.connections(T084_REPOSITORY),
+  };
+  if (publish) upstream.publish();
+  return upstream;
+}
+
+/** Available's empty state, line by line, and its focus stops. @param {Awaited<ReturnType<typeof t073Driver>>} p */
+const t084Empty = p => p.q(`(() => {
+  const empty = document.querySelector('[data-pack-empty]');
+  return empty && { lines: [...empty.children].map(node => node.innerText.replace(/\\s+/g, ' ').trim()),
+    stops: empty.querySelectorAll('button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])').length };
+})()`);
+/** The open pack details: heading, eyebrow, and facts by term. @param {Awaited<ReturnType<typeof t073Driver>>} p */
+const t084PackDetails = p => p.q(`(() => {
+  const text = node => node?.innerText.replace(/\\s+/g, ' ').trim() ?? null;
+  const body = document.querySelector('[data-pack-detail-body]');
+  return { title: text(document.querySelector('[data-pack-detail] h2')), eyebrow: text(document.querySelector('[data-pack-detail] header span')),
+    actions: [...body.querySelectorAll('[data-pack-operation]')].map(node => node.textContent),
+    facts: Object.fromEntries([...body.querySelectorAll('dl dt')].map(dt => [dt.textContent, text(dt.nextElementSibling)])),
+    documents: [...body.querySelectorAll('[data-pack-document]')].map(node => node.getAttribute('data-pack-document')),
+    details: text(body.querySelector('[data-pack-details]')) };
+})()`);
+/** The coverage notice above the list, line by line, or null when there is none. @param {Awaited<ReturnType<typeof t073Driver>>} p */
+const t084Coverage = p => p.q(`(() => {
+  const notice = document.querySelector('[data-pack-coverage]');
+  return notice && [...notice.children].map(node => node.innerText.replace(/\\s+/g, ' ').trim());
+})()`);
+/** What scrolls sideways now: the page, the rows, the Sources table, a details body, or the empty state. @param {Awaited<ReturnType<typeof t073Driver>>} p */
+const t084Wide = p => p.q(`[['page', document.documentElement], ...['[data-pack-scroll]', '[data-sources-scroll]', '[data-pack-detail-body]', '[data-pack-empty]']
+  .map(selector => [selector, document.querySelector(selector)])]
+  .filter(([, node]) => node && node.getClientRects().length && node.scrollWidth > node.clientWidth + 1).map(([name]) => name)`);
+/** Text in `selector` below 4.5:1 against its painted background. @param {Awaited<ReturnType<typeof t073Driver>>} p @param {string} selector */
+async function t084Contrast(p, selector) {
+  const samples = await p.q(`(() => {
+    const background = node => {
+      for (let n = node; n; n = n.parentElement) {
+        const color = getComputedStyle(n).backgroundColor;
+        if (color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') return color;
+      }
+      return 'rgb(255, 255, 255)';
+    };
+    return [...document.querySelectorAll(${JSON.stringify(selector)})].flatMap(root => [root, ...root.querySelectorAll('*')])
+      .filter(node => node.getClientRects().length && !node.closest('button:disabled')
+        && [...node.childNodes].some(child => child.nodeType === 3 && child.textContent.trim()))
+      .map(node => ({ text: node.textContent.trim().slice(0, 40), color: getComputedStyle(node).color, background: background(node) }));
+  })()`);
+  assert.ok(samples.length > 0, `text to measure in ${selector}`);
+  return samples.filter(sample => contrast(sample.color, sample.background) < 4.5)
+    .map(sample => `${sample.text}: ${contrast(sample.color, sample.background).toFixed(2)}`);
+}
+/**
+ * Bring the node `expression` names to the top of its nearest scroller, as the
+ * approved mock brings each state's subject into view in a short window.
+ * @param {Awaited<ReturnType<typeof t073Driver>>} p @param {string} expression
+ */
+const t084Reveal = (p, expression) => p.q(`(() => {
+  const node = ${expression};
+  for (let scroller = node?.parentElement; scroller; scroller = scroller.parentElement) {
+    if (/auto|scroll/.test(getComputedStyle(scroller).overflowY) && scroller.scrollHeight > scroller.clientHeight) {
+      scroller.scrollTop += node.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 8;
+      return true;
+    }
+  }
+  return Boolean(node);
+})()`);
+/**
+ * One state at every 084 size in both themes (VSC-001, VSC-003): nothing scrolls
+ * sideways, the text in `selector` meets 4.5:1, and the screenshot, with the
+ * state's subject in view, takes the approved mock's name. It ends back at
+ * 1440x900 light.
+ * @param {Awaited<ReturnType<typeof openAboutCanvas>>} canvas @param {Awaited<ReturnType<typeof t073Driver>>} p
+ * @param {string} state @param {string} selector @param {string} subject an expression naming the node to bring into view
+ */
+async function t084Matrix(canvas, p, state, selector, subject) {
+  for (const theme of ['light', 'dark']) for (const size of T083_SIZES) {
+    const label = `${size.name}-${theme}`;
+    await aboutViewport(canvas.page, size, theme);
+    assert.deepEqual(await t084Wide(p), [], `${state} scrolls nothing sideways at ${label}`);
+    assert.deepEqual(await t084Contrast(p, selector), [], `${state} text contrast at ${label}`);
+    assert.equal(await t084Reveal(p, subject), true, `${state} shows its subject at ${label}`);
+    await settleBrowserWork(canvas.page);
+    await aboutScreenshot(canvas.page, canvas.output, `${state}-${label}`);
+  }
+  await aboutViewport(canvas.page, T083_SIZES[0], 'light');
+}
+/**
+ * The open pack action dialog at every 084 size in both themes: 083's width,
+ * fit, and contrast, and the full commit, when shown, wrapping inside its fact.
+ * Each screenshot brings Source to the top of the body, as the mock does.
+ * @param {Awaited<ReturnType<typeof openAboutCanvas>>} canvas @param {Awaited<ReturnType<typeof t083Driver>>} p @param {string} state
+ */
+async function t084DialogMatrix(canvas, p, state) {
+  for (const theme of ['light', 'dark']) for (const size of T083_SIZES) {
+    const label = `${size.name}-${theme}`;
+    await aboutViewport(canvas.page, size, theme);
+    const dialog = await p.dialog();
+    assert.equal(dialog.width, Math.min(480, size.width - 16), `the dialog is min(480px, 100vw - 16px) at ${label}`);
+    assert.deepEqual([dialog.modal, dialog.pageWide, dialog.dialogWide, dialog.chromeShown, dialog.top >= 0, dialog.bottom <= dialog.innerHeight],
+      [true, false, false, true, true, true], `${state} fits with its title and buttons shown at ${label}`);
+    assert.deepEqual(await t083Contrast(p), [], `${state} contrast at ${label}`);
+    const commit = await p.q(`(() => {
+      const code = [...document.querySelectorAll('[data-pack-action-body] dd code')].find(node => /^[0-9a-f]{40}$/.test(node.textContent));
+      if (!code) return null;
+      const r = code.getBoundingClientRect(), dd = code.closest('dd').getBoundingClientRect();
+      return { inside: r.left >= dd.left - 0.5 && r.right <= dd.right + 0.5, lines: code.getClientRects().length };
+    })()`);
+    if (commit) {
+      assert.equal(commit.inside, true, `the commit stays inside its fact at ${label}`);
+      if (size.width === 180) assert.ok(commit.lines > 1, `the full commit wraps at 180 px (${commit.lines} line)`);
+    }
+    assert.equal(await t084Reveal(p, `[...document.querySelectorAll('[data-pack-action-body] dt')].find(node => node.textContent === 'Source')`), true);
+    await settleBrowserWork(canvas.page);
+    await aboutScreenshot(canvas.page, canvas.output, `${state}-${label}`);
+  }
+  await aboutViewport(canvas.page, T083_SIZES[0], 'light');
+}
+
+test('084 Upstream packs: before the first Reload, Available says Reload packs also reads Bundle upstream, Sources says Not read, and browsing asks the upstream nothing', {
+  timeout: 420_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  /** @type {ReturnType<typeof t084Upstream>} */
+  let upstream;
+  await runAboutCase(context, '084-unread', { upstream: T084_UPSTREAM, packs: { bulkInstalled: 20 }, prepare: workspace => {
+    upstream = t084Upstream(workspace);
+    return upstream.github.restore;
+  } }, async canvas => {
+    const { page, output } = canvas;
+    const p = await t073Driver(canvas);
+    assert.equal(approvedLfDesignSha256(fs.readFileSync(path.join(ROOT, T084_APPROVED))), T084_APPROVED_SHA256, 'the approved 084 mock is the bound artifact');
+    await p.enter();
+
+    // Available: the existing not-read state, plus the one sentence, beside the one action that fills the list.
+    await p.chooseSub('available');
+    assert.deepEqual(await t084Empty(p), { lines: [...T084_UNREAD, T084_NOT_READ, 'Reload packs'], stops: 1 },
+      'the sentence sits before Reload packs and adds no focus stop');
+    assert.deepEqual((await p.state()).totals, ['28', '?']);
+    assert.equal(await p.q(`document.querySelector('[data-pack-toolbar] [role="combobox"]').disabled`), true, 'Use case is off before the first Reload');
+    assert.match((await t084Coverage(p))?.join(' ') ?? '', /Catalog: not read Nothing is read until you choose Reload packs/);
+    await aboutScreenshot(page, output, 'unread-1440x900-light');
+    await t084Matrix(canvas, p, 'unread', '[data-pack-empty]',
+      `[...document.querySelectorAll('[data-pack-empty] > *')].find(node => node.textContent === ${JSON.stringify(T084_NOT_READ)})`);
+
+    // Sources: Bundle upstream is Not read, like any source before a Reload, and says what a Reload does with it.
+    await p.chooseSub('sources');
+    const sources = await t073SourcesState(p);
+    assert.deepEqual(sources.rows.map(row => row.cells), [
+      ['Local library Local folder', 'library/packs', 'Not read', 'Built in'],
+      ['Bundle upstream GitHub', `${T084_UPSTREAM} Ref main`, 'Not read', 'Built in']]);
+    assert.equal(sources.rows[1].label, `Bundle upstream. GitHub. ${T084_UPSTREAM}, ref main. Not read. Built in.`);
+    await p.click(`[data-source-row="${t073SourceKey(sources, 'Bundle upstream')}"]`);
+    assert.deepEqual(await t073SourceOutline(p), ['coverage notice', 'description', 'actions + read-only note',
+      'facts: Status | Packs found | Installed from this source | Saved in']);
+    const details = await t073SourceDetails(p);
+    assert.equal(await p.q(`document.querySelector('[data-source-notice]').innerText.replace(/\\s+/g, ' ').trim()`),
+      'Status: not read Choose Reload packs to read this source. Until then its packs are unknown.');
+    assert.ok((await p.q(`document.querySelector('[data-source-description]').textContent`)).endsWith(T084_DESCRIPTION));
+    assert.deepEqual([details.show.disabled, details.reason, details.facts.Status, details.facts['Packs found'], details.facts['Saved in']],
+      [true, 'Not read yet - choose Reload packs.', 'Not read', 'Unknown', 'Not saved. Derived from this installation each time. Managed by bundle upgrade.']);
+    await aboutScreenshot(page, output, 'sources-unread-1440x900-light');
+    await aboutViewport(page, T083_SIZES[0], 'dark');
+    await aboutScreenshot(page, output, 'sources-unread-1440x900-dark');
+    await aboutViewport(page, T083_SIZES[0], 'light');
+    await key(page, 'Escape');
+
+    // Opening views, filtering, paging, a focus change and its automatic reread ask the upstream nothing.
+    await p.chooseSub('installed');
+    await p.chooseSource('Local library - Local folder');
+    await p.clear();
+    await p.click('[aria-label="Next pack page"]');
+    assert.equal((await p.state()).page, 'Page 2 of 2');
+    await p.click('[aria-label="Previous pack page"]');
+    const plain = canvas.packReads().length;
+    await p.q(`window.dispatchEvent(new Event('focus'))`);
+    await until(() => canvas.packReads().length > plain, 'an automatic installed read');
+    await packsSettled(page);
+    await p.chooseSub('available');
+    assert.deepEqual((await t084Empty(p))?.lines, [...T084_UNREAD, T084_NOT_READ, 'Reload packs'], 'the automatic reread keeps the sentence');
+    assert.deepEqual([canvas.discoveryReads().length, upstream.requests()], [0, 0], 'nothing before Reload packs read a catalog or asked the upstream');
+    assert.doesNotMatch(await p.q('document.body.innerText'), T084_BY_DESIGN);
+
+    // Reload packs is what reads it: the stand-in is asked, and its upstream-only pack is listed.
+    await p.reload();
+    assert.ok(upstream.requests() > 0, 'Reload packs read the upstream');
+    assert.equal((await p.rows()).some(row => row[1] === 'fresh' && row[2] === T084_LABEL), true);
+    assert.equal(await t084Empty(p), null, 'the not-read state is gone');
+    assert.deepEqual(canvas.foreign(), [], 'the page itself contacted nothing outside Canvas');
+    output.json('approved-screenshots.json', Object.fromEntries(fs.readdirSync(T084_SCREENSHOTS)
+      .map(name => [name, sha256(fs.readFileSync(path.join(T084_SCREENSHOTS, name)))])));
+  });
+});
+
+test('084 Upstream packs: Reload lists the upstream-only pack once from Bundle upstream, Sources counts it, one click installs it at the commit its preview read with no third-party warning, and Remove returns it', {
+  timeout: 600_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  /** @type {ReturnType<typeof t084Upstream>} */
+  let upstream;
+  await runAboutCase(context, '084-install', { upstream: T084_UPSTREAM, prepare: workspace => {
+    upstream = t084Upstream(workspace);
+    return upstream.github.restore;
+  } }, async canvas => {
+    const { page, output, workspace } = canvas;
+    const p = await t083Driver(canvas);
+    await p.enter();
+    await p.chooseSub('available');
+    await p.reload();
+
+    // fresh is one more row, by name among the local packs; bravo, which both list, appears once, from Local library.
+    let state = await p.state();
+    assert.deepEqual([state.totals, state.count], [['8', '12'], '1–12 of 12']);
+    const rows = await p.rows();
+    assert.deepEqual(rows.map(row => [row[1], row[2]]), [...T084_LOCAL, 'fresh'].sort()
+      .map(name => [name, name === 'fresh' ? T084_LABEL : 'Local library - Local folder']));
+    const freshKey = rows.find(row => row[1] === 'fresh')[0];
+    assert.equal(await p.q(`document.querySelector('[data-pack-context="available"]').getAttribute('aria-label')`), 'Available (12)');
+    assert.deepEqual(await p.sourceOptions(), ['All sources', 'Local library - Local folder', T084_LABEL]);
+    assert.deepEqual(await t084Coverage(p), null, 'every source was read, so there is no coverage notice');
+    await aboutScreenshot(page, output, 'available-1440x900-light');
+    await t084Matrix(canvas, p, 'available', '[data-pack-scroll]', `document.querySelector('[data-pack-row="${freshKey}"]')`);
+
+    // Its details are the existing ones, from the title through Projected files.
+    await p.click(`[data-pack-row="${freshKey}"]`);
+    assert.deepEqual(await t084PackDetails(p), {
+      title: 'fresh - Bundle upstream', eyebrow: 'Available · Workspace scope', actions: ['Install'],
+      facts: { 'Use cases': 'ui', Source: T084_LABEL, Location: T084_UPSTREAM, 'Tracked ref': 'main', 'Declared tools': 'Not acquired in this snapshot.' },
+      documents: ['pack.md'], details: 'Details pack.md Member READMEs are not read from GitHub before installation.' });
+    await aboutScreenshot(page, output, 'available-details-1440x900-light');
+    await aboutViewport(page, T083_SIZES[0], 'dark');
+    await aboutScreenshot(page, output, 'available-details-1440x900-dark');
+    await aboutViewport(page, T083_SIZES[0], 'light');
+    await key(page, 'Escape');
+
+    // Sources: the count is every pack the upstream lists, and Packs found says how many Available lists.
+    await p.chooseSub('sources');
+    const sources = await t073SourcesState(p);
+    assert.deepEqual(sources.rows.map(row => row.cells[2]), ['Read - 18 packs', 'Read - 2 packs']);
+    const upstreamKey = t073SourceKey(sources, 'Bundle upstream');
+    await p.click(`[data-source-row="${upstreamKey}"]`);
+    let details = await t073SourceDetails(p);
+    assert.deepEqual([details.show, details.reason, details.facts['Packs found']],
+      [{ disabled: false, label: 'Show packs in Available' }, "Show packs in Available lists this source's packs that are not installed.", `2 (1 in Available) ${T084_FOUND_NOTE}`]);
+    assert.deepEqual(await t073SourceOutline(p), ['description', 'actions + read-only note', 'facts: Status | Packs found | Installed from this source | Saved in']);
+    await aboutScreenshot(page, output, 'sources-read-1440x900-light');
+    await t084Matrix(canvas, p, 'sources-read', '[data-pack-detail]', `document.querySelector('[data-pack-detail] h2')`);
+    // Show packs in Available opens Available on that source alone, with focus on the Available tab.
+    await p.click('[data-source-show]');
+    await settleBrowserWork(page);
+    state = await p.state();
+    assert.deepEqual([state.context, state.keys, await p.q(`document.querySelector('[data-pack-source-filter]').textContent.trim()`),
+      await p.q(`document.activeElement?.getAttribute('data-pack-context')`)], ['available', [freshKey], T084_LABEL, 'available']);
+    await aboutScreenshot(page, output, 'sources-show-1440x900-light');
+    await p.clear();
+
+    // Install: checking Bundle upstream, then a ready view that names it, with the full commit under Source and no warning.
+    const profileFile = path.join(workspace.root, '.dude', 'metadata', 'profile.md');
+    const profile = fs.readFileSync(profileFile);
+    await p.click(`[data-pack-row="${freshKey}"]`);
+    await p.hold(['preview']);
+    await p.open('install');
+    let dialog = await p.dialog();
+    assert.deepEqual([dialog.phase, dialog.title, dialog.body, dialog.buttons, dialog.focus], ['loading', 'Install fresh', 'Checking Bundle upstream...', [['Cancel', false]], 'cancel']);
+    await aboutScreenshot(page, output, 'install-loading-1440x900-light');
+    await p.release();
+    await p.phase('ready');
+    dialog = await p.dialog();
+    const previewed = upstream.commit;
+    assert.match(previewed, /^[0-9a-f]{40}$/);
+    assert.deepEqual([dialog.title, dialog.buttons, dialog.focus, dialog.fields], ['Install fresh', [['Cancel', false], ['Install', false]], 'cancel', 0]);
+    assert.ok(dialog.body.startsWith('Adds 3 items '), dialog.body);
+    assert.ok(dialog.body.includes(`Required tools None Source ${T084_LABEL} Commit ${previewed} ${T083_NEW_SESSION} Show files (3)`), dialog.body);
+    assert.equal(dialog.body.includes('Third-party source'), false, 'Bundle upstream carries no warning');
+    assert.doesNotMatch(dialog.body, T083_PROTOCOL);
+    assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-action-body] dl dt')].map(node => node.textContent)`),
+      ['Required tools', 'Source', 'Commit'], 'the Commit fact sits directly under Source');
+    assert.equal(await p.q(`document.querySelector('[data-pack-action-body] dl').querySelectorAll('button, a[href], [tabindex]:not([tabindex="-1"])').length`), 0,
+      'the facts add no focus stop');
+    for (const shift of [false, true]) for (let step = 0; step < 5; step += 1) {
+      await key(page, 'Tab', 'Tab', { shift });
+      assert.equal(await p.q(`document.querySelector('[data-pack-action-dialog]').contains(document.activeElement)`), true, 'Tab stays in the dialog');
+    }
+    const tree = await t005Accessibility(page);
+    assert.deepEqual([tree.has('dialog', 'Install fresh'), tree.has('button', 'Install'), tree.has('button', 'Cancel')], [true, true, true]);
+    assert.deepEqual(fs.readFileSync(profileFile), profile, 'a preview writes nothing');
+    await aboutScreenshot(page, output, 'install-ready-1440x900-light');
+    await t084DialogMatrix(canvas, p, 'install-ready');
+
+    // The upstream branch moves on after the preview; one click installs what the preview read.
+    t083Pack(upstream.directory, 'fresh', { version: 2 });
+    assert.notEqual(t083Commit(upstream.directory, 'fresh v2'), previewed);
+    await focus(page, '[data-pack-action-primary]');
+    await key(page, 'Enter');
+    await p.phase('success');
+    dialog = await p.dialog();
+    assert.ok(dialog.body.startsWith(`Installed fresh ${T083_NEW_SESSION} Added 3 items`), dialog.body);
+    assert.deepEqual(t083Record(workspace, 'fresh').source, { type: 'remote', repository: T084_UPSTREAM, requested_ref: previewed, resolved_commit: previewed },
+      'the profile records the commit the preview read');
+    assert.match(fs.readFileSync(path.join(workspace.root, '.github', 'agents', 'dude-pack-fresh-writer.agent.md'), 'utf8'), /Writer v1\./);
+    await until(async () => (await p.dialog()).buttons.some(([text, disabled]) => text === 'Show in Installed' && !disabled), 'Installed lists fresh');
+    await aboutScreenshot(page, output, 'install-success-1440x900-light');
+    assert.deepEqual([canvas.provider.read().requests.length, canvas.sends.length], [0, 0], 'no Needs you request and no chat message');
+
+    // Show in Installed: fresh is installed from Bundle upstream, with its recorded commit, and gone from Available.
+    await p.click('[data-pack-action-show]');
+    state = await p.state();
+    assert.deepEqual([state.context, state.detail, await p.q(`document.activeElement?.getAttribute('aria-label')`)], ['installed', 'pack:fresh', 'Close pack details']);
+    const installed = await t084PackDetails(p);
+    assert.deepEqual([installed.facts.Source, installed.facts.Repository, installed.facts['Requested ref'], installed.facts['Resolved commit']],
+      [T084_LABEL, T084_UPSTREAM, previewed, previewed]);
+    assert.equal((await p.rows()).find(row => row[0] === 'pack:fresh')?.[3], T084_LABEL);
+    await aboutScreenshot(page, output, 'installed-1440x900-light');
+    await key(page, 'Escape');
+    await p.chooseContext('available');
+    assert.equal((await p.state()).keys.includes(freshKey), false, 'an installed name leaves Available');
+
+    // Every pack the upstream lists is now installed or also in Local library.
+    await p.chooseSub('sources');
+    await p.click(`[data-source-row="${upstreamKey}"]`);
+    details = await t073SourceDetails(p);
+    assert.deepEqual([details.show.disabled, details.reason, details.facts.Status, details.facts['Packs found'], details.facts['Installed from this source']],
+      [true, T084_NONE_LISTED, 'Read - 2 packs', `2 (none in Available) ${T084_FOUND_NOTE}`, '1: fresh 8 installed packs record an unlisted source.']);
+    await aboutScreenshot(page, output, 'sources-none-1440x900-light');
+    await key(page, 'Escape');
+    // Available filtered to Bundle upstream says where its other packs are listed.
+    await p.chooseSub('available');
+    await p.chooseSource(T084_LABEL);
+    assert.deepEqual((await t084Empty(p))?.lines, ['No matching packs', T084_LOCAL_WINS]);
+    await aboutScreenshot(page, output, 'available-none-1440x900-light');
+    await p.clear();
+
+    // Remove reads no source, and the next Reload lists fresh from Bundle upstream again.
+    await p.chooseContext('installed');
+    await p.click('[data-pack-row="pack:fresh"]');
+    await p.open('remove');
+    await p.phase('ready');
+    await p.click('[data-pack-action-primary]');
+    await p.phase('success');
+    await p.click('[data-pack-action-primary]');
+    await until(async () => !(await p.state()).keys.includes('pack:fresh'), 'Installed no longer lists fresh');
+    await p.chooseContext('available');
+    await p.reload();
+    assert.deepEqual((await p.rows()).filter(row => row[1] === 'fresh').map(row => row[2]), [T084_LABEL]);
+    assert.deepEqual(await p.q('window.t083.sent'), ['preview', 'apply', 'preview', 'apply'], 'one preview and one apply per action');
+    assert.doesNotMatch(await p.q('document.body.innerText'), T084_BY_DESIGN);
+  });
+});
+
+test('084 Upstream packs: Refresh names the source its preview read, Bundle upstream with its commit, then Local library with Source changes after a pull', {
+  timeout: 600_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  /** @type {ReturnType<typeof t084Upstream>} */
+  let upstream;
+  await runAboutCase(context, '084-refresh', { upstream: T084_UPSTREAM, prepare: workspace => {
+    upstream = t084Upstream(workspace);
+    return upstream.github.restore;
+  } }, async canvas => {
+    const { page, output, workspace } = canvas;
+    const p = await t083Driver(canvas);
+    await p.enter();
+    await p.chooseSub('available');
+    await p.reload();
+    await p.click('[data-pack-row^="pack:fresh@"]');
+    await p.open('install');
+    await p.phase('ready');
+    await p.click('[data-pack-action-primary]');
+    await p.phase('success');
+    await until(async () => (await p.dialog()).buttons.some(([text, disabled]) => text === 'Show in Installed' && !disabled), 'Installed lists fresh');
+    await p.click('[data-pack-action-show]');
+    const installedCommit = upstream.commit;
+
+    // While Local library lacks fresh: checking Bundle upstream, then Source with its commit, and no Source changes.
+    await p.hold(['preview']);
+    await p.open('refresh');
+    let dialog = await p.dialog();
+    assert.deepEqual([dialog.phase, dialog.title, dialog.body, dialog.buttons], ['loading', 'Refresh fresh', 'Checking Bundle upstream...', [['Cancel', false]]]);
+    await aboutScreenshot(page, output, 'refresh-loading-1440x900-light');
+    await p.release();
+    await p.phase('ready');
+    dialog = await p.dialog();
+    assert.ok(dialog.body.startsWith(`Source ${T084_LABEL} Commit ${upstream.commit} Local edits are overwritten `), dialog.body);
+    assert.deepEqual([dialog.body.includes('Source changes'), dialog.body.includes('Third-party source')], [false, false]);
+    assert.ok(dialog.body.includes('Replaced (3)'), dialog.body);
+    await aboutScreenshot(page, output, 'refresh-upstream-1440x900-light');
+    await key(page, 'Escape');
+    assert.deepEqual([(await p.dialog()).open, (await p.dialog()).focus], [false, 'refresh'], 'Escape is Cancel, and focus returns to Refresh pack');
+
+    // A pull adds fresh to Local library. The row still names Bundle upstream, and the ready view names what the preview read.
+    t083Pack(workspace.root, 'fresh', { version: 2 });
+    assert.equal(await p.q(`document.querySelector('[data-pack-source]').textContent`), T084_LABEL);
+    await p.open('refresh');
+    await p.phase('ready');
+    dialog = await p.dialog();
+    assert.ok(dialog.body.startsWith(`Source Local library - Local folder Source changes ${T084_UPSTREAM} @ ${installedCommit} -> Local library (library/packs) `
+      + 'Local edits are overwritten '), dialog.body);
+    assert.deepEqual([dialog.body.includes('Commit'), dialog.body.includes('Third-party source')], [false, false]);
+    assert.ok(dialog.body.includes('Added (1) .github/prompts/dude-pack-fresh-start.prompt.md'), dialog.body);
+    await aboutScreenshot(page, output, 'refresh-pulled-1440x900-light');
+    await t084DialogMatrix(canvas, p, 'refresh-pulled');
+
+    // One click refreshes from Local library; Installed names it, and later refreshes use the local copy.
+    await p.click('[data-pack-action-primary]');
+    await p.phase('success');
+    assert.deepEqual(t083Record(workspace, 'fresh').source, { type: 'local', location: fs.realpathSync(path.join(workspace.root, 'library', 'packs')) });
+    await p.click('[data-pack-action-primary]');
+    await until(async () => (await p.rows()).find(row => row[0] === 'pack:fresh')?.[3] === 'Local library - Local folder', 'Installed names Local library');
+    assert.equal(await p.q(`document.querySelector('[data-pack-source]')?.textContent`), 'Local library - Local folder');
+    await aboutScreenshot(page, output, 'refresh-pulled-success-1440x900-light');
+    await p.open('refresh');
+    await p.phase('ready');
+    dialog = await p.dialog();
+    assert.ok(dialog.body.startsWith('Source Local library - Local folder Local edits are overwritten '), dialog.body);
+    await key(page, 'Escape');
+    assert.deepEqual([canvas.provider.read().requests.length, canvas.sends.length], [0, 0]);
+  });
+});
+
+test('084 Upstream packs: an unreachable upstream is Unavailable in the partial notice, Sources, and the Source filter, and every local pack stays listed', {
+  timeout: 420_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  /** @type {ReturnType<typeof t084Upstream>} */
+  let upstream;
+  await runAboutCase(context, '084-offline', { upstream: T084_UPSTREAM, prepare: workspace => {
+    upstream = t084Upstream(workspace, { publish: false });
+    return upstream.github.restore;
+  } }, async canvas => {
+    const { page, output } = canvas;
+    const p = await t073Driver(canvas);
+    await p.enter();
+    await p.chooseSub('available');
+    await p.reload();
+
+    // Every local pack is listed, the counts are known counts, and the notice names Bundle upstream and Compose's reason.
+    let state = await p.state();
+    assert.deepEqual([state.totals, state.count, (await p.rows()).map(row => row[1])], [['8', '11'], '1–11 of 11 known', T084_LOCAL]);
+    assert.equal(await p.q(`document.querySelector('[data-pack-context="available"]').getAttribute('aria-label')`), 'Available (11 known)');
+    const notice = /** @type {string[]} */ (await t084Coverage(p));
+    assert.deepEqual(notice.slice(0, 2), ['Installed: current · Catalog: partial (1 of 2 sources unavailable)',
+      'Some sources could not be read. Packs from them are not listed.']);
+    assert.match(notice[2], /^Bundle upstream - GitHub acme\/bundle: Unavailable - failed to fetch source https:\/\/github\.com\/acme\/bundle @ main: /);
+    const reason = notice[2].slice(`${T084_LABEL}: Unavailable - `.length);
+    assert.equal(notice[3], 'Packs from unavailable sources are not listed. Counts are known counts, not totals, and an empty result is not a confirmed empty list.');
+    await aboutScreenshot(page, output, 'available-offline-1440x900-light');
+    assert.deepEqual(await p.sourceOptions(), ['All sources', 'Local library - Local folder', `${T084_LABEL} (unavailable)`]);
+    await p.chooseSource(`${T084_LABEL} (unavailable)`);
+    assert.deepEqual((await t084Empty(p))?.lines, ['No known matching packs',
+      `${T084_LABEL}: Unavailable - ${reason.replace(/[.\s]+$/, '')}. Its packs are not listed, so this is not a confirmed empty list.`]);
+    await aboutScreenshot(page, output, 'available-offline-filter-1440x900-light');
+    await p.clear();
+    await p.chooseSub('installed');
+    assert.deepEqual(await t084Coverage(p), notice, 'Installed carries the same notice');
+    await aboutScreenshot(page, output, 'installed-offline-1440x900-light');
+
+    // Sources: Unavailable with the reason, and no count.
+    await p.chooseSub('sources');
+    const sources = await t073SourcesState(p);
+    assert.deepEqual(sources.rows.map(row => row.cells[2]), ['Read - 18 packs', `Unavailable - ${reason}`]);
+    await p.click(`[data-source-row="${t073SourceKey(sources, 'Bundle upstream')}"]`);
+    const details = await t073SourceDetails(p);
+    assert.equal(await p.q(`document.querySelector('[data-source-notice]').innerText.replace(/\\s+/g, ' ').trim()`),
+      `Status: unavailable This source could not be read: ${reason} Its packs are not listed under Available.`);
+    assert.deepEqual([details.show.disabled, details.reason, details.facts['Packs found']], [true, 'Unavailable - its packs are not listed.', 'Unknown']);
+    await aboutScreenshot(page, output, 'sources-offline-1440x900-light');
+    await key(page, 'Escape');
+
+    // Once the upstream answers, the next Reload lists its upstream-only pack.
+    upstream.publish();
+    await p.chooseSub('available');
+    await p.reload();
+    state = await p.state();
+    assert.deepEqual([state.totals, state.count, await t084Coverage(p)], [['8', '12'], '1–12 of 12', null]);
+    assert.equal((await p.rows()).some(row => row[1] === 'fresh' && row[2] === T084_LABEL), true);
+  });
+});
+
+test('084 Upstream packs: a release install reads Bundle upstream as its default with 083\'s dialog, and neither it nor a checkout without an upstream shows the Reload sentence', {
+  timeout: 420_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await context.test('release', async () => {
+    /** @type {ReturnType<typeof t084Upstream>} */
+    let upstream;
+    await runAboutCase(context, '084-release', { upstream: T084_UPSTREAM, prepare: workspace => {
+      fs.rmSync(path.join(workspace.root, 'library'), { recursive: true });
+      upstream = t084Upstream(workspace);
+      return upstream.github.restore;
+    } }, async canvas => {
+      const { page, output } = canvas;
+      const p = await t083Driver(canvas);
+      await p.enter();
+      await p.chooseSub('available');
+      assert.deepEqual(await t084Empty(p), { lines: [...T084_UNREAD, 'Reload packs'], stops: 1 }, 'no sentence where Bundle upstream is the default');
+      await aboutScreenshot(page, output, 'unread-released-1440x900-light');
+      await p.chooseSub('sources');
+      let sources = await t073SourcesState(p);
+      assert.deepEqual(sources.rows.map(row => [row.cells[0], row.cells[2]]), [['Bundle upstream GitHub', 'Not read']]);
+      await p.click(`[data-source-row="${t073SourceKey(sources, 'Bundle upstream')}"]`);
+      assert.ok((await p.q(`document.querySelector('[data-source-description]').textContent`))
+        .endsWith('This installation has no local library, so Bundle upstream supplies the default catalog.'));
+      await key(page, 'Escape');
+      assert.equal(upstream.requests(), 0);
+
+      // Reload reads it as the default catalog, with 073's wording.
+      await p.reload();
+      sources = await t073SourcesState(p);
+      assert.deepEqual(sources.rows.map(row => row.cells[2]), ['Read - 2 packs']);
+      await p.click(`[data-source-row="${t073SourceKey(sources, 'Bundle upstream')}"]`);
+      const details = await t073SourceDetails(p);
+      assert.deepEqual([details.facts['Packs found'], details.reason],
+        ['2 (none installed) Counts include names you already have installed. Available lists only names that are not installed.',
+          "Show packs in Available lists this source's packs that are not installed."]);
+      await key(page, 'Escape');
+
+      // 083's release dialog: Checking Bundle upstream, its Source, and no Commit and no warning.
+      await p.chooseSub('available');
+      assert.deepEqual((await p.rows()).map(row => [row[1], row[2]]), [['bravo', T084_LABEL], ['fresh', T084_LABEL]]);
+      await p.click('[data-pack-row^="pack:fresh@"]');
+      await p.hold(['preview']);
+      await p.open('install');
+      assert.equal((await p.dialog()).body, 'Checking Bundle upstream...');
+      await p.release();
+      await p.phase('ready');
+      const dialog = await p.dialog();
+      assert.ok(dialog.body.includes(`Required tools None Source ${T084_LABEL} ${T083_NEW_SESSION} Show files (3)`), dialog.body);
+      assert.deepEqual([dialog.body.includes('Commit'), dialog.body.includes('Third-party source')], [false, false]);
+      assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-action-body] dl dt')].map(node => node.textContent)`), ['Required tools', 'Source']);
+      await key(page, 'Escape');
+      assert.equal((await p.dialog()).open, false);
+    });
+  });
+  await context.test('no upstream', async () => {
+    await runAboutCase(context, '084-no-upstream', { upstream: null }, async canvas => {
+      const { page, output } = canvas;
+      const p = await t073Driver(canvas);
+      await p.enter();
+      await p.chooseSub('available');
+      assert.deepEqual(await t084Empty(p), { lines: [...T084_UNREAD, 'Reload packs'], stops: 1 }, 'no sentence without an upstream');
+      await aboutScreenshot(page, output, 'unread-noupstream-1440x900-light');
+      await p.chooseSub('sources');
+      assert.deepEqual((await t073SourcesState(p)).rows.map(row => [row.cells[0], row.cells[2]]), [['Local library Local folder', 'Not read']]);
+      await p.chooseSub('available');
+      await p.reload();
+      assert.deepEqual([(await p.state()).count, await t084Coverage(p)], ['1–11 of 11', null], 'only Local library is read');
+    });
   });
 });
 
