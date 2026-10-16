@@ -1,23 +1,26 @@
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Button, createTableColumn, DataGrid, DataGridBody, DataGridCell, DataGridHeader,
-  DataGridHeaderCell, DataGridRow, Dropdown, Field, MessageBar, MessageBarBody, MessageBarTitle, Option, Spinner,
-  Tab, TabList, Text,
+  DataGridHeaderCell, DataGridRow, Dropdown, Field, MessageBar, MessageBarActions, MessageBarBody, MessageBarTitle, Option, Spinner,
+  Switch, Tab, TabList, Text,
 } from '@fluentui/react-components';
 import { ArrowClockwiseRegular, ChevronLeftRegular, ChevronRightRegular, DismissRegular, bundleIcon, Info20Filled, Info20Regular,
-  PuzzlePiece20Filled, PuzzlePiece20Regular } from '@fluentui/react-icons';
+  PaintBrush20Filled, PaintBrush20Regular, PuzzlePiece20Filled, PuzzlePiece20Regular } from '@fluentui/react-icons';
 import { AboutPanel } from './about.jsx';
 import { ArtifactImport, NEW_SESSION } from './artifact-import.jsx';
 import { besideLibrary, catalogCoverageText, RemoveSourceDialog, removalRefusal, blockersOf, SourceBody, sourceLabel, sourcePlace,
   SourcesPanel, sourceStatus, sourceWriteReason } from './pack-sources.jsx';
 import { Markdown } from './markdown.jsx';
 import { mergeClasses, useCanvasStyles } from './styles.js';
+import { rereadPreference, retryPreferenceRead, toggleFollowAppTheme, useAppearanceSettings } from './theme.js';
 import { importRequestStatus, packActionReason } from './use-canvas-data.js';
 
 // Installed and Available list 25 rows per page. Filtering always runs first.
 const PAGE_SIZE = 25;
 const INITIAL_VIEW = { context: 'installed', tag: '', source: '', page: 1, selected: null };
+// Packs stays first, as the entry section; Appearance follows GitHub's and macOS Settings; About stays last.
 const SECTIONS = [['packs', 'Packs', bundleIcon(PuzzlePiece20Filled, PuzzlePiece20Regular)],
+  ['appearance', 'Appearance', bundleIcon(PaintBrush20Filled, PaintBrush20Regular)],
   ['about', 'About', bundleIcon(Info20Filled, Info20Regular)]];
 const CONTEXTS = [['installed', 'Installed'], ['available', 'Available']];
 // The Packs views: the two lists, the import view beside them, then Sources.
@@ -647,12 +650,91 @@ function PackActionDialog({ action, shown, data, showKey, showReason, onClose, o
   </dialog>;
 }
 
+/*
+ * Settings > Appearance (085): one Fluent Switch for the one saved choice. It
+ * shows the confirmed choice only; a save or read in flight keeps it
+ * focusable but inert, and its outcome is announced, with no visible "Saved".
+ */
+const APPEARANCE_HINT = "Uses the GitHub app's colors, fonts, and text sizes. Controls and layout stay the same. "
+  + "Applies to all your projects on this computer. Turn off to use Dude's own look.";
+const APPEARANCE_PENDING = { saving: 'Saving...', checking: 'Checking whether it was saved...', reading: 'Reading the saved choice...' };
+const APPEARANCE_NO_HOST = "The GitHub app's theme isn't available here, so Canvas uses Dude's own look. Your choice stays on.";
+/** @param {string|null} message @param {boolean} confirmed */
+function appearanceMessage(message, confirmed) {
+  const choice = confirmed ? 'on' : 'off';
+  return {
+    'save-failed': { intent: 'error', title: 'Not saved', text: `Canvas couldn't save your choice on this computer. Follow GitHub app theme is still ${choice}, and the look hasn't changed. Use the switch to try again.` },
+    'not-saved': { intent: 'error', title: 'Not saved', text: `The save didn't finish. Canvas read the saved choice again: Follow GitHub app theme is still ${choice}, and the look hasn't changed. Use the switch to try again.` },
+    'read-failed': { intent: 'warning', title: 'Saved choice not read', retry: true, text: "Canvas couldn't read your appearance choice on this computer, so it uses Dude's own look for now. Nothing was changed." },
+    'read-failed-later': { intent: 'warning', title: 'Saved choice not read', retry: true, text: `Canvas couldn't read your appearance choice just now, so it keeps the last choice it confirmed: ${choice}. Nothing was changed.` },
+  }[message] ?? null;
+}
+
 /**
- * Settings holds two local sections. Packs stays mounted while About is shown,
- * so its view, selection, and pack action survive a section switch; only its
- * dialogs close, and they reopen on return under the existing focus rules.
- * The Packs view (sub: Installed, Available, or Add/import) belongs to the
- * shell, which names it in the footer and header, and clears it with the section.
+ * The Appearance section panel, About's sheet with one field. Entering it
+ * reads the saved choice again; it reads no pack and sends nothing else. It is
+ * a focus stop only while it has something to scroll.
+ */
+function AppearancePanel({ id, labelledBy, shown }) {
+  const s = useCanvasStyles();
+  const state = useAppearanceSettings();
+  const panel = useRef(null), toggle = useRef(null), focusRequest = useRef(state.focusSwitch);
+  const [scrolls, setScrolls] = useState(false);
+  useEffect(() => { if (shown) void rereadPreference(); }, [shown]);
+  useLayoutEffect(() => {
+    const node = panel.current;
+    if (!shown) return;
+    const measure = () => setScrolls(node.scrollHeight > node.clientHeight + 1);
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    observer.observe(node.firstElementChild);
+    return () => observer.disconnect();
+  }, [shown]);
+  // A successful Retry moves focus to the switch it confirmed.
+  useEffect(() => {
+    if (state.focusSwitch === focusRequest.current) return;
+    focusRequest.current = state.focusSwitch;
+    if (shown) toggle.current?.focus();
+  }, [state.focusSwitch, shown]);
+  const pending = Boolean(state.pending);
+  const message = appearanceMessage(state.message, state.confirmed);
+  return <div ref={panel} role="tabpanel" id={id} aria-labelledby={labelledBy} hidden={!shown}
+    tabIndex={shown && scrolls ? 0 : undefined} className={s.aboutPanel} data-appearance-panel>
+    {shown && <div className={s.aboutBody}>
+      <Field hint={APPEARANCE_HINT}>
+        <Switch ref={toggle} checked={state.confirmed} disabledFocusable={pending} label="Follow GitHub app theme"
+          className={s.followSwitch} onChange={() => void toggleFollowAppTheme()} data-follow-app-theme />
+      </Field>
+      {pending && <Spinner size="extra-tiny" label={APPEARANCE_PENDING[state.pending]} className={s.appearancePending}
+        data-appearance-pending={state.pending} />}
+      {message && <MessageBar intent={message.intent} layout="multiline" className={mergeClasses(s.notice, s.narrowBar)}
+        data-appearance-message={state.message}>
+        <MessageBarBody>
+          <MessageBarTitle>{message.title}</MessageBarTitle>
+          <div>{message.text}</div>
+        </MessageBarBody>
+        {message.retry && <MessageBarActions className={s.narrowBarActions}>
+          <Button appearance="primary" size="medium" disabledFocusable={pending} onClick={() => void retryPreferenceRead()}
+            data-appearance-retry>Retry</Button>
+        </MessageBarActions>}
+      </MessageBar>}
+      {state.confirmed && !state.hostSupplied && <MessageBar intent="info" layout="multiline" role="note"
+        aria-label="GitHub app theme not available" className={mergeClasses(s.notice, s.narrowBar)} data-appearance-note>
+        <MessageBarBody><div>{APPEARANCE_NO_HOST}</div></MessageBarBody>
+      </MessageBar>}
+      <p className={s.visuallyHidden} role="status" aria-live="polite" aria-atomic="true" data-appearance-status>{state.status}</p>
+      <p className={s.visuallyHidden} role="alert" aria-atomic="true" data-appearance-alert>{state.alert}</p>
+    </div>}
+  </div>;
+}
+
+/**
+ * Settings holds three local sections. Packs stays mounted while Appearance
+ * or About is shown, so its view, selection, and pack action survive a section
+ * switch; only its dialogs close, and they reopen on return under the existing
+ * focus rules. The saved appearance choice lives outside this workspace-keyed
+ * component. The Packs view (sub: Installed, Available, or Add/import) belongs
+ * to the shell, which names it in the footer and header, and clears it with the section.
  * Add/import keeps its typed Source here; the list view is kept beside it, so a
  * trip to Add/import and back keeps the filters, page, and selection.
  */
@@ -1337,6 +1419,7 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
     <RemoveSourceDialog source={removing} busy={Boolean(removal?.busy)} refusal={removal?.refusal ?? null}
       onConfirm={confirmRemove} onClose={closeRemoval} onReload={() => { data.reloadPacks(); closeRemoval(); }} />
     </div>
+    <AppearancePanel id={`${id}-appearance`} labelledBy={`${id}-section-appearance`} shown={active && section === 'appearance'} />
     <AboutPanel id={`${id}-about`} labelledBy={`${id}-section-about`} shown={active && section === 'about'}
       readAbout={data.readAbout} />
   </div>;

@@ -47,6 +47,16 @@ const PACKS_MODULE = new URL('./lib/packs.mjs', import.meta.url).href;
 /** Every environment variable that names a home to the CLI's loader, to Git for Windows or to libcurl. */
 const HOME_VARIABLES = Object.freeze(['HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH']);
 
+/*
+ * 085 App theme: serving `/` reads the one Canvas preference. Every server this
+ * file starts, in this process or a child, reads it from this owned,
+ * project-relative home until a case names its own, so no case reads or
+ * writes the real user's choice. Teardown removes the folder.
+ */
+const PAGE_PREFERENCE_ROOT = fs.mkdtempSync(fileURLToPath(new URL('../../../.dude-canvas-test-085-', import.meta.url)));
+process.env.COPILOT_HOME = path.join(PAGE_PREFERENCE_ROOT, 'copilot-home');
+after(() => fs.rmSync(PAGE_PREFERENCE_ROOT, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
+
 /** The one test that a child run of this file registers when it runs a test alone (see `isolatedTest`). */
 const ISOLATED_TEST_ENV = 'DUDE_CANVAS_ISOLATED_TEST';
 const isolatedName = process.env[ISOLATED_TEST_ENV];
@@ -1289,6 +1299,23 @@ function call(url, { path = '/', ...init } = {}) {
 }
 
 /**
+ * 085: the page that `/` serves for one preference read. It is the shipped
+ * `ui/index.html` with exactly its two bootstrap slots filled: the owned
+ * attribute and the fixed JSON slot, holding only the boolean and the closed
+ * read-error code. Every other byte is the file's.
+ * @param {{ followAppTheme?: boolean, preferenceError?: 'preference_unreadable' | null }} [read]
+ */
+function servedPage({ followAppTheme = false, preferenceError = null } = {}) {
+  const page = fs.readFileSync(new URL('./ui/index.html', import.meta.url), 'utf8');
+  const attribute = 'data-dude-follow-app-theme="false"';
+  const slot = '<script type="application/json" id="dude-canvas-bootstrap">{"followAppTheme":false,"preferenceError":null}</script>';
+  assert.equal(page.split(attribute).length, 2, 'the shipped page has one bootstrap attribute');
+  assert.equal(page.split(slot).length, 2, 'the shipped page has one bootstrap slot, holding the default');
+  return page.replace(attribute, `data-dude-follow-app-theme="${followAppTheme}"`)
+    .replace(slot, `<script type="application/json" id="dude-canvas-bootstrap">${JSON.stringify({ followAppTheme, preferenceError })}</script>`);
+}
+
+/**
  * `fetch` normalizes the request path and refuses to set `host` or `origin`, so
  * tests that need any of them must drive the raw request line.
  * @param {import('node:http').Server} server
@@ -1507,7 +1534,8 @@ test('only exact workspace shell assets are served with fixed MIME and cache hea
       assert.equal(response.headers.get('cache-control'), 'no-store', `cache policy for ${route}`);
       assert.equal(
         await response.text(),
-        fs.readFileSync(new URL(`./${relative}`, import.meta.url), 'utf8'),
+        // 085: the page carries the bootstrap of the owned home, which holds no saved choice.
+        route === '/' ? servedPage() : fs.readFileSync(new URL(`./${relative}`, import.meta.url), 'utf8'),
         `exact bytes for ${route}`,
       );
     }
@@ -2834,7 +2862,7 @@ test('read-only API route matrix permits only projection GETs and refresh POST',
     assert.equal(projectionPayload.freshness.state, 'current');
     assert.deepEqual(freshnessPayload, projectionPayload);
     assert.deepEqual(refreshPayload, { ...projectionPayload, replaced: false });
-    assert.equal(body, fs.readFileSync(new URL('./ui/index.html', import.meta.url), 'utf8'));
+    assert.equal(body, servedPage(), 'the shipped page with the owned home\'s bootstrap');
     assert.match(body, /<title>Dude<\/title>/);
     assert.match(body, /<script type="module" src="\/assets\/app\.js"><\/script>/);
     assert.doesNotMatch(body, /<(?:button|form|input|select|textarea)\b/i);
@@ -9883,4 +9911,445 @@ test('084 Upstream packs: when Local library cannot be read, Available hides no 
     assert.deepEqual(readOf(rows.get('Bundle upstream')), { status: 'read', reason: null, count: 2, uninstalled: 2 });
     assert.deepEqual(availableRows(body), [['fresh', 'Bundle upstream'], ['shared', 'Bundle upstream']]);
   } finally { await f.close(); fixture.cleanup(); }
+});
+
+/*
+ * 085 App theme: the one per-user Canvas preference. Each case owns its
+ * preference home, so no case reads or writes the real user's choice.
+ */
+const PREFERENCES_ROUTE = '/api/canvas-preferences';
+const PREFERENCE_PARTS = Object.freeze(['extensions', 'dude', 'artifacts', 'canvas-preferences.json']);
+const PREFERENCE_UNREADABLE = Object.freeze({ status: 503, body: { error: 'preference_unreadable' } });
+const PREFERENCE_WRITE_FAILED = Object.freeze({ status: 500, body: { error: 'preference_write_failed' } });
+/** @param {boolean} followAppTheme */
+const preferenceOf = followAppTheme => ({ status: 200, body: { followAppTheme } });
+/**
+ * Each case's fixture folder is owned and project-relative: a uniquely named
+ * folder at the repository root, outside the src, .github, .dude, scripts,
+ * library and docs trees that builds, projections, lint and other tests read.
+ */
+const PREFERENCE_FIXTURE_PREFIX = fileURLToPath(new URL('../../../.dude-canvas-test-085-', import.meta.url));
+
+/**
+ * Give one case its own preference home. COPILOT_HOME names a folder that does
+ * not exist yet, so a case can show exactly what a read or a save creates.
+ * Teardown restores the variable and removes the folder.
+ * @param {import('node:test').TestContext} t
+ */
+function preferenceHome(t) {
+  const temporary = fs.mkdtempSync(PREFERENCE_FIXTURE_PREFIX);
+  const home = path.join(temporary, 'copilot-home');
+  const previous = process.env.COPILOT_HOME;
+  process.env.COPILOT_HOME = home;
+  t.after(() => {
+    if (previous === undefined) delete process.env.COPILOT_HOME;
+    else process.env.COPILOT_HOME = previous;
+    fs.rmSync(temporary, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
+  return { temporary, home, file: path.join(home, ...PREFERENCE_PARTS) };
+}
+
+/**
+ * One preference request through `fetch`: a read, or a save from the
+ * instance's own origin. Every answer is uncached JSON.
+ * @param {{ url: string }} instance @param {unknown} [body] a save's body; a string is sent as is
+ * @returns {Promise<{ status: number, body: unknown }>}
+ */
+async function preferenceRoute(instance, body) {
+  const response = await call(instance.url, { path: PREFERENCES_ROUTE, ...(body === undefined ? {} : {
+    method: 'POST',
+    headers: { origin: new URL(instance.url).origin, 'content-type': 'application/json' },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  }) });
+  assert.equal(response.headers.get('cache-control'), 'no-store', 'a preference answer is never cached');
+  assert.equal(response.headers.get('content-type'), 'application/json; charset=utf-8');
+  return { status: response.status, body: await response.json() };
+}
+
+test('085 App theme: an absent preference reads as off and creates nothing', async t => {
+  const { temporary, file } = preferenceHome(t);
+  const instance = await openInstance('app-theme-absent', () => {});
+  try {
+    assert.deepEqual(await preferenceRoute(instance), preferenceOf(false));
+    assert.deepEqual(fs.readdirSync(temporary), [], 'a read creates no home, folder or file');
+    // An existing but empty artifacts folder still holds no saved choice.
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    assert.deepEqual(await preferenceRoute(instance), preferenceOf(false));
+    assert.deepEqual(fs.readdirSync(path.dirname(file)), []);
+  } finally {
+    await closeInstance('app-theme-absent');
+  }
+});
+
+test('085 App theme: one saved choice is shared by project servers on distinct ports and outlives a restart', async t => {
+  const { temporary, home, file } = preferenceHome(t);
+  const roots = ['alpha', 'beta'].map(name => {
+    const root = path.join(temporary, name);
+    writeDraft(root, '001', name);
+    return root;
+  });
+  const before = roots.map(root => snapshotFiles(root));
+  /** @param {number} index */
+  const open = index => openInstance(`app-theme-project-${index}`, () => {}, Object.freeze({ complete: true }), { root: roots[index] });
+  try {
+    let [alpha, beta] = [await open(0), await open(1)];
+    assert.notEqual(new URL(alpha.url).origin, new URL(beta.url).origin);
+    assert.deepEqual(await preferenceRoute(alpha, { followAppTheme: true }), preferenceOf(true), 'a save answers the saved choice');
+    assert.equal(fs.readFileSync(file, 'utf8'), '{"followAppTheme":true}');
+    assert.deepEqual(await preferenceRoute(beta), preferenceOf(true), 'the other project reads the same choice');
+    assert.deepEqual(await preferenceRoute(beta, { followAppTheme: false }), preferenceOf(false));
+    assert.equal(fs.readFileSync(file, 'utf8'), '{"followAppTheme":false}');
+    assert.deepEqual(await preferenceRoute(alpha), preferenceOf(false));
+    // The file alone is the authority: no server keeps its own copy.
+    fs.writeFileSync(file, '{"followAppTheme":true}');
+    assert.deepEqual(await preferenceRoute(alpha), preferenceOf(true));
+
+    // Both Canvases restart on new servers and read the saved choice.
+    await closeInstance('app-theme-project-0');
+    await closeInstance('app-theme-project-1');
+    [alpha, beta] = [await open(0), await open(1)];
+    assert.deepEqual(await preferenceRoute(alpha), preferenceOf(true));
+    assert.deepEqual(await preferenceRoute(beta), preferenceOf(true));
+    assert.deepEqual(await preferenceRoute(beta, { followAppTheme: false }), preferenceOf(false));
+    assert.deepEqual(await preferenceRoute(alpha), preferenceOf(false));
+
+    assert.deepEqual(snapshotFiles(home), new Map([[path.join(...PREFERENCE_PARTS), Buffer.from('{"followAppTheme":false}')]]),
+      'the home holds only the preference: no extension entrypoint, package or staging file');
+    assert.deepEqual(roots.map(root => snapshotFiles(root)), before, 'no project is written');
+  } finally {
+    await closeInstance('app-theme-project-0');
+    await closeInstance('app-theme-project-1');
+  }
+});
+
+test('085 App theme: malformed or unreadable storage is a read error, never off and never repaired', async t => {
+  const { file } = preferenceHome(t);
+  const artifacts = path.dirname(file);
+  fs.mkdirSync(artifacts, { recursive: true });
+  const instance = await openInstance('app-theme-unreadable', () => {});
+  try {
+    for (const stored of ['', ' ', 'not json', '{"followAppTheme":true', '{"followAppTheme":true}}', 'null', 'false',
+      '[]', '"off"', '{}', '[{"followAppTheme":true}]', '{"followAppTheme":"true"}', '{"followAppTheme":1}',
+      '{"followAppTheme":0}', '{"followAppTheme":null}', '{"FollowAppTheme":true}', '{"followAppTheme":true,"theme":"dark"}',
+      '{"followAppTheme":false,"root":"/elsewhere"}', '{"followAppTheme":true,"__proto__":{}}']) {
+      fs.writeFileSync(file, stored);
+      assert.deepEqual(await preferenceRoute(instance), PREFERENCE_UNREADABLE, `stored ${JSON.stringify(stored)}`);
+      assert.equal(fs.readFileSync(file, 'utf8'), stored, 'a read never repairs the stored bytes');
+      assert.deepEqual(fs.readdirSync(artifacts), ['canvas-preferences.json']);
+    }
+    // Insignificant JSON whitespace is the same document.
+    fs.writeFileSync(file, '{ "followAppTheme": true }\n');
+    assert.deepEqual(await preferenceRoute(instance), preferenceOf(true));
+
+    fs.rmSync(file);
+    fs.mkdirSync(file);
+    assert.deepEqual(await preferenceRoute(instance), PREFERENCE_UNREADABLE, 'a folder where the file belongs');
+    assert.equal(fs.statSync(file).isDirectory(), true);
+    fs.rmdirSync(file);
+
+    fs.writeFileSync(file, '{"followAppTheme":true}');
+    const readFile = fs.promises.readFile;
+    let denied = 0;
+    const unreadable = t.mock.method(fs.promises, 'readFile', /** @this {any} */ async function (target, ...rest) {
+      if (path.resolve(String(target)) !== file) return readFile.call(this, target, ...rest);
+      denied += 1;
+      throw Object.assign(new Error(`EACCES: permission denied, open '${target}'`),
+        { code: 'EACCES', errno: -13, syscall: 'open', path: String(target) });
+    });
+    assert.deepEqual(await preferenceRoute(instance), PREFERENCE_UNREADABLE, 'a refused permission');
+    assert.equal(denied, 1, 'the refusal came from the actual preference read');
+    unreadable.mock.restore();
+    assert.deepEqual(await preferenceRoute(instance), preferenceOf(true), 'the readable preference reads again');
+
+    // A save is the user's explicit choice, so it replaces damaged storage.
+    fs.writeFileSync(file, 'not json');
+    assert.deepEqual(await preferenceRoute(instance, { followAppTheme: false }), preferenceOf(false));
+    assert.equal(fs.readFileSync(file, 'utf8'), '{"followAppTheme":false}');
+  } finally {
+    t.mock.restoreAll();
+    await closeInstance('app-theme-unreadable');
+  }
+});
+
+test('085 App theme: a save that cannot be written fails and leaves the previous preference intact', async t => {
+  const { temporary, file } = preferenceHome(t);
+  const artifacts = path.dirname(file);
+  const instance = await openInstance('app-theme-unwritable', () => {});
+  try {
+    assert.deepEqual(await preferenceRoute(instance, { followAppTheme: true }), preferenceOf(true));
+    for (const [method, code] of [['writeFile', 'ENOSPC'], ['rename', 'EACCES']]) {
+      const original = /** @type {any} */ (fs.promises)[method];
+      let refused = 0;
+      const refusal = t.mock.method(fs.promises, /** @type {any} */ (method), /** @this {any} */ async function (target, ...rest) {
+        if (path.dirname(path.resolve(String(target))) !== artifacts) return original.call(this, target, ...rest);
+        refused += 1;
+        // A full disk can leave part of the staging file behind.
+        if (method === 'writeFile') await original.call(this, target, '{"followApp');
+        throw Object.assign(new Error(`${code}: ${method} refused '${target}'`), { code });
+      });
+      assert.deepEqual(await preferenceRoute(instance, { followAppTheme: false }), PREFERENCE_WRITE_FAILED, method);
+      refusal.mock.restore();
+      assert.equal(refused, 1, `the refusal came from the actual ${method}`);
+      assert.equal(fs.readFileSync(file, 'utf8'), '{"followAppTheme":true}', 'the previous document is intact');
+      assert.deepEqual(fs.readdirSync(artifacts), ['canvas-preferences.json'], 'no staging file is left behind');
+      assert.deepEqual(await preferenceRoute(instance), preferenceOf(true));
+    }
+
+    // A real refusal: a file stands where the home's folders must be made.
+    const blocker = path.join(temporary, 'blocker');
+    fs.writeFileSync(blocker, 'not a folder');
+    process.env.COPILOT_HOME = path.join(blocker, 'copilot-home');
+    assert.deepEqual(await preferenceRoute(instance, { followAppTheme: true }), PREFERENCE_WRITE_FAILED, 'an unwritable home');
+    assert.equal(fs.readFileSync(blocker, 'utf8'), 'not a folder');
+  } finally {
+    t.mock.restoreAll();
+    await closeInstance('app-theme-unwritable');
+  }
+});
+
+test('085 App theme: simultaneous saves through two servers leave one complete document', async t => {
+  const { file } = preferenceHome(t);
+  try {
+    const servers = [await openInstance('app-theme-race-0', () => {}), await openInstance('app-theme-race-1', () => {})];
+    const choices = [true, false, true, false, false, true, false, true];
+    const outcomes = await Promise.allSettled(choices.map((followAppTheme, index) =>
+      preferenceRoute(servers[index % 2], { followAppTheme })));
+    /** @type {boolean[]} */
+    const saved = [];
+    outcomes.forEach((outcome, index) => {
+      if (outcome.status === 'rejected') throw outcome.reason;
+      // Windows can refuse one rename while another replaces the same file;
+      // that save then reports its failure instead of a success.
+      if (outcome.value.status === 200) saved.push(choices[index]);
+      assert.deepEqual(outcome.value, outcome.value.status === 200 ? preferenceOf(choices[index]) : PREFERENCE_WRITE_FAILED);
+    });
+    assert.ok(saved.length > 0, 'at least one save completed');
+    const stored = fs.readFileSync(file, 'utf8');
+    assert.ok(['{"followAppTheme":true}', '{"followAppTheme":false}'].includes(stored), `one complete document: ${stored}`);
+    const final = JSON.parse(stored).followAppTheme;
+    assert.ok(saved.includes(final), 'the document is one completed save');
+    assert.deepEqual(fs.readdirSync(path.dirname(file)), ['canvas-preferences.json'], 'no staging file is left behind');
+    for (const server of servers) assert.deepEqual(await preferenceRoute(server), preferenceOf(final));
+    t.diagnostic(`simultaneous saves: ${saved.length} completed, ${choices.length - saved.length} refused, ${final} kept`);
+  } finally {
+    await closeInstance('app-theme-race-0');
+    await closeInstance('app-theme-race-1');
+  }
+});
+
+test('085 App theme: Host, Origin, same-origin save, exact route and closed body guards refuse before any read or write', async t => {
+  const { temporary, home, file } = preferenceHome(t);
+  const root = path.join(temporary, 'project');
+  writeDraft(root, '001', 'project');
+  const before = snapshotFiles(root);
+  // A joined provider enables the opaque Review exception on this instance. It
+  // has nothing else, so any provider call from these routes would fail them.
+  const provider = /** @type {any} */ ({
+    matchesRoot: (/** @type {string} */ candidate) => path.resolve(candidate) === path.resolve(root),
+    subscribe: () => () => {},
+  });
+  const instance = await openInstance('app-theme-guards', () => {}, Object.freeze({ complete: true }), { root }, provider);
+  const { host, origin, port } = new URL(instance.url);
+  const readFile = fs.promises.readFile;
+  let reads = 0;
+  t.mock.method(fs.promises, 'readFile', /** @this {any} */ async function (target, ...rest) {
+    if (path.resolve(String(target)) === file) reads += 1;
+    return readFile.call(this, target, ...rest);
+  });
+  const json = { host, origin, 'content-type': 'application/json' };
+  const valid = JSON.stringify({ followAppTheme: true });
+  /** @param {string | Buffer} body @param {Record<string, string>} [headers] */
+  const save = (body, headers = json) => ({ path: PREFERENCES_ROUTE, method: 'POST', headers, body });
+  /** @param {Parameters<typeof rawJson>[1]} request @param {number} status @param {unknown} body */
+  const expectAnswer = async (request, status, body) => {
+    const label = `${request?.method ?? 'GET'} ${request?.path} ${JSON.stringify(request?.headers)} ${String(request?.body ?? '').slice(0, 40)}`;
+    let answer;
+    try { answer = await rawJson(instance.server, request); }
+    catch (error) { throw new Error(`Preference HTTP case failed: ${label}`, { cause: error }); }
+    assert.deepEqual(answer, { status, body }, label);
+  };
+  const notFound = { error: 'Not found.' };
+  const invalid = { error: 'invalid_input' };
+  try {
+    assert.equal(await rawStatus(instance.server, { path: '/review/engine.mjs', headers: { host, origin: 'null' } }), 200,
+      'the opaque Review exception is live for its own static module');
+    for (const headers of [
+      { host, origin: 'null' }, { host, origin: 'https://evil.example' },
+      { host, origin: `http://127.0.0.1:${Number(port) + 1}` }, { host, origin: `http://localhost:${port}` },
+      { host, 'sec-fetch-site': 'cross-site' }, { host, 'sec-fetch-site': 'same-site' },
+      { host: 'evil.example.com' }, { host: `localhost:${port}` }, { host: `[::1]:${port}` },
+    ]) {
+      const refused = { error: 'Cross-origin requests are not allowed.' };
+      await expectAnswer({ path: PREFERENCES_ROUTE, headers }, 403, refused);
+      await expectAnswer(save(valid, { ...headers, 'content-type': 'application/json' }), 403, refused);
+    }
+    // A save names this instance's own origin; fetch metadata alone is not enough.
+    for (const headers of [{ host }, { host, 'sec-fetch-site': 'same-origin' }]) {
+      await expectAnswer(save(valid, { ...headers, 'content-type': 'application/json' }), 403, { error: 'Same-origin action required.' });
+    }
+    for (const suffix of ['?', '?root=elsewhere', '?path=../canvas-preferences.json', '?followAppTheme=true',
+      '/', '/extra', '.json', '#fragment', '/../canvas-preferences']) {
+      await expectAnswer({ path: `${PREFERENCES_ROUTE}${suffix}`, headers: { host } }, 404, notFound);
+      await expectAnswer({ ...save(valid), path: `${PREFERENCES_ROUTE}${suffix}` }, 404, notFound);
+    }
+    for (const alias of ['/api/Canvas-Preferences', '/API/canvas-preferences', '/api//canvas-preferences',
+      '/api/%63anvas-preferences', '/api/x/../canvas-preferences', '/canvas-preferences', '/api/preferences']) {
+      await expectAnswer({ ...save(valid), path: alias }, 404, notFound);
+    }
+    for (const method of ['PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
+      await expectAnswer({ path: PREFERENCES_ROUTE, method, headers: json }, 404, notFound);
+    }
+    assert.equal(await rawStatus(instance.server, { path: PREFERENCES_ROUTE, method: 'HEAD', headers: { host } }), 404);
+    // A read takes no body.
+    await expectAnswer({ path: PREFERENCES_ROUTE, headers: { host, 'content-length': '2' }, body: '{}' }, 400, invalid);
+    await expectAnswer({ path: PREFERENCES_ROUTE, headers: { host, 'transfer-encoding': 'chunked' }, body: '{}' }, 400, invalid);
+    // A save is JSON holding exactly one boolean: no root, path, home or other field.
+    await expectAnswer(save(valid, { ...json, 'content-type': 'text/plain' }), 415, { error: 'JSON action required.' });
+    await expectAnswer(save(valid, { host, origin }), 415, { error: 'JSON action required.' });
+    for (const body of ['', '{invalid', 'followAppTheme=true', Buffer.from([0xc3, 0x28]), 'true', 'null', '[]', '"on"', '{}',
+      '[{"followAppTheme":true}]', ...['"true"', '1', '0', 'null', '[]', '{}'].map(value => `{"followAppTheme":${value}}`),
+      ...['root', 'path', 'file', 'home', 'copilotHome', 'COPILOT_HOME', 'location', 'destination', 'workspace', 'theme']
+        .map(key => JSON.stringify({ followAppTheme: true, [key]: '/elsewhere' })),
+      JSON.stringify({ root: '/elsewhere' })]) {
+      await expectAnswer(save(body), 400, invalid);
+    }
+    // The server's own body limit, refused before or while the body is read.
+    await expectAnswer(save('x'.repeat(4 * 1024 + 1)), 413, invalid);
+    const padded = JSON.stringify({ followAppTheme: true, pad: 'x'.repeat(4 * 1024) });
+    await expectAnswer(save(padded, { ...json, 'content-length': String(Buffer.byteLength(padded)) }), 413, invalid);
+
+    assert.equal(reads, 0, 'no refused request read the preference');
+    assert.equal(fs.existsSync(home), false, 'no refused request saved anything');
+    await expectAnswer({ path: PREFERENCES_ROUTE, headers: { host, origin } }, 200, { followAppTheme: false });
+    await expectAnswer({ path: PREFERENCES_ROUTE, headers: { host, 'sec-fetch-site': 'same-origin' } }, 200, { followAppTheme: false });
+    assert.equal(reads, 2, "the renderer's own reads are served");
+    await expectAnswer(save(valid, { ...json, 'content-type': 'application/json; charset=utf-8' }), 200, { followAppTheme: true });
+    assert.equal(fs.readFileSync(file, 'utf8'), '{"followAppTheme":true}', 'the exact save is admitted');
+    assert.deepEqual(snapshotFiles(root), before, 'no project is written');
+  } finally {
+    t.mock.restoreAll();
+    await closeInstance('app-theme-guards');
+  }
+});
+
+test('085 App theme: without COPILOT_HOME the preference is in the user home .copilot folder', async t => {
+  const home = fs.mkdtempSync(PREFERENCE_FIXTURE_PREFIX);
+  const saved = Object.fromEntries(['COPILOT_HOME', 'HOME', 'USERPROFILE'].map(key => [key, process.env[key]]));
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
+  delete process.env.COPILOT_HOME;
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  // This case owns the fallback home before any request can read or save a preference.
+  assert.equal(os.homedir(), home);
+  const instance = await openInstance('app-theme-fallback', () => {});
+  try {
+    assert.deepEqual(await preferenceRoute(instance), preferenceOf(false));
+    assert.deepEqual(fs.readdirSync(home), [], 'a read creates nothing');
+    assert.deepEqual(await preferenceRoute(instance, { followAppTheme: true }), preferenceOf(true));
+    assert.deepEqual(snapshotFiles(home),
+      new Map([[path.join('.copilot', ...PREFERENCE_PARTS), Buffer.from('{"followAppTheme":true}')]]));
+    assert.deepEqual(await preferenceRoute(instance), preferenceOf(true));
+    // The page the next Canvas opens with bootstraps the same choice from that home.
+    assert.equal(await (await call(instance.url)).text(), servedPage({ followAppTheme: true }));
+  } finally {
+    await closeInstance('app-theme-fallback');
+  }
+});
+
+/**
+ * 085 App theme: the page itself carries the saved choice, so the first
+ * render and the page background use it without a later read.
+ * @param {{ url: string }} instance
+ */
+async function servedBootstrap(instance) {
+  const response = await call(instance.url);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8');
+  assert.equal(response.headers.get('cache-control'), 'no-store', 'the page and its choice are never cached');
+  return response.text();
+}
+
+test('085 App theme: serving / bootstraps the saved choice and a closed read-error code, never stored text or a path', async t => {
+  const { temporary, home, file } = preferenceHome(t);
+  const instance = await openInstance('app-theme-bootstrap', () => {});
+  const shippedApp = fs.readFileSync(new URL('./ui/assets/app.js', import.meta.url));
+  try {
+    // Nothing saved: off, and serving the page creates nothing.
+    assert.equal(await servedBootstrap(instance), servedPage());
+    assert.deepEqual(fs.readdirSync(temporary), [], 'serving the page creates no home, folder or file');
+
+    // A saved choice, on and then off, through the route the switch uses.
+    assert.deepEqual(await preferenceRoute(instance, { followAppTheme: true }), preferenceOf(true));
+    assert.equal(await servedBootstrap(instance), servedPage({ followAppTheme: true }));
+    assert.deepEqual(await preferenceRoute(instance, { followAppTheme: false }), preferenceOf(false));
+    assert.equal(await servedBootstrap(instance), servedPage({ followAppTheme: false }));
+    // The file alone is the authority, read for every page.
+    fs.writeFileSync(file, '{"followAppTheme":true}');
+    assert.equal(await servedBootstrap(instance), servedPage({ followAppTheme: true }));
+
+    // Unreadable storage serves the page off with the closed code: never the stored text, never a path.
+    const unread = servedPage({ preferenceError: 'preference_unreadable' });
+    for (const stored of ['not json', '{"followAppTheme":true,"root":"C:/secret-085/project"}', '{"followAppTheme":"true"}',
+      '{"followAppTheme":true,"theme":"</script><script>secret-085</script>"}']) {
+      fs.writeFileSync(file, stored);
+      const body = await servedBootstrap(instance);
+      assert.equal(body, unread, `stored ${JSON.stringify(stored)}`);
+      assert.equal(body.includes('secret-085'), false, 'no stored text reaches the page');
+      assert.equal(fs.readFileSync(file, 'utf8'), stored, 'serving the page never repairs the stored bytes');
+    }
+    fs.rmSync(file);
+    fs.mkdirSync(file);
+    const folder = await servedBootstrap(instance);
+    assert.equal(folder, unread, 'a folder where the file belongs');
+    for (const location of [home, temporary, file]) {
+      for (const spelling of [location, JSON.stringify(location).slice(1, -1), location.replaceAll('\\', '/')]) {
+        assert.equal(folder.includes(spelling), false, 'no preference location reaches the page');
+      }
+    }
+    fs.rmdirSync(file);
+    assert.equal(await servedBootstrap(instance), servedPage(), 'removed again: off, with no error');
+
+    // The bootstrap is the only difference: every other asset is the shipped bytes.
+    const app = await call(instance.url, { path: '/assets/app.js' });
+    assert.deepEqual(Buffer.from(await app.arrayBuffer()), shippedApp);
+  } finally {
+    await closeInstance('app-theme-bootstrap');
+  }
+});
+
+test('085 App theme: project servers on distinct ports bootstrap one saved choice, and so do restarted ones', async t => {
+  const { temporary } = preferenceHome(t);
+  const roots = ['alpha', 'beta'].map(name => {
+    const root = path.join(temporary, name);
+    writeDraft(root, '001', name);
+    return root;
+  });
+  const before = roots.map(root => snapshotFiles(root));
+  /** @param {number} index */
+  const open = index => openInstance(`app-theme-page-${index}`, () => {}, Object.freeze({ complete: true }), { root: roots[index] });
+  try {
+    let [alpha, beta] = [await open(0), await open(1)];
+    assert.notEqual(new URL(alpha.url).origin, new URL(beta.url).origin);
+    assert.deepEqual(await Promise.all([alpha, beta].map(servedBootstrap)), [servedPage(), servedPage()]);
+    assert.deepEqual(await preferenceRoute(alpha, { followAppTheme: true }), preferenceOf(true));
+    assert.equal(await servedBootstrap(beta), servedPage({ followAppTheme: true }), 'the other project opens with the choice');
+
+    await closeInstance('app-theme-page-0');
+    await closeInstance('app-theme-page-1');
+    [alpha, beta] = [await open(0), await open(1)];
+    assert.deepEqual(await Promise.all([alpha, beta].map(servedBootstrap)),
+      [servedPage({ followAppTheme: true }), servedPage({ followAppTheme: true })], 'restarted Canvases open with it too');
+    assert.deepEqual(await preferenceRoute(beta, { followAppTheme: false }), preferenceOf(false));
+    assert.equal(await servedBootstrap(alpha), servedPage({ followAppTheme: false }));
+    assert.deepEqual(roots.map(root => snapshotFiles(root)), before, 'no project is written');
+  } finally {
+    await closeInstance('app-theme-page-0');
+    await closeInstance('app-theme-page-1');
+  }
 });

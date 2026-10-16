@@ -14,6 +14,7 @@ import { deflateSync } from 'node:zlib';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { createReview, ReviewError, REVIEW_LIMITS } from './lib/review.mjs';
 import {
@@ -2574,4 +2575,87 @@ test('review limits reject out-of-view, malformed caret, duplicate IDs, oversize
     () => assertVisibleAnnotations(outside),
     (error) => isReviewError(error, 'review_outside_viewport'),
   );
+});
+
+/*
+ * 085 App theme: while Canvas follows the GitHub app theme, Review saves the
+ * palette its engine resolved as explicit sRGB and the browser's own font
+ * list. Each case owns a project-relative workspace, removed afterward.
+ */
+const APP_THEME_FIXTURE_PREFIX = fileURLToPath(new URL('../../../.dude-canvas-test-085-', import.meta.url));
+/** What the engine saved over the observed dark app theme and over Fluent light, as the 085 browser cases recorded. */
+const APP_THEME_PALETTES = Object.freeze({
+  dark: Object.freeze({
+    stroke: 'rgb(227, 125, 128)', background: 'rgb(45, 43, 85)', foreground: 'rgb(255, 255, 255)',
+    highlightFill: 'rgba(129, 116, 0, 0.5)', highlightStroke: 'rgb(253, 234, 61)', selection: 'rgb(163, 151, 230)',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji"',
+  }),
+  light: Object.freeze({
+    stroke: 'rgb(209, 52, 56)', background: 'rgb(255, 255, 255)', foreground: 'rgb(36, 36, 36)',
+    highlightFill: 'rgb(254, 247, 178)', highlightStroke: 'rgb(253, 227, 0)', selection: 'rgb(15, 108, 189)',
+    fontFamily: '"Segoe UI", "Segoe UI Web (West European)", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", sans-serif',
+  }),
+});
+
+test('085 App theme: markup saved with an explicit sRGB palette and the app font list restores live and as history, and seals, in both tones', { timeout: 30_000 }, async (t) => {
+  const root = fs.mkdtempSync(APP_THEME_FIXTURE_PREFIX);
+  t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
+  const feature = createFeature(root, '850', 'app-theme');
+  for (const tone of /** @type {const} */ (['dark', 'light'])) {
+    const request = requestFor(feature);
+    const state = savedState({ view: view({ theme: tone }), palette: { ...APP_THEME_PALETTES[tone] } });
+    const adapter = createReview({ root });
+    const input = adapterInput(root, request);
+    let revision;
+    try {
+      const opened = await adapter.openReview(input);
+      const saved = await adapter.saveReview({ ...input, workingRevision: opened.workingRevision, working: state });
+      revision = saved.workingRevision;
+      const live = await adapter.openReview({ ...input, allocate: false });
+      assert.deepEqual([live.status, live.editable, live.working], ['editing', true, state], `${tone}: the live reopen restores it exactly`);
+    } finally {
+      adapter.dispose();
+    }
+    const restored = createReview({ root });
+    try {
+      const reopened = await restored.openReview(adapterInput(root, request, {
+        submissionId: input.submissionId, allocate: false,
+        binding: { sessionId: 'fresh-session', providerGeneration: 'fresh-generation', toolCallId: 'fresh-tool', requestHandle: 'fresh-handle' },
+      }));
+      assert.deepEqual([reopened.status, reopened.workingRevision, reopened.working], ['historical', revision, state],
+        `${tone}: a later Canvas restores the same bytes as read-only evidence`);
+    } finally {
+      restored.dispose();
+    }
+    const sealed = sealedHistory(root, feature, { version: 2, state, revisionText: null });
+    const reader = createReview({ root });
+    try {
+      const selected = reader.readHistory({ scope: feature.scope, submissionId: sealed.submissionId, signal: new AbortController().signal });
+      assert.deepEqual([selected.status, selected.report], ['historical', sealed.report], `${tone}: the sealed evidence verifies`);
+      assert.equal(Buffer.from(selected.image.base64, 'base64').equals(sealed.image), true);
+      assert.deepEqual(JSON.parse(read(root, `${sealed.directory}/working.json`).toString('utf8')).state.palette, APP_THEME_PALETTES[tone]);
+    } finally {
+      reader.dispose();
+    }
+  }
+});
+
+test('085 App theme: the closed saved palette still refuses unresolved CSS color forms and unsafe font lists', () => {
+  const base = savedState({ view: view({ theme: 'dark' }), palette: { ...APP_THEME_PALETTES.dark } });
+  assert.deepEqual(workingState(base).palette, APP_THEME_PALETTES.dark, 'explicit sRGB rgb() and rgba() are accepted as saved');
+  assert.deepEqual(workingState(savedState()).palette, palette(), 'hex palettes saved before 085 stay valid');
+  for (const [key, value] of [
+    ['background', 'color-mix(in srgb, #2d2b55, #ffffff 6%)'],
+    ['stroke', 'color(srgb 0.89 0.49 0.5)'],
+    ['selection', 'oklch(0.7 0.1 290)'],
+    ['foreground', 'var(--text-color-default, #ffffff)'],
+    ['highlightFill', 'rgb(129 116 0 / 50%)'],
+    ['highlightFill', 'rgba(129, 116, 0, 1.5)'],
+    ['fontFamily', 'Segoe UI; color: red'],
+    ['fontFamily', '<style>'],
+    ['fontFamily', 'a'.repeat(257)],
+  ]) {
+    assert.throws(() => workingState({ ...base, palette: { ...base.palette, [key]: value } }),
+      (error) => isReviewError(error, 'review_invalid_input'), `${key}: ${value}`);
+  }
 });

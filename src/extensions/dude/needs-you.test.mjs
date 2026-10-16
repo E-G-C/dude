@@ -7,7 +7,7 @@
  * session are deliberately narrow fixtures: T010 owns review storage/sealing
  * and T012 owns installed-host acceptance.
  */
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -17,6 +17,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { deflateSync, inflateSync } from 'node:zlib';
 
 import {
@@ -29,6 +30,15 @@ import { createReview, REVIEW_LIMITS, ReviewError } from './lib/review.mjs';
 import { closeInstance, openInstance } from './lib/canvas-server.mjs';
 import { validateDirectoryImportResult } from '../../skills/dude-bundle-import/lib/directory-import.mjs';
 import { serializeProfileDocument } from '../../skills/dude-engine/lib/profile.mjs';
+
+/*
+ * 085 App theme: a Canvas server reads the one Canvas preference whenever it
+ * serves `/`. Every server here reads it from this owned, project-relative
+ * home, never the real user's, and teardown removes the folder.
+ */
+const PREFERENCE_ROOT = fs.mkdtempSync(fileURLToPath(new URL('../../../.dude-canvas-test-085-', import.meta.url)));
+process.env.COPILOT_HOME = path.join(PREFERENCE_ROOT, 'copilot-home');
+after(() => fs.rmSync(PREFERENCE_ROOT, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
 
 let fixtureSequence = 0;
 let invocationSequence = 0;

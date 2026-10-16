@@ -35,6 +35,7 @@ import { REVIEW_LIMITS, ReviewError } from './review.mjs';
 import { addPackSource, packActionRevision, readPacks, removePackSource, runPackAction } from './packs.mjs';
 import { readProjectArtifacts } from './project-artifacts.mjs';
 import { readInstallationRecord } from './about.mjs';
+import { parseCanvasPreferences, readCanvasPreferences, writeCanvasPreferences } from './canvas-preferences.mjs';
 
 const UI_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
 
@@ -89,6 +90,47 @@ const ABOUT_UNAVAILABLE = Object.freeze({
   error: 'about_unavailable',
   message: 'This Canvas has no current workspace.',
 });
+
+/**
+ * The user's one Canvas preference, which every instance shares through one
+ * file outside every repository (see `canvas-preferences.mjs`). Two exact
+ * requests with closed bodies:
+ *
+ *   GET  -> 200 {"followAppTheme":<boolean>}, false when nothing was saved
+ *   POST {"followAppTheme":<boolean>} -> 200 {"followAppTheme":<the saved boolean>}
+ *
+ * A malformed or unreadable preference is 503 {"error":"preference_unreadable"},
+ * never false. A failed save is 500 {"error":"preference_write_failed"} and
+ * leaves the previous preference in place. A save needs this instance's own
+ * Origin (403) and a JSON content type (415); any other body, including a root,
+ * path or extra field, is 400 {"error":"invalid_input"}, or 413 past the body
+ * limit. A read with a body is 400, and another method, a query or a suffix is
+ * 404. Neither involves a workspace, pack, Needs You request or agent.
+ */
+const PREFERENCES_ROUTE = '/api/canvas-preferences';
+
+/**
+ * The page carries the saved choice from its first byte, so Canvas paints it
+ * before any script runs: an owned attribute for the page background and one
+ * fixed JSON slot that the application reads once. Each is replaced exactly
+ * once, with only the boolean and the closed read-error code. A read failure
+ * still serves the page, with the choice off and the error code set.
+ */
+const FOLLOW_ATTRIBUTE = 'data-dude-follow-app-theme="false"';
+const BOOTSTRAP_SLOT = '<script type="application/json" id="dude-canvas-bootstrap">'
+  + '{"followAppTheme":false,"preferenceError":null}</script>';
+
+/** @param {string} page @param {Awaited<ReturnType<typeof readCanvasPreferences>>} read */
+function bootstrapPage(page, read) {
+  const followAppTheme = 'error' in read ? false : read.followAppTheme;
+  const preferenceError = 'error' in read ? read.error : null;
+  if (page.split(FOLLOW_ATTRIBUTE).length !== 2 || page.split(BOOTSTRAP_SLOT).length !== 2) {
+    throw new Error('The Canvas page has no single preference bootstrap slot.');
+  }
+  return page.replace(FOLLOW_ATTRIBUTE, `data-dude-follow-app-theme="${followAppTheme}"`)
+    .replace(BOOTSTRAP_SLOT, () => '<script type="application/json" id="dude-canvas-bootstrap">'
+      + `${JSON.stringify({ followAppTheme, preferenceError })}</script>`);
+}
 
 /**
  * The two exact reads of the pack projection. Both return installed packs, the
@@ -561,7 +603,8 @@ async function handleRequest(instance, req, res) {
       // The parent's policy also bounds an opaque review frame's self-navigation.
       'Content-Security-Policy': `frame-src ${new URL(instance.url).origin}/review-source/`,
       ...(pathname.startsWith('/review/') ? { 'Access-Control-Allow-Origin': '*', 'X-Content-Type-Options': 'nosniff' } : {}) });
-    res.end(await readFile(file));
+    res.end(pathname === '/' ? bootstrapPage(await readFile(file, 'utf8'), await readCanvasPreferences())
+      : await readFile(file));
     return;
   }
 
@@ -762,6 +805,42 @@ async function handleRequest(instance, req, res) {
     else if (instance.readInput?.root !== root) {
       sendJson(res, 409, { error: 'identity_mismatch', message: 'The workspace changed. Open About again to read it.' });
     } else sendJson(res, 200, record);
+    return;
+  }
+
+  if (pathname === PREFERENCES_ROUTE) {
+    // Any instance answers, bound or not. The shared Host/Origin guard has
+    // already run, and its opaque Review exception never reaches this route.
+    if (req.url !== pathname || (req.method !== 'GET' && req.method !== 'POST')) {
+      sendJson(res, 404, { error: 'Not found.' });
+      return;
+    }
+    if (req.method === 'GET') {
+      if (Number(req.headers['content-length'] ?? 0) !== 0 || req.headers['transfer-encoding']) {
+        sendJson(res, 400, { error: 'invalid_input' });
+        return;
+      }
+      const read = await readCanvasPreferences();
+      sendJson(res, 'error' in read ? 503 : 200, read);
+      return;
+    }
+    if (req.headers.origin !== new URL(instance.url).origin) {
+      sendJson(res, 403, { error: 'Same-origin action required.' });
+      return;
+    }
+    if (req.headers['content-type']?.split(';', 1)[0].trim().toLowerCase() !== 'application/json') {
+      sendJson(res, 415, { error: 'JSON action required.' });
+      return;
+    }
+    let preferences = null, refusal = 400;
+    try { preferences = parseCanvasPreferences(await readJsonBody(req)); }
+    catch (error) { if (error instanceof NeedsYouError) refusal = error.status; }
+    if (!preferences) {
+      sendJson(res, refusal, { error: 'invalid_input' });
+      return;
+    }
+    const saved = await writeCanvasPreferences(preferences.followAppTheme);
+    sendJson(res, 'error' in saved ? 500 : 200, saved);
     return;
   }
 

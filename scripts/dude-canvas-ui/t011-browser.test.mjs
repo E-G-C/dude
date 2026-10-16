@@ -8,7 +8,7 @@
  * owned by one test and removed afterward. Evidence is written only beneath
  * DUDE_CANVAS_ARTIFACTS_DIR (or the OS temporary directory).
  */
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import childProcess, { spawn, spawnSync } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
@@ -40,7 +40,16 @@ const BROWSER = process.env.DUDE_CANVAS_BROWSER
   ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
 const REQUIRED = process.env.DUDE_CANVAS_BROWSER_REQUIRED === '1';
 const DEADLINE = 20_000;
-const PUBLISHED_APP_SHA256 = '6d6db4c02ca519153a03774546a7b386281295c751804fce48b343ac77c7af89';
+const PUBLISHED_APP_SHA256 = '1d3271f702cfad403847c9870a7a21a28bb2652bd2bccb8b56a340ae1461569f';
+/*
+ * 085 App theme: every Canvas server here serves `/` with the one Canvas
+ * preference, read from this owned, project-relative home, never the real
+ * user's. A case that needs a saved choice writes it here. Teardown removes it.
+ */
+const PREFERENCE_ROOT = fs.mkdtempSync(path.join(ROOT, '.dude-canvas-test-085-'));
+const PREFERENCE_FILE = path.join(PREFERENCE_ROOT, 'copilot-home', 'extensions', 'dude', 'artifacts', 'canvas-preferences.json');
+process.env.COPILOT_HOME = path.join(PREFERENCE_ROOT, 'copilot-home');
+after(() => fs.rmSync(PREFERENCE_ROOT, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
 
 /** @param {string|Buffer} value */
 function hash(value) {
@@ -18483,4 +18492,198 @@ test('073 Add/import: with the production provider an open import excludes every
     assert.equal(await evaluate(page, `${field('Your idea')}.value`), draft, 'the draft survived the whole journey');
     output.results.push({ case: 'exclusion-return-refresh', refusals, key, draftSha256: hash(draft) });
   });
+});
+
+/* ---------------------------------------------------------------------------------------------- 085 App theme */
+
+/** The observed dark app appearance as the approved 085 mock injects it: values inline on html, with its tone. */
+const APP_THEME_DARK_HOST = `(() => {
+  const apply = () => {
+    const root = document.documentElement;
+    for (const [name, value] of Object.entries(${JSON.stringify({
+    '--background-color-default': '#2d2b55', '--border-color-default': 'color-mix(in srgb, #807b98 40%, transparent)',
+    '--text-color-default': '#ffffff', '--text-color-muted': '#bdb8d2', '--color-focus-outline': '#a397e6', '--color-white': '#fff',
+    '--font-sans': '-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji"',
+    '--font-sans-display': '"Mona Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji"',
+    '--font-mono': '"Monaspace Neon", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+    '--font-weight-semibold': '600', '--text-body-medium': '.875rem', '--leading-body-medium': '1.4285', '--text-code-inline': '.9285em',
+  })})) root.style.setProperty(name, value);
+    root.setAttribute('data-theme-source', 'external');
+    root.setAttribute('data-theme-tone', 'dark');
+  };
+  if (document.documentElement) apply();
+  else new MutationObserver((records, observer) => {
+    if (document.documentElement) { observer.disconnect(); apply(); }
+  }).observe(document, { childList: true });
+})()`;
+const APP_THEME_SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji"';
+const FLUENT_SANS = '"Segoe UI", "Segoe UI Web (West European)", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", sans-serif';
+const EXPLICIT_SRGB = /^rgba?\(\d+, \d+, \d+(?:, (?:0|1|0?\.\d+))?\)$/;
+
+test('085 App theme: Review saves, restores, seals, and captures under both appearances with the truthful host tone, and a palette change leaves saved markup stale', {
+  timeout: 300_000,
+  concurrency: false,
+}, async (context) => {
+  if (!browserReady(context)) return;
+  const output = evidence(context, '085-app-theme-review');
+  const board = installEmptyBoard();
+  const root = fs.mkdtempSync(path.join(PREFERENCE_ROOT, 'review-'));
+  const runtimeErrors = [], network = [], pending = [];
+  let browserState, fixture;
+  fs.mkdirSync(path.dirname(PREFERENCE_FILE), { recursive: true });
+  fs.writeFileSync(PREFERENCE_FILE, JSON.stringify({ followAppTheme: true }));
+  try {
+    const feature = createIdea(root, 2, 'review-feature', 'defined');
+    const preview = createPreview(root, /** @type {any} */ (feature));
+    fixture = await createFixture(root);
+    browserState = await startBrowser(1, false, true);
+    const { page } = browserState;
+    page.on('Runtime.exceptionThrown', (event) => runtimeErrors.push(event));
+    page.on('Network.requestWillBeSent', (event) => network.push({
+      method: event.request.method, url: event.request.url, body: event.request.postData ?? null,
+    }));
+    // The app is dark while this device prefers light: Review must receive the app's tone either way.
+    await page.send('Page.addScriptToEvaluateOnNewDocument', { source: APP_THEME_DARK_HOST });
+    await navigate(page, fixture, 1440, 'light');
+    const scope = { kind: 'feature', ideaPath: feature.ideaPath, specPath: feature.specPath };
+    const reviews = path.join(root, ...path.posix.dirname(feature.specPath).split('/'), 'reviews');
+    const look = () => evaluate(page, `({
+      follow: document.documentElement.getAttribute('data-dude-follow-app-theme'),
+      background: getComputedStyle(document.querySelector('.fui-FluentProvider')).getPropertyValue('--colorNeutralBackground1').trim(),
+      reviewed: document.querySelector('.dude-review-frame iframe')?.style.colorScheme ?? null,
+    })`);
+    const engineReady = () => until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
+      && !document.querySelector('[aria-label="Box (B)"]').matches(':disabled,[aria-disabled="true"]')`), 'mounted Review', 60_000);
+    /** @param {string} prompt */
+    const openRequest = async (prompt) => {
+      await click(page, button('Needs you'));
+      await visible(page, prompt);
+      // One current request opens selected; with several, choose this one.
+      const item = `[...document.querySelectorAll('button')].find((node) =>
+        node.innerText.includes(${JSON.stringify(prompt)}) && node.getClientRects().length)`;
+      if (await evaluate(page, `Boolean(${item})`)) await click(page, item);
+      await click(page, button('Open Review'));
+    };
+    /** @param {boolean} value */
+    const follow = async (value) => {
+      await click(page, `document.querySelector('#dude-tab-settings')`);
+      await click(page, `document.querySelector('[data-settings-section="appearance"]')`);
+      const control = `document.querySelector('[data-appearance-panel]:not([hidden]) [data-follow-app-theme]')`;
+      await until(() => evaluate(page, `Boolean(${control}) && !document.querySelector('[data-appearance-pending]')`), 'Appearance');
+      if (await evaluate(page, `${control}.checked`) !== value) await click(page, control);
+      await until(() => evaluate(page, `${control}.checked === ${value} && !document.querySelector('[data-appearance-pending]')
+        && document.documentElement.getAttribute('data-dude-follow-app-theme') === '${value}'`), `follow ${value}`);
+      assert.equal(fs.readFileSync(PREFERENCE_FILE, 'utf8'), JSON.stringify({ followAppTheme: value }));
+    };
+    /** Draw one box with a comment and save it. @param {string} label */
+    const annotate = async (label) => {
+      await click(page, `document.querySelector('[aria-label="Box (B)"]')`);
+      await openReviewDetails(page);
+      await click(page, button('Add at center'));
+      await visible(page, 'Comments (1)');
+      await click(page, button('Comments (1)'));
+      await fill(page, field('Comment (optional)'), `085 ${label} comment`);
+      await click(page, `document.querySelector('[aria-label="Close comments"]')`);
+      await saveWorkingMarkup(page, network, output);
+    };
+    /** @param {string} requestRef */
+    const savedRecord = (requestRef) => until(() => fixture.provider.read().requests.find((item) => (
+      item.request.requestRef === requestRef && item.reviewSubmissionId && !item.reviewing)), 'saved Review record');
+    /** @param {string} submissionId */
+    const working = (submissionId) => JSON.parse(fs.readFileSync(path.join(reviews, submissionId, 'working.json'), 'utf8'));
+
+    /**
+     * One full round: open, annotate, save, leave and restore, then seal and
+     * capture through the real capture process for the original waiter.
+     * @param {string} label @param {{ follow: string, background: string, palette: string, fontFamily: string }} expected
+     */
+    const round = async (label, expected) => {
+      const request = requestFor(fixture, 'preview', preview, scope);
+      request.prompt = `085 ${label}: annotate under this appearance`;
+      const published = await publish(fixture, request);
+      pending.push(published);
+      await openRequest(request.prompt);
+      await engineReady();
+      const mounted = await look();
+      assert.deepEqual(mounted, { follow: expected.follow, background: expected.background, reviewed: 'dark' },
+        `${label}: Canvas shows its appearance and the reviewed page gets the app's dark tone`);
+      await annotate(label);
+      const record = await savedRecord(request.requestRef);
+      const saved = working(record.reviewSubmissionId);
+      assert.equal(saved.state.view.viewport.theme, 'dark', `${label}: the saved view binds the app's tone`);
+      for (const [key, value] of Object.entries(saved.state.palette)) {
+        if (key !== 'fontFamily') assert.match(value, EXPLICIT_SRGB, `${label}: saved ${key} is explicit sRGB`);
+      }
+      assert.deepEqual({ background: saved.state.palette.background, fontFamily: saved.state.palette.fontFamily },
+        { background: expected.palette, fontFamily: expected.fontFamily }, `${label}: the saved palette is Canvas's own`);
+      await click(page, button('Back'));
+      await openRequest(request.prompt);
+      await engineReady();
+      await visible(page, 'Comments (1)');
+      await openReviewDetails(page);
+      await visible(page, 'Working markup matches the saved revision');
+      await closeReviewDetails(page);
+      assert.equal(await evaluate(page, `document.body.innerText.includes('Old markup is retained and cannot be sent')`), false,
+        `${label}: restored markup is current, not stale`);
+      await click(page, button('Send annotations'));
+      await evaluate(page, `(${button('Send annotations')})?.click()`);
+      const result = await published.result;
+      const delivered = JSON.parse(result.textResultForLlm);
+      assert.equal(delivered.status, 'awaiting_acknowledgment');
+      const directory = path.join(reviews, delivered.response.submissionId);
+      assert.deepEqual(fs.readdirSync(directory).sort(), ['annotated.png', 'provenance.json', 'report.md', 'working.json']);
+      const sealed = working(delivered.response.submissionId);
+      assert.deepEqual(sealed.state.palette, saved.state.palette, `${label}: sealing keeps the saved palette`);
+      const png = fs.readFileSync(path.join(directory, 'annotated.png'));
+      assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+      const decoded = decodePng(png);
+      const stroke = EXPLICIT_SRGB.exec(sealed.state.palette.stroke) && sealed.state.palette.stroke.match(/\d+/g).slice(0, 3).map(Number);
+      let painted = 0;
+      for (let index = 0; index < decoded.pixels.length; index += 4) {
+        if ([0, 1, 2].every((channel) => Math.abs(decoded.pixels[index + channel] - stroke[channel]) <= 24)) painted += 1;
+      }
+      assert.ok(painted > 50, `${label}: the captured image paints the box in the saved stroke ${sealed.state.palette.stroke} (${painted} px)`);
+      fs.cpSync(directory, path.join(output.directory, `sealed-${label}`), { recursive: true });
+      const shot = await page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+      fs.writeFileSync(path.join(output.directory, `${label}-review-1440x900.png`), Buffer.from(shot.data, 'base64'));
+      await click(page, `document.querySelector('[data-review-return]')`);
+      return { label, mounted, palette: saved.state.palette, theme: saved.state.view.viewport.theme,
+        submissionId: delivered.response.submissionId, painted, image: { width: decoded.width, height: decoded.height } };
+    };
+
+    const on = await round('on', { follow: 'true', background: '#2d2b55', palette: 'rgb(45, 43, 85)', fontFamily: APP_THEME_SANS });
+    await follow(false);
+    const off = await round('off', { follow: 'false', background: '#ffffff', palette: 'rgb(255, 255, 255)', fontFamily: FLUENT_SANS });
+
+    // Markup saved under one appearance and reopened under the other: retained as saved, never rebased, and blocked.
+    const staleRequest = requestFor(fixture, 'preview', preview, scope);
+    staleRequest.prompt = '085 stale: annotate, then change the appearance';
+    pending.push(await publish(fixture, staleRequest));
+    await openRequest(staleRequest.prompt);
+    await engineReady();
+    await annotate('stale');
+    const staleRecord = await savedRecord(staleRequest.requestRef);
+    const before = fs.readFileSync(path.join(reviews, staleRecord.reviewSubmissionId, 'working.json'));
+    await click(page, button('Back'));
+    await follow(true);
+    await openRequest(staleRequest.prompt);
+    await visible(page, 'Old markup is retained and cannot be sent');
+    await visible(page, 'Comments (1)');
+    assert.deepEqual(fs.readFileSync(path.join(reviews, staleRecord.reviewSubmissionId, 'working.json')), before,
+      'the stale markup is retained exactly as saved');
+    assert.equal(fixture.provider.read().requests.find((item) => item.request.requestRef === staleRequest.requestRef).phase, 'pending',
+      'stale markup delivers nothing');
+    const staleShot = await page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+    fs.writeFileSync(path.join(output.directory, 'stale-review-1440x900.png'), Buffer.from(staleShot.data, 'base64'));
+    assert.deepEqual(runtimeErrors, []);
+    writeEvidenceJson(output, '085-review', { browser: browserState.version.Browser, node: process.version, rounds: [on, off],
+      stale: { submissionId: staleRecord.reviewSubmissionId, working: JSON.parse(before.toString('utf8')).state.palette } });
+  } finally {
+    for (const published of pending) published.controller.abort();
+    if (fixture) await fixture.close({ removeRoot: false });
+    if (browserState) await cleanupBrowserDriver(browserState);
+    await board.close();
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    fs.rmSync(PREFERENCE_FILE, { force: true });
+  }
 });

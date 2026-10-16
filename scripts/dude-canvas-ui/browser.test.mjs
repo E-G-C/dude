@@ -24,6 +24,15 @@ const BROWSER = process.env.DUDE_CANVAS_BROWSER ?? '/Applications/Microsoft Edge
 const REQUIRED = process.env.DUDE_CANVAS_BROWSER_REQUIRED === '1';
 const FLUENT_PACKAGE_ROOT = path.join(HERE, 'node_modules', '@fluentui', 'react-components');
 const FLUENT_PACKAGE_JSON = path.join(FLUENT_PACKAGE_ROOT, 'package.json');
+/*
+ * 085 App theme: every Canvas server here serves `/` with the one Canvas
+ * preference, read from this owned, project-relative home, never the real
+ * user's. A case that needs a saved choice writes it here. Teardown removes it.
+ */
+const PREFERENCE_ROOT = fs.mkdtempSync(path.join(ROOT, '.dude-canvas-test-085-'));
+const PREFERENCE_FILE = path.join(PREFERENCE_ROOT, 'copilot-home', 'extensions', 'dude', 'artifacts', 'canvas-preferences.json');
+process.env.COPILOT_HOME = path.join(PREFERENCE_ROOT, 'copilot-home');
+after(() => fs.rmSync(PREFERENCE_ROOT, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
 /** @type {string} Evidence belongs to the single suite run in this process. */
 let artifactRoot;
 const DEADLINE_MS = 12_000;
@@ -39,6 +48,18 @@ const ACTION_REFRESH = Object.freeze({
 function cssRgb(color) {
   assert.match(color, /^#[\da-f]{6}$/i, `expected an opaque Fluent token, got ${color}`);
   return `rgb(${Number.parseInt(color.slice(1, 3), 16)}, ${Number.parseInt(color.slice(3, 5), 16)}, ${Number.parseInt(color.slice(5, 7), 16)})`;
+}
+
+/**
+ * A Review palette color as [r, g, b]: explicit sRGB rgb() or rgba() since 085,
+ * or the #rrggbb an older saved state may hold.
+ * @param {string} color
+ */
+function paletteChannels(color) {
+  if (/^#[\da-f]{6}$/i.test(color)) return [1, 3, 5].map(index => Number.parseInt(color.slice(index, index + 2), 16));
+  const match = /^rgba?\((\d+), (\d+), (\d+)(?:, [\d.]+)?\)$/.exec(color);
+  assert.ok(match, `a Review palette color is explicit sRGB: ${color}`);
+  return match.slice(1, 4).map(Number);
 }
 
 /** @param {string|Buffer} value */
@@ -3334,7 +3355,7 @@ test('T012 anchoring regression: nested-scroll Open comment clips then recovers 
         )));
         assert.equal(
           productAppSha256,
-          '6d6db4c02ca519153a03774546a7b386281295c751804fce48b343ac77c7af89',
+          '1d3271f702cfad403847c9870a7a21a28bb2652bd2bccb8b56a340ae1461569f',
           'the exact-source regression executes the current published product UI',
         );
         const exactHarnessOptions = {
@@ -3393,8 +3414,7 @@ test('T012 anchoring regression: nested-scroll Open comment clips then recovers 
           const atMaxImage = fs.readFileSync(path.join(atMaxHarness.reviewDirectory, 'annotated.png'));
           const { decodePng: decodeAtMaxPng } = await import('../../src/extensions/dude/lib/review/png.mjs');
           const atMaxDecoded = decodeAtMaxPng(atMaxImage);
-          const atMaxStroke = atMaxWorking.state.palette.stroke.match(/[a-f0-9]{2}/gi)
-            .map(value => Number.parseInt(value, 16));
+          const atMaxStroke = paletteChannels(atMaxWorking.state.palette.stroke);
           let atMaxPainted = false;
           for (let y = 178 * 2 - 7; y <= 178 * 2 + 7 && !atMaxPainted; y += 1) {
             for (let x = (661 + 11) * 2 - 7; x <= (661 + 11) * 2 + 7; x += 1) {
@@ -4170,8 +4190,7 @@ test('T012 anchoring regression: nested-scroll Open comment clips then recovers 
               );
               const { decodePng } = await import('../../src/extensions/dude/lib/review/png.mjs');
               const decoded = decodePng(recoveredPng);
-              const stroke = recoveredWorking.state.palette.stroke.match(/[a-f0-9]{2}/gi)
-                .map(value => Number.parseInt(value, 16));
+              const stroke = paletteChannels(recoveredWorking.state.palette.stroke);
               let painted = false;
               for (let y = 178 * 2 - 7; y <= 178 * 2 + 7 && !painted; y += 1) {
                 for (let x = (661 + 11) * 2 - 7; x <= (661 + 11) * 2 + 7; x += 1) {
@@ -4561,8 +4580,7 @@ test('T012 drawing admission: a clipped synthetic Open comment is rejected befor
           const { decodePng } = await import('../../src/extensions/dude/lib/review/png.mjs');
           const beforeDecoded = decodePng(beforeScreenshot);
           const afterDecoded = decodePng(afterScreenshot);
-          const stroke = beforeState.palette.stroke.match(/[a-f0-9]{2}/gi)
-            .map(value => Number.parseInt(value, 16));
+          const stroke = paletteChannels(beforeState.palette.stroke);
           const nativeSample = {
             x: Math.round((661 + 11) * beforeState.view.viewport.deviceScale),
             y: Math.round(554 * beforeState.view.viewport.deviceScale),
@@ -5146,8 +5164,7 @@ test('T012 drawing admission: native edge gestures never become invisible workin
               ]);
               const clean = decodePng(cleanImage);
               const marked = decodePng(markedImage);
-              const stroke = finalState.palette.stroke.match(/[a-f0-9]{2}/gi)
-                .map(value => Number.parseInt(value, 16));
+              const stroke = paletteChannels(finalState.palette.stroke);
               const scaleX = marked.width / frame.clientWidth;
               const scaleY = marked.height / frame.clientHeight;
               let addedInside = 0;
@@ -6917,8 +6934,9 @@ test('T012 nested-scroll field clip: a partial target stays valid only while its
               const pixels = context.getImageData(
                 0, 0, viewport.width, viewport.height
               ).data;
-              const foreground = window.__review.getState().palette.foreground
-                .match(/[a-f0-9]{2}/gi).map(value => Number.parseInt(value, 16));
+              const foreground = (value => /^#[a-f0-9]{6}$/i.test(value)
+                ? value.match(/[a-f0-9]{2}/gi).map(part => Number.parseInt(part, 16))
+                : value.match(/\\d+/g).slice(0, 3).map(Number))(window.__review.getState().palette.foreground);
               const nearForeground = (x, y) => {
                 const at = (y * viewport.width + x) * 4;
                 return pixels[at + 3] > 128 && foreground.every((channel, index) => (
@@ -8355,8 +8373,7 @@ test('T012 nested-scroll state: edits, clipping, restore, and capture retain ori
           const decoded = decodePng(image);
           const near = (pixel, expected, tolerance = 8) => pixel.slice(0, 3)
             .every((channel, index) => Math.abs(channel - expected[index]) <= tolerance);
-          const stroke = working.state.palette.stroke.match(/[a-f0-9]{2}/gi)
-            .map(value => Number.parseInt(value, 16));
+          const stroke = paletteChannels(working.state.palette.stroke);
           const storedComment = working.state.annotations.find(({ id }) => id === commentId);
           const sealedCurrent = reopened.annotations.find(({ id }) => id === commentId);
           let painted = false;
@@ -11886,6 +11903,10 @@ test('T002 Settings reads real local and configured-remote pack authorities only
       const ready = () => until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
         ?.getAttribute('aria-busy') === 'false' && window.packReadProbe.snapshots.length > 0`), 'settled pack snapshot');
       const selectTag = async tag => {
+        // In a short window the approved 085 three-section header leaves the panel little height, and the
+        // inline listbox takes only what remains below its field: bring the field to the panel's top first,
+        // as a person would.
+        await evaluate(page, `document.querySelector('[data-pack-toolbar] [role="combobox"]').scrollIntoView({ block: 'start' })`);
         await click('[data-pack-toolbar] [role="combobox"]');
         await clickSettingsControl(page, `[...document.querySelectorAll('[role="option"]')]
           .find(node => node.textContent.trim() === ${JSON.stringify(tag || 'All use cases')})`);
@@ -12128,11 +12149,18 @@ test('T002 Settings reads real local and configured-remote pack authorities only
             scroll: rect('[data-pack-scroll]'), first: rect('[data-pack-row]'), pager: rect('[data-pack-pager]'),
             settings: rect('#dude-tab-settings'),
             orientation: document.querySelector('[aria-label="Workspace views"]').getAttribute('aria-orientation'),
+            // Reachable once scrolled into view: the approved 085 three-section header can put a toolbar
+            // control below a short panel's fold. Every scroll position is restored afterwards.
             targets: targets.map(selector => {
-              const node = document.querySelector(selector), r = node.getBoundingClientRect();
+              const node = document.querySelector(selector), scrolled = [];
+              for (let n = node.parentElement; n; n = n.parentElement) scrolled.push([n, n.scrollLeft, n.scrollTop]);
+              node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+              const r = node.getBoundingClientRect();
               const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-              return { selector, width: r.width, height: r.height, visible: r.x >= 0 && r.y >= 0
+              const result = { selector, width: r.width, height: r.height, visible: r.x >= 0 && r.y >= 0
                 && r.right <= innerWidth && r.bottom <= innerHeight, hit: hit === node || node.contains(hit) };
+              for (const [n, left, top] of scrolled) { n.scrollLeft = left; n.scrollTop = top; }
+              return result;
             }),
             nav: [...document.querySelectorAll('[data-navigation-pane] [role=tab]')].map(node => {
               const r = node.getBoundingClientRect(); return { x: r.x, y: r.y };
@@ -12256,7 +12284,8 @@ test('T002 Settings reads real local and configured-remote pack authorities only
         assert.deepEqual(names(await packRows()), packKeys(packs.availableNames.slice(0, 25)));
         const availableImage = await screenshot(`available-entry-${width}x${height}-${theme}`);
         await selectTag('bundle-authoring');
-        assert.deepEqual(await packRows(), []);
+        assert.deepEqual(await packRows(), [], `bundle-authoring matches nothing at ${width} ${theme}: ${await evaluate(page,
+          `document.querySelector('[data-pack-toolbar] [role="combobox"]')?.textContent.trim()`)}`);
         const emptyGeometry = await evaluate(page, `(() => {
           // Where the whole panel scrolls its pager follows the (here empty) rows, so reach it by scrolling.
           const rows = document.querySelector('[data-pack-scroll]');
@@ -12273,7 +12302,10 @@ test('T002 Settings reads real local and configured-remote pack authorities only
           'zero matches keeps the pager reachable and on screen');
         await evaluate(page, `document.querySelector('[data-pack-scroll]').closest('[role="tabpanel"]').scrollTop = 0`);
         const clearGeometry = await evaluate(page, `(() => {
-          const clear = document.querySelector('[data-pack-toolbar] > button').getBoundingClientRect();
+          // Reachable once scrolled into view: the approved 085 three-section header can put Clear below a short panel's fold.
+          const node = document.querySelector('[data-pack-toolbar] > button');
+          node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+          const clear = node.getBoundingClientRect();
           const hit = document.elementFromPoint(clear.x + clear.width / 2, clear.y + clear.height / 2);
           return { hit: hit?.closest('button')?.textContent === 'Clear', visible: clear.top >= 0 && clear.bottom <= innerHeight };
         })()`);
@@ -13479,10 +13511,18 @@ async function clickAboutTarget(page, expression, { settle = true } = {}) {
   if (settle) await settleBrowserWork(page);
 }
 
-/** @param {Cdp} page @param {'packs'|'about'} value */
+/** @param {Cdp} page */
+function appearanceSettled(page) {
+  return until(() => evaluate(page, `document.querySelector('[data-settings-section="appearance"]')?.getAttribute('aria-selected') === 'true'
+    && Boolean(document.querySelector('[data-appearance-panel]:not([hidden]) [data-follow-app-theme]'))
+    && !document.querySelector('[data-appearance-pending]')`), 'settled Appearance section');
+}
+
+/** @param {Cdp} page @param {'packs'|'appearance'|'about'} value */
 async function chooseSettingsSection(page, value) {
   await clickSettingsControl(page, `document.querySelector('[data-settings-section="${value}"]')`);
   if (value === 'about') await aboutSettled(page);
+  else if (value === 'appearance') await appearanceSettled(page);
   else await packsSettled(page);
   await settleAboutAnimations(page);
 }
@@ -13496,7 +13536,7 @@ async function aboutAccessibility(page) {
   const namedRoles = new Set(['button', 'tab', 'tablist', 'tabpanel', 'combobox', 'grid', 'toolbar', 'textbox', 'link']);
   return {
     tablists: named('tablist'),
-    sections: live.filter(node => node.role?.value === 'tab' && ['Packs', 'About'].includes(node.name?.value))
+    sections: live.filter(node => node.role?.value === 'tab' && ['Packs', 'Appearance', 'About'].includes(node.name?.value))
       .map(node => [node.name.value, selected(node)]),
     tabpanels: named('tabpanel'),
     links: named('link'),
@@ -13544,7 +13584,7 @@ test('074 About: Settings then About shows the recorded development install in a
       footer: document.querySelector('footer').textContent,
     })`);
     assert.deepEqual(packsEntry, {
-      heading: 'Settings', sections: [['Packs', 'true'], ['About', 'false']],
+      heading: 'Settings', sections: [['Packs', 'true'], ['Appearance', 'false'], ['About', 'false']],
       context: 'installed', filter: 'All use cases', page: 'Page 1 of 1', details: 0,
       toolbar: ['Reload packs'], footer: 'Installed: current · Catalog: not read',
     }, 'Settings opens on Packs with the existing initial view');
@@ -13576,13 +13616,14 @@ test('074 About: Settings then About shows the recorded development install in a
       };
     })()`);
     assert.deepEqual(structure, {
-      panels: [{ role: 'tabpanel', labelledBy: true, hidden: true }, { role: 'tabpanel', labelledBy: true, hidden: false }],
+      panels: [{ role: 'tabpanel', labelledBy: true, hidden: true }, { role: 'tabpanel', labelledBy: true, hidden: true },
+        { role: 'tabpanel', labelledBy: true, hidden: false }],
       renderedPackControls: 0, openDialogs: 0, contextTabs: 1, aboutTabIndex: null,
     }, 'Packs stays mounted but hidden; nothing from it is rendered or open');
     const tree = await aboutAccessibility(page);
     assert.deepEqual(tree.tablists.filter(name => name !== 'Workspace views'), ['Settings sections'],
       'the hidden Pack context tabs leave the accessibility tree');
-    assert.deepEqual(tree.sections, [['Packs', false], ['About', true]]);
+    assert.deepEqual(tree.sections, [['Packs', false], ['Appearance', false], ['About', true]]);
     assert.deepEqual(tree.tabpanels, ['Settings', 'About'], 'only the workspace Settings panel and its About section');
     assert.deepEqual(tree.links, [ABOUT_LINK.label]);
     assert.deepEqual(tree.grids, [], 'no hidden pack results remain exposed');
@@ -13590,27 +13631,29 @@ test('074 About: Settings then About shows the recorded development install in a
       JSON.stringify(tree.buttons));
     assert.deepEqual(tree.unnamed, []);
 
-    // Standard tab keys: arrows, Home, and End move and select; Enter keeps.
+    // Standard tab keys: arrows, Home, and End move and select through Packs, Appearance, and About; Enter keeps.
     const keyed = [];
-    for (const [pressed, expected] of [['ArrowLeft', 'packs'], ['ArrowRight', 'about'], ['Home', 'packs'],
+    for (const [pressed, expected] of [['ArrowLeft', 'appearance'], ['ArrowRight', 'about'], ['Home', 'packs'],
       ['End', 'about'], ['ArrowRight', 'packs'], ['ArrowLeft', 'about'], ['Enter', 'about']]) {
       await key(page, pressed);
       await until(() => evaluate(page, `document.querySelector('[data-settings-section="${expected}"]')
         ?.getAttribute('aria-selected') === 'true'`), `${pressed} selects ${expected}`);
       if (expected === 'about') await aboutSettled(page);
+      else if (expected === 'appearance') await appearanceSettled(page);
       else await packsSettled(page);
       keyed.push({ pressed, focused: await activeSection(), surface: await aboutSurface(page) });
     }
     for (const entry of keyed) {
-      const about = entry.focused === 'about';
+      const about = entry.focused === 'about', appearance = entry.focused === 'appearance';
       assert.equal(entry.surface.shown, about, JSON.stringify(entry));
-      assert.deepEqual(entry.surface.toolbar, about ? [] : ['Reload packs'], JSON.stringify(entry));
-      assert.equal(entry.surface.footer, about ? 'About · Read only' : 'Installed: current · Catalog: not read');
+      assert.deepEqual(entry.surface.toolbar, about || appearance ? [] : ['Reload packs'], JSON.stringify(entry));
+      assert.equal(entry.surface.footer, about ? 'About · Read only'
+        : appearance ? 'Appearance · This computer, all projects' : 'Installed: current · Catalog: not read');
       if (about) assert.deepEqual(entry.surface.rows, ABOUT_MAIN_ROWS);
     }
-    assert.deepEqual(keyed.map(entry => entry.focused), ['packs', 'about', 'packs', 'about', 'packs', 'about', 'about']);
+    assert.deepEqual(keyed.map(entry => entry.focused), ['appearance', 'about', 'packs', 'about', 'packs', 'about', 'about']);
     assert.equal(canvas.aboutReads().length, 4, 'each About entry reads once; Enter on the selected tab does not reread');
-    assert.equal(canvas.packReads().length, packReads, 'section changes and About never reload packs');
+    assert.equal(canvas.packReads().length, packReads, 'section changes, Appearance, and About never reload packs');
 
     // Tab leaves the section tabs for the About content; Shift+Tab returns.
     await key(page, 'Tab');
@@ -14052,7 +14095,7 @@ test('074 About: local sections keep the Packs view, dialogs, focus, and unsent 
     const scrolled = await packView();
     await focus(page, '[data-settings-section="packs"]');
     await key(page, 'ArrowRight');
-    await aboutSettled(page);
+    await appearanceSettled(page);
     await key(page, 'ArrowLeft');
     await packsSettled(page);
     await settleAboutAnimations(page);
@@ -14342,15 +14385,22 @@ function aboutGeometry(page, selectors) {
 
 /**
  * Product-minus-mock differences in CSS px for the approved composition.
+ * 085 approved the three-section Settings header row (Packs, Appearance,
+ * About, with its 479px and 300px rules), which the 074 and 075 mocks predate:
+ * the `085 App theme:` cases pin that row against the 085 mock. Here the
+ * section tabs and the header height are not compared, and everything below
+ * the header is measured from the header's bottom, so the About sheet still
+ * follows these mocks exactly.
  * @param {any} product @param {any} mock
  */
 function aboutGeometryDelta(product, mock) {
   const top = { product: product.command.y, mock: mock.command.y };
+  const below = { product: product.header.bottom, mock: mock.header.bottom };
   const delta = {};
   const put = (name, left, right) => { if (left !== null && right !== null) delta[name] = Math.round((left - right) * 100) / 100; };
-  const vertical = (name, key, index) => {
-    const read = (source, origin) => { const value = index === undefined ? source[key] : source[key][index]; return value ? value.y - origin : null; };
-    put(`${name}.top`, read(product, top.product), read(mock, top.mock));
+  const vertical = (name, key, index, origin = top) => {
+    const read = (source, from) => { const value = index === undefined ? source[key] : source[key][index]; return value ? value.y - from : null; };
+    put(`${name}.top`, read(product, origin.product), read(mock, origin.mock));
   };
   put('command.height', product.command.height, mock.command.height);
   put('rail.width', product.rail.width, mock.rail.width);
@@ -14358,17 +14408,12 @@ function aboutGeometryDelta(product, mock) {
   put('main.width', product.main.width, mock.main.width);
   put('cog.bottomGap', product.rail.bottom - product.cog.bottom, mock.rail.bottom - mock.cog.bottom);
   vertical('header', 'header');
-  put('header.height', product.header.height, mock.header.height);
   for (const key of ['x', 'width', 'height']) put(`title.${key}`, product.title[key], mock.title[key]);
   vertical('title', 'title');
-  product.tabs.forEach((tab, index) => {
-    for (const key of ['x', 'width', 'height']) put(`tab${index}.${key}`, tab[key], mock.tabs[index][key]);
-    vertical(`tab${index}`, 'tabs', index);
-  });
   if (product.identity && mock.identity) {
     put('identity.x', product.identity.x, mock.identity.x);
     put('identity.height', product.identity.height, mock.identity.height);
-    vertical('identity', 'identity');
+    vertical('identity', 'identity', undefined, below);
     product.rows.forEach((row, index) => {
       const other = mock.rows[index];
       put(`row${index}.height`, row.row.height, other.row.height);
@@ -14377,11 +14422,11 @@ function aboutGeometryDelta(product, mock) {
       put(`row${index}.value.x`, row.value.x, other.value.x);
       put(`row${index}.value.width`, row.value.width, other.value.width);
       put(`row${index}.value.height`, row.value.height, other.value.height);
-      put(`row${index}.top`, row.row.y - top.product, other.row.y - top.mock);
+      put(`row${index}.top`, row.row.y - below.product, other.row.y - below.mock);
     });
     for (const key of ['x', 'width', 'height']) put(`link.${key}`, product.link?.[key] ?? null, mock.link?.[key] ?? null);
     put('note.height', product.note.height, mock.note.height);
-    vertical('note', 'note');
+    vertical('note', 'note', undefined, below);
   }
   put('footer.height', product.footer.height, mock.footer.height);
   if (product.packTabs.length && mock.packTabs.length) {
@@ -14389,9 +14434,9 @@ function aboutGeometryDelta(product, mock) {
     // Their x and width are pinned against the 073 mock by packsStripDelta.
     product.packTabs.slice(0, mock.packTabs.length).forEach((tab, index) => {
       put(`packTab${index}.height`, tab.height, mock.packTabs[index].height);
-      vertical(`packTab${index}`, 'packTabs', index);
+      vertical(`packTab${index}`, 'packTabs', index, below);
     });
-    vertical('toolbar', 'toolbar');
+    vertical('toolbar', 'toolbar', undefined, below);
   }
   return delta;
 }
@@ -14514,7 +14559,7 @@ test('074 About: rendered geometry, contrast, reflow, and keyboard scrolling fol
           const r = node.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
           return hit === node || node.contains(hit);
         })`);
-        assert.deepEqual(hits, [true, true, true], `section tabs and the cog are not clipped at ${size.name}`);
+        assert.deepEqual(hits, [true, true, true, true], `section tabs and the cog are not clipped at ${size.name}`);
         assert.equal(geometry.footerText, 'About · Read only');
         const colors = await colorSamples();
         for (const sample of colors.text) {
@@ -14524,7 +14569,7 @@ test('074 About: rendered geometry, contrast, reflow, and keyboard scrolling fol
           assert.ok(contrast(sample.color, sample.background) >= 3, JSON.stringify({ size, theme, sample }));
         }
         const tree = await aboutAccessibility(page);
-        assert.deepEqual(tree.sections, [['Packs', false], ['About', true]]);
+        assert.deepEqual(tree.sections, [['Packs', false], ['Appearance', false], ['About', true]]);
         assert.deepEqual(tree.links, [ABOUT_LINK.label]);
         assert.deepEqual(tree.unnamed, []);
         const image = await aboutScreenshot(page, output, `product-about-${size.name}-${theme}`);
@@ -14543,7 +14588,14 @@ test('074 About: rendered geometry, contrast, reflow, and keyboard scrolling fol
           await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32 });
           await until(() => evaluate(page, `document.querySelector('[data-about-panel]').scrollTop > 0`), 'keyboard-scrolled About');
           await settleAboutAnimations(page);
-          const scrolled = await evaluate(page, `document.querySelector('[data-about-panel]').scrollTop`);
+          // A keyboard scroll can still be gliding after its first frame; Tab only once it has come to rest.
+          const scrolled = await until(async () => {
+            const first = await evaluate(page, `document.querySelector('[data-about-panel]').scrollTop`);
+            await new Promise(resolve => setTimeout(resolve, 150));
+            await settleBrowserWork(page);
+            const second = await evaluate(page, `document.querySelector('[data-about-panel]').scrollTop`);
+            return first === second ? second : null;
+          }, 'keyboard scroll at rest');
           const panelFocusImage = await aboutScreenshot(page, output, `product-about-panel-focus-${size.name}-${theme}`);
           await key(page, 'Tab');
           await settleAboutAnimations(page);
@@ -14979,7 +15031,7 @@ test('075 About: the recorded base follows the approved 075 mock across sizes, r
         const r = node.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
         return hit === node || node.contains(hit);
       })`);
-      assert.deepEqual(hits, [true, true, true], `section tabs and the cog are not clipped at ${label}`);
+      assert.deepEqual(hits, [true, true, true, true], `section tabs and the cog are not clipped at ${label}`);
       const surface = await aboutSurface(page);
       assert.deepEqual({ rows: surface.rows, note: surface.note }, { rows: known, note: ABOUT_NOTE }, label);
       const value = await aboutValueLayout(page, ABOUT_VALUE.product);
@@ -15001,7 +15053,7 @@ test('075 About: the recorded base follows the approved 075 mock across sizes, r
         assert.ok(contrast(sample.color, sample.background) >= 3, JSON.stringify({ label, sample }));
       }
       const tree = await aboutAccessibility(page);
-      assert.deepEqual(tree.sections, [['Packs', false], ['About', true]]);
+      assert.deepEqual(tree.sections, [['Packs', false], ['Appearance', false], ['About', true]]);
       assert.deepEqual(tree.links, [ABOUT_LINK.label], 'the base release is never a link');
       assert.deepEqual(tree.unnamed, []);
       const exposure = await aboutTextAccessibility(page, ABOUT_KNOWN_BASE);
@@ -15344,7 +15396,7 @@ test('073 Packs: Installed lists Name, Type, and Use cases with read-only projec
       assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-toolbar] label')].map(node => node.textContent)`), ['Use case', 'Source'], 'only the Use case and Source filters: no Type, origin, or operation filter');
       const surface = await p.q(`document.querySelector('[data-settings]').innerText`);
       assert.match(surface, /Sources/, 'Phase B appends Sources to the same strip');
-      assert.equal(await p.q(`document.querySelectorAll('[data-settings] [role="tab"]').length`), 6, 'two section tabs and four Packs views');
+      assert.equal(await p.q(`document.querySelectorAll('[data-settings] [role="tab"]').length`), 7, 'three section tabs and four Packs views');
       await aboutScreenshot(page, output, 'installed-typed-rows-1440x900-light');
 
       // A same-name skill and agent have distinct keys and never share selection or focus.
@@ -15604,12 +15656,22 @@ const t073Colors = p => p.q(`(() => {
   return nodes.map(([selector, node]) => ({ selector, color: getComputedStyle(node).color, background: background(node) }));
 })()`);
 
-/** Whether each control is on screen, at least 24px, and hit-testable. @param {Awaited<ReturnType<typeof t073Driver>>} p @param {string[]} selectors */
+/**
+ * Whether each control is reachable: on screen, at least 24px, and hit-testable once scrolled into view. The
+ * approved 085 three-section header can put a control below a short panel's fold, where a person scrolls, or
+ * keyboard focus scrolls, to reach it. Every scroll position is restored afterwards.
+ * @param {Awaited<ReturnType<typeof t073Driver>>} p @param {string[]} selectors
+ */
 const t073Targets = (p, selectors) => p.q(`${JSON.stringify(selectors)}.map(selector => {
-  const node = document.querySelector(selector), r = node.getBoundingClientRect();
+  const node = document.querySelector(selector), scrolled = [];
+  for (let n = node.parentElement; n; n = n.parentElement) scrolled.push([n, n.scrollLeft, n.scrollTop]);
+  node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  const r = node.getBoundingClientRect();
   const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-  return { selector, width: r.width, height: r.height, visible: r.x >= 0 && r.y >= 0 && r.right <= innerWidth && r.bottom <= innerHeight,
+  const result = { selector, width: r.width, height: r.height, visible: r.x >= 0 && r.y >= 0 && r.right <= innerWidth && r.bottom <= innerHeight,
     hit: hit === node || node.contains(hit) };
+  for (const [n, left, top] of scrolled) { n.scrollLeft = left; n.scrollTop = top; }
+  return result;
 })`);
 
 test('073 Packs: both themes at four sizes and the 200% reflow variants keep every list and details state usable', {
@@ -16672,6 +16734,9 @@ test('083 Pack actions: a saved folder and GitHub warn as third-party sources, a
     // Restored and unconfirmed failures arrive as the route answers them; each has its own sentence.
     for (const [mutation, body] of [['restored', 'Install failed Failed; your files were restored'],
       ['uncertain', 'Install failed Failed; restoration unconfirmed. Check Installed.']]) {
+      // Every apply starts the automatic read, which moves the details' buttons when it lands (its stale
+      // note goes), so let it land before clicking, as the Remove case does after its Refresh.
+      await packsSettled(page);
       await p.open('install');
       await p.phase('ready');
       await p.answer('apply', 200, { ok: false, error: `Compose stopped (${mutation}).`, mutation });
@@ -16797,7 +16862,7 @@ test('073 Sources: built-ins then added sources show every status before and aft
         [['installed', 'Installed (8)'], ['available', 'Available (unknown)'], ['import', null], ['sources', null]],
         'the Sources view joins the same strip, after Add/import; Available is unknown, not zero, before Reload');
       assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-settings] [role="tab"]')].map(node => node.innerText.replace(/\\s+/g, ' ').trim())`),
-        ['Packs', 'About', 'Installed 8', 'Available ?', 'Add/import', 'Sources']);
+        ['Packs', 'Appearance', 'About', 'Installed 8', 'Available ?', 'Add/import', 'Sources']);
       await p.click('[data-pack-context="sources"]');
       await settleAboutAnimations(page);
       let state = await t073SourcesState(p);
@@ -20491,7 +20556,7 @@ test('T010 mounts the vanilla engine under current Fluent tokens and seals real 
           assert.equal(geometry.focused, true);
           assert.notEqual(geometry.outline, 'none');
           assert.ok(geometry.tokenStroke);
-          assert.equal(engineState.palette.stroke, geometry.tokenStroke);
+          assert.deepEqual(paletteChannels(engineState.palette.stroke), paletteChannels(geometry.tokenStroke));
           if (entry !== matrix.at(-1)) await evaluate(reviewPage, `window.__review.dispose()`);
         }
 
@@ -21269,5 +21334,1440 @@ test('T010 mounts the vanilla engine under current Fluent tokens and seals real 
           'no exact Review capture profile created by this test process survives fixture cleanup',
         );
       }
+});
+
+/* ---------------------------------------------------------------------------------------------- 085 App theme */
+
+const APP_THEME_APPROVED = '.dude/specs/085-dude-canvas-app-theme/design/app-theme.html';
+const APP_THEME_APPROVED_SHA256 = '2a693bbd4130651381c9e37d0db0c5e6e386dddde2a2718ef68f5341bde70ad8';
+const APP_THEME_LABEL = 'Follow GitHub app theme';
+const APP_THEME_HINT = "Uses the GitHub app's colors, fonts, and text sizes. Controls and layout stay the same. "
+  + "Applies to all your projects on this computer. Turn off to use Dude's own look.";
+const APP_THEME_FOOTER = 'Appearance · This computer, all projects';
+/** The observed type values, the same in both tones (the coordinator's probe in the GitHub app, 2026-10-15). */
+const APP_THEME_TYPE = Object.freeze({
+  '--font-sans': '-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji"',
+  '--font-sans-display': '"Mona Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji"',
+  '--font-mono': '"Monaspace Neon", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+  '--font-weight-semibold': '600', '--text-body-medium': '.875rem', '--leading-body-medium': '1.4285',
+  '--text-title-large': '2rem', '--leading-title-large': '1.5', '--text-code-inline': '.9285em',
+});
+/**
+ * Host appearances as the app supplies them: documented variables on the
+ * document with its tone attributes. The two app fixtures are the user's
+ * observed custom app theme, verbatim, including variables Canvas must not
+ * read (--true-color-*, raw palette entries, the title size). The others are
+ * constructed and labeled as such.
+ */
+const APP_THEME_HOSTS = Object.freeze({
+  'app-dark': { tone: 'dark', values: {
+    '--background-color-default': '#2d2b55', '--border-color-default': 'color-mix(in srgb, #807b98 40%, transparent)',
+    '--text-color-default': '#ffffff', '--text-color-muted': '#bdb8d2', '--color-focus-outline': '#a397e6', '--color-white': '#fff',
+    '--true-color-red': 'color-mix(in lab, #c4c1cf 28%, #ff7b74)', '--true-color-red-muted': 'color-mix(in oklch, #ff7b74 15%, transparent)',
+    '--true-color-blue': 'color-mix(in lab, #c4c1cf 28%, #6aa8ff)', '--true-color-blue-muted': 'color-mix(in oklch, #6aa8ff 15%, transparent)',
+    ...APP_THEME_TYPE, '--n-0': '#2d2b55', '--b-11-10': '#a397e6', '--bb-11-10': '#cbc2fc' } },
+  'app-light': { tone: 'light', values: {
+    '--background-color-default': '#fbfaff', '--border-color-default': 'color-mix(in srgb, #a8a0c0 40%, transparent)',
+    '--text-color-default': '#37306b', '--text-color-muted': '#665a94', '--color-focus-outline': '#4a2fa1', '--color-white': '#fff',
+    '--true-color-red': 'color-mix(in lab, #6a6090 28%, #8c2022)', '--true-color-red-muted': 'color-mix(in oklch, #8c2022 15%, transparent)',
+    '--true-color-blue': 'color-mix(in lab, #6a6090 28%, #174a9b)', '--true-color-blue-muted': 'color-mix(in oklch, #174a9b 15%, transparent)',
+    ...APP_THEME_TYPE, '--n-0': '#fbfaff', '--b-11-10': '#4a2fa1', '--bb-11-10': '#5e42d7' } },
+  // Constructed, never observed: text, muted text, the border seed, and the accent all miss their minimum.
+  deficient: { tone: 'dark', values: {
+    '--background-color-default': '#34325a', '--border-color-default': 'color-mix(in srgb, #5c5880 40%, transparent)',
+    '--text-color-default': '#8f8bab', '--text-color-muted': '#6f6b8f', '--color-focus-outline': '#5a52a8', '--color-white': '#fff',
+    ...APP_THEME_TYPE } },
+  // Constructed: the observed light colors with a 1rem body and 1.5 leading.
+  larger: { tone: 'light', values: {
+    '--background-color-default': '#fbfaff', '--border-color-default': 'color-mix(in srgb, #a8a0c0 40%, transparent)',
+    '--text-color-default': '#37306b', '--text-color-muted': '#665a94', '--color-focus-outline': '#4a2fa1', '--color-white': '#fff',
+    ...APP_THEME_TYPE, '--text-body-medium': '1rem', '--leading-body-medium': '1.5' } },
+  // Constructed partial and unusable sets from the observed values: each value that is missing or not a
+  // color keeps its own Fluent tokens, and the values that are there still follow.
+  'type-dark': { tone: 'dark', values: { ...APP_THEME_TYPE } },
+  'type-light': { tone: 'light', values: { ...APP_THEME_TYPE } },
+  'colors-dark': { tone: 'dark', values: {
+    '--background-color-default': '#2d2b55', '--border-color-default': 'color-mix(in srgb, #807b98 40%, transparent)',
+    '--text-color-default': '#ffffff', '--text-color-muted': '#bdb8d2', '--color-focus-outline': '#a397e6', '--color-white': '#fff' } },
+  'no-background-dark': { tone: 'dark', values: {
+    '--border-color-default': 'color-mix(in srgb, #807b98 40%, transparent)',
+    '--text-color-default': '#ffffff', '--text-color-muted': '#bdb8d2', '--color-focus-outline': '#a397e6', '--color-white': '#fff',
+    ...APP_THEME_TYPE } },
+  'no-muted-light': { tone: 'light', values: {
+    '--background-color-default': '#fbfaff', '--border-color-default': 'color-mix(in srgb, #a8a0c0 40%, transparent)',
+    '--text-color-default': '#37306b', '--color-focus-outline': '#4a2fa1', '--color-white': '#fff', ...APP_THEME_TYPE } },
+  'unusable-light': { tone: 'light', values: {
+    '--background-color-default': 'not-a-color', '--border-color-default': 'color-mix(in srgb, #a8a0c0 40%, transparent)',
+    '--text-color-default': '12px', '--text-color-muted': '#665a94', '--color-focus-outline': '#4a2fa1', '--color-white': '#fff',
+    ...APP_THEME_TYPE } },
+  // Constructed: the observed palettes with only the page background not a color.
+  'unusable-background-dark': { tone: 'dark', values: {
+    '--background-color-default': 'not-a-color', '--border-color-default': 'color-mix(in srgb, #807b98 40%, transparent)',
+    '--text-color-default': '#ffffff', '--text-color-muted': '#bdb8d2', '--color-focus-outline': '#a397e6', '--color-white': '#fff',
+    ...APP_THEME_TYPE } },
+  'unusable-background-light': { tone: 'light', values: {
+    '--background-color-default': 'not-a-color', '--border-color-default': 'color-mix(in srgb, #a8a0c0 40%, transparent)',
+    '--text-color-default': '#37306b', '--text-color-muted': '#665a94', '--color-focus-outline': '#4a2fa1', '--color-white': '#fff',
+    ...APP_THEME_TYPE } },
+  'tone-dark': { tone: 'dark', values: {} },
+  none: { tone: null, values: {} },
+});
+
+/**
+ * Put one host appearance on the document as the approved mock does: its
+ * values inline on html, with data-theme-source and data-theme-tone. Values of
+ * the previous fixture that this one lacks are removed. At document start,
+ * before html exists, it waits for html.
+ * @param {keyof typeof APP_THEME_HOSTS} id
+ */
+function appThemeHostScript(id) {
+  const { tone, values } = APP_THEME_HOSTS[id];
+  const names = [...new Set(Object.values(APP_THEME_HOSTS).flatMap(host => Object.keys(host.values)))];
+  return `(() => {
+    const apply = () => {
+      const root = document.documentElement, values = ${JSON.stringify(values)};
+      for (const name of ${JSON.stringify(names)}) if (!(name in values)) root.style.removeProperty(name);
+      for (const [name, value] of Object.entries(values)) root.style.setProperty(name, value);
+      const tone = ${JSON.stringify(tone)};
+      if (tone) { root.setAttribute('data-theme-source', 'external'); root.setAttribute('data-theme-tone', tone); }
+      else { root.removeAttribute('data-theme-source'); root.removeAttribute('data-theme-tone'); }
+    };
+    if (document.documentElement) { apply(); return true; }
+    const wait = new MutationObserver(() => { if (document.documentElement) { wait.disconnect(); apply(); } });
+    wait.observe(document, { childList: true });
+    return true;
+  })()`;
+}
+
+/**
+ * The same host appearance as attributes for the served html element, for a
+ * host whose appearance is in place before Canvas parses its first byte.
+ * @param {keyof typeof APP_THEME_HOSTS} id
+ */
+function appThemeHostAttributes(id) {
+  const { tone, values } = APP_THEME_HOSTS[id];
+  const escape = text => text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  const style = Object.entries(values).map(([name, value]) => `${name}: ${value};`).join(' ');
+  return `style="${escape(style)}"${tone ? ` data-theme-source="external" data-theme-tone="${tone}"` : ''}`;
+}
+
+/** @param {Cdp} page @param {keyof typeof APP_THEME_HOSTS} id */
+async function setAppThemeHost(page, id) {
+  await evaluate(page, appThemeHostScript(id));
+  await settleAboutAnimations(page);
+}
+
+/** Save a choice in the owned preference home, or remove it; a string is stored as is. @param {boolean|string|null} value */
+function storeAppThemeChoice(value) {
+  if (value === null) { fs.rmSync(PREFERENCE_FILE, { recursive: true, force: true }); return; }
+  fs.mkdirSync(path.dirname(PREFERENCE_FILE), { recursive: true });
+  fs.writeFileSync(PREFERENCE_FILE, typeof value === 'string' ? value : JSON.stringify({ followAppTheme: value }));
+}
+
+/** What Settings > Appearance shows and says, and the shell around it. @param {Cdp} page */
+function appearanceSurface(page) {
+  return evaluate(page, `(() => {
+    const panel = document.querySelector('[data-appearance-panel]');
+    const input = panel?.querySelector('[data-follow-app-theme]');
+    const message = panel?.querySelector('[data-appearance-message]');
+    const active = document.activeElement;
+    return {
+      shown: Boolean(panel && !panel.hidden),
+      checked: input ? input.checked : null, ariaDisabled: input?.getAttribute('aria-disabled') ?? null,
+      disabled: input ? input.disabled : null, role: input?.getAttribute('role') ?? null,
+      label: input ? document.querySelector('label[for="' + input.id + '"]')?.textContent ?? null : null,
+      hint: input ? (input.getAttribute('aria-describedby') ?? '').split(' ').map(id => document.getElementById(id)?.textContent)
+        .filter(Boolean).join(' ') : null,
+      pending: panel?.querySelector('[data-appearance-pending]')?.textContent ?? null,
+      message: message ? { kind: message.getAttribute('data-appearance-message'), title: message.querySelector('.fui-MessageBarTitle')?.textContent,
+        text: message.querySelector('.fui-MessageBarBody > div')?.textContent,
+        retry: message.querySelector('[data-appearance-retry]')?.textContent ?? null,
+        retryDisabled: message.querySelector('[data-appearance-retry]')?.getAttribute('aria-disabled') ?? null } : null,
+      note: panel?.querySelector('[data-appearance-note]')?.textContent ?? null,
+      status: panel?.querySelector('[data-appearance-status]')?.textContent ?? null,
+      alert: panel?.querySelector('[data-appearance-alert]')?.textContent ?? null,
+      saidSaved: /\\bSaved\\b/.test(panel?.innerText ?? ''),
+      footer: document.querySelector('footer').textContent,
+      toolbar: [...document.querySelectorAll('header [role="toolbar"] button')].map(node => node.getAttribute('aria-label')),
+      follow: document.documentElement.getAttribute('data-dude-follow-app-theme'),
+      colorScheme: document.documentElement.style.colorScheme,
+      focus: active === input ? 'switch' : active?.hasAttribute('data-appearance-retry') ? 'retry'
+        : active?.getAttribute('data-settings-section') ?? active?.tagName ?? null,
+    };
+  })()`);
+}
+
+/**
+ * In-page color facts, resolved by the browser: any CSS color as sRGB, a
+ * node's painted surface composited through its ancestors, and WCAG ratios.
+ * Inserted at the start of an evaluated function; it defines `kit`.
+ */
+const T085_KIT = `
+  const probe = document.body.appendChild(document.createElement('i'));
+  probe.hidden = true;
+  const paint = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+  const known = new Map();
+  const rgba = value => {
+    if (known.has(value)) return known.get(value);
+    probe.style.color = '';
+    probe.style.color = value;
+    const text = getComputedStyle(probe).color;
+    let result;
+    let m = /^rgba?\\(\\s*([\\d.]+)[\\s,]+([\\d.]+)[\\s,]+([\\d.]+)(?:\\s*[,/]\\s*([\\d.]+))?\\s*\\)$/.exec(text);
+    if (m) result = [+m[1], +m[2], +m[3], m[4] === undefined ? 1 : +m[4]];
+    else if ((m = /^color\\(srgb\\s+([-\\d.e]+)\\s+([-\\d.e]+)\\s+([-\\d.e]+)(?:\\s*\\/\\s*([\\d.]+))?\\s*\\)$/.exec(text))) {
+      result = [m[1] * 255, m[2] * 255, m[3] * 255, m[4] === undefined ? 1 : +m[4]];
+    } else {
+      paint.clearRect(0, 0, 1, 1); paint.fillStyle = '#000'; paint.fillStyle = text; paint.fillRect(0, 0, 1, 1);
+      const d = paint.getImageData(0, 0, 1, 1).data;
+      result = [d[0], d[1], d[2], d[3] / 255];
+    }
+    known.set(value, result);
+    return result;
+  };
+  const over = (top, under) => top.slice(0, 3).map((v, i) => v * top[3] + under[i] * (1 - top[3]));
+  const surface = node => {
+    const layers = [];
+    for (let n = node; n && n.nodeType === 1; n = n.parentElement) {
+      const color = rgba(getComputedStyle(n).backgroundColor);
+      if (color[3] > 0) { layers.push(color); if (color[3] >= 1) break; }
+    }
+    return layers.reverse().reduce((under, layer) => over(layer, under), [255, 255, 255]);
+  };
+  const luminance = c => { const ch = v => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * ch(c[0]) + 0.7152 * ch(c[1]) + 0.0722 * ch(c[2]); };
+  const ratio = (a, b) => { const x = luminance(a), y = luminance(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const hex = c => '#' + c.slice(0, 3).map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
+  const token = name => rgba(getComputedStyle(document.querySelector('.fui-FluentProvider')).getPropertyValue('--' + name).trim());
+  const kit = { rgba, over, surface, ratio, hex, token, done: () => probe.remove() };
+`;
+
+/**
+ * Every visible text run in the Canvas, against the surface it is painted on.
+ * Disabled controls are outside WCAG's text minimum; large text needs 3:1 and
+ * the rest 4.5:1.
+ * @param {Cdp} page
+ */
+function t085TextSweep(page) {
+  return evaluate(page, `(() => {${T085_KIT}
+    const failures = [], samples = [];
+    const walker = document.createTreeWalker(document.querySelector('.fui-FluentProvider'), NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const element = node.parentElement;
+      if (!node.textContent.trim() || !element || element.closest('[hidden], [aria-hidden="true"], svg, [aria-disabled="true"], :disabled')) continue;
+      if (element.closest('.fui-Switch')?.querySelector('input:is(:disabled, [aria-disabled="true"])')) continue;
+      const style = getComputedStyle(element);
+      if (style.visibility !== 'visible' || Number(style.opacity) === 0) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const rect = range.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2 || rect.bottom < 0 || rect.top > innerHeight || rect.right < 0 || rect.left > innerWidth) continue;
+      const background = kit.surface(element), color = kit.over(kit.rgba(style.color), background);
+      const size = parseFloat(style.fontSize), weight = Number(style.fontWeight);
+      const minimum = size >= 24 || (size >= 18.66 && weight >= 700) ? 3 : 4.5;
+      const measured = kit.ratio(color, background);
+      const sample = { text: node.textContent.trim().slice(0, 48), ratio: Math.round(measured * 100) / 100, minimum,
+        color: kit.hex(color), background: kit.hex(background), size: style.fontSize };
+      samples.push(sample);
+      if (measured < minimum) failures.push(sample);
+    }
+    kit.done();
+    return { count: samples.length, min: Math.min(...samples.map(s => s.ratio)), failures };
+  })()`);
+}
+
+/**
+ * The adapted roles against the surfaces they sit on, from the provider's own
+ * resolved tokens: text 4.5:1, essential boundaries and focus 3:1, in rest,
+ * hover, pressed, and selected states. The decorative rule is reported.
+ * @param {Cdp} page
+ */
+function t085TokenContrast(page) {
+  return evaluate(page, `(() => {${T085_KIT}
+    const t = kit.token;
+    const neutral = ['colorNeutralBackground1', 'colorNeutralBackground2', 'colorNeutralBackground1Hover',
+      'colorNeutralBackground1Pressed', 'colorNeutralBackground1Selected', 'colorNeutralBackground3', 'colorNeutralBackground4']
+      .map(name => kit.over(t(name), [255, 255, 255]));
+    const status = ['colorStatusSuccessBackground1', 'colorStatusWarningBackground1', 'colorStatusDangerBackground1']
+      .map(name => kit.over(t(name), neutral[0]));
+    const fills = ['colorCompoundBrandBackground', 'colorCompoundBrandBackgroundHover', 'colorCompoundBrandBackgroundPressed',
+      'colorBrandBackground', 'colorBrandBackgroundHover', 'colorBrandBackgroundPressed'].map(name => kit.over(t(name), neutral[0]));
+    const worst = (name, surfaces) => Math.round(Math.min(...surfaces.map(s => kit.ratio(kit.over(t(name), s), s))) * 100) / 100;
+    const result = {
+      text: Object.fromEntries(['colorNeutralForeground1', 'colorNeutralForeground2', 'colorNeutralForeground3',
+        'colorBrandForeground1', 'colorBrandForeground2', 'colorBrandForegroundLink', 'colorBrandForegroundLinkHover',
+        'colorBrandForegroundLinkPressed', 'colorCompoundBrandForeground1', 'colorPaletteRedForeground1']
+        .map(name => [name, worst(name, name === 'colorNeutralForeground1' ? [...neutral, ...status] : neutral)])),
+      onFill: Object.fromEntries(['colorNeutralForegroundOnBrand', 'colorNeutralForegroundInverted'].map(name => [name, worst(name, fills)])),
+      boundary: Object.fromEntries(['colorNeutralStrokeAccessible', 'colorNeutralStrokeAccessibleHover', 'colorNeutralStrokeAccessiblePressed',
+        'colorNeutralStroke1', 'colorNeutralStroke1Hover', 'colorNeutralStroke1Pressed', 'colorStrokeFocus2', 'colorCompoundBrandStroke',
+        'colorBrandStroke1', 'colorPaletteRedBorder2', 'colorStatusWarningForeground3']
+        .map(name => [name, worst(name, neutral)])),
+      fill: worst('colorCompoundBrandBackground', [neutral[0], neutral[2], neutral[5]]),
+      innerFocus: worst('colorStrokeFocus1', fills),
+      decorative: worst('colorNeutralStroke2', [neutral[0]]),
+      colors: Object.fromEntries(['colorNeutralBackground1', 'colorNeutralForeground1', 'colorNeutralForeground2', 'colorNeutralStrokeAccessible',
+        'colorStrokeFocus2', 'colorBrandForeground1', 'colorCompoundBrandBackground', 'colorNeutralForegroundOnBrand', 'colorPaletteRedForeground1']
+        .map(name => [name, kit.hex(kit.over(t(name), neutral[0]))])),
+    };
+    kit.done();
+    return result;
+  })()`);
+}
+
+/** The painted surfaces and type by role. @param {Cdp} page */
+function t085Look(page) {
+  return evaluate(page, `(() => {${T085_KIT}
+    const node = selector => document.querySelector(selector);
+    const painted = selector => { const n = node(selector); return n && n.getClientRects().length ? kit.hex(kit.surface(n)) : null; };
+    const type = selector => { const n = node(selector); if (!n) return null; const s = getComputedStyle(n);
+      return { family: s.fontFamily, size: s.fontSize, lineHeight: s.lineHeight, weight: s.fontWeight }; };
+    const provider = getComputedStyle(node('.fui-FluentProvider'));
+    const result = {
+      follow: document.documentElement.getAttribute('data-dude-follow-app-theme'),
+      colorScheme: getComputedStyle(document.documentElement).colorScheme,
+      html: kit.hex(kit.over(kit.rgba(getComputedStyle(document.documentElement).backgroundColor), [255, 255, 255])),
+      document: kit.hex(kit.surface(document.body)),
+      page: painted('.fui-FluentProvider > div'), rail: painted('[data-navigation-pane]'), command: painted('body header'),
+      footer: painted('footer'), tableHeader: painted('[data-pack-scroll] .fui-DataGridHeader'), pager: painted('[data-pack-page]'),
+      text: kit.hex(kit.rgba(getComputedStyle(node('.fui-FluentProvider > div')).color)),
+      body: type('.fui-FluentProvider'), title: type('[data-settings] h1'),
+      label: type('.fui-Switch__label'), hint: type('.fui-Field__hint'),
+      tokens: Object.fromEntries(['fontFamilyBase', 'fontFamilyMonospace', 'fontWeightSemibold', 'fontSizeBase200', 'fontSizeBase300',
+        'fontSizeBase500', 'lineHeightBase200', 'lineHeightBase300', 'lineHeightBase500', 'dude-font-display', 'dude-code-inline']
+        .map(name => [name, provider.getPropertyValue('--' + name).trim()])),
+    };
+    kit.done();
+    return result;
+  })()`);
+}
+
+/**
+ * The faint rules after the rail and after the command bar's title, as styled
+ * and as painted. A computed border color proves nothing when no border is
+ * drawn, so each rule is also read from a screenshot: the pixel in the box's
+ * last column at its middle, beside the pixel two columns inside it.
+ * @param {Cdp} page
+ */
+async function t085Rules(page) {
+  const boxes = await evaluate(page, `(() => {${T085_KIT}
+    const read = node => { const s = getComputedStyle(node), r = node.getBoundingClientRect();
+      return { width: s.borderInlineEndWidth, style: s.borderInlineEndStyle, right: r.right, middle: (r.top + r.bottom) / 2,
+        color: kit.hex(kit.over(kit.rgba(s.borderInlineEndColor), kit.surface(node))) }; };
+    const result = { dpr: devicePixelRatio, rail: read(document.querySelector('[data-navigation-pane]')),
+      title: read(document.querySelector('body header > div')) };
+    kit.done();
+    return result;
+  })()`);
+  const { decodePng } = await import('../../src/extensions/dude/lib/review/png.mjs');
+  const { data } = await page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+  const decoded = decodePng(Buffer.from(data, 'base64'));
+  const pixel = (x, y) => `#${decodedPixel(decoded, Math.floor(x * boxes.dpr), Math.floor(y * boxes.dpr)).slice(0, 3)
+    .map(value => value.toString(16).padStart(2, '0')).join('')}`;
+  const distance = (a, b) => Math.max(...[1, 3, 5].map(index => Math.abs(Number.parseInt(a.slice(index, index + 2), 16)
+    - Number.parseInt(b.slice(index, index + 2), 16))));
+  // A box with a fractional right edge has its 1px rule snapped to one of the two device columns it spans.
+  const rule = ({ width, style, right, middle, color }) => {
+    const inside = pixel(right - 3, middle);
+    const painted = [pixel(right - 1, middle), pixel(right - 0.01, middle)]
+      .reduce((best, candidate) => (distance(candidate, inside) > distance(best, inside) ? candidate : best));
+    return { width, style, color, right, x: Math.floor(right - 1), painted, inside };
+  };
+  return { rail: rule(boxes.rail), title: rule(boxes.title) };
+}
+
+/** Whether a painted pixel is the expected color, within the rounding of compositing. @param {string} actual @param {string} expected */
+function t085SameColor(actual, expected) {
+  const channels = color => [1, 3, 5].map(index => Number.parseInt(color.slice(index, index + 2), 16));
+  const [a, b] = [channels(actual), channels(expected)];
+  return a.every((value, index) => Math.abs(value - b[index]) <= 2);
+}
+
+/**
+ * The fonts the platform actually rendered for one node's text; a computed
+ * family list alone does not show which face was available.
+ * @param {Cdp} page @param {string} expression
+ */
+async function t085RenderedFonts(page, expression) {
+  await evaluate(page, `(${expression}).setAttribute('data-t085-fonts', '')`);
+  try {
+    await page.send('CSS.enable');
+    const { root } = await page.send('DOM.getDocument', { depth: -1 });
+    const { nodeId } = await page.send('DOM.querySelector', { nodeId: root.nodeId, selector: '[data-t085-fonts]' });
+    const { fonts } = await page.send('CSS.getPlatformFontsForNode', { nodeId });
+    return fonts.map(font => font.familyName);
+  } finally {
+    await evaluate(page, `document.querySelector('[data-t085-fonts]')?.removeAttribute('data-t085-fonts')`);
+  }
+}
+
+/**
+ * The faces rendered for one node beside the faces rendered, in the same
+ * document, for a probe with the node's own text, weight, style, width, and
+ * size in the expected declared stack. The node renders from that stack when
+ * the two sets are equal. The platform's own resolution of the stack is the
+ * reference, not the names in it: a platform may supply a face the stack never
+ * names, as fontconfig supplies Liberation Sans for the sans stacks on Linux.
+ * @param {Cdp} page @param {string} expression @param {string} stack
+ */
+async function t085FacesFromStack(page, expression, stack) {
+  const rendered = await t085RenderedFonts(page, expression);
+  try {
+    await evaluate(page, `(() => {
+      const node = ${expression}, style = getComputedStyle(node), probe = document.createElement('span');
+      probe.setAttribute('data-t085-probe', '');
+      probe.textContent = node.textContent;
+      probe.style.cssText = 'position: fixed; left: 0; top: 0; pointer-events: none';
+      for (const name of ['font-weight', 'font-style', 'font-stretch', 'font-size']) probe.style.setProperty(name, style.getPropertyValue(name));
+      probe.style.setProperty('font-family', ${JSON.stringify(stack)});
+      document.body.append(probe);
+      probe.getBoundingClientRect();
+    })()`);
+    const expected = await t085RenderedFonts(page, `document.querySelector('[data-t085-probe]')`);
+    const faces = new Set(rendered), yielded = new Set(expected);
+    return { rendered, expected, same: faces.size > 0 && faces.size === yielded.size && [...faces].every(face => yielded.has(face)) };
+  } finally {
+    await evaluate(page, `document.querySelector('[data-t085-probe]')?.remove()`);
+  }
+}
+
+/** The switch and the sections as the accessibility tree exposes them. @param {Cdp} page */
+async function t085SwitchTree(page) {
+  const tree = await page.send('Accessibility.getFullAXTree');
+  const live = tree.nodes.filter(node => !node.ignored);
+  const node = live.find(entry => entry.role?.value === 'switch');
+  const property = name => node?.properties?.find(entry => entry.name === name)?.value.value;
+  return {
+    switch: node ? { name: node.name?.value, description: node.description?.value, checked: property('checked'),
+      disabled: property('disabled') ?? false, focusable: property('focusable') ?? false } : null,
+    panels: live.filter(entry => entry.role?.value === 'tabpanel').map(entry => entry.name?.value),
+    sections: live.filter(entry => entry.role?.value === 'tab' && ['Packs', 'Appearance', 'About'].includes(entry.name?.value))
+      .map(entry => [entry.name.value, entry.properties?.find(p => p.name === 'selected')?.value.value === true]),
+  };
+}
+
+/** Space, through the browser's native input path. @param {Cdp} page */
+async function t085Space(page) {
+  await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: ' ', code: 'Space', windowsVirtualKeyCode: 32,
+    nativeVirtualKeyCode: 32, text: ' ', unmodifiedText: ' ' });
+  await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32 });
+  await settleBrowserWork(page);
+}
+
+/** The panel's visible words, without its visually hidden announcements. @param {Cdp} page */
+function t085VisibleText(page) {
+  return evaluate(page, `(() => {
+    const clone = document.querySelector('[data-appearance-panel]').cloneNode(true);
+    clone.querySelectorAll('[data-appearance-status], [data-appearance-alert]').forEach(node => node.remove());
+    return clone.textContent;
+  })()`);
+}
+
+/**
+ * One case's control of the preference route: the browser's requests to it
+ * can be held at the request or response stage, then answered, lost, or let
+ * through. Release lets every held request through.
+ * @param {Awaited<ReturnType<typeof openAboutCanvas>>} canvas
+ */
+function t085Route(canvas) {
+  const { page, origin } = canvas;
+  const route = `${origin}/api/canvas-preferences`;
+  const paused = [];
+  page.on('Fetch.requestPaused', event => { if (event.request.url === route) paused.push(event); });
+  return {
+    reads: () => canvas.requests.filter(entry => entry.url === route && entry.method === 'GET'),
+    saves: () => canvas.requests.filter(entry => entry.url === route && entry.method === 'POST'),
+    hold: (requestStage = 'Request') => page.send('Fetch.enable', { patterns: [{ urlPattern: route, requestStage }] }),
+    /** @param {'GET'|'POST'} method */
+    next: method => until(() => {
+      const index = paused.findIndex(event => event.request.method === method);
+      return index < 0 ? null : paused.splice(index, 1)[0];
+    }, `a held ${method} to the preference route`),
+    pass: event => page.send('Fetch.continueRequest', { requestId: event.requestId }),
+    lose: event => page.send('Fetch.failRequest', { requestId: event.requestId, errorReason: 'ConnectionReset' }),
+    answer: (event, status, body) => page.send('Fetch.fulfillRequest', { requestId: event.requestId, responseCode: status,
+      responseHeaders: [{ name: 'Content-Type', value: 'application/json; charset=utf-8' }, { name: 'Cache-Control', value: 'no-store' }],
+      body: Buffer.from(JSON.stringify(body)).toString('base64') }),
+    release: async () => {
+      for (const event of paused.splice(0)) await page.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {});
+      await page.send('Fetch.disable');
+    },
+  };
+}
+
+/** The page background token as resolved: Fluent's, or the followed app's. @param {Cdp} page */
+function t085Background(page) {
+  return evaluate(page, `getComputedStyle(document.querySelector('.fui-FluentProvider')).getPropertyValue('--colorNeutralBackground1').trim()`);
+}
+
+/** @param {Cdp} page */
+async function t085OpenAppearance(page) {
+  await clickSettingsControl(page, `document.querySelector('#dude-tab-settings')`);
+  await packsSettled(page);
+  await chooseSettingsSection(page, 'appearance');
+}
+
+/** Canvas gaining visible focus again: the window focus event the reread follows. @param {Cdp} page */
+function t085Refocus(page) {
+  return evaluate(page, `window.dispatchEvent(new Event('focus'))`);
+}
+
+/** @param {Cdp} page @param {string} description @param {(surface: any) => boolean} predicate */
+function t085Surface(page, description, predicate) {
+  return until(async () => {
+    const surface = await appearanceSurface(page);
+    return predicate(surface) ? surface : null;
+  }, description);
+}
+
+/** Per page, the host attributes the next served page carries. */
+const T085_SERVED_HOSTS = new WeakMap();
+
+/**
+ * One navigation whose served html and body already carry a host's
+ * attributes, as when the host's appearance is in place before Canvas parses
+ * its first byte. Returns the page as the server sent it, the first frame,
+ * and its screenshot. The first frame is the html and body backgrounds and
+ * the text as parsing ends, the color the page paints at the viewport's
+ * center while the application script is still held, and the provider's
+ * first render once it is released.
+ * @param {Awaited<ReturnType<typeof openAboutCanvas>>} canvas
+ * @param {{ html?: string, body?: string }} host attributes for html and body
+ * @param {'light'|'dark'} device
+ */
+async function t085FirstFrame(canvas, { html = '', body = '' }, device) {
+  const { page } = canvas;
+  const pageUrl = `${canvas.origin}/`, appUrl = `${canvas.origin}/assets/app.js`;
+  if (!T085_SERVED_HOSTS.has(page)) {
+    page.on('Fetch.requestPaused', event => {
+      const next = T085_SERVED_HOSTS.get(page);
+      if (event.request.url === appUrl) { next.app = event; return; }
+      if (event.request.url !== pageUrl || next.served) return;
+      next.served = (async () => {
+        const response = await page.send('Fetch.getResponseBody', { requestId: event.requestId });
+        const sent = response.base64Encoded ? Buffer.from(response.body, 'base64').toString('utf8') : response.body;
+        const hosted = sent.replace('<html ', `<html ${next.html} `).replace('<body>', next.body ? `<body ${next.body}>` : '<body>');
+        await page.send('Fetch.fulfillRequest', { requestId: event.requestId, responseCode: event.responseStatusCode,
+          responseHeaders: event.responseHeaders.filter(header => header.name.toLowerCase() !== 'content-length'),
+          body: Buffer.from(hosted).toString('base64') });
+        return sent;
+      })();
+    });
+  }
+  const next = { html, body, served: null, app: null };
+  T085_SERVED_HOSTS.set(page, next);
+  await page.send('Fetch.enable', { patterns: [{ urlPattern: pageUrl, requestStage: 'Response' },
+    { urlPattern: appUrl, requestStage: 'Request' }] });
+  const { identifier } = await page.send('Page.addScriptToEvaluateOnNewDocument', { source: `
+    window.__t085 = { page: null, provider: null };
+    document.addEventListener('readystatechange', () => {
+      if (document.readyState === 'interactive' && !window.__t085.page) window.__t085.page = {
+        follow: document.documentElement.getAttribute('data-dude-follow-app-theme'),
+        html: getComputedStyle(document.documentElement).backgroundColor, body: getComputedStyle(document.body).backgroundColor,
+        color: getComputedStyle(document.body).color, bootstrap: document.getElementById('dude-canvas-bootstrap')?.textContent };
+    });
+    new MutationObserver((records, observer) => {
+      const provider = document.querySelector('.fui-FluentProvider');
+      if (!provider) return;
+      observer.disconnect();
+      window.__t085.provider = { background: getComputedStyle(provider).getPropertyValue('--colorNeutralBackground1').trim(),
+        page: getComputedStyle(provider.firstElementChild ?? provider).backgroundColor };
+    }).observe(document, { childList: true, subtree: true });` });
+  let shot = null;
+  try {
+    const loaded = navigate(page, null, 1440, device, canvas.origin).then(() => null, error => error);
+    const held = await until(() => next.app, 'the held application script');
+    await until(() => evaluate(page, 'Boolean(window.__t085?.page) && !document.querySelector(".fui-FluentProvider")'), 'the parsed page');
+    await settleBrowserWork(page);
+    shot = Buffer.from((await page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })).data, 'base64');
+    await page.send('Fetch.continueRequest', { requestId: held.requestId });
+    const failed = await loaded;
+    if (failed) throw failed;
+  } finally {
+    await page.send('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+    await page.send('Fetch.disable');
+  }
+  const { decodePng } = await import('../../src/extensions/dude/lib/review/png.mjs');
+  const decoded = decodePng(shot);
+  const painted = `#${decodedPixel(decoded, decoded.width / 2, decoded.height / 2).slice(0, 3)
+    .map(value => value.toString(16).padStart(2, '0')).join('')}`;
+  const first = await evaluate(page, 'window.__t085');
+  return { served: await next.served, first: { ...first, page: { ...first.page, painted } }, shot };
+}
+
+/** Fluent's own themes as Canvas uses them while off: web light and dark with the accessible control strokes. */
+function t085FluentThemes() {
+  const { webDarkTheme, webLightTheme } = createRequire(path.join(HERE, 'package.json'))('@fluentui/react-components');
+  const accessible = theme => ({ ...theme, colorNeutralStroke1: theme.colorNeutralStrokeAccessible,
+    colorNeutralStroke1Hover: theme.colorNeutralStrokeAccessibleHover, colorNeutralStroke1Pressed: theme.colorNeutralStrokeAccessiblePressed,
+    colorNeutralStroke1Selected: theme.colorNeutralStrokeAccessibleSelected });
+  return { light: accessible(webLightTheme), dark: accessible(webDarkTheme) };
+}
+
+/** The provider's resolved theme tokens, by name. @param {Cdp} page @param {string[]} names */
+function t085Tokens(page, names) {
+  return evaluate(page, `(() => { const style = getComputedStyle(document.querySelector('.fui-FluentProvider'));
+    return Object.fromEntries(${JSON.stringify(names)}.map(name => [name, style.getPropertyValue('--' + name).trim()])); })()`);
+}
+
+test('085 App theme: off by default, one switch action saves and applies the choice, failures stay honest, and Retry only reads', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  storeAppThemeChoice(null);
+  try {
+    await runAboutCase(context, '085-app-theme-switch', {}, async canvas => {
+      const { page, output } = canvas;
+      const route = t085Route(canvas);
+      const shots = {};
+      const shot = async name => { await settleAboutAnimations(page); shots[name] = await aboutScreenshot(page, output, name); };
+      const quiet = () => ({ packs: canvas.packReads().length, discoveries: canvas.discoveryReads().length,
+        sources: canvas.sourceWrites().length, sends: canvas.sends.length });
+      // The counts once a second passes with no new request.
+      const steady = async () => {
+        let last = JSON.stringify(quiet());
+        for (let unchanged = 0; unchanged < 5;) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+          const now = JSON.stringify(quiet());
+          unchanged = now === last ? unchanged + 1 : 0;
+          last = now;
+        }
+        return JSON.parse(last);
+      };
+      // The app supplies its dark appearance from the start; off ignores it.
+      await page.send('Page.addScriptToEvaluateOnNewDocument', { source: appThemeHostScript('app-dark') });
+      await navigate(page, null, 1440, 'dark', canvas.origin);
+      assert.equal(await t085Background(page), '#292929', 'off by default: Fluent dark, not the app');
+      assert.equal(fs.existsSync(PREFERENCE_FILE), false, 'opening Canvas saves nothing');
+
+      // Settings: Packs | Appearance | About. Entering Appearance reads the choice and nothing about packs.
+      await clickSettingsControl(page, `document.querySelector('#dude-tab-settings')`);
+      await packsSettled(page);
+      const before = quiet();
+      const readsBefore = route.reads().length;
+      await chooseSettingsSection(page, 'appearance');
+      await until(() => route.reads().length > readsBefore, 'Appearance entry reads the saved choice');
+      const sections = await evaluate(page, `[...document.querySelectorAll('[role="tablist"][aria-label="Settings sections"] [role="tab"]')]
+        .map(node => [node.querySelector('.fui-Tab__content').textContent, node.getAttribute('aria-selected')])`);
+      assert.deepEqual(sections, [['Packs', 'false'], ['Appearance', 'true'], ['About', 'false']]);
+      assert.deepEqual(await appearanceSurface(page), {
+        shown: true, checked: false, ariaDisabled: null, disabled: false, role: 'switch', label: APP_THEME_LABEL, hint: APP_THEME_HINT,
+        pending: null, message: null, note: null, status: '', alert: '', saidSaved: false, footer: APP_THEME_FOOTER, toolbar: [],
+        follow: 'false', colorScheme: '', focus: 'appearance',
+      }, 'off, with no Reload packs and the Appearance footer');
+      const tree = await t085SwitchTree(page);
+      assert.deepEqual(tree.switch, { name: APP_THEME_LABEL, description: APP_THEME_HINT, checked: 'false', disabled: false, focusable: true });
+      assert.deepEqual(tree.sections, [['Packs', false], ['Appearance', true], ['About', false]]);
+      assert.ok(tree.panels.includes('Appearance'), 'the Appearance tabpanel is named by its tab');
+      await shot('off-appearance-1440x900-dark');
+      // Off keeps today's look, whatever the app supplies: no rule after the rail or the title, as before 085.
+      for (const [name, rule] of Object.entries(await t085Rules(page))) {
+        assert.ok(rule.style === 'none' && rule.width === '0px' && rule.painted === rule.inside, `off paints no ${name} rule: ${JSON.stringify(rule)}`);
+      }
+
+      // Keyboard: Tab reaches the switch; Space saves; the look changes after the save.
+      await key(page, 'Tab');
+      assert.equal((await appearanceSurface(page)).focus, 'switch');
+      await t085Space(page);
+      const on = await t085Surface(page, 'the saved choice', surface => surface.checked && surface.status.startsWith('Saved.'));
+      assert.deepEqual({ status: on.status, follow: on.follow, focus: on.focus, colorScheme: on.colorScheme },
+        { status: 'Saved. Follow GitHub app theme is on.', follow: 'true', focus: 'switch', colorScheme: 'dark' });
+      assert.equal(await t085Background(page), '#2d2b55', 'on: the app background');
+      assert.equal(await t085VisibleText(page), `${APP_THEME_LABEL}${APP_THEME_HINT}`, 'success shows no visible Saved text');
+      assert.deepEqual(route.saves().map(entry => entry.body), ['{"followAppTheme":true}'], 'one action, one save');
+      assert.equal(fs.readFileSync(PREFERENCE_FILE, 'utf8'), '{"followAppTheme":true}');
+      await shot('on-appearance-1440x900-dark');
+
+      // A pending save keeps the confirmed choice and keyboard focus, and ignores a second action.
+      await route.hold('Request');
+      await t085Space(page);
+      const held = await route.next('POST');
+      const saving = await t085Surface(page, 'Saving...', surface => surface.pending === 'Saving...');
+      assert.deepEqual({ checked: saving.checked, ariaDisabled: saving.ariaDisabled, disabled: saving.disabled, focus: saving.focus,
+        status: saving.status }, { checked: true, ariaDisabled: 'true', disabled: false, focus: 'switch', status: 'Saving.' });
+      assert.equal((await t085SwitchTree(page)).switch.disabled, true, 'the switch reads as unavailable while it saves');
+      assert.equal(await t085Background(page), '#2d2b55', 'the look waits for the save');
+      await shot('saving-off-1440x900-dark');
+      await t085Space(page);
+      await settleAboutAnimations(page);
+      assert.equal(route.saves().length, 2, 'a second action while saving sends nothing');
+      await route.pass(held);
+      const off = await t085Surface(page, 'saved off', surface => !surface.checked && !surface.pending);
+      assert.deepEqual({ status: off.status, focus: off.focus }, { status: 'Saved. Follow GitHub app theme is off.', focus: 'switch' });
+      assert.equal(await t085Background(page), '#292929');
+
+      // A save the server could not write: still off, the look unchanged, and an alert.
+      await t085Space(page);
+      await route.answer(await route.next('POST'), 500, { error: 'preference_write_failed' });
+      const failed = await t085Surface(page, 'the failed save', surface => surface.message?.kind === 'save-failed');
+      assert.deepEqual({ checked: failed.checked, message: failed.message, alert: failed.alert, focus: failed.focus }, {
+        checked: false, focus: 'switch', alert: 'Not saved. Follow GitHub app theme is still off.',
+        message: { kind: 'save-failed', title: 'Not saved', retry: null, retryDisabled: null,
+          text: "Canvas couldn't save your choice on this computer. Follow GitHub app theme is still off, and the look hasn't changed. Use the switch to try again." },
+      });
+      assert.equal(await t085Background(page), '#292929');
+      assert.equal(fs.readFileSync(PREFERENCE_FILE, 'utf8'), '{"followAppTheme":false}');
+      await shot('save-failed-1440x900-dark');
+
+      // A lost answer to a save that never landed: one reread, never a second save.
+      const savesBeforeLost = route.saves().length;
+      await t085Space(page);
+      await route.lose(await route.next('POST'));
+      const reread = await route.next('GET');
+      const checking = await t085Surface(page, 'Checking...', surface => surface.pending === 'Checking whether it was saved...');
+      assert.deepEqual({ status: checking.status, ariaDisabled: checking.ariaDisabled, focus: checking.focus },
+        { status: 'Checking whether it was saved.', ariaDisabled: 'true', focus: 'switch' });
+      await shot('uncertain-1440x900-dark');
+      await route.pass(reread);
+      const notSaved = await t085Surface(page, 'not saved after the reread', surface => surface.message?.kind === 'not-saved');
+      assert.deepEqual({ checked: notSaved.checked, text: notSaved.message.text, alert: notSaved.alert }, { checked: false,
+        text: "The save didn't finish. Canvas read the saved choice again: Follow GitHub app theme is still off, and the look hasn't changed. Use the switch to try again.",
+        alert: 'Not saved. Follow GitHub app theme is still off.' });
+      assert.equal(route.saves().length, savesBeforeLost + 1, 'the lost save is never sent again');
+      await shot('uncertain-not-saved-1440x900-dark');
+      await route.release();
+
+      // A lost answer to a save that did land: the reread confirms it.
+      await route.hold('Response');
+      await t085Space(page);
+      const landed = await route.next('POST');
+      assert.equal(fs.readFileSync(PREFERENCE_FILE, 'utf8'), '{"followAppTheme":true}', 'the server saved before the answer was lost');
+      await route.lose(landed);
+      await route.pass(await route.next('GET'));
+      const confirmed = await t085Surface(page, 'saved after the reread', surface => surface.checked && !surface.pending);
+      assert.deepEqual({ message: confirmed.message, status: confirmed.status }, { message: null, status: 'Saved. Follow GitHub app theme is on.' });
+      assert.equal(await t085Background(page), '#2d2b55');
+      assert.equal(route.saves().length, savesBeforeLost + 2);
+      await route.release();
+      assert.deepEqual(quiet(), before, 'Appearance and its switch read no pack, write no source, and send nothing');
+
+      // A later read that fails keeps the last confirmed choice, says so, and offers Retry. Focus also
+      // starts Canvas's existing freshness check, which may reread workspace facts; it settles first.
+      storeAppThemeChoice('not json');
+      await t085Refocus(page);
+      const later = await t085Surface(page, 'the failed reread', surface => surface.message?.kind === 'read-failed-later');
+      assert.deepEqual({ checked: later.checked, message: later.message }, { checked: true, message: { kind: 'read-failed-later',
+        title: 'Saved choice not read', retry: 'Retry', retryDisabled: null,
+        text: "Canvas couldn't read your appearance choice just now, so it keeps the last choice it confirmed: on. Nothing was changed." } });
+      assert.equal(await t085Background(page), '#2d2b55', 'the confirmed look stays');
+      await shot('read-failed-later-1440x900-dark');
+      const focused = await steady();
+      // Tab reaches Retry after the switch. Retry only reads, keeps focus while reading, and alerts when it fails again.
+      await focus(page, '[data-follow-app-theme]');
+      await key(page, 'Tab');
+      assert.equal((await appearanceSurface(page)).focus, 'retry');
+      const savesBeforeRetry = route.saves().length;
+      await route.hold('Request');
+      await key(page, 'Enter');
+      const retrying = await route.next('GET');
+      const reading = await t085Surface(page, 'Reading the saved choice...', surface => surface.pending === 'Reading the saved choice...');
+      assert.deepEqual({ focus: reading.focus, retryDisabled: reading.message.retryDisabled, ariaDisabled: reading.ariaDisabled,
+        status: reading.status }, { focus: 'retry', retryDisabled: 'true', ariaDisabled: 'true', status: 'Reading the saved choice.' });
+      await shot('focus-retry-1440x900-dark');
+      await route.pass(retrying);
+      const still = await t085Surface(page, 'still not read', surface => !surface.pending && surface.alert);
+      assert.deepEqual({ alert: still.alert, focus: still.focus, kind: still.message.kind },
+        { alert: 'Still not read. Nothing was changed.', focus: 'retry', kind: 'read-failed-later' });
+      await route.release();
+      // Readable again: Retry adopts the saved choice and moves focus to the switch.
+      storeAppThemeChoice(false);
+      await key(page, 'Enter');
+      const read = await t085Surface(page, 'read again', surface => !surface.message && !surface.pending);
+      assert.deepEqual({ checked: read.checked, status: read.status, focus: read.focus },
+        { checked: false, status: 'Read. Follow GitHub app theme is off.', focus: 'switch' });
+      assert.equal(await t085Background(page), '#292929');
+      assert.equal(route.saves().length, savesBeforeRetry, 'Retry never saves');
+      assert.deepEqual(quiet(), focused, 'Retry reads no pack, writes no source, and sends nothing');
+
+      // Opening with an unreadable choice: off, with the first-open warning; Retry reads it.
+      storeAppThemeChoice('{"followAppTheme":true,"theme":"dark"}');
+      await navigate(page, null, 1440, 'dark', canvas.origin);
+      assert.equal(await evaluate(page, `document.documentElement.getAttribute('data-dude-follow-app-theme')`), 'false');
+      assert.equal(await t085Background(page), '#292929', 'an unread choice opens in Dude\'s own look');
+      await t085OpenAppearance(page);
+      const firstOpen = await appearanceSurface(page);
+      assert.deepEqual({ checked: firstOpen.checked, message: firstOpen.message }, { checked: false, message: { kind: 'read-failed',
+        title: 'Saved choice not read', retry: 'Retry', retryDisabled: null,
+        text: "Canvas couldn't read your appearance choice on this computer, so it uses Dude's own look for now. Nothing was changed." } });
+      await shot('read-failed-1440x900-dark');
+      storeAppThemeChoice(true);
+      await clickSettingsControl(page, `document.querySelector('[data-appearance-retry]')`);
+      const recovered = await t085Surface(page, 'the recovered read', surface => surface.checked && !surface.message && !surface.pending);
+      assert.deepEqual({ status: recovered.status, focus: recovered.focus }, { status: 'Read. Follow GitHub app theme is on.', focus: 'switch' });
+      assert.equal(await t085Background(page), '#2d2b55');
+      assert.deepEqual(canvas.foreign(), [], 'nothing leaves the Canvas origin');
+      output.json('switch-result.json', { browser: canvas.driver.info.Browser, node: process.version,
+        saves: route.saves().map(entry => entry.body), reads: route.reads().length, shots });
+    });
+  } finally {
+    storeAppThemeChoice(null);
+  }
+});
+
+test('085 App theme: following paints the app\'s tone, colors, and type from the first frame, follows live changes, and keeps work', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  storeAppThemeChoice(true);
+  try {
+    await runAboutCase(context, '085-app-theme-follow', {}, async canvas => {
+      const { page, output, workspace } = canvas;
+      const route = t085Route(canvas);
+      const shots = {};
+      const shot = async name => { await settleAboutAnimations(page); shots[name] = await aboutScreenshot(page, output, name); };
+      const click = selector => clickSettingsControl(page, `document.querySelector(${JSON.stringify(selector)})`);
+      // A host whose appearance is in place before Canvas paints: its values and tone on the served html element.
+      const { served: html, first } = await t085FirstFrame(canvas, { html: appThemeHostAttributes('app-dark') }, 'dark');
+      assert.ok(html.includes('<html lang="en" data-dude-follow-app-theme="true">')
+        && html.includes('{"followAppTheme":true,"preferenceError":null}'), 'the server bootstraps the saved choice');
+      assert.deepEqual(first, {
+        page: { follow: 'true', html: 'rgb(20, 20, 20)', body: 'rgb(45, 43, 85)', color: 'rgb(255, 255, 255)',
+          bootstrap: '{"followAppTheme":true,"preferenceError":null}', painted: '#2d2b55' },
+        provider: { background: '#2d2b55', page: 'rgb(45, 43, 85)' },
+      }, 'the page paints the app background over the dark Fluent one, and the first render agrees with the saved choice');
+
+      // The followed look: the app background on the document, page, rail, command bar, table header, pager, and
+      // footer, with the dark Fluent page under the document's.
+      await click('#dude-tab-settings');
+      await packsSettled(page);
+      await click('[data-pack-row]');
+      await settleAboutAnimations(page);
+      const packs = await t085Look(page);
+      assert.deepEqual({ html: packs.html, document: packs.document, page: packs.page, rail: packs.rail, command: packs.command,
+        footer: packs.footer, tableHeader: packs.tableHeader, pager: packs.pager, text: packs.text, colorScheme: packs.colorScheme },
+      { html: '#141414', document: '#2d2b55', page: '#2d2b55', rail: '#2d2b55', command: '#2d2b55', footer: '#2d2b55',
+        tableHeader: '#2d2b55', pager: '#2d2b55', text: '#ffffff', colorScheme: 'dark' });
+      // The rail shares the page's background, so the approved faint rules after the rail and after the
+      // title are what separate them: 1px, painted in the app's composited border color, wide and narrow.
+      const rules = { wide: await t085Rules(page) };
+      const contrast = await t085TokenContrast(page);
+      assert.deepEqual({ stroke: contrast.colors.colorNeutralStrokeAccessible, focus: contrast.colors.colorStrokeFocus2,
+        fill: contrast.colors.colorCompoundBrandBackground, onFill: contrast.colors.colorNeutralForegroundOnBrand,
+        brand: contrast.colors.colorBrandForeground1, red: contrast.colors.colorPaletteRedForeground1 },
+      { stroke: '#bdb8d2', focus: '#a397e6', fill: '#a397e6', onFill: '#2d2b55', brand: '#b9b0ec', red: '#eca5a7' },
+      'borders take the muted text; focus and fills the accent; white fails on the lavender, so labels are dark; accent text and red are strengthened');
+      for (const [name, value] of Object.entries({ ...contrast.text, ...contrast.onFill })) assert.ok(value >= 4.5, `${name} ${value}`);
+      for (const [name, value] of Object.entries(contrast.boundary)) assert.ok(value >= 3, `${name} ${value}`);
+      assert.ok(contrast.fill >= 3 && contrast.innerFocus >= 3, JSON.stringify(contrast));
+      assert.ok(contrast.decorative < 3, `the supplied border stays a faint decorative rule (${contrast.decorative}:1)`);
+      const packText = await t085TextSweep(page);
+      assert.deepEqual(packText.failures, [], `Packs text meets its minimum (${packText.count} runs, lowest ${packText.min})`);
+      await shot('on-packs-1440x900-dark');
+      // Inline code in running text takes the app's relative size and mono stack.
+      await click('[data-pack-context="import"]');
+      const inline = `[...document.querySelectorAll('[data-settings] p code')].find(node => node.getClientRects().length)`;
+      const code = await evaluate(page, `(() => { const node = ${inline};
+        return { inline: getComputedStyle(node).fontSize, around: getComputedStyle(node.parentElement).fontSize,
+          family: getComputedStyle(node).fontFamily }; })()`);
+      assert.deepEqual(code, { inline: `${Math.round(14 * 0.9285 * 1000) / 1000}px`, around: '14px', family: APP_THEME_TYPE['--font-mono'] });
+      const renderedCode = await t085FacesFromStack(page, inline, APP_THEME_TYPE['--font-mono']);
+      assert.ok(renderedCode.same, `inline code renders the faces the app's mono stack yields: ${JSON.stringify(renderedCode)}`);
+      await chooseSettingsSection(page, 'appearance');
+      const look = await t085Look(page);
+      assert.deepEqual({ title: look.title, label: look.label, body: look.body.size, tokens: look.tokens }, {
+        title: { family: APP_THEME_TYPE['--font-sans-display'], size: '20px', lineHeight: '28px', weight: '600' },
+        label: { family: APP_THEME_TYPE['--font-sans'], size: '14px', lineHeight: '20px', weight: '400' },
+        body: '14px',
+        tokens: { fontFamilyBase: APP_THEME_TYPE['--font-sans'], fontFamilyMonospace: APP_THEME_TYPE['--font-mono'],
+          fontWeightSemibold: '600', fontSizeBase200: '12px', fontSizeBase300: '14px', fontSizeBase500: '20px',
+          lineHeightBase200: '16px', lineHeightBase300: '20px', lineHeightBase500: '28px',
+          'dude-font-display': APP_THEME_TYPE['--font-sans-display'], 'dude-code-inline': '.9285em' },
+      }, 'page titles take the display face at Dude\'s 20px; body type and line lengths follow the app');
+      const rendered = {
+        title: await t085FacesFromStack(page, `document.querySelector('[data-settings] h1')`, APP_THEME_TYPE['--font-sans-display']),
+        label: await t085FacesFromStack(page, `document.querySelector('.fui-Switch__label')`, APP_THEME_TYPE['--font-sans']),
+        code: renderedCode };
+      assert.ok(rendered.title.same && rendered.label.same,
+        `the title and the label render the faces the app's stacks yield: ${JSON.stringify(rendered)}`);
+      const appearanceText = await t085TextSweep(page);
+      assert.deepEqual(appearanceText.failures, [], `Appearance text (${appearanceText.count} runs, lowest ${appearanceText.min})`);
+      await shot('on-appearance-1440x900-dark');
+      await aboutViewport(page, { width: 360, height: 900, scale: 1 }, 'dark', false);
+      rules.narrow = await t085Rules(page);
+      await aboutViewport(page, { width: 1440, height: 900, scale: 1 }, 'dark', false);
+      for (const [size, measured] of Object.entries(rules)) for (const [name, rule] of Object.entries(measured)) {
+        assert.ok(rule.width === '1px' && rule.style === 'solid' && t085SameColor(rule.color, '#4e4b70')
+          && t085SameColor(rule.painted, rule.color) && !t085SameColor(rule.inside, rule.color),
+        `the dark ${name} rule is painted at ${size}: ${JSON.stringify(rule)}`);
+      }
+      assert.deepEqual([rules.wide.rail.x, rules.narrow.rail.x], [47, 47], 'the rail rule is the rail\'s last column, as approved');
+
+      // Work this tab keeps: a finder query, an unsent idea, and an unsent answer.
+      const request = {
+        owner: 'dude', requestRef: randomUUID(), revision: randomUUID(), class: 'fact', scope: workspace.stable.scope,
+        source: { kind: 'file', path: workspace.stable.ideaPath,
+          revision: workspace.revision(fs.readFileSync(path.join(workspace.root, workspace.stable.ideaPath))) },
+        prompt: 'Keep this unsent answer while the app theme changes.',
+        whyHuman: 'The owner needs your words.', unblocks: 'The owner can continue.', blocking: true, fields: { input: { kind: 'text' } },
+      };
+      await canvas.ask(request);
+      await click('#dude-tab-overview');
+      await until(() => evaluate(page, `document.querySelectorAll('[data-work-path]').length > 1`), 'the work finder');
+      await focus(page, 'input[type="search"]');
+      await page.send('Input.insertText', { text: '701' });
+      await until(() => evaluate(page, `document.querySelectorAll('[data-work-path]').length === 1`), 'finder query');
+      await click('#dude-tab-needs');
+      await clickSettingsControl(page, `[...document.querySelectorAll('#dude-panel-needs button')]
+        .find(node => node.textContent.includes(${JSON.stringify(request.prompt)}))`);
+      await until(() => evaluate(page, `Boolean(document.querySelector('#dude-panel-needs textarea:not(:disabled)'))`), 'response field');
+      await focus(page, '#dude-panel-needs textarea');
+      const answer = '  An unsent answer survives the app theme.  ';
+      await page.send('Input.insertText', { text: answer });
+      await click('#dude-tab-new');
+      await focus(page, '#dude-panel-new textarea');
+      const idea = '  An unsent idea survives the app theme.  ';
+      await page.send('Input.insertText', { text: idea });
+      await evaluate(page, `window.__t085.style = document.querySelector('style[id^="fui-FluentProvider"]')`);
+      const kept = () => evaluate(page, `({
+        idea: document.querySelector('#dude-panel-new textarea')?.value,
+        focused: document.activeElement === document.querySelector('#dude-panel-new textarea'),
+        caret: document.activeElement?.selectionStart,
+        style: document.querySelector('style[id^="fui-FluentProvider"]') === window.__t085.style,
+      })`);
+      const readsBefore = route.reads().length;
+
+      // Repeated notifications with unchanged values: no new theme, no reset, no request.
+      await evaluate(page, `(async () => {
+        const root = document.documentElement, value = root.style.getPropertyValue('--background-color-default');
+        for (let index = 0; index < 40; index += 1) {
+          root.style.setProperty('--background-color-default', value);
+          root.setAttribute('data-theme-tone', 'dark');
+          root.setAttribute('data-theme-source', 'external');
+          document.head.append(document.createElement('style'));
+          await new Promise(resolve => setTimeout(resolve, 5));
+        }
+      })()`);
+      await settleAboutAnimations(page);
+      assert.deepEqual(await kept(), { idea, focused: true, caret: idea.length, style: true },
+        'unchanged notifications leave the theme, the draft, and its focus alone');
+      await shot('on-newidea-1440x900-dark');
+
+      // A same-tone palette change from a stylesheet, its removal, and a tone change follow live.
+      await evaluate(page, `(() => { const sheet = document.createElement('style'); sheet.id = 't085-same-tone';
+        sheet.textContent = ':root { --background-color-default: #3b2f63 !important; }'; document.head.append(sheet); })()`);
+      await until(async () => (await t085Look(page)).page === '#3b2f63', 'the same-tone background follows');
+      assert.deepEqual({ ...(await kept()), style: undefined }, { idea, focused: true, caret: idea.length, style: undefined });
+      await evaluate(page, `document.getElementById('t085-same-tone').remove()`);
+      await until(async () => (await t085Look(page)).page === '#2d2b55', 'the stylesheet removal follows');
+      await setAppThemeHost(page, 'app-light');
+      await until(async () => (await t085Look(page)).page === '#fbfaff', 'the light app tone follows');
+      const light = await t085Look(page);
+      assert.deepEqual({ colorScheme: light.colorScheme, text: light.text, html: light.html, document: light.document },
+        { colorScheme: 'light', text: '#37306b', html: '#f5f5f5', document: '#fbfaff' }, 'the Fluent page under it changes tone too');
+      assert.deepEqual({ ...(await kept()), style: undefined }, { idea, focused: true, caret: idea.length, style: undefined });
+      assert.equal(route.reads().length, readsBefore, 'host changes never read the choice');
+      assert.equal(route.saves().length, 0, 'and never save it');
+      await shot('on-newidea-1440x900-light');
+      await click('#dude-tab-needs');
+      assert.equal(await evaluate(page, `document.querySelector('#dude-panel-needs textarea').value`), answer);
+      await click('#dude-tab-overview');
+      assert.equal(await evaluate(page, `document.querySelector('input[type="search"]').value`), '701');
+      assert.equal(await evaluate(page, `document.querySelectorAll('[data-work-path]').length`), 1);
+      const lightContrast = await t085TokenContrast(page);
+      for (const [name, value] of Object.entries({ ...lightContrast.text, ...lightContrast.onFill })) assert.ok(value >= 4.5, `${name} ${value}`);
+      for (const [name, value] of Object.entries(lightContrast.boundary)) assert.ok(value >= 3, `${name} ${value}`);
+      assert.deepEqual({ stroke: lightContrast.colors.colorNeutralStrokeAccessible, focus: lightContrast.colors.colorStrokeFocus2,
+        fill: lightContrast.colors.colorCompoundBrandBackground, onFill: lightContrast.colors.colorNeutralForegroundOnBrand,
+        brand: lightContrast.colors.colorBrandForeground1 },
+      { stroke: '#665a94', focus: '#4a2fa1', fill: '#4a2fa1', onFill: '#ffffff', brand: '#4a2fa1' },
+      'the observed light palette passes as supplied');
+      await click('#dude-tab-settings');
+      await packsSettled(page);
+      await chooseSettingsSection(page, 'appearance');
+      const lightText = await t085TextSweep(page);
+      assert.deepEqual(lightText.failures, [], `light Appearance text (${lightText.count} runs, lowest ${lightText.min})`);
+      await shot('on-appearance-1440x900-light');
+      rules.light = await t085Rules(page);
+      for (const [name, rule] of Object.entries(rules.light)) {
+        assert.ok(rule.width === '1px' && rule.style === 'solid' && t085SameColor(rule.color, '#dad6e6')
+          && t085SameColor(rule.painted, rule.color) && !t085SameColor(rule.inside, rule.color),
+        `the light ${name} rule is painted: ${JSON.stringify(rule)}`);
+      }
+      output.json('follow-result.json', { browser: canvas.driver.info.Browser, node: process.version, first, packs, rules, contrast,
+        packText: { count: packText.count, min: packText.min }, code, look, rendered,
+        appearanceText: { count: appearanceText.count, min: appearanceText.min }, light, lightContrast,
+        lightText: { count: lightText.count, min: lightText.min }, shots });
+    });
+  } finally {
+    storeAppThemeChoice(null);
+  }
+});
+
+test('085 App theme: missing host values, a deficient palette, larger text, and forced colors stay readable', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  storeAppThemeChoice(true);
+  try {
+    await runAboutCase(context, '085-app-theme-fallbacks', {}, async canvas => {
+      const { page, output } = canvas;
+      const shots = {};
+      const shot = async name => { await settleAboutAnimations(page); shots[name] = await aboutScreenshot(page, output, name); };
+      // Outside the app: no documented value at all. The choice stays on; the look is Fluent's, with a note.
+      await navigate(page, null, 1440, 'dark', canvas.origin);
+      await t085OpenAppearance(page);
+      const none = await appearanceSurface(page);
+      assert.deepEqual({ checked: none.checked, note: none.note, follow: none.follow },
+        { checked: true, follow: 'true', note: "The GitHub app's theme isn't available here, so Canvas uses Dude's own look. Your choice stays on." });
+      assert.equal(await t085Background(page), '#292929', 'no host values: Fluent dark for the device');
+      await shot('no-host-1440x900-dark');
+      await aboutViewport(page, { width: 1440, height: 900, scale: 1 }, 'light');
+      assert.equal(await t085Background(page), '#ffffff', 'no host values: Fluent light for the device');
+      await shot('no-host-1440x900-light');
+
+      // A constructed palette whose own pairs fail: Canvas replaces them to meet WCAG 2.2 AA.
+      await setAppThemeHost(page, 'deficient');
+      await until(async () => (await t085Background(page)) === '#34325a', 'the deficient fixture applies');
+      assert.equal((await appearanceSurface(page)).note, null, 'supplied values replace the note');
+      const deficient = await t085TokenContrast(page);
+      for (const [name, value] of Object.entries({ ...deficient.text, ...deficient.onFill })) assert.ok(value >= 4.5, `${name} ${value}`);
+      for (const [name, value] of Object.entries(deficient.boundary)) assert.ok(value >= 3, `${name} ${value}`);
+      assert.ok(deficient.fill >= 3 && deficient.innerFocus >= 3, JSON.stringify(deficient));
+      assert.notEqual(deficient.colors.colorNeutralForeground1, '#8f8bab', 'body text is replaced');
+      assert.notEqual(deficient.colors.colorNeutralStrokeAccessible, '#6f6b8f', 'control borders are replaced');
+      assert.notEqual(deficient.colors.colorStrokeFocus2, '#5a52a8', 'focus is replaced');
+      const deficientText = await t085TextSweep(page);
+      assert.deepEqual(deficientText.failures, [], `deficient text (${deficientText.count} runs, lowest ${deficientText.min})`);
+      await shot('deficient-appearance-1440x900');
+      // The checked switch on its sheet, in rest, hover, and pressed: the track against the sheet and the thumb against the track.
+      await page.send('CSS.enable');
+      const { root } = await page.send('DOM.getDocument', { depth: -1 });
+      const { nodeId } = await page.send('DOM.querySelector', { nodeId: root.nodeId, selector: '[data-follow-app-theme]' });
+      const states = [];
+      for (const state of [[], ['hover'], ['hover', 'active']]) {
+        await page.send('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: state });
+        states.push(await evaluate(page, `(() => {${T085_KIT}
+          const track = document.querySelector('.fui-Switch__indicator'), style = getComputedStyle(track);
+          const sheet = kit.surface(track.parentElement), fill = kit.over(kit.rgba(style.backgroundColor), sheet);
+          const result = { state: ${JSON.stringify(state.join('+') || 'rest')}, track: Math.round(kit.ratio(fill, sheet) * 100) / 100,
+            thumb: Math.round(kit.ratio(kit.over(kit.rgba(style.color), fill), fill) * 100) / 100 };
+          kit.done();
+          return result;
+        })()`));
+      }
+      await page.send('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: [] });
+      for (const entry of states) assert.ok(entry.track >= 3 && entry.thumb >= 3, `deficient switch ${JSON.stringify(states)}`);
+      await chooseSettingsSection(page, 'packs');
+      const deficientPacks = await t085TextSweep(page);
+      assert.deepEqual(deficientPacks.failures, [], `deficient Packs text (${deficientPacks.count} runs, lowest ${deficientPacks.min})`);
+      await shot('deficient-packs-1440x900');
+
+      // Larger app text: sizes and line heights follow by Fluent's ratios, and Appearance reflows at 180x450.
+      await setAppThemeHost(page, 'larger');
+      await chooseSettingsSection(page, 'appearance');
+      await until(async () => (await t085Look(page)).tokens.fontSizeBase300 === '16px', 'the larger body applies');
+      const larger = await t085Look(page);
+      assert.deepEqual({ title: larger.title.size, titleLine: larger.title.lineHeight, label: larger.label.size,
+        line: larger.tokens.lineHeightBase300 }, { title: '22.86px', titleLine: '33.6px', label: '16px', line: '24px' });
+      await shot('larger-text-1440x900');
+      await aboutViewport(page, { width: 180, height: 450, scale: 1 }, 'light', false);
+      assert.equal(await evaluate(page, `document.documentElement.scrollWidth`), 180, 'no sideways page scroll');
+      assert.equal(await evaluate(page, `getComputedStyle(document.querySelector('.fui-Switch__label')).fontSize`), '16px', 'text never shrinks');
+      await shot('larger-text-180x450');
+
+      // Forced colors: the system palette replaces the app's, with Fluent's native switch states.
+      await setAppThemeHost(page, 'app-dark');
+      await page.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+      await page.send('Emulation.setEmulatedMedia', { media: '', features: [{ name: 'prefers-color-scheme', value: 'dark' },
+        { name: 'forced-colors', value: 'active' }] });
+      await settleAboutAnimations(page);
+      const forced = await evaluate(page, `(() => {
+        const probe = document.body.appendChild(document.createElement('i'));
+        probe.style.cssText = 'background-color: Highlight; color: CanvasText';
+        const system = { highlight: getComputedStyle(probe).backgroundColor, text: getComputedStyle(probe).color };
+        probe.remove();
+        return { active: matchMedia('(forced-colors: active)').matches, system,
+          track: getComputedStyle(document.querySelector('.fui-Switch__indicator')).backgroundColor,
+          label: getComputedStyle(document.querySelector('.fui-Switch__label')).color };
+      })()`);
+      assert.deepEqual({ active: forced.active, track: forced.track, label: forced.label },
+        { active: true, track: forced.system.highlight, label: forced.system.text }, 'native forced colors win over the app palette');
+      await shot('forced-colors-on-app-dark-1440x900');
+      await page.send('Emulation.setEmulatedMedia', { media: '', features: [{ name: 'prefers-color-scheme', value: 'dark' },
+        { name: 'forced-colors', value: 'none' }] });
+      output.json('fallback-result.json', { browser: canvas.driver.info.Browser, node: process.version, deficient, states,
+        deficientText: { count: deficientText.count, min: deficientText.min },
+        deficientPacks: { count: deficientPacks.count, min: deficientPacks.min }, larger, forced, shots });
+    });
+  } finally {
+    storeAppThemeChoice(null);
+  }
+});
+
+test('085 App theme: the first frame paints a usable app background over Fluent\'s page in the provider\'s tone, by the host\'s attributes before the device, and off stays the device\'s', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  storeAppThemeChoice(true);
+  try {
+    await runAboutCase(context, '085-app-theme-first-tone', {}, async canvas => {
+      const { output } = canvas;
+      // Fluent's page as html carries it and as the first frame paints it, the text, and the provider's first Background1, in each tone.
+      const LIGHT = { painted: '#f5f5f5', html: 'rgb(245, 245, 245)', color: 'rgb(36, 36, 36)', provider: '#ffffff' };
+      const DARK = { painted: '#141414', html: 'rgb(20, 20, 20)', color: 'rgb(255, 255, 255)', provider: '#292929' };
+      const APP_LIGHT_TEXT = 'rgb(55, 48, 107)';
+      // The provider's order: a light or dark data-theme-tone on html, then body, then data-color-mode, then the device.
+      // A usable app background paints over that tone's Fluent page; one that is not a color leaves the Fluent page showing.
+      const cases = [
+        ['an html tone without a background, over the device', { html: appThemeHostAttributes('no-background-dark') }, 'light', DARK],
+        ['an html tone over the device', { html: 'data-theme-tone="light"' }, 'dark', LIGHT],
+        ['type only, with an html tone', { html: appThemeHostAttributes('type-dark') }, 'light', DARK],
+        ['an html color mode over the device', { html: 'data-color-mode="dark"' }, 'light', DARK],
+        ['an unknown tone falls through to the color mode', { html: 'data-theme-tone="sepia" data-color-mode="light"' }, 'dark', LIGHT],
+        ['a body tone over an html color mode', { html: 'data-color-mode="light"', body: 'data-theme-tone="dark"' }, 'light', DARK],
+        ['an html tone over a body tone', { html: 'data-theme-tone="light"', body: 'data-theme-tone="dark"' }, 'dark', LIGHT],
+        ['no host attributes: the device', {}, 'dark', DARK],
+        ['the app\'s dark background over a light device', { html: appThemeHostAttributes('app-dark') }, 'light',
+          { ...DARK, painted: '#2d2b55', provider: '#2d2b55' }],
+        ['the app\'s light background over a dark device', { html: appThemeHostAttributes('app-light') }, 'dark',
+          { ...LIGHT, painted: '#fbfaff', color: APP_LIGHT_TEXT, provider: '#fbfaff' }],
+        ['a dark tone whose background is not a color, over a light device',
+          { html: appThemeHostAttributes('unusable-background-dark') }, 'light', DARK],
+        ['a light tone whose background is not a color, over a dark device',
+          { html: appThemeHostAttributes('unusable-background-light') }, 'dark', { ...LIGHT, color: APP_LIGHT_TEXT }],
+      ];
+      const frames = [], observed = [], wanted = [];
+      /**
+       * @param {string} name @param {{ html?: string, body?: string }} host @param {'light'|'dark'} device
+       * @param {boolean} follow @param {Record<string, string>} expected
+       */
+      const frame = async (name, host, device, follow, expected) => {
+        const { served, first, shot } = await t085FirstFrame(canvas, host, device);
+        assert.ok(served.includes(`<html lang="en" data-dude-follow-app-theme="${follow}">`), `${name}: the server bootstraps ${follow}`);
+        frames.push({ name, host, device, first, shot: output.image(`first-frame-${String(frames.length + 1).padStart(2, '0')}.png`, shot) });
+        observed.push([name, { painted: first.page.painted, html: first.page.html, ...(follow ? { color: first.page.color } : {}),
+          provider: first.provider.background }]);
+        wanted.push([name, expected]);
+      };
+      for (const [name, host, device, expected] of cases) await frame(name, host, device, true, expected);
+      // Off keeps today's device-selected Fluent page and provider, whatever the host supplies.
+      storeAppThemeChoice(false);
+      await frame('off: a dark tone whose background is not a color, over a light device',
+        { html: appThemeHostAttributes('unusable-background-dark') }, 'light', false,
+        { painted: '#f5f5f5', html: 'rgb(245, 245, 245)', provider: '#ffffff' });
+      await frame('off: the app\'s light background over a dark device', { html: appThemeHostAttributes('app-light') }, 'dark', false,
+        { painted: '#141414', html: 'rgb(20, 20, 20)', provider: '#292929' });
+      output.json('first-tone-result.json', { browser: canvas.driver.info.Browser, node: process.version, frames });
+      assert.deepEqual(observed, wanted, 'each first frame paints the page its provider takes');
+    });
+  } finally {
+    storeAppThemeChoice(null);
+  }
+});
+
+test('085 App theme: each missing or unusable host value keeps its own Fluent tokens in both tones, and removing values restores them', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  const fluent = t085FluentThemes();
+  const colors = Object.keys(fluent.light).filter(name => name.startsWith('color'));
+  const type = Object.keys(fluent.light).filter(name => /^(fontFamily|fontSize|fontWeight|lineHeight)/.test(name));
+  const owned = ['dude-font-display', 'dude-code-inline', 'dude-separator-style'];
+  const neutral = ['colorNeutralBackground1', 'colorNeutralBackground2', 'colorNeutralCardBackground', 'colorNeutralBackground3',
+    'colorNeutralBackground4', 'colorNeutralBackground5', 'colorNeutralBackground6', 'colorNeutralBackgroundDisabled',
+    ...['Hover', 'Pressed', 'Selected'].flatMap(state => [`colorNeutralBackground1${state}`, `colorNeutralBackground2${state}`,
+      `colorSubtleBackground${state}`])];
+  /** The named tokens that differ from Fluent's own in the tone; Fluent's weights are numbers, CSS's are text. */
+  const changed = (tokens, tone, names) => names.filter(name => tokens[name] !== String(fluent[tone][name]));
+  storeAppThemeChoice(true);
+  try {
+    await runAboutCase(context, '085-app-theme-partial', {}, async canvas => {
+      const { page, output } = canvas;
+      const seen = {};
+      /** @param {keyof typeof APP_THEME_HOSTS} id @param {(tokens: Record<string, string>) => boolean} adopted */
+      const host = async (id, adopted) => {
+        await setAppThemeHost(page, id);
+        seen[id] = await until(async () => {
+          const tokens = await t085Tokens(page, [...colors, ...type, ...owned]);
+          return adopted(tokens) ? tokens : null;
+        }, `the ${id} host is followed`);
+        seen[id].rules = await t085Rules(page);
+        return seen[id];
+      };
+      const unruled = (id, rules) => {
+        for (const [name, rule] of Object.entries(rules)) {
+          assert.ok(rule.style === 'none' && rule.painted === rule.inside, `${id}: no shared background, no ${name} rule: ${JSON.stringify(rule)}`);
+        }
+      };
+      await navigate(page, null, 1440, 'dark', canvas.origin);
+      await t085OpenAppearance(page);
+
+      // Type only, in either tone: every color is Fluent's own, nothing is ruled, and the type follows.
+      for (const [id, tone] of [['type-dark', 'dark'], ['type-light', 'light']]) {
+        const tokens = await host(id, value => value.fontFamilyBase === APP_THEME_TYPE['--font-sans']
+          && value.colorNeutralBackground1 === fluent[tone].colorNeutralBackground1);
+        assert.deepEqual(changed(tokens, tone, colors), [], `${id}: a host that supplies only type changes no color`);
+        assert.deepEqual([tokens['dude-font-display'], tokens['dude-separator-style']], [APP_THEME_TYPE['--font-sans-display'], '']);
+        unruled(id, tokens.rules);
+      }
+
+      // Colors only: every type token is Fluent's own, and the shared background is ruled.
+      const colorOnly = await host('colors-dark', value => value.colorNeutralBackground1 === '#2d2b55');
+      assert.deepEqual(changed(colorOnly, 'dark', type), [], 'a host that supplies only colors changes no type');
+      assert.deepEqual(owned.map(name => colorOnly[name]), ['', '', 'solid']);
+
+      // No background: each neutral surface and its states keep their own Fluent values, unruled; the rest still follows.
+      const unpainted = await host('no-background-dark', value => value.colorNeutralBackground1 === fluent.dark.colorNeutralBackground1
+        && value.colorNeutralForeground2 === '#bdb8d2');
+      assert.deepEqual(changed(unpainted, 'dark', neutral), [], 'a missing background keeps every neutral surface Fluent\'s own');
+      assert.notEqual(unpainted.colorNeutralBackground2, unpainted.colorNeutralBackground1, 'the rail keeps its own Fluent surface');
+      assert.equal(unpainted['dude-separator-style'], '');
+      unruled('no-background-dark', unpainted.rules);
+
+      // No muted text: each muted token keeps its own Fluent value where it reads, and none collapses onto another.
+      const unmuted = await host('no-muted-light', value => value.colorNeutralBackground1 === '#fbfaff');
+      assert.deepEqual([unmuted.colorNeutralForeground2, unmuted.colorNeutralForeground3],
+        [fluent.light.colorNeutralForeground2, fluent.light.colorNeutralForeground3], 'muted text keeps Fluent\'s own steps');
+      assert.notEqual(unmuted.colorNeutralForeground4, unmuted.colorNeutralForeground2, 'Foreground4 never becomes Foreground2');
+      const unmutedContrast = await t085TokenContrast(page);
+      for (const [name, value] of Object.entries(unmutedContrast.text)) assert.ok(value >= 4.5, `no-muted-light ${name} ${value}`);
+
+      // Values that are not colors are unusable: their tokens stay Fluent's own, and the usable values still follow.
+      const unusable = await host('unusable-light', value => value.colorBrandForeground1 === '#4a2fa1');
+      assert.deepEqual(changed(unusable, 'light', [...neutral, 'colorNeutralForeground1']), [],
+        'an unusable background and text keep their Fluent tokens');
+      unruled('unusable-light', unusable.rules);
+
+      // Removing supplied values restores Fluent's own: first the colors, then the type.
+      await host('app-dark', value => value.colorNeutralBackground1 === '#2d2b55');
+      const typeLeft = await host('type-dark', value => value.colorNeutralBackground1 === fluent.dark.colorNeutralBackground1);
+      assert.deepEqual(changed(typeLeft, 'dark', colors), [], 'removing the colors restores every Fluent color');
+      const nothingLeft = await host('tone-dark', value => value.fontFamilyBase === fluent.dark.fontFamilyBase);
+      assert.deepEqual(changed(nothingLeft, 'dark', [...colors, ...type]), [], 'removing the type restores every Fluent token');
+      assert.deepEqual(owned.map(name => nothingLeft[name]), ['', '', '']);
+      assert.equal((await appearanceSurface(page)).note,
+        "The GitHub app's theme isn't available here, so Canvas uses Dude's own look. Your choice stays on.");
+      output.json('partial-result.json', { browser: canvas.driver.info.Browser, node: process.version, seen, unmutedContrast });
+    });
+  } finally {
+    storeAppThemeChoice(null);
+  }
+});
+
+/** The Settings header row and the switch, by the product's and the approved mock's own selectors. */
+const T085_GEOMETRY = {
+  product: { command: 'body header', main: 'main', header: '[data-settings] > header', title: '[data-settings] h1',
+    tabs: '[data-settings-section]', icon: '.fui-Tab__icon', text: '.fui-Tab__content', track: '.fui-Switch__indicator',
+    label: '.fui-Switch__label', input: '.fui-Switch__input', panel: '[data-appearance-panel]',
+    rail: '[data-navigation-pane]', titlebar: 'body header > div' },
+  mock: { command: '.command-bar', main: '.product', header: '.settings-header', title: '#settings-title',
+    tabs: '.section-tab', icon: '.tab-icon', text: '.tab-text', track: '.switch-indicator',
+    label: '.switch-label', input: '.switch-input', panel: '#section-appearance', rail: '.rail', titlebar: '.titlebar' },
+};
+
+/** @param {Cdp} page @param {Record<string, string>} selectors */
+function t085Geometry(page, selectors) {
+  return evaluate(page, `(() => {
+    const s = ${JSON.stringify(selectors)};
+    const round = value => Math.round(value * 100) / 100;
+    const box = node => { if (!node || !node.getClientRects().length) return null; const r = node.getBoundingClientRect();
+      return { x: round(r.x), y: round(r.y), width: round(r.width), height: round(r.height), right: round(r.right), bottom: round(r.bottom) }; };
+    const one = key => box(document.querySelector(s[key]));
+    const panel = document.querySelector(s.panel);
+    const tabs = [...document.querySelectorAll(s.tabs)].map(tab => {
+      const r = tab.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      const text = tab.querySelector(s.text), range = document.createRange();
+      range.selectNodeContents(text);
+      const lines = [...range.getClientRects()].filter(rect => rect.width > 0), words = range.getBoundingClientRect();
+      return { box: box(tab), hit: Boolean(hit) && (hit === tab || tab.contains(hit)), icon: Boolean(box(tab.querySelector(s.icon))),
+        whole: lines.length === 1 && words.left >= r.left - 0.5 && words.right <= r.right + 0.5, label: text.textContent };
+    });
+    return {
+      viewport: { width: innerWidth, documentWidth: document.documentElement.scrollWidth, dpr: devicePixelRatio },
+      command: one('command'), main: one('main'), header: one('header'), title: one('title'), tabs,
+      track: one('track'), label: one('label'), input: one('input'),
+      rules: Object.fromEntries([['rail', s.rail], ['title', s.titlebar]].map(([name, selector]) => {
+        const node = document.querySelector(selector), style = node && getComputedStyle(node);
+        return [name, node?.getClientRects().length ? { right: round(node.getBoundingClientRect().right),
+          width: style.borderInlineEndWidth, style: style.borderInlineEndStyle } : null];
+      })),
+      labelSize: document.querySelector(s.label) ? getComputedStyle(document.querySelector(s.label)).fontSize : null,
+      panelScroll: panel ? { width: panel.scrollWidth, client: panel.clientWidth } : null,
+      wide: panel ? [...panel.querySelectorAll('*')].filter(node => node.getClientRects().length
+        && node.getBoundingClientRect().right > panel.getBoundingClientRect().left + panel.clientLeft + panel.clientWidth + 0.5)
+        .map(node => node.tagName + '.' + (node.className.baseVal ?? node.className) + ' ' + Math.round(node.getBoundingClientRect().left) + '-' + Math.round(node.getBoundingClientRect().right)) : [],
+      panelBox: panel ? [panel.getBoundingClientRect().left, panel.clientLeft, panel.clientWidth, panel.offsetWidth] : null,
+    };
+  })()`);
+}
+
+/** Product-minus-approved-085 differences in CSS px, with tops from the command bar's top. @param {any} product @param {any} mock */
+function t085GeometryDelta(product, mock) {
+  const top = { product: product.command.y, mock: mock.command.y };
+  const delta = {};
+  const put = (name, left, right) => { delta[name] = Math.round((left - right) * 100) / 100; };
+  put('header.height', product.header.height, mock.header.height);
+  put('header.top', product.header.y - top.product, mock.header.y - top.mock);
+  for (const key of ['x', 'width']) put(`title.${key}`, product.title[key], mock.title[key]);
+  put('title.top', product.title.y - top.product, mock.title.y - top.mock);
+  product.tabs.forEach((tab, index) => {
+    for (const key of ['x', 'width', 'height']) put(`tab${index}.${key}`, tab.box[key], mock.tabs[index].box[key]);
+    put(`tab${index}.top`, tab.box.y - top.product, mock.tabs[index].box.y - top.mock);
+  });
+  for (const key of ['x', 'width', 'height']) put(`track.${key}`, product.track[key], mock.track[key]);
+  put('track.top', product.track.y - top.product, mock.track.y - top.mock);
+  put('label.x', product.label.x, mock.label.x);
+  put('label.top', product.label.y - top.product, mock.label.y - top.mock);
+  return delta;
+}
+
+test('085 App theme: the three-section header and the switch fit every size and 200% with the 479px and 300px rules, as approved', {
+  timeout: 600_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  assert.equal(approvedLfDesignSha256(fs.readFileSync(path.join(ROOT, APP_THEME_APPROVED))), APP_THEME_APPROVED_SHA256,
+    'the comparison uses the exact approved 085 mock');
+  storeAppThemeChoice(null);
+  try {
+    await runAboutCase(context, '085-app-theme-geometry', {}, async canvas => {
+      const { page, output } = canvas;
+      const product = [];
+      await navigate(page, null, 1440, 'light', canvas.origin);
+      await t085OpenAppearance(page);
+      for (const [mode, host, theme] of [['off', 'none', 'light'], ['on', 'app-dark', 'dark']]) {
+        if (mode === 'on') {
+          await setAppThemeHost(page, host);
+          await focus(page, '[data-follow-app-theme]');
+          await t085Space(page);
+          await t085Surface(page, 'following is on', surface => surface.checked && !surface.pending);
+        }
+        for (const size of ABOUT_VISUAL_SIZES) {
+          await aboutViewport(page, size, theme, mode === 'off');
+          const geometry = await t085Geometry(page, T085_GEOMETRY.product);
+          const content = geometry.main.width;
+          const label = `${mode} ${size.name}`;
+          assert.equal(geometry.viewport.documentWidth, size.width, `no sideways page scroll at ${label}`);
+          assert.ok(geometry.panelScroll.width <= geometry.panelScroll.client,
+            `the panel never scrolls sideways at ${label}: ${JSON.stringify({ scroll: geometry.panelScroll, wide: geometry.wide, box: geometry.panelBox })}`);
+          assert.deepEqual(geometry.tabs.map(tab => tab.label), ['Packs', 'Appearance', 'About']);
+          for (const tab of geometry.tabs) {
+            assert.ok(tab.hit && tab.whole && tab.box.width >= 24 && tab.box.height >= 24 && tab.box.right <= size.width + 0.5,
+              `${label}: ${JSON.stringify(tab)}`);
+            assert.equal(tab.icon, content > 479, `${label}: tab icons show only above 479px of content (${content})`);
+          }
+          assert.equal(geometry.label.bottom <= geometry.track.y + 0.5, content <= 300,
+            `${label}: the label sits above its track only at 300px or less (${content})`);
+          assert.ok(geometry.input.width >= 24 && geometry.input.height >= 24, `${label}: the switch hit area ${JSON.stringify(geometry.input)}`);
+          assert.equal(geometry.labelSize, '14px', `${label}: the label never shrinks`);
+          product.push({ mode, theme, host, size, geometry, image: await aboutScreenshot(page, output, `${mode}-appearance-${size.name}-${theme}`) });
+        }
+      }
+      // The exact 479px and 300px content transitions, beside the 48px rail.
+      await aboutViewport(page, { width: 600, height: 900, scale: 1 }, 'dark', false);
+      const rail = 600 - (await t085Geometry(page, T085_GEOMETRY.product)).main.width;
+      const transitions = [];
+      for (const [content, icons, above] of [[480, true, false], [479, false, false], [301, false, false], [300, false, true]]) {
+        await aboutViewport(page, { width: content + rail, height: 900, scale: 1 }, 'dark', false);
+        const geometry = await t085Geometry(page, T085_GEOMETRY.product);
+        assert.equal(geometry.main.width, content, `content width at ${content + rail}px`);
+        const entry = { width: content + rail, content, icons: geometry.tabs.map(tab => tab.icon),
+          above: geometry.label.bottom <= geometry.track.y + 0.5, whole: geometry.tabs.every(tab => tab.whole && tab.hit),
+          rows: new Set(geometry.tabs.map(tab => tab.box.y)).size, documentWidth: geometry.viewport.documentWidth };
+        transitions.push(entry);
+        assert.deepEqual(entry.icons, [icons, icons, icons], `icons at ${content}px of content`);
+        assert.equal(entry.above, above, `label position at ${content}px of content`);
+        assert.ok(entry.whole && entry.documentWidth === entry.width, JSON.stringify(entry));
+      }
+      // The approved mock at the same sizes and states.
+      const approvedUrl = pathToFileURL(path.join(ROOT, APP_THEME_APPROVED)).href;
+      const comparisons = [];
+      for (const entry of product) {
+        await aboutViewport(page, entry.size, entry.theme, false);
+        await page.send('Page.navigate', { url: `${approvedUrl}?theme=${entry.theme}&section=appearance&appearance=${entry.mode}&host=${entry.host}` });
+        await until(() => evaluate(page, `Boolean(document.querySelector('#follow-app-theme'))
+          && !document.querySelector('#section-appearance').hidden
+          && document.querySelector('#follow-app-theme').checked === ${entry.mode === 'on'}`), 'approved 085 mock on Appearance');
+        await settleAboutAnimations(page);
+        const mock = await t085Geometry(page, T085_GEOMETRY.mock);
+        comparisons.push({ mode: entry.mode, theme: entry.theme, size: entry.size.name, delta: t085GeometryDelta(entry.geometry, mock),
+          rules: { product: entry.geometry.rules, mock: mock.rules },
+          productImage: entry.image, mockImage: await aboutScreenshot(page, output, `approved-${entry.mode}-appearance-${entry.size.name}-${entry.theme}`) });
+      }
+      const tolerance = 1;
+      const offenders = comparisons.flatMap(entry => Object.entries(entry.delta).filter(([, value]) => Math.abs(value) > tolerance)
+        .map(([name, value]) => ({ mode: entry.mode, size: entry.size, name, value })));
+      output.json('geometry-result.json', { browser: canvas.driver.info.Browser, node: process.version,
+        reflow: 'Effective-viewport reflow: 200% halves the CSS viewport at device scale 2. Not native browser zoom.',
+        product, rail, transitions, comparisons, offenders, tolerance });
+      assert.deepEqual(offenders, [], 'the header row and the switch follow the approved 085 mock');
+      // The faint rules after the rail and after the title: as approved while following, where the rail shares
+      // the page's background. Off keeps the product's look from before 085, which never painted them (the
+      // mock's off states draw them; that difference is inherited and outside the approved header).
+      for (const entry of comparisons) for (const name of ['rail', 'title']) {
+        const [own, approved] = [entry.rules.product[name], entry.rules.mock[name]];
+        const label = `${entry.mode} ${entry.size} ${name} rule: ${JSON.stringify(entry.rules)}`;
+        assert.equal(Boolean(own), Boolean(approved), label);
+        if (!own) continue;
+        if (entry.mode === 'off') { assert.equal(own.style, 'none', label); continue; }
+        assert.deepEqual([own.width, own.style], [approved.width, approved.style], label);
+        assert.ok(Math.abs(own.right - approved.right) <= tolerance, label);
+      }
+    });
+  } finally {
+    storeAppThemeChoice(null);
+  }
+});
+
+test('085 App theme: a choice saved in another project is adopted on focus and on Appearance entry, with no polling', {
+  timeout: 240_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  storeAppThemeChoice(false);
+  const { openInstance, closeInstance } = await import('../../src/extensions/dude/lib/canvas-server.mjs');
+  const otherRoot = fs.mkdtempSync(path.join(PREFERENCE_ROOT, 'other-project-'));
+  const otherId = `085-other-project-${randomUUID()}`;
+  try {
+    await runAboutCase(context, '085-app-theme-adoption', {}, async canvas => {
+      const { page, output } = canvas;
+      const route = t085Route(canvas);
+      const other = await openInstance(otherId, () => {}, null, { root: otherRoot });
+      const otherOrigin = new URL(other.url).origin;
+      assert.notEqual(otherOrigin, canvas.origin, 'the other project serves its own origin');
+      // The other project's switch: the save its Canvas sends, from its own origin.
+      const saveElsewhere = async followAppTheme => {
+        const response = await fetch(new URL('/api/canvas-preferences', other.url), { method: 'POST',
+          headers: { origin: otherOrigin, 'content-type': 'application/json' }, body: JSON.stringify({ followAppTheme }) });
+        assert.deepEqual([response.status, await response.json()], [200, { followAppTheme }]);
+      };
+      await page.send('Page.addScriptToEvaluateOnNewDocument', { source: appThemeHostScript('app-light') });
+      await navigate(page, null, 1440, 'light', canvas.origin);
+      await t085OpenAppearance(page);
+      assert.equal((await appearanceSurface(page)).checked, false);
+
+      await saveElsewhere(true);
+      const reads = route.reads().length;
+      await new Promise(resolve => setTimeout(resolve, 3_000));
+      assert.equal(route.reads().length, reads, 'no polling: nothing reads the choice on its own');
+      assert.equal((await appearanceSurface(page)).checked, false, 'a visible Canvas keeps its choice until it reads again');
+      // Entering Appearance reads it again.
+      await chooseSettingsSection(page, 'about');
+      await clickSettingsControl(page, `document.querySelector('[data-settings-section="appearance"]')`);
+      const adopted = await t085Surface(page, 'the other project\'s choice, adopted on entry', surface => surface.checked);
+      assert.equal(adopted.status, 'Follow GitHub app theme is on.');
+      assert.equal(await t085Background(page), '#fbfaff');
+      await settleAboutAnimations(page);
+      await aboutScreenshot(page, output, 'adopted-on-entry-1440x900-light');
+      // Visible focus reads it again, wherever Canvas is.
+      await clickSettingsControl(page, `document.querySelector('#dude-tab-overview')`);
+      await saveElsewhere(false);
+      await t085Refocus(page);
+      await until(async () => (await t085Background(page)) === '#ffffff', 'the other project\'s off, adopted on focus');
+      assert.equal(route.saves().length, 0, 'adopting a choice never saves it');
+      await settleAboutAnimations(page);
+      await aboutScreenshot(page, output, 'adopted-on-focus-1440x900-light');
+      output.json('adoption-result.json', { browser: canvas.driver.info.Browser, node: process.version, reads: route.reads().length });
+    });
+  } finally {
+    await closeInstance(otherId);
+    fs.rmSync(otherRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    storeAppThemeChoice(null);
+  }
 });
 }
