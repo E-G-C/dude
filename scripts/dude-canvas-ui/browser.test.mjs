@@ -21701,10 +21701,34 @@ async function t085RenderedFonts(page, expression) {
   }
 }
 
-/** A rendered face is the first installed family of a declared stack. @param {string[]} rendered @param {string} stack */
-function t085FromStack(rendered, stack) {
-  const declared = stack.split(',').map(name => name.trim().replace(/^"|"$/g, ''));
-  return rendered.length > 0 && rendered.every(face => declared.some(name => face === name || face.startsWith(`${name} `)));
+/**
+ * The faces rendered for one node beside the faces rendered, in the same
+ * document, for a probe with the node's own text, weight, style, width, and
+ * size in the expected declared stack. The node renders from that stack when
+ * the two sets are equal. The platform's own resolution of the stack is the
+ * reference, not the names in it: a platform may supply a face the stack never
+ * names, as fontconfig supplies Liberation Sans for the sans stacks on Linux.
+ * @param {Cdp} page @param {string} expression @param {string} stack
+ */
+async function t085FacesFromStack(page, expression, stack) {
+  const rendered = await t085RenderedFonts(page, expression);
+  try {
+    await evaluate(page, `(() => {
+      const node = ${expression}, style = getComputedStyle(node), probe = document.createElement('span');
+      probe.setAttribute('data-t085-probe', '');
+      probe.textContent = node.textContent;
+      probe.style.cssText = 'position: fixed; left: 0; top: 0; pointer-events: none';
+      for (const name of ['font-weight', 'font-style', 'font-stretch', 'font-size']) probe.style.setProperty(name, style.getPropertyValue(name));
+      probe.style.setProperty('font-family', ${JSON.stringify(stack)});
+      document.body.append(probe);
+      probe.getBoundingClientRect();
+    })()`);
+    const expected = await t085RenderedFonts(page, `document.querySelector('[data-t085-probe]')`);
+    const faces = new Set(rendered), yielded = new Set(expected);
+    return { rendered, expected, same: faces.size > 0 && faces.size === yielded.size && [...faces].every(face => yielded.has(face)) };
+  } finally {
+    await evaluate(page, `document.querySelector('[data-t085-probe]')?.remove()`);
+  }
 }
 
 /** The switch and the sections as the accessibility tree exposes them. @param {Cdp} page */
@@ -22138,8 +22162,8 @@ test('085 App theme: following paints the app\'s tone, colors, and type from the
         return { inline: getComputedStyle(node).fontSize, around: getComputedStyle(node.parentElement).fontSize,
           family: getComputedStyle(node).fontFamily }; })()`);
       assert.deepEqual(code, { inline: `${Math.round(14 * 0.9285 * 1000) / 1000}px`, around: '14px', family: APP_THEME_TYPE['--font-mono'] });
-      const renderedCode = await t085RenderedFonts(page, inline);
-      assert.ok(t085FromStack(renderedCode, APP_THEME_TYPE['--font-mono']), `inline code renders from the app's stack: ${renderedCode}`);
+      const renderedCode = await t085FacesFromStack(page, inline, APP_THEME_TYPE['--font-mono']);
+      assert.ok(renderedCode.same, `inline code renders the faces the app's mono stack yields: ${JSON.stringify(renderedCode)}`);
       await chooseSettingsSection(page, 'appearance');
       const look = await t085Look(page);
       assert.deepEqual({ title: look.title, label: look.label, body: look.body.size, tokens: look.tokens }, {
@@ -22151,10 +22175,12 @@ test('085 App theme: following paints the app\'s tone, colors, and type from the
           lineHeightBase200: '16px', lineHeightBase300: '20px', lineHeightBase500: '28px',
           'dude-font-display': APP_THEME_TYPE['--font-sans-display'], 'dude-code-inline': '.9285em' },
       }, 'page titles take the display face at Dude\'s 20px; body type and line lengths follow the app');
-      const rendered = { title: await t085RenderedFonts(page, `document.querySelector('[data-settings] h1')`),
-        label: await t085RenderedFonts(page, `document.querySelector('.fui-Switch__label')`), code: renderedCode };
-      assert.ok(t085FromStack(rendered.title, APP_THEME_TYPE['--font-sans-display'])
-        && t085FromStack(rendered.label, APP_THEME_TYPE['--font-sans']), JSON.stringify(rendered));
+      const rendered = {
+        title: await t085FacesFromStack(page, `document.querySelector('[data-settings] h1')`, APP_THEME_TYPE['--font-sans-display']),
+        label: await t085FacesFromStack(page, `document.querySelector('.fui-Switch__label')`, APP_THEME_TYPE['--font-sans']),
+        code: renderedCode };
+      assert.ok(rendered.title.same && rendered.label.same,
+        `the title and the label render the faces the app's stacks yield: ${JSON.stringify(rendered)}`);
       const appearanceText = await t085TextSweep(page);
       assert.deepEqual(appearanceText.failures, [], `Appearance text (${appearanceText.count} runs, lowest ${appearanceText.min})`);
       await shot('on-appearance-1440x900-dark');
