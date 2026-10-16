@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-dude-follow-app-theme="false">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -26,6 +26,70 @@
           background: #141414;
         }
       }
+      /*
+       * Following the GitHub app: its documented page values from the first
+       * paint, else Fluent's for the tone the application resolves: a light or
+       * dark data-theme-tone on html, then on body, then the same for
+       * data-color-mode, and only then the device preference. Each later rule
+       * here wins, so the order below runs from the weakest source up. html
+       * always paints that tone's Fluent page, and body, filling the viewport,
+       * paints the app's background over it, so a value that is not a color
+       * leaves only body transparent.
+       */
+      :root[data-dude-follow-app-theme="true"] {
+        --dude-page-fallback: #f5f5f5;
+        --dude-text-fallback: #242424;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root[data-dude-follow-app-theme="true"] {
+          --dude-page-fallback: #141414;
+          --dude-text-fallback: #ffffff;
+        }
+      }
+      :root[data-dude-follow-app-theme="true"]:where(:has(> body[data-color-mode="light"])) {
+        --dude-page-fallback: #f5f5f5;
+        --dude-text-fallback: #242424;
+      }
+      :root[data-dude-follow-app-theme="true"]:where(:has(> body[data-color-mode="dark"])) {
+        --dude-page-fallback: #141414;
+        --dude-text-fallback: #ffffff;
+      }
+      :root[data-dude-follow-app-theme="true"]:where([data-color-mode="light"]) {
+        --dude-page-fallback: #f5f5f5;
+        --dude-text-fallback: #242424;
+      }
+      :root[data-dude-follow-app-theme="true"]:where([data-color-mode="dark"]) {
+        --dude-page-fallback: #141414;
+        --dude-text-fallback: #ffffff;
+      }
+      :root[data-dude-follow-app-theme="true"]:where(:has(> body[data-theme-tone="light"])) {
+        --dude-page-fallback: #f5f5f5;
+        --dude-text-fallback: #242424;
+      }
+      :root[data-dude-follow-app-theme="true"]:where(:has(> body[data-theme-tone="dark"])) {
+        --dude-page-fallback: #141414;
+        --dude-text-fallback: #ffffff;
+      }
+      :root[data-dude-follow-app-theme="true"]:where([data-theme-tone="light"]) {
+        --dude-page-fallback: #f5f5f5;
+        --dude-text-fallback: #242424;
+      }
+      :root[data-dude-follow-app-theme="true"]:where([data-theme-tone="dark"]) {
+        --dude-page-fallback: #141414;
+        --dude-text-fallback: #ffffff;
+      }
+      :root[data-dude-follow-app-theme="true"],
+      :root[data-dude-follow-app-theme="true"] body {
+        color: var(--text-color-default, var(--dude-text-fallback));
+        font-family: var(--font-sans, "Segoe UI", "Segoe UI Web (West European)", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", sans-serif);
+      }
+      :root[data-dude-follow-app-theme="true"] {
+        background: var(--dude-page-fallback);
+      }
+      :root[data-dude-follow-app-theme="true"] body {
+        min-height: 100dvh;
+        background: var(--background-color-default, var(--dude-page-fallback));
+      }
       @media (prefers-reduced-motion: reduce) {
         *,
         *::before,
@@ -37,6 +101,7 @@
         }
       }
     </style>
+    <script type="application/json" id="dude-canvas-bootstrap">{"followAppTheme":false,"preferenceError":null}</script>
     <script type="module" src="/assets/app.js"></script>
   </head>
   <body>

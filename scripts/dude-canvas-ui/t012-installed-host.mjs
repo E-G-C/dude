@@ -158,6 +158,15 @@ fs.mkdirSync(ARTIFACTS, { recursive: true });
 // Windows realpath can return a \\?\ path. Use the equivalent file-URL path
 // spelling so shipped CLI main-entry guards see the same path as import.meta.
 const RUN = fileURLToPath(pathToFileURL(fs.realpathSync(fs.mkdtempSync(path.join(ARTIFACTS, 'installed-host-')))));
+/*
+ * 085 App theme: an installed Canvas serves `/` with the one Canvas preference.
+ * Each installed host here reads it from its own folder in this owned,
+ * project-relative root, never the real user's. On Windows each host's HOME is
+ * isolated besides, so the unset-variable fallback is owned too. The driver
+ * removes the root when it exits.
+ */
+const PREFERENCE_HOME = fs.mkdtempSync(path.join(ROOT, '.dude-canvas-test-085-'));
+process.on('exit', () => fs.rmSync(PREFERENCE_HOME, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
 const DEADLINE = 30_000;
 const MAX_MODEL_BODY = 4 * 1024 * 1024;
 const REVIEW_SLUG = 'dude-canvas-workspace-integration';
@@ -249,13 +258,13 @@ const DEVELOPMENT_ABOUT = Object.freeze({
   baseRelease: 'v1.3.0',
   rows: installedAboutRows('Development (main), based on v1.3.0', 'Development (main)'),
 });
-const SOURCE_APP_SHA256 = '6d6db4c02ca519153a03774546a7b386281295c751804fce48b343ac77c7af89';
+const SOURCE_APP_SHA256 = '1d3271f702cfad403847c9870a7a21a28bb2652bd2bccb8b56a340ae1461569f';
 const TASKS_PATH = path.posix.join(path.posix.dirname(SPEC_PATH), 'tasks.md');
 const DONE_IDEA_PATH = '.dude/ideas/052-dude-canvas-ui.md';
 const DONE_SPEC_PATH = '.dude/specs/052-dude-canvas-ui/spec.md';
 const MIXED_IDEA_PATH = '.dude/ideas/061-installed-controlled-tasks.md';
 const MIXED_SPEC_PATH = '.dude/specs/061-installed-controlled-tasks/spec.md';
-const SOURCE_LEGAL_SHA256 = 'f5722a59f11d3b24a83b546313fde699789d759791fcb554ebf0dcdce083c8b2';
+const SOURCE_LEGAL_SHA256 = '364e4d11b6c97b1e9a1501b2f2981fe6085a91035951dbb84af216ddba122a11';
 /**
  * The Review gesture behavior lives in these static modules, not in the bundled
  * frontend, so the frontend hash alone cannot show which engine an installed
@@ -263,7 +272,7 @@ const SOURCE_LEGAL_SHA256 = 'f5722a59f11d3b24a83b546313fde699789d759791fcb554ebf
  * Canvas server actually serves.
  */
 const SOURCE_REVIEW_MODULES = Object.freeze({
-  'ui/review/engine.mjs': 'c2edc7410e59f78b3ce3a6936218e36975aac89eab7705eae2a29858ceaee766',
+  'ui/review/engine.mjs': '101bdfb724c0ce2254ab4028553abb8a4654d932192514330f9f340cc8db6b30',
   'ui/review/geometry.mjs': 'e3e000908c5ee2f033448215eec606cae2931b062d0f3d75d049844c4a8f4def',
   'ui/review/styles.css': '20e3430b0e0111584f2c4d06352f69182cdeb3eff522db1a088d858fc23871af',
 });
@@ -2489,13 +2498,8 @@ function createReviewModel(root, evidence) {
     );
     assert.equal(hasColorNear(decoded, 120, 30, [22, 58, 95], 2, 8), true,
       'the declared CSS sticky header is present in the installed source image');
-    const stroke = /^#[a-f0-9]{6}$/i.test(working.state.palette.stroke)
-      ? [
-        Number.parseInt(working.state.palette.stroke.slice(1, 3), 16),
-        Number.parseInt(working.state.palette.stroke.slice(3, 5), 16),
-        Number.parseInt(working.state.palette.stroke.slice(5, 7), 16),
-      ]
-      : null;
+    // 085 serializes Review palette colors as explicit sRGB rgb() or rgba().
+    const stroke = /^rgba?\((\d+), (\d+), (\d+)(?:, [\d.]+)?\)$/.exec(working.state.palette.stroke)?.slice(1, 4).map(Number) ?? null;
     assert.ok(stroke);
     const viewport = provenance.capture.viewport;
     const alignment = working.state.annotations.map((annotation) => {
@@ -4816,6 +4820,7 @@ async function createInstalledHost(options) {
     COPILOT_PROVIDER_TYPE: 'openai',
     COPILOT_MODEL: 'gpt-4.1',
     DUDE_CANVAS_BROWSER: BROWSER,
+    COPILOT_HOME: fs.mkdtempSync(path.join(PREFERENCE_HOME, 'copilot-home-')),
     ...(WINDOWS ? windowsHostEnvironment(options.data) : {}),
     ...(WINDOWS ? { COPILOT_CLI_DIST_DIR: CLI_DIST_DIR } : {}),
   };
@@ -5374,6 +5379,7 @@ function installedParity(root) {
     'extension.mjs',
     'lib/about.mjs',
     'lib/canvas-server.mjs',
+    'lib/canvas-preferences.mjs',
     'lib/projection.mjs',
     'lib/packs.mjs',
     'lib/pack-action.mjs',
@@ -5967,9 +5973,9 @@ async function driveInstalledImportRoundTrip(page, canvasUrl, fixture, ownerMode
       controls: [...settings.querySelectorAll('button, [role="tab"]')].map(text),
     };
   })()`);
-  assert.deepEqual(surface.sections, ['packs', 'about']);
+  assert.deepEqual(surface.sections, ['packs', 'appearance', 'about']);
   assert.deepEqual(surface.contexts, ['installed', 'available', 'import', 'sources']);
-  assert.deepEqual(surface.tabs, ['Packs', 'About', `Installed ${fixture.fillNames.length}`, 'Available ?', 'Add/import', 'Sources']);
+  assert.deepEqual(surface.tabs, ['Packs', 'Appearance', 'About', `Installed ${fixture.fillNames.length}`, 'Available ?', 'Add/import', 'Sources']);
   assert.equal(discoveries(), 0, 'entering Settings reads installed packs and project rows, never a catalog');
   let list = await packListView(page);
   assert.deepEqual(
@@ -6513,9 +6519,9 @@ async function driveInstalledSourceRoundTrip(page, canvasUrl, fixture, sources) 
       contexts: [...settings.querySelectorAll('[data-pack-context]')].map(node => node.getAttribute('data-pack-context')),
     };
   })()`);
-  assert.deepEqual(surface.sections, ['packs', 'about']);
+  assert.deepEqual(surface.sections, ['packs', 'appearance', 'about']);
   assert.deepEqual(surface.contexts, ['installed', 'available', 'import', 'sources'], 'Sources is the last of the four Packs views');
-  assert.deepEqual(surface.tabs, ['Packs', 'About', 'Installed 0', 'Available ?', 'Add/import', 'Sources'],
+  assert.deepEqual(surface.tabs, ['Packs', 'Appearance', 'About', 'Installed 0', 'Available ?', 'Add/import', 'Sources'],
     'before the first Reload Available is unknown');
   await click(page, `document.querySelector('[data-pack-context="sources"]')`);
   await settled('Sources lists the built-in sources', async () => (await sourcesView(page)).rows.length === 2);

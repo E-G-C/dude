@@ -1123,15 +1123,19 @@ That Windows path was not exercised in the documented Darwin acceptance.
 
 #### Settings: optional packs
 
-Settings is the cog at the bottom of the left navigation rail. It has two
-sections, Packs and About, chosen with the tabs beside the Settings heading.
-Packs manages the current workspace's optional packs and the sources they come
-from, and About identifies the installation (see
-[Settings: About](#settings-about)). Settings has no other sections. It opens on
-Packs each time you enter it. Switching to About and back keeps the Packs view,
-use case, source, page, selection, and open details. Entering or leaving
+Settings is the cog at the bottom of the left navigation rail. It has three
+sections, Packs, Appearance, and About, chosen with the tabs beside the
+Settings heading. Packs manages the current workspace's optional packs and the
+sources they come from, Appearance chooses whether Canvas follows the GitHub
+app theme (see [Settings: Appearance](#settings-appearance)), and About
+identifies the installation (see [Settings: About](#settings-about)). Settings
+has no other sections. It opens on Packs each time you enter it. Switching to
+Appearance or About and back keeps the Packs view, use case, source, page,
+selection, and open details. Entering or leaving
 Settings keeps the selected work, task inspection, unsent answers and idea text,
-and retained Review work. Canvas still opens in Overview.
+and retained Review work. Canvas still opens in Overview. When the Canvas area
+is 479 px wide or less, the section tabs show their labels without icons. At
+300 px or less they wrap into equal columns that keep each label whole.
 
 Packs has four views, chosen with the tabs under the section tabs: Installed,
 Available, Add/import, and Sources, in that order. Add/import is described in
@@ -1644,6 +1648,72 @@ ordinary link that opens a separate tab or window; opening it from the embedded
 desktop panel has not been verified. About offers no other action. While it is
 open, the command bar has no Reload packs or Refresh control, and the status
 bar shows `About · Read only`.
+
+#### Settings: Appearance
+
+Appearance has one switch, Follow GitHub app theme. It is off by default. Off
+keeps Dude's own look, the Fluent light or dark theme that matches the device.
+On, Canvas uses the GitHub app's colors, fonts, and text sizes; controls and
+layout stay the same. While Appearance is open, the command bar has no Reload
+packs or Refresh control, and the status bar shows
+`Appearance · This computer, all projects`.
+
+The choice belongs to you on this computer, not to a project. Canvas saves it
+in `$COPILOT_HOME/extensions/dude/artifacts/canvas-preferences.json`, or in the
+same path under `~/.copilot` when `COPILOT_HOME` is unset, as exactly
+`{"followAppTheme":true}` or `{"followAppTheme":false}`. No repository file
+changes. Canvas reads the saved choice when it serves its page, so it opens in
+the chosen look from the first frame. Another open Canvas, in this project or
+another, reads the choice again when its window regains focus or when you open
+its Appearance section. Canvas neither polls for the choice nor pushes it to
+other windows.
+
+The switch saves the new choice first and changes the look only after the save
+succeeds. While a save is in progress, `Saving...` shows below the switch, which
+keeps keyboard focus and ignores another press. A successful save shows no
+"Saved" text; screen readers hear the new state. If the save fails, the switch
+and the look keep the last confirmed choice, and an error says the choice was
+not saved. If the answer to a save is lost, Canvas shows
+`Checking whether it was saved...` and reads the saved choice once to find out;
+it never sends the save again. If the saved choice cannot be read, Canvas keeps
+the last choice it confirmed, or Dude's own look when it opens without one, and
+shows a warning with Retry. Retry only reads the choice again. A malformed file
+counts as a failed read: Canvas neither treats it as off nor repairs it.
+
+While following, Canvas takes the app's light or dark tone from the document's
+`data-theme-tone`, then `data-color-mode`, then the device preference, and its
+first frame already uses that tone. It reads only these documented variables:
+`--background-color-default`, `--border-color-default`, `--text-color-default`,
+`--text-color-muted`, `--color-focus-outline`, `--color-white`, `--font-sans`,
+`--font-sans-display`, `--font-mono`, `--font-weight-semibold`,
+`--text-body-medium`, `--leading-body-medium`, and `--text-code-inline`. When
+the app changes its theme, Canvas follows right away. It does not reload, read
+or save the choice, or lose the selected work, unsent text, or Review work.
+Where the app supplies none of these values, such as outside the app, the
+switch stays on and Canvas uses Dude's own look, with a note saying the GitHub
+app's theme isn't available. A value the app leaves out, or one Canvas can't
+use, keeps Dude's own look for just what that value sets: a theme with only
+fonts and sizes changes no color, and one with only colors changes no type.
+
+Following keeps WCAG 2.2 AA contrast. Where an app color would leave text below
+4.5:1, or a control border or focus indicator below 3:1, against the surfaces
+it appears on, Canvas uses the nearest color that passes, computed from the
+app's own colors. Control borders use the app's muted text color. The app's
+border color draws only faint dividing rules. Warning and error colors stay
+Fluent's and are strengthened where needed. Windows contrast themes (forced
+colors) replace all of these colors, as they do when following is off.
+
+Text sizes follow the app's body size, and Fluent's ratios set the other sizes.
+Page titles use the app's display font at Dude's usual title size, and code
+inside a sentence takes the app's inline code size. Canvas downloads no font:
+when a named font isn't installed, the browser uses the next one in the app's
+list.
+
+Review receives the app's light or dark tone whether or not following is on,
+and Canvas applies none of its colors or fonts to the reviewed page. Markup
+saved under one appearance and reopened under one with different colors is
+kept, but it becomes stale, as it does after a theme or viewport change, and
+can't be sent.
 
 #### Reloading the development canvas
 
@@ -2352,6 +2422,23 @@ selected-Dude owner, exact permission, the importer, result acknowledgment, and
 authoritative provider reread. It also reads a core-only install's default
 catalog from public GitHub. The recorded Windows runs below predate the pack
 action dialog, and macOS behavior of the current driver is unverified.
+
+Appearance coverage is in the `085 App theme:` cases of
+`canvas-server.test.mjs`, `review.test.mjs`, `browser.test.mjs`, and
+`t011-browser.test.mjs`. They cover the saved choice and the page that carries
+it, Settings > Appearance with its failures, following and its contrast and
+type, and Review under both appearances. They supply the app's theme the way
+the approved 085 mock does: documented variables inline on `html`, with
+`data-theme-source` and `data-theme-tone`. The dark and light fixtures are the
+observed app theme; the low-contrast and larger-text fixtures are constructed
+and named as such. Serving `/` reads the saved choice, so every suite that
+serves Canvas, and the installed-host driver, sets `COPILOT_HOME` to its own
+`.dude-canvas-test-085-*` folder at the repository root and removes it at the
+end. No run reads or writes your own choice. On Windows, the installed-host
+driver also gives each host its own `HOME`, so the fallback without
+`COPILOT_HOME` stays owned too. None of these runs shows the desktop app's own
+injection timing, a same-tone change delivered by the app, or fonts installed
+only with the app.
 
 ##### Installed Copilot host
 

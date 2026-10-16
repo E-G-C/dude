@@ -10,7 +10,7 @@ import {
   CommentRegular, DismissRegular, GridRegular, NavigationRegular, RecordRegular, SearchRegular, SettingsRegular, WarningRegular,
 } from '@fluentui/react-icons';
 import { mergeClasses, useCanvasStyles } from './styles.js';
-import { darkTheme, lightTheme, useHostAppearance } from './theme.js';
+import { useCanvasTheme } from './theme.js';
 import { currentRequests, matchesRequestScope, NeedsYou, NewIdea, Notice, previewEligibility } from './needs-you.jsx';
 import { loadReviewEngine, ReviewHistory, ReviewWorkspace } from './review.jsx';
 import { importPermission, requestKey, useCanvasData } from './use-canvas-data.js';
@@ -652,7 +652,9 @@ function ActivityRail({ tab, onNavigate, onExpand }) {
 }
 
 function App() {
-  const s = useCanvasStyles(), theme = useHostAppearance();
+  // The confirmed appearance choice and the host's tone live outside Settings'
+  // workspace-keyed lifetime; Review receives only the truthful host tone.
+  const s = useCanvasStyles(), { theme, hostTone } = useCanvasTheme();
   const [tab, setTab] = useState('overview'), [selection, setSelection] = useState(null);
   const [selectedRequest, setSelectedRequest] = useState(null), [finder, setFinder] = useState(DEFAULT_FINDER);
   const [idea, setIdea] = useState(''), [drafts, setDrafts] = useState({});
@@ -673,6 +675,7 @@ function App() {
   const [packsSub, setPacksSub] = useState('installed');
   const settingsActive = tab === 'settings' && !reviewActive && !history;
   const aboutActive = settingsActive && settingsSection === 'about';
+  const appearanceActive = settingsActive && settingsSection === 'appearance';
   const importActive = settingsActive && settingsSection === 'packs' && packsSub === 'import';
   const data = useCanvasData(selection, { packsActive: settingsActive || Boolean(settingsReturn) });
   const root = useRef(null), scroll = useRef(0), main = useRef(null), focusNext = useRef(null), opening = useRef(null);
@@ -970,7 +973,9 @@ function App() {
   // The Catalog word is honest about a read that was partial or never made.
   const catalogWord = catalogCoverageText(data.packs);
   // Add/import reads no pack, so its footer makes no installed or catalog claim.
-  const settingsStatus = aboutActive ? 'About · Read only' : importActive
+  // Appearance is one choice for this user on this computer, never a pack or project fact.
+  const settingsStatus = aboutActive ? 'About · Read only' : appearanceActive ? 'Appearance · This computer, all projects'
+    : importActive
     ? `Add/import · ${unavailable || !data.needs ? 'Current request coverage unavailable'
       : data.connected ? 'Connected' : 'Reconnecting; no automatic resend'}`
     : data.packsLoading ? 'Reading packs…'
@@ -986,7 +991,7 @@ function App() {
     }} resultsId={overviewActive || popupOpen ? resultsId : undefined} />;
   // Fluent forwards provider classes to portals. Keep viewport layout on the
   // child so dropdowns/drawers do not inherit a page-sized background or height.
-  return <FluentProvider theme={theme === 'dark' ? darkTheme : lightTheme}>
+  return <FluentProvider theme={theme}>
     <AriaLiveAnnouncer><div className={mergeClasses(s.page, s.app)}>
       <header className={s.commands}>
         <div className={s.titlebar}><Text weight="semibold">Dude</Text>
@@ -1000,7 +1005,7 @@ function App() {
               resultsRef={results} resultsId={resultsId} />
           </div>}
         </div>
-        {!aboutActive && !importActive && <Toolbar className={s.refresh} aria-label="Workspace actions"><ToolbarButton className={s.refreshButton} icon={<ArrowClockwiseRegular />}
+        {!aboutActive && !appearanceActive && !importActive && <Toolbar className={s.refresh} aria-label="Workspace actions"><ToolbarButton className={s.refreshButton} icon={<ArrowClockwiseRegular />}
           aria-label={settingsActive ? 'Reload packs' : 'Refresh'} title={settingsActive ? 'Reload pack information' : 'Refresh'}
           aria-busy={settingsActive ? data.packsLoading : data.loading || data.selecting}
           onClick={settingsActive ? data.reloadPacks : data.refresh}>
@@ -1049,7 +1054,7 @@ function App() {
         </div>)}
         {review && <ReviewWorkspace key={review.review.submissionId} entry={review} active={reviewActive && !history}
           scopeTitle={scopeTitle(review.record.request.scope, rows)} browsingLabel={browsingLabel}
-          theme={theme} data={data} onReturn={returnReview} onReviewed={onReviewed} onHistory={openHistory}
+          theme={hostTone} data={data} onReturn={returnReview} onReviewed={onReviewed} onHistory={openHistory}
           onRestore={record => openReview(record, true)} />}
         {history && <ReviewHistory record={history.record} scopeTitle={scopeTitle(history.record.scope, rows)}
           browsingLabel={browsingLabel} onReturn={returnHistory} />}

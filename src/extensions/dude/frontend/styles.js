@@ -1,10 +1,40 @@
-import { buttonClassNames, makeStyles, messageBarBodyClassNames, messageBarClassNames, tabClassNames, tokens } from '@fluentui/react-components';
+import { buttonClassNames, makeStyles, messageBarBodyClassNames, messageBarClassNames, switchClassNames, tabClassNames, tokens } from '@fluentui/react-components';
 export { mergeClasses } from '@fluentui/react-components';
 
 // The shortest vertical palette that still works: one complete 36px tool slot
 // with room for its focus ring, beside the fixed 24px grip, the 36px
 // orientation switch, their two gaps, the palette padding, and its borders.
 const TOOLS_COLUMN_FLOOR = `calc(40px + 24px + 36px + 4 * ${tokens.spacingHorizontalXXS} + 2 * ${tokens.strokeWidthThin})`;
+
+// Page titles take the GitHub app's display face while Canvas follows it
+// (085), at Dude's own title sizes; otherwise the --dude-* role is unset and
+// they keep the body face. Inline code takes the app's relative code size.
+const DISPLAY_FONT = `var(--dude-font-display, ${tokens.fontFamilyBase})`;
+const INLINE_CODE_SIZE = `var(--dude-code-inline, ${tokens.fontSizeBase200})`;
+// The faint rule after the rail and after the command bar's title. While Canvas
+// follows the app, the rail shares the page's background, so the followed theme
+// sets --dude-separator-style and the rule is painted; otherwise it stays unset
+// and nothing is. Griffel emits the border-inline-end longhands but drops the
+// shorthand.
+const SEPARATOR_STYLE = 'var(--dude-separator-style, none)';
+
+// A message bar in a narrow Settings panel: at 300px or less its icon sits
+// above its title so the words keep their width.
+const NARROW_BAR = {
+  '@container (max-width: 300px)': {
+    gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateAreas: '"icon" "body" "secondaryActions"',
+    paddingLeft: tokens.spacingHorizontalS,
+    [`& .${messageBarClassNames.icon}`]: { marginRight: 0, marginBottom: tokens.spacingVerticalXS },
+  },
+};
+// Its actions start at the line's start, and at 300px or less take the full row.
+const NARROW_BAR_ACTIONS = {
+  '@container (max-width: 479px)': { justifyContent: 'flex-start' },
+  '@container (max-width: 300px)': {
+    paddingRight: tokens.spacingHorizontalS,
+    '& button': { width: '100%', minWidth: 0, maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere' },
+  },
+};
 
 // The approved workspace composition. Fluent owns color, type and spacing;
 // numbers below are responsive geometry and minimum interaction sizes.
@@ -20,13 +50,16 @@ export const useCanvasStyles = makeStyles({
   titlebar: {
     display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS, flexShrink: 0,
     paddingInlineEnd: tokens.spacingHorizontalM,
-    borderInlineEnd: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderInlineEndWidth: tokens.strokeWidthThin, borderInlineEndStyle: SEPARATOR_STYLE, borderInlineEndColor: tokens.colorNeutralStroke2,
   },
   workspaceLabel: {
     color: tokens.colorNeutralForeground2, fontSize: tokens.fontSizeBase200,
     '@media (max-width: 960px)': { display: 'none' },
   },
-  title: { margin: 0, fontSize: tokens.fontSizeBase500, lineHeight: tokens.lineHeightBase500, fontWeight: tokens.fontWeightSemibold, overflowWrap: 'anywhere' },
+  title: {
+    margin: 0, fontFamily: DISPLAY_FONT, fontSize: tokens.fontSizeBase500, lineHeight: tokens.lineHeightBase500,
+    fontWeight: tokens.fontWeightSemibold, overflowWrap: 'anywhere',
+  },
   subheading: { margin: 0, fontSize: tokens.fontSizeBase400, lineHeight: tokens.lineHeightBase400, fontWeight: tokens.fontWeightSemibold },
   eyebrow: { color: tokens.colorNeutralForeground2, fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200, overflowWrap: 'anywhere' },
   quiet: { color: tokens.colorNeutralForeground2 },
@@ -57,7 +90,7 @@ export const useCanvasStyles = makeStyles({
     boxSizing: 'border-box', position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center',
     width: '48px', minHeight: 0, flexShrink: 0, gap: tokens.spacingVerticalL, paddingBlock: tokens.spacingVerticalS,
     backgroundColor: tokens.colorNeutralBackground2,
-    borderInlineEnd: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderInlineEndWidth: tokens.strokeWidthThin, borderInlineEndStyle: SEPARATOR_STYLE, borderInlineEndColor: tokens.colorNeutralStroke2,
   },
   railExpanded: {
     width: '208px', alignItems: 'stretch', paddingInline: tokens.spacingHorizontalS,
@@ -111,8 +144,10 @@ export const useCanvasStyles = makeStyles({
   settingsPanel: { padding: 0, overflow: 'hidden', scrollbarGutter: 'auto', '@container (max-width: 700px)': { padding: 0 } },
   settings: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0 },
   // One compact header row: the page title and the Settings section tabs share
-  // the former Packs heading's 36px rhythm above one rule. At the narrowest
-  // width the two short labels take equal columns instead of wrapping apart.
+  // the former Packs heading's 36px rhythm above one rule. At 479px or less the
+  // tabs drop their icons and take Fluent's small-tab sides, so the three keep
+  // that row where they fit. At 300px or less the full labels take as many
+  // equal 6.5em columns as hold "Appearance" whole, in as many rows as needed.
   settingsHeader: {
     display: 'flex', flexWrap: 'wrap', alignItems: 'stretch', flexShrink: 0, minWidth: 0,
     columnGap: tokens.spacingHorizontalL, paddingInline: tokens.spacingHorizontalL,
@@ -124,12 +159,19 @@ export const useCanvasStyles = makeStyles({
   },
   settingsSections: {
     minWidth: 0,
-    '@container (max-width: 300px)': { flexBasis: '100%', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' },
+    '@container (max-width: 300px)': {
+      flexBasis: '100%', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 6.5em), 1fr))',
+    },
   },
   // Fluent's medium tab, trimmed to the approved 36px heading rhythm. Longhands
-  // replace Fluent's own padding longhands instead of competing with them.
+  // replace Fluent's own padding longhands instead of competing with them. A
+  // hidden icon leaves its grid column, so its gap goes with it.
   sectionTab: {
     minHeight: '36px', paddingTop: tokens.spacingVerticalS, paddingBottom: tokens.spacingVerticalS,
+    '@container (min-width: 301px) and (max-width: 479px)': {
+      paddingLeft: tokens.spacingHorizontalSNudge, paddingRight: tokens.spacingHorizontalSNudge, columnGap: 0,
+      [`& .${tabClassNames.icon}`]: { display: 'none' },
+    },
     '@container (max-width: 300px)': {
       minWidth: 0, minHeight: '32px', columnGap: 0,
       paddingTop: tokens.spacingVerticalSNudge, paddingBottom: tokens.spacingVerticalSNudge,
@@ -475,7 +517,7 @@ export const useCanvasStyles = makeStyles({
   },
   markdownCodespan: {
     padding: `0 ${tokens.spacingHorizontalXXS}`, borderRadius: tokens.borderRadiusSmall,
-    backgroundColor: tokens.colorNeutralBackground3, fontFamily: tokens.fontFamilyMonospace, fontSize: tokens.fontSizeBase200,
+    backgroundColor: tokens.colorNeutralBackground3, fontFamily: tokens.fontFamilyMonospace, fontSize: INLINE_CODE_SIZE,
   },
   // A too-wide table scrolls sideways in its own box. One that cannot fit even
   // at its narrowest keeps readable columns, 12em each including padding,
@@ -567,18 +609,33 @@ export const useCanvasStyles = makeStyles({
   },
   // At 300px or less the status icon sits above its title so the words keep
   // their width, and the Open Needs you action takes the full row.
-  importStatus: {
+  importStatus: NARROW_BAR,
+  importStatusActions: NARROW_BAR_ACTIONS,
+  // Settings > Appearance (085) reuses About's panel and sheet. Its one bar or
+  // note follows the same narrow rule as Add/import's status.
+  narrowBar: NARROW_BAR,
+  // Retry keeps Fluent's medium button, as wide as its word.
+  narrowBarActions: { ...NARROW_BAR_ACTIONS, '& button': { minWidth: 0 } },
+  appearancePending: { justifyContent: 'flex-start', minHeight: '20px', overflowWrap: 'anywhere' },
+  // At 300px or less the label sits above its track, with Fluent's
+  // labelPosition="above" geometry, so its words stay whole and the hit area
+  // spans the field: a column root, a track with no top margin, and the input
+  // over the track's row.
+  followSwitch: {
+    // The switch hugs its track and label, as Fluent draws it outside a Field, so its focus ring does too.
+    justifySelf: 'start', maxWidth: '100%',
+    [`& .${switchClassNames.label}`]: { minWidth: 0, overflowWrap: 'anywhere' },
     '@container (max-width: 300px)': {
-      gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateAreas: '"icon" "body" "secondaryActions"',
-      paddingLeft: tokens.spacingHorizontalS,
-      [`& .${messageBarClassNames.icon}`]: { marginRight: 0, marginBottom: tokens.spacingVerticalXS },
-    },
-  },
-  importStatusActions: {
-    '@container (max-width: 479px)': { justifyContent: 'flex-start' },
-    '@container (max-width: 300px)': {
-      paddingRight: tokens.spacingHorizontalS,
-      '& button': { width: '100%', minWidth: 0, maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere' },
+      flexDirection: 'column', width: '100%',
+      [`& .${switchClassNames.label}`]: {
+        order: -1, boxSizing: 'border-box', width: '100%', overflowWrap: 'break-word',
+        paddingTop: tokens.spacingVerticalXS, paddingBottom: tokens.spacingVerticalXS,
+        paddingLeft: tokens.spacingHorizontalS, paddingRight: tokens.spacingHorizontalS,
+      },
+      [`& .${switchClassNames.indicator}`]: { marginTop: 0 },
+      [`& .${switchClassNames.input}`]: {
+        top: 'auto', bottom: 0, left: 0, width: '100%', height: `calc(20px + ${tokens.spacingVerticalS})`,
+      },
     },
   },
   pathList: { listStyleType: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, minWidth: 0 },
@@ -681,7 +738,7 @@ export const useCanvasStyles = makeStyles({
     '& > div': { minWidth: 0 },
   },
   objectTitle: {
-    display: 'flex', alignItems: 'baseline', gap: tokens.spacingHorizontalM, margin: 0,
+    display: 'flex', alignItems: 'baseline', gap: tokens.spacingHorizontalM, margin: 0, fontFamily: DISPLAY_FONT,
     fontSize: tokens.fontSizeHero700, lineHeight: tokens.lineHeightHero700, fontWeight: tokens.fontWeightSemibold,
     overflowWrap: 'anywhere', minWidth: 0,
     '& > span:last-child': { minWidth: 0 },
@@ -800,7 +857,11 @@ export const useCanvasStyles = makeStyles({
   back: { alignSelf: 'flex-start', flexShrink: 0 },
   control: { minWidth: 0, width: '100%' },
   actions: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: tokens.spacingHorizontalS, paddingTop: tokens.spacingVerticalS },
-  code: { fontFamily: tokens.fontFamilyMonospace, fontSize: tokens.fontSizeBase200, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', margin: 0 },
+  code: {
+    fontFamily: tokens.fontFamilyMonospace, fontSize: tokens.fontSizeBase200, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', margin: 0,
+    // Code inside running text, not a path list's item or a value block.
+    ':is(code):not(li > *)': { fontSize: INLINE_CODE_SIZE },
+  },
   scope: {
     display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS,
     borderLeft: `${tokens.strokeWidthThick} solid ${tokens.colorBrandStroke1}`,

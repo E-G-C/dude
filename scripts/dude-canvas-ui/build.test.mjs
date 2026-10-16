@@ -832,10 +832,10 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   assert.ok(application.length > 100_000, 'the application bundle must contain the browser runtime');
   const gzip = gzipSync(applicationBytes, { level: 9 });
   const repeatedGzip = gzipSync(applicationBytes, { level: 9 });
-  assert.equal(applicationBytes.length, 1_108_959, 'committed app.js raw byte size');
+  assert.equal(applicationBytes.length, 1_141_224, 'committed app.js raw byte size');
   assert.equal(
     sha256(applicationBytes),
-    '6d6db4c02ca519153a03774546a7b386281295c751804fce48b343ac77c7af89',
+    '1d3271f702cfad403847c9870a7a21a28bb2652bd2bccb8b56a340ae1461569f',
     'committed app.js raw SHA-256',
   );
   assertPortableGzip(gzip, repeatedGzip, applicationBytes, 'Node zlib level-9 app.js');
@@ -847,10 +847,10 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   assert.match(legal, /keyborg\/dist\/index\.js/);
   assert.match(legal, /MIT License/i);
   assert.match(legal, /Third-party package licenses \(metafile-derived\)/);
-  assert.equal(legalBytes.length, 82_901, 'complete legal notice byte size');
+  assert.equal(legalBytes.length, 84_389, 'complete legal notice byte size');
   assert.equal(
     sha256(legalBytes),
-    'f5722a59f11d3b24a83b546313fde699789d759791fcb554ebf0dcdce083c8b2',
+    '364e4d11b6c97b1e9a1501b2f2981fe6085a91035951dbb84af216ddba122a11',
     'complete legal notice SHA-256',
   );
   assert.match(html, /<script type="module" src="\/assets\/app\.js"><\/script>/);
@@ -891,7 +891,7 @@ test('metafile-derived legal inventory contains every contributing package and c
   });
 
   // Assert
-  assert.equal(expected.length, 54, 'metafile identifies the exact bundled npm package count');
+  assert.equal(expected.length, 55, 'metafile identifies the exact bundled npm package count');
   assert.deepEqual(
     actual.map(({ name, rootRelative, version }) => ({ name, rootRelative, version })),
     expected,
@@ -909,7 +909,7 @@ test('metafile-derived legal inventory contains every contributing package and c
       name: '@fluentui/react-menu',
       version: '9.25.4',
       inputCount: 36,
-      bytesInOutput: 31_653,
+      bytesInOutput: 31_651,
     },
     {
       name: '@fluentui/react-motion-components-preview',
@@ -921,7 +921,7 @@ test('metafile-derived legal inventory contains every contributing package and c
       name: '@fluentui/react-tooltip',
       version: '9.10.5',
       inputCount: 6,
-      bytesInOutput: 8_316,
+      bytesInOutput: 8_328,
     },
   ], 'the shipped menu, motion implementation, and tooltip contribute real app.js bytes');
   for (const { name, version } of menuGraphPackages) {
@@ -1191,7 +1191,9 @@ function assertT011CompiledBorders() {
     'scope', 'drawingToolbar', 'historyImage',
   ]) {
     const rule = styleRule(styles, name);
-    assert.match(rule, /\bborder(?:Block|Inline|Top|Right|Bottom|Left)?(?:Start|End)?:/);
+    assert.match(rule, /\bborder(?:Block|Inline|Top|Right|Bottom|Left)?(?:Start|End)?(?:Width|Style|Color)?:/);
+    // Griffel drops these shorthands without emitting anything, so a border declared with them never paints.
+    assert.doesNotMatch(rule, /\bborder(?:Inline|Block)(?:Start|End)?:|\bborder(?:Width|Style|Color):/, `${name} uses a shorthand Griffel drops`);
   }
   assert.match(bundle, /colorNeutralStroke2/);
   assert.doesNotMatch(styles, /border:\s*['"`][^'"`]*(?:#|rgb|hsl)/i);

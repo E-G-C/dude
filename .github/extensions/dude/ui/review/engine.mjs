@@ -37,6 +37,50 @@ const MESSAGES = Object.freeze({
 
 function fail(code) { throw Object.assign(new Error(MESSAGES[code] ?? code), { code }); }
 function requireValue(value) { if (!value) fail('review_invalid_input'); }
+
+let paintContext = null;
+/**
+ * Any CSS color the document accepts, resolved by the browser and written as
+ * explicit sRGB: `rgb(r, g, b)`, or `rgba(r, g, b, a)` while it is translucent.
+ * Null when the value is not a color.
+ */
+function srgb(probe, value) {
+  probe.style.color = '';
+  probe.style.color = value;
+  if (!probe.style.color) return null;
+  const text = getComputedStyle(probe).color;
+  const alpha = part => (part === undefined ? 1 : part.endsWith('%') ? parseFloat(part) / 100 : Number(part));
+  let color = null;
+  let match = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/.exec(text);
+  if (match) color = [+match[1], +match[2], +match[3], alpha(match[4])];
+  match = !color && /^color\(srgb\s+([-\d.e]+)\s+([-\d.e]+)\s+([-\d.e]+)(?:\s*\/\s*([\d.]+%?))?\s*\)$/.exec(text);
+  if (match) color = [match[1] * 255, match[2] * 255, match[3] * 255, alpha(match[4])];
+  if (!color) {
+    // Other color spaces are painted once and read back in sRGB.
+    paintContext ??= document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+    paintContext.clearRect(0, 0, 1, 1);
+    paintContext.fillStyle = '#000';
+    paintContext.fillStyle = text;
+    paintContext.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = paintContext.getImageData(0, 0, 1, 1).data;
+    color = [r, g, b, a / 255];
+  }
+  const [r, g, b] = color.slice(0, 3).map(channel => Math.min(255, Math.max(0, Math.round(channel))));
+  const a = Math.min(1, Math.max(0, Math.round(color[3] * 1000) / 1000));
+  return a >= 1 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+/**
+ * A font list in the browser's own spelling. One longer than the saved
+ * palette holds loses whole families from its end; the first ones still apply.
+ */
+function fontList(probe, value) {
+  probe.style.fontFamily = '';
+  probe.style.fontFamily = value;
+  if (!probe.style.fontFamily) return null;
+  let list = getComputedStyle(probe).fontFamily.trim();
+  while (list.length > 256 && list.includes(',')) list = list.slice(0, list.lastIndexOf(',')).trim();
+  return list && list.length <= 256 && !/[<>{};\\]/.test(list) ? list : null;
+}
 // A refresh that is only transiently refused still retries and stays silent;
 // the reported cause is the one the retries kept hitting.
 const TRANSIENT_VIEW = Object.freeze(['review_not_ready', 'review_frame_unresponsive', 'review_view_unsettled']);
@@ -122,7 +166,31 @@ export function mountReview(container, { review, requestHandle, revision, theme,
       highlightStroke: 'colorPaletteYellowBorder2', selection: 'colorBrandStroke1', fontFamily: 'fontFamilyBase' };
     const result = Object.fromEntries(Object.entries(keys).map(([k, token]) => [k, computed.getPropertyValue(`--${token}`).trim()]));
     requireValue(Object.values(result).every(Boolean));
-    return result;
+    return normalPalette(result);
+  }
+  /**
+   * Saved and captured palettes hold explicit sRGB rgb(a) colors and the
+   * browser's own font-list spelling, whatever CSS the theme tokens use: a
+   * followed app theme supplies var(), color-mix(), and other color forms that
+   * the closed saved-palette schema does not accept, and equal colors must
+   * compare equal however a token spelled them.
+   */
+  function normalPalette(palette) {
+    const probe = document.createElement('span');
+    probe.hidden = true;
+    root.append(probe);
+    try {
+      const result = Object.fromEntries(Object.entries(palette).map(([key, value]) =>
+        [key, key === 'fontFamily' ? fontList(probe, value) : srgb(probe, value)]));
+      requireValue(Object.values(result).every(Boolean));
+      return result;
+    } finally {
+      probe.remove();
+    }
+  }
+  // Saved work from before this normalization spelled the same colors in hex.
+  function samePalette(saved, current) {
+    try { return same(normalPalette(saved), current); } catch { return false; }
   }
   const projected = () => state.annotations.map(a => projectAnnotation(a, state.view?.scrolls));
   /**
@@ -321,7 +389,7 @@ export function mountReview(container, { review, requestHandle, revision, theme,
     if (viewportPinned && previous
       && ['width', 'height', 'deviceScale', 'theme'].some(k => previous[k] !== v[k])) markStale();
     const palette = colors();
-    if (viewportPinned && state.palette && !same(state.palette, palette)) markStale();
+    if (viewportPinned && state.palette && !samePalette(state.palette, palette)) markStale();
     if (!stale) {
       const legacy = state.annotations.length && state.view && state.view.scrolls === undefined && !result.scrolls.length;
       state.view = { viewport: clone(v), signature: result.signature, ...(!legacy ? { scrolls: clone(result.scrolls) } : {}) };
