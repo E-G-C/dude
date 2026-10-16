@@ -9,6 +9,6 @@ check for newer releases. An absent file means the base release is unknown.
 ```json
 {
   "source_repo": "https://github.com/E-G-C/dude",
-  "base_release": "v1.9.0"
+  "base_release": "v1.10.0"
 }
 ```
