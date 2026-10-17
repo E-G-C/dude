@@ -802,7 +802,7 @@ test('model mapping changes regenerate only matching profiles in a disposable to
 
     // Existing HTML source is independently authored too: the displaced
     // baseline ID must be rejected there as well.
-    const nonJavaScriptProbe = 'src/skills/dude-lightweight-execution/backlog-template.html';
+    const nonJavaScriptProbe = 'src/extensions/dude/ui/index.html';
     assert.equal(
       fs.statSync(at(workspace, nonJavaScriptProbe)).isFile(),
       true,

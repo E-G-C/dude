@@ -13,20 +13,15 @@ import {
   collectLifecycleModel,
   deriveLifecycleModel,
   parseBacklogOrder,
-  parseCoordinatorLog,
   parseProvisionalRelationships,
-  refreshCommittedBacklog,
-  renderArtifacts,
   renderCurrentMermaid,
   renderFlowchart,
-  renderMarkdown,
-  renderReport,
+  renderText,
 } from "./backlog.mjs";
 
 const BACKLOG_PATH = fileURLToPath(new URL("./backlog.mjs", import.meta.url));
-const TEMPLATE_URL = new URL("./backlog-template.html", import.meta.url);
-const TEMPLATE_PATH = fileURLToPath(TEMPLATE_URL);
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const ORDER_SOURCE = ".dude/state/backlog-order.md";
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -90,6 +85,12 @@ function writePackage(root, feature, options = {}) {
   ].join("\n"));
 }
 
+/** Stand-ins for report copies an earlier Dude version left in a project. */
+function writeEarlierReportCopies(root) {
+  writeFile(root, ".dude/backlog.md", "# Backlog\n\nEarlier-version Markdown copy.\n");
+  writeFile(root, ".dude/backlog.html", "<!doctype html>\n<p>Earlier-version HTML copy.</p>\n");
+}
+
 function fixtureItem(slug, overrides = {}) {
   const tasks = overrides.tasks ?? [];
   const counts = {
@@ -103,29 +104,18 @@ function fixtureItem(slug, overrides = {}) {
     identity: `.dude/ideas/${slug}.md`,
     ideaPath: `.dude/ideas/${slug}.md`,
     slug,
-    title: overrides.title ?? slug,
     status: overrides.defined ? "defined" : "draft",
     defined: false,
-    declaredDefined: false,
     specPath: null,
-    declaredSpecPath: null,
-    tasksPath: null,
-    excerpt: `Excerpt for ${slug}.`,
     dependsOn: [],
     provisionalRelationships: [],
-    coordinatorLog: [],
-    milestones: [],
-    userStories: [],
     tasks,
-    phases: [],
-    unphasedTasks: tasks,
     taskCounts: counts,
     tasksAvailable: overrides.tasksAvailable ?? tasks.length > 0,
     packageComplete: false,
     hasInProgress: false,
     ownBlocked: false,
     unavailableDetail: null,
-    anchor: `feature-${slug}`,
     ...overrides,
     taskCounts: overrides.taskCounts ?? counts,
   };
@@ -176,54 +166,33 @@ function runCli(root, args) {
   return spawnSync(process.execPath, [BACKLOG_PATH, ...args, "--root", root], { encoding: "utf8" });
 }
 
-function backlogArtifactPaths(root) {
-  return {
-    markdown: path.join(root, ".dude", "backlog.md"),
-    html: path.join(root, ".dude", "backlog.html"),
-  };
-}
-
-function readIfPresent(absolutePath) {
-  return fs.existsSync(absolutePath) ? fs.readFileSync(absolutePath) : null;
-}
-
-function assertCommittedPair(root, expected, label) {
-  const artifacts = backlogArtifactPaths(root);
-  assert.deepEqual(fs.readFileSync(artifacts.markdown), Buffer.from(expected.markdown), `${label}: Markdown`);
-  assert.deepEqual(fs.readFileSync(artifacts.html), Buffer.from(expected.html), `${label}: HTML`);
-}
-
-function htmlClassification(html) {
-  const rows = new Map();
-  const pattern = /<details class="feature-detail[^"]*"[^>]*data-idea-path="([^"]+)" data-section="([^"]+)" data-group="([^"]+)"/g;
-  let match;
-  while ((match = pattern.exec(html)) !== null) rows.set(match[1], `${match[2]}/${match[3]}`);
-  return rows;
-}
-
-function markdownClassification(markdown) {
-  const groups = new Map([
-    ["Blocked", "current/blocked"],
-    ["Active", "current/active"],
-    ["Next", "current/next"],
-    ["Ideas awaiting definition", "planned/awaiting-definition"],
-    ["Defined awaiting work", "planned/defined-awaiting-work"],
-    ["Prioritized for later", "planned/prioritized-later"],
-    ["Completed", "completed/completed"],
-  ]);
-  const rows = new Map();
-  let group = null;
-  for (const line of markdown.split("\n")) {
-    const heading = /^#{2,3} (.+)$/.exec(line);
+/** Read the printed group lists as title -> entries. */
+function printedGroups(text) {
+  const groups = new Map();
+  let rows = null;
+  for (const line of text.split("\n")) {
+    const heading = /^(.+) \(\d+\):$/.exec(line);
     if (heading) {
-      group = groups.get(heading[1]) ?? null;
-      continue;
-    }
-    if (!group) continue;
-    const item = /^- `[^`]+` .+ \(`([^`]+)`\)$/.exec(line);
-    if (item) rows.set(item[1], group);
+      rows = [];
+      groups.set(heading[1], rows);
+    } else if (line === "") rows = null;
+    else if (rows && line !== "  (none)") rows.push(line.slice(2));
   }
-  return rows;
+  return groups;
+}
+
+/** Read the printed Dependency and order notes without their indentation. */
+function printedNotes(text) {
+  const lines = text.split("\n");
+  const start = lines.indexOf("Dependency and order notes:");
+  assert.ok(start > 0, "the notes section is printed after the groups");
+  const notes = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line === "") break;
+    assert.match(line, /^ {2}\S/, "each note is one indented line");
+    notes.push(line.slice(2));
+  }
+  return notes;
 }
 
 test("T001 lifecycle model partitions zero, one, and arbitrary inventories exactly once", () => {
@@ -235,8 +204,6 @@ test("T001 lifecycle model partitions zero, one, and arbitrary inventories exact
     ideasAwaitingDefinition: 0,
     definedAwaitingWork: 0,
     completed: 0,
-    active: 0,
-    blocked: 0,
   });
 
   const solo = fixtureItem("solo");
@@ -275,8 +242,6 @@ test("T001 lifecycle model classifies Current, Planned, conditional Later, and C
     ideasAwaitingDefinition: 1,
     definedAwaitingWork: 2,
     completed: 1,
-    active: 1,
-    blocked: 1,
   });
 
   const withoutOrder = deriveLifecycleModel({ items: [next, later], order: [] });
@@ -284,40 +249,106 @@ test("T001 lifecycle model classifies Current, Planned, conditional Later, and C
   assert.equal(withoutOrder.current.next.length, 0);
 });
 
-test("T001 HTML suppresses empty Current subsection bodies while retaining zero summary counts", () => {
-  const model = deriveLifecycleModel({ items: [fixtureItem("draft")], order: [] });
-  const html = renderReport(fs.readFileSync(TEMPLATE_PATH, "utf8"), model);
-  assert.match(html, /Current work<\/span><small>0 active · 0 blocked/);
-  assert.match(html, /Ready \/ Next<\/span><small>ready from declared dependency or order/);
-  assert.doesNotMatch(html, /authoritatively ready work/i);
-  assert.doesNotMatch(html, /class="work-subsection current-(?:blocked|active|next)"/);
-  assert.match(html, /No current execution/);
+test("T001 printed view keeps its summary and lifecycle groups, then prints dependency and order notes", () => {
+  // Arrange
+  const model = deriveLifecycleModel({
+    items: [
+      fixtureItem("completed", { defined: true, packageComplete: true }),
+      fixtureItem("blocked", { defined: true, ownBlocked: true }),
+      fixtureItem("active", { defined: true, hasInProgress: true }),
+      fixtureItem("next", { defined: true }),
+      fixtureItem("later", { defined: true }),
+      fixtureItem("draft"),
+      fixtureItem("defined", { defined: true }),
+    ],
+    order: ["next", "later"],
+  });
+  const emptyCurrent = deriveLifecycleModel({ items: [fixtureItem("draft")], order: [] });
+
+  // Act
+  const text = renderText(model);
+  const emptyText = renderText(emptyCurrent);
+
+  // Assert
+  assert.equal(text, [
+    "Where are we: current 2; ready/next 1; awaiting definition 1; defined awaiting work 2; completed 1",
+    "",
+    "Blocked (1):", "  blocked", "",
+    "Active (1):", "  active", "",
+    "Next (1):", "  next", "",
+    "Ideas awaiting definition (1):", "  draft", "",
+    "Defined awaiting work (1):", "  defined", "",
+    "Prioritized for later (1):", "  later", "",
+    "Completed (1):", "  completed", "",
+    "Dependency and order notes:",
+    "  Explicit feature order is declared in .dude/state/backlog-order.md.",
+    "  No declared feature dependencies are present.",
+    "  No provisional body-stated dependency evidence was recognized.",
+    "",
+  ].join("\n"));
+  assert.equal(emptyText, [
+    "Where are we: current 0; ready/next 0; awaiting definition 1; defined awaiting work 0; completed 0",
+    "",
+    "Blocked (0):", "  (none)", "",
+    "Active (0):", "  (none)", "",
+    "Next (0):", "  (none)", "",
+    "Ideas awaiting definition (1):", "  draft", "",
+    "Defined awaiting work (0):", "  (none)", "",
+    "Completed (0):", "  (none)", "",
+    "Dependency and order notes:",
+    "  No explicit feature order declared.",
+    "  No declared feature dependencies are present.",
+    "  No provisional body-stated dependency evidence was recognized.",
+    "",
+  ].join("\n"));
 });
 
-test("T001 generation is exact-byte and SHA deterministic across differently named roots", () => {
+test("T001 printed views are read-only and byte-identical across repeated reads and differently named roots", () => {
+  // Arrange
   const left = makeRoot("lifecycle-alpha-");
   const right = makeRoot("lifecycle-very-different-root-name-");
+  const forms = [[], ["kanban"], ["flowchart", "active-one"]];
   try {
     for (const root of [left, right]) {
       writeIdea(root, "draft-one", { title: "Draft One", log: ["2026-08-01 UTC - brainstorm captured"] });
-      writeIdea(root, "active-one", { feature: "101-active-one", title: "Active One" });
+      writeIdea(root, "active-one", { feature: "101-active-one", title: "Active One", dependsOn: "done-one" });
       writePackage(root, "101-active-one", { tasks: [
-        "# Tasks: active-one", "", "## Phase 1: Work", "", "- [~] T001@aaaaaaaa Active task", "",
+        "# Tasks: active-one", "", "## Phase 1: Work", "",
+        "- [~] T001@aaaaaaaa Active task",
+        "- [ ] T002@cccccccc Follow-up task", "   deps: T001@aaaaaaaa", "",
       ].join("\n") });
       writeIdea(root, "done-one", { feature: "102-done-one", title: "Done One" });
       writePackage(root, "102-done-one", { tasks: [
         "# Tasks: done-one", "", "## Phase 1: Work", "", "- [x] T001@bbbbbbbb Completed task", "",
       ].join("\n") });
+      writeFile(root, ORDER_SOURCE, "- active-one\n");
+      writeEarlierReportCopies(root);
     }
-    const first = renderArtifacts({ root: left });
-    const repeat = renderArtifacts({ root: left });
-    const other = renderArtifacts({ root: right });
-    assert.equal(first.markdown, repeat.markdown);
-    assert.equal(first.html, repeat.html);
-    assert.equal(first.markdown, other.markdown);
-    assert.equal(first.html, other.html);
-    assert.equal(sha256(first.markdown), sha256(other.markdown));
-    assert.equal(sha256(first.html), sha256(other.html));
+    const before = { left: snapshotTree(left), right: snapshotTree(right) };
+
+    // Act
+    const read = (root) => forms.map((args) => runCli(root, args));
+    const first = read(left);
+    const repeat = read(left);
+    const other = read(right);
+
+    // Assert
+    for (const [index, args] of forms.entries()) {
+      const label = args.join(" ") || "default";
+      assert.equal(first[index].status, 0, `${label}: ${first[index].stderr}`);
+      assert.equal(first[index].stderr, "", label);
+      assert.equal(repeat[index].stdout, first[index].stdout, `${label}: repeated read`);
+      assert.equal(other[index].stdout, first[index].stdout, `${label}: differently named root`);
+    }
+    assert.deepEqual(printedNotes(first[0].stdout), [
+      "Explicit feature order is declared in .dude/state/backlog-order.md.",
+      "Declared: active-one depends on done-one.",
+      "No provisional body-stated dependency evidence was recognized.",
+    ]);
+    assert.match(first[1].stdout, /^```mermaid\nkanban\n {2}active\[Active\]\n {4}work_1\[101 active-one\]\n```\n$/);
+    assert.match(first[2].stdout, /T001_aaaaaaaa --> T002_cccccccc/);
+    assert.deepEqual(snapshotTree(left), before.left, "left root, including earlier report copies, is unchanged");
+    assert.deepEqual(snapshotTree(right), before.right, "right root, including earlier report copies, is unchanged");
   } finally {
     fs.rmSync(left, { recursive: true, force: true });
     fs.rmSync(right, { recursive: true, force: true });
@@ -338,12 +369,9 @@ test("T001 live inventory remains count-agnostic and one-to-one", () => {
 
 test("T001 output source omits wall-clock, Git revision, checkout title, and fingerprint slots", () => {
   const source = fs.readFileSync(BACKLOG_PATH, "utf8");
-  const template = fs.readFileSync(TEMPLATE_PATH, "utf8");
   for (const banned of ["new Date", "child_process", "execSync", "rev-parse", "path.basename", "GENERATED_AT", "SOURCE_REV"]) {
     assert.equal(source.includes(banned), false, banned);
-    assert.equal(template.includes(banned), false, banned);
   }
-  assert.doesNotMatch(template, /generated\s+\d{4}|source revision|fingerprint/i);
 });
 
 test("T030 only an exact package-less resolved shape reaches Completed", () => {
@@ -389,11 +417,8 @@ test("T030 only an exact package-less resolved shape reaches Completed", () => {
     // Act
     const collected = collectLifecycleItems({ root });
     const model = deriveLifecycleModel({ items: [...collected, ownerClaim], order: [] });
-    const markdown = renderMarkdown(model);
-    const html = renderReport(fs.readFileSync(TEMPLATE_PATH, "utf8"), model);
+    const printed = printedGroups(renderText(model));
     const bySlug = new Map(model.items.map((item) => [item.slug, item]));
-    const markdownGroups = markdownClassification(markdown);
-    const htmlGroups = htmlClassification(html);
 
     // Assert
     const resolved = bySlug.get("resolved");
@@ -408,7 +433,6 @@ test("T030 only an exact package-less resolved shape reaches Completed", () => {
         resolved: resolved.resolved,
         defined: resolved.defined,
         specPath: resolved.specPath,
-        tasksPath: resolved.tasksPath,
         tasksAvailable: resolved.tasksAvailable,
         packageComplete: resolved.packageComplete,
         taskCounts: resolved.taskCounts,
@@ -422,7 +446,6 @@ test("T030 only an exact package-less resolved shape reaches Completed", () => {
         resolved: true,
         defined: false,
         specPath: null,
-        tasksPath: null,
         tasksAvailable: false,
         packageComplete: false,
         taskCounts: { open: 0, active: 0, blocked: 0, done: 0, total: 0 },
@@ -441,9 +464,7 @@ test("T030 only an exact package-less resolved shape reaches Completed", () => {
       const item = bySlug.get(slug);
       assert.ok(item, slug);
       assert.equal(item.resolved, false, slug);
-      assert.notEqual(item.section, "completed", slug);
-      assert.notEqual(markdownGroups.get(item.ideaPath), "completed/completed", slug);
-      assert.notEqual(htmlGroups.get(item.ideaPath), "completed/completed", slug);
+      assert.notEqual(item.group, "completed", slug);
     }
     assert.equal(bySlug.get("nonempty-canonical").ownerSpecPath, null);
     assert.equal(bySlug.get("nonempty-canonical").resolvedCandidate, true);
@@ -453,32 +474,16 @@ test("T030 only an exact package-less resolved shape reaches Completed", () => {
     assert.deepEqual(model.completed.map((item) => item.slug), ["resolved"]);
     assert.equal(model.summary.completed, 1);
     assertPartition(model, [...collected, ownerClaim]);
-    assert.equal(markdownGroups.get(resolved.ideaPath), "completed/completed");
-    assert.equal(htmlGroups.get(resolved.ideaPath), "completed/completed");
-
-    const marker = `data-idea-path="${resolved.ideaPath}"`;
-    const markerIndex = html.indexOf(marker);
-    const detailStart = html.lastIndexOf("<details", markerIndex);
-    const detailEnd = html.indexOf("</details>", markerIndex);
-    assert.ok(markerIndex >= 0 && detailStart >= 0 && detailEnd > markerIndex);
-    const resolvedDetail = html.slice(detailStart, detailEnd + "</details>".length);
-    assert.match(resolvedDetail, /Outcome resolved without a package; definition is not applicable\./);
-    assert.match(resolvedDetail, /Outcome resolved without a package; tasks are not applicable\./);
-    assert.match(
-      resolvedDetail,
-      /Lifecycle: Idea reached, Defined not applicable, Tasks not applicable, Done reached/,
-    );
-    assert.doesNotMatch(resolvedDetail, /class="counts|aria-label="Task states"|No task package/);
-    assert.doesNotMatch(resolvedDetail, /Awaiting definition - no tasks exist yet/);
-    assert.doesNotMatch(resolvedDetail, /T\d{3}@/);
-    const plannedMarkdown = markdown.slice(markdown.indexOf("## Planned"), markdown.indexOf("## Completed"));
-    assert.doesNotMatch(plannedMarkdown, /`resolved`/);
+    assert.deepEqual(printed.get("Completed"), ["001 resolved"], "the printed view lists only the resolved ledger as Completed");
+    for (const [title, rows] of printed) {
+      if (title !== "Completed") assert.equal(rows.includes("001 resolved"), false, title);
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("T002 collector exposes real idea, exact owner, stories, phases, tasks, deps, blockers, and milestones", () => {
+test("T002 collector exposes the exact owner and the task graph the flowchart reads", () => {
   const root = makeRoot();
   try {
     writeIdea(root, "evidence", {
@@ -501,19 +506,13 @@ test("T002 collector exposes real idea, exact owner, stories, phases, tasks, dep
     });
     const item = collectLifecycleItems({ root })[0];
     assert.equal(item.ideaPath, ".dude/ideas/201-evidence.md");
-    assert.match(item.excerpt, /real idea excerpt/);
     assert.equal(item.specPath, ".dude/specs/201-evidence/spec.md");
-    assert.equal(item.tasksPath, ".dude/specs/201-evidence/tasks.md");
-    assert.deepEqual(item.userStories, [
-      "User Story 1 - Inspect exact evidence (Priority: P1)",
-      "User Story 2 - Keep literal tasks (Priority: P2)",
+    assert.deepEqual(item.tasks, [
+      { id: "T001@aaaaaaaa", description: "Collect real evidence", deps: [] },
+      { id: "T002@bbbbbbbb", description: "Preserve historical blocker", deps: ["T001@aaaaaaaa"] },
     ]);
-    assert.deepEqual(item.phases.map((phase) => phase.title), ["Phase 1: Evidence", "Phase 2: Delivery"]);
-    assert.deepEqual(item.tasks.map((task) => ({ id: task.id, glyph: task.glyph, deps: task.deps, blockedBy: task.blockedBy })), [
-      { id: "T001@aaaaaaaa", glyph: "~", deps: [], blockedBy: null },
-      { id: "T002@bbbbbbbb", glyph: "x", deps: ["T001@aaaaaaaa"], blockedBy: "historical only" },
-    ]);
-    assert.deepEqual(item.milestones.map((entry) => entry.label), ["Captured", "Defined"]);
+    assert.deepEqual(item.taskCounts, { open: 0, active: 1, blocked: 0, done: 1, total: 2 });
+    assert.equal(item.ownBlocked, false, "a completed task's blocker stays historical");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -521,20 +520,20 @@ test("T002 collector exposes real idea, exact owner, stories, phases, tasks, dep
 
 test("T002 collector blocker regression: blank metadata and live blockers", async (t) => {
   const cases = [
-    { name: "active task with empty blocker", glyph: "~", reason: "", parsedReason: "",
-      state: "in-progress", count: "active", group: "active", ownBlocked: false },
-    { name: "active task with whitespace-only blocker", glyph: "~", reason: " \t ", parsedReason: "",
-      state: "in-progress", count: "active", group: "active", ownBlocked: false },
-    { name: "open task with empty blocker", glyph: " ", reason: "", parsedReason: "",
-      state: "todo", count: "open", group: "defined-awaiting-work", ownBlocked: false },
-    { name: "open task with whitespace-only blocker", glyph: " ", reason: " \t ", parsedReason: "",
-      state: "todo", count: "open", group: "defined-awaiting-work", ownBlocked: false },
+    { name: "active task with empty blocker", glyph: "~", reason: "",
+      count: "active", group: "active", ownBlocked: false },
+    { name: "active task with whitespace-only blocker", glyph: "~", reason: " \t ",
+      count: "active", group: "active", ownBlocked: false },
+    { name: "open task with empty blocker", glyph: " ", reason: "",
+      count: "open", group: "defined-awaiting-work", ownBlocked: false },
+    { name: "open task with whitespace-only blocker", glyph: " ", reason: " \t ",
+      count: "open", group: "defined-awaiting-work", ownBlocked: false },
     { name: "active task with genuine blocker", glyph: "~", reason: "external-dependency: waiting on service",
-      parsedReason: "external-dependency: waiting on service", state: "in-progress", count: "active", group: "blocked", ownBlocked: true },
+      count: "active", group: "blocked", ownBlocked: true },
     { name: "open task with genuine blocker", glyph: " ", reason: "external-dependency: waiting on service",
-      parsedReason: "external-dependency: waiting on service", state: "todo", count: "open", group: "blocked", ownBlocked: true },
-    { name: "explicit blocked glyph without a reason", glyph: "!", reason: null, parsedReason: null,
-      state: "blocked", count: "blocked", group: "blocked", ownBlocked: true },
+      count: "open", group: "blocked", ownBlocked: true },
+    { name: "explicit blocked glyph without a reason", glyph: "!", reason: null,
+      count: "blocked", group: "blocked", ownBlocked: true },
   ];
   for (const scenario of cases) {
     await t.test(scenario.name, () => {
@@ -564,14 +563,11 @@ test("T002 collector blocker regression: blank metadata and live blockers", asyn
         assert.deepEqual(item.authorityIssues, []);
         assert.equal(item.tasksAvailable, true);
         assert.deepEqual(item.taskWarnings, []);
-        assert.deepEqual(item.tasks.map(({ id, glyph, state, blockedBy }) => ({ id, glyph, state, blockedBy })), [
-          { id: "T001@aaaaaaaa", glyph: scenario.glyph, state: scenario.state, blockedBy: scenario.parsedReason },
-        ]);
+        assert.deepEqual(item.tasks, [{ id: "T001@aaaaaaaa", description: "Live work", deps: [] }]);
         assert.deepEqual(item.taskCounts, {
           open: 0, active: 0, blocked: 0, done: 0, total: 1, [scenario.count]: 1,
         });
         assert.equal(item.ownBlocked, scenario.ownBlocked);
-        assert.equal(item.section, scenario.group === "defined-awaiting-work" ? "planned" : "current");
         assert.equal(item.group, scenario.group);
         assert.deepEqual(partitionRows(model), [item]);
         assert.equal(fs.readFileSync(path.join(root, tasksPath), "utf8"), tasks);
@@ -609,14 +605,9 @@ test("T002 collector blocker regression: completed blockers stay historical", ()
     assert.deepEqual(item.authorityIssues, []);
     assert.equal(item.tasksAvailable, true);
     assert.deepEqual(item.taskWarnings, []);
-    assert.deepEqual(item.tasks.map(({ id, glyph, state, blockedBy }) => ({ id, glyph, state, blockedBy })), [
-      { id: "T001@aaaaaaaa", glyph: "~", state: "in-progress", blockedBy: null },
-      { id: "T002@bbbbbbbb", glyph: "x", state: "done", blockedBy: "historical only" },
-    ]);
     assert.deepEqual(item.taskCounts, { open: 0, active: 1, blocked: 0, done: 1, total: 2 });
     assert.equal(item.packageComplete, false);
     assert.equal(item.ownBlocked, false);
-    assert.equal(item.section, "current");
     assert.equal(item.group, "active");
     assert.deepEqual(model.current.active, [item]);
     assert.deepEqual(model.current.blocked, []);
@@ -626,7 +617,7 @@ test("T002 collector blocker regression: completed blockers stay historical", ()
   }
 });
 
-test("T002 malformed idea metadata stays visibly unavailable without negative dependency or draft claims", () => {
+test("T002 malformed idea metadata stays unavailable without a negative dependency claim", () => {
   // Arrange
   const root = makeRoot();
   try {
@@ -650,8 +641,7 @@ test("T002 malformed idea metadata stays visibly unavailable without negative de
     // Act
     const model = collectLifecycleModel({ root });
     const item = model.items[0];
-    const html = renderReport(fs.readFileSync(TEMPLATE_PATH, "utf8"), model);
-    const markdown = renderMarkdown(model);
+    const notes = printedNotes(renderText(model));
 
     // Assert
     assert.equal(item.frontmatterAvailable, false);
@@ -659,15 +649,14 @@ test("T002 malformed idea metadata stays visibly unavailable without negative de
     assert.equal(item.dependencyAvailable, false);
     assert.deepEqual(item.dependsOn, []);
     assert.equal(item.packageComplete, false);
-    assert.match(html, /Some source data is unavailable or ambiguous/);
-    assert.match(html, /Defined unavailable, Tasks unavailable, Done unavailable/);
-    assert.match(html, /Task state unavailable/);
-    assert.match(html, /Dependency data unavailable/);
-    assert.doesNotMatch(html, /No dependency signal/);
-    assert.doesNotMatch(html, /Declared dependencies:<\/strong> none in idea frontmatter/);
-    assert.doesNotMatch(html, /Awaiting definition - no tasks exist yet/);
-    assert.match(markdown, /source data unavailable or ambiguous/);
-    assert.match(markdown, /Dependency data is unavailable for `broken`; no negative dependency fact is inferred/);
+    assert.match(item.unavailableDetail, /Lifecycle details are unavailable/);
+    assert.match(item.authorityIssues.join("\n"), /Idea metadata is unavailable/);
+    assert.deepEqual(model.relationships.unavailable, [item]);
+    assert.deepEqual(notes, [
+      "No explicit feature order declared.",
+      "Dependency data is unavailable for broken; no negative dependency fact is inferred.",
+      "No provisional body-stated dependency evidence was recognized.",
+    ], "unavailable data suppresses the no-dependencies statement");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -722,7 +711,7 @@ test("T001 duplicate exact spec-path claimants suppress authority before diagnos
   }
 });
 
-test("T001 same-prefix peers keep distinct authority, anchors, counts, dependencies, and path tie order", () => {
+test("T001 same-prefix peers keep distinct authority, counts, dependencies, and path tie order", () => {
   // Arrange
   const root = makeRoot();
   const tasks = (feature, row) => [`# Tasks: ${feature}`, "", "## Phase 1: Delivery", "", row, ""].join("\n");
@@ -740,10 +729,9 @@ test("T001 same-prefix peers keep distinct authority, anchors, counts, dependenc
 
     // Act
     const model = collectLifecycleModel({ root });
-    const html = renderReport(fs.readFileSync(TEMPLATE_PATH, "utf8"), model);
     const bySlug = new Map(model.items.map((item) => [item.slug, item]));
     const slugs = (items) => items.map((item) => item.slug);
-    const renderedAnchors = [...html.matchAll(/ id="(feature-[^"]+)"/g)].map((match) => match[1]);
+    const notes = printedNotes(renderText(model));
 
     // Assert
     assert.deepEqual(model.items.map((item) => item.ideaPath), [
@@ -757,11 +745,9 @@ test("T001 same-prefix peers keep distinct authority, anchors, counts, dependenc
     for (const item of model.items) {
       assert.equal(item.authoritySlug, item.slug, item.ideaPath);
       assert.deepEqual(item.authorityIssues, [], item.ideaPath);
-      assert.equal(item.anchor, `feature-${item.slug}`, item.ideaPath);
     }
     for (const slug of ["alpha", "beta", "gamma"]) {
       assert.equal(bySlug.get(slug).ownerSpecPath, `.dude/specs/074-${slug}/spec.md`, slug);
-      assert.equal(bySlug.get(slug).tasksPath, `.dude/specs/074-${slug}/tasks.md`, slug);
     }
     assert.deepEqual(bySlug.get("alpha").taskCounts, { open: 0, active: 0, blocked: 0, done: 1, total: 1 });
     assert.deepEqual(bySlug.get("beta").taskCounts, { open: 1, active: 0, blocked: 0, done: 0, total: 1 });
@@ -771,13 +757,19 @@ test("T001 same-prefix peers keep distinct authority, anchors, counts, dependenc
     assert.deepEqual(slugs(model.current.blocked), ["gamma"]);
     assert.deepEqual(slugs(model.planned.awaitingDefinition), ["earlier", "eta-draft", "zeta-draft"]);
     assert.deepEqual(slugs(model.planned.definedAwaitingWork), []);
-    // Only declared depends-on edges exist; a shared number adds none.
+    // Only declared depends-on edges exist; a shared number adds none. Nodes are the model items themselves.
     assert.deepEqual(model.relationships.declared.map((relation) => [relation.from, relation.to, relation.type]), [
       [bySlug.get("alpha"), bySlug.get("beta"), "dependency"],
       [bySlug.get("beta"), bySlug.get("gamma"), "dependency"],
     ]);
+    assert.equal(model.relationships.declared[0].to, bySlug.get("beta"), "relationship nodes keep model item identity");
     assert.deepEqual(model.relationships.provisional, []);
-    assert.deepEqual([...new Set(renderedAnchors)].sort(), model.items.map((item) => item.anchor).sort());
+    assert.deepEqual(notes, [
+      "No explicit feature order declared.",
+      "Declared: beta depends on alpha.",
+      "Declared: gamma depends on beta.",
+      "No provisional body-stated dependency evidence was recognized.",
+    ]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -802,7 +794,6 @@ test("T002 malformed and duplicate task rows cannot produce package completion o
 
     // Act
     const model = collectLifecycleModel({ root });
-    const html = renderReport(fs.readFileSync(TEMPLATE_PATH, "utf8"), model);
 
     // Assert
     assert.equal(model.completed.length, 0);
@@ -814,10 +805,6 @@ test("T002 malformed and duplicate task rows cannot produce package completion o
     }
     assert.match(model.items.find((item) => item.slug === "malformed-tasks").taskWarnings.join("\n"), /malformed task line/);
     assert.match(model.items.find((item) => item.slug === "duplicate-tasks").taskWarnings.join("\n"), /duplicate task id/);
-    assert.match(html, /Task state unavailable/);
-    assert.match(html, /Done unavailable/);
-    assert.doesNotMatch(html, /Done reached/);
-    assert.doesNotMatch(html, /class="task task-done"/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -834,19 +821,25 @@ test("T002 only a literal depends-on marker is provisional evidence, and it stay
   const admitted = [marker, inExample].map((body) => parseProvisionalRelationships(body));
   const target = fixtureItem("report", { defined: true, packageComplete: true });
   const withEvidence = deriveLifecycleModel({
-    items: [fixtureItem("canvas", { provisionalRelationships: [{ targetSlug: "report", evidence: marker }] }), target],
+    items: [fixtureItem("canvas", { provisionalRelationships: [{ targetSlug: "report" }] }), target],
     order: [],
   });
   const withoutEvidence = deriveLifecycleModel({ items: [fixtureItem("canvas"), target], order: [] });
 
   // Assert
   assert.deepEqual(admitted, [
-    [{ targetSlug: "backlog-report", evidence: marker }],
-    [{ targetSlug: "backlog-report", evidence: inExample }],
+    [{ targetSlug: "backlog-report" }],
+    [{ targetSlug: "backlog-report" }],
   ]);
-  assert.equal(withEvidence.relationships.provisional.length, 1);
+  assert.deepEqual(withEvidence.relationships.provisional, [{ fromSlug: "report", toSlug: "canvas" }]);
   assert.equal(withEvidence.items.find((item) => item.slug === "canvas").group, "awaiting-definition");
   assert.equal(withoutEvidence.items.find((item) => item.slug === "canvas").group, "awaiting-definition");
+  assert.deepEqual(printedNotes(renderText(withEvidence)).slice(-1), [
+    "Provisional, non-authoritative: canvas states a relationship to report. This does not affect lifecycle classification.",
+  ]);
+  assert.deepEqual(printedNotes(renderText(withoutEvidence)).slice(-1), [
+    "No provisional body-stated dependency evidence was recognized.",
+  ]);
 });
 
 test("T002 provisional parsing rejects natural prose, bare markers, hidden text, and blockquotes", () => {
@@ -906,54 +899,69 @@ test("T002 declared dependency completion, blockage, cycles, and order parsing r
     dependencyModel.current.blocked.filter((item) => item.slug.startsWith("cycle-")).map((item) => item.slug),
     ["cycle-a", "cycle-b"],
   );
-  assert.deepEqual(orderModel.order, ["alpha", "beta"]);
+  assert.equal(orderModel.relationships.hasExplicitOrder, true);
   assert.deepEqual(orderModel.current.next.map((item) => item.slug), ["alpha"]);
   assert.deepEqual(orderModel.planned.prioritizedLater.map((item) => item.slug), ["beta"]);
   assert.deepEqual(orderModel.planned.definedAwaitingWork.map((item) => item.slug), ["gamma"]);
 });
 
-test("T002 task flowchart and delivery map point from prerequisite to dependent", () => {
+test("T002 task flowchart and dependency notes read from prerequisite to dependent", () => {
   // Arrange
   const prerequisiteTask = { id: "T001@aaaaaaaa", description: "Foundation", deps: [] };
   const dependentTask = { id: "T002@bbbbbbbb", description: "Delivery", deps: ["T001@aaaaaaaa"] };
-  const prerequisite = fixtureItem("foundation", { defined: true, packageComplete: true, title: "Foundation" });
-  const dependent = fixtureItem("delivery", { defined: true, title: "Delivery", dependsOn: ["foundation"] });
+  const prerequisite = fixtureItem("foundation", { defined: true, packageComplete: true });
+  const dependent = fixtureItem("delivery", { defined: true, dependsOn: ["foundation"] });
 
   // Act
   const flowchart = renderFlowchart([prerequisiteTask, dependentTask], { slug: "delivery" });
-  const html = renderReport(
-    fs.readFileSync(TEMPLATE_PATH, "utf8"),
-    deriveLifecycleModel({ items: [dependent, prerequisite], order: [] }),
-  );
+  const model = deriveLifecycleModel({ items: [dependent, prerequisite], order: [] });
+  const notes = printedNotes(renderText(model));
 
   // Assert
   assert.match(flowchart, /T001_aaaaaaaa --> T002_bbbbbbbb/);
   assert.doesNotMatch(flowchart, /T002_bbbbbbbb --> T001_aaaaaaaa/);
-  assert.match(html, /aria-label="foundation prerequisite to delivery dependent: declared dependency"/);
-  assert.match(html, /declared dependency · prerequisite <span aria-hidden="true">→<\/span> dependent/);
-  assert.ok(html.indexOf("Foundation</strong>") < html.indexOf("Delivery</strong>"));
+  assert.deepEqual(notes, [
+    "No explicit feature order declared.",
+    "Declared: delivery depends on foundation.",
+    "No provisional body-stated dependency evidence was recognized.",
+  ]);
 });
 
-test("T002 explicit order edges read earlier to later and never claim a dependency", () => {
+test("T002 explicit order notes name their source only for a valid order and never claim a dependency", () => {
   // Arrange
-  const first = fixtureItem("alpha", { defined: true, title: "Alpha" });
-  const second = fixtureItem("beta", { defined: true, title: "Beta" });
+  const root = makeRoot();
+  try {
+    writeIdea(root, "alpha", { number: "001", feature: "001-alpha" });
+    writePackage(root, "001-alpha");
+    writeIdea(root, "beta", { number: "002", feature: "002-beta" });
+    writePackage(root, "002-beta");
+    writeFile(root, ORDER_SOURCE, ["- unknown-feature", "- also-unknown", ""].join("\n"));
 
-  // Act
-  const html = renderReport(
-    fs.readFileSync(TEMPLATE_PATH, "utf8"),
-    deriveLifecycleModel({ items: [first, second], order: ["alpha", "beta"] }),
-  );
-  const edge = /<div class="map-edge"[^>]*>.*?<\/div>/s.exec(html)[0];
+    // Act
+    const unknownOnly = collectLifecycleModel({ root });
+    const unknownNotes = printedNotes(renderText(unknownOnly));
+    writeFile(root, ORDER_SOURCE, ["- alpha", "- beta", ""].join("\n"));
+    const valid = collectLifecycleModel({ root });
+    const validNotes = printedNotes(renderText(valid));
 
-  // Assert
-  assert.match(edge, /aria-label="alpha is listed earlier than beta; no dependency is implied: explicit order"/);
-  assert.match(edge, /explicit order · earlier <span aria-hidden="true">→<\/span> later/);
-  assert.match(edge, /class="map-connector solid"/);
-  assert.doesNotMatch(edge, /prerequisite|dependent/);
+    // Assert
+    assert.equal(unknownOnly.relationships.hasExplicitOrder, false, "an order file without a known feature is no order");
+    assert.equal(unknownNotes[0], "No explicit feature order declared.");
+    assert.equal(valid.relationships.hasExplicitOrder, true);
+    assert.deepEqual(valid.relationships.declared, [], "explicit order adds no dependency relationship");
+    assert.deepEqual(validNotes, [
+      "Explicit feature order is declared in .dude/state/backlog-order.md.",
+      "No declared feature dependencies are present.",
+      "No provisional body-stated dependency evidence was recognized.",
+    ]);
+    assert.deepEqual(valid.current.next.map((item) => item.slug), ["alpha"]);
+    assert.deepEqual(valid.planned.prioritizedLater.map((item) => item.slug), ["beta"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
-test("T002 planned backlog-canvas relation is exact, provisional, non-authoritative, and default-open", () => {
+test("T002 planned backlog-canvas relation is exact, provisional, and non-authoritative", () => {
   const root = makeRoot();
   try {
     writeIdea(root, "backlog-report", { number: "001", status: "draft" });
@@ -963,25 +971,24 @@ test("T002 planned backlog-canvas relation is exact, provisional, non-authoritat
       body: "The canvas records `depends-on: backlog-report` after it is first defined.",
     });
 
-    const artifacts = renderArtifacts({ root });
-    const canvas = artifacts.model.items.find((item) => item.slug === "backlog-canvas");
+    const model = collectLifecycleModel({ root });
+    const canvas = model.items.find((item) => item.slug === "backlog-canvas");
     assert.ok(canvas);
-    assert.deepEqual(canvas.provisionalRelationships.map((entry) => entry.targetSlug), ["backlog-report"]);
-    assert.deepEqual(
-      artifacts.model.relationships.provisional.map((relation) => `${relation.fromSlug}->${relation.toSlug}`),
-      ["backlog-report->backlog-canvas"],
-    );
-    assert.equal(canvas.section, "planned");
-    assert.match(artifacts.html, /data-authority="provisional"/);
-    assert.match(artifacts.html, /class="map-connector dashed"/);
-    assert.match(artifacts.html, /stated in idea, not authoritative/);
-    assert.match(artifacts.html, /id="feature-backlog-canvas"[^>]* open>/);
+    assert.deepEqual(canvas.provisionalRelationships, [{ targetSlug: "backlog-report" }]);
+    assert.deepEqual(model.relationships.provisional, [{ fromSlug: "backlog-report", toSlug: "backlog-canvas" }]);
+    assert.deepEqual(model.relationships.declared, []);
+    assert.equal(canvas.group, "awaiting-definition");
+    assert.deepEqual(printedNotes(renderText(model)), [
+      "No explicit feature order declared.",
+      "No declared feature dependencies are present.",
+      "Provisional, non-authoritative: backlog-canvas states a relationship to backlog-report. This does not affect lifecycle classification.",
+    ]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("T002 duplicate and malformed slugs keep display-only identity while all source fields render as escaped text", () => {
+test("T002 duplicate and malformed slugs keep display-only identity without dependency or order authority", () => {
   // Arrange
   const root = makeRoot();
   try {
@@ -1016,39 +1023,32 @@ test("T002 duplicate and malformed slugs keep display-only identity while all so
       "   blocked-by: <iframe src=https://attacker.example></iframe>", "",
     ].join("\n"));
     writeIdea(root, "wants-safe-id", { number: "302", dependsOn: "safe-id" });
-    writeFile(root, ".dude/state/backlog-order.md", ["- safe-id", "- wants-safe-id", ""].join("\n"));
+    writeFile(root, ORDER_SOURCE, ["- safe-id", "- wants-safe-id", ""].join("\n"));
 
     // Act
     const model = collectLifecycleModel({ root });
     const special = model.items.find((item) => item.ideaPath.endsWith("safe-id.md"));
     const wants = model.items.find((item) => item.slug === "wants-safe-id");
-    const html = renderReport(fs.readFileSync(TEMPLATE_PATH, "utf8"), model);
-    const anchors = model.items.map((item) => item.anchor);
-    const renderedAnchors = [...html.matchAll(/ id="(feature-[^"]+)"/g)].map((match) => match[1]);
+    const duplicates = model.items.filter((item) => item.slug === "duplicate");
+    const text = renderText(model);
 
     // Assert
-    assert.equal(new Set(anchors).size, model.items.length);
-    assert.equal(new Set(renderedAnchors).size, model.items.length);
-    assert.equal(anchors.filter((anchor) => anchor.startsWith("feature-path-")).length, 2);
+    assert.equal(duplicates.length, 2);
+    assert.deepEqual(duplicates.map((item) => item.authoritySlug), [null, null]);
     assert.equal(special.slug, "safe-id");
-    assert.equal(special.anchor, "feature-safe-id");
     // The file-name slug is display identity only; it carries no dependency or order authority.
     assert.equal(special.authoritySlug, null);
-    assert.equal(special.orderPosition, null);
-    assert.deepEqual(model.order, ["wants-safe-id"]);
+    assert.match(special.authorityIssues.join("\n"), /The idea slug is malformed; the file name is used only as a stable display identity/);
     assert.equal(wants.group, "blocked");
+    assert.equal(model.relationships.hasExplicitOrder, true, "only the authoritative wants-safe-id entry is a valid order");
     assert.equal(model.relationships.declared.some((relation) => relation.from === special || relation.to === special), false);
-    assert.equal(model.relationships.provisional.some((relation) => relation.from === special || relation.to === special), false);
-    assert.match(html, /The idea slug is malformed; the file name is used only as a stable display identity/);
-    assert.equal(special.excerpt, "Bold linked <idea> & code strike image alt");
-    assert.doesNotMatch(html, /<(?:script|img|svg|iframe)\b/i);
-    assert.doesNotMatch(html, /href="https?:/i);
-    assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt; &amp; dangerous title/);
-    assert.match(html, /Bold linked &lt;idea&gt; &amp; code strike image alt/);
-    assert.match(html, /User Story &lt;svg onload=alert\(2\)&gt; &amp; safe text/);
-    assert.match(html, /Phase 1: &lt;em&gt;phase&lt;\/em&gt;/);
-    assert.match(html, /Render &lt;script&gt;alert\(3\)&lt;\/script&gt; as text/);
-    assert.match(html, /&lt;iframe src=https:\/\/attacker\.example&gt;&lt;\/iframe&gt;/);
+    assert.deepEqual(model.relationships.provisional, []);
+    assert.deepEqual(printedNotes(text), [
+      "Explicit feature order is declared in .dude/state/backlog-order.md.",
+      "Declared: wants-safe-id depends on safe-id.",
+      "No provisional body-stated dependency evidence was recognized.",
+    ]);
+    assert.doesNotMatch(text, /<(?:img|svg|script|iframe|em)\b/i, "no idea, spec, or task markup reaches the printed view");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1069,7 +1069,6 @@ test("T002 a malformed-slug source declares no authoritative dependency in the o
     const model = collectLifecycleModel({ root });
     const source = model.items.find((item) => item.ideaPath.endsWith("malformed-source.md"));
     const target = model.items.find((item) => item.slug === "valid-target");
-    const html = renderReport(fs.readFileSync(TEMPLATE_PATH, "utf8"), model);
 
     // Assert
     assert.equal(source.authoritySlug, null);
@@ -1079,493 +1078,141 @@ test("T002 a malformed-slug source declares no authoritative dependency in the o
     assert.equal(source.group, "awaiting-definition");
     assert.equal(target.group, "awaiting-definition");
     assert.deepEqual(model.current.next, []);
-    assert.equal(source.orderPosition, null);
     assert.deepEqual(model.relationships.declared, []);
     assert.deepEqual(model.relationships.provisional, []);
-    assert.deepEqual(
-      model.relationships.missing.map((item) => item.identity).sort(),
-      [source.identity, target.identity].sort(),
-    );
-    assert.doesNotMatch(html, /\(authoritative\)/);
-    assert.doesNotMatch(html, /Declared signal/);
-    assert.equal([...html.matchAll(/ id="feature-malformed-source"/g)].length, 1);
-    assert.match(html, /The idea slug is malformed; the file name is used only as a stable display identity/);
-    // The malformed entry must not claim the frontmatter declares nothing; it declares data that is ignored.
-    const malformedEntry = html.slice(html.indexOf(` id="feature-malformed-source"`));
-    const malformedDetail = malformedEntry.slice(0, malformedEntry.indexOf("</details>"));
-    assert.doesNotMatch(malformedDetail, /none in idea frontmatter/);
-    assert.match(malformedDetail, /dependency metadata is present but ignored because the idea slug is malformed/);
-    assert.doesNotMatch(malformedDetail, /\(authoritative\)/);
+    assert.match(source.authorityIssues.join("\n"), /The idea slug is malformed; the file name is used only as a stable display identity/);
+    assert.deepEqual(printedNotes(renderText(model)), [
+      "No explicit feature order declared.",
+      "No declared feature dependencies are present.",
+      "No provisional body-stated dependency evidence was recognized.",
+    ]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("T002 draft summaries retain stable IDEA slug identity and plain-language labels", () => {
+test("dependency and order notes keep order, declared, unavailable, and provisional facts in enumeration order", () => {
   // Arrange
   const root = makeRoot();
   try {
-    writeIdea(root, "readable-draft", {
-      title: "Readable Draft",
-      body: "**Readable** [label](https://example.test) with `code` and ~~markup~~.",
-    });
+    writeIdea(root, "foundation", { number: "001" });
+    writeIdea(root, "delivery", { number: "002", dependsOn: "foundation" });
+    writeIdea(root, "broken", { number: "003", dependsOn: "invalid!" });
+    writeIdea(root, "report", { number: "004" });
+    writeIdea(root, "canvas", { number: "005", body: "The canvas records `depends-on: report` after it is first defined." });
+    writeFile(root, ORDER_SOURCE, ["- foundation", "- delivery", ""].join("\n"));
 
     // Act
     const model = collectLifecycleModel({ root });
-    const html = renderReport(fs.readFileSync(TEMPLATE_PATH, "utf8"), model);
+    const notes = printedNotes(renderText(model));
 
     // Assert
-    assert.equal(model.items[0].excerpt, "Readable label with code and markup.");
-    assert.match(html, /<span class="identity">I-001 · readable-draft<\/span>/);
-    assert.match(html, /Awaiting definition - no tasks exist yet/);
-    assert.match(html, /No dependency signal/);
-    assert.match(html, /ready from declared dependency or order/);
-    assert.doesNotMatch(html, /authoritatively ready work/i);
+    assert.deepEqual(notes, [
+      "Explicit feature order is declared in .dude/state/backlog-order.md.",
+      "Declared: delivery depends on foundation.",
+      "Dependency data is unavailable for broken; no negative dependency fact is inferred.",
+      "Provisional, non-authoritative: canvas states a relationship to report. This does not affect lifecycle classification.",
+    ]);
+    assert.equal(model.items.find((item) => item.slug === "canvas").group, "awaiting-definition");
+    assert.equal(model.items.find((item) => item.slug === "report").group, "awaiting-definition");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("T002 Coordinator activity parses valid dates, groups descending, and uses stable same-date ordering", () => {
-  const log = [
-    "## Coordinator Log", "",
-    "- 2026-08-04 12:30 UTC - second append", "- 2026-02-30 UTC - invalid date", "- no date", "",
-  ].join("\n");
-  assert.deepEqual(parseCoordinatorLog(log).map((entry) => entry.date), ["2026-08-04", null, null]);
+test("dependency and order notes keep the repository's provisional backlog-canvas relationship", () => {
+  // Act
+  const result = runCli(REPO_ROOT, []);
 
-  const alpha = fixtureItem("alpha", { coordinatorLog: [
-    { text: "2026-08-04 UTC - alpha first", date: "2026-08-04", appendIndex: 0 },
-    { text: "2026-08-04 UTC - alpha second", date: "2026-08-04", appendIndex: 1 },
-  ] });
-  const bravo = fixtureItem("bravo", { coordinatorLog: [
-    { text: "2026-08-05 UTC - bravo newest", date: "2026-08-05", appendIndex: 0 },
-    { text: "2026-08-04 UTC - bravo same date", date: "2026-08-04", appendIndex: 1 },
-  ] });
-  const model = deriveLifecycleModel({ items: [bravo, alpha], order: [] });
-  assert.deepEqual(model.activityByDate.map((group) => group.date), ["2026-08-05", "2026-08-04"]);
-  assert.deepEqual(model.activityByDate[1].events.map((event) => event.text), [
-    "2026-08-04 UTC - alpha first",
-    "2026-08-04 UTC - alpha second",
-    "2026-08-04 UTC - bravo same date",
-  ]);
-  const html = renderReport(fs.readFileSync(TEMPLATE_PATH, "utf8"), model);
-  assert.match(html, /Coordinator activity/);
-  assert.match(html, /<details class="activity-library"><summary>/);
-  assert.doesNotMatch(html, /<details class="activity-library" open/);
-  assert.match(html, /Git history, ad-hoc work outside Coordinator Logs, and other execution history sources are excluded/);
+  // Assert
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(
+    printedNotes(result.stdout).includes(
+      "Provisional, non-authoritative: backlog-canvas states a relationship to backlog-report. This does not affect lifecycle classification.",
+    ),
+    result.stdout,
+  );
 });
 
-test("T002 check reports missing, stale, and fresh artifacts separately and never writes", () => {
+test("retired report: check, generate, and --write exit 1 without writing", () => {
+  // Arrange
   const root = makeRoot();
+  const forms = [["check"], ["generate"], ["--write"], ["generate", "--write"], ["check", "--write"]];
   try {
-    writeIdea(root, "draft", { title: "Original title" });
-    const missingBefore = snapshotTree(root);
-    const missing = runCli(root, ["check"]);
-    assert.equal(missing.status, 3);
-    assert.match(missing.stderr, /\[MISSING\] \.dude\/backlog\.md/);
-    assert.match(missing.stderr, /\[MISSING\] \.dude\/backlog\.html/);
-    assert.deepEqual(snapshotTree(root), missingBefore);
+    writeIdea(root, "draft");
+    for (const earlierCopies of [false, true]) {
+      if (earlierCopies) writeEarlierReportCopies(root);
+      for (const args of forms) {
+        const label = `${args.join(" ")} with ${earlierCopies ? "earlier-version copies" : "no report files"}`;
+        const before = snapshotTree(root);
 
-    const generated = runCli(root, ["generate", "--write"]);
-    assert.equal(generated.status, 0, generated.stderr);
-    const freshBefore = snapshotTree(root);
-    const fresh = runCli(root, ["check"]);
-    assert.equal(fresh.status, 0, fresh.stderr);
-    assert.match(fresh.stdout, /backlog\.md is current/);
-    assert.match(fresh.stdout, /backlog\.html is current/);
-    assert.deepEqual(snapshotTree(root), freshBefore);
+        // Act
+        const result = runCli(root, args);
 
-    const ideaPath = path.join(root, ".dude", "ideas", "001-draft.md");
-    fs.writeFileSync(ideaPath, fs.readFileSync(ideaPath, "utf8").replace("title: Original title", "title: Changed title"));
-    const staleBefore = snapshotTree(root);
-    const stale = runCli(root, ["check"]);
-    assert.equal(stale.status, 3);
-    assert.match(stale.stderr, /\[STALE\] \.dude\/backlog\.md/);
-    assert.match(stale.stderr, /\[STALE\] \.dude\/backlog\.html/);
-    assert.deepEqual(snapshotTree(root), staleBefore);
-
-    const rejectBefore = snapshotTree(root);
-    const reject = runCli(root, ["check", "--write"]);
-    assert.notEqual(reject.status, 0);
-    assert.match(reject.stderr, /read-only and rejects --write/);
-    assert.deepEqual(snapshotTree(root), rejectBefore);
-
-    fs.rmSync(path.join(root, ".dude", "backlog.html"));
-    const oneMissingBefore = snapshotTree(root);
-    const oneMissing = runCli(root, ["check"]);
-    assert.equal(oneMissing.status, 3);
-    assert.match(oneMissing.stderr, /\[MISSING\] \.dude\/backlog\.html/);
-    assert.deepEqual(snapshotTree(root), oneMissingBefore);
+        // Assert
+        assert.equal(result.status, 1, label);
+        assert.equal(result.stdout, "", label);
+        assert.match(
+          result.stderr,
+          args.includes("--write") ? /^\[FAIL\] unknown option: --write\n$/ : /^\[FAIL\] unknown command: (?:check|generate)\n$/,
+          label,
+        );
+        assert.deepEqual(snapshotTree(root), before, `${label}: no workspace write`);
+      }
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("T003 approved HTML is one drill-down per item with compact collapsed completion and real native interaction", () => {
-  const canvas = fixtureItem("backlog-canvas", {
-    title: "Backlog Canvas",
-    excerpt: "Actual URL prose https://example.test/reference remains text.",
-    provisionalRelationships: [{ targetSlug: "done", evidence: "`done` has to ship first." }],
-  });
-  const activeTask = { id: "T001@aaaaaaaa", glyph: "~", state: "in-progress", description: "Current task", deps: [], blockedBy: null };
-  const active = fixtureItem("active", {
-    defined: true,
-    hasInProgress: true,
-    tasksAvailable: true,
-    tasks: [activeTask],
-    unphasedTasks: [activeTask],
-    taskCounts: { open: 0, active: 1, blocked: 0, done: 0, total: 1 },
-  });
-  const done = fixtureItem("done", { defined: true, packageComplete: true });
-  const model = deriveLifecycleModel({ items: [canvas, active, done], order: [] });
-  const html = renderReport(fs.readFileSync(TEMPLATE_PATH, "utf8"), model);
-
-  assert.equal((html.match(/class="feature-detail/g) ?? []).length, model.items.length);
-  assert.equal((html.match(/class="completed-library"/g) ?? []).length, 1);
-  assert.match(html, /<details class="completed-library"><summary>/);
-  assert.doesNotMatch(html, /<details class="completed-library" open/);
-  assert.match(html, /id="feature-backlog-canvas"[^>]* open>/);
-  assert.match(html, /Idea reached, Defined pending, Tasks pending, Done pending/);
-  assert.match(html, /Awaiting definition - no tasks exist yet/);
-  assert.doesNotMatch(html, /class="(?:bar|pill)"/);
-  assert.doesNotMatch(html, /% of all tasks|portfolio percentage|completion percentage/i);
-  assert.match(html, /https:\/\/example\.test\/reference/);
-  assert.doesNotMatch(html, /href="https?:/);
-});
-
-test("T003 approved HTML is self-contained, semantic, focus-visible, responsive, and print-safe", () => {
-  const template = fs.readFileSync(TEMPLATE_PATH, "utf8");
-  const model = deriveLifecycleModel({ items: [fixtureItem("draft")], order: [] });
-  const html = renderReport(template, model);
-
-  for (const banned of [/<script\b/i, /\son[a-z]+\s*=/i, /javascript:/i, /<link\b/i, /\bsrc\s*=/i, /@import/i, /@font-face/i, /url\(/i, /box-shadow/i]) {
-    assert.equal(banned.test(html), false, String(banned));
-  }
-  assert.doesNotMatch(template, /max-height\s*:/i);
-  assert.doesNotMatch(template, /overflow(?:-[xy])?\s*:\s*(?:auto|scroll|hidden)/i);
-  assert.match(template, /a:focus-visible, summary:focus-visible/);
-  assert.match(template, /--strata-focus: var\(--strata-series-6\)/);
-  assert.match(template, /outline: 2px solid var\(--strata-focus\)/);
-  assert.match(template, /outline-offset: 2px/);
-  assert.match(html, /<header class="hero">/);
-  assert.match(html, /<main id="main-content">/);
-  assert.match(html, /<footer class="site-footer">/);
-  assert.match(html, /aria-labelledby="delivery-title" aria-describedby="delivery-desc"/);
-  assert.match(template, /width: min\(1180px/);
-  assert.match(template, /@media \(max-width: 800px\)/);
-  assert.match(template, /@media \(max-width: 520px\)/);
-  assert.match(template, /@media \(max-width: 320px\)/);
-  assert.match(template, /width: calc\(100% - 16px\)/);
-  assert.match(template, /@media print/);
-  assert.match(template, /\.current-work details:not\(\[open\]\) > \.feature-body/);
-  assert.match(template, /\.planned-work details:not\(\[open\]\) > \.feature-body/);
-  assert.match(template, /\.skip-link, \.completed-library, \.activity-library \{ display: none; \}/);
-  assert.match(template, /\.print-completed-index, \.print-activity-summary \{ display: block; \}/);
-  assert.match(template, /border: 1px solid var\(--strata-rule\)/);
-  assert.equal(template.includes("dude-pack-strata-visual"), false);
-});
-
-test("T003 rendered HTML has no fake controls, scripts, or external loads and keeps a meaningful hierarchy", () => {
-  // Arrange
-  const activeTask = { id: "T001@aaaaaaaa", glyph: "~", state: "in-progress", description: "Active work", deps: [], blockedBy: null };
-  const model = deriveLifecycleModel({ items: [
-    fixtureItem("active", {
-      defined: true,
-      hasInProgress: true,
-      tasksAvailable: true,
-      tasks: [activeTask],
-      unphasedTasks: [activeTask],
-      taskCounts: { open: 0, active: 1, blocked: 0, done: 0, total: 1 },
-    }),
-    fixtureItem("planned"),
-    fixtureItem("completed", { defined: true, packageComplete: true }),
-  ], order: [] });
-
+test("retired report: help lists only the three read-only forms", () => {
   // Act
-  const html = renderReport(fs.readFileSync(TEMPLATE_PATH, "utf8"), model);
-  const markup = html.replace(/<style>[\s\S]*?<\/style>/, "");
-  const headingLevels = [...markup.matchAll(/<h([1-6])(?:\s[^>]*)?>/g)].map((match) => Number(match[1]));
-  const ids = new Set([...markup.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]));
-  const labelledBy = [...markup.matchAll(/\saria-labelledby="([^"]+)"/g)].flatMap((match) => match[1].split(/\s+/));
+  const result = spawnSync(process.execPath, [BACKLOG_PATH, "--help"], { encoding: "utf8" });
 
   // Assert
-  assert.doesNotMatch(markup, /<(?:button|input|select|textarea|form|script|iframe|object|embed|canvas)\b/i);
-  assert.doesNotMatch(markup, /\s(?:href|src)="(?:https?:|\/\/|data:)/i);
-  assert.doesNotMatch(markup, /\son[a-z]+\s*=/i);
-  assert.equal((markup.match(/<header\b/g) ?? []).length, 1);
-  assert.equal((markup.match(/<main\b/g) ?? []).length, 1);
-  assert.equal((markup.match(/<footer\b/g) ?? []).length, 1);
-  assert.equal(headingLevels.filter((level) => level === 1).length, 1);
-  for (let index = 1; index < headingLevels.length; index += 1) {
-    assert.ok(headingLevels[index] <= headingLevels[index - 1] + 1, `heading jump ${headingLevels[index - 1]} to ${headingLevels[index]}`);
-  }
-  for (const reference of labelledBy) assert.ok(ids.has(reference), `missing aria-labelledby target ${reference}`);
-  assert.match(markup, /<a class="skip-link" href="#main-content">Skip to lifecycle content<\/a>/);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.stdout.split("\n").filter((line) => line.startsWith("  node backlog.mjs")), [
+    "  node backlog.mjs [--root <dir>]",
+    "  node backlog.mjs kanban [--root <dir>]",
+    "  node backlog.mjs flowchart <idea-slug> [--root <dir>]",
+  ]);
+  assert.match(result.stdout, /dependency and order notes/);
+  assert.doesNotMatch(result.stdout, /\bcheck\b|\bgenerate\b|--write|\.dude\/backlog\./);
 });
 
-test("T003 print keeps Current and Planned detail but substitutes compact Completed and activity summaries", () => {
-  // Arrange
-  const activeTask = { id: "T900@aaaaaaaa", glyph: "~", state: "in-progress", description: "Useful current print detail", deps: [], blockedBy: null };
-  const active = fixtureItem("active-print", {
-    defined: true,
-    hasInProgress: true,
-    tasksAvailable: true,
-    tasks: [activeTask],
-    unphasedTasks: [activeTask],
-    taskCounts: { open: 0, active: 1, blocked: 0, done: 0, total: 1 },
-  });
-  const activity = Array.from({ length: 1146 }, (_, appendIndex) => ({
-    text: `2026-08-04 UTC - activity ${appendIndex}`,
-    date: "2026-08-04",
-    appendIndex,
-  }));
-  const planned = fixtureItem("planned-print", { excerpt: "Useful planned print detail", coordinatorLog: activity });
-  const completed = Array.from({ length: 26 }, (_, index) => {
-    const id = `T${String(index + 100).padStart(3, "0")}@${String(index).padStart(8, "0")}`;
-    const task = { id, glyph: "x", state: "done", description: `Completed corpus ${index}`, deps: [], blockedBy: null };
-    return fixtureItem(`completed-${index}`, {
-      defined: true,
-      packageComplete: true,
-      tasksAvailable: true,
-      tasks: [task],
-      unphasedTasks: [task],
-      taskCounts: { open: 0, active: 0, blocked: 0, done: 1, total: 1 },
-    });
-  });
-
-  // Act
-  const model = deriveLifecycleModel({ items: [active, planned, ...completed], order: [] });
-  const template = fs.readFileSync(TEMPLATE_PATH, "utf8");
-  const html = renderReport(template, model);
-  const printIndex = /<ol class="print-completed-index"[^>]*>([\s\S]*?)<\/ol>/.exec(html)?.[1] ?? "";
-
-  // Assert
-  assert.equal((printIndex.match(/<li>/g) ?? []).length, 26);
-  assert.doesNotMatch(printIndex, /T\d{3}@|Completed corpus/);
-  assert.match(html, /1146 dated Coordinator Log entries are available in the HTML report; the full activity list is omitted from print/);
-  assert.match(template, /\.skip-link, \.completed-library, \.activity-library \{ display: none; \}/);
-  assert.match(template, /\.print-completed-index, \.print-activity-summary \{ display: block; \}/);
-  assert.match(template, /\.current-work details:not\(\[open\]\) > \.feature-body,[\s\S]*\.planned-work details:not\(\[open\]\) > \.feature-body \{ display: block !important; \}/);
-  assert.match(html, /Useful current print detail/);
-  assert.match(html, /Useful planned print detail/);
-});
-
-test("T004 Markdown and HTML share exact one-to-one lifecycle classification", () => {
-  const blocked = fixtureItem("blocked", { defined: true, ownBlocked: true });
-  const active = fixtureItem("active", { defined: true, hasInProgress: true });
-  const next = fixtureItem("next", { defined: true });
-  const later = fixtureItem("later", { defined: true });
-  const draft = fixtureItem("draft");
-  const waiting = fixtureItem("waiting", { defined: true });
-  const done = fixtureItem("done", { defined: true, packageComplete: true });
-  const model = deriveLifecycleModel({ items: [blocked, active, next, later, draft, waiting, done], order: ["next", "later"] });
-  const markdown = renderMarkdown(model);
-  const html = renderReport(fs.readFileSync(TEMPLATE_PATH, "utf8"), model);
-
-  assert.deepEqual(markdownClassification(markdown), htmlClassification(html));
-  assert.equal(markdownClassification(markdown).size, model.items.length);
-  assert.match(markdown, /## Where are we\?/);
-  assert.match(markdown, /## Current/);
-  assert.match(markdown, /## Planned/);
-  assert.match(markdown, /## Completed/);
-  assert.match(markdown, /### Prioritized for later/);
-  assert.match(markdown, /No explicit feature order declared|Explicit feature order is declared/);
-  assert.match(markdown, /Coordinator activity is sourced only/);
-});
-
-test("T004 Mermaid contains current work only and Markdown does not duplicate HTML task detail", () => {
-  const task = { id: "T001@aaaaaaaa", glyph: "~", state: "in-progress", description: "Deep task detail", deps: [], blockedBy: null };
+test("T004 Mermaid contains current work only", () => {
+  const task = { id: "T001@aaaaaaaa", state: "in-progress", description: "Deep task detail", deps: [] };
   const active = fixtureItem("active", {
     defined: true,
     hasInProgress: true,
     tasksAvailable: true,
     tasks: [task],
-    unphasedTasks: [task],
     taskCounts: { open: 0, active: 1, blocked: 0, done: 0, total: 1 },
   });
   const planned = fixtureItem("planned");
   const completed = fixtureItem("completed", { defined: true, packageComplete: true });
   const model = deriveLifecycleModel({ items: [active, planned, completed], order: [] });
-  const markdown = renderMarkdown(model);
   const mermaid = renderCurrentMermaid(model);
   assert.match(mermaid, /active/);
-  assert.doesNotMatch(mermaid, /planned|completed/);
-  assert.equal((markdown.match(/```mermaid/g) ?? []).length, 1);
-  assert.doesNotMatch(markdown, /T001@aaaaaaaa|Deep task detail|Original idea|Phases and tasks/);
+  assert.doesNotMatch(mermaid, /planned|completed|T001@aaaaaaaa|Deep task detail/);
 
   const emptyCurrent = deriveLifecycleModel({ items: [planned, completed], order: [] });
-  const concise = renderMarkdown(emptyCurrent);
   assert.equal(renderCurrentMermaid(emptyCurrent), "");
-  assert.doesNotMatch(concise, /```mermaid/);
-  assert.doesNotMatch(concise, /### (Blocked|Active|Next)/);
-  assert.doesNotMatch(concise, /Prioritized for later/);
 });
 
-test("T005 generate writes exactly the two fixed artifacts and dry generation writes nothing", () => {
-  const root = makeRoot();
-  try {
-    writeIdea(root, "draft");
-    const before = snapshotTree(root);
-    const dry = runCli(root, ["generate"]);
-    assert.equal(dry.status, 0, dry.stderr);
-    assert.match(dry.stdout, /==> \.dude\/backlog\.md/);
-    assert.match(dry.stdout, /==> \.dude\/backlog\.html/);
-    assert.deepEqual(snapshotTree(root), before);
-
-    const wrote = runCli(root, ["generate", "--write"]);
-    assert.equal(wrote.status, 0, wrote.stderr);
-    const newFiles = snapshotTree(root)
-      .filter((entry) => !before.includes(entry))
-      .filter((entry) => entry.startsWith("file "))
-      .map((entry) => entry.split(" ")[1]);
-    assert.deepEqual(newFiles.sort(), [".dude/backlog.html", ".dude/backlog.md"]);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("T030 refresh renders both postimages before either committed artifact advances", () => {
-  // Arrange
-  const root = makeRoot("dude-backlog-render-before-write-");
-  const artifacts = backlogArtifactPaths(root);
-  const before = {
-    markdown: Buffer.from("legacy markdown preimage\n"),
-    html: Buffer.from("legacy html preimage\n"),
-  };
-  writeIdea(root, "render-before-write");
-  fs.writeFileSync(artifacts.markdown, before.markdown);
-  fs.writeFileSync(artifacts.html, before.html);
-  const realReadFileSync = fs.readFileSync;
-  let templateRead = false;
-
-  try {
-    // Act
-    // @ts-ignore -- deliberate render-stage failure injection
-    fs.readFileSync = (file, ...rest) => {
-      if (file instanceof URL && file.href === TEMPLATE_URL.href) {
-        templateRead = true;
-        throw new Error("injected HTML render failure");
-      }
-      return realReadFileSync(file, ...rest);
-    };
-    assert.throws(
-      () => refreshCommittedBacklog({ root }),
-      /injected HTML render failure/,
-      "a failed second postimage render must stop before any artifact write",
-    );
-
-    // Assert
-    assert.equal(templateRead, true, "the complete HTML render path was reached");
-    assert.deepEqual(fs.readFileSync(artifacts.markdown), before.markdown, "Markdown preimage remains exact");
-    assert.deepEqual(fs.readFileSync(artifacts.html), before.html, "HTML preimage remains exact");
-  } finally {
-    fs.readFileSync = realReadFileSync;
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("T030 refresh restores pair preimages after first or truncated second write failures", () => {
-  const scenarios = [
-    { label: "present pair / first Markdown write", target: "markdown", present: true },
-    { label: "present pair / truncated second HTML write", target: "html", present: true },
-    { label: "missing pair / truncated second HTML write", target: "html", present: false },
-  ];
-
-  for (const scenario of scenarios) {
-    // Arrange
-    const root = makeRoot(`dude-backlog-restore-${scenario.target}-`);
-    const artifacts = backlogArtifactPaths(root);
-    const before = {
-      markdown: Buffer.from(`legacy Markdown ${scenario.label}\n`),
-      html: Buffer.from(`legacy HTML ${scenario.label}\n`),
-    };
-    writeIdea(root, `restore-${scenario.target}-${scenario.present ? "present" : "missing"}`);
-    if (scenario.present) {
-      fs.writeFileSync(artifacts.markdown, before.markdown);
-      fs.writeFileSync(artifacts.html, before.html);
-    }
-    const realWriteFileSync = fs.writeFileSync;
-    const target = artifacts[scenario.target];
-    let injected = 0;
-
-    try {
-      // Act
-      // @ts-ignore -- deliberate O_TRUNC-style writer failure injection
-      fs.writeFileSync = (file, data, ...rest) => {
-        if (injected === 0 && path.resolve(String(file)) === target) {
-          injected += 1;
-          realWriteFileSync(file, Buffer.from("truncated before write failure\n"), ...rest);
-          throw new Error(`injected ${scenario.target} write failure`);
-        }
-        return realWriteFileSync(file, data, ...rest);
-      };
-      assert.throws(
-        () => refreshCommittedBacklog({ root }),
-        new RegExp(`injected ${scenario.target} write failure`),
-        scenario.label,
-      );
-      fs.writeFileSync = realWriteFileSync;
-
-      // Assert
-      assert.equal(injected, 1, `${scenario.label}: the intended write failed`);
-      if (scenario.present) {
-        assert.deepEqual(fs.readFileSync(artifacts.markdown), before.markdown, `${scenario.label}: Markdown restored`);
-        assert.deepEqual(fs.readFileSync(artifacts.html), before.html, `${scenario.label}: HTML restored`);
-      } else {
-        assert.equal(readIfPresent(artifacts.markdown), null, `${scenario.label}: missing Markdown stays missing`);
-        assert.equal(readIfPresent(artifacts.html), null, `${scenario.label}: missing HTML stays missing`);
-      }
-
-      if (scenario.label === "present pair / truncated second HTML write") {
-        const stale = runCli(root, ["check"]);
-        assert.equal(stale.status, 3, stale.stderr);
-        assert.match(stale.stderr, /\[STALE\] \.dude\/backlog\.md/);
-        assert.match(stale.stderr, /\[STALE\] \.dude\/backlog\.html/);
-      }
-    } finally {
-      fs.writeFileSync = realWriteFileSync;
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  }
-});
-
-test("T030 direct refresh and generate --write commit the exact fresh pair", () => {
-  // Arrange
-  const root = makeRoot("dude-backlog-refresh-success-");
-  const artifacts = backlogArtifactPaths(root);
-  try {
-    writeIdea(root, "refresh-success");
-    const expected = renderArtifacts({ root });
-
-    // Act
-    refreshCommittedBacklog({ root });
-
-    // Assert
-    assertCommittedPair(root, expected, "direct refresh");
-
-    // Arrange a distinct stale pair to exercise the explicit generate write path.
-    fs.writeFileSync(artifacts.markdown, "stale Markdown\n");
-    fs.writeFileSync(artifacts.html, "stale HTML\n");
-
-    // Act
-    const generated = runCli(root, ["generate", "--write"]);
-
-    // Assert
-    assert.equal(generated.status, 0, generated.stderr);
-    assert.match(generated.stdout, /\[OK\] wrote \.dude\/backlog\.md and \.dude\/backlog\.html/);
-    assertCommittedPair(root, expected, "generate --write");
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("T005 runtime reads neither approved preview nor optional visual pack and keeps fixed paths", () => {
+test("T005 runtime reads neither approved preview nor optional visual pack and names no report artifact", () => {
   const source = fs.readFileSync(BACKLOG_PATH, "utf8");
-  assert.equal(source.includes("design/preview.html"), false);
-  assert.equal(source.includes("dude-pack-strata-visual"), false);
-  assert.equal(source.includes("node:child_process"), false);
-  assert.match(source, /const BACKLOG_MD_PATH = "\.dude\/backlog\.md"/);
-  assert.match(source, /const BACKLOG_HTML_PATH = "\.dude\/backlog\.html"/);
+  for (const absent of [
+    "design/preview.html",
+    "dude-pack-strata-visual",
+    "node:child_process",
+    ".dude/backlog.md",
+    ".dude/backlog.html",
+    "backlog-template",
+  ]) {
+    assert.equal(source.includes(absent), false, absent);
+  }
+  assert.equal(fs.existsSync(new URL("./backlog-template.html", import.meta.url)), false, "the report template is retired");
 });
 
 test("T005 Feature 025 historical artifacts retain exact bytes except its active owner breadcrumb", () => {
@@ -1598,11 +1245,4 @@ test("T005 Feature 025 historical artifacts retain exact bytes except its active
     "498a957464be36793df326697f5ba6e913e7a9642f92b578866b2f0f473c9173",
     "reversing the sole authorized breadcrumb change restores the exact historical tasks bytes",
   );
-});
-
-test("T005 committed backlog artifacts are mechanically fresh in the existing test path", () => {
-  const result = runCli(REPO_ROOT, ["check"]);
-  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
-  assert.match(result.stdout, /\.dude\/backlog\.md is current/);
-  assert.match(result.stdout, /\.dude\/backlog\.html is current/);
 });

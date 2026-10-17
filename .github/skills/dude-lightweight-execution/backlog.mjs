@@ -4,28 +4,20 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { inventoryLifecycleIdentities } from "../dude-engine/lib/feature.mjs";
 import { parseFrontmatterScalars, parseIdeaIdentity, parseSpecIdentity } from "../dude-engine/lib/feature-identity.mjs";
 import { parseTasks } from "../dude-engine/lib/tasks.mjs";
-import { WORKSPACE_PATHS, resolveWorkspacePath, resolveMutationPath } from "../dude-engine/lib/workspace-paths.mjs";
+import { WORKSPACE_PATHS, resolveWorkspacePath } from "../dude-engine/lib/workspace-paths.mjs";
 
 const IDEA_KEYS = Object.freeze(["title", "slug", "status", "spec_path", "depends-on"]);
 const BACKLOG_ORDER_PATH = `${WORKSPACE_PATHS.STATE_DIR}/backlog-order.md`;
-const BACKLOG_MD_PATH = ".dude/backlog.md";
-const BACKLOG_HTML_PATH = ".dude/backlog.html";
 const CANONICAL_SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
 const CURRENT_GROUPS = Object.freeze([
   { key: "blocked", title: "Blocked" },
   { key: "active", title: "Active" },
   { key: "next", title: "Next" },
-]);
-const PLANNED_GROUPS = Object.freeze([
-  { key: "awaitingDefinition", title: "Ideas awaiting definition" },
-  { key: "definedAwaitingWork", title: "Defined awaiting work" },
-  { key: "prioritizedLater", title: "Prioritized for later" },
 ]);
 
 /** @param {string} left @param {string} right */
@@ -39,21 +31,6 @@ function compareLifecycle(left, right) {
   const leftNumber = Number.isSafeInteger(left.numberValue) ? left.numberValue : Number.MAX_SAFE_INTEGER;
   const rightNumber = Number.isSafeInteger(right.numberValue) ? right.numberValue : Number.MAX_SAFE_INTEGER;
   return leftNumber - rightNumber || compareIdentity(left.identity, right.identity);
-}
-
-/** @param {unknown} value */
-function esc(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/\x27/g, "&#39;");
-}
-
-/** @param {string|Buffer} value */
-function sha256(value) {
-  return createHash("sha256").update(value).digest("hex");
 }
 
 /** @param {string} value */
@@ -151,37 +128,6 @@ function visibleProseLines(content) {
   return visible;
 }
 
-/** Make a deterministic plain-text excerpt from the user-controlled Idea section. */
-function ideaExcerpt(ideaBody) {
-  const selected = [];
-  for (const rawLine of visibleProseLines(ideaBody)) {
-    const line = rawLine.replace(/^\s*(?:>\s*)+/, "");
-    if (/^###\s+/.test(line) && selected.some((entry) => entry.trim() !== "")) break;
-    if (/^#{1,6}\s+/.test(line)) continue;
-    selected.push(line.replace(/^\s*(?:[-*+]\s+|\d+\.\s+)/, ""));
-  }
-  let text = selected.join(" ")
-    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/[*_~]+/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  const limit = 360;
-  if ([...text].length <= limit) return text;
-  text = [...text].slice(0, limit + 1).join("");
-  const boundary = text.lastIndexOf(" ");
-  return `${(boundary > 240 ? text.slice(0, boundary) : text.slice(0, limit)).trimEnd()}…`;
-}
-
-function conciseEvidence(value, limit = 420) {
-  const text = String(value).replace(/\s+/g, " ").trim();
-  if ([...text].length <= limit) return text;
-  const prefix = [...text].slice(0, limit + 1).join("");
-  const boundary = prefix.lastIndexOf(" ");
-  return `${(boundary > Math.floor(limit * .65) ? prefix.slice(0, boundary) : prefix.slice(0, limit)).trimEnd()}…`;
-}
-
 /** Admit only an explicit literal `depends-on: <slug>` marker in visible prose. */
 export function parseProvisionalRelationships(ideaBody) {
   const relationships = [];
@@ -192,60 +138,10 @@ export function parseProvisionalRelationships(ideaBody) {
     for (const match of line.matchAll(/`depends-on:\s*([a-z0-9][a-z0-9-]*)`/g)) {
       if (seen.has(match[1])) continue;
       seen.add(match[1]);
-      relationships.push({ targetSlug: match[1], evidence: line.trim() });
+      relationships.push({ targetSlug: match[1] });
     }
   }
   return relationships;
-}
-
-function isCalendarDate(value) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return false;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  if (month < 1 || month > 12 || day < 1) return false;
-  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  return day <= days[month - 1];
-}
-
-/** Parse Coordinator Log bullets and their optional leading calendar date. */
-export function parseCoordinatorLog(content) {
-  const section = extractSection(content, 2, "Coordinator Log");
-  const entries = [];
-  let appendIndex = 0;
-  for (const line of section.split(/\r\n|\n|\r/)) {
-    const match = /^-\s+(.+?\S)\s*$/.exec(line);
-    if (!match) continue;
-    const text = match[1];
-    const dateMatch = /^(\d{4}-\d{2}-\d{2})(?=\s|T|$)/.exec(text);
-    const date = dateMatch && isCalendarDate(dateMatch[1]) ? dateMatch[1] : null;
-    entries.push({ text, date, appendIndex });
-    appendIndex += 1;
-  }
-  return entries;
-}
-
-function milestoneLabel(text) {
-  if (/\bbrainstorm\s+(?:captured|created)\b/i.test(text)) return "Captured";
-  if (/\b(?:first definition|defined as feature)\b|\bdefined\b\s*(?:-|=)?>/i.test(text)) return "Defined";
-  if (/\bfeature(?:\s+\S+){0,3}\s+complete\b|\bfeature complete\b|\ball\s+\d+\s+tasks?\s+\[x\]/i.test(text)) return "Completed";
-  return null;
-}
-
-function selectMilestones(entries) {
-  const candidates = entries
-    .map((entry) => ({ ...entry, label: milestoneLabel(entry.text) }))
-    .filter((entry) => entry.label !== null);
-  const selected = [];
-  const captured = candidates.find((entry) => entry.label === "Captured");
-  const defined = candidates.find((entry) => entry.label === "Defined");
-  const completed = candidates.filter((entry) => entry.label === "Completed").at(-1);
-  if (captured) selected.push(captured);
-  if (defined) selected.push(defined);
-  if (completed) selected.push(completed);
-  return selected.sort((left, right) => left.appendIndex - right.appendIndex);
 }
 
 function readSafeFile(root, relativePath) {
@@ -343,45 +239,9 @@ function taskCounts(tasks) {
 function taskDetail(task) {
   return {
     id: task.id,
-    glyph: task.glyph,
-    state: task.state,
     description: task.description,
     deps: [...task.deps],
-    blockedBy: task.blockedBy,
   };
-}
-
-function phaseDetails(tasksContent, tasks) {
-  const { headings } = visibleHeadings(tasksContent);
-  const definitions = headings
-    .filter((heading) => heading.level === 2 && /^Phase\b/i.test(heading.title))
-    .map((heading) => ({ title: heading.title, line: heading.line, tasks: [] }));
-  const unphasedTasks = [];
-  for (const task of tasks) {
-    let owning = null;
-    for (const phase of definitions) {
-      if (phase.line < task.headerLine) owning = phase;
-      else break;
-    }
-    const detail = taskDetail(task);
-    if (owning) owning.tasks.push(detail);
-    else unphasedTasks.push(detail);
-  }
-  return {
-    phases: definitions.map(({ title, tasks: phaseTasks }) => ({ title, tasks: phaseTasks })),
-    unphasedTasks,
-  };
-}
-
-function userStoryHeadings(specContent) {
-  return visibleHeadings(specContent).headings
-    .filter((heading) => heading.level === 3 && /^User Story\b/i.test(heading.title))
-    .map((heading) => heading.title);
-}
-
-function anchorFor(item, duplicated) {
-  if (!duplicated && CANONICAL_SLUG_RE.test(item.slug)) return `feature-${item.slug}`;
-  return `feature-path-${Buffer.from(item.ideaPath, "utf8").toString("hex")}`;
 }
 
 /** Collect every safe direct idea and its exact-owner evidence. */
@@ -432,7 +292,6 @@ export function collectLifecycleItems({ root }) {
   const items = [];
   for (const file of files) {
     const { content } = file;
-    let title = file.identitySlug;
     let slug = file.identitySlug;
     let authoritySlug = null;
     let status = "unknown";
@@ -445,7 +304,6 @@ export function collectLifecycleItems({ root }) {
     const localAuthorityIssues = [];
     try {
       const frontmatter = parseFrontmatterScalars(content, { canonicalKeys: IDEA_KEYS });
-      title = frontmatter.scalars.get("title")?.value || file.identitySlug;
       const parsedSlug = frontmatter.scalars.get("slug")?.value || file.identitySlug;
       slug = CANONICAL_SLUG_RE.test(parsedSlug) ? parsedSlug : file.identitySlug;
       // Display identity always resolves; only a canonical frontmatter slug carries authority.
@@ -495,14 +353,11 @@ export function collectLifecycleItems({ root }) {
     const declaredDefined = lifecycleAvailable && status === "defined";
     const defined = !resolvedCandidate && (Boolean(ownerSpecPath) || declaredDefined);
     const specPath = resolvedCandidate ? null : ownerSpecPath;
-    const tasksPath = specPath
-      ? `${specPath.slice(0, -"spec.md".length)}tasks.md`
-      : null;
     const displaySpecPath = ownerSpecPath ?? declaredSpecPath;
     const displayTasksPath = displaySpecPath
       ? `${displaySpecPath.slice(0, -"spec.md".length)}tasks.md`
       : null;
-    const specContent = displaySpecPath ? readSafeFile(root, displaySpecPath) : null;
+    const specContent = ownerSpecPath ? readSafeFile(root, ownerSpecPath) : null;
     const tasksContent = displayTasksPath ? readSafeFile(root, displayTasksPath) : null;
     let parsedTasks = [];
     let taskWarnings = [];
@@ -524,10 +379,6 @@ export function collectLifecycleItems({ root }) {
     }
     const counts = taskCounts(parsedTasks);
     const body = extractSection(content, 2, "Idea");
-    const coordinatorLog = parseCoordinatorLog(content);
-    const phaseModel = tasksAvailable && tasksContent !== null
-      ? phaseDetails(tasksContent, parsedTasks)
-      : { phases: [], unphasedTasks: [] };
     const packageComplete = !resolvedCandidate && Boolean(
       ownerSpecPath && tasksAvailable && parsedTasks.length > 0 && parsedTasks.every((task) => task.state === "done"),
     );
@@ -552,7 +403,6 @@ export function collectLifecycleItems({ root }) {
       numberValue: file.numberValue,
       slug,
       authoritySlug,
-      title,
       status,
       rawStatus,
       rawSpecPath,
@@ -563,20 +413,11 @@ export function collectLifecycleItems({ root }) {
       ownerSpecPath,
       resolvedCandidate,
       resolved,
-      declaredDefined,
       defined,
-      declaredSpecPath,
       specPath,
-      tasksPath,
-      excerpt: ideaExcerpt(body),
       dependsOn,
       provisionalRelationships: parseProvisionalRelationships(body),
-      coordinatorLog,
-      milestones: selectMilestones(coordinatorLog),
-      userStories: specContent === null ? [] : userStoryHeadings(specContent),
       tasks: parsedTasks.map(taskDetail),
-      phases: phaseModel.phases,
-      unphasedTasks: phaseModel.unphasedTasks,
       taskCounts: counts,
       taskWarnings,
       tasksAvailable,
@@ -590,9 +431,7 @@ export function collectLifecycleItems({ root }) {
   const slugCounts = new Map();
   for (const item of items) slugCounts.set(item.slug, (slugCounts.get(item.slug) ?? 0) + 1);
   for (const item of items) {
-    const duplicateSlug = (slugCounts.get(item.slug) ?? 0) > 1;
-    if (duplicateSlug) item.authoritySlug = null;
-    item.anchor = anchorFor(item, duplicateSlug);
+    if ((slugCounts.get(item.slug) ?? 0) > 1) item.authoritySlug = null;
   }
   return items;
 }
@@ -630,7 +469,6 @@ function withItemDefaults(item, index) {
       && (item.lifecycleAvailable ?? true);
   const defined = resolvedCandidate ? false : Boolean(item.defined);
   const specPath = resolvedCandidate ? null : item.specPath ?? null;
-  const tasksPath = resolvedCandidate ? null : item.tasksPath ?? null;
   return {
     identity,
     ideaPath: item.ideaPath ?? identity,
@@ -638,7 +476,6 @@ function withItemDefaults(item, index) {
     numberValue,
     slug,
     authoritySlug: item.authoritySlug === undefined ? (CANONICAL_SLUG_RE.test(slug) ? slug : null) : item.authoritySlug,
-    title: item.title ?? slug,
     status,
     rawStatus,
     rawSpecPath,
@@ -650,27 +487,17 @@ function withItemDefaults(item, index) {
     ownerSpecPath,
     resolvedCandidate,
     resolved,
-    declaredDefined: resolvedCandidate ? false : item.declaredDefined ?? Boolean(item.defined),
     defined,
-    declaredSpecPath: resolvedCandidate ? null : item.declaredSpecPath ?? specPath,
     specPath,
-    tasksPath,
-    excerpt: item.excerpt ?? "",
     dependsOn: Array.isArray(item.dependsOn) ? [...item.dependsOn] : [],
     provisionalRelationships: Array.isArray(item.provisionalRelationships) ? [...item.provisionalRelationships] : [],
-    coordinatorLog: Array.isArray(item.coordinatorLog) ? [...item.coordinatorLog] : [],
-    milestones: Array.isArray(item.milestones) ? [...item.milestones] : [],
-    userStories: Array.isArray(item.userStories) ? [...item.userStories] : [],
     tasks: Array.isArray(item.tasks) ? [...item.tasks] : [],
-    phases: Array.isArray(item.phases) ? [...item.phases] : [],
-    unphasedTasks: Array.isArray(item.unphasedTasks) ? [...item.unphasedTasks] : [],
     taskCounts: { ...counts },
     tasksAvailable: resolvedCandidate ? false : Boolean(item.tasksAvailable),
     packageComplete: resolvedCandidate ? false : Boolean(item.packageComplete),
     hasInProgress: Boolean(item.hasInProgress),
     ownBlocked: Boolean(item.ownBlocked),
     unavailableDetail: item.unavailableDetail ?? null,
-    anchor: item.anchor ?? anchorFor({ slug, ideaPath: identity }, false),
   };
 }
 
@@ -693,32 +520,7 @@ function authoritativeDependsOn(item) {
   return item.authoritySlug ? item.dependsOn : [];
 }
 
-function groupActivity(items) {
-  const dated = [];
-  for (const item of items) {
-    for (const entry of item.coordinatorLog) {
-      if (!entry.date) continue;
-      dated.push({ ...entry, ideaPath: item.ideaPath, slug: item.slug, anchor: item.anchor });
-    }
-  }
-  dated.sort((left, right) => (
-    compareIdentity(right.date, left.date)
-    || compareIdentity(left.ideaPath, right.ideaPath)
-    || left.appendIndex - right.appendIndex
-  ));
-  const groups = [];
-  for (const event of dated) {
-    let group = groups[groups.length - 1];
-    if (!group || group.date !== event.date) {
-      group = { date: event.date, events: [] };
-      groups.push(group);
-    }
-    group.events.push(event);
-  }
-  return groups;
-}
-
-function buildRelationships(items, validOrder, orderIndex) {
+function buildRelationships(items, validOrder) {
   const unique = uniqueItemsBySlug(items);
   const declared = [];
   const provisional = [];
@@ -726,7 +528,6 @@ function buildRelationships(items, validOrder, orderIndex) {
     if (item.authoritySlug === null) continue;
     for (const targetSlug of item.dependsOn) {
       declared.push({
-        authority: "declared",
         type: "dependency",
         from: unique.get(targetSlug) ?? null,
         fromSlug: targetSlug,
@@ -735,49 +536,13 @@ function buildRelationships(items, validOrder, orderIndex) {
       });
     }
     for (const relation of item.provisionalRelationships) {
-      provisional.push({
-        authority: "provisional",
-        type: "body-stated dependency",
-        from: unique.get(relation.targetSlug) ?? null,
-        fromSlug: relation.targetSlug,
-        to: item,
-        toSlug: item.slug,
-        evidence: relation.evidence,
-      });
+      provisional.push({ fromSlug: relation.targetSlug, toSlug: item.slug });
     }
   }
-  for (let index = 1; index < validOrder.length; index += 1) {
-    const from = unique.get(validOrder[index - 1]);
-    const to = unique.get(validOrder[index]);
-    if (!from || !to) continue;
-    declared.push({
-      authority: "declared",
-      type: "explicit order",
-      from,
-      fromSlug: from.slug,
-      to,
-      toSlug: to.slug,
-    });
-  }
-  const involved = new Set();
-  for (const relation of [...declared, ...provisional]) {
-    if (relation.from) involved.add(relation.from.identity);
-    involved.add(relation.to.identity);
-  }
-  const unavailable = items.filter((item) => !item.dependencyAvailable);
-  const missing = items.filter((item) => (
-    item.dependencyAvailable
-    && item.section !== "completed"
-    && !involved.has(item.identity)
-    && authoritativeDependsOn(item).length === 0
-    && !orderIndex.has(item.authoritySlug)
-    && item.provisionalRelationships.length === 0
-  ));
   return {
     declared,
     provisional,
-    missing,
-    unavailable,
+    unavailable: items.filter((item) => !item.dependencyAvailable),
     hasExplicitOrder: validOrder.length > 0,
   };
 }
@@ -850,321 +615,36 @@ export function deriveLifecycleModel({ items: sourceItems = [], order = [] }) {
   next.sort(byOrder);
   prioritizedLater.sort(byOrder);
 
-  const assign = (rows, section, group) => {
-    for (const item of rows) {
-      item.section = section;
-      item.group = group;
-      item.orderPosition = orderIndex.has(item.authoritySlug) ? orderIndex.get(item.authoritySlug) + 1 : null;
-    }
+  const assign = (rows, group) => {
+    for (const item of rows) item.group = group;
   };
-  assign(blocked, "current", "blocked");
-  assign(active, "current", "active");
-  assign(next, "current", "next");
-  assign(awaitingDefinition, "planned", "awaiting-definition");
-  assign(definedAwaitingWork, "planned", "defined-awaiting-work");
-  assign(prioritizedLater, "planned", "prioritized-later");
-  assign(completed, "completed", "completed");
+  assign(blocked, "blocked");
+  assign(active, "active");
+  assign(next, "next");
+  assign(awaitingDefinition, "awaiting-definition");
+  assign(definedAwaitingWork, "defined-awaiting-work");
+  assign(prioritizedLater, "prioritized-later");
+  assign(completed, "completed");
 
-  const model = {
+  return {
     summary: {
       currentWork: blocked.length + active.length,
       readyNext: next.length,
       ideasAwaitingDefinition: awaitingDefinition.length + prioritizedLater.filter((item) => !item.defined).length,
       definedAwaitingWork: definedAwaitingWork.length + prioritizedLater.filter((item) => item.defined).length,
       completed: completed.length,
-      active: active.length,
-      blocked: blocked.length,
     },
     current: { blocked, active, next },
     planned: { awaitingDefinition, definedAwaitingWork, prioritizedLater },
     completed,
     items,
-    order: validOrder,
-    activityByDate: groupActivity(items),
-    relationships: null,
+    relationships: buildRelationships(items, validOrder),
   };
-  model.relationships = buildRelationships(items, validOrder, orderIndex);
-  return model;
 }
 
 /** Collect and derive the lifecycle model from one workspace root. */
 export function collectLifecycleModel({ root }) {
   return deriveLifecycleModel({ items: collectLifecycleItems({ root }), order: readOrder(root) });
-}
-
-function featureKind(item) {
-  if (!item.number) return "IDEA";
-  return item.defined ? `F-${item.number}` : `I-${item.number}`;
-}
-
-function lifecycleRibbon(item) {
-  const unknown = !item.lifecycleAvailable;
-  const stages = [
-    { key: "idea", label: "Idea", state: "reached" },
-    { key: "defined", label: "Defined", state: item.resolved ? "not-applicable" : unknown ? "unknown" : item.defined ? "reached" : "pending" },
-    { key: "tasks", label: "Tasks", state: item.resolved ? "not-applicable" : unknown || (item.defined && !item.tasksAvailable) ? "unknown" : item.taskCounts.total > 0 ? "reached" : "pending" },
-    { key: "done", label: "Done", state: item.resolved ? "reached" : unknown || (item.defined && !item.tasksAvailable) ? "unknown" : item.section === "completed" ? "reached" : "pending" },
-  ];
-  const description = stages.map((stage) => `${stage.label} ${stage.state === "unknown" ? "unavailable" : stage.state === "not-applicable" ? "not applicable" : stage.state}`).join(", ");
-  return `<span class="ribbon" role="img" aria-label="Lifecycle: ${esc(description)}">${stages.map((stage) => (
-    `<span class="stage stage-${stage.key} ${stage.state}">${stage.label}</span>`
-  )).join("")}</span>`;
-}
-
-function countsMarkup(item) {
-  if (item.resolved) return "";
-  if (!item.lifecycleAvailable || (item.defined && !item.tasksAvailable)) return `<span class="counts unavailable">Task state unavailable</span>`;
-  if (item.taskCounts.total === 0) return `<span class="counts none">No task package</span>`;
-  const counts = item.taskCounts;
-  return `<span class="counts" role="group" aria-label="Task states">`
-    + `<span><strong>${counts.open}</strong> open</span>`
-    + `<span><strong>${counts.active}</strong> active</span>`
-    + `<span><strong>${counts.blocked}</strong> blocked</span>`
-    + `<span><strong>${counts.done}</strong> done</span></span>`;
-}
-
-function dependencySignal(item) {
-  if (!item.dependencyAvailable) return `<span class="dep-signal unavailable"><span aria-hidden="true">?</span> Dependency data unavailable</span>`;
-  if (authoritativeDependsOn(item).length > 0 || item.orderPosition !== null) {
-    return `<span class="dep-signal declared"><span aria-hidden="true">━</span> Declared signal</span>`;
-  }
-  if (item.provisionalRelationships.length > 0) {
-    return `<span class="dep-signal provisional"><span aria-hidden="true">┄</span> Provisional signal</span>`;
-  }
-  return `<span class="dep-signal none"><span aria-hidden="true">—</span> No dependency signal</span>`;
-}
-
-function renderMilestones(item) {
-  if (item.milestones.length === 0) return `<p class="quiet">No Coordinator Log milestones are recorded.</p>`;
-  return `<ol class="milestones">${item.milestones.map((milestone) => (
-    `<li><span class="milestone-label">${esc(milestone.label)}</span><span>${esc(conciseEvidence(milestone.text))}</span></li>`
-  )).join("")}</ol>`;
-}
-
-function internalTargetLink(model, slug) {
-  const matches = model.items.filter((item) => item.authoritySlug === slug);
-  if (matches.length !== 1) return `<code>${esc(slug)}</code>`;
-  return `<a href="#${esc(matches[0].anchor)}"><code>${esc(slug)}</code></a>`;
-}
-
-function renderDependencyFacts(model, item) {
-  const rows = [];
-  if (!item.dependencyAvailable) rows.push(`<li><strong>Declared dependencies:</strong> unavailable because idea metadata could not be read reliably.</li>`);
-  else if (item.authoritySlug === null && item.dependsOn.length > 0) rows.push(`<li><strong>Declared dependencies:</strong> dependency metadata is present but ignored because the idea slug is malformed.</li>`);
-  else if (authoritativeDependsOn(item).length === 0) rows.push(`<li><strong>Declared dependencies:</strong> none in idea frontmatter.</li>`);
-  else for (const slug of authoritativeDependsOn(item)) rows.push(
-    `<li><strong>Declared dependency:</strong> ${internalTargetLink(model, slug)} (authoritative).</li>`,
-  );
-  for (const relation of item.provisionalRelationships) rows.push(
-    `<li><strong>Provisional, non-authoritative:</strong> ${internalTargetLink(model, relation.targetSlug)} — ${esc(relation.evidence)}</li>`,
-  );
-  if (item.orderPosition !== null) rows.push(
-    `<li><strong>Explicit order:</strong> position ${item.orderPosition} in <code>${BACKLOG_ORDER_PATH}</code>.</li>`,
-  );
-  else if (!model.relationships.hasExplicitOrder) rows.push(`<li><strong>Explicit order:</strong> no explicit feature order declared.</li>`);
-  else rows.push(`<li><strong>Explicit order:</strong> this item has no listed position.</li>`);
-  return `<ul class="facts">${rows.join("")}</ul>`;
-}
-
-function taskStateLabel(task) {
-  if (task.state === "done") return "Done";
-  if (task.state === "in-progress") return "Active";
-  if (task.state === "blocked") return "Blocked";
-  return "Open";
-}
-
-function renderTask(task) {
-  const dependencies = task.deps.length > 0
-    ? `<div class="task-meta"><span>deps:</span> ${task.deps.map((dep) => `<code>${esc(dep)}</code>`).join(", ")}</div>`
-    : "";
-  const blocker = task.blockedBy
-    ? `<div class="task-meta blocked-by"><span>blocked-by:</span> ${esc(task.blockedBy)}</div>`
-    : "";
-  return `<li class="task task-${esc(task.state)}"><div class="task-main">`
-    + `<span class="task-status"><span aria-hidden="true">[${esc(task.glyph)}]</span> ${taskStateLabel(task)}</span>`
-    + `<code>${esc(task.id)}</code><span>${esc(task.description)}</span></div>${dependencies}${blocker}</li>`;
-}
-
-function renderTasks(item) {
-  if (item.resolved) return `<p class="quiet">Outcome resolved without a package; tasks are not applicable.</p>`;
-  if (!item.lifecycleAvailable) return `<p class="awaiting">Task state is unavailable because lifecycle metadata is ambiguous.</p>`;
-  if (!item.defined) return `<p class="awaiting">Awaiting definition - no tasks exist yet.</p>`;
-  if (!item.tasksAvailable) return `<p class="awaiting">${esc(item.unavailableDetail ?? "Task details are unavailable.")}</p>`;
-  if (item.taskCounts.total === 0) return `<p class="quiet">No tasks are recorded${item.tasksPath ? ` in <code>${esc(item.tasksPath)}</code>` : ""}.</p>`;
-  const sections = [];
-  if (item.unphasedTasks.length > 0) sections.push(`<ol class="task-list unphased">${item.unphasedTasks.map(renderTask).join("")}</ol>`);
-  for (const phase of item.phases) {
-    const body = phase.tasks.length > 0
-      ? `<ol class="task-list">${phase.tasks.map(renderTask).join("")}</ol>`
-      : `<p class="quiet phase-empty">No tasks are recorded in this phase.</p>`;
-    sections.push(`<section class="phase"><h4>${esc(phase.title)}</h4>${body}</section>`);
-  }
-  return sections.join("");
-}
-
-function renderFeatureDefinition(item) {
-  if (item.resolved) return `<p class="quiet">Outcome resolved without a package; definition is not applicable.</p>`;
-  if (!item.lifecycleAvailable) return `<p class="awaiting">Definition status is unavailable because idea metadata is ambiguous.</p>`;
-  if (!item.defined) return `<p class="awaiting">Awaiting definition - no tasks exist yet.</p>`;
-  const stories = item.userStories.length > 0
-    ? `<ul class="story-list">${item.userStories.map((story) => `<li>${esc(story)}</li>`).join("")}</ul>`
-    : `<p class="quiet">No user-story headings are present in the linked feature specification.</p>`;
-  if (!item.specPath) {
-    const declaredSource = item.declaredSpecPath && item.userStories.length > 0
-      ? `<p class="source-path"><span>Declared spec (display only)</span> <code>${esc(item.declaredSpecPath)}</code></p>${stories}`
-      : "";
-    return `<p class="awaiting">${esc(item.unavailableDetail ?? "The linked feature definition is unavailable or ambiguous.")}</p>${declaredSource}`;
-  }
-  return `<p class="source-path"><span>Spec</span> <code>${esc(item.specPath)}</code></p>${stories}`;
-}
-
-function renderFeatureDetail(model, item) {
-  const compact = item.section === "completed" ? " compact" : "";
-  const open = item.slug === "backlog-canvas" ? " open" : "";
-  const excerpt = item.excerpt
-    ? `<p>${esc(item.excerpt)}</p>`
-    : `<p class="quiet">No readable excerpt is available from the <code>## Idea</code> section.</p>`;
-  const taskPath = item.tasksPath ? `<code>${esc(item.tasksPath)}</code>` : "";
-  const warnings = [...item.authorityIssues, ...item.taskWarnings];
-  const warningMarkup = warnings.length > 0 ? `<aside class="data-warning" aria-label="Unavailable or ambiguous source data"><strong>Some source data is unavailable or ambiguous.</strong><ul>${warnings.map((warning) => `<li>${esc(warning)}</li>`).join("")}</ul></aside>` : "";
-  const kind = featureKind(item);
-  const visibleIdentity = kind === "IDEA" || kind.startsWith("I-") ? `${kind} · ${item.slug}` : kind;
-  return `<details class="feature-detail${compact}" id="${esc(item.anchor)}" data-feature-entry="${esc(item.slug)}" data-idea-path="${esc(item.ideaPath)}" data-section="${esc(item.section)}" data-group="${esc(item.group)}"${open}>`
-    + `<summary><span class="summary-grid"><span class="identity">${esc(visibleIdentity)}</span>`
-    + `<span class="feature-title">${esc(item.title)}</span>${lifecycleRibbon(item)}${countsMarkup(item)}${dependencySignal(item)}</span></summary>`
-    + `<div class="feature-body">${warningMarkup}<div class="detail-grid">`
-    + `<section><h3>Original idea</h3>${excerpt}<p class="source-path"><span>Source</span> <code>${esc(item.ideaPath)}</code></p></section>`
-    + `<section><h3>Coordinator milestones</h3>${renderMilestones(item)}</section>`
-    + `<section><h3>Dependencies and order</h3>${renderDependencyFacts(model, item)}</section>`
-    + `<section><h3>Feature definition</h3>${renderFeatureDefinition(item)}</section></div>`
-    + `<section class="tasks-section"><div class="section-heading"><h3>Phases and tasks</h3>${taskPath}</div>${renderTasks(item)}</section>`
-    + `</div></details>`;
-}
-
-function renderSummary(model) {
-  const summary = model.summary;
-  return `<div class="metric-strip" role="group" aria-label="Where are we summary">`
-    + `<div class="metric current"><strong>${summary.currentWork}</strong><span>Current work</span><small>${summary.active} active · ${summary.blocked} blocked</small></div>`
-    + `<div class="metric next"><strong>${summary.readyNext}</strong><span>Ready / Next</span><small>ready from declared dependency or order</small></div>`
-    + `<div class="metric ideas"><strong>${summary.ideasAwaitingDefinition}</strong><span>Ideas awaiting definition</span><small>no task package yet</small></div>`
-    + `<div class="metric defined"><strong>${summary.definedAwaitingWork}</strong><span>Defined awaiting work</span><small>not active or ordered next</small></div>`
-    + `<div class="metric completed"><strong>${summary.completed}</strong><span>Completed features</span><small>compact library below</small></div></div>`
-    + `<p class="at-glance"><strong>Current:</strong> ${summary.currentWork}. <strong>Ready:</strong> ${summary.readyNext}. <strong>Planned:</strong> ${summary.ideasAwaitingDefinition} awaiting definition and ${summary.definedAwaitingWork} defined awaiting work. <strong>Completed:</strong> ${summary.completed}.</p>`;
-}
-
-function mapNode(item, fallbackSlug) {
-  if (!item) return `<span class="map-node unresolved"><span class="map-id">Unresolved</span><strong>${esc(fallbackSlug)}</strong></span>`;
-  return `<a class="map-node" href="#${esc(item.anchor)}"><span class="map-id">${esc(featureKind(item))}</span><strong>${esc(item.title)}</strong><small>${esc(item.slug)}</small></a>`;
-}
-
-function renderRelation(relation) {
-  const provisional = relation.authority === "provisional";
-  const order = relation.type === "explicit order";
-  const label = provisional
-    ? "stated in idea, not authoritative"
-    : order ? "explicit order" : "declared dependency";
-  const direction = order
-    ? `${relation.fromSlug} is listed earlier than ${relation.toSlug}; no dependency is implied`
-    : `${relation.fromSlug} prerequisite to ${relation.toSlug} dependent`;
-  const ends = order ? ["earlier", "later"] : ["prerequisite", "dependent"];
-  return `<div class="map-edge" role="listitem" data-authority="${relation.authority}" aria-label="${esc(direction)}: ${label}">`
-    + `${mapNode(relation.from, relation.fromSlug)}<span class="map-connector ${provisional ? "dashed" : "solid"}"><span class="map-label">${esc(label)} · ${ends[0]} <span aria-hidden="true">→</span> ${ends[1]}</span></span>${mapNode(relation.to, relation.toSlug)}</div>`;
-}
-
-function renderDeliveryMap(model) {
-  const { declared, provisional, missing, unavailable, hasExplicitOrder } = model.relationships;
-  const relationships = [...declared, ...provisional];
-  const rows = relationships.length > 0
-    ? `<div class="map-edges" role="list">${relationships.map(renderRelation).join("")}</div>`
-    : unavailable.length > 0
-      ? `<p class="empty-state"><strong>Relationship lines require readable source data.</strong></p>`
-      : `<p class="empty-state"><strong>No dependency relationships are declared or provisionally evidenced.</strong></p>`;
-  const isolated = missing.length > 0
-    ? `<div class="map-isolated"><strong>No dependency signal:</strong> ${missing.map((item) => `<a href="#${esc(item.anchor)}">${esc(item.slug)}</a>`).join(" · ")}</div>`
-    : "";
-  const unavailableRows = unavailable.length > 0
-    ? `<div class="map-isolated data-unavailable"><strong>Dependency data unavailable:</strong> ${unavailable.map((item) => `<a href="#${esc(item.anchor)}">${esc(item.slug)}</a>`).join(" · ")}</div>`
-    : "";
-  return `<section class="delivery-map" aria-labelledby="delivery-title" aria-describedby="delivery-desc">`
-    + `<div class="section-heading"><h2 id="delivery-title">Delivery map</h2><p id="delivery-desc">Only declared order and dependency evidence, plus separately marked provisional idea statements. Layout position never creates authority.</p></div>`
-    + `<div class="order-banner${hasExplicitOrder ? " order-present" : ""}">${hasExplicitOrder ? "Explicit feature order is declared in the backlog order input." : "No explicit feature order declared"}</div>`
-    + `${rows}${isolated}${unavailableRows}<div class="map-legend" role="group" aria-label="Delivery map legend"><span><i class="legend-line solid" aria-hidden="true"></i> solid = declared</span><span><i class="legend-line dashed" aria-hidden="true"></i> dashed = stated in idea, not authoritative</span><span><i class="legend-none" aria-hidden="true">—</i> no line = no order signal</span></div></section>`;
-}
-
-function renderCurrent(model) {
-  const subsections = [];
-  for (const group of CURRENT_GROUPS) {
-    const rows = model.current[group.key];
-    if (rows.length === 0) continue;
-    subsections.push(`<section class="work-subsection current-${group.key}"><div class="subsection-heading"><h3>${group.title}</h3><span>${rows.length}</span></div>${rows.map((item) => renderFeatureDetail(model, item)).join("")}</section>`);
-  }
-  const body = subsections.length > 0
-    ? subsections.join("")
-    : `<p class="empty-state"><strong>No current execution.</strong> There are no blocked, active, or ready items.</p>`;
-  return `<section class="work-section current-work" aria-labelledby="current-title"><div class="section-heading"><h2 id="current-title">Current work</h2><p>Blocked first, then active work, then ready work. Empty subsections stay out of the way.</p></div>${body}</section>`;
-}
-
-function renderPlanned(model) {
-  const subsections = [];
-  for (const group of PLANNED_GROUPS) {
-    const rows = model.planned[group.key];
-    if (rows.length === 0) continue;
-    subsections.push(`<section class="work-subsection planned-${group.key}"><div class="subsection-heading"><h3>${group.title}</h3><span>${rows.length}</span></div>${rows.map((item) => renderFeatureDetail(model, item)).join("")}</section>`);
-  }
-  const body = subsections.length > 0 ? subsections.join("") : `<p class="empty-state"><strong>No planned work.</strong></p>`;
-  return `<section class="work-section planned-work" aria-labelledby="planned-title"><div class="section-heading"><h2 id="planned-title">Planned work</h2><p>Undefined and defined-but-unstarted work remains compact until authoritative state moves it into Current.</p></div>${body}</section>`;
-}
-
-function renderCompleted(model) {
-  const body = model.completed.length > 0
-    ? model.completed.map((item) => renderFeatureDetail(model, item)).join("")
-    : `<p class="quiet">No completed features are recorded.</p>`;
-  const printIndex = model.completed.length > 0
-    ? `<ol class="print-completed-index" aria-label="Completed feature print index">${model.completed.map((item) => `<li><span class="identity">${esc(featureKind(item))}</span> ${esc(item.title)}</li>`).join("")}</ol>`
-    : `<p class="print-completed-index quiet">No completed features are recorded.</p>`;
-  return `<section class="work-section completed-work" aria-labelledby="completed-title"><div class="section-heading"><h2 id="completed-title">Completed library</h2><p>One collapsed library keeps completed history available without making it a peer lane.</p></div>`
-    + `<details class="completed-library"><summary>${model.completed.length} completed feature${model.completed.length === 1 ? "" : "s"} — open compact library</summary><div class="details-body">${body}</div></details>${printIndex}</section>`;
-}
-
-function renderActivity(model) {
-  const total = model.activityByDate.reduce((count, group) => count + group.events.length, 0);
-  const groups = model.activityByDate.length > 0
-    ? model.activityByDate.map((group) => `<section class="activity-day"><h3><time datetime="${group.date}">${group.date}</time></h3><ol>${group.events.map((event) => `<li><a href="#${esc(event.anchor)}"><code>${esc(event.slug)}</code></a><span>${esc(conciseEvidence(event.text, 240))}</span></li>`).join("")}</ol></section>`).join("")
-    : `<p class="empty-state"><strong>No dated Coordinator Log entries are available.</strong></p>`;
-  return `<section class="work-section coordinator-activity" aria-labelledby="activity-title"><div class="section-heading"><h2 id="activity-title">Coordinator activity</h2><p>Grouped by calendar date, newest first; same-date entries use stable idea identity and append order, not invented intra-day chronology.</p></div>`
-    + `<p class="scope-note">Only dated entries from idea Coordinator Logs are shown. Git history, ad-hoc work outside Coordinator Logs, and other execution history sources are excluded.</p>`
-    + `<details class="activity-library"><summary>${total} dated Coordinator Log entr${total === 1 ? "y" : "ies"} — open activity</summary><div class="activity-body">${groups}</div></details><p class="print-activity-summary">${total} dated Coordinator Log entr${total === 1 ? "y is" : "ies are"} available in the HTML report; the full activity list is omitted from print.</p></section>`;
-}
-
-/** Fill the committed HTML template from one lifecycle model. */
-export function renderReport(template, model) {
-  const slots = {
-    SUMMARY: renderSummary(model),
-    DELIVERY_MAP: renderDeliveryMap(model),
-    CURRENT: renderCurrent(model),
-    PLANNED: renderPlanned(model),
-    COMPLETED: renderCompleted(model),
-    ACTIVITY: renderActivity(model),
-  };
-  const rendered = String(template).replace(/\{\{([A-Z_]+)\}\}/g, (whole, key) => (
-    Object.hasOwn(slots, key) ? slots[key] : whole
-  ));
-  if (/\{\{[A-Z_]+\}\}/.test(rendered)) throw new Error("unfilled backlog template slot");
-  return rendered;
-}
-
-function markdownInline(value) {
-  return String(value ?? "")
-    .replace(/\\/g, "\\\\")
-    .replace(/([\[\]()*_<>])/g, "\\$1")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function markdownItem(item) {
-  const unavailable = item.authorityIssues.length > 0 || item.taskWarnings.some((warning) => warning.startsWith("duplicate task id ") || warning.startsWith("malformed task line "));
-  const number = item.number ? `\`${item.number}\` · ` : "";
-  return `- ${number}\`${String(item.slug).replace(/`/g, "")}\` — ${markdownInline(item.title)} (\`${String(item.ideaPath).replace(/`/g, "")}\`)${unavailable ? " — source data unavailable or ambiguous" : ""}`;
 }
 
 /** Render a current-work-only Mermaid diagram. */
@@ -1182,74 +662,6 @@ export function renderCurrentMermaid(model) {
   }
   if (count === 0) return "";
   lines.push("```", "");
-  return lines.join("\n");
-}
-
-/** Render concise Markdown over the shared lifecycle model. */
-export function renderMarkdown(model) {
-  const s = model.summary;
-  const lines = [
-    "# Backlog",
-    "",
-    "A read-only view built from idea files, linked feature files, task records, and declared order.",
-    "",
-    "## Where are we?",
-    "",
-    `- Current work: **${s.currentWork}** (${s.active} active, ${s.blocked} blocked)`,
-    `- Ready / Next: **${s.readyNext}**`,
-    `- Ideas awaiting definition: **${s.ideasAwaitingDefinition}**`,
-    `- Defined awaiting work: **${s.definedAwaitingWork}**`,
-    `- Completed: **${s.completed}**`,
-    "",
-    "## Current",
-    "",
-    `Blocked ${model.current.blocked.length} · Active ${model.current.active.length} · Next ${model.current.next.length}`,
-    "",
-  ];
-  for (const group of CURRENT_GROUPS) {
-    const rows = model.current[group.key];
-    if (rows.length === 0) continue;
-    lines.push(`### ${group.title}`, "", ...rows.map(markdownItem), "");
-  }
-  const mermaid = renderCurrentMermaid(model);
-  if (mermaid) lines.push("### Current work map", "", mermaid);
-  else lines.push("No current work to diagram.", "");
-
-  lines.push("## Planned", "");
-  for (const group of PLANNED_GROUPS) {
-    const rows = model.planned[group.key];
-    if (rows.length === 0) continue;
-    lines.push(`### ${group.title}`, "", ...rows.map(markdownItem), "");
-  }
-  if (PLANNED_GROUPS.every((group) => model.planned[group.key].length === 0)) lines.push("_(none)_", "");
-
-  lines.push("## Completed", "");
-  if (model.completed.length > 0) lines.push(...model.completed.map(markdownItem), "");
-  else lines.push("_(none)_", "");
-
-  lines.push("## Dependency and order notes", "");
-  lines.push(model.relationships.hasExplicitOrder
-    ? `- Explicit feature order is declared in \`${BACKLOG_ORDER_PATH}\`.`
-    : "- No explicit feature order declared.");
-  if (model.relationships.declared.filter((relation) => relation.type === "dependency").length === 0 && model.relationships.unavailable.length === 0) {
-    lines.push("- No declared feature dependencies are present.");
-  } else {
-    for (const relation of model.relationships.declared.filter((entry) => entry.type === "dependency")) {
-      lines.push(`- Declared: \`${relation.toSlug}\` depends on \`${relation.fromSlug}\`.`);
-    }
-  }
-  for (const item of model.relationships.unavailable) lines.push(`- Dependency data is unavailable for \`${item.slug}\`; no negative dependency fact is inferred.`);
-  if (model.relationships.provisional.length === 0) lines.push("- No provisional body-stated dependency evidence was recognized.");
-  else for (const relation of model.relationships.provisional) lines.push(
-    `- Provisional, non-authoritative: \`${relation.toSlug}\` states a relationship to \`${relation.fromSlug}\`. This does not affect lifecycle classification.`,
-  );
-  lines.push(
-    "",
-    "## Coordinator activity",
-    "",
-    "Coordinator activity is sourced only from dated idea Coordinator Log entries. Git history, ad-hoc work outside Coordinator Logs, and other execution history sources are excluded.",
-    "",
-  );
   return lines.join("\n");
 }
 
@@ -1273,6 +685,21 @@ export function renderText(model) {
   add("Defined awaiting work", model.planned.definedAwaitingWork);
   if (model.planned.prioritizedLater.length > 0) add("Prioritized for later", model.planned.prioritizedLater);
   add("Completed", model.completed);
+
+  const { declared, provisional, unavailable, hasExplicitOrder } = model.relationships;
+  lines.push("Dependency and order notes:");
+  lines.push(hasExplicitOrder
+    ? `  Explicit feature order is declared in ${BACKLOG_ORDER_PATH}.`
+    : "  No explicit feature order declared.");
+  // Unavailable dependency data is not evidence that a feature has no dependencies.
+  if (declared.length === 0 && unavailable.length === 0) lines.push("  No declared feature dependencies are present.");
+  for (const relation of declared) lines.push(`  Declared: ${relation.toSlug} depends on ${relation.fromSlug}.`);
+  for (const item of unavailable) lines.push(`  Dependency data is unavailable for ${item.slug}; no negative dependency fact is inferred.`);
+  if (provisional.length === 0) lines.push("  No provisional body-stated dependency evidence was recognized.");
+  for (const relation of provisional) lines.push(
+    `  Provisional, non-authoritative: ${relation.toSlug} states a relationship to ${relation.fromSlug}. This does not affect lifecycle classification.`,
+  );
+  lines.push("");
   return lines.join("\n");
 }
 
@@ -1293,152 +720,14 @@ export function renderFlowchart(tasks, meta = {}) {
   return lines.join("\n");
 }
 
-function readTemplate() {
-  return fs.readFileSync(new URL("./backlog-template.html", import.meta.url), "utf8");
-}
-
-/** Render both fixed artifacts in memory through the shared model. */
-export function renderArtifacts({ root }) {
-  const model = collectLifecycleModel({ root });
-  return {
-    model,
-    markdown: renderMarkdown(model),
-    html: renderReport(readTemplate(), model),
-  };
-}
-
-/** @param {unknown} error */
-function isMissingPath(error) {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
-}
-
-/** Capture exact existing bytes, or the prior absence of one fixed artifact. */
-function captureBacklogPreimage(absolutePath) {
-  try {
-    return { missing: false, bytes: fs.readFileSync(absolutePath) };
-  } catch (error) {
-    if (isMissingPath(error)) return { missing: true, bytes: null };
-    throw error;
-  }
-}
-
-/** Restore one fixed artifact to its exact prior bytes or prior absence. */
-function restoreBacklogPreimage(artifact) {
-  if (artifact.preimage.missing) {
-    try {
-      fs.unlinkSync(artifact.absolutePath);
-    } catch (error) {
-      if (!isMissingPath(error)) throw error;
-    }
-    return;
-  }
-  fs.writeFileSync(artifact.absolutePath, artifact.preimage.bytes);
-  const restored = fs.readFileSync(artifact.absolutePath);
-  if (!restored.equals(artifact.preimage.bytes)) {
-    throw new Error(`backlog artifact restore did not complete: ${artifact.relativePath}`);
-  }
-}
-
-/**
- * Render and replace the two committed backlog artifacts as one recoverable pair.
- * @param {{root:string}} options
- */
-export function refreshCommittedBacklog({ root }) {
-  // Rendering completes before either target is resolved or written, so both
-  // postimages necessarily come from the same authoritative poststate.
-  const rendered = renderArtifacts({ root });
-  const artifacts = [
-    { relativePath: BACKLOG_MD_PATH, content: Buffer.from(rendered.markdown) },
-    { relativePath: BACKLOG_HTML_PATH, content: Buffer.from(rendered.html) },
-  ].map((artifact) => ({
-    ...artifact,
-    absolutePath: resolveMutationPath(root, artifact.relativePath),
-  }));
-  for (const artifact of artifacts) artifact.preimage = captureBacklogPreimage(artifact.absolutePath);
-
-  try {
-    for (const artifact of artifacts) {
-      fs.writeFileSync(artifact.absolutePath, artifact.content);
-      const actual = fs.readFileSync(artifact.absolutePath);
-      if (!actual.equals(artifact.content)) {
-        throw new Error(`backlog artifact write did not complete: ${artifact.relativePath}`);
-      }
-    }
-  } catch (error) {
-    let restoreError = null;
-    for (const artifact of artifacts) {
-      try {
-        restoreBacklogPreimage(artifact);
-      } catch (failure) {
-        restoreError ??= failure;
-      }
-    }
-    if (restoreError) throw restoreError;
-    throw error;
-  }
-}
-
-function readCommittedArtifact(root, relativePath) {
-  try {
-    const absolute = resolveWorkspacePath(root, relativePath);
-    const stat = fs.lstatSync(absolute);
-    if (stat.isSymbolicLink() || !stat.isFile()) return { status: "missing", bytes: null };
-    return { status: "present", bytes: fs.readFileSync(absolute) };
-  } catch {
-    return { status: "missing", bytes: null };
-  }
-}
-
-function runCheck(root, { write }) {
-  if (write) {
-    process.stderr.write("[FAIL] check is read-only and rejects --write\n");
-    return 1;
-  }
-  const rendered = renderArtifacts({ root });
-  const expected = [
-    { relativePath: BACKLOG_MD_PATH, content: rendered.markdown },
-    { relativePath: BACKLOG_HTML_PATH, content: rendered.html },
-  ];
-  let failed = false;
-  for (const artifact of expected) {
-    const actual = readCommittedArtifact(root, artifact.relativePath);
-    const bytes = Buffer.from(artifact.content);
-    if (actual.status === "missing") {
-      process.stderr.write(`[MISSING] ${artifact.relativePath}\n`);
-      failed = true;
-      continue;
-    }
-    if (!actual.bytes.equals(bytes)) {
-      process.stderr.write(`[STALE] ${artifact.relativePath}: expected ${bytes.byteLength} bytes (${sha256(bytes)}), found ${actual.bytes.byteLength} bytes (${sha256(actual.bytes)})\n`);
-      failed = true;
-      continue;
-    }
-    process.stdout.write(`[OK] ${artifact.relativePath} is current\n`);
-  }
-  if (failed) process.stderr.write("Run backlog.mjs generate --root . --write to refresh both fixed artifacts.\n");
-  return failed ? 3 : 0;
-}
-
-function runGenerate(root, { write }) {
-  if (!write) {
-    const rendered = renderArtifacts({ root });
-    process.stdout.write(`==> ${BACKLOG_MD_PATH}\n${rendered.markdown}\n==> ${BACKLOG_HTML_PATH}\n${rendered.html}\n`);
-    return 0;
-  }
-  refreshCommittedBacklog({ root });
-  process.stdout.write(`[OK] wrote ${BACKLOG_MD_PATH} and ${BACKLOG_HTML_PATH}\n`);
-  return 0;
-}
-
-const HELP = `backlog — deterministic lifecycle orientation\n\nUsage:\n  node backlog.mjs [--root <dir>]\n  node backlog.mjs kanban [--root <dir>]\n  node backlog.mjs flowchart <idea-slug> [--root <dir>]\n  node backlog.mjs check [--root <dir>]\n  node backlog.mjs generate [--root <dir>] [--write]\n\nThe default form prints Current, Planned, and Completed lifecycle groups. kanban\nprints current work only. flowchart prints one defined package task graph. check\nbyte-compares both committed artifacts and writes nothing. Only generate --write\nwrites, and it writes exactly .dude/backlog.md and .dude/backlog.html.\n`;
+const HELP = `backlog — deterministic lifecycle orientation\n\nUsage:\n  node backlog.mjs [--root <dir>]\n  node backlog.mjs kanban [--root <dir>]\n  node backlog.mjs flowchart <idea-slug> [--root <dir>]\n\nThe default form prints Current, Planned, and Completed lifecycle groups, then\ndependency and order notes. kanban prints current work only. flowchart prints\none defined package task graph. Every form is read-only.\n`;
 
 export function parseArgs(argv) {
-  const output = { root: process.cwd(), command: undefined, slug: undefined, write: false, help: false, invalid: null };
+  const output = { root: process.cwd(), command: undefined, slug: undefined, help: false, invalid: null };
   const positionals = [];
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === "--help" || token === "-h") output.help = true;
-    else if (token === "--write") output.write = true;
     else if (token === "--root") {
       const root = argv[index + 1];
       if (!root || root.startsWith("--")) output.invalid = "--root requires a directory";
@@ -1462,10 +751,6 @@ export function run(args) {
   }
   if (args.invalid || typeof args.root !== "string") {
     process.stderr.write(`[FAIL] ${args.invalid ?? "workspace root is required"}\n`);
-    return 1;
-  }
-  if (args.write && args.command !== "generate" && args.command !== "check") {
-    process.stderr.write("[FAIL] --write is accepted only by generate; check rejects it explicitly\n");
     return 1;
   }
   try {
@@ -1492,8 +777,6 @@ export function run(args) {
       process.stdout.write(renderFlowchart(matches[0].tasks, { slug: args.slug }));
       return 0;
     }
-    if (args.command === "check") return runCheck(args.root, { write: args.write });
-    if (args.command === "generate") return runGenerate(args.root, { write: args.write });
     process.stderr.write(`[FAIL] unknown command: ${args.command}\n`);
     return 1;
   } catch (error) {

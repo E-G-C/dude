@@ -1828,8 +1828,14 @@ test('T030 lifecycle guidance preserves resolved ledgers and requires explicit r
   const matchingItems = model.items.filter((item) => item.ideaPath === ledgerRelative);
   assert.equal(matchingItems.length, 1, `${ledgerRelative}: one lifecycle item`);
   const [item] = matchingItems;
+  const coordinatorLog = markdownSection(ledger, '## Coordinator Log')
+    .split('\n')
+    .flatMap((line) => {
+      const text = /^-\s+(.+?\S)\s*$/.exec(line)?.[1];
+      return text ? [{ date: /^(\d{4}-\d{2}-\d{2})\b/.exec(text)?.[1] ?? null, text }] : [];
+    });
   assert.deepEqual(
-    item.coordinatorLog.slice(0, 3).map(({ date, text }) => ({ date, text })),
+    coordinatorLog.slice(0, 3),
     [
       {
         date: '2026-07-29',
@@ -1846,8 +1852,8 @@ test('T030 lifecycle guidance preserves resolved ledgers and requires explicit r
     ],
     `${ledgerRelative}: pre-existing dated Coordinator Log events are preserved`,
   );
-  assert.equal(item.coordinatorLog.length, 4, `${ledgerRelative}: only the resolution event was appended`);
-  const resolutionEvents = item.coordinatorLog.filter(({ text }) => /\bresolved\b/i.test(text));
+  assert.equal(coordinatorLog.length, 4, `${ledgerRelative}: only the resolution event was appended`);
+  const resolutionEvents = coordinatorLog.filter(({ text }) => /\bresolved\b/i.test(text));
   assert.equal(resolutionEvents.length, 1, `${ledgerRelative}: exactly one resolution event`);
   assert.match(resolutionEvents[0].text, /^2026-08-11 UTC - idea resolved without a package because /);
   assert.match(resolutionEvents[0].text, /\bFeature 012\b[\s\S]*\bconsumed and delivered\b/i);
@@ -1859,13 +1865,11 @@ test('T030 lifecycle guidance preserves resolved ledgers and requires explicit r
   assert.equal(item.rawSpecPath, '', `${ledgerRelative}: no declared package path`);
   assert.equal(item.ownerSpecPath, null, `${ledgerRelative}: no defined package claims the ledger`);
   assert.equal(item.specPath, null, `${ledgerRelative}: no resolved package path`);
-  assert.equal(item.tasksPath, null, `${ledgerRelative}: no task package`);
   assert.equal(item.defined, false, `${ledgerRelative}: owns no defined feature`);
   assert.deepEqual(item.tasks, [], `${ledgerRelative}: owns no tasks`);
   assert.deepEqual(item.taskCounts, { open: 0, active: 0, blocked: 0, done: 0, total: 0 }, `${ledgerRelative}: carries no task counts`);
 
   assert.equal(model.completed.filter((candidate) => candidate.ideaPath === ledgerRelative).length, 1, `${ledgerRelative}: classified once in Completed`);
-  assert.equal(item.section, 'completed', `${ledgerRelative}: Completed section`);
   assert.equal(item.group, 'completed', `${ledgerRelative}: Completed group`);
   assert.equal(
     model.planned.awaitingDefinition.some((candidate) => candidate.ideaPath === ledgerRelative),
@@ -1976,7 +1980,7 @@ test('T003 current-format guidance carries numbered identity without selector or
   ]);
 });
 
-test('T030 backlog freshness guidance remains bounded, pair-safe, and source-generated equivalent', () => {
+test('T030 retired backlog report leaves only read-only views, source-generated equivalent and without report duties', () => {
   const sourceSkill = 'src/skills/dude-lightweight-execution/SKILL.md';
   const generatedSkill = '.github/skills/dude-lightweight-execution/SKILL.md';
   const assertGuidanceMatchesAll = (relative, patterns) => {
@@ -1985,42 +1989,65 @@ test('T030 backlog freshness guidance remains bounded, pair-safe, and source-gen
   };
 
   assert.equal(read(generatedSkill), read(sourceSkill), 'generated Lightweight guidance equals its source');
-  assert.equal(
-    read('.github/skills/dude-lightweight-execution/backlog.mjs'),
-    read('src/skills/dude-lightweight-execution/backlog.mjs'),
-    'generated backlog helper equals its source',
-  );
-  assertSectionMatchesAll(sourceSkill, '### Cross-Idea Backlog', [
-    /pair-safe refresh renders both postimages before either write and restores both preimages if either write fails/i,
-    /runs after successful guarded `board\.mjs set --write`, guarded `apply-states --write`, and successful autonomous `applyLightweightWorkRequest`/i,
-    /does not run for `render --write`, reads, dry runs, or refused and failed canonical mutations/i,
-    /exits `2`, writes `\[FAIL\] canonical state committed; backlog refresh failed` to stderr, and does not print its success line/i,
-    /autonomous refresh failure preserves the exact committed `\{ ok, phase, receipt \}` result without a warning/i,
-    /`backlog\.mjs check` detects the restored stale pair, and the next successful coordinator refresh repairs it/i,
-    /Coordinator Log-only writes outside the autonomous boundary, brainstorm, definition, resolution, reopen, and backlog-order changes still require procedural `backlog\.mjs generate --write`/i,
-  ]);
+  for (const module of ['backlog.mjs', 'board.mjs']) {
+    assert.equal(
+      read(`.github/skills/dude-lightweight-execution/${module}`),
+      read(`src/skills/dude-lightweight-execution/${module}`),
+      `generated ${module} equals its source`,
+    );
+  }
+  for (const template of [
+    'src/skills/dude-lightweight-execution/backlog-template.html',
+    '.github/skills/dude-lightweight-execution/backlog-template.html',
+  ]) {
+    assert.equal(fs.existsSync(path.join(ROOT, template)), false, `${template} is retired`);
+  }
+
+  // No current guide, skill, agent, or instruction assigns report generation, freshness, or refresh.
+  const currentGuidance = ['README.md'];
+  const visit = (relative) => {
+    for (const entry of fs.readdirSync(path.join(ROOT, relative), { withFileTypes: true })) {
+      const child = `${relative}/${entry.name}`;
+      if (entry.isDirectory()) visit(child);
+      else if (entry.isFile() && entry.name.endsWith('.md')) currentGuidance.push(child);
+    }
+  };
+  for (const relative of ['src', 'docs']) visit(relative);
+  assert.ok(currentGuidance.includes(sourceSkill) && currentGuidance.includes('src/skills/dude-work/SKILL.md'));
+  for (const relative of currentGuidance) {
+    const content = read(relative).replace(/\s+/g, ' ');
+    for (const retired of [
+      /backlog\.mjs (?:check|generate)/i,
+      /generate --write/i,
+      /backlog[- ]refresh/i,
+      /derived backlog/i,
+      /backlog generation/i,
+      /backlog-template/i,
+      /stale pair/i,
+    ]) {
+      assert.doesNotMatch(content, retired, `${relative}: ${retired}`);
+    }
+    if (relative !== 'README.md') {
+      assert.doesNotMatch(content, /\.dude\/backlog\.(?:md|html)/, `${relative}: names no retired report file`);
+    }
+  }
+
+  // The README carries the single earlier-version notice beside the current views.
+  const readme = read('README.md').replace(/\s+/g, ' ');
+  assert.equal(readme.split('.dude/backlog.md').length - 1, 1, 'README names the retired Markdown file once');
+  assert.equal(readme.split('.dude/backlog.html').length - 1, 1, 'README names the retired HTML file once');
   assertGuidanceMatchesAll('README.md', [
-    /derived backlog pair, `\.dude\/backlog\.md` and `\.dude\/backlog\.html`, refreshes\s+after guarded task `set --write`, guarded batch `apply-states --write`, and a\s+successful autonomous Lightweight task application/i,
-    /not continuously\s+synchronized[\s\S]*?Coordinator Log-only, lifecycle, and backlog-order changes[\s\S]*?coordinator backlog generation/i,
-    /failed derived refresh never rolls back\s+committed task state; the freshness check detects the stale pair/i,
+    /open the \[Canvas\]\(#canvas\) or run `@dude status`, which prints every idea and feature by lifecycle stage, followed by dependency and order notes/,
+    /Dude no longer updates `\.dude\/backlog\.md` or `\.dude\/backlog\.html`; if your project has copies from an earlier version, you can delete them\./,
   ]);
   assertGuidanceMatchesAll('docs/commands.md', [
-    /Successful guarded `board set --write` and `apply-states --write`, plus a successful autonomous Lightweight application, refresh the committed backlog pair/i,
-    /Board rendering, reads, dry runs, and refused or failed canonical changes do not/i,
-    /exits `2` with `\[FAIL\] canonical state committed; backlog refresh failed`/i,
-    /autonomous result remains its existing committed receipt without a warning/i,
-    /Coordinator Log-only, lifecycle, and backlog-order changes still need procedural `backlog\.mjs generate --write`/i,
+    /\| `dude-lightweight-execution\/backlog\.mjs` \| read-only lifecycle views: default groups with dependency and order notes, `kanban`, and `flowchart <slug>` \|/,
+    /`backlog\.mjs` never writes\. Its default form prints the Current, Planned, and Completed groups, then dependency and order notes/,
+    /provisional relationship stated in an idea body, which never changes grouping/,
   ]);
   assertGuidanceMatchesAll('docs/reference.md', [
-    /refresh after guarded `set --write`, guarded `apply-states --write`, and a successful autonomous Lightweight application, but not after board rendering, reads, dry runs, or refused mutations/i,
-    /failed refresh keeps the canonical task commit; an autonomous result keeps its existing receipt, while `backlog\.mjs check` reports the stale pair/i,
-    /Log-only, lifecycle, and order updates require procedural backlog generation/i,
-  ]);
-  assertGuidanceMatchesAll('docs/workflow.md', [
-    /refresh after guarded `set --write`, guarded `apply-states --write`, and successful autonomous Lightweight applications/i,
-    /do not refresh for board-only rendering, reads, dry runs, or refused mutations/i,
-    /refresh failure leaves canonical task state committed; autonomous work keeps its existing committed receipt, and `backlog\.mjs check` detects the stale pair/i,
-    /Coordinator Log-only, lifecycle, and backlog-order changes remain procedural backlog-generation work/i,
+    /The cross-idea backlog is also a view, computed when you read it rather than stored\./,
+    /`@dude status` prints the lifecycle groups followed by dependency and order notes/,
   ]);
 });
 
@@ -2130,9 +2157,10 @@ test("T005 cross-idea backlog binds lifecycle semantics and read-only status for
     "One lifecycle inventory places each idea exactly once",
     "Current** presents Blocked, Active, and Next in that order",
     "Planned** presents ideas awaiting definition, defined features awaiting work",
-    "Completed** is one compact collapsed library",
+    "Completed** is one list, not a peer execution lane",
     "Current work (active plus blocked), Ready / Next, Ideas awaiting definition, Defined awaiting work, and Completed",
     "node .github/skills/dude-lightweight-execution/backlog.mjs --root .",
+    "then dependency and order notes",
     "node .github/skills/dude-lightweight-execution/backlog.mjs kanban --root .",
     "node .github/skills/dude-lightweight-execution/backlog.mjs flowchart <slug> --root .",
     "Mermaid for current work only",
@@ -2145,58 +2173,45 @@ test("T005 cross-idea backlog binds lifecycle semantics and read-only status for
   );
 });
 
-test("T005 cross-idea backlog binds exact-byte freshness, deterministic provenance, and two fixed writes", () => {
+test("T005 cross-idea backlog binds deterministic read-only output and the dependency and order notes", () => {
   const relative = "src/skills/dude-lightweight-execution/SKILL.md";
   const heading = "## Status And Handoff";
   assertSectionIncludesAll(relative, heading, [
-    "node .github/skills/dude-lightweight-execution/backlog.mjs check --root .",
-    "compares exact bytes",
-    "fails separately for a missing or stale path",
-    "rejects `--write`, and writes nothing",
-    "node .github/skills/dude-lightweight-execution/backlog.mjs generate --root . --write",
-    "only artifact mutation path",
-    "writes exactly `.dude/backlog.md` and `.dude/backlog.html`",
-    "existing test and CI path runs the exact-byte check",
-    "no wall-clock time, checkout name, or Git revision",
-    "byte-identically in differently named roots",
+    "Output contains no wall-clock time, checkout name, or Git revision",
+    "print identical text in differently named roots",
+    "The default form ends with **Dependency and order notes**.",
+    "name `.dude/state/backlog-order.md` when it declares a valid explicit order and otherwise say `No explicit feature order declared`",
+    "list each declared dependency and name each feature whose dependency data is unavailable, without inferring that it has none",
+    "`No declared feature dependencies are present` appears only when there are neither declared dependencies nor unavailable data",
+    "labeled provisional and non-authoritative, with no effect on lifecycle classification; when none is recognized, the notes say so",
     "Feature 025 history remains unchanged",
   ]);
   assertSectionRuleRejectsMutations(
     relative,
     heading,
-    "- `node .github/skills/dude-lightweight-execution/backlog.mjs check --root .` renders both expected artifacts in memory, compares exact bytes, fails separately for a missing or stale path, rejects `--write`, and writes nothing.",
-  );
-  assertSectionRuleRejectsMutations(
-    relative,
-    heading,
-    "- `node .github/skills/dude-lightweight-execution/backlog.mjs generate --root . --write` is the only artifact mutation path and writes exactly `.dude/backlog.md` and `.dude/backlog.html`.",
+    "The default form ends with **Dependency and order notes**. They name `.dude/state/backlog-order.md` when it declares a valid explicit order and otherwise say `No explicit feature order declared`. They list each declared dependency and name each feature whose dependency data is unavailable, without inferring that it has none. `No declared feature dependencies are present` appears only when there are neither declared dependencies nor unavailable data. Each recognized provisional relationship is labeled provisional and non-authoritative, with no effect on lifecycle classification; when none is recognized, the notes say so.",
   );
   const implementation = read("src/skills/dude-lightweight-execution/backlog.mjs");
-  const template = read("src/skills/dude-lightweight-execution/backlog-template.html");
   for (const staleContract of ["new Date", "node:child_process", "rev-parse", "path.basename", "GENERATED_AT", "SOURCE_REV"]) {
     assert.equal(implementation.includes(staleContract), false, staleContract);
-    assert.equal(template.includes(staleContract), false, staleContract);
   }
 });
 
-test("T005 cross-idea backlog binds declared and provisional authority plus Coordinator activity scope", () => {
+test("T005 cross-idea backlog binds declared and provisional authority", () => {
   const relative = "src/skills/dude-lightweight-execution/SKILL.md";
   const heading = "## Status And Handoff";
   assertSectionIncludesAll(relative, heading, [
     "`depends-on:` relationships",
     "`.dude/state/backlog-order.md` provides explicit order",
+    "A lifecycle number is never priority, dependency, explicit backlog order, phase, readiness, dispatch order, or execution order",
     "displayed separately as provisional and non-authoritative",
     "never blocks, prioritizes, or orders work",
-    "Activity is labeled **Coordinator activity**",
-    "grouped by calendar date",
-    "stable same-date ordering by idea identity and append order",
-    "Git history, ad-hoc work outside Coordinator Logs, and other execution history sources are excluded",
     "Keep cross-feature ordering in `depends-on:`, never in task `deps:`",
   ]);
   assertSectionRuleRejectsMutations(
     relative,
     heading,
-    "Activity is labeled **Coordinator activity**. It contains only dated idea Coordinator Log entries grouped by calendar date, with stable same-date ordering by idea identity and append order. Git history, ad-hoc work outside Coordinator Logs, and other execution history sources are excluded.",
+    "These views are derived and never authoritative. Idea frontmatter provides lifecycle and declared `depends-on:` relationships, canonical `tasks.md` provides execution, and optional `.dude/state/backlog-order.md` provides explicit order. The views display direct ledgers and use their lifecycle numbers for chronological ordering inside the applicable lifecycle or work-state group only. A lifecycle number is never priority, dependency, explicit backlog order, phase, readiness, dispatch order, or execution order. A literal `depends-on: <slug>` marker written in the user-controlled `## Idea` body is displayed separately as provisional and non-authoritative; it never blocks, prioritizes, or orders work.",
   );
 });
 
@@ -10404,7 +10419,7 @@ const TERMINAL_MANUAL_WORK_REQUIREMENTS = [
   ]],
   ['ordinary coordinator writer only', 'Only the coordinator may then use the existing', [
     /`board\.mjs set <tasks\.md> <same-taskKey> done --write` path/,
-    /ordinary\s+Lightweight state, render, snapshot, close-log, backlog-refresh, and\s+lint duties/,
+    /ordinary\s+Lightweight state, render, snapshot, close-log, and\s+lint duties/,
     /Do not call `applyLightweightWorkRequest`/,
     /issue a Work permit or\s+receipt/,
     /restore or revive the old accepted state/,
@@ -10423,7 +10438,7 @@ const TERMINAL_MANUAL_WORK_REQUIREMENTS = [
     /Cleanup remains separately authorized/,
   ]],
   ['partial close reports only actual effects', 'The ordinary close is not one transaction', [
-    /owner log, board, snapshot,\s+derived backlog, and lint/,
+    /owner log, board, snapshot,\s+and lint/,
     /report exactly what committed and what remains incomplete/,
     /Do not claim rollback,\s+successful close, or permission to repair or retry/,
     /successful report names\s+only the manual task outcome/,
@@ -11053,7 +11068,7 @@ const TERMINAL_ADMIN_WORK_REQUIREMENTS = [
   ]],
   ['ordinary same-task writer creates no Work revival', 'Then the coordinator uses the existing same-task', [
     /`board\.mjs set <tasks\.md> <same-taskKey> done --write` path/,
-    /ordinary render, snapshot, blocker\/state\/render\/close logging, final backlog\s+refresh, and lint duties/,
+    /ordinary render, snapshot, blocker\/state\/render\/close logging, and\s+lint duties/,
     /Do not insert an intermediate `\[~\]` claim/,
     /call\s+`applyLightweightWorkRequest` or any Work wrapper or adapter/,
     /restore old\s+RunState, identity, counters, attempts, permits, or receipts/,
@@ -11066,9 +11081,9 @@ const TERMINAL_ADMIN_WORK_REQUIREMENTS = [
   ['retention and partial-effect reporting stay exact', 'Preserve every old history and capture byte', [
     /failure, learning record, pending\s+obligation, accounting entry, permit, receipt, cleanup preimage and result,\s+archive, and discovered-work record/,
     /Keep every product boundary that current\s+acceptance did not qualify explicit/,
-    /ordinary log, metadata, board,\s+render, snapshot, backlog, and lint operations are not one transaction/,
+    /ordinary log, metadata, board,\s+render, snapshot, and lint operations are not one transaction/,
     /Recheck\s+expected bytes between steps/,
-    /report which MANUAL\s+or ordinary log append, blocker metadata edit, glyph, render, snapshot, backlog\s+refresh, and validation effects committed and what remains undone/,
+    /report which MANUAL\s+or ordinary log append, blocker metadata edit, glyph, render, snapshot, and\s+validation effects committed and what remains undone/,
     /no\s+rollback, retry, or successful-close fiction/,
     /successful report names only\s+the current accepted scope, its unqualified limits, the actual provenance, and\s+the separate administrative task outcome/,
     /leaves the old Work failure,\s+learning, pending obligations, and accounting unsettled/,

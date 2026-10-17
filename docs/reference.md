@@ -228,13 +228,9 @@ live execution board before Beads import.
 and maintained by Dude. Treat it as a convenience view over the canonical task
 units rather than separate execution state.
 
-The committed `.dude/backlog.md` and `.dude/backlog.html` are another derived
-view. They refresh after guarded `set --write`, guarded `apply-states --write`,
-and a successful autonomous Lightweight application, but not after board
-rendering, reads, dry runs, or refused mutations. A failed refresh keeps the
-canonical task commit; an autonomous result keeps its existing receipt, while
-`backlog.mjs check` reports the stale pair. Log-only, lifecycle, and order
-updates require procedural backlog generation.
+The cross-idea backlog is also a view, computed when you read it rather than
+stored. The Canvas shows it visually, and `@dude status` prints the lifecycle
+groups followed by dependency and order notes.
 
 Each `tasks.md` points its audit breadcrumb at the uniquely owning flat idea.
 Resolve that companion by requiring exactly one numbered
