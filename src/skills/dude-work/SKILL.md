@@ -340,8 +340,8 @@ clears no learning seal.
 
 Only the coordinator may then use the existing
 `board.mjs set <tasks.md> <same-taskKey> done --write` path and complete the
-ordinary Lightweight state, render, snapshot, close-log, backlog-refresh, and
-lint duties. Do not call `applyLightweightWorkRequest`, issue a Work permit or
+ordinary Lightweight state, render, snapshot, close-log, and lint duties. Do not
+call `applyLightweightWorkRequest`, issue a Work permit or
 receipt, restore or revive the old accepted state, claim `ended` or
 `task-settled` for the old run, clear a blocker, change requirements, or rekey the
 task.
@@ -354,7 +354,7 @@ later Work request will be admitted. Cleanup remains separately authorized by
 `## Checkpoint Lifecycle And Manual Cleanup`.
 
 The ordinary close is not one transaction across the owner log, board, snapshot,
-derived backlog, and lint. If any part writes and a later part fails, stop and
+and lint. If any part writes and a later part fails, stop and
 report exactly what committed and what remains incomplete. Do not claim rollback,
 successful close, or permission to repair or retry. A successful report names
 only the manual task outcome, preserves the old terminal failure and outstanding
@@ -522,8 +522,8 @@ change the parser or writer.
 
 Then the coordinator uses the existing same-task
 `board.mjs set <tasks.md> <same-taskKey> done --write` path and completes the
-ordinary render, snapshot, blocker/state/render/close logging, final backlog
-refresh, and lint duties. Do not insert an intermediate `[~]` claim, call
+ordinary render, snapshot, blocker/state/render/close logging, and lint duties.
+Do not insert an intermediate `[~]` claim, call
 `applyLightweightWorkRequest` or any Work wrapper or adapter, restore old
 RunState, identity, counters, attempts, permits, or receipts, resolve learning,
 claim `ended` or `task-settled` for the old run, clean controls, create a
@@ -534,10 +534,10 @@ Preserve every old history and capture byte, failure, learning record, pending
 obligation, accounting entry, permit, receipt, cleanup preimage and result,
 archive, and discovered-work record. Keep every product boundary that current
 acceptance did not qualify explicit. These ordinary log, metadata, board,
-render, snapshot, backlog, and lint operations are not one transaction. Recheck
+render, snapshot, and lint operations are not one transaction. Recheck
 expected bytes between steps; after any failure, stop and report which MANUAL
-or ordinary log append, blocker metadata edit, glyph, render, snapshot, backlog
-refresh, and validation effects committed and what remains undone, with no
+or ordinary log append, blocker metadata edit, glyph, render, snapshot, and
+validation effects committed and what remains undone, with no
 rollback, retry, or successful-close fiction. A successful report names only
 the current accepted scope, its unqualified limits, the actual provenance, and
 the separate administrative task outcome. It leaves the old Work failure,

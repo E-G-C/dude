@@ -17879,12 +17879,10 @@ test('T001 adapter composition: the host adapter closes one ordinary Lightweight
 
     assert.equal(receipt.permitHash, permit.permitHash);
     assert.equal(receipt.targetStateChanged, true);
-    // The lane owner commits its canonical surfaces, then its bounded derived
-    // backlog pair; no other workspace surface may move.
+    // The lane owner commits only its canonical surfaces; no other workspace
+    // surface may move.
     const changed = t018ChangedPaths(before, after);
     assert.deepEqual(changed, [
-      '.dude/backlog.html',
-      '.dude/backlog.md',
       TASKS_PATH,
       '.dude/state/task-state.json',
     ].sort());

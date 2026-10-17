@@ -88,7 +88,6 @@ const TARGET = Object.freeze({
   lane: 'lightweight',
   taskKey: 'T001@61646170',
 });
-const BACKLOG_CLI = fileURLToPath(new URL('../dude-lightweight-execution/backlog.mjs', import.meta.url));
 const SECOND_TARGET = Object.freeze({
   specPath: TARGET.specPath,
   lane: 'lightweight',
@@ -8462,9 +8461,10 @@ for (const {
   });
 }
 
-// The exact path shape of one observed autonomous attempt: 135 sorted authorized
-// writer paths of 9 through 68 bytes and the 25 it changed. Only the path
-// strings are reused; no historical identity, hash, or state is.
+// The path shape of one observed autonomous attempt, less its since-retired
+// backlog template: 134 sorted authorized writer paths of 9 through 68 bytes and
+// the 25 it changed. Only the path strings are reused; no historical identity,
+// hash, or state is.
 const CAPTURED_AUTHORIZED_TARGETS = Object.freeze([
   '.github/agents/dude-reviewer.agent.md',
   '.github/agents/dude-spec-lead.agent.md',
@@ -8545,7 +8545,6 @@ const CAPTURED_AUTHORIZED_TARGETS = Object.freeze([
   '.github/skills/dude-learning-promotion/SKILL.md',
   '.github/skills/dude-lightweight-execution',
   '.github/skills/dude-lightweight-execution/SKILL.md',
-  '.github/skills/dude-lightweight-execution/backlog-template.html',
   '.github/skills/dude-lightweight-execution/backlog.mjs',
   '.github/skills/dude-lightweight-execution/board.mjs',
   '.github/skills/dude-lint',
@@ -8687,7 +8686,7 @@ function capacityTrustedIdentities(state, result) {
   };
 }
 
-nodeTest('work handoff capacity: state-bound preflight prepares 16, 17, and the captured 135-path authorization exactly', () => {
+nodeTest('work handoff capacity: state-bound preflight prepares 16, 17, and the captured 134-path authorization exactly', () => {
   for (const [authorized, changed] of [
     [CAPTURED_AUTHORIZED_TARGETS.slice(0, 16), CAPTURED_AUTHORIZED_TARGETS.slice(0, 16)],
     [CAPTURED_AUTHORIZED_TARGETS.slice(0, 17), CAPTURED_AUTHORIZED_TARGETS.slice(0, 17)],
@@ -8738,9 +8737,9 @@ nodeTest('work handoff capacity: state-bound preflight prepares 16, 17, and the 
   }
 });
 
-nodeTest('work handoff capacity: the runner settles the captured 135-path authorization and its 25 changed paths without truncation', async () => {
+nodeTest('work handoff capacity: the runner settles the captured 134-path authorization and its 25 changed paths without truncation', async () => {
   await withSealedWorkspace(async (root) => {
-    const label = 'captured-135-authorized-25-changed';
+    const label = 'captured-134-authorized-25-changed';
     const materialInputs = focusedMaterialInputs(CAPTURED_AUTHORIZED_TARGETS);
     // Four check rows with the observed definition and evidence lengths.
     const checks = [[183, 579], [153, 402], [116, 378], [102, 259]].map(([definition, evidence], index) => ({
@@ -8760,7 +8759,7 @@ nodeTest('work handoff capacity: the runner settles the captured 135-path author
     assert.ok(authorization, `${label}: one authorization`);
     const authorizedState = focusedRunnerAcceptedState(authorization);
     const [pending] = authorizedState.pending;
-    assert.deepEqual(pending.materialInputs, materialInputs, `${label}: accepted authorization keeps all 135 paths`);
+    assert.deepEqual(pending.materialInputs, materialInputs, `${label}: accepted authorization keeps all 134 paths`);
     assert.equal(pending.approachHash, approachHash({ action: 'execute-task', materialInputs }), label);
 
     const [capture] = observed.captures;
@@ -8775,7 +8774,7 @@ nodeTest('work handoff capacity: the runner settles the captured 135-path author
     const approaches = history.filter((event) => event.type === 'approach-occurrence');
     assert.equal(approaches.length, 1, `${label}: one retained approach occurrence`);
     validateApproachOccurrenceEventV1(approaches[0]);
-    assert.deepEqual(approaches[0].basis, capacityApproachBasis(pending), `${label}: lane history keeps all 135 paths`);
+    assert.deepEqual(approaches[0].basis, capacityApproachBasis(pending), `${label}: lane history keeps all 134 paths`);
     assert.equal(approaches[0].occurrence.attemptIdentity, expected.attemptIdentity, label);
     assert.equal(approaches[0].occurrence.resultIdentity, expected.resultIdentity, label);
     assert.equal(approaches[0].occurrence.disposition, 'accepted', label);
@@ -10505,54 +10504,28 @@ nodeTest('focused table A: sequential challenge protocol and foreground CLI', as
   });
 });
 
-nodeTest('T030 derived backlog failure preserves the production autonomous receipt, commit, and audit path', async () => {
+nodeTest('T030 autonomous settlement leaves report copies untouched and preserves the production receipt, commit, and audit path', async () => {
   await withSealedWorkspace(async (root) => {
     // Arrange
     writeSealedTaskState(root);
-    const artifacts = {
+    const reports = {
       markdown: path.join(root, '.dude', 'backlog.md'),
       html: path.join(root, '.dude', 'backlog.html'),
     };
-    fs.writeFileSync(artifacts.markdown, 'host regression Markdown preimage\n');
-    fs.writeFileSync(artifacts.html, 'host regression HTML preimage\n');
+    const earlierCopies = {
+      markdown: Buffer.from('host regression earlier-version Markdown copy\n'),
+      html: Buffer.from('host regression earlier-version HTML copy\n'),
+    };
+    fs.writeFileSync(reports.markdown, earlierCopies.markdown);
+    fs.writeFileSync(reports.html, earlierCopies.html);
     const tasksPath = path.join(root, TASKS_PATH);
-    const realWriteFileSync = fs.writeFileSync;
-    let injected = 0;
-    let refreshPreimages = null;
-    let result;
 
-    try {
-      // Act
-      // The runner may write projection events before its final task close. Fail
-      // specifically at the final `x` poststate so the test observes the actual
-      // autonomous task-settlement boundary, not an earlier projection.
-      // @ts-ignore -- deliberate O_TRUNC-style derived-writer failure injection
-      fs.writeFileSync = (file, data, ...rest) => {
-        const absolute = path.resolve(String(file));
-        const finalTaskCommitted = fs.readFileSync(tasksPath, 'utf8').includes(`- [x] ${TARGET.taskKey}`);
-        if (injected === 0 && absolute === artifacts.markdown && finalTaskCommitted) {
-          refreshPreimages = {
-            markdown: fs.readFileSync(artifacts.markdown),
-            html: fs.readFileSync(artifacts.html),
-          };
-        }
-        if (injected === 0 && absolute === artifacts.html && finalTaskCommitted) {
-          injected += 1;
-          realWriteFileSync(file, Buffer.from('truncated before host refresh failure\n'), ...rest);
-          throw new Error('injected host backlog HTML write failure');
-        }
-        return realWriteFileSync(file, data, ...rest);
-      };
-      result = await runHostAdapter(focusedRunnerRequest(root), {
-        checkpoint: memoryCheckpointStore().port,
-      });
-    } finally {
-      fs.writeFileSync = realWriteFileSync;
-    }
+    // Act
+    const result = await runHostAdapter(focusedRunnerRequest(root), {
+      checkpoint: memoryCheckpointStore().port,
+    });
 
-    // Assert: the derived error does not become refusal, rollback, or a second result channel.
-    assert.equal(injected, 1, 'the final backlog HTML write was deliberately interrupted');
-    assert.ok(refreshPreimages, 'the pair preimages were captured immediately before the failed refresh');
+    // Assert: settlement keeps its single result channel and never writes report files.
     assert.equal(result.outcome, 'ended');
     assert.equal(result.reason, 'task-settled');
     assert.equal(Object.hasOwn(result, 'unchangedPrestateHash'), false);
@@ -10573,24 +10546,11 @@ nodeTest('T030 derived backlog failure preserves the production autonomous recei
     );
     assert.deepEqual(
       {
-        markdown: fs.readFileSync(artifacts.markdown),
-        html: fs.readFileSync(artifacts.html),
+        markdown: fs.readFileSync(reports.markdown),
+        html: fs.readFileSync(reports.html),
       },
-      refreshPreimages,
-      'the failed refresh restores both pair preimages exactly',
-    );
-
-    const stale = spawnSync(process.execPath, [BACKLOG_CLI, 'check', '--root', root], { encoding: 'utf8' });
-    assert.equal(stale.status, 3, `${stale.stdout}${stale.stderr}`);
-    assert.match(stale.stderr, /\[STALE\] \.dude\/backlog\.md/);
-    assert.match(stale.stderr, /\[STALE\] \.dude\/backlog\.html/);
-    assert.deepEqual(
-      {
-        markdown: fs.readFileSync(artifacts.markdown),
-        html: fs.readFileSync(artifacts.html),
-      },
-      refreshPreimages,
-      'freshness detection remains read-only over the restored stale pair',
+      earlierCopies,
+      'earlier-version report copies stay byte-identical',
     );
   });
 });
