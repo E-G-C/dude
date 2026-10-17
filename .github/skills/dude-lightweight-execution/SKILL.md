@@ -89,9 +89,9 @@ authority. Enter it only after `dude-work`
 rechecked the confirmed basis and retained controls, obtained fresh independent
 acceptance, and appended its MANUAL owner-log disposition. That gate waives none
 of the steps above. If the disposition or ordinary close partially commits
-before a later write, render, snapshot, backlog refresh, or lint failure, report
-the committed and incomplete effects without claiming rollback, success, or
-retry permission, and do not select another task.
+before a later write, render, snapshot, or lint failure, report the committed
+and incomplete effects without claiming rollback, success, or retry permission,
+and do not select another task.
 
 For `### Post-Terminal Administrative Reconciliation`, the same writer-only
 rule applies only after that owning subsection has rechecked its current
@@ -113,34 +113,25 @@ If Beads is enabled later, hand off through `@dude track`; after import, never c
 
 Separate from lane-specific status, `@dude status` renders one read-only cross-idea orientation over every safe direct `.dude/ideas/*.md` ledger. One lifecycle inventory places each idea exactly once:
 
-- **Current** presents Blocked, Active, and Next in that order. Empty subsection bodies are omitted, while summary counts remain visible.
+- **Current** presents Blocked, Active, and Next in that order.
 - **Planned** presents ideas awaiting definition, defined features awaiting work, and Prioritized for later only when authoritative order actually places work later.
-- **Completed** is one compact collapsed library, not a peer execution lane.
+- **Completed** is one list, not a peer execution lane.
 
 The where-are-we summary reports Current work (active plus blocked), Ready / Next, Ideas awaiting definition, Defined awaiting work, and Completed. It reports no all-history completion percentage.
 
 `@dude status` invokes the generated `backlog.mjs` read-only in three forms. Each renders on demand in the reply and writes no file:
 
-- `node .github/skills/dude-lightweight-execution/backlog.mjs --root .` (text Current / Planned / Completed orientation)
+- `node .github/skills/dude-lightweight-execution/backlog.mjs --root .` (text Current / Planned / Completed orientation, then dependency and order notes)
 - `node .github/skills/dude-lightweight-execution/backlog.mjs kanban --root .` (Mermaid for current work only)
 - `node .github/skills/dude-lightweight-execution/backlog.mjs flowchart <slug> --root .` (one defined package task `deps:` graph; `<slug>` is the exact unnumbered frontmatter selector, not the numbered filename)
 
-The committed Markdown and self-contained HTML projections remain fixed at `.dude/backlog.md` and `.dude/backlog.html`. Freshness is mechanical. For direct `backlog.mjs` use:
+Output contains no wall-clock time, checkout name, or Git revision, so unchanged authoritative input bytes print identical text in differently named roots.
 
-- `node .github/skills/dude-lightweight-execution/backlog.mjs check --root .` renders both expected artifacts in memory, compares exact bytes, fails separately for a missing or stale path, rejects `--write`, and writes nothing.
-- `node .github/skills/dude-lightweight-execution/backlog.mjs generate --root . --write` is the only artifact mutation path and writes exactly `.dude/backlog.md` and `.dude/backlog.html`.
+These views are derived and never authoritative. Idea frontmatter provides lifecycle and declared `depends-on:` relationships, canonical `tasks.md` provides execution, and optional `.dude/state/backlog-order.md` provides explicit order. The views display direct ledgers and use their lifecycle numbers for chronological ordering inside the applicable lifecycle or work-state group only. A lifecycle number is never priority, dependency, explicit backlog order, phase, readiness, dispatch order, or execution order. A literal `depends-on: <slug>` marker written in the user-controlled `## Idea` body is displayed separately as provisional and non-authoritative; it never blocks, prioritizes, or orders work.
 
-The pair-safe refresh renders both postimages before either write and restores both preimages if either write fails. It runs after successful guarded `board.mjs set --write`, guarded `apply-states --write`, and successful autonomous `applyLightweightWorkRequest`. It does not run for `render --write`, reads, dry runs, or refused and failed canonical mutations.
+The default form ends with **Dependency and order notes**. They name `.dude/state/backlog-order.md` when it declares a valid explicit order and otherwise say `No explicit feature order declared`. They list each declared dependency and name each feature whose dependency data is unavailable, without inferring that it has none. `No declared feature dependencies are present` appears only when there are neither declared dependencies nor unavailable data. Each recognized provisional relationship is labeled provisional and non-authoritative, with no effect on lifecycle classification; when none is recognized, the notes say so.
 
-If a guarded refresh fails after canonical state commits, the command exits `2`, writes `[FAIL] canonical state committed; backlog refresh failed` to stderr, and does not print its success line. An autonomous refresh failure preserves the exact committed `{ ok, phase, receipt }` result without a warning. `backlog.mjs check` detects the restored stale pair, and the next successful coordinator refresh repairs it.
-
-Coordinator Log-only writes outside the autonomous boundary, brainstorm, definition, resolution, reopen, and backlog-order changes still require procedural `backlog.mjs generate --write`. The existing test and CI path runs the exact-byte check. Generation emits no wall-clock time, checkout name, or Git revision; unchanged authoritative input bytes render byte-identically in differently named roots.
-
-Both artifacts are derived projections and never authoritative. Idea frontmatter provides lifecycle and declared `depends-on:` relationships, canonical `tasks.md` provides execution, and optional `.dude/state/backlog-order.md` provides explicit order. The report displays direct ledgers and uses their lifecycle numbers for chronological ordering inside the applicable lifecycle or work-state group only. A lifecycle number is never priority, dependency, explicit backlog order, phase, readiness, dispatch order, or execution order. A literal `depends-on: <slug>` marker written in the user-controlled `## Idea` body is displayed separately as provisional and non-authoritative; it never blocks, prioritizes, or orders work. When explicit order is absent, the report says `No explicit feature order declared`.
-
-Activity is labeled **Coordinator activity**. It contains only dated idea Coordinator Log entries grouped by calendar date, with stable same-date ordering by idea identity and append order. Git history, ad-hoc work outside Coordinator Logs, and other execution history sources are excluded.
-
-This current lifecycle, provenance, activity-labeling, and freshness contract supersedes only the affected current behavior delivered by Feature 025. Feature 025 history remains unchanged.
+This current lifecycle and provenance contract supersedes only the affected current behavior delivered by Feature 025. Feature 025 history remains unchanged.
 
 Non-goal, not guarded: a task `deps:` key that names another feature task resolves as permanently unsatisfied because task dependency resolution is confined to one file. Keep cross-feature ordering in `depends-on:`, never in task `deps:`.
 

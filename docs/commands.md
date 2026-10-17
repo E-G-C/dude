@@ -2037,7 +2037,7 @@ The coordinator invokes them; they are not a background service.
 | `dude-compose/compose.mjs` | `list` / `status` / `add` / `remove` / `refresh` / `verify` optional packs and their installed-map records |
 | `dude-bundle-upgrade/upgrade.mjs` | refresh core files from the upstream source |
 | `dude-lightweight-execution/board.mjs` | `parse` / `ready` / `next` / `render` / `set` / `apply-states` / `diff` on `tasks.md` |
-| `dude-lightweight-execution/backlog.mjs` | read-only lifecycle views, `check`, and pair-safe `generate --write` for `.dude/backlog.md` and `.dude/backlog.html` |
+| `dude-lightweight-execution/backlog.mjs` | read-only lifecycle views: default groups with dependency and order notes, `kanban`, and `flowchart <slug>` |
 | `dude-team-expansion/scaffold-agent.mjs` | emit a lint-clean `.agent.md` skeleton (`--pack` updates `pack.md`) |
 | `dude-skill-authoring/scaffold-skill.mjs` | emit a lint-clean `SKILL.md` skeleton (`--pack` updates `pack.md`) |
 | `dude-bundle-import/import.mjs` | focused `analyze` / `apply`, plus guarded directory analysis, planning, and apply |
@@ -2061,14 +2061,13 @@ refresh the coordinator snapshot. `memory append` refuses a near-duplicate unles
 `--force`. Every engine script exits `0` on success, `1` on usage error, `2` on
 operation error.
 
-Successful guarded `board set --write` and `apply-states --write`, plus a
-successful autonomous Lightweight application, refresh the committed backlog
-pair. Board rendering, reads, dry runs, and refused or failed canonical changes
-do not. If a guarded pair refresh fails after the canonical commit, it exits `2`
-with `[FAIL] canonical state committed; backlog refresh failed`; the autonomous
-result remains its existing committed receipt without a warning. The backlog
-`check` command exposes a stale restored pair. Coordinator Log-only, lifecycle, and
-backlog-order changes still need procedural `backlog.mjs generate --write`.
+`backlog.mjs` never writes. Its default form prints the Current, Planned, and
+Completed groups, then dependency and order notes: whether
+`.dude/state/backlog-order.md` declares a valid explicit order, each declared
+`depends-on:` dependency, each feature whose dependency data is unavailable, and
+any provisional relationship stated in an idea body, which never changes
+grouping. `kanban` prints current work as Mermaid, and `flowchart <slug>` prints
+one defined package's task graph.
 
 ### Repo layout: source vs built bundle
 

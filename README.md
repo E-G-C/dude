@@ -244,12 +244,11 @@ lifecycle request. Until a reopen request arrives, `@dude define` and
 After editing the idea, run `@dude define expense-entry` to rebuild the package
 rather than editing `spec.md` or `plan.md` by hand.
 
-The derived backlog pair, `.dude/backlog.md` and `.dude/backlog.html`, refreshes
-after guarded task `set --write`, guarded batch `apply-states --write`, and a
-successful autonomous Lightweight task application. It is not continuously
-synchronized: Coordinator Log-only, lifecycle, and backlog-order changes still
-need a coordinator backlog generation. A failed derived refresh never rolls back
-committed task state; the freshness check detects the stale pair.
+For a cross-idea view, open the [Canvas](#canvas) or run `@dude status`, which
+prints every idea and feature by lifecycle stage, followed by dependency and
+order notes. Both are computed when you read them. Dude no longer updates
+`.dude/backlog.md` or `.dude/backlog.html`; if your project has copies from an
+earlier version, you can delete them.
 
 ## How Much To Drive It
 

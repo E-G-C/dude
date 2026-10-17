@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { run, parseArgs, applyLightweightWorkRequest } from './board.mjs';
-import { refreshCommittedBacklog, renderArtifacts } from './backlog.mjs';
+import { collectLifecycleModel } from './backlog.mjs';
 import { parseTasks, renderBoard } from '../dude-engine/lib/tasks.mjs';
 import { buildLightweightWorkPostimages } from '../dude-engine/lib/lightweight-work-postimage.mjs';
 import { canonicalJson } from '../dude-work/recovery.mjs';
@@ -168,6 +168,7 @@ function scaffoldBacklogHookFeature() {
   return { root, file };
 }
 
+/** The report files an earlier Dude version maintained; current writers must leave them alone. */
 function backlogPaths(root) {
   return {
     markdown: path.join(root, '.dude', 'backlog.md'),
@@ -190,42 +191,24 @@ function readBacklogPair(root) {
   };
 }
 
-function assertFreshBacklogPair(root, label) {
-  const expected = renderArtifacts({ root });
-  const actual = readBacklogPair(root);
-  assert.deepEqual(actual.markdown, Buffer.from(expected.markdown), `${label}: Markdown equals fresh poststate render`);
-  assert.deepEqual(actual.html, Buffer.from(expected.html), `${label}: HTML equals fresh poststate render`);
+/**
+ * Arrange the report files as absent or as earlier-version copies, and return
+ * the exact bytes every later read must still observe.
+ * @param {string} root @param {'absent'|'earlier copies'} preimage @param {string} label
+ */
+function arrangeReportFiles(root, preimage, label) {
+  if (preimage === 'absent') return { markdown: null, html: null };
+  const copies = {
+    markdown: Buffer.from(`${label} earlier-version Markdown copy\n`),
+    html: Buffer.from(`${label} earlier-version HTML copy\n`),
+  };
+  writeBacklogPair(root, copies.markdown, copies.html);
+  return copies;
 }
 
-function markdownGroupForIdea(markdown, ideaPath) {
-  const groups = new Set(['Blocked', 'Active', 'Next', 'Ideas awaiting definition', 'Defined awaiting work', 'Prioritized for later', 'Completed']);
-  let group = null;
-  for (const line of markdown.split('\n')) {
-    const heading = /^#{2,3} (.+)$/.exec(line);
-    if (heading) {
-      group = groups.has(heading[1]) ? heading[1] : null;
-      continue;
-    }
-    if (group && line.includes(`(\`${ideaPath}\`)`)) return group;
-  }
-  return null;
-}
-
-function htmlGroupForIdea(html, ideaPath) {
-  const pattern = /<details class="feature-detail[^"]*"[^>]*data-idea-path="([^"]+)" data-section="([^"]+)" data-group="([^"]+)"/g;
-  let match;
-  while ((match = pattern.exec(html)) !== null) {
-    if (match[1] === ideaPath) return `${match[2]}/${match[3]}`;
-  }
-  return null;
-}
-
-function assertBacklogClassification(root, expected, label, ideaPath = `.dude/ideas/${BACKLOG_HOOK_FEATURE}.md`) {
-  const pair = readBacklogPair(root);
-  const markdownGroup = expected === 'active' ? 'Active' : 'Completed';
-  const htmlGroup = expected === 'active' ? 'current/active' : 'completed/completed';
-  assert.equal(markdownGroupForIdea(pair.markdown.toString('utf8'), ideaPath), markdownGroup, `${label}: Markdown classification`);
-  assert.equal(htmlGroupForIdea(pair.html.toString('utf8'), ideaPath), htmlGroup, `${label}: HTML classification`);
+function assertLifecycleGroup(root, expected, label, ideaPath = `.dude/ideas/${BACKLOG_HOOK_FEATURE}.md`) {
+  const item = collectLifecycleModel({ root }).items.find((candidate) => candidate.ideaPath === ideaPath);
+  assert.equal(item?.group, expected, `${label}: lifecycle group`);
 }
 
 function assertHookCanonicalPoststate(root, file, taskKey, glyph, ownerBefore, label) {
@@ -239,26 +222,6 @@ function assertHookCanonicalPoststate(root, file, taskKey, glyph, ownerBefore, l
       ownerBefore,
       `${label}: owner remains canonical and unchanged`,
     );
-  }
-}
-
-function failOnceOnBacklogHtmlWrite(root, callback) {
-  const htmlPath = backlogPaths(root).html;
-  const realWriteFileSync = fs.writeFileSync;
-  let injected = 0;
-  try {
-    // @ts-ignore -- deliberate O_TRUNC-style writer failure injection
-    fs.writeFileSync = (file, data, ...rest) => {
-      if (injected === 0 && path.resolve(String(file)) === htmlPath) {
-        injected += 1;
-        realWriteFileSync(file, Buffer.from('truncated before injected HTML failure\n'), ...rest);
-        throw new Error('injected backlog HTML write failure');
-      }
-      return realWriteFileSync(file, data, ...rest);
-    };
-    return { value: callback(), injected };
-  } finally {
-    fs.writeFileSync = realWriteFileSync;
   }
 }
 
@@ -451,110 +414,112 @@ test('apply-states --write batch-updates glyphs, warns unknown, refreshes snapsh
   }
 });
 
-test('T030 guarded set --write refreshes both artifacts for claim and final close', () => {
-  // Arrange
-  const { root, file } = scaffoldBacklogHookFeature();
-  try {
-    // Act
-    const claimed = captureStreams(() => run({
-      cmd: 'set',
-      file,
-      id: BACKLOG_HOOK_TASK,
-      state: 'in-progress',
-      root,
-      write: true,
-    }));
-
-    // Assert
-    assert.equal(claimed.code, 0, claimed.stderr);
-    assertFreshBacklogPair(root, 'guarded claim');
-    assertBacklogClassification(root, 'active', 'guarded claim');
-    assertHookCanonicalPoststate(root, file, BACKLOG_HOOK_TASK, '~', null, 'guarded claim');
-
-    // Act
-    const closed = captureStreams(() => run({
-      cmd: 'set',
-      file,
-      id: BACKLOG_HOOK_TASK,
-      state: 'done',
-      root,
-      write: true,
-    }));
-
-    // Assert
-    assert.equal(closed.code, 0, closed.stderr);
-    assertFreshBacklogPair(root, 'guarded close');
-    assertBacklogClassification(root, 'completed', 'guarded close');
-    assertHookCanonicalPoststate(root, file, BACKLOG_HOOK_TASK, 'x', null, 'guarded close');
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('T030 guarded apply-states --write refreshes both artifacts for claim, no-op, and final close', () => {
-  // Arrange
-  const { root, file } = scaffoldBacklogHookFeature();
-  const mapFile = path.join(root, 'state-map.json');
-  try {
-    fs.writeFileSync(mapFile, JSON.stringify({ [BACKLOG_HOOK_TASK]: 'in-progress' }));
-
-    // Act
-    const claimed = captureStreams(() => run({
-      cmd: 'apply-states',
-      file,
-      root,
-      fromPath: mapFile,
-      write: true,
-    }));
-
-    // Assert
-    assert.equal(claimed.code, 0, claimed.stderr);
-    assertFreshBacklogPair(root, 'batch claim');
-    assertBacklogClassification(root, 'active', 'batch claim');
-    assertHookCanonicalPoststate(root, file, BACKLOG_HOOK_TASK, '~', null, 'batch claim');
-
-    // Arrange a stale pair while the canonical state remains in progress.
-    writeBacklogPair(root, 'stale batch Markdown\n', 'stale batch HTML\n');
-    fs.writeFileSync(mapFile, JSON.stringify({}));
-
-    // Act: a successful zero-change batch is still a covered refresh boundary.
-    const noOp = captureStreams(() => run({
-      cmd: 'apply-states',
-      file,
-      root,
-      fromPath: mapFile,
-      write: true,
-    }));
-
-    // Assert
-    assert.equal(noOp.code, 0, noOp.stderr);
-    assert.match(noOp.stdout, /\[OK\] applied 0 state\(s\)/);
-    assertFreshBacklogPair(root, 'batch no-op refresh');
-    assertBacklogClassification(root, 'active', 'batch no-op refresh');
-
+test('T030 guarded set --write commits claim and final close without writing report files', () => {
+  for (const preimage of /** @type {const} */ (['absent', 'earlier copies'])) {
     // Arrange
-    fs.writeFileSync(mapFile, JSON.stringify({ [BACKLOG_HOOK_TASK]: 'done' }));
+    const { root, file } = scaffoldBacklogHookFeature();
+    const reportBefore = arrangeReportFiles(root, preimage, 'guarded set');
+    try {
+      // Act
+      const claimed = captureStreams(() => run({
+        cmd: 'set',
+        file,
+        id: BACKLOG_HOOK_TASK,
+        state: 'in-progress',
+        root,
+        write: true,
+      }));
 
-    // Act
-    const closed = captureStreams(() => run({
+      // Assert
+      assert.equal(claimed.code, 0, claimed.stderr);
+      assert.equal(claimed.stderr, '', `${preimage}: guarded claim reports no failure`);
+      assert.match(claimed.stdout, /^\[OK\] T001@6261636b set to "in-progress" in /);
+      assertHookCanonicalPoststate(root, file, BACKLOG_HOOK_TASK, '~', null, `${preimage}: guarded claim`);
+      assertLifecycleGroup(root, 'active', `${preimage}: guarded claim`);
+      assert.deepEqual(readBacklogPair(root), reportBefore, `${preimage}: guarded claim writes no report file`);
+
+      // Act
+      const closed = captureStreams(() => run({
+        cmd: 'set',
+        file,
+        id: BACKLOG_HOOK_TASK,
+        state: 'done',
+        root,
+        write: true,
+      }));
+
+      // Assert
+      assert.equal(closed.code, 0, closed.stderr);
+      assert.equal(closed.stderr, '', `${preimage}: guarded close reports no failure`);
+      assert.match(closed.stdout, /^\[OK\] T001@6261636b set to "done" in /);
+      assertHookCanonicalPoststate(root, file, BACKLOG_HOOK_TASK, 'x', null, `${preimage}: guarded close`);
+      assertLifecycleGroup(root, 'completed', `${preimage}: guarded close`);
+      assert.deepEqual(readBacklogPair(root), reportBefore, `${preimage}: guarded close writes no report file`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('T030 guarded apply-states --write commits claim, no-op, and final close without writing report files', () => {
+  for (const preimage of /** @type {const} */ (['absent', 'earlier copies'])) {
+    // Arrange
+    const { root, file } = scaffoldBacklogHookFeature();
+    const mapFile = path.join(root, 'state-map.json');
+    const reportBefore = arrangeReportFiles(root, preimage, 'guarded batch');
+    const batch = () => captureStreams(() => run({
       cmd: 'apply-states',
       file,
       root,
       fromPath: mapFile,
       write: true,
     }));
+    try {
+      fs.writeFileSync(mapFile, JSON.stringify({ [BACKLOG_HOOK_TASK]: 'in-progress' }));
 
-    // Assert
-    assert.equal(closed.code, 0, closed.stderr);
-    assertFreshBacklogPair(root, 'batch close');
-    assertBacklogClassification(root, 'completed', 'batch close');
-    assertHookCanonicalPoststate(root, file, BACKLOG_HOOK_TASK, 'x', null, 'batch close');
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+      // Act
+      const claimed = batch();
+
+      // Assert
+      assert.equal(claimed.code, 0, claimed.stderr);
+      assert.equal(claimed.stderr, '', `${preimage}: batch claim reports no failure`);
+      assert.match(claimed.stdout, /\[OK\] applied 1 state\(s\)/);
+      assertHookCanonicalPoststate(root, file, BACKLOG_HOOK_TASK, '~', null, `${preimage}: batch claim`);
+      assertLifecycleGroup(root, 'active', `${preimage}: batch claim`);
+      assert.deepEqual(readBacklogPair(root), reportBefore, `${preimage}: batch claim writes no report file`);
+
+      // Arrange
+      fs.writeFileSync(mapFile, JSON.stringify({}));
+
+      // Act
+      const noOp = batch();
+
+      // Assert
+      assert.equal(noOp.code, 0, noOp.stderr);
+      assert.match(noOp.stdout, /\[OK\] applied 0 state\(s\)/);
+      assertHookCanonicalPoststate(root, file, BACKLOG_HOOK_TASK, '~', null, `${preimage}: batch no-op`);
+      assert.deepEqual(readBacklogPair(root), reportBefore, `${preimage}: batch no-op writes no report file`);
+
+      // Arrange
+      fs.writeFileSync(mapFile, JSON.stringify({ [BACKLOG_HOOK_TASK]: 'done' }));
+
+      // Act
+      const closed = batch();
+
+      // Assert
+      assert.equal(closed.code, 0, closed.stderr);
+      assert.equal(closed.stderr, '', `${preimage}: batch close reports no failure`);
+      assert.match(closed.stdout, /\[OK\] applied 1 state\(s\)/);
+      assertHookCanonicalPoststate(root, file, BACKLOG_HOOK_TASK, 'x', null, `${preimage}: batch close`);
+      assertLifecycleGroup(root, 'completed', `${preimage}: batch close`);
+      assert.deepEqual(readBacklogPair(root), reportBefore, `${preimage}: batch close writes no report file`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   }
 });
 
-test('T030 excluded board and refused autonomous paths leave committed backlog bytes untouched', () => {
+test('T030 excluded board and refused autonomous paths leave earlier report copies untouched', () => {
   // Arrange
   const { root, file } = scaffoldBacklogHookFeature();
   const sentinels = {
@@ -564,7 +529,7 @@ test('T030 excluded board and refused autonomous paths leave committed backlog b
   try {
     writeBacklogPair(root, sentinels.markdown, sentinels.html);
     const assertSentinels = (label) => {
-      assert.deepEqual(readBacklogPair(root), sentinels, `${label}: no backlog refresh write`);
+      assert.deepEqual(readBacklogPair(root), sentinels, `${label}: report copies untouched`);
     };
 
     // Act / Assert: board-only write, reads, dry run, and failed guarded mutation are excluded.
@@ -611,84 +576,9 @@ test('T030 excluded board and refused autonomous paths leave committed backlog b
     assert.equal(result.ok, false);
     assert.equal(result.phase, 'refused');
     assert.equal(result.reason, 'expected-capture-mismatch');
-    assert.deepEqual(readBacklogPair(laneRoot), laneSentinels, 'refused autonomous request does not refresh');
+    assert.deepEqual(readBacklogPair(laneRoot), laneSentinels, 'refused autonomous request leaves report copies untouched');
   } finally {
     fs.rmSync(laneRoot, { recursive: true, force: true });
-  }
-});
-
-test('T030 guarded refresh failures restore both preimages and retain canonical commits', () => {
-  const commands = [
-    {
-      label: 'set',
-      run(root, file) {
-        return captureStreams(() => run({
-          cmd: 'set',
-          file,
-          id: BACKLOG_HOOK_TASK,
-          state: 'in-progress',
-          root,
-          write: true,
-        }));
-      },
-    },
-    {
-      label: 'apply-states',
-      run(root, file) {
-        const mapFile = path.join(root, 'failing-state-map.json');
-        fs.writeFileSync(mapFile, JSON.stringify({ [BACKLOG_HOOK_TASK]: 'in-progress' }));
-        return captureStreams(() => run({
-          cmd: 'apply-states',
-          file,
-          root,
-          fromPath: mapFile,
-          write: true,
-        }));
-      },
-    },
-  ];
-
-  for (const command of commands) {
-    for (const preimage of ['present', 'missing']) {
-      // Arrange
-      const { root, file } = scaffoldBacklogHookFeature();
-      const before = {
-        markdown: Buffer.from(`${command.label} ${preimage} Markdown preimage\n`),
-        html: Buffer.from(`${command.label} ${preimage} HTML preimage\n`),
-      };
-      const ownerBefore = fs.readFileSync(path.join(root, '.dude', 'ideas', `${BACKLOG_HOOK_FEATURE}.md`));
-      if (preimage === 'present') writeBacklogPair(root, before.markdown, before.html);
-
-      try {
-        // Act
-        const failed = failOnceOnBacklogHtmlWrite(root, () => command.run(root, file));
-
-        // Assert
-        assert.equal(failed.injected, 1, `${command.label}/${preimage}: second write was reached`);
-        assert.equal(failed.value.code, 2, `${command.label}/${preimage}: operation-error exit`);
-        assert.equal(failed.value.stderr, '[FAIL] canonical state committed; backlog refresh failed\n');
-        assert.equal(failed.value.stdout, '', `${command.label}/${preimage}: ordinary success is suppressed`);
-        assertHookCanonicalPoststate(
-          root,
-          file,
-          BACKLOG_HOOK_TASK,
-          '~',
-          ownerBefore,
-          `${command.label}/${preimage}`,
-        );
-        if (preimage === 'present') {
-          assert.deepEqual(readBacklogPair(root), before, `${command.label}/${preimage}: both preimages restored`);
-        } else {
-          assert.deepEqual(
-            readBacklogPair(root),
-            { markdown: null, html: null },
-            `${command.label}/${preimage}: both absent preimages restored`,
-          );
-        }
-      } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-      }
-    }
   }
 });
 
@@ -1065,14 +955,17 @@ test('terminal manual resolution: manual close preserves retained fixture bytes'
       fs.writeFileSync(absolute, bytes);
     }
 
-    // Seed both derived backlog files before capturing complete preimages.
-    refreshCommittedBacklog({ root });
+    // Seed earlier-version report copies before capturing complete preimages.
+    writeBacklogPair(
+      root,
+      Buffer.from('manual-close earlier-version Markdown copy\n'),
+      Buffer.from('manual-close earlier-version HTML copy\n'),
+    );
     const { readTaskState } = await loadTaskStateLib();
     const seededState = readTaskState(root);
     assert.equal(seededState.status, 'ok', 'fixture snapshot starts valid');
     assert.deepEqual(seededState.state, initialSnapshot, 'fixture snapshot carries target and unrelated entries');
-    assertFreshBacklogPair(root, 'seeded manual-close fixture');
-    assertBacklogClassification(root, 'active', 'seeded manual-close fixture');
+    assertLifecycleGroup(root, 'active', 'seeded manual-close fixture');
 
     const preimages = captureFixtureTree();
     const tasksBefore = preimages.get(relativeTasks);
@@ -1139,8 +1032,6 @@ test('terminal manual resolution: manual close preserves retained fixture bytes'
       '',
     ].join('\n'));
     fs.appendFileSync(ownerPath, ordinaryCloseLines);
-    const expectedFinalBacklog = renderArtifacts({ root });
-    refreshCommittedBacklog({ root });
 
     const tasksAfter = fs.readFileSync(file);
     const ownerAfter = fs.readFileSync(ownerPath);
@@ -1211,19 +1102,10 @@ test('terminal manual resolution: manual close preserves retained fixture bytes'
     assert.match(historyBefore.toString('utf8'), /verification-failed/, 'retained history keeps its failure');
     assert.match(historyBefore.toString('utf8'), /required-check-skipped/, 'retained history keeps its skip');
 
-    const actualFinalBacklog = readBacklogPair(root);
-    assert.deepEqual(actualFinalBacklog.markdown, Buffer.from(expectedFinalBacklog.markdown));
-    assert.deepEqual(actualFinalBacklog.html, Buffer.from(expectedFinalBacklog.html));
-    assertFreshBacklogPair(root, 'final manual-close fixture');
-    assert.equal(
-      markdownGroupForIdea(actualFinalBacklog.markdown.toString('utf8'), ownerRelative),
-      'Defined awaiting work',
+    assertLifecycleGroup(
+      root,
+      'defined-awaiting-work',
       'open sibling remains ordinary defined work rather than an automatically claimed next task',
-    );
-    assert.equal(
-      htmlGroupForIdea(actualFinalBacklog.html.toString('utf8'), ownerRelative),
-      'planned/defined-awaiting-work',
-      'HTML backlog also makes no automatic next-task claim',
     );
 
     const postimages = captureFixtureTree();
@@ -1232,12 +1114,10 @@ test('terminal manual resolution: manual close preserves retained fixture bytes'
       .filter((relative) => !preimages.get(relative).equals(postimages.get(relative)))
       .sort();
     assert.deepEqual(changed, [
-      '.dude/backlog.html',
-      '.dude/backlog.md',
       ownerRelative,
       relativeTasks,
       snapshotRelative,
-    ].sort(), 'complete fixture delta is limited to tasks, snapshot, owner log, and backlog pair');
+    ].sort(), 'complete fixture delta is limited to tasks, snapshot, and owner log; report copies stay untouched');
     for (const relative of preimages.keys()) {
       if (!changed.includes(relative)) {
         assert.deepEqual(postimages.get(relative), preimages.get(relative), `${relative}: unchanged fixture postimage`);
@@ -1796,79 +1676,41 @@ test('T006 lightweight work-set commits an exact claim only after fresh poststat
   }
 });
 
-test('T030 autonomous claim and final close refresh both artifacts without changing the result contract', () => {
-  // Arrange
-  const root = scaffoldSingleTaskLane();
-  try {
-    // Act
-    const claimed = applyLightweightWorkRequest(laneRequest(root));
-
-    // Assert
-    assertAutonomousCommittedResult(claimed, root, 'autonomous claim');
-    assertFreshBacklogPair(root, 'autonomous claim');
-    assertBacklogClassification(root, 'active', 'autonomous claim', LANE_IDEA);
-    assert.match(
-      laneBytes(root, LANE_TASKS).toString('utf8'),
-      new RegExp(`- \\[~\\] ${LANE_TASK_KEY}`),
-      'autonomous claim commits the canonical task',
-    );
-
-    // Arrange
-    const completion = laneCompletionMutation();
-    const closeRequest = laneRequest(root, { mutation: completion, glyph: '~' });
-
-    // Act
-    const closed = applyLightweightWorkRequest(closeRequest);
-
-    // Assert
-    assertAutonomousCommittedResult(closed, root, 'autonomous close');
-    assertFreshBacklogPair(root, 'autonomous close');
-    assertBacklogClassification(root, 'completed', 'autonomous close', LANE_IDEA);
-    assert.match(
-      laneBytes(root, LANE_TASKS).toString('utf8'),
-      new RegExp(`- \\[x\\] ${LANE_TASK_KEY}`),
-      'autonomous close commits the final canonical task',
-    );
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('T030 autonomous refresh failure restores the pair but returns the original committed receipt', () => {
-  for (const preimage of ['present', 'missing']) {
+test('T030 autonomous claim and final close keep the result contract without writing report files', () => {
+  for (const preimage of /** @type {const} */ (['absent', 'earlier copies'])) {
     // Arrange
     const root = scaffoldSingleTaskLane();
-    const before = {
-      markdown: Buffer.from(`autonomous ${preimage} Markdown preimage\n`),
-      html: Buffer.from(`autonomous ${preimage} HTML preimage\n`),
-    };
-    const canonicalBefore = laneSurfaces(root);
-    if (preimage === 'present') writeBacklogPair(root, before.markdown, before.html);
-
+    const reportBefore = arrangeReportFiles(root, preimage, 'autonomous');
     try {
       // Act
-      const failed = failOnceOnBacklogHtmlWrite(root, () => applyLightweightWorkRequest(laneRequest(root)));
+      const claimed = applyLightweightWorkRequest(laneRequest(root));
 
       // Assert
-      assert.equal(failed.injected, 1, `${preimage}: second backlog write was reached`);
-      assertAutonomousCommittedResult(failed.value, root, `${preimage}: autonomous failure`);
-      const after = laneSurfaces(root);
-      assert.match(after.tasks.toString('utf8'), new RegExp(`- \\[~\\] ${LANE_TASK_KEY}`), `${preimage}: task stayed committed`);
-      assert.equal(
-        JSON.parse(after.taskState.toString('utf8'))[LANE_TASKS].glyphs[LANE_TASK_KEY],
-        '~',
-        `${preimage}: snapshot stayed committed`,
+      assertAutonomousCommittedResult(claimed, root, `${preimage}: autonomous claim`);
+      assertLifecycleGroup(root, 'active', `${preimage}: autonomous claim`, LANE_IDEA);
+      assert.match(
+        laneBytes(root, LANE_TASKS).toString('utf8'),
+        new RegExp(`- \\[~\\] ${LANE_TASK_KEY}`),
+        `${preimage}: autonomous claim commits the canonical task`,
       );
-      assert.deepEqual(after.owner, canonicalBefore.owner, `${preimage}: owner was not rolled back or rewritten`);
-      if (preimage === 'present') {
-        assert.deepEqual(readBacklogPair(root), before, `${preimage}: both prior artifact bytes restored`);
-      } else {
-        assert.deepEqual(
-          readBacklogPair(root),
-          { markdown: null, html: null },
-          `${preimage}: both prior absent artifacts restored`,
-        );
-      }
+      assert.deepEqual(readBacklogPair(root), reportBefore, `${preimage}: autonomous claim writes no report file`);
+
+      // Arrange
+      const completion = laneCompletionMutation();
+      const closeRequest = laneRequest(root, { mutation: completion, glyph: '~' });
+
+      // Act
+      const closed = applyLightweightWorkRequest(closeRequest);
+
+      // Assert
+      assertAutonomousCommittedResult(closed, root, `${preimage}: autonomous close`);
+      assertLifecycleGroup(root, 'completed', `${preimage}: autonomous close`, LANE_IDEA);
+      assert.match(
+        laneBytes(root, LANE_TASKS).toString('utf8'),
+        new RegExp(`- \\[x\\] ${LANE_TASK_KEY}`),
+        `${preimage}: autonomous close commits the final canonical task`,
+      );
+      assert.deepEqual(readBacklogPair(root), reportBefore, `${preimage}: autonomous close writes no report file`);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -3153,23 +2995,16 @@ test('terminal administrative reconciliation: blocked same-task close preserves 
     assert.equal(fs.existsSync(liveClaimPath), false, 'synthetic live ownership claim starts absent');
     assert.equal(fs.existsSync(liveCheckpointPath), false, 'synthetic live checkpoint starts absent');
 
-    refreshCommittedBacklog({ root });
+    writeBacklogPair(
+      root,
+      Buffer.from('administrative earlier-version Markdown copy\n'),
+      Buffer.from('administrative earlier-version HTML copy\n'),
+    );
     const { readTaskState } = await loadTaskStateLib();
     const seededState = readTaskState(root);
     assert.equal(seededState.status, 'ok', 'fixture snapshot starts valid');
     assert.deepEqual(seededState.state, initialSnapshot, 'fixture snapshot carries target and unrelated entries');
-    assertFreshBacklogPair(root, 'seeded administrative fixture');
-    const seededBacklog = readBacklogPair(root);
-    assert.equal(
-      markdownGroupForIdea(seededBacklog.markdown.toString('utf8'), ownerRelative),
-      'Blocked',
-      'obsolete blocker begins in the blocked backlog group',
-    );
-    assert.equal(
-      htmlGroupForIdea(seededBacklog.html.toString('utf8'), ownerRelative),
-      'current/blocked',
-      'HTML backlog begins with the same blocked classification',
-    );
+    assertLifecycleGroup(root, 'blocked', 'obsolete blocker begins in the blocked lifecycle group');
 
     const preimages = captureFixtureTree();
     const tasksBefore = preimages.get(relativeTasks);
@@ -3211,8 +3046,8 @@ test('terminal administrative reconciliation: blocked same-task close preserves 
     assert.equal(parsedAfterMetadata.byId.get(targetKey)?.blockedBy, null, 'only the obsolete blocker metadata is removed');
     assert.deepEqual(fs.readFileSync(snapshotPath), snapshotBefore, 'metadata edit does not fabricate a snapshot write');
     const backlogBeforeCli = readBacklogPair(root);
-    assert.deepEqual(backlogBeforeCli.markdown, preimages.get('.dude/backlog.md'), 'metadata edit does not refresh Markdown backlog');
-    assert.deepEqual(backlogBeforeCli.html, preimages.get('.dude/backlog.html'), 'metadata edit does not refresh HTML backlog');
+    assert.deepEqual(backlogBeforeCli.markdown, preimages.get('.dude/backlog.md'), 'metadata edit leaves the earlier Markdown copy untouched');
+    assert.deepEqual(backlogBeforeCli.html, preimages.get('.dude/backlog.html'), 'metadata edit leaves the earlier HTML copy untouched');
 
     const setResult = boardCli(['set', file, targetKey, 'done', '--write', '--root', root]);
     assert.equal(setResult.status, 0, `actual set CLI failed: ${setResult.stdout}${setResult.stderr}`);
@@ -3255,8 +3090,6 @@ test('terminal administrative reconciliation: blocked same-task close preserves 
       '',
     ].join('\n'));
     fs.appendFileSync(ownerPath, ordinaryCloseLines);
-    const expectedFinalBacklog = renderArtifacts({ root });
-    refreshCommittedBacklog({ root });
 
     const tasksAfter = fs.readFileSync(file);
     const ownerAfter = fs.readFileSync(ownerPath);
@@ -3336,19 +3169,10 @@ test('terminal administrative reconciliation: blocked same-task close preserves 
     assert.equal(fs.existsSync(liveClaimPath), false, 'separately cleaned ownership claim remains absent');
     assert.equal(fs.existsSync(liveCheckpointPath), false, 'separately cleaned checkpoint remains absent');
 
-    const actualFinalBacklog = readBacklogPair(root);
-    assert.deepEqual(actualFinalBacklog.markdown, Buffer.from(expectedFinalBacklog.markdown));
-    assert.deepEqual(actualFinalBacklog.html, Buffer.from(expectedFinalBacklog.html));
-    assertFreshBacklogPair(root, 'final administrative fixture');
-    assert.equal(
-      markdownGroupForIdea(actualFinalBacklog.markdown.toString('utf8'), ownerRelative),
-      'Defined awaiting work',
+    assertLifecycleGroup(
+      root,
+      'defined-awaiting-work',
       'open dependent remains ordinary defined work rather than an automatically claimed successor',
-    );
-    assert.equal(
-      htmlGroupForIdea(actualFinalBacklog.html.toString('utf8'), ownerRelative),
-      'planned/defined-awaiting-work',
-      'HTML backlog also makes no automatic successor claim',
     );
 
     const postimages = captureFixtureTree();
@@ -3357,12 +3181,10 @@ test('terminal administrative reconciliation: blocked same-task close preserves 
       .filter((relative) => !preimages.get(relative).equals(postimages.get(relative)))
       .sort();
     assert.deepEqual(changed, [
-      '.dude/backlog.html',
-      '.dude/backlog.md',
       ownerRelative,
       relativeTasks,
       snapshotRelative,
-    ].sort(), 'complete fixture delta is limited to the five legitimate surfaces');
+    ].sort(), 'complete fixture delta is limited to the three legitimate surfaces; report copies stay untouched');
     for (const relative of preimages.keys()) {
       if (!changed.includes(relative)) {
         assert.deepEqual(postimages.get(relative), preimages.get(relative), `${relative}: unchanged fixture postimage`);

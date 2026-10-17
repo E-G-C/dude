@@ -381,14 +381,6 @@ In this lane:
 - one bounded task may still include closely related code, tests, and docs when
   one verification step proves the slice
 
-The derived `.dude/backlog.md` and `.dude/backlog.html` refresh after guarded
-`set --write`, guarded `apply-states --write`, and successful autonomous
-Lightweight applications. They do not refresh for board-only rendering, reads,
-dry runs, or refused mutations. A refresh failure leaves canonical task state
-committed; autonomous work keeps its existing committed receipt, and
-`backlog.mjs check` detects the stale pair. Coordinator Log-only, lifecycle, and
-backlog-order changes remain procedural backlog-generation work.
-
 3. Continue execution from the ready-now task or ready set, or resume any
   existing `[~]` task first. `[P]` is only an independence candidate; it
   neither proves safety nor authorizes fan-out.
