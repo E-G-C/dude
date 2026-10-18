@@ -6970,7 +6970,10 @@ test('T003 the adapter owns every ordinary Work runtime route', () => {
       [/shell environment variable may mirror accepted bytes for transport/, /never authority/, /never read as fallback/],
     ]],
     ['the boundary adds no user-visible surface', [
-      [/adds no command, grammar, lane, board, or project state surface/, /never a second board, ledger, or event store/],
+      [
+        /The bundled driver is host integration for the existing adapter and runner; it adds no `@dude` command, Work grammar, lane, board, or project state surface/,
+        /never a second board, ledger, or event store/,
+      ],
     ]],
     ['the foreground runner is async, serialized, and terminal-only', [
       [
@@ -7486,6 +7489,137 @@ test('T003 the adapter and its prompt surfaces are generated, never hand-authore
     'fetch(', 'openai', 'anthropic',
   ]) {
     assert.equal(runner.includes(forbidden), false, `runner adds forbidden resident/model surface ${forbidden}`);
+  }
+});
+
+// --- Feature 086: the bundled Work driver and its operating reference --------
+
+const DRIVER_SOURCE = 'src/skills/dude-work/driver.mjs';
+const DRIVER_COOKBOOK = 'src/skills/dude-work/COOKBOOK.md';
+const DRIVER_COOKBOOK_GENERATED = '.github/skills/dude-work/COOKBOOK.md';
+const DRIVER_COMMAND = 'node .github/skills/dude-work/driver.mjs';
+
+// One documented form per subcommand, plus the cancel form, each with every flag it requires.
+const DRIVER_COMMAND_FORMS = [
+  ['claim', ['--root', '--spec', '--task']],
+  ['run', ['--request']],
+  ['assess', ['--root', '--challenge', '--input']],
+  ['respond', ['--root', '--challenge', '--tester', '--reviewer', '--changed']],
+  ['respond', ['--root', '--challenge', '--cancel']],
+  ['snapshot', ['--root', '--out']],
+  ['diff', ['--root', '--baseline', '--challenge', '--out']],
+  ['ownership', ['--root', '--spec', '--task']],
+];
+
+// Session-kit instructions and retired duties the current guidance never carries.
+// Each sample proves its pattern is live, so no absence check passes vacuously.
+const RETIRED_DRIVER_GUIDANCE = [
+  ['kit script names',
+    /\b(?:setup-claim|bridge-run|make-assessment|make-specialist-response|make-cancel|changed-paths|check-ownership|select-next)\.mjs\b/,
+    'node "$KIT\\setup-claim.mjs" --root $WS'],
+  ['kit templates', /\.template\.json\b/, 'assessment-input.template.json'],
+  ['session or machine paths', /session-state|copilot-worktrees|[A-Za-z]:\\Users\\/i, 'C:\\Users\\someone\\.copilot\\session-state\\files'],
+  ['retired report maintenance', /backlog\.mjs|\.dude\/backlog\.|backlog (?:report|refresh|generation)|generate --write/i,
+    'node backlog.mjs generate --root $WS --write'],
+  ['cut driver options', /--(?:fix-paths|dry-run|outcome|no-changes|claim-note|no-owner-log|modules|no-record-runtime)\b/,
+    'make-assessment --fix-paths --dry-run'],
+  ['a learning-review response maker', /selectedAlternativeIdentity|validateAlternativeV2/,
+    '"selectedAlternativeIdentity":"<only for selected-alternative>"'],
+  ['an optional-pack dependency', /dude-pack-/, 'dude-pack-rubber-duck-retrospective'],
+];
+
+/** The single Work-skill paragraph that points to the cookbook. */
+function driverCookbookPointer() {
+  const pointers = visibleMarkdown(read(ADAPTER_OWNER)).split(/\n\s*\n/)
+    .filter((paragraph) => paragraph.includes('COOKBOOK.md'));
+  assert.equal(pointers.length, 1, `${ADAPTER_OWNER}: exactly one cookbook pointer`);
+  return pointers[0].trim();
+}
+
+/** Every documented driver call in a fenced block: its subcommand and the driver flags before `--`. @param {string} source */
+function documentedDriverCommands(source) {
+  return (source.match(/```[^\n]*\n[\s\S]*?\n[ \t]*```/g) ?? [])
+    .flatMap((block) => block.split('\n'))
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith(`${DRIVER_COMMAND} `))
+    .map((line) => {
+      const [own] = line.slice(DRIVER_COMMAND.length + 1).split(' -- ');
+      const [subcommand, ...tokens] = own.split(/\s+/);
+      return { line, subcommand, flags: tokens.filter((token) => /^--[a-z][a-z-]*$/.test(token)) };
+    });
+}
+
+/** The flags the driver's own usage declares for each subcommand. */
+function declaredDriverFlags() {
+  const usage = /const USAGE = `usage:\n([\s\S]*?)`;/.exec(read(DRIVER_SOURCE));
+  assert.ok(usage, `${DRIVER_SOURCE} declares its usage`);
+  return new Map(usage[1].split('\n').filter((line) => line.trim() !== '').map((line) => {
+    const match = /^\s*node driver\.mjs ([a-z]+) (.*)$/.exec(line);
+    assert.ok(match, `usage line: ${line}`);
+    return [match[1], new Set(match[2].match(/--[a-z][a-z-]*/g) ?? [])];
+  }));
+}
+
+test('Feature 086 T002: the Work skill points to the bundled driver and its separate cookbook', () => {
+  const pointer = driverCookbookPointer();
+  assert.match(pointer, /autonomous Lightweight Work, including Work inside Ship/);
+  assert.match(pointer, /the bundled `driver\.mjs` in this directory/);
+  assert.match(pointer, /`COOKBOOK\.md` beside it holds the driver's operating steps, flags, and input examples/);
+  assert.ok(sentences(pointer).length <= 2, 'the pointer stays one or two sentences');
+  assert.ok(adapterOwnerSection(ADAPTER_BOUNDARY_SECTION).includes(pointer), 'the pointer sits beside the runner and claim setup it locates');
+  assert.equal(pointer.includes('dude-work-intake') || pointer.includes('## Needs You Handoff'), false, 'the pointer adds no Needs You reference');
+
+  // The replaced boundary sentence names the driver as host integration and keeps the checkpoint sentence.
+  const work = read(ADAPTER_OWNER);
+  assert.ok(work.includes(
+    'The bundled driver is host integration for the existing adapter and runner; it adds no `@dude` command, Work grammar, lane, board, or project state surface. The checkpoint is transient host storage outside the workspace and never a second board, ledger, or event store.',
+  ));
+  assert.equal(work.includes('This boundary adds no command, grammar, lane, board, or project state surface.'), false);
+});
+
+test('Feature 086 T002: the cookbook documents every driver command form with only declared flags', () => {
+  const declared = declaredDriverFlags();
+  const dispatched = /const COMMANDS = \{ ([a-z, ]+) \};/.exec(read(DRIVER_SOURCE))?.[1].split(', ');
+  assert.deepEqual([...declared.keys()], dispatched, 'the usage declares exactly the dispatched subcommands');
+  assert.equal(dispatched?.length, 7);
+
+  const documented = documentedDriverCommands(read(DRIVER_COOKBOOK));
+  assert.deepEqual(
+    [...new Set(documented.map(({ subcommand }) => subcommand))].sort(),
+    [...dispatched].sort(),
+    'every subcommand has a documented command form',
+  );
+  for (const { line, subcommand, flags } of documented) {
+    const known = declared.get(subcommand);
+    assert.ok(known, `${line}: unknown subcommand`);
+    for (const flag of flags) assert.ok(known.has(flag), `${line}: ${subcommand} declares no ${flag}`);
+  }
+  for (const [subcommand, required] of DRIVER_COMMAND_FORMS) {
+    assert.ok(
+      documented.some((entry) => entry.subcommand === subcommand
+        && required.every((flag) => entry.flags.includes(flag))
+        && entry.flags.includes('--cancel') === required.includes('--cancel')),
+      `the cookbook documents ${subcommand} ${required.join(' ')}`,
+    );
+  }
+});
+
+test('Feature 086 T002: the cookbook is an exact core projection with current-only instructions', () => {
+  const outputs = listCoreOutputs(ROOT).filter((output) => output.relPath === DRIVER_COOKBOOK_GENERATED);
+  assert.equal(outputs.length, 1, `${DRIVER_COOKBOOK_GENERATED}: one planned core output`);
+  assert.equal(outputs[0].abs, path.join(ROOT, DRIVER_COOKBOOK), `${DRIVER_COOKBOOK_GENERATED}: exact source correspondence`);
+  assert.deepEqual(
+    fs.readFileSync(path.join(ROOT, DRIVER_COOKBOOK_GENERATED)),
+    fs.readFileSync(path.join(ROOT, DRIVER_COOKBOOK)),
+    `${DRIVER_COOKBOOK_GENERATED} is byte-identical to its source`,
+  );
+
+  const guidance = [[DRIVER_COOKBOOK, read(DRIVER_COOKBOOK)], [`${ADAPTER_OWNER} cookbook pointer`, driverCookbookPointer()]];
+  for (const [label, pattern, sample] of RETIRED_DRIVER_GUIDANCE) {
+    assert.match(sample, pattern, `${label}: the pattern must be live`);
+    for (const [relative, content] of guidance) {
+      assert.doesNotMatch(content, pattern, `${relative} carries ${label}`);
+    }
   }
 });
 
