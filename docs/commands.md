@@ -2038,6 +2038,7 @@ The coordinator invokes them; they are not a background service.
 | `dude-bundle-upgrade/upgrade.mjs` | refresh core files from the upstream source |
 | `dude-lightweight-execution/board.mjs` | `parse` / `ready` / `next` / `render` / `set` / `apply-states` / `diff` on `tasks.md` |
 | `dude-lightweight-execution/backlog.mjs` | read-only lifecycle views: default groups with dependency and order notes, `kanban`, and `flowchart <slug>` |
+| `dude-work/driver.mjs` | autonomous Lightweight Work host integration: `claim` / `run` / `assess` / `respond` / `snapshot` / `diff` / `ownership`; its steps, flags, examples, and own exit codes are in `dude-work/COOKBOOK.md` |
 | `dude-team-expansion/scaffold-agent.mjs` | emit a lint-clean `.agent.md` skeleton (`--pack` updates `pack.md`) |
 | `dude-skill-authoring/scaffold-skill.mjs` | emit a lint-clean `SKILL.md` skeleton (`--pack` updates `pack.md`) |
 | `dude-bundle-import/import.mjs` | focused `analyze` / `apply`, plus guarded directory analysis, planning, and apply |
