@@ -2059,8 +2059,7 @@ and `mirror` captured Beads state back into `tasks.md`).
 The mutating commands (`board render`/`set`/`apply-states`, `beads mirror`) are
 **non-mutating by default** — they print a preview; pass `--write` to apply and
 refresh the coordinator snapshot. `memory append` refuses a near-duplicate unless
-`--force`. Every engine script exits `0` on success, `1` on usage error, `2` on
-operation error.
+`--force`. Exit codes vary by script and subcommand.
 
 `backlog.mjs` never writes. Its default form prints the Current, Planned, and
 Completed groups, then dependency and order notes: whether
