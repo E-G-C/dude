@@ -654,6 +654,8 @@ function PackActionDialog({ action, shown, data, showKey, showReason, onClose, o
  * Settings > Appearance (085): one Fluent Switch for the one saved choice. It
  * shows the confirmed choice only; a save or read in flight keeps it
  * focusable but inert, and its outcome is announced, with no visible "Saved".
+ * 072: the choice shares its saved document with About's update-check switch,
+ * so while that document cannot be read this switch waits for Retry too.
  */
 const APPEARANCE_HINT = "Uses the GitHub app's colors, fonts, and text sizes. Controls and layout stay the same. "
   + "Applies to all your projects on this computer. Turn off to use Dude's own look.";
@@ -694,19 +696,20 @@ function AppearancePanel({ id, labelledBy, shown }) {
   useEffect(() => {
     if (state.focusSwitch === focusRequest.current) return;
     focusRequest.current = state.focusSwitch;
-    if (shown) toggle.current?.focus();
-  }, [state.focusSwitch, shown]);
+    if (shown && state.focusKey === 'followAppTheme') toggle.current?.focus();
+  }, [state.focusSwitch, state.focusKey, shown]);
   const pending = Boolean(state.pending);
   const message = appearanceMessage(state.message, state.confirmed);
+  // 072: while the saved choices cannot be read, the switch waits for a read that succeeds, such as Retry.
   return <div ref={panel} role="tabpanel" id={id} aria-labelledby={labelledBy} hidden={!shown}
     tabIndex={shown && scrolls ? 0 : undefined} className={s.aboutPanel} data-appearance-panel>
     {shown && <div className={s.aboutBody}>
       <Field hint={APPEARANCE_HINT}>
-        <Switch ref={toggle} checked={state.confirmed} disabledFocusable={pending} label="Follow GitHub app theme"
+        <Switch ref={toggle} checked={state.confirmed} disabledFocusable={pending || !state.readable} label="Follow GitHub app theme"
           className={s.followSwitch} onChange={() => void toggleFollowAppTheme()} data-follow-app-theme />
       </Field>
-      {pending && <Spinner size="extra-tiny" label={APPEARANCE_PENDING[state.pending]} className={s.appearancePending}
-        data-appearance-pending={state.pending} />}
+      {pending && state.pendingKey === 'followAppTheme' && <Spinner size="extra-tiny" label={APPEARANCE_PENDING[state.pending]}
+        className={s.appearancePending} data-appearance-pending={state.pending} />}
       {message && <MessageBar intent={message.intent} layout="multiline" className={mergeClasses(s.notice, s.narrowBar)}
         data-appearance-message={state.message}>
         <MessageBarBody>
@@ -738,7 +741,7 @@ function AppearancePanel({ id, labelledBy, shown }) {
  * Add/import keeps its typed Source here; the list view is kept beside it, so a
  * trip to Add/import and back keeps the filters, page, and selection.
  */
-export function Settings({ data, active, section, onSection, sub, onSub, onPermission }) {
+export function Settings({ data, active, section, onSection, sub, onSub, onPermission, onAboutRead, updates }) {
   const { packs, packsLoading: loading, issues: { packs: issue } } = data;
   const s = useCanvasStyles(), id = useId();
   const packsShown = active && section === 'packs';
@@ -1421,6 +1424,6 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
     </div>
     <AppearancePanel id={`${id}-appearance`} labelledBy={`${id}-section-appearance`} shown={active && section === 'appearance'} />
     <AboutPanel id={`${id}-about`} labelledBy={`${id}-section-about`} shown={active && section === 'about'}
-      readAbout={data.readAbout} />
+      readAbout={data.readAbout} onRead={onAboutRead} updates={updates} />
   </div>;
 }

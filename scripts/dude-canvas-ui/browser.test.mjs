@@ -3355,7 +3355,7 @@ test('T012 anchoring regression: nested-scroll Open comment clips then recovers 
         )));
         assert.equal(
           productAppSha256,
-          '1d3271f702cfad403847c9870a7a21a28bb2652bd2bccb8b56a340ae1461569f',
+          '7c245184a0239dbcc100169f466c6b8c84d31e906f203187e35ca3ca1697e10e',
           'the exact-source regression executes the current published product UI',
         );
         const exactHarnessOptions = {
@@ -13303,10 +13303,11 @@ function serveRecordedUpstream(workspace) {
  */
 async function openAboutCanvas(context, slug, { review = false, deviceScale = null, baseRelease = null, packs: packOptions = {},
   upstream = ABOUT_RECORDED_REPO, prepare = () => {} } = {}) {
-  const [{ createNeedsYou }, { createReview }, { openInstance, closeInstance }] = await Promise.all([
+  const [{ createNeedsYou }, { createReview }, { openInstance, closeInstance }, { createBundleUpgrade }] = await Promise.all([
     import('../../src/extensions/dude/lib/needs-you.mjs'),
     import('../../src/extensions/dude/lib/review.mjs'),
     import('../../src/extensions/dude/lib/canvas-server.mjs'),
+    import('../../src/extensions/dude/lib/bundle-upgrade.mjs'),
   ]);
   const workspace = createReviewWorkspaceFixture();
   const packs = addSettingsPackFixture(workspace, 'local', packOptions);
@@ -13357,7 +13358,9 @@ async function openAboutCanvas(context, slug, { review = false, deviceScale = nu
     }
   };
   try {
-    instance = await openInstance(id, () => {}, null, { root: workspace.root }, provider);
+    // 072: the extension's update controller, as production passes it. These
+    // cases never start a session check, so nothing is contacted.
+    instance = await openInstance(id, () => {}, null, { root: workspace.root }, provider, createBundleUpgrade({ root: workspace.root }));
     driver = await startBrowser(deviceScale);
   } catch (error) {
     await close();
@@ -13443,7 +13446,7 @@ function aboutSurface(page) {
 /** Current development record rows, exactly as approved. */
 const ABOUT_MAIN_ROWS = Object.freeze([
   ['Dude version', 'Development (main)'], ['Author', 'Enrique Gonzalez'],
-  ['Repository', ABOUT_REPOSITORY], ['Recorded channel/ref', 'Development (main)']]);
+  ['Repository', ABOUT_REPOSITORY], ['Update channel', 'Development (main)']]);
 const ABOUT_LINK = Object.freeze({ text: ABOUT_REPOSITORY, href: ABOUT_REPOSITORY, target: '_blank',
   rel: 'noopener noreferrer', label: `${ABOUT_REPOSITORY} (opens in a new tab)` });
 
@@ -13594,7 +13597,7 @@ test('074 About: Settings then About shows the recorded development install in a
     await chooseSettingsSection(page, 'about');
     assert.deepEqual(await aboutSurface(page), {
       shown: true, heading: 'Dude', rows: ABOUT_MAIN_ROWS, busy: 'false', link: ABOUT_LINK, note: ABOUT_NOTE,
-      status: '', footer: 'About · Read only', toolbar: [],
+      status: '', footer: 'About · Development (main)', toolbar: [],
     }, 'About shows the recorded record with no Reload packs, no fallback Refresh, and an inert footer');
     assert.equal(await activeSection(), 'about', 'focus stays on the activated section tab');
     assert.equal(canvas.aboutReads().length, 1, 'one About entry is one read');
@@ -13647,7 +13650,7 @@ test('074 About: Settings then About shows the recorded development install in a
       const about = entry.focused === 'about', appearance = entry.focused === 'appearance';
       assert.equal(entry.surface.shown, about, JSON.stringify(entry));
       assert.deepEqual(entry.surface.toolbar, about || appearance ? [] : ['Reload packs'], JSON.stringify(entry));
-      assert.equal(entry.surface.footer, about ? 'About · Read only'
+      assert.equal(entry.surface.footer, about ? 'About · Development (main)'
         : appearance ? 'Appearance · This computer, all projects' : 'Installed: current · Catalog: not read');
       if (about) assert.deepEqual(entry.surface.rows, ABOUT_MAIN_ROWS);
     }
@@ -13697,9 +13700,9 @@ test('074 About: recorded refs classify independently and unreadable reads keep 
   await runAboutCase(context, '074-about-records', {}, async canvas => {
     const { page, output, workspace } = canvas;
     const unavailableRows = [['Dude version', 'Unavailable'], ['Author', 'Enrique Gonzalez'],
-      ['Repository', ABOUT_REPOSITORY], ['Recorded channel/ref', 'Unavailable']];
+      ['Repository', ABOUT_REPOSITORY], ['Update channel', 'Unavailable']];
     const rows = (version, channel) => [['Dude version', version], ['Author', 'Enrique Gonzalez'],
-      ['Repository', ABOUT_REPOSITORY], ['Recorded channel/ref', channel]];
+      ['Repository', ABOUT_REPOSITORY], ['Update channel', channel]];
     const longRef = `feature/${'long-recorded-segment-'.repeat(6)}end/${'x'.repeat(64)}`;
     const hash = 'f22d9808fb2e3f6b8dde49156b46693a6e818f38';
     await navigate(page, null, 1440, 'light', canvas.origin);
@@ -13710,11 +13713,11 @@ test('074 About: recorded refs classify independently and unreadable reads keep 
     // Real records through the real read boundary: each column reads its own
     // field, and nothing falls back to the other ref or to a default.
     const recorded = [
-      ['stable release on the latest channel', { installed_ref: 'v1.2.3', source_ref: 'latest' }, rows('v1.2.3', 'Stable releases (latest)')],
-      ['pinned release', { installed_ref: 'v1.2.3', source_ref: 'v1.2.3' }, rows('v1.2.3', 'Pinned release (v1.2.3)')],
+      ['stable release on the latest channel', { installed_ref: 'v1.2.3', source_ref: 'latest' }, rows('v1.2.3', 'Latest release')],
+      ['pinned release', { installed_ref: 'v1.2.3', source_ref: 'v1.2.3' }, rows('v1.2.3', 'Pinned to v1.2.3')],
       ['development main', { installed_ref: 'main', source_ref: 'main' }, ABOUT_MAIN_ROWS],
       ['latest is never a resolved version', { installed_ref: 'latest', source_ref: 'latest' },
-        rows('Recorded ref (latest)', 'Stable releases (latest)')],
+        rows('Recorded ref (latest)', 'Latest release')],
       ['prerelease-shaped and branch refs', { installed_ref: 'v1.3.0-rc.1', source_ref: 'release/1.3' },
         rows('Recorded ref (v1.3.0-rc.1)', 'Recorded ref (release/1.3)')],
       ['hash-shaped ref', { installed_ref: hash, source_ref: 'main' }, rows(`Recorded ref (${hash})`, 'Development (main)')],
@@ -13787,8 +13790,8 @@ test('074 About: recorded refs classify independently and unreadable reads keep 
     assert.deepEqual(loading, {
       shown: true, heading: 'Dude', busy: 'true', link: ABOUT_LINK, note: ABOUT_NOTE,
       rows: [['Dude version', 'Reading…'], ['Author', 'Enrique Gonzalez'], ['Repository', ABOUT_REPOSITORY],
-        ['Recorded channel/ref', 'Reading…']],
-      status: 'Reading recorded installation metadata.', footer: 'About · Read only', toolbar: [],
+        ['Update channel', 'Reading…']],
+      status: 'Reading recorded installation metadata.', footer: 'About · Reading…', toolbar: [],
     }, 'loading keeps credit, the repository, the note, and section navigation');
     const loadingTree = await page.send('Accessibility.getFullAXTree');
     const progress = loadingTree.nodes.filter(node => !node.ignored && node.role?.value === 'progressbar')
@@ -13942,7 +13945,7 @@ test('074 About: leaving, re-entry, and root replacement discard earlier reads',
     const releaseMark = await seenCount();
     await release();
     await settleAboutAnimations(page);
-    assert.deepEqual(await facts(), ['v1.2.3', 'Enrique Gonzalez', ABOUT_REPOSITORY, 'Stable releases (latest)']);
+    assert.deepEqual(await facts(), ['v1.2.3', 'Enrique Gonzalez', ABOUT_REPOSITORY, 'Latest release']);
     assert.equal((await seenSince(releaseMark)).some(text => text.includes('Development (main)')), false,
       'the earlier entry body is never displayed after it completes');
     assert.equal(await evaluate(page, `window.aboutReadProbe.bodies.at(-2).installedRef`), 'main',
@@ -13972,7 +13975,7 @@ test('074 About: leaving, re-entry, and root replacement discard earlier reads',
     await clickSettingsControl(page, `document.querySelector('#dude-tab-settings')`);
     await packsSettled(page);
     await chooseSettingsSection(page, 'about');
-    assert.deepEqual(await facts(), ['v2.0.0', 'Enrique Gonzalez', ABOUT_REPOSITORY, 'Pinned release (v2.0.0)'],
+    assert.deepEqual(await facts(), ['v2.0.0', 'Enrique Gonzalez', ABOUT_REPOSITORY, 'Pinned to v2.0.0'],
       'the replacement root reads its own record');
     output.json('lifetime-result.json', { browser: canvas.driver.info.Browser, node: process.version, cancellations,
       aboutReads: canvas.aboutReads().length, seen: await evaluate(page, `window.aboutReadProbe.seen`),
@@ -14442,6 +14445,17 @@ function aboutGeometryDelta(product, mock) {
 }
 
 /**
+ * 072, approved after the 074 and 075 mocks, rewords two strings these
+ * comparisons measure: the channel row's label ("Update channel" for
+ * "Recorded channel/ref") and the footer (the recorded installed version for
+ * "Read only"). Where the narrowest widths wrap them onto one line fewer or
+ * one more, the difference is exactly one 16px line and nothing else moves;
+ * any other difference still fails.
+ * @param {string} name @param {number} value
+ */
+const aboutReworded = (name, value) => ({ 'row3.height': -16, 'note.top': -16, 'footer.height': 16 })[name] === value;
+
+/**
  * Product-minus-approved-073 differences in CSS px for the Packs views strip:
  * each view's x, width, height, and top below the command bar. The caller
  * proves both strips show the same views first, so a missing view is a failure,
@@ -14527,6 +14541,9 @@ test('074 About: rendered geometry, contrast, reflow, and keyboard scrolling fol
     const setViewport = (size, theme, product = true) => aboutViewport(page, size, theme, product);
     const colorSamples = () => aboutColorSamples(page);
 
+    // 072's Updates section makes the panel scroll at 384px, where this mock's shorter sheet did not. As in the
+    // 075 comparison, both surfaces' scrollbars are hidden, so the sheet's own geometry is what is compared.
+    await page.send('Emulation.setScrollbarsHidden', { hidden: true });
     await navigate(page, null, 1440, 'light', canvas.origin);
     await until(() => evaluate(page, `document.body.innerText.includes('Connected')`), 'connected Canvas');
     await clickSettingsControl(page, `document.querySelector('#dude-tab-settings')`);
@@ -14560,7 +14577,7 @@ test('074 About: rendered geometry, contrast, reflow, and keyboard scrolling fol
           return hit === node || node.contains(hit);
         })`);
         assert.deepEqual(hits, [true, true, true, true], `section tabs and the cog are not clipped at ${size.name}`);
-        assert.equal(geometry.footerText, 'About · Read only');
+        assert.equal(geometry.footerText, 'About · Development (main)');
         const colors = await colorSamples();
         for (const sample of colors.text) {
           assert.ok(contrast(sample.color, sample.background) >= 4.5, JSON.stringify({ size, theme, sample }));
@@ -14695,7 +14712,7 @@ test('074 About: rendered geometry, contrast, reflow, and keyboard scrolling fol
     // rasterization: rail, main frame, header, tabs, facts, link, and note.
     const tolerance = 1;
     const offenders = comparisons.flatMap(entry => Object.entries(entry.delta)
-      .filter(([name, value]) => !name.startsWith('command.') && Math.abs(value) > tolerance)
+      .filter(([name, value]) => !name.startsWith('command.') && Math.abs(value) > tolerance && !aboutReworded(name, value))
       .map(([name, value]) => ({ size: entry.size, theme: entry.theme, kind: entry.kind, state: entry.state, name, value })));
     const stripOffenders = strips.flatMap(strip => Object.entries(strip.delta).filter(([, value]) => Math.abs(value) > tolerance)
       .map(([name, value]) => ({ size: strip.size, theme: strip.theme, name, value })));
@@ -14713,7 +14730,7 @@ test('074 About: rendered geometry, contrast, reflow, and keyboard scrolling fol
 
 /** @param {string} version @param {string} channel */
 const aboutRows = (version, channel) => [['Dude version', version], ['Author', 'Enrique Gonzalez'],
-  ['Repository', ABOUT_REPOSITORY], ['Recorded channel/ref', channel]];
+  ['Repository', ABOUT_REPOSITORY], ['Update channel', channel]];
 
 /** Product and approved-mock selectors for the Dude version value and its scroll panel. */
 const ABOUT_VALUE = Object.freeze({
@@ -14851,7 +14868,7 @@ test('075 About: a recorded development base supplements only the version value 
     await chooseSettingsSection(page, 'about');
     assert.deepEqual(await aboutSurface(page), {
       shown: true, heading: 'Dude', rows: aboutRows(ABOUT_KNOWN_BASE, 'Development (main)'), busy: 'false', link: ABOUT_LINK,
-      note: ABOUT_NOTE, status: '', footer: 'About · Read only', toolbar: [],
+      note: ABOUT_NOTE, status: '', footer: `About · ${ABOUT_KNOWN_BASE}`, toolbar: [],
     }, 'the known base extends only the version value; the channel keeps its own recorded value');
     const knownTree = await aboutAccessibility(page);
     assert.deepEqual(knownTree.links, [ABOUT_LINK.label], 'the base release is inert text, never a link');
@@ -14871,7 +14888,7 @@ test('075 About: a recorded development base supplements only the version value 
     // every other record keeps its 074 classification and ordinary note.
     const cases = [
       ['known base beside another channel', { ...development, source_ref: 'latest' }, 'valid',
-        aboutRows(ABOUT_KNOWN_BASE, 'Stable releases (latest)')],
+        aboutRows(ABOUT_KNOWN_BASE, 'Latest release')],
       ['known base beside no usable channel', { source_repo: ABOUT_RECORDED_REPO, installed_ref: 'main' }, 'valid',
         aboutRows(ABOUT_KNOWN_BASE, 'Unavailable')],
       ['no base record', development, null, ABOUT_MAIN_ROWS],
@@ -14884,9 +14901,9 @@ test('075 About: a recorded development base supplements only the version value 
       ['base record with an extra field', development,
         recordText({ source_repo: ABOUT_RECORDED_REPO, base_release: 'v1.3.0', revision: 'f22d9808' }), ABOUT_MAIN_ROWS],
       ['release with a stray base record', { ...development, installed_ref: 'v1.3.0', source_ref: 'latest' }, 'valid',
-        aboutRows('v1.3.0', 'Stable releases (latest)')],
+        aboutRows('v1.3.0', 'Latest release')],
       ['pinned release with a stray base record', { ...development, installed_ref: 'v1.3.0', source_ref: 'v1.3.0' }, 'valid',
-        aboutRows('v1.3.0', 'Pinned release (v1.3.0)')],
+        aboutRows('v1.3.0', 'Pinned to v1.3.0')],
       ['other recorded ref with a stray base record', { ...development, installed_ref: 'feature/base-release' }, 'valid',
         aboutRows('Recorded ref (feature/base-release)', 'Development (main)')],
       ['missing installation record', null, 'valid', unavailableRows],
@@ -15093,7 +15110,7 @@ test('075 About: the recorded base follows the approved 075 mock across sizes, r
     const recordPath = path.join(workspace.root, ...ABOUT_BASE_RECORD.split('/'));
     const expectedStates = {
       'no-base': { rows: ABOUT_MAIN_ROWS, note: ABOUT_NOTE },
-      release: { rows: aboutRows('v1.3.0', 'Stable releases (latest)'), note: ABOUT_NOTE },
+      release: { rows: aboutRows('v1.3.0', 'Latest release'), note: ABOUT_NOTE },
       loading: { rows: aboutRows('Reading…', 'Reading…'), note: ABOUT_NOTE },
       'missing-record': { rows: aboutRows('Unavailable', 'Unavailable'), note: ABOUT_NOTE },
       'read-failure': { rows: aboutRows('Unavailable', 'Unavailable'), note: ABOUT_UNAVAILABLE_NOTE },
@@ -15182,7 +15199,7 @@ test('075 About: the recorded base follows the approved 075 mock across sizes, r
     // rasterization: rail, main frame, header, tabs, facts, link, and note.
     const tolerance = 1;
     const offenders = comparisons.flatMap(entry => Object.entries(entry.delta)
-      .filter(([name, value]) => !name.startsWith('command.') && Math.abs(value) > tolerance)
+      .filter(([name, value]) => !name.startsWith('command.') && Math.abs(value) > tolerance && !aboutReworded(name, value))
       .map(([name, value]) => ({ size: entry.size, theme: entry.theme, state: entry.state, scrollbar: entry.scrollbar, name, value })));
     output.json('visual-075-result.json', { browser: canvas.driver.info.Browser, node: process.version,
       approved: ABOUT_075_APPROVED, approvedSha256: ABOUT_075_APPROVED_SHA256,
@@ -21976,7 +21993,8 @@ test('085 App theme: off by default, one switch action saves and applies the cho
       assert.equal(await t085Background(page), '#2d2b55', 'on: the app background');
       assert.equal(await t085VisibleText(page), `${APP_THEME_LABEL}${APP_THEME_HINT}`, 'success shows no visible Saved text');
       assert.deepEqual(route.saves().map(entry => entry.body), ['{"followAppTheme":true}'], 'one action, one save');
-      assert.equal(fs.readFileSync(PREFERENCE_FILE, 'utf8'), '{"followAppTheme":true}');
+      assert.equal(fs.readFileSync(PREFERENCE_FILE, 'utf8'), '{"followAppTheme":true,"checkForUpdatesOnSessionStart":true}',
+        '072: the saved document keeps the update-check choice beside it');
       await shot('on-appearance-1440x900-dark');
 
       // A pending save keeps the confirmed choice and keyboard focus, and ignores a second action.
@@ -22007,7 +22025,7 @@ test('085 App theme: off by default, one switch action saves and applies the cho
           text: "Canvas couldn't save your choice on this computer. Follow GitHub app theme is still off, and the look hasn't changed. Use the switch to try again." },
       });
       assert.equal(await t085Background(page), '#292929');
-      assert.equal(fs.readFileSync(PREFERENCE_FILE, 'utf8'), '{"followAppTheme":false}');
+      assert.equal(fs.readFileSync(PREFERENCE_FILE, 'utf8'), '{"followAppTheme":false,"checkForUpdatesOnSessionStart":true}');
       await shot('save-failed-1440x900-dark');
 
       // A lost answer to a save that never landed: one reread, never a second save.
@@ -22032,7 +22050,8 @@ test('085 App theme: off by default, one switch action saves and applies the cho
       await route.hold('Response');
       await t085Space(page);
       const landed = await route.next('POST');
-      assert.equal(fs.readFileSync(PREFERENCE_FILE, 'utf8'), '{"followAppTheme":true}', 'the server saved before the answer was lost');
+      assert.equal(fs.readFileSync(PREFERENCE_FILE, 'utf8'), '{"followAppTheme":true,"checkForUpdatesOnSessionStart":true}',
+        'the server saved before the answer was lost');
       await route.lose(landed);
       await route.pass(await route.next('GET'));
       const confirmed = await t085Surface(page, 'saved after the reread', surface => surface.checked && !surface.pending);
@@ -22052,6 +22071,16 @@ test('085 App theme: off by default, one switch action saves and applies the cho
         text: "Canvas couldn't read your appearance choice just now, so it keeps the last choice it confirmed: on. Nothing was changed." } });
       assert.equal(await t085Background(page), '#2d2b55', 'the confirmed look stays');
       await shot('read-failed-later-1440x900-dark');
+      // 072's declared departure: while the shared document cannot be read, the switch waits for a read that
+      // succeeds, since a save could not keep the update-check choice. It stays focusable, and an action sends nothing.
+      assert.equal(later.ariaDisabled, 'true', 'the switch is unavailable until Retry reads the saved choices');
+      const savesWhileUnread = route.saves().length;
+      await focus(page, '[data-follow-app-theme]');
+      await t085Space(page);
+      await settleAboutAnimations(page);
+      assert.equal(route.saves().length, savesWhileUnread, 'an unread document is never saved over');
+      assert.deepEqual({ checked: (await appearanceSurface(page)).checked, focus: (await appearanceSurface(page)).focus },
+        { checked: true, focus: 'switch' }, 'the confirmed choice and focus stay');
       const focused = await steady();
       // Tab reaches Retry after the switch. Retry only reads, keeps focus while reading, and alerts when it fails again.
       await focus(page, '[data-follow-app-theme]');
@@ -22087,6 +22116,7 @@ test('085 App theme: off by default, one switch action saves and applies the cho
       assert.equal(await t085Background(page), '#292929', 'an unread choice opens in Dude\'s own look');
       await t085OpenAppearance(page);
       const firstOpen = await appearanceSurface(page);
+      assert.equal(firstOpen.ariaDisabled, 'true', '072: an unread first open waits for Retry before any save');
       assert.deepEqual({ checked: firstOpen.checked, message: firstOpen.message }, { checked: false, message: { kind: 'read-failed',
         title: 'Saved choice not read', retry: 'Retry', retryDisabled: null,
         text: "Canvas couldn't read your appearance choice on this computer, so it uses Dude's own look for now. Nothing was changed." } });
@@ -22734,7 +22764,7 @@ test('085 App theme: a choice saved in another project is adopted on focus and o
       const saveElsewhere = async followAppTheme => {
         const response = await fetch(new URL('/api/canvas-preferences', other.url), { method: 'POST',
           headers: { origin: otherOrigin, 'content-type': 'application/json' }, body: JSON.stringify({ followAppTheme }) });
-        assert.deepEqual([response.status, await response.json()], [200, { followAppTheme }]);
+        assert.deepEqual([response.status, await response.json()], [200, { followAppTheme, checkForUpdatesOnSessionStart: true }]);
       };
       await page.send('Page.addScriptToEvaluateOnNewDocument', { source: appThemeHostScript('app-light') });
       await navigate(page, null, 1440, 'light', canvas.origin);
@@ -22768,6 +22798,1572 @@ test('085 App theme: a choice saved in another project is adopted on focus and o
     await closeInstance(otherId);
     fs.rmSync(otherRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     storeAppThemeChoice(null);
+  }
+});
+
+/* ========================================================================= 072 Bundle upgrade
+ * The session notice, About's Updates section and switch, the one update
+ * dialog, and the old-session page, over the real Canvas server and a real
+ * update controller. Each case's consumer is a disposable copy of a released
+ * bundle recorded against a tagged local upstream (v1.0.0, then v1.1.0 with an
+ * annotated tag), built as the server cases build it; a case that needs a
+ * failure records a private upstream whose v1.2.0 carries it. Nothing leaves
+ * the machine, and the preference home is this suite's own.
+ */
+const T072_REPLACED = '.github/extensions/dude/ui/review/NOTICE.txt';
+const T072_ADDED = '.github/extensions/dude/ui/review/styles.css';
+const T072_RETIRED = '.github/skills/dude-retired/SKILL.md';
+const T072_ALPHA = '.github/agents/dude-pack-alpha-worker.agent.md';
+const T072_MANIFEST = '.dude/metadata/bundle-manifest.md';
+const T072_PROFILE = '.dude/metadata/profile.md';
+const T072_BROKEN_SKILL = '---\nname: "dude-wrong"\ndescription: "Use when testing a fixture failure."\n---\n\n# Broken\n';
+// A target engine that stages through the real one but reports a restoration it could not confirm.
+const T072_UNCONFIRMED_ENGINE = `export * from './upgrade-real.mjs';
+export const UPGRADE_STAGING_CONTRACT = 1;
+export async function applyPreparedUpgrade({ prepared }) {
+  return {
+    from_ref: prepared.from_ref, to_ref: prepared.to_ref, branch: prepared.branch,
+    outcome: 'restoration_unconfirmed',
+    reason: 'restore failed: ${T072_REPLACED}: EBUSY: resource busy or locked',
+    paths: ['${T072_REPLACED}'],
+    new_failures: [],
+  };
+}
+`;
+const T072_ROOTS = /** @type {string[]} */ ([]);
+// T005: a target whose own bundle check holds each run until the case lets it go, for at most 60 seconds, and
+// then reports no problem. The file the update adds tells the run after writing from the one before, and each run
+// marks beside the consumer when it starts waiting (see `t072Held`), as the server cases build it.
+const T072_HELD_LINT = `#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+const root = path.resolve(process.argv[2] || '.');
+const run = fs.existsSync(path.join(root, ${JSON.stringify(T072_ADDED)})) ? 'after' : 'before';
+const marker = (name) => path.join(path.dirname(root), path.basename(root) + '.' + run + '-' + name);
+fs.writeFileSync(marker('waiting'), '');
+for (let waited = 0; waited < 60000 && !fs.existsSync(marker('go')); waited += 20) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+}
+console.log('[INFO]  Findings: 0 warning(s), 0 failure(s)');
+`;
+// T005: a target whose staging, as the real engine's does when it cannot confirm that a process it started has
+// stopped, leaves material in its prepared folder and says so. It reports its first activity, then waits to be cancelled.
+const T072_KEPT_ENGINE = `import fs from 'node:fs';
+import path from 'node:path';
+export * from './upgrade-real.mjs';
+export const UPGRADE_STAGING_CONTRACT = 1;
+export async function stageUpgrade({ preparedRoot, signal, onProgress }) {
+  fs.writeFileSync(path.join(preparedRoot, 'still-in-use.txt'), 'a process may still write here\\n');
+  onProgress?.({ phase: 'staging-core' });
+  await new Promise((resolve) => (signal.aborted ? resolve(undefined) : signal.addEventListener('abort', resolve, { once: true })));
+  throw Object.assign(new Error('pack "alpha" could not be prepared: its process tree could not be confirmed stopped'),
+    { reason: 'pack-failed', pack: 'alpha', cleanupConfirmed: false });
+}
+`;
+// T005: the same, for a consumer's first preparation only; later ones are the real engine's, so the session that
+// kept a folder can still apply an update and reach the old-session page.
+const T072_KEPT_ONCE_ENGINE = `import fs from 'node:fs';
+import path from 'node:path';
+import { stageUpgrade as stageReal } from './upgrade-real.mjs';
+export * from './upgrade-real.mjs';
+export const UPGRADE_STAGING_CONTRACT = 1;
+export async function stageUpgrade(input) {
+  const once = path.join(path.dirname(input.workspaceRoot), path.basename(input.workspaceRoot) + '.kept-once');
+  if (fs.existsSync(once)) return stageReal(input);
+  fs.writeFileSync(once, '');
+  fs.writeFileSync(path.join(input.preparedRoot, 'still-in-use.txt'), 'a process may still write here\\n');
+  input.onProgress?.({ phase: 'staging-core' });
+  await new Promise((resolve) => (input.signal.aborted ? resolve(undefined) : input.signal.addEventListener('abort', resolve, { once: true })));
+  throw Object.assign(new Error('pack "alpha" could not be prepared: its process tree could not be confirmed stopped'),
+    { reason: 'pack-failed', pack: 'alpha', cleanupConfirmed: false });
+}
+`;
+/**
+ * The held bundle check's markers beside one consumer: whether its run before or after writing is waiting, and
+ * letting it go. @param {string} root
+ */
+function t072Held(root) {
+  /** @param {string} name */
+  const marker = name => path.join(path.dirname(root), `${path.basename(root)}.${name}`);
+  return {
+    /** @param {'before' | 'after'} run */
+    waiting: run => fs.existsSync(marker(`${run}-waiting`)),
+    /** @param {'before' | 'after'} run */
+    go: run => fs.writeFileSync(marker(`${run}-go`), ''),
+    release() { for (const run of ['before', 'after']) fs.writeFileSync(marker(`${run}-go`), ''); },
+  };
+}
+after(() => { for (const root of T072_ROOTS) fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); });
+
+/** @param {string} cwd @param {...string} args */
+function t072Git(cwd, ...args) {
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });
+  assert.equal(result.status, 0, `git ${args.join(' ')} in ${cwd}\n${result.stdout}${result.stderr}`);
+  return result.stdout.trim();
+}
+/** @param {string} root @param {boolean} [init] */
+function t072Repository(root, init = true) {
+  if (init) t072Git(root, 'init', '-q', '-b', 'main');
+  t072Git(root, 'config', 'user.name', 'Update Fixture');
+  t072Git(root, 'config', 'user.email', 'update-fixture@example.invalid');
+  t072Git(root, 'config', 'core.autocrlf', 'false');
+  t072Git(root, 'config', 'commit.gpgsign', 'false');
+}
+/** @param {string} root @param {string} message */
+function t072Commit(root, message) { t072Git(root, 'add', '-A'); t072Git(root, 'commit', '-q', '-m', message); }
+/** @param {string} root @param {string} relative @param {string|Buffer} content */
+function t072Write(root, relative, content) {
+  const target = path.join(root, ...relative.split('/'));
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, content);
+}
+/** @param {string} root @param {string} relative */
+const t072Read = (root, relative) => fs.readFileSync(path.join(root, ...relative.split('/')));
+/** Rewrite only the manifest's JSON payload. @param {string} root @param {Record<string, string>} payload */
+function t072Manifest(root, payload) {
+  t072Write(root, T072_MANIFEST, t072Read(root, T072_MANIFEST).toString('utf8')
+    .replace(/```json\n[\s\S]*?\n```/, `\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``));
+}
+/** One lint-clean catalog pack with one worker agent. @param {string} root @param {string} name @param {string} version */
+function t072Pack(root, name, version) {
+  const directory = `library/packs/${name}`;
+  fs.rmSync(path.join(root, ...directory.split('/')), { recursive: true, force: true });
+  t072Write(root, `${directory}/pack.md`, `---\nname: ${name}\ndescription: "Fixture ${name} pack."\n---\n\n# ${name}\n`);
+  t072Write(root, `${directory}/agents/dude-pack-${name}-worker.agent.md`, [
+    '---', `name: "${name} worker"`, `description: "Fixture ${name} worker."`, 'tools: ["read"]', 'user-invocable: false',
+    'model-class: balanced', '---', '', `You are the ${name} worker (${version}).`, '', '## Scope', '', 'Fixture work only.', '',
+    '**Coordinator-only artifacts:** none.', '',
+  ].join('\n'));
+}
+/** HEAD, branch, index and staged paths: what an update never moves. @param {string} root */
+function t072GitState(root) {
+  return { head: t072Git(root, 'rev-parse', 'HEAD'), branch: t072Git(root, 'symbolic-ref', '--short', 'HEAD'),
+    index: sha256(t072Git(root, 'ls-files', '-s')), staged: t072Git(root, 'diff', '--cached', '--name-only') };
+}
+
+/** @type {Promise<{ root: string, upstream: string, source: string, template: string, restore: string, unconfirmed: string, checking: string, kept: string, keptOnce: string, noStable: string }> | undefined} */
+let t072Shared;
+/** The upstreams and consumer template, built once for this file. */
+const t072Fixture = () => (t072Shared ??= (async () => {
+  const [{ buildRelease }, { cmdAdd }] = await Promise.all([import('../build-release.mjs'), import('../../src/skills/dude-compose/compose.mjs')]);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-cu-ui-'));
+  T072_ROOTS.push(root);
+  const upstream = path.join(root, 'up');
+  const source = pathToFileURL(upstream).href;
+  buildRelease({ repoRoot: ROOT, outDir: upstream, ref: '' });
+  const replaced = t072Read(upstream, T072_REPLACED), added = t072Read(upstream, T072_ADDED);
+  // v1.0.0: an older replaced file, no added file, a retired skill, and the alpha pack at v1.
+  t072Write(upstream, T072_REPLACED, Buffer.concat([replaced, Buffer.from('\nolder release fixture\n')]));
+  fs.rmSync(path.join(upstream, ...T072_ADDED.split('/')));
+  t072Write(upstream, T072_RETIRED, '---\nname: "dude-retired"\ndescription: "Use when testing a retired fixture skill."\n---\n\n# Retired\n');
+  t072Pack(upstream, 'alpha', 'v1');
+  t072Repository(upstream);
+  t072Commit(upstream, 'release v1.0.0');
+  t072Git(upstream, 'tag', 'v1.0.0');
+  // The consumer: v1.0.0 on the latest channel, with alpha installed from the same upstream.
+  const template = path.join(root, 'tpl');
+  fs.cpSync(upstream, template, { recursive: true,
+    filter: from => !['.git', 'library'].includes(path.relative(upstream, from).split(path.sep)[0]) });
+  t072Manifest(template, { source_repo: source, source_ref: 'latest', installed_ref: 'v1.0.0' });
+  const installed = await cmdAdd({ root: template, library: path.join(template, 'library', 'packs'), name: 'alpha', source, ref: 'v1.0.0', force: false });
+  assert.equal(installed.ok, true, installed.error);
+  t072Repository(template);
+  t072Commit(template, 'consumer on v1.0.0');
+  // v1.1.0, an annotated tag: the target, with alpha at v2.
+  t072Write(upstream, T072_REPLACED, replaced);
+  t072Write(upstream, T072_ADDED, added);
+  fs.rmSync(path.join(upstream, '.github/skills/dude-retired'), { recursive: true });
+  t072Pack(upstream, 'alpha', 'v2');
+  t072Commit(upstream, 'release v1.1.0');
+  t072Git(upstream, 'tag', '-a', 'v1.1.0', '-m', 'Release v1.1.0');
+  /** A v1.2.0 one commit past v1.1.0. @param {string} name @param {(clone: string) => void} change */
+  const variant = (name, change) => {
+    const clone = path.join(root, name);
+    t072Git(root, '-c', 'core.autocrlf=false', 'clone', '-q', upstream, clone);
+    t072Repository(clone, false);
+    change(clone);
+    t072Commit(clone, name);
+    t072Git(clone, 'tag', 'v1.2.0');
+    return pathToFileURL(clone).href;
+  };
+  // Its own check finds a new problem once it is in place, so the update restores every file.
+  const restore = variant('ur', clone => t072Write(clone, '.github/skills/dude-broken/SKILL.md', T072_BROKEN_SKILL));
+  const unconfirmed = variant('uu', clone => {
+    const engine = path.join(clone, '.github/skills/dude-bundle-upgrade');
+    fs.renameSync(path.join(engine, 'upgrade.mjs'), path.join(engine, 'upgrade-real.mjs'));
+    fs.writeFileSync(path.join(engine, 'upgrade.mjs'), T072_UNCONFIRMED_ENGINE);
+  });
+  // Its own bundle check waits for the case before and after writing, so Applying and Checking can be watched.
+  const checking = variant('uc', clone => t072Write(clone, '.github/skills/dude-lint/lint.mjs', T072_HELD_LINT));
+  // Its staging cannot confirm that its process stopped, so Cancel keeps its temporary folder.
+  const kept = variant('uk', clone => {
+    const engine = path.join(clone, '.github/skills/dude-bundle-upgrade');
+    fs.renameSync(path.join(engine, 'upgrade.mjs'), path.join(engine, 'upgrade-real.mjs'));
+    fs.writeFileSync(path.join(engine, 'upgrade.mjs'), T072_KEPT_ENGINE);
+  });
+  // Only its first preparation in a consumer keeps its folder.
+  const keptOnce = variant('uo', clone => {
+    const engine = path.join(clone, '.github/skills/dude-bundle-upgrade');
+    fs.renameSync(path.join(engine, 'upgrade.mjs'), path.join(engine, 'upgrade-real.mjs'));
+    fs.writeFileSync(path.join(engine, 'upgrade.mjs'), T072_KEPT_ONCE_ENGINE);
+  });
+  const prerelease = path.join(root, 'pre');
+  t072Write(prerelease, 'README.md', 'prereleases\n');
+  t072Repository(prerelease);
+  t072Commit(prerelease, 'prereleases');
+  for (const tag of ['v2.0.0-rc1', 'nightly']) t072Git(prerelease, 'tag', tag);
+  return { root, upstream, source, template, restore, unconfirmed, checking, kept, keptOnce, noStable: pathToFileURL(prerelease).href };
+})());
+
+let t072Consumers = 0;
+/**
+ * A disposable consumer: a copy of the template, optionally recorded against
+ * another source or manifest, with optional uncommitted edits.
+ * @param {Awaited<ReturnType<typeof t072Fixture>>} fixture
+ * @param {{ source?: string, payload?: Record<string, string> | null, dirty?: boolean, prepare?: (root: string) => void }} [options]
+ */
+function t072Consumer(fixture, { source = fixture.source, payload = null, dirty = false, prepare = () => {} } = {}) {
+  const root = path.join(fixture.root, `w${++t072Consumers}`);
+  fs.cpSync(fixture.template, root, { recursive: true });
+  if (source !== fixture.source || payload) {
+    t072Manifest(root, payload ?? { source_repo: source, source_ref: 'latest', installed_ref: 'v1.0.0' });
+    t072Commit(root, 'recorded source');
+  }
+  prepare(root);
+  if (dirty) fs.appendFileSync(path.join(root, ...T072_REPLACED.split('/')), '\nlocal uncommitted edit\n');
+  return root;
+}
+/** A private clone of the upstream, with its v1.0.0 and v1.1.0 tags, that a case may move or break. @param {Awaited<ReturnType<typeof t072Fixture>>} fixture */
+function t072Upstream(fixture) {
+  const clone = path.join(fixture.root, `u${++t072Consumers}`);
+  t072Git(fixture.root, '-c', 'core.autocrlf=false', 'clone', '-q', fixture.upstream, clone);
+  t072Repository(clone, false);
+  return { path: clone, url: pathToFileURL(clone).href };
+}
+
+/**
+ * One Canvas over a fresh update controller for `root`, joined to a real Needs
+ * you provider whose session stand-in records every send, and one browser. The
+ * session-start check runs first, as the extension starts it after joining.
+ * @param {import('node:test').TestContext} context @param {string} slug @param {string} root @param {{ check?: boolean }} [options]
+ */
+async function openT072Canvas(context, slug, root, { check = true } = {}) {
+  const [{ createNeedsYou }, { openInstance, closeInstance }, { createBundleUpgrade }] = await Promise.all([
+    import('../../src/extensions/dude/lib/needs-you.mjs'),
+    import('../../src/extensions/dude/lib/canvas-server.mjs'),
+    import('../../src/extensions/dude/lib/bundle-upgrade.mjs'),
+  ]);
+  const controller = createBundleUpgrade({ root });
+  const provider = createNeedsYou({ root });
+  const sends = [], runtimeErrors = [], requests = [];
+  const session = {
+    sessionId: `${slug}-${randomUUID()}`,
+    send: async input => { sends.push(input); return `unexpected-${sends.length}`; },
+    rpc: { queue: { pendingItems: async () => ({ items: [], steeringMessages: [], inFlightSteeringCount: 0 }) } },
+  };
+  provider.bindSession(/** @type {any} */ (session));
+  provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+  const output = createT010Evidence(context, slug);
+  const id = `${slug}-${randomUUID()}`, toolCalls = new AbortController(), toolResults = [];
+  let instance = null, driver = null;
+  const close = async () => {
+    toolCalls.abort();
+    await Promise.allSettled(toolResults);
+    try {
+      if (driver) await cleanupBrowserDriver(driver);
+    } finally {
+      provider.dispose();
+      if (instance) await closeInstance(id);
+    }
+  };
+  try {
+    instance = await openInstance(id, () => {}, null, { root }, provider, controller);
+    if (check) await controller.startSessionCheck();
+    driver = await startBrowser();
+  } catch (error) {
+    await close();
+    throw error;
+  }
+  const { page } = driver, origin = new URL(instance.url).origin;
+  page.on('Runtime.exceptionThrown', event => runtimeErrors.push(event.exceptionDetails));
+  page.on('Network.requestWillBeSent', event => requests.push({ method: event.request.method, url: event.request.url,
+    body: event.request.postData }));
+  /** @param {Record<string, any>} request */
+  const ask = request => {
+    toolResults.push(provider.tool.handler({ op: 'request', request }, {
+      sessionId: session.sessionId, toolName: 'dude_needs_you', toolCallId: randomUUID(), signal: toolCalls.signal,
+    }));
+    return until(() => provider.read().requests.find(record => record.request.requestRef === request.requestRef
+      && record.phase === 'pending'), `pending ${request.class} request`);
+  };
+  return {
+    root, controller, provider, sends, instance, driver, page, output, origin, runtimeErrors, requests, close, ask,
+    /** Every update action this browser sent, as bodies. */
+    actions: () => requests.filter(entry => entry.url === `${origin}/api/updates/action`).map(entry => JSON.parse(entry.body)),
+    /** The update state, read beside the browser. */
+    state: async () => (await fetch(new URL('/api/updates', instance.url))).json(),
+    /** Every request that left the Canvas origin. */
+    foreign: () => requests.filter(entry => !entry.url.startsWith(origin) && !/^(?:data|about):/.test(entry.url)),
+  };
+}
+
+/**
+ * Run one 072 case. Every case must also end with no runtime exception and no
+ * message sent to the joined session.
+ * @param {import('node:test').TestContext} context @param {string} slug @param {string} root
+ * @param {{ check?: boolean }} options @param {(canvas: Awaited<ReturnType<typeof openT072Canvas>>) => Promise<void>} body
+ */
+async function runT072Case(context, slug, root, options, body) {
+  const canvas = await openT072Canvas(context, slug, root, options);
+  try {
+    await body(canvas);
+    assert.deepEqual(canvas.runtimeErrors, [], 'the Canvas reports no runtime exception');
+    assert.equal(canvas.sends.length, 0, 'updating Dude sends nothing to the joined session');
+  } catch (error) {
+    try {
+      const capture = await canvas.page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+      canvas.output.image('failure.png', Buffer.from(capture.data, 'base64'));
+      context.diagnostic(JSON.stringify({ runtimeErrors: canvas.runtimeErrors, requests: canvas.requests.slice(-40),
+        state: await canvas.state(), dom: await evaluate(canvas.page, 'document.body.innerText') }));
+    } catch (diagnosticError) {
+      context.diagnostic(`072 failure evidence was incomplete: ${diagnosticError}`);
+    }
+    throw error;
+  } finally {
+    await canvas.close();
+  }
+}
+
+/**
+ * One case's control of the update state route: reads can be held, answered
+ * with a body, or let through. Release lets every held read through.
+ * @param {{ page: Cdp, origin: string }} canvas
+ */
+function t072Reads(canvas) {
+  const { page, origin } = canvas;
+  const route = `${origin}/api/updates`;
+  const paused = [];
+  page.on('Fetch.requestPaused', event => { if (event.request.url === route) paused.push(event); });
+  return {
+    hold: () => page.send('Fetch.enable', { patterns: [{ urlPattern: route, requestStage: 'Request' }] }),
+    next: () => until(() => paused.shift(), 'a held update state read'),
+    /** @param {any} event @param {unknown} body */
+    answer: (event, body) => page.send('Fetch.fulfillRequest', { requestId: event.requestId, responseCode: 200,
+      responseHeaders: [{ name: 'Content-Type', value: 'application/json; charset=utf-8' }, { name: 'Cache-Control', value: 'no-store' }],
+      body: Buffer.from(JSON.stringify(body)).toString('base64') }),
+    release: async () => {
+      for (const event of paused.splice(0)) await page.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {});
+      await page.send('Fetch.disable');
+    },
+  };
+}
+
+/** The focused element, named by its own data-update-* or other marker. @param {Cdp} page */
+function t072Focus(page) {
+  return evaluate(page, `(() => {
+    const node = document.activeElement;
+    if (!node || node === document.body) return 'body';
+    const marker = [...node.attributes].find(attribute => /^data-(update|follow|appearance|settings-section)/.test(attribute.name));
+    if (marker) return marker.name.replace(/^data-/, '');
+    return node.tagName.toLowerCase() + (node.tagName === 'H1' ? ':' + node.textContent : '');
+  })()`);
+}
+
+/** What the Needs you notice shows and how it sits in its page. @param {Cdp} page */
+function t072Notice(page) {
+  return evaluate(page, `(() => {
+    const bar = document.querySelector('[data-update-notice]');
+    if (!bar) return null;
+    const words = name => (bar.getAttribute(name) ?? '').split(' ').map(id => document.getElementById(id)?.textContent ?? '').join(' ');
+    const column = bar.closest('#dude-panel-needs > div');
+    const parts = column ? [...column.children].map(node => node.querySelector('[data-update-notice]') ? 'notice'
+      : node.tagName === 'H1' ? 'title' : node.tagName === 'SECTION' ? 'requests' : node.tagName.toLowerCase()) : null;
+    return {
+      role: bar.getAttribute('role'), name: words('aria-labelledby'), description: words('aria-describedby'), parts, inRequest: Boolean(bar.closest('section')),
+      buttons: [...bar.querySelectorAll('button')].map(node => ({ text: node.textContent, popup: node.getAttribute('aria-haspopup'),
+        height: Math.round(node.getBoundingClientRect().height) })),
+      links: [...bar.querySelectorAll('a')].map(node => ({ text: node.textContent, href: node.getAttribute('href'), target: node.target,
+        rel: node.rel, label: node.getAttribute('aria-label') })),
+    };
+  })()`);
+}
+
+/** What About's Updates section shows and says. @param {Cdp} page */
+function t072About(page) {
+  return evaluate(page, `(() => {
+    const section = document.querySelector('[data-about-panel]:not([hidden]) [data-about-updates]');
+    if (!section) return null;
+    const toggle = section.querySelector('[data-update-switch]');
+    const message = section.querySelector('[data-update-message]');
+    const described = node => (node?.getAttribute('aria-describedby') ?? '').split(' ').map(id => document.getElementById(id)?.textContent)
+      .filter(Boolean).join(' ');
+    return {
+      heading: section.querySelector('h3')?.textContent, tone: section.querySelector('[data-update-status]')?.getAttribute('data-update-status'),
+      line: section.querySelector('[data-update-line]')?.textContent, detail: section.querySelector('[data-update-detail]')?.textContent ?? null,
+      time: section.querySelector('[data-update-detail] time')?.getAttribute('datetime') ?? null,
+      links: [...section.querySelectorAll('a')].map(node => node.getAttribute('aria-label')),
+      actions: [...section.querySelectorAll('[data-update-actions] button')].map(node => ({ text: node.textContent,
+        ariaDisabled: node.getAttribute('aria-disabled'), popup: node.getAttribute('aria-haspopup') })),
+      switch: toggle ? { checked: toggle.checked, ariaDisabled: toggle.getAttribute('aria-disabled'), role: toggle.getAttribute('role'),
+        label: document.querySelector('label[for="' + toggle.id + '"]')?.textContent, hint: described(toggle) } : null,
+      pending: section.querySelector('[data-update-pending]')?.textContent ?? null,
+      message: message ? { kind: message.getAttribute('data-update-message'), title: message.querySelector('.fui-MessageBarTitle')?.textContent,
+        text: message.querySelector('.fui-MessageBarBody > div')?.textContent,
+        retry: message.querySelector('[data-update-retry]')?.getAttribute('aria-disabled') ?? (message.querySelector('[data-update-retry]') ? 'enabled' : null) } : null,
+      said: section.querySelector('[data-update-said]')?.textContent, status: section.querySelector('[data-update-switch-status]')?.textContent,
+      alert: section.querySelector('[data-update-switch-alert]')?.textContent,
+      rows: [...document.querySelectorAll('[data-about-facts] > div')].map(row => [row.querySelector('dt').textContent, row.querySelector('dd').textContent]),
+      footer: document.querySelector('footer').textContent,
+    };
+  })()`);
+}
+
+/** What the update dialog shows, says, and offers. @param {Cdp} page */
+function t072Dialog(page) {
+  return evaluate(page, `(() => {
+    const dialog = document.querySelector('[data-update-dialog]');
+    if (!dialog?.open) return null;
+    const body = dialog.querySelector('[data-update-body]'), box = dialog.querySelector('input[data-update-packs]');
+    const primary = dialog.querySelector('[data-update-primary]'), files = dialog.querySelector('[data-update-files]');
+    const described = node => (node?.getAttribute('aria-describedby') ?? '').split(' ').map(id => document.getElementById(id)?.textContent)
+      .filter(Boolean).join(' ');
+    return {
+      phase: dialog.getAttribute('data-update-phase'), modal: dialog.matches(':modal'),
+      name: document.getElementById(dialog.getAttribute('aria-labelledby'))?.textContent, busy: body?.getAttribute('aria-busy'),
+      bodyRole: body?.getAttribute('role'), version: dialog.querySelector('[data-update-version]')?.textContent ?? null,
+      packs: box ? { label: document.querySelector('label[for="' + box.id + '"]')?.textContent, checked: box.checked, description: described(box) } : null,
+      counts: [...dialog.querySelectorAll('[data-update-counts]')].map(section => ({ heading: section.querySelector('h3').textContent,
+        rows: [...section.querySelectorAll('dt')].map(term => [term.textContent, term.nextElementSibling.textContent]) })),
+      bars: [...body.querySelectorAll('.fui-MessageBar')].map(bar => ({ title: bar.querySelector('.fui-MessageBarTitle')?.textContent,
+        lines: [...bar.querySelectorAll('.fui-MessageBarBody > div > *')].map(line => line.tagName === 'UL'
+          ? [...line.querySelectorAll('li')].map(item => item.textContent) : line.textContent) })),
+      details: [...body.querySelectorAll('details:not([data-update-files])')].map(node => ({ summary: node.querySelector('summary').textContent,
+        text: node.querySelector('p')?.textContent })),
+      files: files ? { summary: files.querySelector('summary').textContent, open: files.open,
+        rows: [...files.querySelectorAll('li')].map(item => [item.children[0].textContent, item.querySelector('code').textContent,
+          ...[...item.children[1].children].slice(1).map(node => node.textContent)]) } : null,
+      text: body.innerText,
+      cancel: dialog.querySelector('[data-update-cancel]')?.textContent ?? null,
+      primary: primary ? { text: primary.textContent, disabled: primary.disabled, description: described(primary) } : null,
+      footer: Boolean(dialog.querySelector('footer')), closeDisabled: dialog.querySelector('[data-update-close]')?.disabled ?? null,
+      live: dialog.querySelector('[data-update-live]')?.textContent,
+    };
+  })()`);
+}
+/** @param {Cdp} page @param {string} phase */
+const t072Phase = (page, phase) => until(async () => {
+  const dialog = await t072Dialog(page);
+  return dialog?.phase === phase ? dialog : null;
+}, `the update dialog in ${phase}`, 120_000);
+
+/** Navigate, then open Settings > About and wait for both reads. @param {Awaited<ReturnType<typeof openT072Canvas>>} canvas */
+async function t072OpenAbout(canvas, width = 1440, theme = 'light') {
+  await navigate(canvas.page, null, width, theme, canvas.origin);
+  await clickSettingsControl(canvas.page, `document.querySelector('#dude-tab-settings')`);
+  await packsSettled(canvas.page);
+  await chooseSettingsSection(canvas.page, 'about');
+  return until(async () => {
+    const about = await t072About(canvas.page);
+    return about && about.tone !== 'busy' && about.pending === null ? about : null;
+  }, 'settled About updates');
+}
+
+test('072 Bundle upgrade: an eligible session shows one quiet notice under the Needs you title, outside requests and counts, and Later hides it for the session', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  storeAppThemeChoice(null);
+  const fixture = await t072Fixture();
+  await runT072Case(context, '072-notice', t072Consumer(fixture), {}, async canvas => {
+    const { page, output } = canvas;
+    const started = await canvas.state();
+    assert.deepEqual({ check: started.check?.status, available: started.check?.availableRef, notice: started.notice, update: started.update },
+      { check: 'update_available', available: 'v1.1.0', notice: { installedRef: 'v1.0.0', availableRef: 'v1.1.0', releaseUrl: null }, update: null },
+      'the session-start check found the newer stable release');
+    assert.equal(fs.existsSync(PREFERENCE_FILE), false, 'checking saved no preference');
+    // A request waiting in Needs you: the notice sits above it and outside it, and adds no request.
+    await canvas.ask({ owner: 'dude', requestRef: randomUUID(), revision: randomUUID(), class: 'fact', scope: { kind: 'session' },
+      source: { kind: 'session', revision: randomUUID() }, prompt: 'Which release notes should the team read first?',
+      whyHuman: 'The current owner needs the user’s choice.', unblocks: 'The owner can continue.', blocking: true,
+      fields: { input: { kind: 'text' } } });
+    await navigate(page, null, 1440, 'light', canvas.origin);
+    await clickSettingsControl(page, `document.querySelector('#dude-tab-needs')`);
+    const notice = await until(() => t072Notice(page), 'the update notice');
+    assert.deepEqual(notice, {
+      role: 'group', name: 'Dude v1.1.0 is available', description: 'You have v1.0.0.',
+      parts: ['title', 'notice', 'requests'], inRequest: false,
+      buttons: [{ text: 'Review update', popup: 'dialog', height: 32 }, { text: 'Later', popup: null, height: 32 }],
+      links: [],
+    }, 'a named group under the title and above the request list, with no What\'s new for a local source');
+    const feed = await (await fetch(new URL('/api/needs-you', canvas.instance.url))).json();
+    assert.equal(feed.requests.filter(record => record.phase === 'pending').length, 1, 'the notice is not a request');
+    assert.equal(await evaluate(page, `document.querySelector('#dude-tab-needs').textContent.trim()`), 'Needs you', 'no count or badge');
+    await aboutScreenshot(page, output, 'notice-with-request-1440x900-light');
+    // Tab order: the notice's controls come before the requests'.
+    await focus(page, '[data-update-review]');
+    await key(page, 'Tab');
+    assert.equal(await t072Focus(page), 'update-later');
+    // What's new appears only for a safe release page: the engine builds one for a GitHub repository and tag.
+    const reads = t072Reads(canvas);
+    await reads.hold();
+    for (const [releaseUrl, shown] of [['https://github.com/E-G-C/dude/releases/tag/v1.1.0', true],
+      ['https://example.invalid/releases/tag/v1.1.0', false]]) {
+      await evaluate(page, `window.dispatchEvent(new Event('focus'))`);
+      await reads.answer(await reads.next(), { ...started, check: { ...started.check, releaseUrl },
+        notice: { ...started.notice, releaseUrl } });
+      await settleAboutAnimations(page);
+      assert.deepEqual((await t072Notice(page)).links, shown ? [{ text: "What's new", href: releaseUrl, target: '_blank',
+        rel: 'noopener noreferrer', label: "What's new in v1.1.0 (opens in a new tab)" }] : [], releaseUrl);
+      if (shown) await aboutScreenshot(page, output, 'notice-whats-new-1440x900-light');
+    }
+    await reads.release();
+    await evaluate(page, `window.dispatchEvent(new Event('focus'))`);
+    await until(async () => (await t072Notice(page))?.links.length === 0, 'the real state again');
+    // Narrow: the bar stays whole, its buttons wrap below the words, and nothing scrolls sideways.
+    for (const [width, height] of [[360, 900], [180, 450]]) {
+      await page.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+      await settleAboutAnimations(page);
+      // The shell's own page scroll and its 2px request-button overflow at 180px predate the notice; the notice
+      // itself stays inside the column, and so do its buttons.
+      const fit = await evaluate(page, `(() => {
+        const bar = document.querySelector('[data-update-notice]').getBoundingClientRect();
+        const panel = document.querySelector('#dude-panel-needs'), p = panel.getBoundingClientRect();
+        return { page: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+          inside: bar.left >= p.left && bar.right <= p.left + panel.clientLeft + panel.clientWidth + 0.5,
+          buttons: [...document.querySelectorAll('[data-update-notice] button')].every(node => { const r = node.getBoundingClientRect();
+            return r.width >= 24 && r.height >= 24 && r.left >= bar.left - 0.5 && r.right <= bar.right + 0.5; }) };
+      })()`);
+      assert.deepEqual(fit, { page: true, inside: true, buttons: true }, `the notice fits at ${width}x${height}`);
+      await aboutScreenshot(page, output, `notice-${width}x${height}-light`);
+    }
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+    // Later: hidden for this session, focus on the page title, and an announcement.
+    await clickSettingsControl(page, `document.querySelector('[data-update-later]')`);
+    await until(async () => !(await t072Notice(page)), 'the notice hidden');
+    assert.equal(await t072Focus(page), 'h1:Needs you');
+    await until(() => evaluate(page, `document.querySelector('[data-update-later-status]').textContent
+      === 'Hidden for this session. About in Settings still shows the update.'`), 'the Later announcement');
+    assert.deepEqual(canvas.actions(), [{ op: 'later' }], 'Later is the only update action sent');
+    const later = await canvas.state();
+    assert.deepEqual({ notice: later.notice, check: later.check.status }, { notice: null, check: 'update_available' });
+    await aboutScreenshot(page, output, 'notice-later-1440x900-light');
+    // About still shows the update, and a reload keeps the notice hidden for this session.
+    await clickSettingsControl(page, `document.querySelector('#dude-tab-settings')`);
+    await packsSettled(page);
+    await chooseSettingsSection(page, 'about');
+    assert.equal((await until(() => t072About(page), 'About updates')).line, 'Dude v1.1.0 is available.');
+    await navigate(page, null, 1440, 'light', canvas.origin);
+    await clickSettingsControl(page, `document.querySelector('#dude-tab-needs')`);
+    await settleAboutAnimations(page);
+    assert.equal(await t072Notice(page), null, 'Later lasts for the session');
+    assert.equal(fs.existsSync(PREFERENCE_FILE), false, 'Later saves nothing');
+    assert.deepEqual(canvas.foreign(), [], 'nothing leaves the Canvas origin');
+  });
+});
+
+test('072 Bundle upgrade: About shows this session\'s check, Check for updates works with the session-start switch off, and the switch saves only its own choice', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  storeAppThemeChoice('{"followAppTheme":false,"checkForUpdatesOnSessionStart":false}');
+  const fixture = await t072Fixture();
+  try {
+    await runT072Case(context, '072-about', t072Consumer(fixture), {}, async canvas => {
+      const { page, output } = canvas;
+      assert.equal((await canvas.state()).check, null, 'with the switch off the session start contacted nothing');
+      const off = await t072OpenAbout(canvas);
+      assert.deepEqual({ ...off, said: undefined, status: undefined, alert: undefined }, {
+        heading: 'Updates', tone: 'info', line: 'Automatic checks are off.', detail: 'Use Check for updates to check now.', time: null,
+        links: [], actions: [{ text: 'Check for updates', ariaDisabled: null, popup: null }],
+        switch: { checked: false, ariaDisabled: null, role: 'switch', label: 'Check for updates when a session starts',
+          hint: 'Dude looks for a newer release once when each session starts. Applies to all your projects on this computer.' },
+        pending: null, message: null, said: undefined, status: undefined, alert: undefined,
+        rows: [['Dude version', 'v1.0.0'], ['Author', 'Enrique Gonzalez'], ['Repository', ABOUT_REPOSITORY], ['Update channel', 'Latest release']],
+        footer: 'About · Installed v1.0.0',
+      }, 'off: the channel, the explanation, Check for updates, and the installed-version footer');
+      await aboutScreenshot(page, output, 'about-off-1440x900-light');
+      // Check for updates works with the switch off. Focus stays on it while it is unavailable.
+      const reads = t072Reads(canvas);
+      await reads.hold();
+      await focus(page, '[data-update-check]');
+      await key(page, 'Enter');
+      await until(async () => (await t072About(page)).tone === 'busy', 'checking');
+      const checking = await until(async () => { const about = await t072About(page); return about.said === 'Checking for updates.' ? about : null; },
+        'the checking announcement');
+      assert.deepEqual({ line: checking.line, actions: checking.actions, focus: await t072Focus(page), said: checking.said },
+        { line: 'Checking for updates...', actions: [{ text: 'Check for updates', ariaDisabled: 'true', popup: null }],
+          focus: 'update-check', said: 'Checking for updates.' });
+      await aboutScreenshot(page, output, 'about-checking-1440x900-light');
+      await key(page, 'Enter');
+      assert.deepEqual(canvas.actions(), [{ op: 'check' }], 'a second activation while checking sends nothing');
+      await reads.release();
+      const found = await until(async () => { const about = await t072About(page); return about.tone === 'available' ? about : null; }, 'the result');
+      assert.deepEqual({ line: found.line, detail: found.detail.startsWith('Checked at '), time: /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(found.time),
+        actions: found.actions.map(action => [action.text, action.popup]), focus: await t072Focus(page) },
+      { line: 'Dude v1.1.0 is available.', detail: true, time: true, actions: [['Update to v1.1.0', 'dialog'], ['Check for updates', null]],
+        focus: 'update-check' });
+      await until(async () => (await t072About(page)).said === 'Dude v1.1.0 is available.', 'the announced result');
+      await aboutScreenshot(page, output, 'about-off-checked-1440x900-light');
+      // One switch action saves the opposite choice, keeps the other choice, and checks nothing.
+      const route = t085Route(canvas);
+      await focus(page, '[data-update-switch]');
+      await t085Space(page);
+      const saved = await until(async () => { const about = await t072About(page); return about.switch.checked && !about.pending ? about : null; }, 'saved on');
+      assert.equal(saved.status, 'Saved. Check for updates when a session starts is on.');
+      assert.deepEqual(route.saves().map(entry => entry.body), ['{"checkForUpdatesOnSessionStart":true}'], 'one action, one key');
+      assert.equal(fs.readFileSync(PREFERENCE_FILE, 'utf8'), '{"followAppTheme":false,"checkForUpdatesOnSessionStart":true}');
+      assert.deepEqual(canvas.actions(), [{ op: 'check' }], 'saving the switch starts no check');
+      assert.equal((await canvas.state()).checking, false);
+      // A pending save keeps the confirmed choice and focus, unavailable.
+      await route.hold('Request');
+      await t085Space(page);
+      const held = await route.next('POST');
+      const saving = await until(async () => { const about = await t072About(page); return about.pending === 'Saving...' ? about : null; }, 'saving');
+      assert.deepEqual({ checked: saving.switch.checked, ariaDisabled: saving.switch.ariaDisabled, focus: await t072Focus(page) },
+        { checked: true, ariaDisabled: 'true', focus: 'update-switch' });
+      await aboutScreenshot(page, output, 'switch-saving-off-1440x900-light');
+      // A save the server could not write keeps the confirmed choice and says so.
+      await route.answer(held, 500, { error: 'preference_write_failed' });
+      const failed = await until(async () => { const about = await t072About(page); return about.message?.kind === 'save-failed' ? about : null; }, 'save failed');
+      assert.deepEqual({ checked: failed.switch.checked, message: failed.message, alert: failed.alert }, { checked: true,
+        message: { kind: 'save-failed', title: 'Not saved', retry: null,
+          text: "Canvas couldn't save your choice on this computer. Check for updates when a session starts is still on. Use the switch to try again." },
+        alert: 'Not saved. Check for updates when a session starts is still on.' });
+      await aboutScreenshot(page, output, 'switch-save-failed-1440x900-light');
+      await route.release();
+      // A lost answer to a save that landed: one reread, never a second save.
+      await route.hold('Response');
+      await t085Space(page);
+      await route.lose(await route.next('POST'));
+      await route.pass(await route.next('GET'));
+      const reread = await until(async () => { const about = await t072About(page); return !about.switch.checked && !about.pending ? about : null; }, 'reread off');
+      assert.deepEqual({ status: reread.status, message: reread.message }, { status: 'Saved. Check for updates when a session starts is off.', message: null });
+      assert.equal(route.saves().length, 3, 'the lost save is never sent again');
+      await route.release();
+      assert.equal(fs.readFileSync(PREFERENCE_FILE, 'utf8'), '{"followAppTheme":false,"checkForUpdatesOnSessionStart":false}');
+      // An unreadable shared document: both switches wait for a read that succeeds, and nothing is saved over it.
+      storeAppThemeChoice('{"followAppTheme":true,"theme":"dark"}');
+      await t085Refocus(page);
+      const unread = await until(async () => { const about = await t072About(page); return about.message?.kind === 'read-failed-later' ? about : null; }, 'unread');
+      assert.deepEqual({ checked: unread.switch.checked, ariaDisabled: unread.switch.ariaDisabled, message: unread.message }, {
+        checked: false, ariaDisabled: 'true', message: { kind: 'read-failed-later', title: 'Saved choice not read', retry: 'enabled',
+          text: "Canvas couldn't read your update-check choice just now, so it keeps the last choice it confirmed: off. Nothing was changed. Use Retry before you change the switch." } });
+      const savesBefore = route.saves().length;
+      await focus(page, '[data-update-switch]');
+      await t085Space(page);
+      await settleAboutAnimations(page);
+      assert.equal(route.saves().length, savesBefore, 'the switch sends nothing while the document is unread');
+      await aboutScreenshot(page, output, 'switch-read-error-later-1440x900-light');
+      await chooseSettingsSection(page, 'appearance');
+      await until(async () => (await appearanceSurface(page)).message?.kind === 'read-failed-later', 'Appearance unread');
+      assert.equal((await appearanceSurface(page)).ariaDisabled, 'true', 'Appearance waits for Retry too');
+      await focus(page, '[data-follow-app-theme]');
+      await t085Space(page);
+      await settleAboutAnimations(page);
+      assert.equal(route.saves().length, savesBefore, 'neither switch saves over an unread document');
+      await chooseSettingsSection(page, 'about');
+      // Retry only reads; it fails while the document is unreadable, then adopts it and moves focus to the switch.
+      await focus(page, '[data-update-retry]');
+      await key(page, 'Enter');
+      await until(async () => (await t072About(page)).alert === 'Still not read. Nothing was changed.', 'still unread');
+      storeAppThemeChoice('{"followAppTheme":false,"checkForUpdatesOnSessionStart":true}');
+      await focus(page, '[data-update-retry]');
+      await key(page, 'Enter');
+      const recovered = await until(async () => { const about = await t072About(page); return !about.message && !about.pending ? about : null; }, 'recovered');
+      assert.deepEqual({ checked: recovered.switch.checked, ariaDisabled: recovered.switch.ariaDisabled, status: recovered.status,
+        focus: await t072Focus(page) }, { checked: true, ariaDisabled: null, status: 'Read. Check for updates when a session starts is on.',
+        focus: 'update-switch' });
+      assert.equal(route.saves().length, savesBefore, 'Retry never saves');
+      // Appearance saves only its own choice and keeps the update-check choice.
+      await chooseSettingsSection(page, 'appearance');
+      await focus(page, '[data-follow-app-theme]');
+      await t085Space(page);
+      await until(async () => (await appearanceSurface(page)).status === 'Saved. Follow GitHub app theme is on.', 'appearance saved');
+      assert.equal(fs.readFileSync(PREFERENCE_FILE, 'utf8'), '{"followAppTheme":true,"checkForUpdatesOnSessionStart":true}');
+      assert.deepEqual(canvas.actions(), [{ op: 'check' }], 'no save checked for updates');
+    });
+  } finally {
+    storeAppThemeChoice(null);
+  }
+});
+
+test('072 Bundle upgrade: pinned, development, unavailable, up-to-date, failed, and no-stable installations explain their status with only the actions that apply', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  storeAppThemeChoice(null);
+  const fixture = await t072Fixture();
+  const missing = pathToFileURL(path.join(fixture.root, 'no-such-upstream')).href;
+  const cases = [
+    ['pinned', { payload: { source_repo: fixture.source, source_ref: 'v1.0.0', installed_ref: 'v1.0.0' } },
+      { tone: 'info', line: "Pinned to v1.0.0, so Dude doesn't check for newer releases.", detail: null, actions: [] },
+      'Pinned to v1.0.0', 'About · Installed v1.0.0'],
+    ['development', { payload: { source_repo: fixture.source, source_ref: 'main', installed_ref: 'main' } },
+      { tone: 'info', line: "Release checks don't apply to development installs.", detail: null, actions: [] },
+      'Development (main)', 'About · Development (main)'],
+    ['unavailable', { prepare: root => { fs.rmSync(path.join(root, ...T072_MANIFEST.split('/'))); t072Commit(root, 'no manifest'); } },
+      { tone: 'warning', line: "Installation information is unavailable, so Dude can't check for updates.", detail: null, actions: [] },
+      'Unavailable', 'About · Installation information unavailable'],
+    ['up-to-date', { payload: { source_repo: fixture.source, source_ref: 'latest', installed_ref: 'v1.1.0' } },
+      { tone: 'current', line: 'Dude is up to date.', detail: /^Checked at .+\.$/, actions: ['Check for updates'] },
+      'Latest release', 'About · Installed v1.1.0'],
+    ['failed', { source: missing },
+      { tone: 'warning', line: "Couldn't check for updates.",
+        detail: /^Could not list the tags of file:\/\/\/.+no-such-upstream: .+\. Tried at .+\.$/, actions: ['Check for updates'] },
+      'Latest release', 'About · Installed v1.0.0'],
+    ['no-stable', { source: fixture.noStable },
+      { tone: 'info', line: 'No stable releases found.', detail: /^Checked at .+\.$/, actions: ['Check for updates'] },
+      'Latest release', 'About · Installed v1.0.0'],
+  ];
+  const results = [];
+  for (const [name, options, expected, channel, footer] of cases) {
+    await runT072Case(context, `072-channel-${name}`, t072Consumer(fixture, options), {}, async canvas => {
+      const about = await t072OpenAbout(canvas);
+      assert.equal(about.tone, expected.tone, name);
+      assert.equal(about.line, expected.line, name);
+      if (expected.detail instanceof RegExp) assert.match(about.detail, expected.detail, name);
+      else assert.equal(about.detail, expected.detail, name);
+      assert.deepEqual(about.actions.map(action => action.text), expected.actions, name);
+      assert.equal(about.rows[3][1], channel, name);
+      assert.equal(about.footer, footer, name);
+      assert.equal(about.switch.checked, true, `${name}: the absent choice reads on`);
+      await clickSettingsControl(canvas.page, `document.querySelector('#dude-tab-needs')`);
+      await settleAboutAnimations(canvas.page);
+      assert.equal(await t072Notice(canvas.page), null, `${name}: no notice`);
+      assert.deepEqual(canvas.actions(), [], `${name}: nothing was asked of the update route`);
+      results.push({ name, about, image: await aboutScreenshot(canvas.page, canvas.output, `about-${name}-1440x900-light`) });
+    });
+  }
+  assert.equal(fs.existsSync(PREFERENCE_FILE), false, 'no case saved a preference');
+});
+
+test('072 Bundle upgrade: Review update prepares at once, re-prepares without packs, applies exactly that preview with one OK, and hands off to the old-session page', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  storeAppThemeChoice(null);
+  const fixture = await t072Fixture();
+  const root = t072Consumer(fixture, { dirty: true });
+  const before = t072GitState(root), alpha = t072Read(root, T072_ALPHA), profile = t072Read(root, T072_PROFILE);
+  await runT072Case(context, '072-dialog', root, {}, async canvas => {
+    const { page, output } = canvas;
+    await navigate(page, null, 1440, 'light', canvas.origin);
+    await clickSettingsControl(page, `document.querySelector('#dude-tab-needs')`);
+    await until(() => t072Notice(page), 'the notice');
+    await evaluate(page, `(() => { window.__t072Live = [];
+      new MutationObserver(() => { const text = document.querySelector('[data-update-live]')?.textContent;
+        if (text && window.__t072Live.at(-1) !== text) window.__t072Live.push(text); })
+        .observe(document.body, { subtree: true, childList: true, characterData: true }); })()`);
+    // Keyboard opening: the dialog opens at once, preparing, with focus on Cancel and nothing to confirm yet.
+    await focus(page, '[data-update-review]');
+    await key(page, 'Enter');
+    const opened = await until(() => t072Dialog(page), 'the dialog');
+    assert.deepEqual({ phase: opened.phase, modal: opened.modal, name: opened.name, busy: opened.busy, role: opened.bodyRole,
+      cancel: opened.cancel, primary: opened.primary, focus: await t072Focus(page) },
+    { phase: 'preparing', modal: true, name: 'Update Dude', busy: 'true', role: 'region', cancel: 'Cancel', primary: null, focus: 'update-cancel' });
+    assert.match(opened.text, /Nothing in your project changes until you select OK\./);
+    const ready = await t072Phase(page, 'ready');
+    const live = await evaluate(page, 'window.__t072Live');
+    const order = ['Fetching release v1.1.0...', 'Staging core...', 'Preparing pack alpha (1 of 1)...', 'Comparing files...',
+      'Preview ready. 7 files change.'];
+    const seen = live.filter(text => order.includes(text));
+    assert.deepEqual(seen, order.filter(text => seen.includes(text)), `truthful activities, in order: ${JSON.stringify(live)}`);
+    assert.equal(live.at(-1), 'Preview ready. 7 files change.');
+    assert.deepEqual({ ...ready, text: undefined, live: undefined }, {
+      phase: 'ready', modal: true, name: 'Update Dude', busy: 'false', bodyRole: 'region', version: 'v1.0.0 to v1.1.0',
+      packs: { label: 'Also update installed packs: alpha', checked: true, description: 'alpha: 1 replaced.' },
+      counts: [{ heading: 'Changes', rows: [['Dude core', '1 added, 1 replaced, 1 removed'], ['Metadata', '1 added, 2 replaced'],
+        ['alpha pack', '1 replaced']] }],
+      bars: [{ title: 'Customizations may be overwritten', lines: ["Uncommitted edits to the files this update changes can't be recovered afterward.",
+        'These files have uncommitted edits:', [T072_REPLACED]] }],
+      details: [], files: { summary: 'Show files (7)', open: false, rows: [
+        ['Replaced', T072_REPLACED, 'Uncommitted edits'], ['Added', T072_ADDED], ['Removed', T072_RETIRED],
+        ['Replaced', '.dude/metadata/bundle-manifest.md'], ['Replaced', '.dude/metadata/profile.md'], ['Added', '.dude/metadata/upgrade-log.md'],
+        ['Replaced', T072_ALPHA]] },
+      text: undefined, cancel: 'Cancel', primary: { text: 'OK', disabled: false, description: 'Applies this preview: 7 files, uncommitted on main.' },
+      footer: true, closeDisabled: false, live: undefined,
+    }, 'the ready preview: versions, the pack choice, grouped counts, warnings, and OK described by what it applies');
+    assert.match(ready.text, /Changes stay uncommitted on main\. Start a new session afterward to use v1\.1\.0\./);
+    assert.equal(await t072Focus(page), 'update-cancel', 'a timed step keeps focus on Cancel');
+    await aboutScreenshot(page, output, 'dialog-ready-1440x900-light');
+    // Tab and Shift+Tab stay inside the dialog.
+    const stops = [];
+    for (let step = 0; step < 8; step += 1) { await key(page, 'Tab'); stops.push(await evaluate(page, `Boolean(document.activeElement.closest('[data-update-dialog]'))`)); }
+    for (let step = 0; step < 4; step += 1) { await key(page, 'Tab', 'Tab', { shift: true }); stops.push(await evaluate(page, `Boolean(document.activeElement.closest('[data-update-dialog]'))`)); }
+    assert.deepEqual(stops, stops.map(() => true), 'focus never leaves the modal dialog');
+    // Show files opens in place, and each wide or narrow layout keeps the title and actions visible.
+    await clickSettingsControl(page, `document.querySelector('[data-update-files] summary')`);
+    assert.equal((await t072Dialog(page)).files.open, true);
+    for (const [width, height] of [[360, 900], [180, 450]]) {
+      await page.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+      await settleAboutAnimations(page);
+      const fit = await evaluate(page, `(() => {
+        const dialog = document.querySelector('[data-update-dialog]').getBoundingClientRect(), body = document.querySelector('[data-update-body]');
+        const inView = node => { const r = node.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth; };
+        return { page: document.documentElement.scrollWidth <= document.documentElement.clientWidth, sideways: body.scrollWidth > body.clientWidth,
+          inside: dialog.left >= 0 && dialog.right <= innerWidth,
+          title: inView(document.querySelector('[data-update-dialog] h2')),
+          actions: [...document.querySelectorAll('[data-update-dialog] footer button')].every(inView) };
+      })()`);
+      assert.deepEqual(fit, { page: true, sideways: false, inside: true, title: true, actions: true }, `the dialog fits at ${width}x${height}`);
+      await aboutScreenshot(page, output, `dialog-ready-files-${width}x${height}-light`);
+    }
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+    // Unticking prepares a new core-only preview at once: the checkbox keeps focus and OK waits for it.
+    await focus(page, '[data-update-packs]');
+    await t085Space(page);
+    const unticked = await until(async () => { const dialog = await t072Dialog(page); return dialog?.phase === 'preparing' ? dialog : null; }, 'preparing again');
+    assert.deepEqual({ checked: unticked.packs.checked, primary: unticked.primary, focus: await t072Focus(page) },
+      { checked: false, primary: null, focus: 'update-packs' });
+    assert.match(unticked.text, /Preparing a new preview without packs\./);
+    const core = await t072Phase(page, 'ready');
+    assert.deepEqual({ packs: core.packs, counts: core.counts, primary: core.primary, files: core.files.summary, focus: await t072Focus(page) }, {
+      packs: { label: 'Also update installed packs: alpha', checked: false, description: 'Not included in this preview.' },
+      counts: [{ heading: 'Changes', rows: [['Dude core', '1 added, 1 replaced, 1 removed'], ['Metadata', '1 added, 1 replaced']] }],
+      primary: { text: 'OK', disabled: false, description: 'Applies this preview: 5 files, uncommitted on main.' },
+      files: 'Show files (5)', focus: 'update-packs',
+    }, 'the core-only preview carries no pack change');
+    assert.deepEqual(canvas.actions(), [{ op: 'preview', includePacks: true }, { op: 'preview', includePacks: false }]);
+    // OK, by keyboard: Applying, with no Cancel, no Close, and Escape ignored. The state reads are held here, so the
+    // server's later Checking (covered by its own case) reaches the dialog only after they are let through.
+    const reads = t072Reads(canvas);
+    await reads.hold();
+    await focus(page, '[data-update-primary]');
+    await key(page, 'Enter');
+    const applying = await t072Phase(page, 'applying');
+    assert.deepEqual({ busy: applying.busy, footer: applying.footer, closeDisabled: applying.closeDisabled, live: applying.live,
+      focus: await t072Focus(page) }, { busy: 'true', footer: false, closeDisabled: true, live: 'Applying the update.', focus: 'update-body' });
+    assert.match(applying.text, /Applying the update\.\.\.\s+Writing 5 files on main\. This can't be canceled\./);
+    await key(page, 'Escape');
+    assert.equal((await t072Dialog(page))?.phase, 'applying', 'Escape never interrupts a write');
+    await aboutScreenshot(page, output, 'dialog-applying-1440x900-light');
+    await reads.release();
+    await evaluate(page, `window.dispatchEvent(new Event('focus'))`);
+    const success = await t072Phase(page, 'success');
+    assert.deepEqual({ bars: success.bars, counts: success.counts, primary: success.primary?.text, cancel: success.cancel, version: success.version,
+      live: success.live, focus: await t072Focus(page) }, {
+      bars: [{ title: 'Dude v1.1.0 is installed', lines: ['This session still runs v1.0.0. Start a new session to use v1.1.0.'] }],
+      counts: [{ heading: 'Changes applied', rows: [['Dude core', '1 added, 1 replaced, 1 removed'], ['Metadata', '1 added, 1 replaced']] }],
+      primary: 'Done', cancel: null, version: null, live: 'Dude v1.1.0 is installed. Start a new session to use it.', focus: 'update-primary',
+    });
+    assert.match(success.text, /Changes are uncommitted on main\. Review and commit them when you're ready\./);
+    await aboutScreenshot(page, output, 'dialog-success-1440x900-light');
+    // Exactly the reviewed core-only result: HEAD, branch, and index unchanged, and the unselected pack untouched.
+    assert.deepEqual(canvas.actions().map(action => action.op), ['preview', 'preview', 'apply'], 'one OK');
+    assert.deepEqual(t072GitState(root), before, 'HEAD, branch, index, and staging stay as they were');
+    assert.deepEqual(t072Git(root, 'status', '--porcelain=v1', '--untracked-files=all').split('\n').map(line => line.trim()).sort(), [
+      `?? .dude/metadata/upgrade-log.md`, `?? ${T072_ADDED}`, `D ${T072_RETIRED}`, `M .dude/metadata/bundle-manifest.md`, `M ${T072_REPLACED}`,
+    ].sort());
+    assert.ok(t072Read(root, T072_ALPHA).equals(alpha) && t072Read(root, T072_PROFILE).equals(profile), 'the unselected pack and its record are unchanged');
+    assert.match(t072Read(root, T072_MANIFEST).toString('utf8'), /"installed_ref": "v1\.1\.0"/);
+    assert.equal(canvas.provider.read().requests.length, 0, 'no Needs you request');
+    // Done leads to the old-session page; a reload gets the same words from the server, with no application.
+    await key(page, 'Enter');
+    const handoff = await until(() => evaluate(page, `(() => { const main = document.querySelector('[data-update-handoff]');
+      return main && { phase: main.getAttribute('data-update-handoff'), name: document.getElementById(main.getAttribute('aria-labelledby'))?.textContent,
+        text: main.innerText, controls: main.querySelectorAll('button, a, input, [tabindex="0"]').length,
+        shell: getComputedStyle(document.querySelector('header').parentElement).display,
+        focus: document.activeElement === main.querySelector('h1') }; })()`), 'the old-session page');
+    assert.deepEqual({ ...handoff, text: undefined }, { phase: 'applied', name: 'Start a new session to use Dude v1.1.0', text: undefined,
+      controls: 0, shell: 'none', focus: true });
+    assert.equal(handoff.text, ['Dude', 'Start a new session to use Dude v1.1.0',
+      "Dude v1.1.0 is installed in this project, but this session still runs v1.0.0. Canvas can't be used in this session anymore.",
+      "The changes are uncommitted on main. Review and commit them when you're ready."].join('\n\n'));
+    await aboutScreenshot(page, output, 'handoff-1440x900-light');
+    await page.send('Page.navigate', { url: `${canvas.origin}/` });
+    await until(() => evaluate(page, `document.querySelector('h1')?.textContent === 'Start a new session to use Dude v1.1.0'`), 'the inert page');
+    assert.deepEqual(await evaluate(page, `({ scripts: document.scripts.length, controls: document.querySelectorAll('button, a, input').length })`),
+      { scripts: 0, controls: 0 });
+    await aboutScreenshot(page, output, 'handoff-reload-1440x900-light');
+  });
+});
+
+test('072 Bundle upgrade: Cancel and Escape before writing change nothing, a changed file makes OK write nothing, and failed preparations say why', {
+  timeout: 360_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  storeAppThemeChoice(null);
+  const fixture = await t072Fixture();
+  const root = t072Consumer(fixture);
+  const untouched = t072Git(root, 'status', '--porcelain=v1');
+  await runT072Case(context, '072-before-write', root, {}, async canvas => {
+    const { page, output } = canvas;
+    // Update to v1.1.0 in About opens the same dialog; Cancel discards the preparation and returns focus there.
+    await t072OpenAbout(canvas);
+    await clickSettingsControl(page, `document.querySelector('[data-update-open]')`);
+    await t072Phase(page, 'ready');
+    await aboutScreenshot(page, output, 'dialog-ready-from-about-1440x900-light');
+    await clickSettingsControl(page, `document.querySelector('[data-update-cancel]')`);
+    await until(async () => !(await t072Dialog(page)), 'closed');
+    assert.equal(await t072Focus(page), 'update-open', 'focus returns to the opener');
+    await until(async () => (await canvas.state()).update === null, 'the preparation discarded');
+    assert.equal(t072Git(root, 'status', '--porcelain=v1'), untouched, 'Cancel changed nothing');
+    // Escape while preparing closes the dialog, then discards what it started.
+    await clickSettingsControl(page, `document.querySelector('[data-update-open]')`);
+    await until(async () => (await t072Dialog(page))?.phase === 'preparing', 'preparing');
+    await key(page, 'Escape');
+    await until(async () => !(await t072Dialog(page)), 'closed by Escape');
+    assert.equal(await t072Focus(page), 'update-open');
+    await until(async () => (await canvas.state()).update === null, 'the preparation discarded after Escape');
+    assert.equal(t072Git(root, 'status', '--porcelain=v1'), untouched);
+    // A touched file that changed after the preview: OK writes nothing and offers Prepare again.
+    await clickSettingsControl(page, `document.querySelector('#dude-tab-needs')`);
+    await clickSettingsControl(page, `document.querySelector('[data-update-review]')`);
+    await t072Phase(page, 'ready');
+    fs.appendFileSync(path.join(root, ...T072_REPLACED.split('/')), '\nchanged after the preview\n');
+    const changed = t072Git(root, 'status', '--porcelain=v1');
+    await clickSettingsControl(page, `document.querySelector('[data-update-primary]')`);
+    const stale = await t072Phase(page, 'stale');
+    assert.deepEqual({ bars: stale.bars, cancel: stale.cancel, primary: stale.primary?.text, live: stale.live, focus: await t072Focus(page) }, {
+      bars: [{ title: 'The preview is out of date', lines: ['Nothing changed. This file changed after the preview was prepared:',
+        [T072_REPLACED], 'Prepare again to review the current changes.'] }],
+      cancel: 'Close', primary: 'Prepare again', live: 'The preview is out of date. Nothing changed.', focus: 'update-primary',
+    });
+    assert.equal(t072Git(root, 'status', '--porcelain=v1'), changed, 'OK wrote nothing');
+    assert.equal((await canvas.state()).gate, 'open', 'Canvas works on after a refusal before writing');
+    await aboutScreenshot(page, output, 'dialog-stale-1440x900-light');
+    await key(page, 'Enter');
+    await until(async () => (await t072Dialog(page))?.phase === 'preparing', 'prepared again');
+    assert.equal(await t072Focus(page), 'update-cancel', 'Prepare again starts over with focus on Cancel');
+    await t072Phase(page, 'ready');
+    await key(page, 'Escape');
+    await until(async () => !(await t072Dialog(page)), 'closed');
+    assert.equal(await t072Focus(page), 'update-review');
+    await until(async () => (await canvas.state()).update === null, 'discarded');
+    fs.writeFileSync(path.join(root, ...T072_REPLACED.split('/')), t072Read(fixture.template, T072_REPLACED));
+  });
+
+  // A source that stops answering after the check: preparing fails and says so, with Git's own words.
+  const offline = t072Upstream(fixture);
+  await runT072Case(context, '072-offline', t072Consumer(fixture, { source: offline.url }), {}, async canvas => {
+    const { page, output } = canvas;
+    fs.renameSync(offline.path, `${offline.path}-gone`);
+    try {
+      await navigate(page, null, 1440, 'light', canvas.origin);
+      await clickSettingsControl(page, `document.querySelector('#dude-tab-needs')`);
+      await clickSettingsControl(page, `document.querySelector('[data-update-review]')`);
+      const failed = await t072Phase(page, 'failed');
+      assert.deepEqual({ bars: failed.bars, details: failed.details.map(entry => entry.summary), cancel: failed.cancel,
+        primary: failed.primary?.text, live: failed.live, focus: await t072Focus(page) }, {
+        bars: [{ title: "Couldn't prepare the update", lines: ["Nothing changed. Dude couldn't download v1.1.0. Check your connection, then prepare again."] }],
+        details: ["Git's message"], cancel: 'Cancel', primary: 'Prepare again', live: "Couldn't prepare the update. Nothing changed.",
+        focus: 'update-cancel' });
+      assert.match(failed.details[0].text, /^could not list the tags of file:\/\//);
+      await aboutScreenshot(page, output, 'dialog-offline-1440x900-light');
+      // A GitHub source's validated release page also names where the release comes from; no other source is named.
+      const reads = t072Reads(canvas), state = await canvas.state();
+      await reads.hold();
+      for (const [releaseUrl, line] of [
+        ['https://github.com/E-G-C/dude/releases/tag/v1.1.0',
+          "Nothing changed. Dude couldn't download v1.1.0 from github.com/E-G-C/dude. Check your connection, then prepare again."],
+        ['https://example.invalid/E-G-C/dude/releases/tag/v1.1.0',
+          "Nothing changed. Dude couldn't download v1.1.0. Check your connection, then prepare again."]]) {
+        await evaluate(page, `window.dispatchEvent(new Event('focus'))`);
+        await reads.answer(await reads.next(), { ...state, check: { ...state.check, releaseUrl } });
+        await until(async () => (await t072Dialog(page))?.bars[0]?.lines[0] === line, `the offline line for ${releaseUrl}`);
+      }
+      await reads.release();
+    } finally {
+      fs.renameSync(`${offline.path}-gone`, offline.path);
+    }
+    await clickSettingsControl(page, `document.querySelector('[data-update-primary]')`);
+    await t072Phase(page, 'ready');
+    await clickSettingsControl(page, `document.querySelector('[data-update-cancel]')`);
+    await until(async () => (await canvas.state()).update === null, 'discarded');
+  });
+
+  // A selected pack that cannot be prepared blocks the combined result; unticking prepares core only.
+  const packless = t072Upstream(fixture);
+  fs.rmSync(path.join(packless.path, 'library', 'packs', 'alpha'), { recursive: true });
+  t072Commit(packless.path, 'release v1.2.0 without alpha');
+  t072Git(packless.path, 'tag', 'v1.2.0');
+  const packRoot = t072Consumer(fixture, { source: packless.url, prepare: consumer => {
+    t072Write(consumer, T072_PROFILE, t072Read(consumer, T072_PROFILE).toString('utf8').split(fixture.source).join(packless.url));
+    t072Commit(consumer, 'the pack is recorded from the same upstream');
+  } });
+  await runT072Case(context, '072-pack-failure', packRoot, {}, async canvas => {
+    const { page, output } = canvas;
+    await navigate(page, null, 1440, 'light', canvas.origin);
+    await clickSettingsControl(page, `document.querySelector('#dude-tab-needs')`);
+    await clickSettingsControl(page, `document.querySelector('[data-update-review]')`);
+    const failed = await t072Phase(page, 'packfail');
+    assert.deepEqual({ packs: failed.packs, bars: failed.bars, details: failed.details.map(entry => entry.summary), primary: failed.primary,
+      cancel: failed.cancel }, {
+      packs: { label: 'Also update installed packs: alpha', checked: true, description: "The alpha pack couldn't be prepared." },
+      bars: [{ title: "Packs can't be included", lines: ["Dude couldn't prepare the alpha pack, so this update can't include packs. Untick \"Also update installed packs\" to update Dude without them."] }],
+      details: ["Compose's message"], primary: { text: 'OK', disabled: true, description: "Packs can't be included" }, cancel: 'Cancel',
+    });
+    assert.match(failed.details[0].text, /pack "alpha" could not be prepared/);
+    await aboutScreenshot(page, output, 'dialog-packfail-1440x900-light');
+    await focus(page, '[data-update-packs]');
+    await t085Space(page);
+    const core = await t072Phase(page, 'ready');
+    assert.deepEqual({ packs: core.packs, counts: core.counts.map(section => section.rows.map(row => row[0])), focus: await t072Focus(page) },
+      { packs: { label: 'Also update installed packs: alpha', checked: false, description: 'Not included in this preview.' },
+        counts: [['Dude core', 'Metadata']], focus: 'update-packs' });
+    await key(page, 'Escape');
+    await until(async () => (await canvas.state()).update === null, 'discarded');
+  });
+});
+
+test('072 Bundle upgrade: a Cancel whose preview had not answered yet never cancels the next opening, whose new preview reaches ready', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  storeAppThemeChoice(null);
+  const fixture = await t072Fixture();
+  const root = t072Consumer(fixture);
+  const untouched = t072Git(root, 'status', '--porcelain=v1');
+  // The replaced preparation stops mid-way; whatever folder it leaves stays in this case's own temporary directory.
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-cu-reopen-'));
+  const saved = Object.fromEntries(['TEMP', 'TMP', 'TMPDIR'].map(key => [key, process.env[key]]));
+  try {
+    await runT072Case(context, '072-reopen-before-answer', root, {}, async canvas => {
+      const { page } = canvas;
+      const action = `${canvas.origin}/api/updates/action`;
+      for (const key of Object.keys(saved)) process.env[key] = scratch;
+      // The first preview's answer is held in the browser after the server sent it; every other action goes through.
+      const held = [], answered = [];
+      page.on('Fetch.requestPaused', event => {
+        if (event.request.url !== action) return;
+        const op = JSON.parse(event.request.postData ?? '{}').op;
+        if (op === 'preview' && !held.length) { held.push(event); return; }
+        answered.push(op);
+        void page.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {});
+      });
+      await navigate(page, null, 1440, 'light', canvas.origin);
+      await clickSettingsControl(page, `document.querySelector('#dude-tab-needs')`);
+      await page.send('Fetch.enable', { patterns: [{ urlPattern: action, requestStage: 'Response' }] });
+      await clickSettingsControl(page, `document.querySelector('[data-update-review]')`);
+      await until(() => held.length === 1, 'the first preview, answered by the server and held in the browser');
+      assert.notEqual((await canvas.state()).update, null, 'the server is preparing the first preview');
+      // Cancel closes at once; the cancellation it starts waits for the first preview's answer.
+      await clickSettingsControl(page, `document.querySelector('[data-update-cancel]')`);
+      await until(async () => !(await t072Dialog(page)), 'closed by Cancel');
+      assert.equal(await t072Focus(page), 'update-review');
+      // Review update again before that answer: the server replaces the first preview with this opening's own.
+      await clickSettingsControl(page, `document.querySelector('[data-update-review]')`);
+      await until(() => answered.includes('preview'), 'the new opening\'s preview answered');
+      // Only now does the first answer arrive. The closed opening's cancellation must not reach the new preview.
+      const [late] = held.splice(0);
+      await page.send('Fetch.continueRequest', { requestId: late.requestId });
+      const settled = await until(async () => {
+        const dialog = await t072Dialog(page);
+        if (!dialog) return 'closed';
+        return dialog.phase === 'ready' ? dialog : null;
+      }, 'the new opening ready, or closed', 180_000);
+      assert.notEqual(settled, 'closed', 'the late answer did not end the new opening');
+      assert.deepEqual({ phase: settled.phase, primary: settled.primary?.text, disabled: settled.primary?.disabled },
+        { phase: 'ready', primary: 'OK', disabled: false });
+      const state = await canvas.state();
+      assert.deepEqual({ phase: state.update?.phase, gate: state.gate }, { phase: 'ready', gate: 'open' },
+        'the new preview is still the server\'s update');
+      assert.deepEqual(canvas.actions().map(entry => entry.op), ['preview', 'preview'], 'no cancel was sent for the closed opening');
+      await page.send('Fetch.disable');
+      // The person's own Cancel still discards the new preview.
+      await clickSettingsControl(page, `document.querySelector('[data-update-cancel]')`);
+      await until(async () => (await canvas.state()).update === null, 'discarded by its own Cancel');
+      assert.deepEqual(canvas.actions().map(entry => entry.op), ['preview', 'preview', 'cancel']);
+      assert.equal(t072Git(root, 'status', '--porcelain=v1'), untouched, 'the project is unchanged');
+    });
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test('072 Bundle upgrade: a new check failure restores every file, an unconfirmed restoration names its paths, and both end on the old-session page', {
+  timeout: 360_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  storeAppThemeChoice(null);
+  const fixture = await t072Fixture();
+  const cases = [
+    ['restored', fixture.restore, {
+      bars: [{ title: 'Update failed', lines: ['Files restored. The check after writing found a new problem, so Dude put the previous files back.',
+        'Start a new session to keep using Canvas.'] }], details: ['Check output'], live: 'Update failed. Files restored.' },
+    'Start a new session to keep using Canvas', "The update didn't finish, and Dude restored your files. Canvas stops in a session once an update starts writing files."],
+    ['unconfirmed', fixture.unconfirmed, {
+      bars: [{ title: 'Update failed', lines: ["Restoration unconfirmed. Dude couldn't confirm that these files were put back:", [T072_REPLACED],
+        "Inspect them before you start a new session, for example with git status. Dude won't repeat the update on its own."] }],
+      details: ['Error message'], live: 'Update failed. Restoration unconfirmed.' },
+    'Start a new session to keep using Canvas', "The update didn't finish, and Dude couldn't confirm that these files were put back:"],
+  ];
+  for (const [name, source, expected, title, first] of cases) {
+    const root = t072Consumer(fixture, { source });
+    const before = t072GitState(root), status = t072Git(root, 'status', '--porcelain=v1');
+    await runT072Case(context, `072-${name}`, root, {}, async canvas => {
+      const { page, output } = canvas;
+      await navigate(page, null, 1440, 'light', canvas.origin);
+      await clickSettingsControl(page, `document.querySelector('#dude-tab-needs')`);
+      await clickSettingsControl(page, `document.querySelector('[data-update-review]')`);
+      await t072Phase(page, 'ready');
+      await clickSettingsControl(page, `document.querySelector('[data-update-primary]')`);
+      const outcome = await t072Phase(page, name);
+      assert.deepEqual({ bars: outcome.bars, details: outcome.details.map(entry => entry.summary), live: outcome.live },
+        expected, `${name}: the observed outcome, in words`);
+      assert.deepEqual({ cancel: outcome.cancel, primary: outcome.primary, focus: await t072Focus(page) },
+        { cancel: 'Close', primary: null, focus: 'update-cancel' });
+      if (name === 'restored') {
+        assert.match(outcome.details[0].text, /dude-broken\/SKILL\.md  frontmatter name 'dude-wrong'/);
+        assert.equal(t072Git(root, 'status', '--porcelain=v1'), status, 'every file was put back');
+      }
+      assert.deepEqual(t072GitState(root), before);
+      assert.deepEqual(canvas.actions().map(action => action.op), ['preview', 'apply'], 'nothing repeats on its own');
+      await aboutScreenshot(page, output, `dialog-${name}-1440x900-light`);
+      // Close after a write never cancels: it leads to the old-session page.
+      await key(page, 'Enter');
+      const handoff = await until(() => evaluate(page, `(() => { const main = document.querySelector('[data-update-handoff]');
+        return main && { title: main.querySelector('h1').textContent, text: main.innerText, focus: document.activeElement === main.querySelector('h1') }; })()`),
+      'the old-session page');
+      assert.equal(handoff.title, title);
+      assert.equal(handoff.focus, true);
+      assert.ok(handoff.text.includes(first), handoff.text);
+      if (name === 'unconfirmed') assert.ok(handoff.text.includes(T072_REPLACED), 'the paths to inspect');
+      assert.deepEqual(canvas.actions().map(action => action.op), ['preview', 'apply'], 'Close after a write sends nothing');
+      await aboutScreenshot(page, output, `handoff-${name}-1440x900-light`);
+      await page.send('Page.navigate', { url: `${canvas.origin}/` });
+      await until(() => evaluate(page, `document.querySelector('h1')?.textContent === ${JSON.stringify(title)}`), 'the inert page');
+    });
+  }
+});
+
+/**
+ * The kept-folder warning where it shows: its name, words, folders with their reasons, and what sits around it.
+ * @param {Cdp} page @param {'needs' | 'about'} where
+ */
+function t072Kept(page, where) {
+  return evaluate(page, `(() => {
+    const needs = ${JSON.stringify(where)} === 'needs';
+    const scope = needs ? document.querySelector('#dude-panel-needs:not([hidden])')
+      : document.querySelector('[data-about-panel]:not([hidden]) [data-about-updates]');
+    const bar = scope?.querySelector('[data-update-kept]');
+    if (!bar) return null;
+    const column = needs ? bar.closest('#dude-panel-needs > div') : scope;
+    const flat = [...column.children].flatMap(node => getComputedStyle(node).display === 'contents' ? [...node.children] : [node]);
+    const parts = flat.map(node => node.matches('[data-update-notice]') ? 'notice' : node.matches('[data-update-kept]') ? 'kept'
+      : node.matches('h1') ? 'title' : node.matches('h3') ? 'heading' : node.matches('[data-update-status]') ? 'status'
+        : node.matches('[data-update-actions]') ? 'actions' : node.querySelector('[data-update-switch]') ? 'switch'
+          : node.matches('section') ? 'requests' : node.matches('[role="status"], [role="alert"]') ? null : node.tagName.toLowerCase())
+      .filter(Boolean);
+    const lines = [...bar.querySelectorAll('.fui-MessageBarBody > div > *')].map(line => line.tagName === 'UL'
+      ? [...line.children].map(item => [item.querySelector('code').textContent, item.querySelector('span').textContent]) : line.textContent);
+    return { role: bar.getAttribute('role'), name: document.getElementById(bar.getAttribute('aria-labelledby'))?.textContent,
+      count: bar.getAttribute('data-update-kept'), title: bar.querySelector('.fui-MessageBarTitle')?.textContent, lines, parts,
+      controls: bar.querySelectorAll('button, a, input').length };
+  })()`);
+}
+
+test('072 Bundle upgrade: Applying becomes Checking only when the engine starts its bundle check after writing, with no Cancel, Close, or Escape, and then the outcome', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  storeAppThemeChoice(null);
+  const fixture = await t072Fixture();
+  const root = t072Consumer(fixture, { source: fixture.checking });
+  const held = t072Held(root);
+  const added = path.join(root, ...T072_ADDED.split('/'));
+  try {
+    await runT072Case(context, '072-checking', root, {}, async canvas => {
+      const { page, output, origin } = canvas;
+      const reads = () => canvas.requests.filter(entry => entry.method === 'GET' && entry.url === `${origin}/api/updates`).length;
+      await navigate(page, null, 1440, 'light', canvas.origin);
+      await clickSettingsControl(page, `document.querySelector('#dude-tab-needs')`);
+      await until(() => t072Notice(page), 'the notice');
+      await clickSettingsControl(page, `document.querySelector('[data-update-review]')`);
+      await t072Phase(page, 'ready');
+      await focus(page, '[data-update-primary]');
+      await key(page, 'Enter');
+      // OK: the engine's bundle check before writing holds the update, and Applying lasts however long that takes.
+      await until(() => held.waiting('before'), 'the bundle check before writing');
+      const applying = await t072Phase(page, 'applying');
+      const before = reads();
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      const still = await t072Dialog(page);
+      assert.deepEqual({ phase: still.phase, busy: still.busy, footer: still.footer, closeDisabled: still.closeDisabled, live: still.live,
+        focus: await t072Focus(page) }, { phase: 'applying', busy: 'true', footer: false, closeDisabled: true, live: 'Applying the update.',
+        focus: 'update-body' }, 'no timer turns Applying into Checking');
+      assert.match(applying.text, /Applying the update\.\.\.\s+Writing 6 files on main\. This can't be canceled\./);
+      assert.equal(reads(), before, 'Canvas reads the update state only on its events, never on a timer');
+      assert.equal(fs.existsSync(added), false, 'nothing is written yet');
+      assert.equal((await canvas.state()).update.phase, 'applying');
+      await key(page, 'Escape');
+      assert.equal((await t072Dialog(page))?.phase, 'applying', 'Escape never interrupts a write');
+
+      // Every file is written and the check after writing starts: the server says Checking, and so does the dialog.
+      held.go('before');
+      await until(() => held.waiting('after'), 'the bundle check after writing');
+      const checking = await t072Phase(page, 'checking');
+      assert.equal(fs.existsSync(added), true, 'every file was written before Checking');
+      assert.equal((await canvas.state()).update.phase, 'checking', 'the server reports the boundary the dialog shows');
+      assert.deepEqual({ ...checking, text: undefined }, {
+        phase: 'checking', modal: true, name: 'Update Dude', busy: 'true', bodyRole: 'region', version: 'v1.0.0 to v1.2.0', packs: null,
+        counts: [], bars: [], details: [], files: null, text: undefined, cancel: null, primary: null, footer: false, closeDisabled: true,
+        live: 'Checking the updated files.',
+      }, 'Checking: busy, with no Cancel, no OK, and Close unavailable');
+      assert.match(checking.text, /Checking the updated files\.\.\.\s+If the check finds a new problem, Dude puts the previous files back\./);
+      assert.equal(await t072Focus(page), 'update-body', 'focus stays on the busy body');
+      await aboutScreenshot(page, output, 'dialog-checking-1440x900-light');
+      await key(page, 'Escape');
+      for (const shift of [false, true]) {
+        await key(page, 'Tab', 'Tab', shift ? { shift: true } : undefined);
+        assert.equal(await evaluate(page, `Boolean(document.activeElement.closest('[data-update-dialog]'))`), true, 'focus stays inside');
+      }
+      assert.equal((await t072Dialog(page))?.phase, 'checking', 'Escape never interrupts the check');
+      const quiet = reads();
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      assert.deepEqual([reads(), (await t072Dialog(page)).phase], [quiet, 'checking'], 'Checking lasts while the check runs, with no polling');
+
+      // The check ends: the outcome follows Checking, and focus moves to its button.
+      held.go('after');
+      const success = await t072Phase(page, 'success');
+      assert.deepEqual({ bars: success.bars.map(bar => bar.title), primary: success.primary?.text, live: success.live, focus: await t072Focus(page) },
+        { bars: ['Dude v1.2.0 is installed'], primary: 'Done', live: 'Dude v1.2.0 is installed. Start a new session to use it.', focus: 'update-primary' });
+      assert.deepEqual(canvas.actions().map(action => action.op), ['preview', 'apply'], 'one OK, and nothing else sent');
+    });
+  } finally {
+    held.release();
+  }
+});
+
+test('072 Bundle upgrade: an update phase this Canvas does not know (a constructed state read) shows the neutral busy state, never an outcome, and the real outcome follows', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  storeAppThemeChoice(null);
+  const fixture = await t072Fixture();
+  const root = t072Consumer(fixture, { source: fixture.checking });
+  const held = t072Held(root);
+  try {
+    await runT072Case(context, '072-unknown-phase', root, {}, async canvas => {
+      const { page } = canvas;
+      await navigate(page, null, 1440, 'light', canvas.origin);
+      await clickSettingsControl(page, `document.querySelector('#dude-tab-needs')`);
+      await clickSettingsControl(page, `document.querySelector('[data-update-review]')`);
+      await t072Phase(page, 'ready');
+      await focus(page, '[data-update-primary]');
+      await key(page, 'Enter');
+      await until(() => held.waiting('before'), 'the bundle check before writing');
+      await t072Phase(page, 'applying');
+      // Constructed: one state read is answered with the server's real state, except for a phase this Canvas has no
+      // name for, as a newer server could report while an update runs. The server itself stays in Applying.
+      const real = await canvas.state();
+      assert.deepEqual([real.gate, real.update?.phase], ['applying', 'applying']);
+      const reads = t072Reads(canvas);
+      await reads.hold();
+      await evaluate(page, `window.dispatchEvent(new Event('focus'))`);
+      await reads.answer(await reads.next(), { ...real, update: { ...real.update, phase: 'verifying' } });
+      const shown = await until(async () => {
+        const dialog = await t072Dialog(page);
+        return dialog?.phase === 'applying' ? null : dialog ?? 'closed';
+      }, 'the dialog showing the constructed state');
+      assert.notEqual(shown, 'closed', 'the dialog stays open');
+      assert.deepEqual({ ...shown, text: undefined }, {
+        phase: 'working', modal: true, name: 'Update Dude', busy: 'true', bodyRole: 'region', version: 'v1.0.0 to v1.2.0', packs: null,
+        counts: [], bars: [], details: [], files: null, text: undefined, cancel: null, primary: null, footer: false, closeDisabled: true,
+        live: 'Working on the update.',
+      }, 'an unknown phase is the neutral busy state: no outcome, no OK or Done, and Close unavailable');
+      assert.match(shown.text, /^v1\.0\.0\s+to\s+v1\.2\.0\s+Working on the update\.\.\.$/);
+      assert.doesNotMatch(`${shown.text}\n${shown.live}`, /Nothing changed|installed|restored|Restoration|failed|Done|\bOK\b/,
+        'no outcome is claimed');
+      assert.equal(await t072Focus(page), 'update-body', 'focus stays on the busy body');
+      await key(page, 'Escape');
+      assert.equal((await t072Dialog(page))?.phase, 'working', 'Escape changes nothing while the update may be writing');
+      // The real state again: Applying, then Checking and the outcome, as the server reports them.
+      await reads.release();
+      await evaluate(page, `window.dispatchEvent(new Event('focus'))`);
+      await t072Phase(page, 'applying');
+      held.go('before');
+      await t072Phase(page, 'checking');
+      held.go('after');
+      const success = await t072Phase(page, 'success');
+      assert.deepEqual(success.bars.map(bar => bar.title), ['Dude v1.2.0 is installed']);
+      assert.deepEqual(canvas.actions().map(action => action.op), ['preview', 'apply'], 'one OK, and nothing else sent');
+    });
+  } finally {
+    held.release();
+  }
+});
+
+test('072 Bundle upgrade: a lost OK answer stays uncertain, with OK withheld and no "Nothing changed", until a state read shows what happened, and OK is never sent again', {
+  timeout: 360_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  storeAppThemeChoice(null);
+  const fixture = await t072Fixture();
+  /**
+   * Drop OK's answer at one stage and hold the state reads, which the case then fails or lets through.
+   * @param {Awaited<ReturnType<typeof openT072Canvas>>} canvas @param {'Request' | 'Response'} stage
+   */
+  const intercept = async (canvas, stage) => {
+    const action = `${canvas.origin}/api/updates/action`, route = `${canvas.origin}/api/updates`;
+    const held = [], dropped = [];
+    canvas.page.on('Fetch.requestPaused', event => {
+      if (event.request.url === route) { held.push(event); return; }
+      if (event.request.url === action && !dropped.length && /"op":"apply"/.test(event.request.postData ?? '')) {
+        dropped.push(event);
+        void canvas.page.send('Fetch.failRequest', { requestId: event.requestId, errorReason: 'ConnectionReset' });
+        return;
+      }
+      void canvas.page.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {});
+    });
+    await canvas.page.send('Fetch.enable', { patterns: [{ urlPattern: action, requestStage: stage }, { urlPattern: route, requestStage: 'Request' }] });
+    return {
+      dropped: () => dropped.length,
+      next: () => until(() => held.length > 0, 'a held update state read'),
+      fail: async () => { for (const event of held.splice(0)) await canvas.page.send('Fetch.failRequest', { requestId: event.requestId, errorReason: 'ConnectionReset' }); },
+      pass: async () => { for (const event of held.splice(0)) await canvas.page.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {}); },
+      off: async () => { await canvas.page.send('Fetch.disable'); for (const event of held.splice(0)) await canvas.page.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {}); },
+    };
+  };
+  /** @param {any} dialog */
+  const claims = dialog => /Nothing changed/.test(`${dialog.text}\n${dialog.live}`);
+
+  // The answer is lost after the server admitted OK: the update runs, held at its bundle check before writing.
+  const root = t072Consumer(fixture, { source: fixture.checking });
+  const held = t072Held(root);
+  try {
+    await runT072Case(context, '072-lost-after', root, {}, async canvas => {
+      const { page, output } = canvas;
+      await navigate(page, null, 1440, 'light', canvas.origin);
+      await clickSettingsControl(page, `document.querySelector('#dude-tab-needs')`);
+      await clickSettingsControl(page, `document.querySelector('[data-update-review]')`);
+      const ready = await t072Phase(page, 'ready');
+      assert.equal(ready.primary?.text, 'OK');
+      const net = await intercept(canvas, 'Response');
+      await focus(page, '[data-update-primary]');
+      await key(page, 'Enter');
+      await until(() => net.dropped() === 1, 'the dropped answer');
+      await net.next();
+      const uncertain = await t072Phase(page, 'uncertain');
+      assert.deepEqual({ busy: uncertain.busy, footer: uncertain.footer, primary: uncertain.primary, cancel: uncertain.cancel,
+        closeDisabled: uncertain.closeDisabled, live: uncertain.live, version: uncertain.version, claims: claims(uncertain), focus: await t072Focus(page) },
+      { busy: 'true', footer: false, primary: null, cancel: null, closeDisabled: true, live: 'Checking whether the update started.',
+        version: 'v1.0.0 to v1.2.0', claims: false, focus: 'update-body' }, 'uncertain: busy, no OK, no outcome claimed');
+      assert.match(uncertain.text, /Checking whether the update started\.\.\.\s+The connection was interrupted after OK\. Nothing is sent again\./);
+      assert.equal((await canvas.state()).gate, 'applying', 'the server did admit OK');
+      await aboutScreenshot(page, output, 'dialog-uncertain-1440x900-light');
+      await key(page, 'Escape');
+      assert.equal((await t072Dialog(page))?.phase, 'uncertain', 'Escape changes nothing while the answer is unsettled');
+
+      // The state read fails too: still uncertain, OK withheld, and Read again is the one way on.
+      await net.fail();
+      const unknown = await t072Phase(page, 'unknown');
+      assert.deepEqual({ busy: unknown.busy, bars: unknown.bars, primary: unknown.primary, cancel: unknown.cancel, closeDisabled: unknown.closeDisabled,
+        live: unknown.live, claims: claims(unknown), focus: await t072Focus(page) }, {
+        busy: 'false', bars: [{ title: 'The response was lost', lines: ["Canvas can't tell whether the update started. Nothing is sent again. Read again to check."] }],
+        primary: { text: 'Read again', disabled: false, description: '' }, cancel: null, closeDisabled: true,
+        live: "The response was lost. Canvas can't tell whether the update started.", claims: false, focus: 'update-primary',
+      }, 'unknown: a read failure keeps OK withheld');
+      await aboutScreenshot(page, output, 'dialog-uncertain-unread-1440x900-light');
+      await key(page, 'Escape');
+      assert.equal((await t072Dialog(page))?.phase, 'unknown', 'Escape never closes an update that may be writing');
+
+      // Read again: one fresh read, which shows the update applying. OK was never sent again.
+      await key(page, 'Enter');
+      await net.next();
+      assert.deepEqual([(await t072Dialog(page)).phase, await t072Focus(page)], ['uncertain', 'update-body'], 'reading again');
+      await net.pass();
+      const applying = await t072Phase(page, 'applying');
+      assert.equal(claims(applying), false);
+      assert.match(applying.text, /Applying the update\.\.\.\s+Writing 6 files on main\. This can't be canceled\./);
+      await net.off();
+      held.go('before');
+      await t072Phase(page, 'checking');
+      held.go('after');
+      const success = await t072Phase(page, 'success');
+      assert.equal(success.bars[0].title, 'Dude v1.2.0 is installed');
+      assert.deepEqual(canvas.actions().map(action => action.op), ['preview', 'apply'], 'the lost OK was never replayed');
+      assert.match(t072Read(root, T072_MANIFEST).toString('utf8'), /"installed_ref": "v1\.2\.0"/);
+    });
+  } finally {
+    held.release();
+  }
+
+  // The request is lost before the server: the read finds the same preview still waiting, so OK can be chosen again.
+  const before = t072Consumer(fixture);
+  await runT072Case(context, '072-lost-before', before, {}, async canvas => {
+    const { page, output } = canvas;
+    await navigate(page, null, 1440, 'light', canvas.origin);
+    await clickSettingsControl(page, `document.querySelector('#dude-tab-needs')`);
+    await clickSettingsControl(page, `document.querySelector('[data-update-review]')`);
+    const ready = await t072Phase(page, 'ready');
+    const { update } = await canvas.state();
+    const net = await intercept(canvas, 'Request');
+    await clickSettingsControl(page, `document.querySelector('[data-update-primary]')`);
+    await until(() => net.dropped() === 1, 'the dropped request');
+    await net.next();
+    const uncertain = await t072Phase(page, 'uncertain');
+    assert.deepEqual([uncertain.primary, claims(uncertain)], [null, false], 'no OK and no claim while the read is pending');
+    assert.deepEqual((await canvas.state()).update, update, 'the server never received OK');
+    await net.pass();
+    const again = await until(async () => { const dialog = await t072Dialog(page); return dialog?.phase === 'ready' ? dialog : null; }, 'ready again');
+    assert.deepEqual({ bars: again.bars[0], primary: again.primary, live: again.live, counts: again.counts, focus: await t072Focus(page) }, {
+      bars: { title: 'OK was not received', lines: ['The connection was interrupted before Dude received OK. Nothing changed. Select OK to apply this preview.'] },
+      primary: { text: 'OK', disabled: false, description: 'Applies this preview: 7 files, uncommitted on main.' },
+      live: 'OK was not received. Nothing changed.', counts: ready.counts, focus: 'update-cancel',
+    }, 'only the same ready preview, still waiting, shows that OK never arrived');
+    await aboutScreenshot(page, output, 'dialog-not-received-1440x900-light');
+    await net.off();
+    await clickSettingsControl(page, `document.querySelector('[data-update-primary]')`);
+    await t072Phase(page, 'success');
+    assert.deepEqual(canvas.actions().map(action => action.op), ['preview', 'apply', 'apply'], 'the second OK is the person\'s own');
+  });
+});
+
+test('072 Bundle upgrade: a temporary folder Dude cannot confirm it is done with stays listed with its reason after Cancel, under the Needs you notice after Later too, and in About', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  storeAppThemeChoice(null);
+  const fixture = await t072Fixture();
+  // The update's temporary folders land in this case's own folder, which is removed once its Canvas has closed.
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-cu-kept-'));
+  const saved = Object.fromEntries(['TEMP', 'TMP', 'TMPDIR'].map(key => [key, process.env[key]]));
+  const reason = 'The folder holds material that a process the update started may still use.';
+  const sentence = "Dude couldn't confirm that an update it started is done with this folder, so it left the folder in place:";
+  try {
+    await runT072Case(context, '072-kept', t072Consumer(fixture, { source: fixture.kept }), {}, async canvas => {
+      const { page, output } = canvas;
+      for (const key of Object.keys(saved)) process.env[key] = scratch;
+      await navigate(page, null, 1440, 'light', canvas.origin);
+      await clickSettingsControl(page, `document.querySelector('#dude-tab-needs')`);
+      await until(() => t072Notice(page), 'the notice');
+      assert.equal(await t072Kept(page, 'needs'), null, 'nothing kept yet');
+      // Cancel while the preparation's process cannot be confirmed stopped: the dialog closes at once.
+      await clickSettingsControl(page, `document.querySelector('[data-update-review]')`);
+      await until(async () => /Staging core\.\.\./.test((await t072Dialog(page))?.text ?? ''), 'staging');
+      await clickSettingsControl(page, `document.querySelector('[data-update-cancel]')`);
+      await until(async () => !(await t072Dialog(page)), 'closed');
+      assert.equal(await t072Focus(page), 'update-review', 'focus returns to Review update');
+      const first = await until(() => t072Kept(page, 'needs'), 'the kept folder under the notice');
+      const state = await canvas.state();
+      assert.equal(state.update, null, 'the update that kept it is gone');
+      assert.equal(state.kept.length, 1);
+      const [one] = state.kept;
+      assert.equal(path.dirname(one.root), scratch, 'the update\'s own temporary folder');
+      assert.deepEqual(first, {
+        role: 'group', name: 'Temporary folder kept', count: '1', title: 'Temporary folder kept',
+        lines: [sentence, [[one.root, reason]], "Dude won't remove it or repeat the update on its own."],
+        parts: ['title', 'notice', 'kept', 'requests'], controls: 0,
+      }, 'one warning names the folder and why, directly below the notice');
+      await aboutScreenshot(page, output, 'kept-needs-1440x900-light');
+      // Later hides the notice for the session; the warning stays where the notice was.
+      await clickSettingsControl(page, `document.querySelector('[data-update-later]')`);
+      await until(async () => !(await t072Notice(page)), 'the notice hidden');
+      assert.deepEqual((await t072Kept(page, 'needs')).parts, ['title', 'kept', 'requests'], 'still listed after Later');
+      await aboutScreenshot(page, output, 'kept-needs-later-1440x900-light');
+      // About lists it too; a Cancel there keeps a second folder, and both stay, in the order kept.
+      const about = await t072OpenAbout(canvas);
+      assert.equal(about.line, 'Dude v1.2.0 is available.');
+      assert.deepEqual((await t072Kept(page, 'about')).parts, ['heading', 'status', 'actions', 'kept', 'switch'], 'below the actions, above the switch');
+      await clickSettingsControl(page, `document.querySelector('[data-update-open]')`);
+      await until(async () => /Staging core\.\.\./.test((await t072Dialog(page))?.text ?? ''), 'staging from About');
+      await key(page, 'Escape');
+      await until(async () => !(await t072Dialog(page)), 'closed by Escape');
+      assert.equal(await t072Focus(page), 'update-open', 'focus returns to Update to v1.2.0');
+      const both = await until(async () => { const kept = await t072Kept(page, 'about'); return kept?.count === '2' ? kept : null; }, 'two kept folders');
+      const { kept } = await canvas.state();
+      assert.deepEqual(both.lines, ["Dude couldn't confirm that the updates it started are done with these folders, so it left them in place:",
+        kept.map(entry => [entry.root, reason]), "Dude won't remove them or repeat an update on its own."]);
+      assert.deepEqual([both.title, kept[0].root], ['2 temporary folders kept', one.root], 'in the order kept');
+      for (const entry of kept) assert.equal(fs.existsSync(entry.root), true, `nothing removed ${entry.root}`);
+      await aboutScreenshot(page, output, 'kept-about-1440x900-light');
+      // Narrow: the long paths wrap inside the bar, and nothing scrolls sideways.
+      for (const [width, height] of [[360, 900], [180, 450]]) {
+        await page.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+        await settleAboutAnimations(page);
+        const fit = await evaluate(page, `(() => { const bar = document.querySelector('[data-about-updates] [data-update-kept]').getBoundingClientRect();
+          const panel = document.querySelector('[data-about-panel]:not([hidden])').getBoundingClientRect();
+          return { page: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+            inside: bar.left >= panel.left - 0.5 && bar.right <= panel.right + 0.5,
+            codes: [...document.querySelectorAll('[data-about-updates] [data-update-kept] code')].every(node => node.getBoundingClientRect().right <= bar.right + 0.5) }; })()`);
+        assert.deepEqual(fit, { page: true, inside: true, codes: true }, `the warning fits at ${width}x${height}`);
+        await aboutScreenshot(page, output, `kept-about-${width}x${height}-light`);
+      }
+      await page.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+      // Back in Needs you, the same two folders are listed.
+      await clickSettingsControl(page, `document.querySelector('#dude-tab-needs')`);
+      assert.equal((await until(() => t072Kept(page, 'needs'), 'listed in Needs you')).count, '2');
+      assert.deepEqual(canvas.actions().map(action => action.op), ['preview', 'cancel', 'later', 'preview', 'cancel'], 'no replay and no removal request');
+    });
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test('072 Bundle upgrade: after a write, the old-session page names every temporary folder this session kept, with why, in the app and on a reload, in the same words', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  storeAppThemeChoice(null);
+  const fixture = await t072Fixture();
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-cu-kept-'));
+  const saved = Object.fromEntries(['TEMP', 'TMP', 'TMPDIR'].map(key => [key, process.env[key]]));
+  const lines = text => text.split(/\n+/).map(line => line.trim()).filter(Boolean);
+  try {
+    await runT072Case(context, '072-kept-handoff', t072Consumer(fixture, { source: fixture.keptOnce }), {}, async canvas => {
+      const { page, output } = canvas;
+      for (const key of Object.keys(saved)) process.env[key] = scratch;
+      await navigate(page, null, 1440, 'light', canvas.origin);
+      await clickSettingsControl(page, `document.querySelector('#dude-tab-needs')`);
+      // A Cancel keeps the first preparation's folder; the second preparation is ready and OK applies it.
+      await clickSettingsControl(page, `document.querySelector('[data-update-review]')`);
+      await until(async () => /Staging core\.\.\./.test((await t072Dialog(page))?.text ?? ''), 'staging');
+      await clickSettingsControl(page, `document.querySelector('[data-update-cancel]')`);
+      await until(() => t072Kept(page, 'needs'), 'the kept folder');
+      const [kept] = (await canvas.state()).kept;
+      await clickSettingsControl(page, `document.querySelector('[data-update-review]')`);
+      await t072Phase(page, 'ready');
+      await clickSettingsControl(page, `document.querySelector('[data-update-primary]')`);
+      const success = await t072Phase(page, 'success');
+      assert.equal(success.bars[0].title, 'Dude v1.2.0 is installed');
+      await key(page, 'Enter');
+      const handoff = await until(() => evaluate(page, `(() => { const main = document.querySelector('[data-update-handoff]');
+        return main && { text: main.innerText, controls: main.querySelectorAll('button, a, input, [tabindex="0"]').length,
+          focus: document.activeElement === main.querySelector('h1') }; })()`), 'the old-session page');
+      const expected = ['Dude', 'Start a new session to use Dude v1.2.0',
+        "Dude v1.2.0 is installed in this project, but this session still runs v1.0.0. Canvas can't be used in this session anymore.",
+        "The changes are uncommitted on main. Review and commit them when you're ready.",
+        "Dude kept these temporary folders because it couldn't confirm that they were cleaned up:",
+        `${kept.root}: The folder holds material that a process the update started may still use.`,
+        'Remove them yourself once nothing uses them.'];
+      assert.deepEqual({ lines: lines(handoff.text), controls: handoff.controls, focus: handoff.focus }, { lines: expected, controls: 0, focus: true },
+        'the outcome, then each kept folder with why, and no control');
+      assert.equal(fs.existsSync(kept.root), true, 'nothing removed it');
+      await aboutScreenshot(page, output, 'handoff-kept-1440x900-light');
+      // The server's page after a reload says the same.
+      await page.send('Page.navigate', { url: `${canvas.origin}/` });
+      await until(() => evaluate(page, `document.querySelector('h1')?.textContent === 'Start a new session to use Dude v1.2.0'`), 'the inert page');
+      assert.deepEqual(lines(await evaluate(page, `document.querySelector('main').innerText`)), expected, 'a reload shows the same words');
+      await aboutScreenshot(page, output, 'handoff-kept-reload-1440x900-light');
+      assert.deepEqual(canvas.actions().map(action => action.op), ['preview', 'cancel', 'preview', 'apply']);
+    });
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 }

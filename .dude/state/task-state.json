@@ -608,6 +608,15 @@
     },
     "updated_at": "2026-09-22T00:27:20.000Z"
   },
+  ".dude/specs/072-dude-canvas-bundle-upgrade/tasks.md": {
+    "glyphs": {
+      "T004@d27e6a90": "x",
+      "T005@e8c42b71": "x",
+      "T006@5f8b2c94": "x",
+      "T003@a87d52c6": "x"
+    },
+    "updated_at": "2026-10-21T10:25:12.000Z"
+  },
   ".dude/specs/073-dude-canvas-artifact-import/tasks.md": {
     "glyphs": {
       "T001@50646b45": "x",

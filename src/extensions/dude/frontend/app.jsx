@@ -16,6 +16,8 @@ import { loadReviewEngine, ReviewHistory, ReviewWorkspace } from './review.jsx';
 import { importPermission, requestKey, useCanvasData } from './use-canvas-data.js';
 import { Settings } from './settings.jsx';
 import { catalogCoverageText } from './pack-sources.jsx';
+import { aboutFooter } from './about.jsx';
+import { Handoff, NeedsUpdates, UpdateDialog } from './bundle-upgrade.jsx';
 
 const TABS = [['overview', 'Overview'], ['context', 'Now'], ['needs', 'Needs you'], ['new', 'New idea'], ['settings', 'Settings']];
 const TAB_ICONS = { overview: GridRegular, context: RecordRegular, needs: CommentRegular, new: AddRegular, settings: SettingsRegular };
@@ -673,6 +675,11 @@ function App() {
   // here and not in Settings because the footer and the header's Reload name it.
   const [settingsSection, setSettingsSection] = useState('packs');
   const [packsSub, setPacksSub] = useState('installed');
+  // 072: the one update dialog, opened by Review update or Update to <tag> with the control that opened it;
+  // About's installation read for the Settings footer; and Later's announcement in Needs you.
+  const [updateRequest, setUpdateRequest] = useState(null), [aboutRead, setAboutRead] = useState(null);
+  const [laterSaid, setLaterSaid] = useState('');
+  const needsPanel = useRef(null), updateRequests = useRef(0);
   const settingsActive = tab === 'settings' && !reviewActive && !history;
   const aboutActive = settingsActive && settingsSection === 'about';
   const appearanceActive = settingsActive && settingsSection === 'appearance';
@@ -803,7 +810,7 @@ function App() {
     focusResults.current = false;
     setSettingsReturn(null);
     if (destination !== 'settings') { setSettingsSection('packs'); setPacksSub('installed'); }
-    setHistory(null); setReviewActive(false); setFinderOpen(false); setMessage('');
+    setHistory(null); setReviewActive(false); setFinderOpen(false); setMessage(''); setLaterSaid('');
     focusNext.current = focus; setTab(destination);
   }, [cancelHistory]);
   const closeFinder = useCallback(() => { focusResults.current = false; setFinderOpen(false); }, []);
@@ -967,6 +974,27 @@ function App() {
     focusNext.current = { kind: 'review-return', returning };
     setHistory(null); setReviewActive(returning.fromReview);
   };
+  // 072: Review update and Update to <tag> open the one update dialog, which prepares at once.
+  const openUpdate = trigger => {
+    cancelHistory(); opening.current = null;
+    setUpdateRequest({ id: ++updateRequests.current, trigger });
+  };
+  // Later hides the notice for this session only. Focus moves to the page title, which stays.
+  const later = async () => {
+    const answer = await data.updateAction({ op: 'later' });
+    if (!answer.ok) return;
+    const heading = needsPanel.current?.querySelector('h1');
+    if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
+    setLaterSaid('');
+    setTimeout(() => setLaterSaid('Hidden for this session. About in Settings still shows the update.'), 30);
+  };
+  // After an update starts writing, this Canvas is finished: once no dialog shows its outcome, only
+  // the old-session page remains, with the words a reload gets from the server.
+  const handoff = Boolean(data.updates && data.updates.gate !== 'open' && !updateRequest);
+  // Needs you's list shows the notice while the server has one, and the temporary folders this session kept, after Later too.
+  const updatesListed = tab === 'needs' && !reviewActive && !history && !displayedRequest;
+  const notice = updatesListed ? data.updates?.notice ?? null : null;
+  const kept = updatesListed ? data.updates?.kept ?? [] : [];
   const unavailable = data.issues.needs || data.needs?.coverage.state === 'unavailable';
   const readAt = data.projection?.complete ? data.projection.readAt : null;
   const sourcesActive = settingsActive && settingsSection === 'packs' && packsSub === 'sources';
@@ -974,7 +1002,7 @@ function App() {
   const catalogWord = catalogCoverageText(data.packs);
   // Add/import reads no pack, so its footer makes no installed or catalog claim.
   // Appearance is one choice for this user on this computer, never a pack or project fact.
-  const settingsStatus = aboutActive ? 'About · Read only' : appearanceActive ? 'Appearance · This computer, all projects'
+  const settingsStatus = aboutActive ? aboutFooter(aboutRead) : appearanceActive ? 'Appearance · This computer, all projects'
     : importActive
     ? `Add/import · ${unavailable || !data.needs ? 'Current request coverage unavailable'
       : data.connected ? 'Connected' : 'Reconnecting; no automatic resend'}`
@@ -992,7 +1020,7 @@ function App() {
   // Fluent forwards provider classes to portals. Keep viewport layout on the
   // child so dropdowns/drawers do not inherit a page-sized background or height.
   return <FluentProvider theme={theme}>
-    <AriaLiveAnnouncer><div className={mergeClasses(s.page, s.app)}>
+    <AriaLiveAnnouncer><div className={mergeClasses(s.page, s.app, handoff && s.hidden)}>
       <header className={s.commands}>
         <div className={s.titlebar}><Text weight="semibold">Dude</Text>
           <Text className={s.workspaceLabel}>{data.needs ? 'Joined workspace' : 'Workspace'}</Text></div>
@@ -1021,11 +1049,13 @@ function App() {
       <main ref={main} className={s.product} aria-label="Workspace">
         {TABS.map(([value]) => <div key={value} id={`dude-panel-${value}`} role="tabpanel"
           aria-labelledby={`dude-tab-${value}`} hidden={reviewActive || Boolean(history) || value !== tab}
+          ref={value === 'needs' ? needsPanel : undefined}
           className={mergeClasses(s.detail, value === 'overview' && s.overviewPanel, value === 'settings' && s.settingsPanel,
             value === 'needs' && s.needsPanel)}>
           {value === 'settings' ? (settingsActive || settingsReturn) && <Settings key={data.rootKey} data={data}
             active={settingsActive} section={settingsSection} onSection={setSettingsSection}
-            sub={packsSub} onSub={setPacksSub} onPermission={openPermission} />
+            sub={packsSub} onSub={setPacksSub} onPermission={openPermission} onAboutRead={setAboutRead}
+            updates={{ updates: data.updates, updatesError: data.updatesError, onAction: data.updateAction, onUpdate: openUpdate }} />
             : reviewActive || history || value !== tab ? null : value === 'overview' ? <Overview data={data} rows={rows} selection={selection} finder={finder}
             scroll={scroll} position={position} onOpen={openWork} onNew={newIdea} resultsRef={results} resultsId={resultsId}
             finderControl={compactCommands ? finderControl : null} />
@@ -1043,12 +1073,16 @@ function App() {
               }}
               onBack={() => navigate('overview', 'row')} onRequest={requestEntry} onReview={reviewEntry}
               onHistory={openHistory} onHistoryReady={restoreReturnFocus} />
-              : value === 'needs' ? <NeedsYou data={data} selected={selectedRequest} drafts={drafts}
+              : value === 'needs' ? <><p className={s.visuallyHidden} role="status" aria-live="polite" aria-atomic="true"
+                data-update-later-status>{laterSaid}</p>
+                <NeedsYou data={data} selected={selectedRequest} drafts={drafts}
                 onDraft={(key, value) => setDrafts(previous => ({ ...previous, [key]: value }))}
                 onSelect={selectRequest} scopeTitle={scopeTitle(displayedRequest?.request.scope, rows)} browsingLabel={browsingLabel}
                 onReview={openReview} reviewedKey={reviewed} onNew={newIdea}
                 onReturn={settingsReturn ? returnToSettings : null}
                 returnLabel="Back to Add/import" />
+                {(notice || kept.length > 0) && <NeedsUpdates panel={needsPanel} notice={notice} kept={kept} onReview={openUpdate}
+                  onLater={() => void later()} />}</>
                 : <NewIdea value={idea} onChange={setIdea} data={data}
                   onCancel={() => navigate('needs')} />}
         </div>)}
@@ -1074,7 +1108,11 @@ function App() {
           {new Date(readAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
         </time></> : 'No complete read'}</span></>}
       </footer>
-    </div></AriaLiveAnnouncer>
+    </div>
+    <UpdateDialog request={updateRequest} updates={data.updates} onAction={data.updateAction} onReread={data.rereadUpdates}
+      onClose={() => setUpdateRequest(null)} />
+    {handoff && <Handoff updates={data.updates} />}
+    </AriaLiveAnnouncer>
   </FluentProvider>;
 }
 

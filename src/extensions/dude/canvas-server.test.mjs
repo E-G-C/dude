@@ -25,10 +25,13 @@ import {
 } from './lib/canvas-server.mjs';
 import { readNowProjection } from './lib/projection.mjs';
 import { readInstallationRecord } from './lib/about.mjs';
+import { createBundleUpgrade } from './lib/bundle-upgrade.mjs';
 import { createNeedsYou, NEEDS_YOU_LIMITS } from './lib/needs-you.mjs';
-import { readPacks, unresolvedSourceKey } from './lib/packs.mjs';
+import { nodeChildLaunch, readPacks, unresolvedSourceKey } from './lib/packs.mjs';
 import { readProjectArtifacts } from './lib/project-artifacts.mjs';
-import { cmdStatus } from '../../skills/dude-compose/compose.mjs';
+import { cmdAdd, cmdStatus } from '../../skills/dude-compose/compose.mjs';
+import { releaseCheckCommand } from '../../skills/dude-bundle-upgrade/lib/release-source.mjs';
+import { buildRelease } from '../../../scripts/build-release.mjs';
 import { renderDevelopmentBaseRelease } from '../../skills/dude-engine/lib/development-base-release.mjs';
 import { PACK_SOURCES_PATH, describePackSources, readPackSources, serializePackSourcesDocument } from '../../skills/dude-engine/lib/pack-sources.mjs';
 import { serializeProfileDocument } from '../../skills/dude-engine/lib/profile.mjs';
@@ -1350,6 +1353,12 @@ function copiedExtensionHarness() {
   fs.mkdirSync(path.join(root, 'src/skills/dude-compose'), { recursive: true });
   fs.copyFileSync(path.resolve(ENGINE_SOURCE_ROOT, '../dude-compose/compose.mjs'),
     path.join(root, 'src/skills/dude-compose/compose.mjs'));
+  // The update controller's release check comes from the upgrade engine.
+  for (const relative of ['upgrade.mjs', 'lib/release-source.mjs']) {
+    const target = path.join(root, 'src/skills/dude-bundle-upgrade', ...relative.split('/'));
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.resolve(ENGINE_SOURCE_ROOT, '../dude-bundle-upgrade', ...relative.split('/')), target);
+  }
   fs.mkdirSync(sdkRoot, { recursive: true });
   fs.writeFileSync(path.join(sdkRoot, 'package.json'), JSON.stringify({
     name: '@github/copilot-sdk',
@@ -1403,12 +1412,13 @@ function copiedExtensionHarness() {
     '  const second = await canvas.open(context);',
     '  const page = await fetch(first.url);',
     "  const projection = await (await fetch(new URL('/api/projection', first.url))).json();",
+    "  const updates = await (await fetch(new URL('/api/updates', first.url))).json();",
     '  await canvas.onClose({ instanceId: context.instanceId });',
     '  let portRefused = false;',
     '  try { await fetch(first.url); } catch { portRefused = true; }',
     '  await canvas.onClose({ instanceId: context.instanceId });',
     '  process.send?.({',
-    '    first, second, pageStatus: page.status, projection, portRefused,',
+    '    first, second, pageStatus: page.status, projection, updates, portRefused,',
     '    sessionLogCalls: sdk.sessionLogCalls(), stdoutWrites,',
     '    sessionRegistration: sdk.registeredSessionSummary(),',
     '  });',
@@ -3514,6 +3524,12 @@ test('extension lifecycle contains rejected session logs without touching stdout
     assert.deepEqual(result.projection.projection.diagnostics.map((diagnostic) => diagnostic.code), [
       'TRACKED_AUTHORITY_UNAVAILABLE',
     ]);
+    // 072: the extension's one update controller serves its Canvas; this workspace records no installation,
+    // so its session-start check contacted nothing.
+    assert.deepEqual(result.updates, {
+      installation: { channel: 'unavailable', installedRef: null, sourceRef: null }, runningRef: null,
+      checking: false, check: null, notice: null, update: null, gate: 'open', kept: [],
+    });
     assert.equal(result.portRefused, true, 'close must remove the server despite close logging rejection');
     assert.equal(result.sessionLogCalls, 3, 'both opens and the successful close attempt session logging');
     assert.equal(result.stdoutWrites, 0, 'neither lifecycle nor logging containment may use stdout');
@@ -9914,15 +9930,19 @@ test('084 Upstream packs: when Local library cannot be read, Available hides no 
 });
 
 /*
- * 085 App theme: the one per-user Canvas preference. Each case owns its
- * preference home, so no case reads or writes the real user's choice.
+ * 085 App theme and 072 update checks: the per-user Canvas preferences, one
+ * document of two choices. Each case owns its preference home, so no case
+ * reads or writes the real user's choices.
  */
 const PREFERENCES_ROUTE = '/api/canvas-preferences';
 const PREFERENCE_PARTS = Object.freeze(['extensions', 'dude', 'artifacts', 'canvas-preferences.json']);
 const PREFERENCE_UNREADABLE = Object.freeze({ status: 503, body: { error: 'preference_unreadable' } });
 const PREFERENCE_WRITE_FAILED = Object.freeze({ status: 500, body: { error: 'preference_write_failed' } });
-/** @param {boolean} followAppTheme */
-const preferenceOf = followAppTheme => ({ status: 200, body: { followAppTheme } });
+/** @param {boolean} followAppTheme @param {boolean} [checkForUpdatesOnSessionStart] */
+const preferenceOf = (followAppTheme, checkForUpdatesOnSessionStart = true) => (
+  { status: 200, body: { followAppTheme, checkForUpdatesOnSessionStart } });
+/** The complete stored document. @param {boolean} followAppTheme @param {boolean} [checkForUpdatesOnSessionStart] */
+const preferenceDocument = (followAppTheme, checkForUpdatesOnSessionStart = true) => JSON.stringify({ followAppTheme, checkForUpdatesOnSessionStart });
 /**
  * Each case's fixture folder is owned and project-relative: a uniquely named
  * folder at the repository root, outside the src, .github, .dude, scripts,
@@ -9970,11 +9990,11 @@ test('085 App theme: an absent preference reads as off and creates nothing', asy
   const { temporary, file } = preferenceHome(t);
   const instance = await openInstance('app-theme-absent', () => {});
   try {
-    assert.deepEqual(await preferenceRoute(instance), preferenceOf(false));
+    assert.deepEqual(await preferenceRoute(instance), preferenceOf(false, true), 'appearance off, update checks on');
     assert.deepEqual(fs.readdirSync(temporary), [], 'a read creates no home, folder or file');
     // An existing but empty artifacts folder still holds no saved choice.
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    assert.deepEqual(await preferenceRoute(instance), preferenceOf(false));
+    assert.deepEqual(await preferenceRoute(instance), preferenceOf(false, true));
     assert.deepEqual(fs.readdirSync(path.dirname(file)), []);
   } finally {
     await closeInstance('app-theme-absent');
@@ -9994,11 +10014,11 @@ test('085 App theme: one saved choice is shared by project servers on distinct p
   try {
     let [alpha, beta] = [await open(0), await open(1)];
     assert.notEqual(new URL(alpha.url).origin, new URL(beta.url).origin);
-    assert.deepEqual(await preferenceRoute(alpha, { followAppTheme: true }), preferenceOf(true), 'a save answers the saved choice');
-    assert.equal(fs.readFileSync(file, 'utf8'), '{"followAppTheme":true}');
+    assert.deepEqual(await preferenceRoute(alpha, { followAppTheme: true }), preferenceOf(true), 'a save answers the saved document');
+    assert.equal(fs.readFileSync(file, 'utf8'), preferenceDocument(true));
     assert.deepEqual(await preferenceRoute(beta), preferenceOf(true), 'the other project reads the same choice');
     assert.deepEqual(await preferenceRoute(beta, { followAppTheme: false }), preferenceOf(false));
-    assert.equal(fs.readFileSync(file, 'utf8'), '{"followAppTheme":false}');
+    assert.equal(fs.readFileSync(file, 'utf8'), preferenceDocument(false));
     assert.deepEqual(await preferenceRoute(alpha), preferenceOf(false));
     // The file alone is the authority: no server keeps its own copy.
     fs.writeFileSync(file, '{"followAppTheme":true}');
@@ -10013,7 +10033,7 @@ test('085 App theme: one saved choice is shared by project servers on distinct p
     assert.deepEqual(await preferenceRoute(beta, { followAppTheme: false }), preferenceOf(false));
     assert.deepEqual(await preferenceRoute(alpha), preferenceOf(false));
 
-    assert.deepEqual(snapshotFiles(home), new Map([[path.join(...PREFERENCE_PARTS), Buffer.from('{"followAppTheme":false}')]]),
+    assert.deepEqual(snapshotFiles(home), new Map([[path.join(...PREFERENCE_PARTS), Buffer.from(preferenceDocument(false))]]),
       'the home holds only the preference: no extension entrypoint, package or staging file');
     assert.deepEqual(roots.map(root => snapshotFiles(root)), before, 'no project is written');
   } finally {
@@ -10031,15 +10051,22 @@ test('085 App theme: malformed or unreadable storage is a read error, never off 
     for (const stored of ['', ' ', 'not json', '{"followAppTheme":true', '{"followAppTheme":true}}', 'null', 'false',
       '[]', '"off"', '{}', '[{"followAppTheme":true}]', '{"followAppTheme":"true"}', '{"followAppTheme":1}',
       '{"followAppTheme":0}', '{"followAppTheme":null}', '{"FollowAppTheme":true}', '{"followAppTheme":true,"theme":"dark"}',
-      '{"followAppTheme":false,"root":"/elsewhere"}', '{"followAppTheme":true,"__proto__":{}}']) {
+      '{"followAppTheme":false,"root":"/elsewhere"}', '{"followAppTheme":true,"__proto__":{}}',
+      // 072: the update-check choice alone, a wrong type, a third key, and the right keys in another case.
+      '{"checkForUpdatesOnSessionStart":false}', '{"followAppTheme":true,"checkForUpdatesOnSessionStart":"false"}',
+      '{"followAppTheme":true,"checkForUpdatesOnSessionStart":null}', '{"followAppTheme":"false","checkForUpdatesOnSessionStart":true}',
+      '{"followAppTheme":true,"checkForUpdatesOnSessionStart":true,"skipVersion":"v1.13.0"}',
+      '{"followAppTheme":true,"CheckForUpdatesOnSessionStart":true}', '{"followAppTheme":true,"checkForUpdates":true}']) {
       fs.writeFileSync(file, stored);
       assert.deepEqual(await preferenceRoute(instance), PREFERENCE_UNREADABLE, `stored ${JSON.stringify(stored)}`);
       assert.equal(fs.readFileSync(file, 'utf8'), stored, 'a read never repairs the stored bytes');
       assert.deepEqual(fs.readdirSync(artifacts), ['canvas-preferences.json']);
     }
-    // Insignificant JSON whitespace is the same document.
+    // Insignificant JSON whitespace is the same document, in either accepted form.
     fs.writeFileSync(file, '{ "followAppTheme": true }\n');
-    assert.deepEqual(await preferenceRoute(instance), preferenceOf(true));
+    assert.deepEqual(await preferenceRoute(instance), preferenceOf(true, true));
+    fs.writeFileSync(file, '{ "checkForUpdatesOnSessionStart": false, "followAppTheme": true }\n');
+    assert.deepEqual(await preferenceRoute(instance), preferenceOf(true, false));
 
     fs.rmSync(file);
     fs.mkdirSync(file);
@@ -10058,13 +10085,20 @@ test('085 App theme: malformed or unreadable storage is a read error, never off 
     });
     assert.deepEqual(await preferenceRoute(instance), PREFERENCE_UNREADABLE, 'a refused permission');
     assert.equal(denied, 1, 'the refusal came from the actual preference read');
+    // 072: a save over a document it cannot read is refused, and writes nothing.
+    assert.deepEqual(await preferenceRoute(instance, { checkForUpdatesOnSessionStart: false }), PREFERENCE_UNREADABLE);
+    assert.equal(denied, 2, 'the save read the document first');
     unreadable.mock.restore();
+    assert.equal(fs.readFileSync(file, 'utf8'), '{"followAppTheme":true}');
     assert.deepEqual(await preferenceRoute(instance), preferenceOf(true), 'the readable preference reads again');
 
-    // A save is the user's explicit choice, so it replaces damaged storage.
-    fs.writeFileSync(file, 'not json');
-    assert.deepEqual(await preferenceRoute(instance, { followAppTheme: false }), preferenceOf(false));
-    assert.equal(fs.readFileSync(file, 'utf8'), '{"followAppTheme":false}');
+    // 072: a save never replaces damaged storage: it would lose the other choice. Neither switch saves until Retry reads.
+    for (const body of [{ followAppTheme: false }, { checkForUpdatesOnSessionStart: false }]) {
+      fs.writeFileSync(file, 'not json');
+      assert.deepEqual(await preferenceRoute(instance, body), PREFERENCE_UNREADABLE, JSON.stringify(body));
+      assert.equal(fs.readFileSync(file, 'utf8'), 'not json', 'the damaged bytes are left as they are');
+      assert.deepEqual(fs.readdirSync(artifacts), ['canvas-preferences.json'], 'no staging file was written');
+    }
   } finally {
     t.mock.restoreAll();
     await closeInstance('app-theme-unreadable');
@@ -10090,16 +10124,22 @@ test('085 App theme: a save that cannot be written fails and leaves the previous
       assert.deepEqual(await preferenceRoute(instance, { followAppTheme: false }), PREFERENCE_WRITE_FAILED, method);
       refusal.mock.restore();
       assert.equal(refused, 1, `the refusal came from the actual ${method}`);
-      assert.equal(fs.readFileSync(file, 'utf8'), '{"followAppTheme":true}', 'the previous document is intact');
+      assert.equal(fs.readFileSync(file, 'utf8'), preferenceDocument(true), 'the previous document is intact');
       assert.deepEqual(fs.readdirSync(artifacts), ['canvas-preferences.json'], 'no staging file is left behind');
       assert.deepEqual(await preferenceRoute(instance), preferenceOf(true));
     }
 
-    // A real refusal: a file stands where the home's folders must be made.
+    // A real refusal: a file stands where the home's folders must be made. The
+    // save reads first, as the system reports it: Windows calls the path missing,
+    // so the save fails to make its folder; elsewhere the read itself fails, so
+    // the save is refused. Either way nothing is written.
     const blocker = path.join(temporary, 'blocker');
     fs.writeFileSync(blocker, 'not a folder');
     process.env.COPILOT_HOME = path.join(blocker, 'copilot-home');
-    assert.deepEqual(await preferenceRoute(instance, { followAppTheme: true }), PREFERENCE_WRITE_FAILED, 'an unwritable home');
+    const read = await preferenceRoute(instance);
+    assert.ok([JSON.stringify(preferenceOf(false)), JSON.stringify(PREFERENCE_UNREADABLE)].includes(JSON.stringify(read)), JSON.stringify(read));
+    assert.deepEqual(await preferenceRoute(instance, { followAppTheme: true }),
+      read.status === 200 ? PREFERENCE_WRITE_FAILED : PREFERENCE_UNREADABLE, 'an unwritable home');
     assert.equal(fs.readFileSync(blocker, 'utf8'), 'not a folder');
   } finally {
     t.mock.restoreAll();
@@ -10118,14 +10158,14 @@ test('085 App theme: simultaneous saves through two servers leave one complete d
     const saved = [];
     outcomes.forEach((outcome, index) => {
       if (outcome.status === 'rejected') throw outcome.reason;
-      // Windows can refuse one rename while another replaces the same file;
-      // that save then reports its failure instead of a success.
+      // One process saves one at a time (072), so no rename races another
+      // here; a failure would still report itself instead of a success.
       if (outcome.value.status === 200) saved.push(choices[index]);
       assert.deepEqual(outcome.value, outcome.value.status === 200 ? preferenceOf(choices[index]) : PREFERENCE_WRITE_FAILED);
     });
     assert.ok(saved.length > 0, 'at least one save completed');
     const stored = fs.readFileSync(file, 'utf8');
-    assert.ok(['{"followAppTheme":true}', '{"followAppTheme":false}'].includes(stored), `one complete document: ${stored}`);
+    assert.ok([preferenceDocument(true), preferenceDocument(false)].includes(stored), `one complete document: ${stored}`);
     const final = JSON.parse(stored).followAppTheme;
     assert.ok(saved.includes(final), 'the document is one completed save');
     assert.deepEqual(fs.readdirSync(path.dirname(file)), ['canvas-preferences.json'], 'no staging file is left behind');
@@ -10203,13 +10243,17 @@ test('085 App theme: Host, Origin, same-origin save, exact route and closed body
     // A read takes no body.
     await expectAnswer({ path: PREFERENCES_ROUTE, headers: { host, 'content-length': '2' }, body: '{}' }, 400, invalid);
     await expectAnswer({ path: PREFERENCES_ROUTE, headers: { host, 'transfer-encoding': 'chunked' }, body: '{}' }, 400, invalid);
-    // A save is JSON holding exactly one boolean: no root, path, home or other field.
+    // A save is JSON holding exactly one known boolean: no root, path, home or other field, and not both choices.
     await expectAnswer(save(valid, { ...json, 'content-type': 'text/plain' }), 415, { error: 'JSON action required.' });
     await expectAnswer(save(valid, { host, origin }), 415, { error: 'JSON action required.' });
     for (const body of ['', '{invalid', 'followAppTheme=true', Buffer.from([0xc3, 0x28]), 'true', 'null', '[]', '"on"', '{}',
       '[{"followAppTheme":true}]', ...['"true"', '1', '0', 'null', '[]', '{}'].map(value => `{"followAppTheme":${value}}`),
+      ...['"false"', '0', 'null', '{}'].map(value => `{"checkForUpdatesOnSessionStart":${value}}`),
+      JSON.stringify({ followAppTheme: true, checkForUpdatesOnSessionStart: true }),
+      JSON.stringify({ checkForUpdates: false }), JSON.stringify({ CheckForUpdatesOnSessionStart: false }),
       ...['root', 'path', 'file', 'home', 'copilotHome', 'COPILOT_HOME', 'location', 'destination', 'workspace', 'theme']
-        .map(key => JSON.stringify({ followAppTheme: true, [key]: '/elsewhere' })),
+        .flatMap(key => [JSON.stringify({ followAppTheme: true, [key]: '/elsewhere' }),
+          JSON.stringify({ checkForUpdatesOnSessionStart: false, [key]: '/elsewhere' })]),
       JSON.stringify({ root: '/elsewhere' })]) {
       await expectAnswer(save(body), 400, invalid);
     }
@@ -10220,11 +10264,16 @@ test('085 App theme: Host, Origin, same-origin save, exact route and closed body
 
     assert.equal(reads, 0, 'no refused request read the preference');
     assert.equal(fs.existsSync(home), false, 'no refused request saved anything');
-    await expectAnswer({ path: PREFERENCES_ROUTE, headers: { host, origin } }, 200, { followAppTheme: false });
-    await expectAnswer({ path: PREFERENCES_ROUTE, headers: { host, 'sec-fetch-site': 'same-origin' } }, 200, { followAppTheme: false });
+    const defaults = { followAppTheme: false, checkForUpdatesOnSessionStart: true };
+    await expectAnswer({ path: PREFERENCES_ROUTE, headers: { host, origin } }, 200, defaults);
+    await expectAnswer({ path: PREFERENCES_ROUTE, headers: { host, 'sec-fetch-site': 'same-origin' } }, 200, defaults);
     assert.equal(reads, 2, "the renderer's own reads are served");
-    await expectAnswer(save(valid, { ...json, 'content-type': 'application/json; charset=utf-8' }), 200, { followAppTheme: true });
-    assert.equal(fs.readFileSync(file, 'utf8'), '{"followAppTheme":true}', 'the exact save is admitted');
+    await expectAnswer(save(valid, { ...json, 'content-type': 'application/json; charset=utf-8' }), 200,
+      { followAppTheme: true, checkForUpdatesOnSessionStart: true });
+    assert.equal(fs.readFileSync(file, 'utf8'), preferenceDocument(true), 'the exact save is admitted');
+    await expectAnswer(save(JSON.stringify({ checkForUpdatesOnSessionStart: false })), 200,
+      { followAppTheme: true, checkForUpdatesOnSessionStart: false });
+    assert.equal(fs.readFileSync(file, 'utf8'), preferenceDocument(true, false), 'the other choice is kept');
     assert.deepEqual(snapshotFiles(root), before, 'no project is written');
   } finally {
     t.mock.restoreAll();
@@ -10253,7 +10302,7 @@ test('085 App theme: without COPILOT_HOME the preference is in the user home .co
     assert.deepEqual(fs.readdirSync(home), [], 'a read creates nothing');
     assert.deepEqual(await preferenceRoute(instance, { followAppTheme: true }), preferenceOf(true));
     assert.deepEqual(snapshotFiles(home),
-      new Map([[path.join('.copilot', ...PREFERENCE_PARTS), Buffer.from('{"followAppTheme":true}')]]));
+      new Map([[path.join('.copilot', ...PREFERENCE_PARTS), Buffer.from(preferenceDocument(true))]]));
     assert.deepEqual(await preferenceRoute(instance), preferenceOf(true));
     // The page the next Canvas opens with bootstraps the same choice from that home.
     assert.equal(await (await call(instance.url)).text(), servedPage({ followAppTheme: true }));
@@ -10351,5 +10400,1528 @@ test('085 App theme: project servers on distinct ports bootstrap one saved choic
   } finally {
     await closeInstance('app-theme-page-0');
     await closeInstance('app-theme-page-1');
+  }
+});
+
+/*
+ * 072 Canvas update: the extension's one update controller behind GET
+ * /api/updates and POST /api/updates/action. The real cases use ordinary tagged
+ * local upstreams built from the current source by the release builder, and
+ * disposable consumers on their older release. The update child runs this
+ * source tree's installed engine, which hands staging and application to the
+ * target release's own retained engine. Every case owns its temporary folder
+ * and, where it reads one, its preference home, so it neither reads the real
+ * user's choices nor hides a root it leaves behind.
+ */
+const UPDATES_ROUTE = '/api/updates';
+const UPDATES_ACTION_ROUTE = '/api/updates/action';
+const UPDATE_ACTION = fileURLToPath(new URL('./lib/upgrade-action.mjs', import.meta.url));
+const UPDATE_REPOSITORY_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
+// What the older release (v1.0.0) has that the target (v1.1.0) changes.
+const UPDATE_REPLACED = '.github/extensions/dude/ui/review/NOTICE.txt';
+const UPDATE_ADDED = '.github/extensions/dude/ui/review/styles.css';
+const UPDATE_RETIRED = '.github/skills/dude-retired/SKILL.md';
+const UPDATE_ALPHA = '.github/agents/dude-pack-alpha-worker.agent.md';
+const UPDATE_MANIFEST = '.dude/metadata/bundle-manifest.md';
+const UPDATE_PROFILE = '.dude/metadata/profile.md';
+const UPDATE_LOG = '.dude/metadata/upgrade-log.md';
+const UPDATE_ID_RE = /^[0-9a-f]{32}$/;
+const UPDATE_IDLE = Object.freeze({ checking: false, check: null, notice: null, update: null, gate: 'open', kept: [] });
+// A target release whose own linter finds a new failure once it is in place.
+const UPDATE_BROKEN_SKILL = '---\nname: "dude-wrong"\ndescription: "Use when testing a fixture failure."\n---\n\n# Broken\n';
+// A target release whose own engine stages through the real one but reports a
+// restoration it could not confirm, as the real engine reports a failed one.
+const UPDATE_UNCONFIRMED_ENGINE = `export * from './upgrade-real.mjs';
+export const UPGRADE_STAGING_CONTRACT = 1;
+export async function applyPreparedUpgrade({ prepared }) {
+  return {
+    from_ref: prepared.from_ref, to_ref: prepared.to_ref, branch: prepared.branch,
+    outcome: 'restoration_unconfirmed',
+    reason: 'restore failed: ${UPDATE_REPLACED}: EBUSY: resource busy or locked',
+    paths: ['${UPDATE_REPLACED}'],
+    new_failures: [],
+  };
+}
+`;
+// A target release whose own bundle check holds each run until the case lets
+// it go, for at most 60 seconds, and then reports no problem. The file the
+// update adds tells the run after writing from the one before, and each run
+// marks beside the project when it starts waiting (see `heldCheck`).
+const UPDATE_HELD_LINT = `#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+const root = path.resolve(process.argv[2] || '.');
+const run = fs.existsSync(path.join(root, ${JSON.stringify(UPDATE_ADDED)})) ? 'after' : 'before';
+const marker = (name) => path.join(path.dirname(root), path.basename(root) + '.' + run + '-' + name);
+fs.writeFileSync(marker('waiting'), '');
+for (let waited = 0; waited < 60000 && !fs.existsSync(marker('go')); waited += 20) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+}
+console.log('[INFO]  Findings: 0 warning(s), 0 failure(s)');
+`;
+// A target release whose staging, as the real engine's does when it cannot
+// confirm that a process it started has stopped, leaves material in its
+// prepared folder and says so. It reports its first activity, then waits to be
+// cancelled.
+const UPDATE_KEPT_ENGINE = `import fs from 'node:fs';
+import path from 'node:path';
+export * from './upgrade-real.mjs';
+export const UPGRADE_STAGING_CONTRACT = 1;
+export async function stageUpgrade({ preparedRoot, signal, onProgress }) {
+  fs.writeFileSync(path.join(preparedRoot, 'still-in-use.txt'), 'a process may still write here\\n');
+  onProgress?.({ phase: 'staging-core' });
+  await new Promise((resolve) => (signal.aborted ? resolve(undefined) : signal.addEventListener('abort', resolve, { once: true })));
+  throw Object.assign(new Error('pack "alpha" could not be prepared: its process tree could not be confirmed stopped'),
+    { reason: 'pack-failed', pack: 'alpha', cleanupConfirmed: false });
+}
+`;
+// A target release whose first preparation for a project leaves material as
+// UPDATE_KEPT_ENGINE does, and waits to be replaced; later preparations stage
+// as the real engine does. Its application ends without answering once the case
+// lets it, so the stop of its process, and so its folder's cleanup, cannot be
+// confirmed. Its markers lie beside the project.
+const UPDATE_RETAINING_ENGINE = `import fs from 'node:fs';
+import path from 'node:path';
+import * as real from './upgrade-real.mjs';
+export * from './upgrade-real.mjs';
+export const UPGRADE_STAGING_CONTRACT = 1;
+const beside = (root, name) => path.join(path.dirname(root), path.basename(root) + '.' + name);
+export async function stageUpgrade(input) {
+  const first = beside(input.workspaceRoot, 'first-staged');
+  if (fs.existsSync(first)) return real.stageUpgrade(input);
+  fs.writeFileSync(first, '');
+  fs.writeFileSync(path.join(input.preparedRoot, 'still-in-use.txt'), 'a process may still write here\\n');
+  input.onProgress?.({ phase: 'staging-core' });
+  await new Promise((resolve) => (input.signal.aborted ? resolve(undefined) : input.signal.addEventListener('abort', resolve, { once: true })));
+  throw Object.assign(new Error('pack "alpha" could not be prepared: its process tree could not be confirmed stopped'),
+    { reason: 'pack-failed', pack: 'alpha', cleanupConfirmed: false });
+}
+export async function applyPreparedUpgrade({ workspaceRoot }) {
+  const go = beside(workspaceRoot, 'apply-go');
+  for (let waited = 0; waited < 60000 && !fs.existsSync(go); waited += 20) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  }
+  process.exit(1);
+}
+`;
+/** Every fixture root the 072 cases create; removed once the file's tests finish. */
+const updateRoots = /** @type {string[]} */ ([]);
+after(() => {
+  for (const root of updateRoots) fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+});
+
+/** @param {string} cwd @param {...string} args */
+function updateGit(cwd, ...args) {
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  assert.equal(result.status, 0, `git ${args.join(' ')} in ${cwd}\n${result.stdout}${result.stderr}`);
+  return result.stdout.trim();
+}
+/** @param {string} root @param {boolean} [init] */
+function updateRepository(root, init = true) {
+  if (init) updateGit(root, 'init', '-q', '-b', 'main');
+  updateGit(root, 'config', 'user.name', 'Update Fixture');
+  updateGit(root, 'config', 'user.email', 'update-fixture@example.invalid');
+  updateGit(root, 'config', 'core.autocrlf', 'false');
+}
+/** @param {string} root @param {string} message */
+function updateCommit(root, message) {
+  updateGit(root, 'add', '-A');
+  updateGit(root, 'commit', '-q', '-m', message);
+}
+/** @param {string} root @param {string} relative @param {string | Buffer} content */
+function updateWrite(root, relative, content) {
+  const target = path.join(root, ...relative.split('/'));
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, content);
+}
+/** @param {string} root @param {string} relative */
+const updateRead = (root, relative) => fs.readFileSync(path.join(root, ...relative.split('/')));
+/** Rewrite only the manifest's JSON payload. @param {string} root @param {Record<string, string>} payload */
+function updateManifest(root, payload) {
+  const current = updateRead(root, UPDATE_MANIFEST).toString('utf8');
+  updateWrite(root, UPDATE_MANIFEST, current.replace(/```json\n[\s\S]*?\n```/, `\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``));
+}
+/** One lint-clean catalog pack with one worker agent. @param {string} root @param {string} name @param {string} version */
+function updatePack(root, name, version) {
+  const directory = `library/packs/${name}`;
+  fs.rmSync(path.join(root, ...directory.split('/')), { recursive: true, force: true });
+  updateWrite(root, `${directory}/pack.md`, `---\nname: ${name}\ndescription: "Fixture ${name} pack."\n---\n\n# ${name}\n`);
+  updateWrite(root, `${directory}/agents/dude-pack-${name}-worker.agent.md`, [
+    '---', `name: "${name} worker"`, `description: "Fixture ${name} worker."`, 'tools: ["read"]', 'user-invocable: false',
+    'model-class: balanced', '---', '', `You are the ${name} worker (${version}).`, '', '## Scope', '', 'Fixture work only.', '',
+    '**Coordinator-only artifacts:** none.', '',
+  ].join('\n'));
+}
+/** HEAD, branch, index and staged paths: what an update must never move. @param {string} root */
+function updateGitState(root) {
+  return {
+    head: updateGit(root, 'rev-parse', 'HEAD'),
+    branch: updateGit(root, 'symbolic-ref', '--short', 'HEAD'),
+    index: createHash('sha256').update(updateGit(root, 'ls-files', '-s')).digest('hex'),
+    staged: updateGit(root, 'diff', '--cached', '--name-only'),
+    tags: updateGit(root, 'tag', '--list'),
+  };
+}
+/** The project's files without Git's own folder, which `updateGitState` covers. @param {string} root */
+const workTree = root => new Map([...snapshotFiles(root)].filter(([file]) => file.split(path.sep)[0] !== '.git'));
+
+/**
+ * @typedef {{ root: string, source: string, template: string, alpha: Buffer, older: Buffer,
+ *   restore: string, unconfirmed: string, checking: string, kept: string, retaining: string, tagsOnly: string }} UpdateFixture
+ */
+/** @type {Promise<UpdateFixture> | undefined} */
+let sharedUpdateFixture;
+/** The shared upstreams and consumer template, built once, before any case owns the temporary folder. */
+const updateFixture = () => (sharedUpdateFixture ??= buildUpdateFixture());
+
+/** @returns {Promise<UpdateFixture>} */
+async function buildUpdateFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-cu-fx-'));
+  updateRoots.push(root);
+  const upstream = path.join(root, 'up');
+  const source = pathToFileURL(upstream).href;
+  buildRelease({ repoRoot: UPDATE_REPOSITORY_ROOT, outDir: upstream, ref: '' });
+  const replaced = updateRead(upstream, UPDATE_REPLACED);
+  const added = updateRead(upstream, UPDATE_ADDED);
+  const older = Buffer.concat([replaced, Buffer.from('\nolder release fixture\n')]);
+  // v1.0.0: an older replaced file, no added file, a retired skill, and the alpha pack at v1.
+  updateWrite(upstream, UPDATE_REPLACED, older);
+  fs.rmSync(path.join(upstream, ...UPDATE_ADDED.split('/')));
+  updateWrite(upstream, UPDATE_RETIRED, '---\nname: "dude-retired"\ndescription: "Use when testing a retired fixture skill."\n---\n\n# Retired\n');
+  updatePack(upstream, 'alpha', 'v1');
+  updateRepository(upstream);
+  updateCommit(upstream, 'release v1.0.0');
+  updateGit(upstream, 'tag', 'v1.0.0');
+
+  // The consumer: v1.0.0 on the latest channel, with alpha installed from the upstream's v1.0.0.
+  const template = path.join(root, 'tpl');
+  fs.cpSync(upstream, template, {
+    recursive: true,
+    filter: from => !['.git', 'library'].includes(path.relative(upstream, from).split(path.sep)[0]),
+  });
+  updateManifest(template, { source_repo: source, source_ref: 'latest', installed_ref: 'v1.0.0' });
+  const installed = await cmdAdd({ root: template, library: path.join(template, 'library', 'packs'), name: 'alpha', source, ref: 'v1.0.0', force: false });
+  assert.equal(installed.ok, true, installed.error);
+  updateRepository(template);
+  updateCommit(template, 'consumer on v1.0.0');
+  const lint = spawnSync(process.execPath, [path.join(template, '.github/skills/dude-lint/lint.mjs'), template], { encoding: 'utf8' });
+  assert.equal(lint.status, 0, `the consumer must start lint-clean:\n${lint.stdout}`);
+  const alpha = updateRead(template, UPDATE_ALPHA);
+
+  // v1.1.0, an annotated tag: the target, with alpha at v2.
+  updateWrite(upstream, UPDATE_REPLACED, replaced);
+  updateWrite(upstream, UPDATE_ADDED, added);
+  fs.rmSync(path.join(upstream, '.github/skills/dude-retired'), { recursive: true });
+  updatePack(upstream, 'alpha', 'v2');
+  updateCommit(upstream, 'release v1.1.0');
+  updateGit(upstream, 'tag', '-a', 'v1.1.0', '-m', 'Release v1.1.0');
+
+  // Two more upstreams, each with a v1.2.0 one commit past v1.1.0.
+  /** @param {string} name @param {(clone: string) => void} change */
+  const variant = (name, change) => {
+    const clone = path.join(root, name);
+    updateGit(root, 'clone', '-q', upstream, clone);
+    updateRepository(clone, false);
+    change(clone);
+    updateCommit(clone, name);
+    updateGit(clone, 'tag', 'v1.2.0');
+    return pathToFileURL(clone).href;
+  };
+  const restore = variant('ur', clone => updateWrite(clone, '.github/skills/dude-broken/SKILL.md', UPDATE_BROKEN_SKILL));
+  const unconfirmed = variant('uu', clone => {
+    const engine = path.join(clone, '.github/skills/dude-bundle-upgrade');
+    fs.renameSync(path.join(engine, 'upgrade.mjs'), path.join(engine, 'upgrade-real.mjs'));
+    fs.writeFileSync(path.join(engine, 'upgrade.mjs'), UPDATE_UNCONFIRMED_ENGINE);
+  });
+  const checking = variant('uc', clone => updateWrite(clone, '.github/skills/dude-lint/lint.mjs', UPDATE_HELD_LINT));
+  const kept = variant('uk', clone => {
+    const engine = path.join(clone, '.github/skills/dude-bundle-upgrade');
+    fs.renameSync(path.join(engine, 'upgrade.mjs'), path.join(engine, 'upgrade-real.mjs'));
+    fs.writeFileSync(path.join(engine, 'upgrade.mjs'), UPDATE_KEPT_ENGINE);
+  });
+  const retaining = variant('ux', clone => {
+    const engine = path.join(clone, '.github/skills/dude-bundle-upgrade');
+    fs.renameSync(path.join(engine, 'upgrade.mjs'), path.join(engine, 'upgrade-real.mjs'));
+    fs.writeFileSync(path.join(engine, 'upgrade.mjs'), UPDATE_RETAINING_ENGINE);
+  });
+
+  // A source with tags only, for release checks.
+  const tags = path.join(root, 'tags');
+  updateWrite(tags, 'README.md', 'tags\n');
+  updateRepository(tags);
+  updateCommit(tags, 'tags');
+  for (const tag of ['v1.0.0', 'v1.1.0-rc1', 'nightly']) updateGit(tags, 'tag', tag);
+  updateGit(tags, 'tag', '-a', 'v1.1.0', '-m', 'Release v1.1.0');
+  return { root, source, template, alpha, older, restore, unconfirmed, checking, kept, retaining, tagsOnly: pathToFileURL(tags).href };
+}
+
+let updateWorkspaces = 0;
+/**
+ * A disposable consumer: a copy of the template, optionally recorded against
+ * another upstream.
+ * @param {UpdateFixture} fixture
+ * @param {string} [source]
+ */
+function newUpdateWorkspace(fixture, source = fixture.source) {
+  updateWorkspaces += 1;
+  const root = path.join(fixture.root, `w${updateWorkspaces}`);
+  fs.cpSync(fixture.template, root, { recursive: true });
+  if (source !== fixture.source) {
+    updateManifest(root, { source_repo: source, source_ref: 'latest', installed_ref: 'v1.0.0' });
+    updateCommit(root, 'another upstream');
+  }
+  return root;
+}
+
+/**
+ * Give one case its own temporary folder: the update roots, and the release
+ * check's never-created home, land there. Teardown restores the variables and
+ * removes the folder.
+ * @param {import('node:test').TestContext} t
+ * @param {string} [prefix] the folder's name before its random part
+ */
+function updateTemporary(t, prefix = 'dude-cu-tmp-') {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const saved = Object.fromEntries(['TEMP', 'TMP', 'TMPDIR'].map(key => [key, process.env[key]]));
+  for (const key of Object.keys(saved)) process.env[key] = scratch;
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
+  return scratch;
+}
+
+/**
+ * Wait until a folder holds exactly `count` entries: an update's root is
+ * removed after its child closed, which a state read can see first.
+ * @param {string} folder @param {number} count @param {string} label
+ */
+async function untilEntries(folder, count, label) {
+  const deadline = performance.now() + 30_000;
+  while (fs.readdirSync(folder).length !== count) {
+    if (performance.now() > deadline) assert.fail(`${label}: ${fs.readdirSync(folder).join(', ') || 'nothing'} instead of ${count}`);
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+}
+/** @param {string} folder @param {string} label */
+const untilEmpty = (folder, label) => untilEntries(folder, 0, label);
+
+/**
+ * One update route request: a state read, or an action from the instance's own
+ * origin. Every answer is uncached JSON.
+ * @param {{ url: string }} instance @param {unknown} [body]
+ * @returns {Promise<{ status: number, body: any }>}
+ */
+async function updatesRoute(instance, body) {
+  const response = await call(instance.url, body === undefined ? { path: UPDATES_ROUTE } : {
+    path: UPDATES_ACTION_ROUTE, method: 'POST',
+    headers: { origin: new URL(instance.url).origin, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  assert.equal(response.headers.get('cache-control'), 'no-store', 'an update answer is never cached');
+  assert.equal(response.headers.get('content-type'), 'application/json; charset=utf-8');
+  return { status: response.status, body: await response.json() };
+}
+
+/**
+ * Read the state until it satisfies `predicate`. The browser rereads on the
+ * `updates` event instead; this test-side bound only keeps a failure finite.
+ * @param {{ url: string }} instance @param {(state: any) => boolean} predicate @param {string} label @param {number} [timeoutMs]
+ */
+async function untilUpdates(instance, predicate, label, timeoutMs = 120_000) {
+  const deadline = performance.now() + timeoutMs;
+  for (;;) {
+    const { status, body } = await updatesRoute(instance);
+    assert.equal(status, 200, JSON.stringify(body));
+    if (predicate(body)) return body;
+    if (performance.now() > deadline) assert.fail(`timed out waiting until ${label}: ${JSON.stringify(body)}`);
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+}
+/** An application has ended once it is neither Applying nor Checking. @param {any} state */
+const applicationEnded = state => !['applying', 'checking'].includes(state.update?.phase);
+
+/**
+ * One Canvas over a fresh update controller for `root`, joined to a real Needs
+ * you provider whose session stand-in records every send.
+ * @param {string} root
+ */
+async function updateCanvas(root) {
+  const controller = createBundleUpgrade({ root });
+  const provider = createNeedsYou({ root });
+  /** @type {unknown[]} */
+  const sends = [];
+  provider.bindSession(/** @type {any} */ ({
+    sessionId: `update-session-${randomUUID()}`,
+    rpc: { queue: { pendingItems: async () => ({ items: [], steeringMessages: [] }) } },
+    send: async (/** @type {unknown} */ input) => { sends.push(input); return `update-message-${sends.length}`; },
+  }));
+  provider.onEvent(/** @type {any} */ ({ id: randomUUID(), type: 'session.idle', data: {} }));
+  const instanceId = `update-${randomUUID()}`;
+  const instance = await openInstance(instanceId, () => {}, Object.freeze({ complete: true }), { root }, provider, controller);
+  let closed = false;
+  return {
+    controller, provider, sends, instance, instanceId,
+    read: () => updatesRoute(instance),
+    act: (/** @type {unknown} */ body) => updatesRoute(instance, body),
+    /** @param {(state: any) => boolean} predicate @param {string} label */
+    until: (predicate, label) => untilUpdates(instance, predicate, label),
+    feed: async () => (await call(instance.url, { path: '/api/needs-you' })).json(),
+    async close() {
+      if (closed) return;
+      closed = true;
+      provider.dispose();
+      await closeInstance(instanceId);
+    },
+  };
+}
+
+/**
+ * Record every process this one starts, through the one method every spawn
+ * uses, without replacing it.
+ * @param {import('node:test').TestContext} t
+ */
+function updateLaunches(t) {
+  const spawn = childProcess.ChildProcess.prototype.spawn;
+  /** @type {{ file: string, args: string[], cwd: string | undefined, env: Record<string, string> }[]} */
+  const launches = [];
+  t.mock.method(childProcess.ChildProcess.prototype, 'spawn', /** @this {any} */ function (/** @type {any} */ options) {
+    const env = Object.fromEntries((options.envPairs ?? []).map((/** @type {string} */ pair) => {
+      const equals = pair.indexOf('=', 1);
+      return [pair.slice(0, equals), pair.slice(equals + 1)];
+    }));
+    launches.push({ file: options.file, args: [...(options.args ?? [])], cwd: options.cwd, env });
+    return spawn.call(this, options);
+  });
+  return launches;
+}
+
+/**
+ * Collect the `updates` events of one event stream.
+ * @param {{ url: string }} instance
+ */
+async function updateEvents(instance) {
+  const hangUp = new AbortController();
+  const response = await call(instance.url, { path: '/events', signal: hangUp.signal });
+  const reader = /** @type {ReadableStream<Uint8Array>} */ (response.body).getReader();
+  const decoder = new TextDecoder();
+  const seen = { text: '', count: 0 };
+  void (async () => {
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        seen.text += decoder.decode(value, { stream: true });
+        seen.count = seen.text.split('event: updates\ndata: {"refresh":true}\n\n').length - 1;
+      }
+    } catch { /* The stream ended with the test. */ }
+  })();
+  return { seen, close: () => hangUp.abort() };
+}
+
+test('072 Canvas update: GET reads this session\'s state only: no process, no outside connection, no file', async t => {
+  const f = aboutFixture();
+  // The recorded source is never contacted.
+  f.write({ source_repo: 'https://example.invalid/never-contacted.git', source_ref: 'latest', installed_ref: 'v1.2.3' });
+  const unbound = await openInstance('update-get-unbound', () => {});
+  const scratch = updateTemporary(t);
+  const controller = createBundleUpgrade({ root: f.root });
+  const instance = await openInstance('update-get', () => {}, Object.freeze({ complete: true }), { root: f.root }, null, controller);
+  const without = await openInstance('update-get-without', () => {}, Object.freeze({ complete: true }), { root: f.root });
+  const before = snapshotFiles(f.temporary);
+  const spawns = t.mock.method(childProcess.ChildProcess.prototype, 'spawn');
+  const syncLaunches = ['spawnSync', 'execSync', 'execFileSync'].map(name => t.mock.method(childProcess, name));
+  syncBuiltinESMExports();
+  const connects = t.mock.method(net.Socket.prototype, 'connect');
+  try {
+    for (let read = 0; read < 3; read += 1) {
+      assert.deepEqual(await updatesRoute(instance), { status: 200, body: {
+        installation: { channel: 'latest', installedRef: 'v1.2.3', sourceRef: 'latest' }, runningRef: 'v1.2.3', ...UPDATE_IDLE,
+      } });
+    }
+    const unavailable = { status: 503, body: { error: 'updates_unavailable', message: 'This Canvas has no current workspace.' } };
+    assert.deepEqual(await updatesRoute(unbound), unavailable, 'a Canvas with no workspace has no update state');
+    assert.deepEqual(await updatesRoute(without), unavailable, 'a Canvas without the controller has none either');
+    assert.equal(spawns.mock.callCount() + syncLaunches.reduce((sum, spy) => sum + spy.mock.callCount(), 0), 0,
+      'reading the update state starts no command or process');
+    const targets = connects.mock.calls.map(({ arguments: args }) => {
+      const options = Array.isArray(args[0]) ? args[0][0] : args[0];
+      return options && typeof options === 'object' ? `${options.host}:${options.port}` : `${args[1]}:${options}`;
+    });
+    assert.deepEqual([...new Set(targets)].sort(), [unbound, instance, without].map(server => new URL(server.url).host).sort(),
+      'only the Canvas loopback servers were contacted');
+    assert.deepEqual(snapshotFiles(f.temporary), before, 'no file is written or created');
+    assert.deepEqual(fs.readdirSync(scratch), [], 'no temporary folder is made');
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    await closeInstance('update-get');
+    await closeInstance('update-get-without');
+    await closeInstance('update-get-unbound');
+    f.cleanup();
+  }
+});
+
+test('072 Canvas update: the action route admits only the exact same-origin JSON POST with a closed body, and every refusal starts nothing', async t => {
+  const f = aboutFixture();
+  f.write({ source_repo: 'https://example.invalid/never-contacted.git', source_ref: 'latest', installed_ref: 'v1.2.3' });
+  const scratch = updateTemporary(t);
+  const controller = createBundleUpgrade({ root: f.root });
+  const instance = await openInstance('update-guards', () => {}, Object.freeze({ complete: true }), { root: f.root }, null, controller);
+  const { host, origin, port } = new URL(instance.url);
+  const before = snapshotFiles(f.temporary);
+  const spawns = t.mock.method(childProcess.ChildProcess.prototype, 'spawn');
+  const json = { host, origin, 'content-type': 'application/json' };
+  const id = '0123456789abcdef0123456789abcdef';
+  /** @param {string | Buffer} body @param {Record<string, string>} [headers] */
+  const act = (body, headers = json) => ({ path: UPDATES_ACTION_ROUTE, method: 'POST', headers, body });
+  /** @param {Parameters<typeof rawJson>[1]} request @param {number} status @param {unknown} body */
+  const expectAnswer = async (request, status, body) => {
+    const label = `${request?.method ?? 'GET'} ${request?.path} ${JSON.stringify(request?.headers)} ${String(request?.body ?? '').slice(0, 60)}`;
+    assert.deepEqual(await rawJson(instance.server, request), { status, body }, label);
+  };
+  const notFound = { error: 'Not found.' };
+  const invalid = { error: 'invalid_input' };
+  try {
+    const valid = JSON.stringify({ op: 'later' });
+    for (const headers of [
+      { host, origin: 'null' }, { host, origin: 'https://evil.example' },
+      { host, origin: `http://127.0.0.1:${Number(port) + 1}` }, { host, origin: `http://localhost:${port}` },
+      { host, 'sec-fetch-site': 'cross-site' }, { host, 'sec-fetch-site': 'same-site' },
+      { host: 'evil.example.com' }, { host: `localhost:${port}` }, { host: `[::1]:${port}` },
+    ]) {
+      const refused = { error: 'Cross-origin requests are not allowed.' };
+      await expectAnswer({ path: UPDATES_ROUTE, headers }, 403, refused);
+      await expectAnswer(act(valid, { ...headers, 'content-type': 'application/json' }), 403, refused);
+    }
+    // An action names this instance's own origin; fetch metadata alone is not enough.
+    for (const headers of [{ host }, { host, 'sec-fetch-site': 'same-origin' }]) {
+      await expectAnswer(act(valid, { ...headers, 'content-type': 'application/json' }), 403, { error: 'Same-origin action required.' });
+    }
+    for (const suffix of ['?', '?root=elsewhere', '?op=check', '/', '/extra', '.json', '#fragment']) {
+      await expectAnswer({ path: `${UPDATES_ROUTE}${suffix}`, headers: { host } }, 404, notFound);
+      await expectAnswer({ ...act(valid), path: `${UPDATES_ACTION_ROUTE}${suffix}` }, 404, notFound);
+    }
+    for (const alias of ['/api/Updates', '/API/updates/action', '/api//updates/action', '/api/%75pdates/action',
+      '/api/x/../updates/action', '/api/updates/check', '/api/updates/apply', '/api/update/action', '/updates/action']) {
+      await expectAnswer({ ...act(valid), path: alias }, 404, notFound);
+    }
+    for (const method of ['PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
+      await expectAnswer({ path: UPDATES_ACTION_ROUTE, method, headers: json }, 404, notFound);
+      await expectAnswer({ path: UPDATES_ROUTE, method, headers: json }, 404, notFound);
+    }
+    await expectAnswer({ path: UPDATES_ACTION_ROUTE, headers: { host } }, 404, notFound);
+    await expectAnswer({ ...act(valid), path: UPDATES_ROUTE }, 404, notFound);
+    // A read takes no body.
+    await expectAnswer({ path: UPDATES_ROUTE, headers: { host, 'content-length': '2' }, body: '{}' }, 400, invalid);
+    await expectAnswer({ path: UPDATES_ROUTE, headers: { host, 'transfer-encoding': 'chunked' }, body: '{}' }, 400, invalid);
+    await expectAnswer(act(valid, { ...json, 'content-type': 'text/plain' }), 415, { error: 'JSON action required.' });
+    await expectAnswer(act(valid, { host, origin }), 415, { error: 'JSON action required.' });
+    // Only the operation, the pack choice and the opaque prepared ID cross: never a repository, root, command or file.
+    for (const body of ['', '{invalid', Buffer.from([0xc3, 0x28]), 'null', '[]', '"check"', 'true', '{}',
+      ...[{ op: 'Check' }, { op: 'refresh' }, { op: 'install' }, { op: 'status' }, { op: 'plan' }, { op: 'discard' }, { op: 'rollback' },
+        { op: 'check', root: '/elsewhere' }, { op: 'later', id }, { op: 'cancel', id }, { op: 'cancel', force: true },
+        { op: 'preview' }, { op: 'preview', includePacks: 'true' }, { op: 'preview', includePacks: 1 }, { op: 'preview', includePacks: null },
+        { op: 'preview', includePacks: true, source: 'https://example.invalid/other.git' }, { op: 'preview', includePacks: true, ref: 'v9.0.0' },
+        { op: 'preview', includePacks: true, root: '/elsewhere' }, { op: 'preview', includePacks: true, packs: ['alpha'] },
+        { op: 'preview', packs: true }, { op: 'apply' }, { op: 'apply', id: id.toUpperCase() }, { op: 'apply', id: id.slice(1) },
+        { op: 'apply', id: `${id}0` }, { op: 'apply', id: 12345 }, { op: 'apply', id, files: ['.github/agents/dude.agent.md'] },
+        { op: 'apply', id, bytes: 'aGVsbG8=' }, { op: 'apply', id, command: 'git push' }, { op: 'apply', id, executable: process.execPath },
+        { op: 'apply', id, repository: 'https://example.invalid/other.git' }, { op: 'apply', id, confirm: 'confirm-upgrade' },
+        { op: 'apply', id, includePacks: true }].map(value => JSON.stringify(value))]) {
+      await expectAnswer(act(body), 400, invalid);
+    }
+    // The server's own body limit, refused before or while the body is read.
+    await expectAnswer(act('x'.repeat(4 * 1024 + 1)), 413, invalid);
+    const padded = JSON.stringify({ op: 'later', pad: 'x'.repeat(4 * 1024) });
+    await expectAnswer(act(padded, { ...json, 'content-length': String(Buffer.byteLength(padded)) }), 413, invalid);
+    assert.equal(spawns.mock.callCount(), 0, 'no refused request started a process');
+
+    // Admitted operations that cannot proceed are refused with their reason, and start nothing either.
+    await expectAnswer(act(JSON.stringify({ op: 'preview', includePacks: true })), 409, { error: 'no_update' });
+    await expectAnswer(act(JSON.stringify({ op: 'apply', id })), 409, { error: 'stale' });
+    const state = (await updatesRoute(instance)).body;
+    await expectAnswer(act(JSON.stringify({ op: 'cancel' })), 200, state);
+    await expectAnswer(act(JSON.stringify({ op: 'later' })), 200, state);
+    assert.equal(spawns.mock.callCount(), 0);
+    assert.deepEqual(snapshotFiles(f.temporary), before, 'no file is written');
+    assert.deepEqual(fs.readdirSync(scratch), []);
+  } finally {
+    t.mock.restoreAll();
+    await closeInstance('update-guards');
+    f.cleanup();
+  }
+});
+
+test('072 Canvas update: the session-start check runs once when the saved choice is on, contacts nothing when it is off or unreadable, and a manual check still works', async t => {
+  const fixture = await updateFixture();
+  const { file } = preferenceHome(t);
+  const f = aboutFixture();
+  f.write({ source_repo: fixture.tagsOnly, source_ref: 'latest', installed_ref: 'v1.0.0' });
+  const scratch = updateTemporary(t);
+  const before = snapshotFiles(f.temporary);
+  const launches = updateLaunches(t);
+  const gitLaunches = () => launches.filter(launch => /(?:^|[\\/])git(?:\.exe)?$/i.test(launch.file));
+  /** @type {{ close: () => Promise<void> }[]} */
+  const opened = [];
+  /** A new session: a fresh controller whose session-start check has decided. */
+  const session = async () => {
+    const canvas = await updateCanvas(f.root);
+    opened.push(canvas);
+    await canvas.controller.startSessionCheck();
+    return canvas;
+  };
+  try {
+    // Nothing saved: checks are on, and the one session check finds the newest stable release.
+    let canvas = await session();
+    assert.equal(gitLaunches().length, process.platform === 'win32' ? 2 : 1, 'one tag listing, after the Windows Git version check');
+    let state = (await canvas.read()).body;
+    assert.match(state.check.checkedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    assert.deepEqual({ ...state, check: { ...state.check, checkedAt: '<time>' } }, {
+      installation: { channel: 'latest', installedRef: 'v1.0.0', sourceRef: 'latest' }, runningRef: 'v1.0.0', checking: false,
+      check: { status: 'update_available', installedRef: 'v1.0.0', availableRef: 'v1.1.0', releaseUrl: null, checkedAt: '<time>', message: null },
+      notice: { installedRef: 'v1.0.0', availableRef: 'v1.1.0', releaseUrl: null }, update: null, gate: 'open', kept: [],
+    }, 'a file source has no release page, so no What\'s new');
+    // Later hides the notice for this session only.
+    state = (await canvas.act({ op: 'later' })).body;
+    assert.equal(state.notice, null);
+    assert.equal(state.check.status, 'update_available', 'About still shows the update');
+    assert.equal((await canvas.read()).body.notice, null);
+    assert.equal(fs.existsSync(file), false, 'neither the check nor Later saved a preference');
+
+    // Saved off: a new session contacts nothing, and saving either choice runs no check.
+    let count = gitLaunches().length;
+    assert.deepEqual(await preferenceRoute(canvas.instance, { checkForUpdatesOnSessionStart: false }), preferenceOf(false, false));
+    assert.deepEqual(await preferenceRoute(canvas.instance, { followAppTheme: true }), preferenceOf(true, false));
+    assert.equal(gitLaunches().length, count, 'saving a choice starts no check');
+    canvas = await session();
+    assert.equal(gitLaunches().length, count, 'checks off: the session made no automatic contact');
+    assert.deepEqual((await canvas.read()).body.check, null);
+    // Check for updates still runs one explicit check.
+    state = (await canvas.act({ op: 'check' })).body;
+    assert.equal(state.checking, true);
+    state = await canvas.until(value => !value.checking, 'the manual check finished');
+    assert.equal(state.check.status, 'update_available');
+    assert.deepEqual(state.notice, { installedRef: 'v1.0.0', availableRef: 'v1.1.0', releaseUrl: null }, 'Later belonged to the other session');
+    assert.ok(gitLaunches().length > count);
+
+    // Unreadable: no automatic contact, and the stored bytes stay as they are.
+    count = gitLaunches().length;
+    fs.writeFileSync(file, '{"followAppTheme":true,"checkForUpdatesOnSessionStart":"yes"}');
+    canvas = await session();
+    assert.equal(gitLaunches().length, count, 'an unreadable choice makes no automatic contact');
+    assert.equal((await canvas.read()).body.check, null);
+    assert.equal(fs.readFileSync(file, 'utf8'), '{"followAppTheme":true,"checkForUpdatesOnSessionStart":"yes"}');
+
+    // The older one-key document keeps checks on, and reading it writes nothing.
+    fs.writeFileSync(file, '{"followAppTheme":true}');
+    canvas = await session();
+    assert.ok(gitLaunches().length > count, 'an earlier appearance-only choice keeps checks on');
+    assert.equal((await canvas.read()).body.check.status, 'update_available');
+    assert.equal(fs.readFileSync(file, 'utf8'), '{"followAppTheme":true}', 'no backfill on read');
+
+    assert.deepEqual(snapshotFiles(f.temporary), before, 'no check wrote into the project');
+    assert.deepEqual(fs.readdirSync(scratch), [], 'no check made a folder, its Git home included');
+    for (const canvas of opened) assert.deepEqual(/** @type {any} */ (canvas).sends, [], 'no agent message');
+  } finally {
+    t.mock.restoreAll();
+    for (const canvas of opened) await canvas.close();
+    f.cleanup();
+  }
+});
+
+test('072 Canvas update: pinned, development and unreadable installations never check and offer no check or update', async t => {
+  const scratch = updateTemporary(t);
+  const launches = updateLaunches(t);
+  const cases = /** @type {const} */ ([
+    ['pinned', { source_repo: 'https://example.invalid/never-contacted.git', source_ref: 'v1.2.3', installed_ref: 'v1.2.3' },
+      { channel: 'pinned', installedRef: 'v1.2.3', sourceRef: 'v1.2.3' }],
+    ['development', { source_repo: 'https://example.invalid/never-contacted.git', source_ref: 'main', installed_ref: 'main' },
+      { channel: 'development', installedRef: 'main', sourceRef: 'main' }],
+    ['latest without a stable installed version', { source_repo: 'https://example.invalid/never-contacted.git', source_ref: 'latest', installed_ref: 'main' },
+      { channel: 'unavailable', installedRef: 'main', sourceRef: 'latest' }],
+    ['pinned with no recorded installed version', { source_repo: 'https://example.invalid/never-contacted.git', source_ref: 'v1.2.3' },
+      { channel: 'unavailable', installedRef: null, sourceRef: 'v1.2.3' }],
+    ['missing metadata', null, { channel: 'unavailable', installedRef: null, sourceRef: null }],
+  ]);
+  for (const [name, manifest, installation] of cases) {
+    const f = aboutFixture();
+    if (manifest) f.write(manifest);
+    const canvas = await updateCanvas(f.root);
+    try {
+      await canvas.controller.startSessionCheck();
+      assert.deepEqual((await canvas.read()).body, { installation, runningRef: installation.installedRef, ...UPDATE_IDLE }, name);
+      assert.deepEqual(await canvas.act({ op: 'check' }), { status: 409, body: { error: 'not_eligible' } }, name);
+      assert.deepEqual(await canvas.act({ op: 'preview', includePacks: true }), { status: 409, body: { error: 'not_eligible' } }, name);
+      assert.deepEqual(canvas.sends, []);
+    } finally {
+      await canvas.close();
+      f.cleanup();
+    }
+  }
+  assert.deepEqual(launches, [], 'no release lookup of any kind');
+  assert.deepEqual(fs.readdirSync(scratch), []);
+});
+
+test('072 Canvas update: a failed check is only an About result, with no notice, request or message', async t => {
+  const f = aboutFixture();
+  f.write({ source_repo: pathToFileURL(path.join(f.temporary, 'no-such-upstream')).href, source_ref: 'latest', installed_ref: 'v1.0.0' });
+  const scratch = updateTemporary(t);
+  const canvas = await updateCanvas(f.root);
+  try {
+    await canvas.controller.startSessionCheck();
+    const state = (await canvas.read()).body;
+    assert.equal(state.check.status, 'check_failed');
+    assert.match(state.check.message, /could not list the tags of/);
+    assert.match(state.check.checkedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/, 'About can say when it tried');
+    assert.equal(state.notice, null, 'no notice');
+    assert.deepEqual(await canvas.act({ op: 'preview', includePacks: true }), { status: 409, body: { error: 'no_update' } });
+    assert.deepEqual(canvas.sends, [], 'no agent message');
+    const feed = await canvas.feed();
+    assert.deepEqual([feed.requests, feed.captures, feed.importRequests], [[], [], []], 'no Needs you request');
+    assert.deepEqual(fs.readdirSync(scratch), []);
+  } finally {
+    await canvas.close();
+    f.cleanup();
+  }
+});
+
+test('072 Canvas update: notice to new session, with one OK after a pack re-preview, and no agent turn', { timeout: 300_000 }, async t => {
+  const fixture = await updateFixture();
+  preferenceHome(t);
+  const scratch = updateTemporary(t);
+  const root = newUpdateWorkspace(fixture);
+  const before = workTree(root);
+  const git = updateGitState(root);
+  const canvas = await updateCanvas(root);
+  const events = await updateEvents(canvas.instance);
+  const launches = updateLaunches(t);
+  try {
+    await canvas.controller.startSessionCheck();
+    let state = (await canvas.read()).body;
+    assert.deepEqual(state.notice, { installedRef: 'v1.0.0', availableRef: 'v1.1.0', releaseUrl: null }, 'the notice names both versions');
+
+    // Review update: one dialog, preparing at once with the pack group included.
+    state = (await canvas.act({ op: 'preview', includePacks: true })).body;
+    assert.deepEqual(state.update, { phase: 'preparing', includePacks: true, packChoice: null, step: null, pack: null, completed: null, total: null });
+    state = await canvas.until(value => value.update?.phase !== 'preparing', 'the combined preview');
+    assert.equal(state.update.phase, 'ready', JSON.stringify(state.update));
+    const combined = state.update;
+    assert.match(combined.id, UPDATE_ID_RE);
+    assert.deepEqual({ ...combined, id: '<id>' }, {
+      phase: 'ready', includePacks: true, packChoice: { names: ['alpha'], checked: true }, id: '<id>',
+      fromRef: 'v1.0.0', toRef: 'v1.1.0', releaseUrl: null, branch: 'main',
+      counts: {
+        core: { added: 1, replaced: 1, removed: 1 },
+        metadata: { added: 1, replaced: 2, removed: 0 },
+        packs: { alpha: { added: 0, replaced: 1, removed: 0 } },
+      },
+      changes: [
+        { path: UPDATE_MANIFEST, group: 'metadata', pack: null, op: 'replace' },
+        { path: UPDATE_PROFILE, group: 'metadata', pack: null, op: 'replace' },
+        { path: UPDATE_LOG, group: 'metadata', pack: null, op: 'add' },
+        { path: UPDATE_ALPHA, group: 'pack', pack: 'alpha', op: 'replace' },
+        { path: UPDATE_REPLACED, group: 'core', pack: null, op: 'replace' },
+        { path: UPDATE_ADDED, group: 'core', pack: null, op: 'add' },
+        { path: UPDATE_RETIRED, group: 'core', pack: null, op: 'remove' },
+      ],
+      dirtyPaths: [],
+      packs: { eligible: ['alpha'], affected: ['alpha'], unchanged: [], notSelected: [] },
+    });
+    const preparation = launches.filter(launch => launch.args.includes(UPDATE_ACTION));
+    assert.equal(preparation.length, 1, 'one update child prepared it');
+    assert.equal(preparation[0].file, process.execPath, 'a Node host runs the child with its own Node');
+    assert.deepEqual(preparation[0].args.slice(-2), [UPDATE_ACTION, path.resolve(root)]);
+    assert.equal(path.dirname(String(preparation[0].cwd)), scratch, 'the child works in its own root');
+
+    // Untick: a replacement core-only preview, and the first ID is spent.
+    state = (await canvas.act({ op: 'preview', includePacks: false })).body;
+    assert.deepEqual(state.update.packChoice, { names: ['alpha'], checked: false }, 'the choice stays offered while it prepares again');
+    assert.equal(state.update.phase, 'preparing');
+    state = await canvas.until(value => value.update?.phase !== 'preparing', 'the core-only preview');
+    assert.equal(state.update.phase, 'ready', JSON.stringify(state.update));
+    const coreOnly = state.update;
+    assert.notEqual(coreOnly.id, combined.id);
+    assert.deepEqual(coreOnly.counts, { core: { added: 1, replaced: 1, removed: 1 }, metadata: { added: 1, replaced: 1, removed: 0 }, packs: {} });
+    assert.deepEqual(coreOnly.changes.map((/** @type {any} */ change) => change.path).sort(),
+      [UPDATE_ADDED, UPDATE_REPLACED, UPDATE_RETIRED, UPDATE_MANIFEST, UPDATE_LOG].sort(), 'no unselected pack change is carried');
+    assert.deepEqual(coreOnly.packs, { eligible: ['alpha'], affected: [], unchanged: [], notSelected: ['alpha'] });
+    assert.deepEqual(await canvas.act({ op: 'apply', id: combined.id }), { status: 409, body: { error: 'stale' } }, 'a replaced preview never applies');
+    await untilEntries(scratch, 1, 'only the live preview keeps a root');
+    assert.deepEqual(workTree(root), before, 'preparing changes nothing in the project');
+
+    // One OK.
+    state = (await canvas.act({ op: 'apply', id: coreOnly.id })).body;
+    assert.equal(state.gate, 'applying');
+    assert.equal(state.update.phase, 'applying');
+    state = await canvas.until(applicationEnded, 'the update applied');
+    assert.equal(state.update.phase, 'applied', JSON.stringify(state.update));
+    assert.deepEqual(state.update.existingFailures, [], 'the check found no problem before or after');
+    assert.equal(state.gate, 'closed');
+    assert.deepEqual(state.installation, { channel: 'latest', installedRef: 'v1.1.0', sourceRef: 'latest' }, 'installed on disk');
+    assert.equal(state.runningRef, 'v1.0.0', 'this session still runs the version it started with');
+    assert.equal(state.notice, null, 'the notice ends once the update is installed');
+
+    // Exactly the reviewed bytes, uncommitted, with the pack, branch, HEAD and index as they were.
+    assert.deepEqual(updateRead(root, UPDATE_REPLACED), updateRead(fixture.root, `up/${UPDATE_REPLACED}`));
+    assert.equal(fs.existsSync(path.join(root, ...UPDATE_ADDED.split('/'))), true);
+    assert.equal(fs.existsSync(path.join(root, ...UPDATE_RETIRED.split('/'))), false);
+    assert.deepEqual(updateRead(root, UPDATE_ALPHA), fixture.alpha, 'the unselected pack keeps its files');
+    assert.deepEqual(updateRead(root, UPDATE_PROFILE), before.get(path.join(...UPDATE_PROFILE.split('/'))), 'and its record');
+    assert.deepEqual(updateGitState(root), git);
+    const after = workTree(root);
+    const changed = [...new Set([...before.keys(), ...after.keys()])]
+      .filter(file => !file.startsWith(`.git${path.sep}`))
+      .filter(file => !(before.get(file) ?? Buffer.alloc(0)).equals(after.get(file) ?? Buffer.alloc(0)));
+    assert.deepEqual(changed.map(file => file.split(path.sep).join('/')).sort(), coreOnly.changes.map((/** @type {any} */ change) => change.path).sort());
+
+    // The old server's write gate: no interface asset, no workspace change, and an inert page on reload.
+    const page = await call(canvas.instance.url);
+    assert.equal(page.status, 200);
+    assert.equal(page.headers.get('content-security-policy'), "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'");
+    const text = await page.text();
+    assert.match(text, /<h1 id="handoff-title">Start a new session to use Dude v1\.1\.0<\/h1>/);
+    assert.match(text, /Dude v1\.1\.0 is installed in this project, but this session still runs v1\.0\.0\./);
+    assert.match(text, /The changes are uncommitted on <code>main<\/code>\./);
+    assert.equal(/<script|app\.js|\/assets\//i.test(text), false, 'the inert page loads no bundle');
+    for (const asset of [...Object.keys(ASSET_ROUTES).filter(route => route !== '/'), ...Object.keys(REVIEW_ASSET_ROUTES)]) {
+      assert.equal((await call(canvas.instance.url, { path: asset })).status, 404, `${asset} is not served after the write gate`);
+    }
+    const origin = new URL(canvas.instance.url).origin;
+    for (const route of ['/api/packs/action', '/api/packs/sources', '/api/imports/request', '/api/needs-you/respond', '/api/needs-you/capture']) {
+      const refused = await call(canvas.instance.url, { path: route, method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: '{}' });
+      assert.deepEqual([refused.status, await refused.json()], [409, { error: 'new_session_required' }], route);
+    }
+    for (const body of [{ op: 'check' }, { op: 'preview', includePacks: true }, { op: 'apply', id: coreOnly.id }]) {
+      assert.deepEqual(await canvas.act(body), { status: 409, body: { error: 'new_session_required' } }, body.op);
+    }
+    assert.deepEqual(await canvas.act({ op: 'cancel' }), { status: 409, body: { error: 'too_late' } });
+    // Another Canvas of the same process is gated too.
+    const other = await openInstance(`update-other-${randomUUID()}`, () => {}, Object.freeze({ complete: true }), { root }, null, canvas.controller);
+    assert.match(await (await call(other.url)).text(), /Start a new session to use Dude v1\.1\.0/);
+    await closeInstance(/** @type {any} */ (other).instanceId);
+
+    // No agent turn, request or message, and every root is gone.
+    assert.deepEqual(canvas.sends, []);
+    const feed = await canvas.feed();
+    assert.deepEqual([feed.requests, feed.captures, feed.importRequests], [[], [], []]);
+    await untilEmpty(scratch, 'the update roots');
+    assert.ok(events.seen.count >= 6, `the stream invalidated the state as it changed: ${events.seen.count} events`);
+    assert.equal(events.seen.text.includes('v1.1.0'), false, 'events carry no update payload');
+    assert.equal(launches.filter(launch => launch.args.includes(UPDATE_ACTION)).length, 3, 'two previews and one application');
+
+    // A new session reads the installed version and finds it up to date.
+    const next = await updateCanvas(root);
+    try {
+      await next.controller.startSessionCheck();
+      const fresh = (await next.read()).body;
+      assert.equal(fresh.runningRef, 'v1.1.0');
+      assert.equal(fresh.check.status, 'up_to_date');
+      assert.equal(fresh.notice, null);
+      assert.equal(fresh.gate, 'open');
+    } finally { await next.close(); }
+  } finally {
+    t.mock.restoreAll();
+    events.close();
+    await canvas.close();
+  }
+});
+
+test('072 Canvas update: Cancel and closing the Canvas end a preparation before it writes, under the release check\'s closed Git environment', { timeout: 300_000 }, async t => {
+  const fixture = await updateFixture();
+  preferenceHome(t);
+  const scratch = updateTemporary(t);
+  const root = newUpdateWorkspace(fixture);
+  const before = workTree(root);
+  // User variables that must never reach the child.
+  const planted = { GH_TOKEN: 'planted-token', GIT_ASKPASS: 'planted-askpass', HTTPS_PROXY: 'http://127.0.0.1:9', NODE_OPTIONS: '--no-warnings',
+    GIT_CONFIG_GLOBAL: path.join(scratch, 'planted.gitconfig'), GIT_CONFIG_PARAMETERS: "'credential.helper=planted'" };
+  const restored = Object.fromEntries(Object.keys(planted).map(key => [key, process.env[key]]));
+  Object.assign(process.env, planted);
+  t.after(() => {
+    for (const [key, value] of Object.entries(restored)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  const launches = updateLaunches(t);
+  const canvas = await updateCanvas(root);
+  try {
+    await canvas.controller.startSessionCheck();
+    assert.equal((await canvas.read()).body.check.status, 'update_available');
+
+    // Cancel while it prepares: the child stops what it started and the root goes.
+    let state = (await canvas.act({ op: 'preview', includePacks: true })).body;
+    assert.equal(state.update.phase, 'preparing');
+    await canvas.until(value => value.update?.phase !== 'preparing' || value.update.step !== null, 'the child reported its first activity');
+    state = (await canvas.act({ op: 'cancel' })).body;
+    assert.equal(state.update, null);
+    await untilEmpty(scratch, 'the cancelled preparation\'s root');
+    assert.deepEqual((await canvas.read()).body.kept, []);
+
+    // Its environment is the release check's own, with its home moved into the child's root.
+    const [child] = launches.filter(launch => launch.args.includes(UPDATE_ACTION));
+    const { args: checkArgs, env: checkEnv } = releaseCheckCommand('', process.env);
+    const temporary = String(child.cwd);
+    assert.equal(path.dirname(temporary), scratch);
+    const home = path.join(temporary, 'home');
+    const expected = Object.keys(checkEnv).filter(key => key !== 'GIT_DIR').concat('GIT_CONFIG_PARAMETERS', 'DUDE_CANVAS_UPGRADE_ACTION', 'TMPDIR');
+    assert.deepEqual(Object.keys(child.env).map(key => key.toUpperCase()).sort(), [...new Set(expected.map(key => key.toUpperCase()))].sort(),
+      'nothing else of this process\'s environment reaches the child');
+    for (const key of Object.keys(planted)) {
+      assert.notEqual(child.env[key], planted[key], `${key} is the check's or absent, never this process's`);
+    }
+    assert.deepEqual([child.env.TEMP, child.env.TMP, child.env.TMPDIR], [temporary, temporary, temporary]);
+    assert.equal(child.env.HOME, home);
+    assert.equal(child.env.GIT_CONFIG_GLOBAL, path.join(home, '.gitconfig'));
+    assert.equal(child.env.XDG_CONFIG_HOME, path.join(home, '.config'));
+    assert.equal(child.env.GIT_CONFIG_NOSYSTEM, '1');
+    assert.equal(child.env.GIT_TERMINAL_PROMPT, '0');
+    assert.equal(child.env.GIT_ALLOW_PROTOCOL, 'file:git:http:https');
+    if (process.platform === 'win32') {
+      assert.equal(child.env.USERPROFILE, home);
+      assert.equal(`${child.env.HOMEDRIVE}${child.env.HOMEPATH}`, home);
+    }
+    const settings = checkArgs.flatMap((arg, index) => (arg === '-c' ? [checkArgs[index + 1]] : []));
+    assert.ok(settings.includes('credential.helper=') && settings.includes('http.emptyAuth=false'));
+    assert.equal(child.env.GIT_CONFIG_PARAMETERS, settings.map(setting => `'${setting}'`).join(' '), 'every check setting reaches every Git');
+    assert.deepEqual(JSON.parse(child.env.DUDE_CANVAS_UPGRADE_ACTION), { op: 'prepare', includePacks: true });
+
+    // Cancel of a ready result releases its root.
+    await canvas.act({ op: 'preview', includePacks: false });
+    state = await canvas.until(value => value.update?.phase !== 'preparing', 'a ready preview');
+    assert.equal(state.update.phase, 'ready');
+    assert.equal(fs.readdirSync(scratch).length, 1);
+    assert.equal((await canvas.act({ op: 'cancel' })).body.update, null);
+    await untilEmpty(scratch, 'the discarded result\'s root');
+    assert.deepEqual(await canvas.act({ op: 'apply', id: state.update.id }), { status: 409, body: { error: 'stale' } });
+
+    // Closing the Canvas that started a preparation ends it; another Canvas then sees no update.
+    const other = await openInstance(`update-viewer-${randomUUID()}`, () => {}, Object.freeze({ complete: true }), { root }, null, canvas.controller);
+    await canvas.act({ op: 'preview', includePacks: true });
+    await canvas.close();
+    await untilEmpty(scratch, 'the closed Canvas\'s preparation root');
+    assert.deepEqual((await updatesRoute(other)).body.update, null);
+    await closeInstance(/** @type {any} */ (other).instanceId);
+
+    assert.deepEqual(workTree(root), before, 'Cancel and closing changed nothing in the project');
+    assert.deepEqual(canvas.sends, []);
+  } finally {
+    t.mock.restoreAll();
+    await canvas.close();
+  }
+});
+
+test('072 Canvas update: a touched file that changed after the preview makes OK write nothing, and Prepare again then applies once', { timeout: 300_000 }, async t => {
+  const fixture = await updateFixture();
+  preferenceHome(t);
+  const scratch = updateTemporary(t);
+  const root = newUpdateWorkspace(fixture);
+  const git = updateGitState(root);
+  const canvas = await updateCanvas(root);
+  try {
+    await canvas.controller.startSessionCheck();
+    await canvas.act({ op: 'preview', includePacks: false });
+    let state = await canvas.until(value => value.update?.phase !== 'preparing', 'the preview');
+    assert.equal(state.update.phase, 'ready');
+    // A local edit to a touched file after the preview.
+    const edit = Buffer.from('a local edit after the preview\n');
+    updateWrite(root, UPDATE_REPLACED, edit);
+    const edited = workTree(root);
+    state = (await canvas.act({ op: 'apply', id: state.update.id })).body;
+    assert.equal(state.gate, 'applying');
+    state = await canvas.until(applicationEnded, 'the refused apply');
+    assert.equal(state.update.phase, 'nothing_changed', JSON.stringify(state.update));
+    assert.match(state.update.message, new RegExp(`${UPDATE_REPLACED.replaceAll('.', '\\.')} changed since the preview`));
+    assert.equal(state.gate, 'open', 'a refusal before writing reopens the gate');
+    assert.deepEqual(workTree(root), edited, 'nothing was written');
+    assert.equal((await call(canvas.instance.url, { path: '/assets/app.js' })).status, 200, 'the old Canvas serves its interface again');
+    assert.equal((await call(canvas.instance.url)).headers.get('content-security-policy'), `frame-src ${new URL(canvas.instance.url).origin}/review-source/`);
+    await untilEmpty(scratch, 'the refused result\'s root');
+
+    // Prepare again: the edit is now a known dirty path, and two simultaneous OKs apply once.
+    await canvas.act({ op: 'preview', includePacks: false });
+    state = await canvas.until(value => value.update?.phase !== 'preparing', 'the fresh preview');
+    assert.equal(state.update.phase, 'ready');
+    assert.deepEqual(state.update.dirtyPaths, [UPDATE_REPLACED]);
+    const answers = await Promise.all([canvas.act({ op: 'apply', id: state.update.id }), canvas.act({ op: 'apply', id: state.update.id })]);
+    assert.deepEqual(answers.map(answer => answer.status).sort(), [200, 409]);
+    assert.deepEqual(answers.find(answer => answer.status === 409)?.body, { error: 'update_in_progress' }, 'a duplicate OK writes nothing');
+    state = await canvas.until(applicationEnded, 'the update applied');
+    assert.equal(state.update.phase, 'applied', JSON.stringify(state.update));
+    assert.deepEqual(updateRead(root, UPDATE_REPLACED), updateRead(fixture.root, `up/${UPDATE_REPLACED}`), 'the warned edit was replaced');
+    assert.deepEqual(updateGitState(root), git);
+    await untilEmpty(scratch, 'the applied result\'s root');
+    assert.deepEqual(canvas.sends, []);
+  } finally {
+    await canvas.close();
+  }
+});
+
+test('072 Canvas update: closing the Canvas after OK cancels nothing, a new check failure restores every file, and a reload gets only the inert page', { timeout: 300_000 }, async t => {
+  const fixture = await updateFixture();
+  preferenceHome(t);
+  const scratch = updateTemporary(t);
+  const root = newUpdateWorkspace(fixture, fixture.restore);
+  const before = workTree(root);
+  const git = updateGitState(root);
+  const canvas = await updateCanvas(root);
+  try {
+    await canvas.controller.startSessionCheck();
+    assert.equal((await canvas.read()).body.check.availableRef, 'v1.2.0');
+    await canvas.act({ op: 'preview', includePacks: true });
+    let state = await canvas.until(value => value.update?.phase !== 'preparing', 'the preview');
+    assert.equal(state.update.phase, 'ready', JSON.stringify(state.update));
+    assert.equal(state.update.packChoice, null, 'a pack from another upstream is never in the group');
+    assert.deepEqual(state.update.packs.eligible, []);
+    await canvas.act({ op: 'apply', id: state.update.id });
+    // Closing the Canvas after OK cancels nothing: the update finishes or restores.
+    await canvas.close();
+    const deadline = performance.now() + 120_000;
+    while (!applicationEnded(state = await canvas.controller.read())) {
+      assert.ok(performance.now() < deadline, 'the update ended');
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    assert.equal(state.update.phase, 'restored', JSON.stringify(state.update));
+    assert.match(state.update.message, /introduced 1 new bundle check failure/);
+    assert.equal(state.update.newFailures.length, 1);
+    assert.match(state.update.newFailures[0], /dude-broken/);
+    assert.equal(state.gate, 'closed', 'files were written, so the gate stays closed');
+    assert.equal(state.installation.installedRef, 'v1.0.0');
+    assert.deepEqual(workTree(root), before, 'every file was restored');
+    assert.deepEqual(updateGitState(root), git);
+    // A reload, here in another Canvas of the same process, gets only the inert page.
+    const other = await openInstance(`update-reload-${randomUUID()}`, () => {}, Object.freeze({ complete: true }), { root }, null, canvas.controller);
+    try {
+      const text = await (await call(other.url)).text();
+      assert.match(text, /<h1 id="handoff-title">Start a new session to keep using Canvas<\/h1>/);
+      assert.match(text, /The update didn't finish, and Dude restored your files\./);
+      assert.equal(/<script/i.test(text), false);
+      assert.equal((await call(other.url, { path: '/assets/app.js' })).status, 404);
+      assert.deepEqual(await updatesRoute(other, { op: 'preview', includePacks: false }), { status: 409, body: { error: 'new_session_required' } });
+    } finally {
+      await closeInstance(/** @type {any} */ (other).instanceId);
+    }
+    await untilEmpty(scratch, 'the restored result\'s root');
+    assert.deepEqual(canvas.sends, []);
+  } finally {
+    await canvas.close();
+  }
+});
+
+test('072 Canvas update: an unconfirmed restoration names its paths on the inert page and is never repeated', { timeout: 300_000 }, async t => {
+  const fixture = await updateFixture();
+  preferenceHome(t);
+  const scratch = updateTemporary(t);
+  const root = newUpdateWorkspace(fixture, fixture.unconfirmed);
+  const canvas = await updateCanvas(root);
+  try {
+    await canvas.controller.startSessionCheck();
+    await canvas.act({ op: 'preview', includePacks: false });
+    let state = await canvas.until(value => value.update?.phase !== 'preparing', 'the preview');
+    assert.equal(state.update.phase, 'ready', JSON.stringify(state.update));
+    const id = state.update.id;
+    await canvas.act({ op: 'apply', id });
+    state = await canvas.until(applicationEnded, 'the unconfirmed apply');
+    assert.equal(state.update.phase, 'restoration_unconfirmed', JSON.stringify(state.update));
+    assert.deepEqual(state.update.paths, [UPDATE_REPLACED]);
+    assert.match(state.update.message, /EBUSY/);
+    assert.equal(state.gate, 'closed');
+    const text = await (await call(canvas.instance.url)).text();
+    assert.match(text, /Dude couldn't confirm that these files were put back:/);
+    assert.ok(text.includes(`<li><code>${UPDATE_REPLACED}</code></li>`), 'the page names the path to inspect');
+    assert.match(text, /Inspect them before you start a new session, for example with git status\./);
+    assert.deepEqual(await canvas.act({ op: 'apply', id }), { status: 409, body: { error: 'new_session_required' } }, 'never repeated');
+    assert.equal((await canvas.read()).body.update.phase, 'restoration_unconfirmed');
+    await untilEmpty(scratch, 'the applied result\'s root');
+  } finally {
+    await canvas.close();
+  }
+});
+
+/**
+ * The held bundle check's markers beside one consumer (see `UPDATE_HELD_LINT`):
+ * whether its run before or after writing is waiting, and letting it go.
+ * @param {string} root
+ */
+function heldCheck(root) {
+  /** @param {string} name */
+  const marker = name => path.join(path.dirname(root), `${path.basename(root)}.${name}`);
+  return {
+    /** @param {'before' | 'after'} run */
+    waiting: run => fs.existsSync(marker(`${run}-waiting`)),
+    /** @param {'before' | 'after'} run */
+    go: run => fs.writeFileSync(marker(`${run}-go`), ''),
+    release() { for (const run of ['before', 'after']) fs.writeFileSync(marker(`${run}-go`), ''); },
+  };
+}
+
+/**
+ * Hold two kinds of Canvas child at one point each, through a preload that
+ * NODE_OPTIONS gives every child this process starts with its own environment:
+ * a catalog reader of an added source's candidate document, before it reads,
+ * and a pack action child, before it asks its write gate. A held child marks
+ * `<kind>-reached` in `folder` and goes on once `<kind>-go` exists there, or
+ * after 30 seconds. The update child gets its own closed environment and is
+ * never held.
+ * @param {import('node:test').TestContext} t
+ * @param {string} folder
+ */
+function holdCanvasChildren(t, folder) {
+  const preload = path.join(folder, 'hold.mjs');
+  fs.writeFileSync(preload, [
+    "import fs from 'node:fs';",
+    "import path from 'node:path';",
+    `const folder = ${JSON.stringify(folder)};`,
+    'const hold = (kind) => {',
+    "  fs.writeFileSync(path.join(folder, kind + '-reached'), '');",
+    "  for (let waited = 0; waited < 30000 && !fs.existsSync(path.join(folder, kind + '-go')); waited += 20) {",
+    '    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);',
+    '  }',
+    '};',
+    'let request = null;',
+    `try { request = JSON.parse(process.env[${JSON.stringify(CATALOG_REQUEST_ENV)}] ?? 'null'); } catch {}`,
+    "if (request?.document === 'candidate') hold('source');",
+    'const send = process.send;',
+    "if (typeof send === 'function') {",
+    '  process.send = function (message, ...rest) {',
+    "    if (message?.type === 'gate') hold('gate');",
+    '    return send.call(this, message, ...rest);',
+    '  };',
+    '}',
+    '',
+  ].join('\n'));
+  t.after(preloadIntoChildren(preload));
+  return {
+    /** @param {'source' | 'gate'} kind */
+    reached: kind => fs.existsSync(path.join(folder, `${kind}-reached`)),
+    /** @param {'source' | 'gate'} kind */
+    go: kind => fs.writeFileSync(path.join(folder, `${kind}-go`), ''),
+    release() { for (const kind of ['source', 'gate']) fs.writeFileSync(path.join(folder, `${kind}-go`), ''); },
+  };
+}
+
+/**
+ * One same-origin JSON POST to a Canvas route.
+ * @param {{ server: import('node:http').Server, url: string }} instance @param {string} route @param {unknown} body
+ * @returns {Promise<{ status: number | undefined, body: any }>}
+ */
+const canvasPost = (instance, route, body) => rawJson(instance.server, {
+  path: route, method: 'POST',
+  headers: { host: new URL(instance.url).host, origin: new URL(instance.url).origin, 'content-type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+/**
+ * The same POST, with its body sent only when `send` runs. The request asks
+ * `Expect: 100-continue`, which Node's server answers before it hands the
+ * request on, so once `admitted` resolves, every check the route makes before
+ * reading a body has run, and the route waits for the body. `abandon` settles
+ * a request whose body was never sent, as a case that failed early must.
+ * @param {{ url: string }} instance @param {string} route @param {unknown} body
+ */
+function canvasPostLater(instance, route, body) {
+  const url = new URL(instance.url);
+  const text = JSON.stringify(body);
+  const request = http.request({ host: '127.0.0.1', port: url.port, method: 'POST', path: route, headers: {
+    host: url.host, origin: url.origin, 'content-type': 'application/json',
+    'content-length': String(Buffer.byteLength(text)), expect: '100-continue',
+  } });
+  /** @type {Promise<{ status: number | undefined, body: any }>} */
+  const answered = new Promise((resolve, reject) => {
+    request.once('response', response => {
+      /** @type {Buffer[]} */
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', () => resolve({ status: response.statusCode, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
+    });
+    request.once('error', reject);
+  });
+  const admitted = new Promise(resolve => request.once('continue', () => resolve(undefined)));
+  let sent = false;
+  return {
+    admitted,
+    answered,
+    send() { if (!sent) { sent = true; request.end(text); } },
+    abandon() { if (!sent) request.destroy(); },
+  };
+}
+
+test('072 Canvas update: Applying becomes Checking only when the engine starts its bundle check after writing, which the parent hears while that check holds the child', { timeout: 300_000 }, async t => {
+  const fixture = await updateFixture();
+  preferenceHome(t);
+  const scratch = updateTemporary(t);
+  const root = newUpdateWorkspace(fixture, fixture.checking);
+  const held = heldCheck(root);
+  const added = path.join(root, ...UPDATE_ADDED.split('/'));
+  const canvas = await updateCanvas(root);
+  const events = await updateEvents(canvas.instance);
+  try {
+    await canvas.controller.startSessionCheck();
+    await canvas.act({ op: 'preview', includePacks: false });
+    let state = await canvas.until(value => value.update?.phase !== 'preparing', 'the preview');
+    assert.equal(state.update.phase, 'ready', JSON.stringify(state.update));
+
+    // OK: while the bundle check before writing runs, the update is Applying, however long it takes.
+    state = (await canvas.act({ op: 'apply', id: state.update.id })).body;
+    assert.deepEqual([state.gate, state.update.phase], ['applying', 'applying']);
+    await eventually(() => held.waiting('before'), 'the bundle check before writing');
+    await new Promise(resolve => setTimeout(resolve, 500));
+    state = (await canvas.read()).body;
+    assert.deepEqual([state.gate, state.update.phase], ['applying', 'applying'], 'no timer turns Applying into Checking');
+    assert.equal(fs.existsSync(added), false, 'nothing is written yet');
+    const applying = state.update;
+    const seen = events.seen.count;
+
+    // Every file is written and the check after writing starts: the parent hears it while that check holds the child.
+    held.go('before');
+    await eventually(() => held.waiting('after'), 'the bundle check after writing');
+    state = await untilUpdates(canvas.instance, value => value.update?.phase !== 'applying', 'Checking', 10_000);
+    assert.deepEqual([state.gate, state.update.phase], ['applying', 'checking'], JSON.stringify(state.update));
+    assert.deepEqual(state.update, { ...applying, phase: 'checking' }, 'Checking has the same keys as Applying');
+    assert.equal(fs.existsSync(added), true, 'every file was written before Checking');
+    await eventually(() => events.seen.count > seen, 'an updates event for Checking');
+    assert.deepEqual(await canvas.act({ op: 'cancel' }), { status: 409, body: { error: 'too_late' } });
+    assert.match(await (await call(canvas.instance.url)).text(), /<h1 id="handoff-title">Dude is updating this project<\/h1>/);
+    assert.equal((await canvas.read()).body.update.phase, 'checking', 'Checking lasts while the check runs');
+
+    // The check ends, and the outcome follows Checking.
+    held.go('after');
+    state = await canvas.until(value => value.update?.phase !== 'checking', 'the outcome');
+    assert.deepEqual([state.update.phase, state.gate], ['applied', 'closed'], JSON.stringify(state.update));
+    assert.deepEqual(state.kept, []);
+    await untilEmpty(scratch, 'the applied result\'s root');
+    assert.deepEqual(canvas.sends, []);
+  } finally {
+    held.release();
+    events.close();
+    await canvas.close();
+  }
+});
+
+test('072 Canvas update: a Canvas change admitted before OK that has not written is refused at its last check, and one whose body arrives after OK never starts', { timeout: 300_000 }, async t => {
+  const fixture = await updateFixture();
+  preferenceHome(t);
+  updateTemporary(t);
+  const root = newUpdateWorkspace(fixture, fixture.checking);
+  // A pack the project's own library offers, and a folder source with another one.
+  updatePack(root, 'beta', 'v1');
+  const folder = fs.mkdtempSync(path.join(fixture.root, 'hold-'));
+  const team = path.join(folder, 'team');
+  updatePack(team, 'gamma', 'v1');
+  const holds = holdCanvasChildren(t, folder);
+  const held = heldCheck(root);
+  const launches = updateLaunches(t);
+  const packChildren = () => launches.filter(launch => launch.args.includes(PACK_ACTION)).length;
+  const canvas = await updateCanvas(root);
+  const viewers = [`update-gate-source-${randomUUID()}`, `update-gate-remove-${randomUUID()}`];
+  const [sourcing, removing] = await Promise.all(viewers.map(id => openInstance(id, () => {}, Object.freeze({ complete: true }), { root },
+    canvas.provider, canvas.controller)));
+  /** @type {Promise<unknown>[]} */
+  const pending = [];
+  /** Settles the late removal when the case fails before its body is sent. */
+  let abandonLate = () => {};
+  try {
+    await canvas.controller.startSessionCheck();
+    await canvas.act({ op: 'preview', includePacks: false });
+    let state = await canvas.until(value => value.update?.phase !== 'preparing', 'the preview');
+    assert.equal(state.update.phase, 'ready', JSON.stringify(state.update));
+    const ready = state.update;
+    const install = await canvasPost(canvas.instance, '/api/packs/action', { op: 'preview', operation: 'install', name: 'beta' });
+    const remove = await canvasPost(removing, '/api/packs/action', { op: 'preview', operation: 'remove', name: 'alpha' });
+    assert.deepEqual([install.status, typeof install.body.token, remove.status, typeof remove.body.token], [200, 'string', 200, 'string'],
+      JSON.stringify([install.body, remove.body]));
+
+    // Three Canvas changes, all admitted before OK, none written: an install before its write gate, a
+    // removal whose body has not arrived, and a source add reading its catalog.
+    const installing = canvasPost(canvas.instance, '/api/packs/action', { op: 'apply', token: install.body.token });
+    pending.push(installing);
+    await eventually(() => holds.reached('gate'), 'the install to reach its write gate');
+    const late = canvasPostLater(removing, '/api/packs/action', { op: 'apply', token: remove.body.token });
+    abandonLate = late.abandon;
+    pending.push(late.answered);
+    await late.admitted;
+    const adding = canvasPost(sourcing, '/api/packs/sources', { op: 'add', location: team, sourcesRevision: 'absent' });
+    pending.push(adding);
+    await eventually(() => holds.reached('source'), 'the source add to read its catalog');
+    const children = packChildren();
+
+    // OK from the first Canvas: none of them can commit without asking the gate again, so none holds it.
+    state = (await canvas.act({ op: 'apply', id: ready.id })).body;
+    assert.deepEqual([state.gate, state.update.phase], ['applying', 'applying']);
+
+    // The source add read its catalog, and its last check before saving refuses it.
+    holds.go('source');
+    assert.deepEqual(await adding, { status: 409, body: { error: 'update_in_progress' } });
+    assert.equal(fs.existsSync(path.join(root, PACK_SOURCES_PATH)), false, 'no source was saved');
+    // The update holds its gate while its bundle check before writing runs.
+    await eventually(() => held.waiting('before'), 'the bundle check before writing');
+    // The removal's body arrives only now: it is refused before any child starts.
+    late.send();
+    assert.deepEqual(await late.answered, { status: 409, body: { error: 'update_in_progress' } });
+    assert.equal(packChildren(), children, 'the late removal started no child');
+    // The install asks its write gate, which now says no.
+    holds.go('gate');
+    assert.deepEqual(await installing, { status: 409, body: { error: 'update_in_progress' } });
+
+    // The update finishes, and none of the three changed anything.
+    held.release();
+    state = await canvas.until(applicationEnded, 'the outcome');
+    assert.deepEqual([state.update.phase, state.gate], ['applied', 'closed'], JSON.stringify(state.update));
+    const status = cmdStatus({ root });
+    assert.deepEqual(status.ok && Object.keys(status.result.installed), ['alpha'], 'alpha stays installed and beta was not installed');
+    assert.deepEqual(updateRead(root, UPDATE_ALPHA), fixture.alpha);
+    assert.equal(fs.existsSync(path.join(root, '.github/agents/dude-pack-beta-worker.agent.md')), false);
+    assert.equal(fs.existsSync(path.join(root, PACK_SOURCES_PATH)), false);
+    assert.deepEqual(canvas.sends, []);
+  } finally {
+    holds.release();
+    held.release();
+    abandonLate();
+    await Promise.allSettled(pending);
+    for (const id of viewers) await closeInstance(id);
+    await canvas.close();
+  }
+});
+
+test('072 Canvas update: OK is busy while another Canvas change can still write, and the same ready update applies once that change ends', { timeout: 300_000 }, async t => {
+  const fixture = await updateFixture();
+  preferenceHome(t);
+  updateTemporary(t);
+  const root = newUpdateWorkspace(fixture);
+  updatePack(root, 'beta', 'v1');
+  const writes = atFirstPackWrite(t, /** @type {any} */ ({ temporary: fs.mkdtempSync(path.join(fixture.root, 'busy-')), root }), 'hold');
+  const canvas = await updateCanvas(root);
+  const otherId = `update-busy-${randomUUID()}`;
+  const other = await openInstance(otherId, () => {}, Object.freeze({ complete: true }), { root }, canvas.provider, canvas.controller);
+  /** @type {Promise<{ status: number | undefined, body: any }> | null} */
+  let installing = null;
+  try {
+    await canvas.controller.startSessionCheck();
+    await canvas.act({ op: 'preview', includePacks: false });
+    let state = await canvas.until(value => value.update?.phase !== 'preparing', 'the preview');
+    assert.equal(state.update.phase, 'ready', JSON.stringify(state.update));
+    const ready = state.update;
+
+    // A pack install in the first Canvas passes its write gate and is held at its first write.
+    const preview = await canvasPost(canvas.instance, '/api/packs/action', { op: 'preview', operation: 'install', name: 'beta' });
+    assert.equal(typeof preview.body.token, 'string', JSON.stringify(preview.body));
+    installing = canvasPost(canvas.instance, '/api/packs/action', { op: 'apply', token: preview.body.token });
+    await eventually(writes.reached, 'the install to reach its first write');
+
+    // OK from the other Canvas waits for it, and nothing changes.
+    assert.deepEqual(await updatesRoute(other, { op: 'apply', id: ready.id }), { status: 409, body: { error: 'busy' } });
+    state = (await canvas.read()).body;
+    assert.deepEqual([state.gate, state.update], ['open', ready], 'the same ready update is still offered');
+
+    writes.release();
+    const installed = await installing;
+    assert.deepEqual([installed.status, installed.body.ok], [200, true], JSON.stringify(installed.body));
+
+    // That change has ended: the same OK now applies the update.
+    state = (await updatesRoute(other, { op: 'apply', id: ready.id })).body;
+    assert.equal(state.gate, 'applying');
+    state = await canvas.until(applicationEnded, 'the outcome');
+    assert.equal(state.update.phase, 'applied', JSON.stringify(state.update));
+    const status = cmdStatus({ root });
+    assert.equal(status.ok && Object.hasOwn(status.result.installed, 'beta'), true, 'the install finished before the update');
+    assert.deepEqual(canvas.sends, []);
+  } finally {
+    writes.release();
+    await installing?.catch(() => null);
+    await closeInstance(otherId);
+    await canvas.close();
+  }
+});
+
+test('072 Canvas update: a temporary folder whose cleanup cannot be confirmed stays listed with why after Cancel and after a replacement, for the rest of the session', { timeout: 300_000 }, async t => {
+  const fixture = await updateFixture();
+  preferenceHome(t);
+  const scratch = updateTemporary(t);
+  const root = newUpdateWorkspace(fixture, fixture.kept);
+  const before = workTree(root);
+  const canvas = await updateCanvas(root);
+  const events = await updateEvents(canvas.instance);
+  const otherId = `update-kept-${randomUUID()}`;
+  const reason = 'The folder holds material that a process the update started may still use.';
+  /** @param {boolean} includePacks */
+  const staging = async includePacks => {
+    await canvas.act({ op: 'preview', includePacks });
+    return canvas.until(value => value.update?.step === 'staging-core', 'the preparation to stage');
+  };
+  /** @param {number} count @param {string} label */
+  const keptCount = (count, label) => canvas.until(value => value.kept.length === count, label);
+  try {
+    await canvas.controller.startSessionCheck();
+
+    // Cancel: the preparation's process cannot be confirmed stopped, so its root stays, listed with why.
+    await staging(true);
+    let seen = events.seen.count;
+    assert.equal((await canvas.act({ op: 'cancel' })).body.update, null, 'Cancel closes the update at once');
+    let state = await keptCount(1, 'the cancelled preparation\'s root to be listed');
+    assert.equal(state.update, null);
+    const [first] = state.kept;
+    assert.deepEqual(first, { root: first.root, reason });
+    assert.equal(path.dirname(first.root), scratch, 'the update\'s own temporary root');
+    assert.ok(fs.readdirSync(first.root).some(name => name.startsWith('dude-up-')), 'its material is kept');
+    await eventually(() => events.seen.count > seen, 'an updates event for the kept root');
+
+    // A replacement: the replaced preparation's root is listed too, and the replacement goes on.
+    await staging(true);
+    seen = events.seen.count;
+    await canvas.act({ op: 'preview', includePacks: false });
+    state = await keptCount(2, 'the replaced preparation\'s root to be listed');
+    assert.equal(state.update?.phase, 'preparing', 'the replacement goes on');
+    await eventually(() => events.seen.count > seen, 'an updates event for the second kept root');
+    await canvas.until(value => value.update?.step === 'staging-core', 'the replacement to stage');
+    await canvas.act({ op: 'cancel' });
+    state = await keptCount(3, 'the last preparation\'s root to be listed');
+
+    // In the order kept, never cleared in this session, and the same in every Canvas of it.
+    assert.equal(state.kept[0].root, first.root);
+    assert.equal(new Set(state.kept.map((/** @type {any} */ entry) => entry.root)).size, 3);
+    for (const entry of state.kept) {
+      assert.deepEqual(entry, { root: entry.root, reason });
+      assert.equal(fs.existsSync(entry.root), true, `${entry.root} is kept`);
+    }
+    await canvas.act({ op: 'later' });
+    await canvas.act({ op: 'check' });
+    const checked = await canvas.until(value => !value.checking, 'a later check');
+    assert.deepEqual(checked.kept, state.kept, 'neither Later nor a new check clears the list');
+    const other = await openInstance(otherId, () => {}, Object.freeze({ complete: true }), { root }, null, canvas.controller);
+    assert.deepEqual((await updatesRoute(other)).body.kept, state.kept);
+    assert.deepEqual(workTree(root), before, 'nothing in the project changed');
+    assert.deepEqual(canvas.sends, []);
+  } finally {
+    events.close();
+    await closeInstance(otherId);
+    await canvas.close();
+  }
+});
+
+test('072 Canvas update: the inert page lists every temporary folder this session kept, with why, and the cleanup an outcome reported after its Canvas closed, all escaped', { timeout: 300_000 }, async t => {
+  const fixture = await updateFixture();
+  preferenceHome(t);
+  // Every root this case keeps holds characters that HTML must escape; a Windows path cannot hold `<` or `>`.
+  const scratch = updateTemporary(t, process.platform === 'win32' ? 'dude-cu-tmp-a&b-' : 'dude-cu-tmp-a<&>b-');
+  const root = newUpdateWorkspace(fixture, fixture.retaining);
+  const go = path.join(path.dirname(root), `${path.basename(root)}.apply-go`);
+  const canvas = await updateCanvas(root);
+  const otherId = `update-inert-kept-${randomUUID()}`;
+  /** Text as the inert page escapes it. @param {string} value */
+  const escaped = value => value.replace(/[&<>"']/g, character => `&#${character.charCodeAt(0)};`);
+  /** One kept folder as the inert page lists it. @param {{ root: string, reason: string }} entry */
+  const listed = entry => `<li><code>${escaped(entry.root)}</code>: ${escaped(entry.reason)}</li>`;
+  try {
+    await canvas.controller.startSessionCheck();
+
+    // The first preparation keeps its root once it is replaced, and the replacement is ready.
+    await canvas.act({ op: 'preview', includePacks: false });
+    await canvas.until(value => value.update?.step === 'staging-core', 'the first preparation to stage');
+    await canvas.act({ op: 'preview', includePacks: false });
+    let state = await canvas.until(value => value.kept.length === 1 && value.update?.phase !== 'preparing',
+      'the replaced preparation\'s root to be kept and the replacement to be ready');
+    assert.equal(state.update.phase, 'ready', JSON.stringify(state.update));
+    const [replaced] = state.kept;
+    assert.deepEqual(replaced, { root: replaced.root, reason: 'The folder holds material that a process the update started may still use.' });
+    assert.equal(path.dirname(replaced.root), scratch);
+
+    // OK: while the replacement applies, a reload already lists the folder kept before it.
+    state = (await canvas.act({ op: 'apply', id: state.update.id })).body;
+    assert.equal(state.gate, 'applying');
+    const other = await openInstance(otherId, () => {}, Object.freeze({ complete: true }), { root }, null, canvas.controller);
+    let text = await (await call(other.url)).text();
+    assert.match(text, /<h1 id="handoff-title">Dude is updating this project<\/h1>/);
+    assert.ok(text.includes(`<ul>${listed(replaced)}</ul>`), 'the kept folder and why, escaped');
+
+    // The Canvas that asked closes, and only then does the application end, without answering: its own root is kept too.
+    await canvas.close();
+    fs.writeFileSync(go, '');
+    const deadline = performance.now() + 120_000;
+    while (!applicationEnded(state = await canvas.controller.read()) || state.kept.length < 2) {
+      assert.ok(performance.now() < deadline, `the application ended and its root was kept: ${JSON.stringify(state.kept)}`);
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    assert.equal(state.update.phase, 'restoration_unconfirmed', JSON.stringify(state.update));
+    const applying = state.kept[1];
+    assert.deepEqual(applying, { root: applying.root, reason: 'A process the update started could not be confirmed stopped.' });
+    assert.equal(path.dirname(applying.root), scratch);
+    assert.equal(state.update.cleanup,
+      `The update's temporary folder was kept at ${applying.root} because a process the update started could not be confirmed stopped.`);
+
+    // A reload shows the outcome, its cleanup, and every folder kept this session with why, escaped and with no script.
+    text = await (await call(other.url)).text();
+    assert.match(text, /<h1 id="handoff-title">Start a new session to keep using Canvas<\/h1>/);
+    assert.ok(text.includes(`<p>${escaped(state.update.cleanup)}</p>`), 'the outcome\'s cleanup sentence');
+    assert.ok(text.includes('<p>Dude kept these temporary folders because it couldn\'t confirm that they were cleaned up:</p>'));
+    assert.ok(text.includes(`<ul>${listed(replaced)}${listed(applying)}</ul>`), 'both folders, in the order kept');
+    assert.ok(text.includes('<p>Remove them yourself once nothing uses them.</p>'));
+    assert.equal(text.includes(scratch), false, 'no root appears unescaped');
+    assert.equal(/<script|<link\b|\bsrc=/i.test(text), false, 'the page still loads nothing');
+    assert.deepEqual(canvas.sends, []);
+  } finally {
+    fs.writeFileSync(go, '');
+    await closeInstance(otherId);
+    await canvas.close();
+  }
+});
+
+test('072 Canvas update: a Node host runs the update child with its own Node, and the CLI\'s single executable uses the node on PATH', () => {
+  const root = path.resolve('workspace-root');
+  assert.deepEqual(nodeChildLaunch(root, UPDATE_ACTION), { command: process.execPath, args: [UPDATE_ACTION, root] });
+  const packs = new URL('./lib/packs.mjs', import.meta.url).href;
+  /** @param {string | null} execPath @param {string | null} bootstrap */
+  const hosted = (execPath, bootstrap) => {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', [
+      ...(execPath ? [`process.execPath = ${JSON.stringify(execPath)};`] : []),
+      ...(bootstrap ? [`process.argv.push(${JSON.stringify(bootstrap)});`] : []),
+      `const { nodeChildLaunch } = await import(${JSON.stringify(packs)});`,
+      `process.stdout.write(JSON.stringify(nodeChildLaunch(${JSON.stringify(root)}, ${JSON.stringify(UPDATE_ACTION)})));`,
+    ].join('\n')], { encoding: 'utf8', windowsHide: true });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  const cli = executableOnPath('git');
+  assert.deepEqual(hosted(cli, 'extension_bootstrap.mjs'), { command: 'node', args: [UPDATE_ACTION, root] },
+    'the single executable relaunches through its bootstrap, so the child is the node on PATH');
+  assert.deepEqual(hosted(null, 'extension_bootstrap.mjs'), { command: process.execPath, args: [UPDATE_ACTION, root] },
+    'a Node host with a bootstrap runs it directly');
+  assert.deepEqual(hosted(cli, null), { command: cli, args: [UPDATE_ACTION, root] }, 'with no bootstrap the host runs scripts itself');
+});
+
+test('072 Canvas update: saves of the two choices in one process run one at a time, so neither resets the other', async t => {
+  const { file } = preferenceHome(t);
+  const instance = await openInstance('update-preference-queue', () => {});
+  const readFile = fs.promises.readFile;
+  const rename = fs.promises.rename;
+  /** @type {string[]} */
+  const order = [];
+  // Hold every read of the document long enough that two unserialized saves would both read the old one.
+  t.mock.method(fs.promises, 'readFile', /** @this {any} */ async function (target, ...rest) {
+    if (path.resolve(String(target)) !== file) return readFile.call(this, target, ...rest);
+    order.push('read');
+    await new Promise(resolve => setTimeout(resolve, 100));
+    return readFile.call(this, target, ...rest);
+  });
+  t.mock.method(fs.promises, 'rename', /** @this {any} */ async function (from, to, ...rest) {
+    if (path.resolve(String(to)) === file) order.push('rename');
+    return rename.call(this, from, to, ...rest);
+  });
+  try {
+    const [appearance, updates] = await Promise.all([
+      preferenceRoute(instance, { followAppTheme: true }),
+      preferenceRoute(instance, { checkForUpdatesOnSessionStart: false }),
+    ]);
+    assert.deepEqual([appearance.status, updates.status], [200, 200]);
+    assert.deepEqual(order, ['read', 'rename', 'read', 'rename'], 'the second save read the first one\'s document');
+    assert.equal(fs.readFileSync(file, 'utf8'), preferenceDocument(true, false), 'both choices are kept');
+    assert.ok([appearance.body, updates.body].some(body => JSON.stringify(body) === preferenceDocument(true, false)),
+      'the later save answers the complete document');
+  } finally {
+    t.mock.restoreAll();
+    await closeInstance('update-preference-queue');
   }
 });

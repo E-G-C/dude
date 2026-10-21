@@ -3711,137 +3711,6 @@ test('T007 Compose guidance documents the exclusive source and the catalog resol
   ]) assert.ok(catalog.includes(requirement), `missing catalog resolution rule: ${requirement}`);
 });
 
-/* ----------------------------------------- T007 upgrade --all Compose calls */
-
-// `upgrade --all` gives Compose the plan's resolved commit as `ref` and never a `source`: an explicit
-// source is exclusive and would skip a local target's catalog. Behaviour tests cannot see a `source`
-// that resolves to the catalog Compose would have read anyway, so this reads the two call sites. The
-// scan is lexical: it blanks comments and string or template literals and matches brackets, and it
-// does not understand regular-expression literals or nested templates. If `cmdPacks` gains one and
-// this test stops finding the calls, extend the scan rather than the expectations.
-// Alternatives: block comment, line comment, 'string', "string", template (substitutions included).
-const UPGRADE_NON_CODE = /\/\*[\s\S]*?\*\/|\/\/[^\n]*|'(?:\\[\s\S]|[^'\\\n])*'|"(?:\\[\s\S]|[^"\\\n])*"|`(?:\\[\s\S]|[^`\\])*`/g;
-
-/**
- * The index of the bracket that closes the one at `open`.
- * @param {string} code source with comments and literals blanked
- * @param {number} open
- * @returns {number}
- */
-function closingBracket(code, open) {
-  let depth = 0;
-  for (let at = open; at < code.length; at += 1) {
-    if ('([{'.includes(code[at])) depth += 1;
-    if (')]}'.includes(code[at])) {
-      depth -= 1;
-      if (depth === 0) return at;
-    }
-  }
-  return assert.fail(`nothing closes the bracket at offset ${open}; the scan may have misread a regular-expression literal or a nested template`);
-}
-
-/**
- * The non-empty ranges between the top-level commas of `code.slice(from, to)`.
- * @param {string} code source with comments and literals blanked
- * @param {number} from
- * @param {number} to
- * @returns {Array<[number, number]>}
- */
-function splitTopLevel(code, from, to) {
-  const cuts = [from - 1];
-  let depth = 0;
-  for (let at = from; at < to; at += 1) {
-    if ('([{'.includes(code[at])) depth += 1;
-    else if (')]}'.includes(code[at])) depth -= 1;
-    else if (code[at] === ',' && depth === 0) cuts.push(at);
-  }
-  cuts.push(to);
-  return cuts
-    .slice(1)
-    .map((end, index) => /** @type {[number, number]} */ ([cuts[index] + 1, end]))
-    .filter(([start, end]) => code.slice(start, end).trim() !== '');
-}
-
-/**
- * Read `async function cmdPacks` of the upgrade source without running it: its body with comments and
- * literals blanked, and each `compose.cmdPreviewRefresh(` / `compose.cmdRefresh(` call in it with the
- * properties of its one object-literal argument (`null` when the argument is anything else).
- * @param {string} source
- */
-function readCmdPacks(source) {
-  const heads = [...source.matchAll(/\basync\s+function\s+cmdPacks\s*\(/g)];
-  assert.equal(heads.length, 1, 'upgrade.mjs must declare `async function cmdPacks(` exactly once');
-  const written = source.slice(heads[0].index);
-  const blanked = written.replace(UPGRADE_NON_CODE, (token) => token.replace(/[^\n]/g, ' '));
-  const bodyStart = blanked.indexOf('{', closingBracket(blanked, heads[0][0].length - 1));
-  const bodyEnd = closingBracket(blanked, bodyStart);
-  const text = written.slice(bodyStart + 1, bodyEnd);
-  const code = blanked.slice(bodyStart + 1, bodyEnd);
-  // Once literals are blanked no quote or backtick is left, unless the scan misread something.
-  assert.doesNotMatch(code, /['"`]/, 'cmdPacks holds a quote or backtick outside any string, template, or comment, most likely in a regular-expression literal that the scan does not understand');
-
-  const calls = [...code.matchAll(/\bcompose\s*\.\s*(cmdPreviewRefresh|cmdRefresh)\s*\(/g)].map((match) => {
-    const at = /** @type {number} */ (match.index);
-    const paren = at + match[0].length - 1;
-    const [argument, ...others] = splitTopLevel(code, paren + 1, closingBracket(code, paren));
-    /** @type {Array<{ key: string, value: string | null, written: string }> | null} */
-    let properties = null;
-    if (argument && others.length === 0) {
-      const open = argument[0] + code.slice(...argument).search(/\S/);
-      const close = argument[0] + code.slice(...argument).trimEnd().length - 1;
-      if (code[open] === '{' && closingBracket(code, open) === close) {
-        properties = splitTopLevel(code, open + 1, close).map(([start, end]) => {
-          const written = text.slice(start, end).replace(/\s+/g, ' ').trim();
-          // Only `name` and `name: value` have a key; spreads, quoted or computed keys, and methods do not.
-          const plain = /^([A-Za-z_$][\w$]*)\s*(?::\s*([\s\S]+))?$/.exec(code.slice(start, end).trim());
-          return plain
-            ? { key: plain[1], value: plain[2] ?? plain[1], written }
-            : { key: `<${written}>`, value: null, written };
-        });
-      }
-    }
-    return { method: match[1], at, properties };
-  });
-  return { code, calls };
-}
-
-test('T007 upgrade --all: the Compose preview and refresh calls pass exactly root, library, name, and the resolved-commit ref, never a source', () => {
-  const { code, calls } = readCmdPacks(fs.readFileSync(new URL('../dude-bundle-upgrade/upgrade.mjs', import.meta.url), 'utf8'));
-
-  // One `ref`, bound at the top level of cmdPacks to the plan's resolved commit, before either call.
-  const declarations = [...code.matchAll(/\b(?:const|let|var)\s+ref\b/g)];
-  assert.equal(declarations.length, 1, `cmdPacks must declare \`ref\` exactly once, found ${declarations.length}`);
-  const declared = /** @type {number} */ (declarations[0].index);
-  const binding = /const\s+ref\s*=\s*plan\s*\.\s*source\s*\.\s*resolved_commit\s*;/y;
-  binding.lastIndex = declared;
-  assert.ok(binding.test(code), 'cmdPacks must bind `const ref = plan.source.resolved_commit;`');
-  const before = code.slice(0, declared);
-  assert.equal(
-    (before.match(/[([{]/g) ?? []).length,
-    (before.match(/[)\]}]/g) ?? []).length,
-    'the `ref` binding must sit at the top level of cmdPacks so that both calls see it',
-  );
-
-  for (const method of ['cmdPreviewRefresh', 'cmdRefresh']) {
-    const found = calls.filter((call) => call.method === method);
-    assert.equal(found.length, 1, `cmdPacks must call compose.${method}( exactly once, found ${found.length}`);
-    const [{ at, properties }] = found;
-    assert.ok(properties, `compose.${method} must be passed one object literal`);
-    const shown = properties.map((property) => property.written).join(', ');
-    assert.deepEqual(
-      properties.map((property) => property.key).sort(),
-      ['library', 'name', 'ref', 'root'],
-      `compose.${method} must pass exactly root, library, name, and ref, never a source: { ${shown} }`,
-    );
-    assert.equal(
-      properties.find((property) => property.key === 'ref')?.value,
-      'ref',
-      `compose.${method} must pass the bound commit as ref: { ${shown} }`,
-    );
-    assert.ok(declared < at, `ref must be bound before compose.${method}(`);
-  }
-});
-
 /* ---------------------------------------- T002 targeted remote acquisition */
 
 // Captured before any test records process starts, so the fixture repository's
@@ -4414,7 +4283,7 @@ test('T002 a core-only install reads its GitHub upstream by its configured spell
         type: 'remote', repository: spelling, requested_ref: 'latest', resolved_commit: second,
       });
 
-      // A ref-only call, as `upgrade --all` makes it: no source, and a full commit as the ref.
+      // A ref-only call: no source, and a full commit as the ref.
       server.requests.length = 0;
       const pinned = await cmdPreviewRefresh({ root: released, library, name: 'alpha', ref: catalog.first });
       assert.equal(pinned.ok, true, pinned.error);

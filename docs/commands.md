@@ -35,7 +35,7 @@ it with `@dude add pack beads`.
 | `@dude hire a <role>` | Add a new specialist to the active roster (creates `.github/agents/dude-local-<slug>.agent.md` for project-local agents). |
 | `@dude list the team` / `@dude show roster` | Read-only summary of the current specialists and their scopes. |
 | `@dude remove <role>` / `@dude modify <role>` | Remove or adjust an existing specialist. |
-| `@dude upgrade [--all] [--dry-run|--rollback|--ref <ref>]` | Refresh the installed Dude bundle from upstream while preserving project memory and active work. `--all` adds a post-core refresh of installed packs after a separate confirmation. |
+| `@dude upgrade [--all] [--dry-run] [--ref <ref>] [--source <url-or-local-path>]` | Prepare an update of the installed Dude bundle from upstream, show the actual file changes, and apply exactly them after one `confirm upgrade`, preserving project memory and active work. `--all` adds the eligible out-of-the-box packs to the same preview and confirmation. The changes stay uncommitted on the current branch. |
 | `@dude import tasks from .dude/specs/<feature>/ into Beads` | Manually import a defined package into Beads when you do not want the normal automatic handoff. Requires the `beads` pack. |
 
 Preferred workflow verbs are `brainstorm`, `define`, `ship`, `status`, `track`, `work`, `flag`, `diff`, and `self-check`. `hire`, `remember`, `upgrade`, `sync Beads to tasks.md`, and the team-management verbs are coordinator-maintenance verbs and may be invoked any time.
@@ -1128,7 +1128,8 @@ sections, Packs, Appearance, and About, chosen with the tabs beside the
 Settings heading. Packs manages the current workspace's optional packs and the
 sources they come from, Appearance chooses whether Canvas follows the GitHub
 app theme (see [Settings: Appearance](#settings-appearance)), and About
-identifies the installation (see [Settings: About](#settings-about)). Settings
+identifies the installation and checks for Dude updates (see
+[Settings: About](#settings-about)). Settings
 has no other sections. It opens on Packs each time you enter it. Switching to
 Appearance or About and back keeps the Packs view, use case, source, page,
 selection, and open details. Entering or leaving
@@ -1618,20 +1619,20 @@ read of the catalogs follows.
 #### Settings: About
 
 About shows the Dude version, the author, Enrique Gonzalez, the project
-repository `https://github.com/E-G-C/dude`, and the recorded channel/ref. The
-version comes from `installed_ref` and the channel/ref from `source_ref` in
+repository `https://github.com/E-G-C/dude`, and the update channel. The
+version comes from `installed_ref` and the channel from `source_ref` in
 `.dude/metadata/bundle-manifest.md`. For a development install
 (`installed_ref: main`), the version also names the base release recorded in
 `.dude/metadata/development-base-release.md`. Each time you open About, it
 reads the manifest again and, for `main` only, that record. The labels
 describe only what is recorded:
 
-| Recorded value | Dude version | Recorded channel/ref |
+| Recorded value | Dude version | Update channel |
 | --- | --- | --- |
-| Release tag such as `v1.2.3` | `v1.2.3` | `Pinned release (v1.2.3)` |
+| Release tag such as `v1.2.3` | `v1.2.3` | `Pinned to v1.2.3` |
 | `main` with a recorded base such as `v1.3.0` | `Development (main), based on v1.3.0` | `Development (main)` |
 | `main` without a usable base | `Development (main)` | `Development (main)` |
-| `latest` | `Recorded ref (latest)` | `Stable releases (latest)` |
+| `latest` | `Recorded ref (latest)` | `Latest release` |
 | Any other safe ref | `Recorded ref (<ref>)` | `Recorded ref (<ref>)` |
 | Missing or unusable | `Unavailable` | `Unavailable` |
 
@@ -1641,13 +1642,32 @@ source when the record was made; it is not the newest release available.
 About uses it only when the record names exactly the manifest's
 `source_repo`. A missing, unreadable, malformed, or differently sourced record
 leaves exactly `Development (main)`, with no warning, and never makes a usable
-version or channel Unavailable. About does not verify installed bytes, look up
-tags, or check for updates. If the manifest cannot be read, both values show
-Unavailable while the author and repository remain. The repository link is an
-ordinary link that opens a separate tab or window; opening it from the embedded
-desktop panel has not been verified. About offers no other action. While it is
-open, the command bar has no Reload packs or Refresh control, and the status
-bar shows `About · Read only`.
+version or channel Unavailable. About does not verify installed bytes. If the
+manifest cannot be read, both values show Unavailable while the author and
+repository remain. The repository link is an ordinary link that opens a
+separate tab or window; opening it from the embedded desktop panel has not been
+verified. While About is open, the command bar has no Reload packs or Refresh
+control, and the status bar shows the installed version, such as
+`About · Installed v1.2.3`.
+
+Below those rows, About shows this session's update status. Only a
+`source_ref: latest` installation with a stable installed version checks for
+releases. Its status says that Dude is checking, is up to date, that a newer
+release is available, that no stable releases were found, or that it couldn't
+check and why, with the time this session checked. What's new appears only for
+a release of a GitHub repository. Check for updates runs one check now, and
+Update to the available version opens the update dialog (see
+[Updating Dude from Canvas](#updating-dude-from-canvas)). Pinned and
+development installs, and installations whose information is unavailable,
+never check: the status line says why, and neither action is offered.
+
+The switch "Check for updates when a session starts" is on until you turn it
+off. It is saved for you on this computer, beside the Appearance choice (see
+[Settings: Appearance](#settings-appearance)), and saving it checks nothing.
+While it is off, a new session contacts no update source, and Check for
+updates still works. If the saved choices cannot be read, the session does not
+check, and neither this switch nor Follow GitHub app theme saves until Retry
+reads them again.
 
 #### Settings: Appearance
 
@@ -1660,8 +1680,14 @@ packs or Refresh control, and the status bar shows
 
 The choice belongs to you on this computer, not to a project. Canvas saves it
 in `$COPILOT_HOME/extensions/dude/artifacts/canvas-preferences.json`, or in the
-same path under `~/.copilot` when `COPILOT_HOME` is unset, as exactly
-`{"followAppTheme":true}` or `{"followAppTheme":false}`. No repository file
+same path under `~/.copilot` when `COPILOT_HOME` is unset, together with the
+update-check choice from About, as exactly
+`{"followAppTheme":<true or false>,"checkForUpdatesOnSessionStart":<true or false>}`.
+A missing file reads as off and on. An earlier file that holds only
+`{"followAppTheme":<true or false>}` still reads, with update checks on, and
+reading it never rewrites it. Each save changes one choice and keeps the other;
+one Canvas process saves one at a time, while Canvases in separate processes
+still replace the whole document, the last save winning. No repository file
 changes. Canvas reads the saved choice when it serves its page, so it opens in
 the chosen look from the first frame. Another open Canvas, in this project or
 another, reads the choice again when its window regains focus or when you open
@@ -1678,7 +1704,9 @@ not saved. If the answer to a save is lost, Canvas shows
 it never sends the save again. If the saved choice cannot be read, Canvas keeps
 the last choice it confirmed, or Dude's own look when it opens without one, and
 shows a warning with Retry. Retry only reads the choice again. A malformed file
-counts as a failed read: Canvas neither treats it as off nor repairs it.
+counts as a failed read: Canvas neither treats it as off nor repairs it, and
+the switch does not save until Retry reads the choices again, because a save
+would replace the update-check choice too.
 
 While following, Canvas takes the app's light or dark tone from the document's
 `data-theme-tone`, then `data-color-mode`, then the device preference, and its
@@ -1715,11 +1743,97 @@ saved under one appearance and reopened under one with different colors is
 kept, but it becomes stale, as it does after a theme or viewport change, and
 can't be sent.
 
+#### Updating Dude from Canvas
+
+When a session starts on an eligible installation with session-start checks
+on, the extension checks the recorded source in the background once the
+session has joined: one Git tag listing, with a five-second deadline and no
+sign-in. Joining never waits for it, and it creates no file, folder,
+preference, Needs you request, or chat message. A newer stable release shows
+one notice at the top of Needs you, outside the request cards and counts, with
+the installed and available versions, Review update, Later, and What's new when
+there is a release page. Later hides the notice for this session only. A check
+that fails shows no notice; About says it couldn't check.
+
+Review update, or Update in About, opens one dialog and starts preparing at
+once, as `@dude upgrade` does (see [Upgrading the bundle](#upgrading-the-bundle)):
+Dude fetches only that release's deployment files with Git into a temporary
+folder, and that release's own engine stages every change there. The project
+does not change while it prepares, and Cancel stops it. The ready preview names
+both versions and the added, replaced, and removed files, grouped into core,
+metadata, and each affected pack, with the current branch and the touched files
+that have uncommitted edits. When installed out-of-the-box packs would change,
+one checkbox, checked at first, includes them; changing it prepares a new
+preview, and OK waits for it.
+
+OK applies exactly that preview, once, and leaves the changes uncommitted on
+the current branch. The dialog shows Applying while the files are written, then
+Checking once the release's own bundle check runs on the written files; the
+engine reports that moment, and no timer guesses it. The dialog then shows the
+installed version, or reports Nothing changed with the reason (for example, a
+file changed after the preview; prepare again), Files restored, or Restoration
+unconfirmed with the paths to inspect. Dude never repeats an update on its own.
+OK waits while another Canvas change in this session can still write, such as
+a pack action that has started writing or a Needs you response on its way: the
+dialog says nothing changed, and OK works again once that change ends.
+If the answer to OK is lost, Canvas never sends OK again and never says that
+nothing changed: the dialog shows `Checking whether the update started...` and
+reads the update state once. It then shows Applying, Checking, or the outcome;
+only a preview still waiting for OK shows that OK was not received and offers
+OK again. If that read fails too, the dialog says it can't tell and offers Read
+again.
+
+From OK on, the Canvas of this session admits no workspace-changing action,
+such as a pack action, a source change, an import, or a Needs you response,
+and serves no more of its interface files, which the update may be replacing.
+An action that started before OK but has not written yet is refused at its last
+check before writing, and saves nothing.
+Closing the dialog or the Canvas does not stop the update: it finishes or
+restores. If the update was refused before it wrote anything, Canvas works
+again. Otherwise, closing the result or reloading shows only a Start a new
+session page; start a new session to use the installed version. Dude does not
+restart or end your session.
+
+Canvas prepares and applies each update in a short-lived Node.js child
+process. When the Copilot CLI runs extensions in its own executable rather than
+Node.js, that child is the `node` on `PATH`, so Node.js 20 or later must be
+there, as for the other bundle-maintenance scripts. Unlike chat's
+`@dude upgrade`, a Canvas update gives Git the release check's closed
+environment: no Git configuration, credential helper, saved sign-in, proxy, or
+redirect of yours. A source that needs any of them can still be updated from
+chat. Each update has its own temporary folder, removed once the update is
+applied, cancelled, or replaced. A folder that a process may still be using, or
+that cannot be removed, is kept, and Canvas lists it with the reason, under the
+Needs you title and in About's Updates section, for the rest of the session,
+also after Cancel or a replacement and on the Start a new session page; remove
+it yourself once nothing uses it.
+
+The browser reaches all of this through two routes, behind Canvas's loopback
+Host and Origin checks:
+
+- `GET /api/updates` returns this session's update state: the recorded
+  installation, the version this session started with, the last check, the
+  notice, the update in progress or its outcome, the write gate, and the
+  temporary folders kept this session. It reads the manifest and acquires
+  nothing.
+- `POST /api/updates/action`, from the Canvas's own origin, takes exactly one
+  of `{"op":"check"}`, `{"op":"later"}`,
+  `{"op":"preview","includePacks":<boolean>}`, `{"op":"cancel"}`, or
+  `{"op":"apply","id":"<prepared id>"}`. The browser never names a
+  repository, ref, folder, command, or file. A refusal changes nothing and
+  names its reason, such as `not_eligible`, `stale`, `busy`,
+  `update_in_progress`, or `new_session_required`.
+
+Each change arrives as an `updates` event on the Canvas event stream. The event
+carries no data, and Canvas reads the state again; nothing polls.
+
 #### Reloading the development canvas
 
 The Canvas Refresh control rereads workspace data; it reloads neither the
 renderer nor the backend. UI assets are served from disk on each request, so a
-renderer reload fetches a rebuilt bundle without restarting the app. Reopening
+renderer reload fetches a rebuilt bundle without restarting the app, except
+after a Canvas update has started writing in this session: from then on the
+old server serves only its Start a new session page. Reopening
 an existing panel may only focus the cached UI. None of these operations
 reloads the extension's backend modules.
 After rebuilding backend code, use the runtime's `extensions_reload({})` tool
@@ -2439,6 +2553,20 @@ driver also gives each host its own `HOME`, so the fallback without
 injection timing, a same-tone change delivered by the app, or fonts installed
 only with the app.
 
+Canvas update server coverage is in the `072 Canvas update:` cases of
+`canvas-server.test.mjs`, which also cover the update-check choice beside the
+`085 App theme:` preference cases. They build ordinary tagged local upstreams
+from the current source with the release builder, under the OS temporary
+directory, and drive disposable consumers through the real update routes, the
+update controller, its child process, and the engine's preparation and
+application, with no network: a notice through one OK to the next session,
+Cancel and Canvas closure, a file changed after the preview, a restored and an
+unconfirmed outcome, and the old server's inert page. Each case owns its
+temporary directory and, where it reads one, its preference home. They need
+Git; on Windows, run them with Git for Windows first on `PATH`, as above. They
+use SDK-session stand-ins, not the installed CLI, so an installed extension
+replacing its own deployed files is left to installed-host acceptance.
+
 ##### Installed Copilot host
 
 Invoke `scripts/dude-canvas-ui/t012-installed-host.mjs` explicitly; recursive
@@ -2882,28 +3010,39 @@ or perform a live GitHub push.
 
 ### Upgrading the bundle
 
-Use the `dude-bundle-upgrade` skill to refresh the installed Dude engine from its
-source repo. The skill reads the sole manifest at
-`.dude/metadata/bundle-manifest.md`. Each invocation runs the upgrade workflow's
-internal `upgrade.mjs status` phase to compare refs for orientation. Unless that
-phase returns an error, an offline result, or `no releases published yet`, the
-workflow continues to the byte-authoritative `plan` phase, fetches the resolved
-release into an OS temp directory, and produces an upgrade report. Global
-`@dude status` is the separate read-only workflow lane-orientation command; it
-does not check upgrade availability.
+Use the `dude-bundle-upgrade` skill to update the installed Dude engine from
+its source repo. The skill reads the sole manifest at
+`.dude/metadata/bundle-manifest.md`. Each `@dude upgrade` prepares one exact
+update first: the engine resolves the recorded channel to one release commit,
+fetches only that commit's deployment files with Git into an OS temp
+directory, and lets that release's own engine build every changed byte in a
+staging copy. The report lists the actual added, replaced, and removed files,
+grouped into core, metadata, and each affected pack. Nothing in the project
+changes until you reply `confirm upgrade`.
 
-Start with a preview or the upgrade itself, then roll back only if needed:
+Start with a preview or the upgrade itself:
 
 ```text
 @dude upgrade --dry-run
 # or
 @dude upgrade
-
-@dude upgrade --rollback
 ```
 
-The dry run writes nothing. Plain `@dude upgrade` shows a fresh report and waits
-for the explicit `confirm upgrade` token before writing.
+The dry run keeps and writes nothing. Plain `@dude upgrade` keeps the prepared
+result and waits for the literal `confirm upgrade` token; any other reply
+discards it. The confirmed update is written in place as one all-or-restored
+batch and stays uncommitted on the current branch: Dude does not switch
+branches, stage, commit, tag, push, or merge, and does not need a clean working
+tree. Review it with `git status` and `git diff`, commit it, and start a new
+session so the updated agents, skills, and Canvas load. Git cannot recover
+pre-existing uncommitted edits that the update overwrites, so commit or copy
+customizations of touched files first. Before committing,
+`git restore -- <path>` returns a modified or deleted tracked file to its
+staged version, which is its committed version unless you staged a change to
+it (`git restore --source=HEAD -- <path>` takes the committed version), and a
+file the update added is untracked, so delete it
+(for example with `git clean -f -- <path>`); after committing, revert the
+commit.
 
 Useful variants:
 
@@ -2911,12 +3050,19 @@ Useful variants:
 @dude upgrade --ref v1.4.0
 @dude upgrade --source https://github.com/<owner>/<repo>
 @dude upgrade --all
+@dude upgrade --all --dry-run
 ```
 
-`@dude upgrade --all` commits the reviewed core upgrade before the upgraded
-engine previews only the packs in the installed profile. Reply `confirm packs`
-after that preview to refresh them. Plain upgrade remains core-only, and
-`--all --dry-run` stops after the ordinary core preview.
+`@dude upgrade --all` adds the out-of-the-box packs to the same preview and the
+same single confirmation: installed packs whose recorded source is the bundle
+upstream, refreshed by the target release's Compose from that source at the
+exact target commit. Packs from another repository or from the project's
+`library/packs` are left alone. Only packs whose files change appear; an
+unchanged pack keeps its record. If an included pack cannot be prepared, the
+combined preview is refused and plain `@dude upgrade` prepares the core alone.
+`--all` needs the source as a Git address, such as an HTTPS or `file:` URL; it
+is refused with a local folder path, which Compose would read as its working
+tree instead of the exact target commit.
 
 Core-owned candidates are exactly:
 
@@ -2929,7 +3075,7 @@ Core-owned candidates are exactly:
 - `.github/instructions/dude.instructions.md`; and
 - the exact deployed runtime tree `.github/extensions/dude/**`.
 
-The core phase may add, replace, or remove files only in those categories.
+The core update may add, replace, or remove files only in those categories.
 `.github/extensions/dude/**` is the only core-owned extension tree. Siblings,
 near matches, and every other extension tree—including
 `.github/extensions/dude-preview/**` and
@@ -2937,57 +3083,78 @@ near matches, and every other extension tree—including
 `src/extensions/dude/**` is also project-owned source content, not a deployed
 core target.
 
-The core phase preserves project ideas, specs, memory, execution state,
+The core update preserves project ideas, specs, memory, execution state,
 installed `dude-pack-*` artifacts, `.github/skills/project/`, `dude-local-*`
 and unreserved custom agents and skills, `.github/copilot-instructions.md`,
-Beads, product source, root files, and repository docs. With `--all`, the
-separate confirmed Compose phase may update the installed profile and its
-recorded pack artifacts. The canonical manifest is required locally and in the
-upstream tree; only that path is accepted.
+Beads, product source, root files, and repository docs. With `--all`, the same
+confirmed result may also update the profile records and recorded artifacts of
+the changed out-of-the-box packs. The canonical manifest is required locally
+and in the target release; only that path is accepted.
 
 The existing recursive ownership of `.github/skills/dude-engine/**` includes
 the packaged model configuration and loader, so an installed pre-feature
-upgrader can bootstrap the current engine without a migration rule. Before
-writing, apply refuses any ignored, untracked planned destination that Git
-cannot restore during rollback.
+upgrader can bootstrap the current engine without a migration rule.
 
-A historical install whose older engine cannot see a newly introduced core
-category may require two explicit `@dude upgrade` invocations. Complete the
-first invocation with its fresh plan and confirmation, then invoke
-`@dude upgrade` again, review its fresh same-ref plan, and provide a fresh
-`confirm upgrade`. There is no hidden follow-up, reused plan, or automatic
+Before writing, apply rechecks every touched file, the installation records,
+the branch, and the prepared bytes; any change since the preview writes
+nothing and needs a fresh `@dude upgrade`. A prepared result is identified by
+an ID that includes a digest of its description and its retained release
+files, checked before any retained code runs, and it is invalidated before
+anything is written, so it applies at most once even when its temporary folder
+cannot be removed; such a folder is named in the output. It runs the target
+release's bundle check before the batch and again inside its rollback
+boundary. Existing check
+failures stay listed and do not block the update; a new failure, or a check
+that cannot run, restores every touched file. Each result reports Nothing
+changed, Files restored, or Restoration unconfirmed with the paths to inspect,
+and Dude never repeats an update on its own. A target release without the
+staged-upgrade contract is refused rather than applied another way.
+
+A historical install whose older engine predates staged upgrades, or cannot see
+a newly introduced core category, may require two explicit `@dude upgrade`
+invocations. Complete the first invocation with its own preview and
+confirmation, then invoke `@dude upgrade` again, review its fresh preview, and
+provide a fresh `confirm upgrade`. There is no hidden follow-up or automatic
 second apply.
 
 A `main` refresh also records the selected bundle's base release when that
-upstream tree records `installed_ref: main` and a base release record for the
-same `source_repo`; the local record names your manifest's selected source,
-so a `--source` override stays associated with it. Any other target ref, or an
+target records `installed_ref: main` and a base release record for the same
+`source_repo`; the local record names your manifest's selected source, so a
+`--source` override stays associated with it. Any other target ref, or an
 upstream bundle without a usable record, removes an earlier local record
 rather than keeping a base that no longer applies. A record change appears in
-the normal preview, even with no file operations, and applies only after
-`confirm upgrade`; rollback restores the earlier record or its absence. The
-upgrade never reads your project's history or looks up releases to find a
-base. An installed engine older than this record does not copy it, even while
-it installs the current engine, and About keeps showing `Development (main)`.
-Run `@dude upgrade` again through the updated engine to preview and confirm
-the record-only change in the same explicit way.
+the normal preview, even with no other file change, and applies only after
+`confirm upgrade`; a failed application restores the earlier record or its
+absence. The upgrade never reads your project's history or looks up releases
+to find a base. An installed engine older than this record does not copy it,
+even while it installs the current engine, and About keeps showing
+`Development (main)`. Run `@dude upgrade` again through the updated engine to
+preview and confirm the record-only change in the same explicit way.
 
 > Core-owned files in the exact categories above are upstream-owned and are
-> overwritten on apply. To customize a default agent or skill,
+> replaced on apply. To customize a default agent or skill,
 > copy it under `dude-local-<slug>` first and edit there — direct edits to
-> core files are discarded by `@dude upgrade`.
+> core files are replaced by `@dude upgrade`.
 
-`installed_ref` identifies the installed release version for orientation.
-The internal `upgrade.mjs status` phase may report `up_to_date` while core
-files are missing or different; that result is not byte-completeness proof. The
-authoritative `plan` phase compares the complete core inventory and bytes, so
-matching refs can still produce Add, Replace, or Remove operations. A true
-no-op requires matching `source_repo`, `source_ref`, and `installed_ref`
-metadata, a matching base release record or absence, and no file operations.
-On the `latest` channel, the internal phase discovers the newest stable
-`vX.Y.Z` tag with `git ls-remote --tags` (remote) or `git tag` (local-path), so
-an upstream contributor never has to bump the upstream manifest manually for
-downstream installs to find new releases.
+`installed_ref` identifies the installed release version for orientation. The
+internal `upgrade.mjs status` check is separate from global `@dude status`,
+which reports workflow lanes and does not check upgrades. On the `latest`
+channel it lists the source's release tags and compares the newest stable
+`vX.Y.Z` with `installed_ref` numerically, within five seconds and without
+writing anything, so an upstream contributor never has to bump the upstream
+manifest manually for downstream installs to find new releases. It uses none
+of your Git configuration, saved Git logins, cookies, proxies, or client
+certificates, never signs in (not even with your Windows or Kerberos account),
+follows no redirect, and never uses SSH, so an SSH source, an address with a
+user name, password, query, or fragment, or a network share reports that it
+could not be checked; `@dude upgrade --dry-run` checks with your own Git
+sign-in. On Windows the check needs Git for Windows 2.32.0(2) or later. Pinned and
+development installs make no lookup. A matching version is not
+byte-completeness proof. The `plan` comparison is authoritative for the
+complete core inventory and bytes, so matching refs can still produce Add,
+Replace, or Remove operations. A true no-op requires matching `source_repo`,
+`source_ref`, and `installed_ref` metadata, a matching base release record or
+absence, and no file difference.
 
 Use reserved `dude-local-` paths for project-owned artifacts:
 `.github/agents/dude-local-<slug>.agent.md` and `.github/skills/dude-local-<slug>/`.

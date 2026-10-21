@@ -2781,3 +2781,370 @@ test('F: authorized definition repair applies owner/spec/plan/tasks and complete
     assert.equal(completed.state.completed.length, 1);
   });
 });
+
+/* ------------------------------------------- deletions and the upgrade bound */
+
+/**
+ * A tree with a file alone in its folders, a file beside a kept sibling, and a
+ * replaceable file, plus the batch that deletes, replaces, and adds.
+ * @param {string} root
+ */
+function writeDeletionFixture(root) {
+  fs.mkdirSync(path.join(root, 'core/retired/reference'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'core/shared'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'core/retired/reference/notes.md'), 'the only file in its folders');
+  fs.writeFileSync(path.join(root, 'core/shared/old.md'), 'beside a kept sibling');
+  fs.writeFileSync(path.join(root, 'core/shared/keep.md'), 'kept sibling');
+  fs.writeFileSync(path.join(root, 'core/replace.md'), 'replace me');
+  return [
+    { path: 'core/retired/reference/notes.md', expected: Buffer.from('the only file in its folders'), staged: 'missing' },
+    { path: 'core/shared/old.md', expected: Buffer.from('beside a kept sibling'), staged: 'missing' },
+    { path: 'core/replace.md', expected: Buffer.from('replace me'), staged: Buffer.from('replaced') },
+    missingChange('core/added/new.md', Buffer.from('added')),
+  ];
+}
+
+test('deletes expected files with additions and replacements, removing only the folders a deletion empties', () => {
+  withTemporaryDirectory((root) => {
+    const changes = writeDeletionFixture(root);
+
+    const result = applyAtomicFileBatch({ root, changes });
+
+    assert.deepEqual(result, {
+      count: 4,
+      paths: ['core/added/new.md', 'core/replace.md', 'core/retired/reference/notes.md', 'core/shared/old.md'],
+    });
+    assert.equal(fs.existsSync(path.join(root, 'core/retired')), false, 'folders left empty by a deletion are removed');
+    assert.equal(fs.existsSync(path.join(root, 'core/shared/old.md')), false);
+    assert.deepEqual(fs.readFileSync(path.join(root, 'core/shared/keep.md')), Buffer.from('kept sibling'));
+    assert.deepEqual(fs.readFileSync(path.join(root, 'core/replace.md')), Buffer.from('replaced'));
+    assert.deepEqual(fs.readFileSync(path.join(root, 'core/added/new.md')), Buffer.from('added'));
+    assertNoAtomicTemps(root);
+  });
+});
+
+test('a caught failure after every write restores additions, replacements, and deletions, with their folders', () => {
+  withTemporaryDirectory((root) => {
+    const changes = writeDeletionFixture(root);
+    const before = snapshotTree(root);
+    let checks = 0;
+
+    const error = captureError(() => applyAtomicFileBatch({ root, changes, bound: 'upgrade' }, () => {
+      checks += 1;
+      assert.equal(fs.existsSync(path.join(root, 'core/retired')), false, 'every change is in place inside the boundary');
+      assert.deepEqual(fs.readFileSync(path.join(root, 'core/added/new.md')), Buffer.from('added'));
+      throw new Error('post-apply check failed');
+    }));
+
+    assert.equal(checks, 1);
+    assert.equal(error.message, 'post-apply check failed');
+    assertRestored(root, before);
+  });
+});
+
+test('injected failures at a deletion, a folder removal, or a later rename restore the exact tree', () => {
+  const faults = [
+    { operation: 'rename', path: 'core/replace.md', index: 1 },
+    { operation: 'delete', path: 'core/retired/reference/notes.md', index: 2 },
+    { operation: 'prune-directory', path: 'core/retired/reference', index: 2 },
+    { operation: 'prune-directory', path: 'core/retired', index: 2 },
+    { operation: 'delete', path: 'core/shared/old.md', index: 3 },
+  ];
+  for (const fault of faults) {
+    withTemporaryDirectory((root) => {
+      const changes = writeDeletionFixture(root);
+      const before = snapshotTree(root);
+      let injections = 0;
+
+      assert.throws(() => applyAtomicFileBatch({
+        root,
+        changes,
+        bound: 'upgrade',
+        failureInjector(event) {
+          if (event.operation === fault.operation && event.path === fault.path && event.index === fault.index) {
+            injections += 1;
+            throw new Error(`injected ${fault.operation} failure`);
+          }
+        },
+      }), new RegExp(`injected ${fault.operation} failure`));
+
+      assert.equal(injections, 1, `${fault.operation} ${fault.path}: deterministic injection point`);
+      assertRestored(root, before);
+    });
+  }
+});
+
+test('a fault while restoring a deleted file surfaces AtomicFileBatchRollbackError with its path', () => {
+  withTemporaryDirectory((root) => {
+    fs.mkdirSync(path.join(root, 'core'));
+    fs.writeFileSync(path.join(root, 'core/removed.md'), 'removed');
+
+    const error = captureError(() => applyAtomicFileBatch({
+      root,
+      changes: [{ path: 'core/removed.md', expected: Buffer.from('removed'), staged: 'missing' }],
+      bound: 'upgrade',
+      failureInjector(event) {
+        if (event.operation === 'rollback-rename') throw new Error('restoration failed');
+      },
+    }, () => {
+      throw new Error('post-apply failure');
+    }));
+
+    assert.equal(error.name, 'AtomicFileBatchRollbackError');
+    assert.equal(error.code, 'ATOMIC_FILE_BATCH_ROLLBACK_FAILED');
+    assert.equal(error.cause?.message, 'post-apply failure');
+    assert.ok(error.rollbackErrors.some((entry) => (
+      entry.operation === 'restore-target' && entry.path === 'core/removed.md' && entry.message === 'restoration failed'
+    )));
+    assertNoAtomicTemps(root);
+  });
+});
+
+test('deletions are validated before any write', () => {
+  withTemporaryDirectory((root) => {
+    fs.mkdirSync(path.join(root, 'core/folder'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'core/present.md'), 'present');
+    const before = snapshotTree(root);
+    for (const [label, change, pattern] of [
+      ['a missing-to-missing change', { path: 'core/absent.md', expected: 'missing', staged: 'missing' }, /must change its target/],
+      ['an absent expected file', { path: 'core/absent.md', expected: Buffer.from('x'), staged: 'missing' }, /does not match expected bytes/],
+      ['changed expected bytes', { path: 'core/present.md', expected: Buffer.from('other'), staged: 'missing' }, /does not match expected bytes/],
+      ['a folder target', { path: 'core/folder', expected: Buffer.from('x'), staged: 'missing' }, /must be a regular file/],
+      ['a staged value that is neither bytes nor missing', { path: 'core/present.md', expected: Buffer.from('present'), staged: 'gone' }, /staged must be a Buffer or "missing"/],
+    ]) {
+      assert.throws(() => applyAtomicFileBatch({ root, changes: [change] }), pattern, label);
+      assert.deepEqual(snapshotTree(root), before, label);
+    }
+  });
+});
+
+test('the default 64-entry bound holds; only the upgrade bound admits up to 8,192 changes and 256 MiB of retained bytes', () => {
+  /** @param {number} count */
+  const many = (count) => Array.from(
+    { length: count },
+    (_, index) => missingChange(`batch/${String(index).padStart(5, '0')}.txt`, Buffer.from(`${index}\n`)),
+  );
+  withTemporaryDirectory((root) => {
+    assert.throws(() => applyAtomicFileBatch({ root, changes: many(65) }), /changes exceeds the 64-entry bound/);
+    assert.throws(
+      () => applyAtomicFileBatch({ root, changes: many(1), validators: Array.from({ length: 65 }, () => () => {}), bound: 'upgrade' }),
+      /validators exceeds the 64-entry bound/,
+    );
+    for (const bound of ['definition', 'UPGRADE', 8_192, null]) {
+      assert.throws(() => applyAtomicFileBatch({ root, changes: many(1), bound }), /bound must be "upgrade" when present/, String(bound));
+    }
+    assert.throws(() => applyAtomicFileBatch({ root, changes: many(8_193), bound: 'upgrade' }), /changes exceeds the 8192-entry bound/);
+    assert.deepEqual(snapshotTree(root), []);
+
+    assert.deepEqual(applyAtomicFileBatch({ root, changes: many(65), bound: 'upgrade' }).count, 65);
+    assert.equal(fs.readdirSync(path.join(root, 'batch')).length, 65);
+    assertNoAtomicTemps(root);
+  });
+
+  withTemporaryDirectory((root) => {
+    // Every preimage and postimage counts; one shared 64 MiB buffer keeps this cheap.
+    const quarter = Buffer.alloc(64 * 1_048_576);
+    /** @param {string} name */
+    const replacement = (name) => ({ path: name, expected: quarter, staged: quarter });
+    const atBound = captureError(() => applyAtomicFileBatch({ root, changes: [replacement('a.bin'), replacement('b.bin')], bound: 'upgrade' }));
+    assert.match(atBound.message, /does not match expected bytes/, 'exactly 256 MiB passes the bound and reaches the expected-bytes check');
+    const over = captureError(() => applyAtomicFileBatch({
+      root,
+      changes: [replacement('a.bin'), replacement('b.bin'), missingChange('c.bin', Buffer.alloc(1))],
+      bound: 'upgrade',
+    }));
+    assert.equal(over.name, 'RangeError');
+    assert.match(over.message, /changes exceed the 268435456-byte upgrade bound/);
+    assert.deepEqual(snapshotTree(root), []);
+  });
+});
+
+test('definition recovery still refuses a deletion: its exact four-path transition needs staged bytes', () => {
+  withTemporaryDirectory((root) => {
+    const current = definitionFixtureBytes();
+    writeDefinitionFixture(root, current);
+    const before = snapshotTree(root);
+    const changes = definitionChanges(current, current).map((change) => (
+      change.path === `${DEFINITION_ROOT}plan.md` ? { ...change, staged: 'missing' } : change
+    ));
+
+    assert.throws(
+      () => atomicRuntime.validateDefinitionRecoveryArtifactTransitionV1({ root, specPath: DEFINITION_SPEC_PATH, changes }),
+      /changes\[\d\]\.staged must be a Buffer$/,
+    );
+    assertRestored(root, before);
+  });
+});
+
+/* ------------------------------------------------------- file permissions */
+
+const POSIX_ONLY = process.platform === 'win32'
+  && 'Windows has no POSIX file permissions, so the batch changes no file mode there';
+
+/** @param {string} root @param {string} relativePath @returns {number} the file's permission bits */
+function permission(root, relativePath) {
+  return fs.statSync(path.join(root, ...relativePath.split('/'))).mode & 0o777;
+}
+
+/** @param {string} root @returns {[string, number][]} every file and its permission bits, in tree order */
+function snapshotPermissions(root) {
+  return snapshotTree(root)
+    .filter((entry) => entry.type === 'file')
+    .map((entry) => /** @type {[string, number]} */ ([entry.path, permission(root, entry.path)]));
+}
+
+/** @param {string} root @param {string} relativePath @param {string} bytes @param {number} mode */
+function writeWithPermission(root, relativePath, bytes, mode) {
+  const target = path.join(root, ...relativePath.split('/'));
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, bytes);
+  fs.chmodSync(target, mode);
+}
+
+test('on POSIX, each added and replaced file gets its supplied permission', { skip: POSIX_ONLY }, () => {
+  withTemporaryDirectory((root) => {
+    writeWithPermission(root, 'scripts/regular.sh', 'regular', 0o644);
+    writeWithPermission(root, 'scripts/private.sh', 'private', 0o700);
+
+    const result = applyAtomicFileBatch({
+      root,
+      changes: [
+        { path: 'scripts/added.sh', expected: 'missing', staged: Buffer.from('added'), mode: 0o755 },
+        { path: 'scripts/regular.sh', expected: Buffer.from('regular'), staged: Buffer.from('now executable'), mode: 0o755 },
+        { path: 'scripts/private.sh', expected: Buffer.from('private'), staged: Buffer.from('now shared'), mode: 0o644 },
+      ],
+      bound: 'upgrade',
+    });
+
+    assert.equal(result.count, 3);
+    assert.deepEqual(snapshotPermissions(root), [
+      ['scripts/added.sh', 0o755],
+      ['scripts/private.sh', 0o644],
+      ['scripts/regular.sh', 0o755],
+    ]);
+    assert.deepEqual(fs.readFileSync(path.join(root, 'scripts/regular.sh')), Buffer.from('now executable'));
+    assertNoAtomicTemps(root);
+  });
+});
+
+test('on POSIX, a replaced file without a supplied permission keeps its existing one, and a new file gets the default', { skip: POSIX_ONLY }, () => {
+  withTemporaryDirectory((root) => {
+    writeWithPermission(root, 'kept/script.sh', 'old script', 0o755);
+    writeWithPermission(root, 'kept/private.md', 'old private', 0o600);
+    fs.writeFileSync(path.join(root, 'reference.md'), 'any new file');
+
+    // A definition caller's batch: no permission, and the default bound.
+    applyAtomicFileBatch({
+      root,
+      changes: [
+        { path: 'kept/script.sh', expected: Buffer.from('old script'), staged: Buffer.from('new script') },
+        { path: 'kept/private.md', expected: Buffer.from('old private'), staged: Buffer.from('new private') },
+        missingChange('kept/added.md', Buffer.from('added')),
+      ],
+    });
+
+    assert.deepEqual(fs.readFileSync(path.join(root, 'kept/script.sh')), Buffer.from('new script'));
+    assert.deepEqual([permission(root, 'kept/script.sh'), permission(root, 'kept/private.md')], [0o755, 0o600]);
+    assert.equal(permission(root, 'kept/added.md'), permission(root, 'reference.md'), 'a new file gets the default of any new file');
+    assertNoAtomicTemps(root);
+  });
+});
+
+test('on POSIX, a caught failure puts back each replaced and deleted file with its original permission', { skip: POSIX_ONLY }, () => {
+  /** @param {string} root */
+  const build = (root) => {
+    writeWithPermission(root, 'core/replaced.sh', 'replace me', 0o700);
+    writeWithPermission(root, 'core/kept.md', 'keep my permission', 0o640);
+    writeWithPermission(root, 'core/same.sh', 'same bytes', 0o644);
+    writeWithPermission(root, 'core/retired/notes.sh', 'delete me', 0o750);
+    return [
+      { path: 'core/added.sh', expected: 'missing', staged: Buffer.from('added'), mode: 0o755 },
+      { path: 'core/kept.md', expected: Buffer.from('keep my permission'), staged: Buffer.from('replaced') },
+      { path: 'core/replaced.sh', expected: Buffer.from('replace me'), staged: Buffer.from('replaced'), mode: 0o755 },
+      { path: 'core/retired/notes.sh', expected: Buffer.from('delete me'), staged: 'missing' },
+      // The same bytes with another permission: restoring it puts back only the mode.
+      { path: 'core/same.sh', expected: Buffer.from('same bytes'), staged: Buffer.from('same bytes'), mode: 0o755 },
+    ];
+  };
+  /** @type {[string, RegExp, (root: string, changes: import('./atomic-file-batch.mjs').AtomicFileChange[]) => unknown][]} */
+  const failures = [
+    ['a failed check after every write', /^post-apply check failed$/, (root, changes) => applyAtomicFileBatch({ root, changes, bound: 'upgrade' }, () => {
+      assert.deepEqual(snapshotPermissions(root), [
+        ['core/added.sh', 0o755],
+        ['core/kept.md', 0o640],
+        ['core/replaced.sh', 0o755],
+        ['core/same.sh', 0o755],
+      ], 'every change is in place, with its permission, inside the boundary');
+      throw new Error('post-apply check failed');
+    })],
+    ['a failed deletion after three writes', /^injected delete failure$/, (root, changes) => applyAtomicFileBatch({
+      root,
+      changes,
+      bound: 'upgrade',
+      failureInjector(event) {
+        if (event.operation === 'delete') throw new Error('injected delete failure');
+      },
+    })],
+  ];
+  for (const [label, message, run] of failures) {
+    withTemporaryDirectory((root) => {
+      const changes = /** @type {import('./atomic-file-batch.mjs').AtomicFileChange[]} */ (build(root));
+      const before = snapshotTree(root);
+      const permissions = snapshotPermissions(root);
+
+      const error = captureError(() => run(root, changes));
+
+      assert.match(error.message, message, label);
+      assertRestored(root, before);
+      assert.deepEqual(snapshotPermissions(root), permissions, `${label}: every original permission is back`);
+    });
+  }
+});
+
+test('a supplied permission that is not permission bits of a written file is refused before any write', () => {
+  withTemporaryDirectory((root) => {
+    fs.writeFileSync(path.join(root, 'present.md'), 'present');
+    const before = snapshotTree(root);
+    for (const mode of [-1, 0o1000, 0o4755, 0o755 + 0.5, Number.NaN, Number.POSITIVE_INFINITY, '755', '0o755', true, null, 493n, [0o755]]) {
+      const label = `${typeof mode} ${String(mode)}`;
+      assert.throws(() => applyAtomicFileBatch({
+        root,
+        changes: [
+          missingChange('added.md'),
+          { path: 'present.md', expected: Buffer.from('present'), staged: Buffer.from('changed'), mode: /** @type {any} */ (mode) },
+        ],
+      }), { name: 'TypeError', message: 'changes[1].mode must be permission bits from 0 to 0o777 for a file the change writes' }, label);
+      assert.deepEqual(snapshotTree(root), before, `${label}: nothing was written`);
+    }
+    assert.throws(
+      () => applyAtomicFileBatch({ root, changes: [{ path: 'present.md', expected: Buffer.from('present'), staged: 'missing', mode: 0o644 }] }),
+      { name: 'TypeError', message: 'changes[0].mode must be permission bits from 0 to 0o777 for a file the change writes' },
+      'a deletion writes no file',
+    );
+    assert.deepEqual(snapshotTree(root), before);
+  });
+});
+
+test('on Windows, a supplied permission changes no file mode', {
+  skip: process.platform !== 'win32' && 'only Windows lacks POSIX file permissions',
+}, () => {
+  withTemporaryDirectory((root) => {
+    fs.writeFileSync(path.join(root, 'replaced.md'), 'replace me');
+    fs.writeFileSync(path.join(root, 'reference.md'), 'any new file');
+
+    applyAtomicFileBatch({
+      root,
+      changes: [
+        { path: 'added.md', expected: 'missing', staged: Buffer.from('added'), mode: 0o444 },
+        { path: 'replaced.md', expected: Buffer.from('replace me'), staged: Buffer.from('replaced'), mode: 0o444 },
+      ],
+    });
+
+    /** @param {string} name */
+    const modeOf = (name) => fs.statSync(path.join(root, name)).mode;
+    assert.deepEqual([modeOf('added.md'), modeOf('replaced.md')], [modeOf('reference.md'), modeOf('reference.md')],
+      'a read-only permission is not applied');
+    fs.appendFileSync(path.join(root, 'replaced.md'), ', and still writable');
+    assertNoAtomicTemps(root);
+  });
+});

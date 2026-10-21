@@ -16,15 +16,30 @@ function accessibleInteractiveTheme(theme) {
 export const lightTheme = accessibleInteractiveTheme(webLightTheme);
 export const darkTheme = accessibleInteractiveTheme(webDarkTheme);
 
-/* ------------------------------------------------------------------ The saved choice */
+/* ------------------------------------------------------------------ The saved choices */
 
-// The one Canvas preference: whether Canvas follows the GitHub app theme. The
-// server reads it while serving the page, so the first render already uses it.
-// It lives here, outside every workspace-keyed component, so neither a root
-// change nor Settings leaving and returning resets it. `confirmed` is always
-// the last choice a read or save confirmed, never an unconfirmed write.
+// The Canvas preference document holds two choices for this user on this
+// computer: whether Canvas follows the GitHub app theme (085), and whether Dude
+// checks for updates when a session starts (072). The server reads the first
+// while serving the page, so the first render already uses it; Canvas reads the
+// whole document once it starts. Both live here, outside every workspace-keyed
+// component, so neither a root change nor Settings leaving and returning resets
+// them. Each confirmed value is always the last one a read or save confirmed,
+// never an unconfirmed write. A switch saves only its own choice, and the
+// server keeps the other. While the document cannot be read, neither switch
+// saves, since a save could not keep the other choice: both wait until a read
+// succeeds, through Retry or a later reread.
 const PREFERENCE_ROUTE = '/api/canvas-preferences';
 const READ_ERROR = 'preference_unreadable';
+const FOLLOW = 'followAppTheme', UPDATE_CHECK = 'checkForUpdatesOnSessionStart';
+const DOCUMENT_KEYS = [UPDATE_CHECK, FOLLOW].join();
+const UNREAD = Object.freeze(['read-failed', 'read-failed-later']);
+// Each switch: its name, the confirmed value it shows, and the store keys of its own words.
+const SWITCHES = Object.freeze({
+  [FOLLOW]: Object.freeze({ name: 'Follow GitHub app theme', value: 'confirmed', message: 'message', status: 'status', alert: 'alert' }),
+  [UPDATE_CHECK]: Object.freeze({ name: 'Check for updates when a session starts', value: 'updateCheck',
+    message: 'updateMessage', status: 'updateStatus', alert: 'updateAlert' }),
+});
 const onOff = value => (value ? 'on' : 'off');
 
 function bootstrapChoice() {
@@ -37,12 +52,16 @@ function bootstrapChoice() {
   return { followAppTheme: false, preferenceError: READ_ERROR };
 }
 
+// `known` says a read or save confirmed the appearance choice; `updateCheck` is
+// null until one confirms that choice. `pending` is the read or save in flight,
+// and `pendingKey` the switch it belongs to: its save, or Retry in its panel.
 let preference = (() => {
   const { followAppTheme, preferenceError } = bootstrapChoice();
   const unread = preferenceError !== null;
   return Object.freeze({
-    confirmed: !unread && followAppTheme, known: !unread, pending: null, message: unread ? 'read-failed' : null,
-    status: '', alert: '', focusSwitch: 0,
+    confirmed: !unread && followAppTheme, known: !unread, updateCheck: null, readable: !unread,
+    pending: null, pendingKey: null, message: unread ? 'read-failed' : null, updateMessage: unread ? 'read-failed' : null,
+    status: '', alert: '', updateStatus: '', updateAlert: '', focusSwitch: 0, focusKey: null,
   });
 })();
 const preferenceListeners = new Set();
@@ -59,96 +78,125 @@ function subscribePreference(listener) {
 }
 const getPreference = () => preference;
 
-/** One request to the fixed preference route: a read, or a save of exactly one boolean. */
-async function preferenceRequest(followAppTheme) {
-  const response = await fetch(PREFERENCE_ROUTE, followAppTheme === undefined ? { cache: 'no-store' } : {
+/** One request to the fixed preference route: a read, or a save of exactly one choice. */
+async function preferenceRequest(patch) {
+  const response = await fetch(PREFERENCE_ROUTE, patch === undefined ? { cache: 'no-store' } : {
     method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ followAppTheme }),
+    body: JSON.stringify(patch),
   });
   let value = null;
   try { value = await response.json(); } catch { /* Answered without a readable body. */ }
   return { status: response.status, value };
 }
-const confirmedChoice = answer => (answer?.status === 200 && typeof answer.value?.followAppTheme === 'boolean'
-  && Object.keys(answer.value).length === 1 ? answer.value.followAppTheme : null);
-async function readChoice() {
-  try { return confirmedChoice(await preferenceRequest()); } catch { return null; }
+/** The complete saved document of a 200 answer, or null: exactly both choices, each a boolean. */
+const confirmedDocument = answer => {
+  const value = answer?.status === 200 ? answer.value : null;
+  return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).sort().join() === DOCUMENT_KEYS
+    && typeof value[FOLLOW] === 'boolean' && typeof value[UPDATE_CHECK] === 'boolean' ? value : null;
+};
+async function readDocument() {
+  try { return confirmedDocument(await preferenceRequest()); } catch { return null; }
 }
-const unreadMessage = () => (preference.known ? 'read-failed-later' : 'read-failed');
+/** What a confirmed document establishes: both choices, and a readable document. */
+const confirmedFrom = saved => ({ confirmed: saved[FOLLOW], updateCheck: saved[UPDATE_CHECK], known: true, readable: true });
+/** An unread document: no saving, and each switch's warning, the first-open kind until its choice was confirmed. */
+const unreadState = () => ({ readable: false, message: preference.known ? 'read-failed-later' : 'read-failed',
+  updateMessage: preference.updateCheck === null ? 'read-failed' : 'read-failed-later' });
 
 /**
- * One switch action saves the opposite of the confirmed choice. The look
- * changes only after the save is confirmed. A refused or failed save keeps the
- * confirmed choice; a lost answer is settled by reading the choice again,
- * never by sending the save again.
+ * One switch action saves the opposite of that switch's confirmed choice. The
+ * look or the choice changes only after the save is confirmed. A refused or
+ * failed save keeps the confirmed choice; a lost answer is settled by reading
+ * the choice again, never by sending the save again. While the document is
+ * unread, nothing is sent.
  */
-export async function toggleFollowAppTheme() {
-  if (preference.pending) return;
-  const turn = ++preferenceTurn, target = !preference.confirmed;
-  setPreference({ pending: 'saving', message: null, status: 'Saving.', alert: '' });
+async function saveChoice(key) {
+  const own = SWITCHES[key];
+  if (preference.pending || !preference.readable || preference[own.value] === null) return;
+  const turn = ++preferenceTurn, target = !preference[own.value];
+  const settled = { pending: null, pendingKey: null };
+  setPreference({ pending: 'saving', pendingKey: key, [own.message]: null, [own.status]: 'Saving.', [own.alert]: '' });
   let answer = null;
-  try { answer = await preferenceRequest(target); } catch { /* The answer was lost. */ }
+  try { answer = await preferenceRequest({ [key]: target }); } catch { /* The answer was lost. */ }
   if (turn !== preferenceTurn) return;
-  const saved = confirmedChoice(answer);
-  if (saved === target) {
-    setPreference({ pending: null, confirmed: target, known: true, status: `Saved. Follow GitHub app theme is ${onOff(target)}.` });
+  const saved = confirmedDocument(answer);
+  if (saved?.[key] === target) {
+    setPreference({ ...confirmedFrom(saved), ...settled, [own.status]: `Saved. ${own.name} is ${onOff(target)}.` });
+    return;
+  }
+  // The stored document cannot be read: nothing was saved, and neither switch saves until a read succeeds.
+  if (answer?.status === 503 && answer.value?.error === READ_ERROR) {
+    setPreference({ ...unreadState(), ...settled, [own.status]: '',
+      [own.alert]: `Not saved. ${own.name} is still ${onOff(preference[own.value])}.` });
     return;
   }
   // The server answered that nothing was saved: a refusal, or a write it could not make.
   if (answer && (answer.status === 500 && answer.value?.error === 'preference_write_failed'
     || (answer.status >= 400 && answer.status < 500))) {
-    setPreference({ pending: null, message: 'save-failed', status: '',
-      alert: `Not saved. Follow GitHub app theme is still ${onOff(preference.confirmed)}.` });
+    setPreference({ ...settled, [own.message]: 'save-failed', [own.status]: '',
+      [own.alert]: `Not saved. ${own.name} is still ${onOff(preference[own.value])}.` });
     return;
   }
-  setPreference({ pending: 'checking', status: 'Checking whether it was saved.' });
-  const reread = await readChoice();
+  setPreference({ pending: 'checking', [own.status]: 'Checking whether it was saved.' });
+  const reread = await readDocument();
   if (turn !== preferenceTurn) return;
-  if (reread === target) {
-    setPreference({ pending: null, confirmed: target, known: true, status: `Saved. Follow GitHub app theme is ${onOff(target)}.` });
-  } else if (reread === null) {
-    setPreference({ pending: null, message: unreadMessage(), status: '',
-      alert: `Saved choice not read. Canvas keeps the last choice it confirmed: ${onOff(preference.confirmed)}.` });
+  if (reread?.[key] === target) {
+    setPreference({ ...confirmedFrom(reread), ...settled, [own.status]: `Saved. ${own.name} is ${onOff(target)}.` });
+  } else if (!reread) {
+    setPreference({ ...unreadState(), ...settled, [own.status]: '',
+      [own.alert]: `Saved choice not read. Canvas keeps the last choice it confirmed: ${onOff(preference[own.value])}.` });
   } else {
-    setPreference({ pending: null, confirmed: reread, known: true, message: 'not-saved', status: '',
-      alert: `Not saved. Follow GitHub app theme is still ${onOff(reread)}.` });
+    setPreference({ ...confirmedFrom(reread), ...settled, [own.message]: 'not-saved', [own.status]: '',
+      [own.alert]: `Not saved. ${own.name} is still ${onOff(reread[key])}.` });
   }
 }
+export const toggleFollowAppTheme = () => saveChoice(FOLLOW);
+export const toggleUpdateCheck = () => saveChoice(UPDATE_CHECK);
 
-/** Retry repeats only the fixed preference read. Success moves focus to the switch. */
-export async function retryPreferenceRead() {
+/** Retry repeats only the fixed preference read. Success moves focus to the switch whose Retry was used. */
+export async function retryPreferenceRead(key = FOLLOW) {
+  const own = SWITCHES[key];
   if (preference.pending) return;
   const turn = ++preferenceTurn;
-  setPreference({ pending: 'reading', status: 'Reading the saved choice.', alert: '' });
-  const choice = await readChoice();
+  setPreference({ pending: 'reading', pendingKey: key, [own.status]: 'Reading the saved choice.', [own.alert]: '' });
+  const saved = await readDocument();
   if (turn !== preferenceTurn) return;
-  if (choice === null) {
-    setPreference({ pending: null, message: unreadMessage(), status: '', alert: 'Still not read. Nothing was changed.' });
+  if (!saved) {
+    setPreference({ ...unreadState(), pending: null, pendingKey: null, [own.status]: '',
+      [own.alert]: 'Still not read. Nothing was changed.' });
     return;
   }
-  setPreference({ pending: null, confirmed: choice, known: true, message: null,
-    status: `Read. Follow GitHub app theme is ${onOff(choice)}.`, focusSwitch: preference.focusSwitch + 1 });
+  setPreference({ ...confirmedFrom(saved), pending: null, pendingKey: null, message: null, updateMessage: null,
+    [own.status]: `Read. ${own.name} is ${onOff(saved[key])}.`, focusSwitch: preference.focusSwitch + 1, focusKey: key });
 }
 
 /**
- * Visible focus and Appearance entry read the choice again, so a choice saved
- * in another project is adopted here. A read that fails keeps the confirmed
- * choice and says so; one that finds the same choice changes nothing.
+ * Starting Canvas, visible focus, and Appearance or About entry read the
+ * document again, so a choice saved in another project is adopted here. A read
+ * that fails keeps the confirmed choices and says so; one that finds the same
+ * choices changes nothing.
  */
 export async function rereadPreference() {
   if (preference.pending) return;
   const turn = ++preferenceTurn;
-  const choice = await readChoice();
+  const saved = await readDocument();
   if (turn !== preferenceTurn || preference.pending) return;
-  if (choice === null) {
-    if (preference.message !== unreadMessage()) setPreference({ message: unreadMessage() });
+  if (!saved) {
+    const unread = unreadState();
+    if (preference.readable || preference.message !== unread.message || preference.updateMessage !== unread.updateMessage) {
+      setPreference(unread);
+    }
     return;
   }
-  const unread = ['read-failed', 'read-failed-later'].includes(preference.message);
-  if (choice === preference.confirmed && preference.known && !unread) return;
-  setPreference({ confirmed: choice, known: true,
-    ...(choice !== preference.confirmed || unread ? { message: null } : {}),
-    ...(choice !== preference.confirmed ? { status: `Follow GitHub app theme is ${onOff(choice)}.` } : {}) });
+  const change = {};
+  for (const [key, own] of Object.entries(SWITCHES)) {
+    const was = preference[own.value];
+    if (saved[key] !== was || UNREAD.includes(preference[own.message])) change[own.message] = null;
+    if (was !== null && saved[key] !== was) change[own.status] = `${own.name} is ${onOff(saved[key])}.`;
+  }
+  if (!Object.keys(change).length && saved[FOLLOW] === preference.confirmed && saved[UPDATE_CHECK] === preference.updateCheck
+    && preference.known && preference.readable) return;
+  setPreference({ ...confirmedFrom(saved), ...change });
 }
 
 /* ------------------------------------------------------------- The host appearance */
@@ -513,6 +561,8 @@ export function useCanvasTheme() {
   }, [confirmed, tone]);
   useEffect(() => {
     const reread = () => { if (document.visibilityState !== 'hidden') void rereadPreference(); };
+    // The page carries only the appearance choice; the update-check choice comes with this first read.
+    void rereadPreference();
     window.addEventListener('focus', reread);
     document.addEventListener('visibilitychange', reread);
     return () => {
@@ -528,4 +578,9 @@ export function useAppearanceSettings() {
   const state = useSyncExternalStore(subscribePreference, getPreference);
   const { supplied } = useSyncExternalStore(subscribeHost, getHost);
   return { ...state, hostSupplied: supplied };
+}
+
+/** What About's update-check switch shows (072): the same saved document, its pending work and messages. */
+export function useUpdateCheckSetting() {
+  return useSyncExternalStore(subscribePreference, getPreference);
 }

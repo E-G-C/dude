@@ -15,10 +15,16 @@
  * Wiring only; the loopback server lives in ./lib/canvas-server.mjs and the
  * browser entry in ./ui/index.html. `stdout` is reserved for JSON-RPC, so
  * user-visible content uses native tool results or `session.log`.
+ *
+ * One update controller (./lib/bundle-upgrade.mjs) serves every Canvas instance
+ * of this process. Making it starts nothing; once the session has joined, its
+ * session-start release check runs in the background, never holding the join,
+ * and it creates no folder, preference, request, waiter or chat message.
  */
 
 import { createCanvas, joinSession } from '@github/copilot-sdk/extension';
 import { createA2a } from './lib/a2a.mjs';
+import { createBundleUpgrade } from './lib/bundle-upgrade.mjs';
 import { closeInstance, openInstance } from './lib/canvas-server.mjs';
 import { createNeedsYou } from './lib/needs-you.mjs';
 import { createReview } from './lib/review.mjs';
@@ -26,6 +32,9 @@ import { createReview } from './lib/review.mjs';
 const root = process.cwd();
 const needsYou = createNeedsYou({ root, reviewAdapter: createReview({ root }) });
 const a2a = createA2a({ root });
+// Made before the join, like the other providers, so a Canvas opened at any
+// moment gets it; it does nothing until `startSessionCheck` below.
+const updates = createBundleUpgrade({ root });
 
 /** @param {unknown} context */
 function exactTarget(context) {
@@ -79,6 +88,7 @@ const session = await joinSession({
           null,
           readInput,
           needsYou,
+          updates,
         );
         await logToSession(`Dude canvas ${ctx.instanceId}: open at ${instance.url}`);
         return { title: 'Dude', status: 'Work and Needs you', url: instance.url };
@@ -93,3 +103,5 @@ const session = await joinSession({
 });
 needsYou.bindSession(session);
 a2a.bindSession(session);
+// Not awaited: joining is complete, and the check reports only through Canvas.
+void updates.startSessionCheck();

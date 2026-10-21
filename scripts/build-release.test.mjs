@@ -1376,8 +1376,6 @@ test('the supported historical upgrade flow bootstraps every current extension b
   const workspace = path.join(sandbox, 'workspace');
   const cache = path.join(sandbox, 'cache');
   const historicalPlanPath = path.join(sandbox, 'historical-plan.json');
-  const bootstrapPlanPath = path.join(sandbox, 'same-ref-bootstrap-plan.json');
-  const noOpPlanPath = path.join(sandbox, 'same-ref-no-op-plan.json');
   try {
     buildRelease({ repoRoot, outDir: candidate, ref: 'v9.9.9' });
     initializeRepository(candidate, 'bootstrap');
@@ -1509,8 +1507,10 @@ test('the supported historical upgrade flow bootstraps every current extension b
     );
 
     // Second explicit @dude upgrade, now following the installed current
-    // procedure. Matching-ref status is informational and proceeds to a fresh,
-    // independently confirmed same-ref plan; there is no internal planner call.
+    // procedure. A branch channel makes no release lookup; the fresh, separately
+    // confirmed same-ref preview prepares what the historical engine could not
+    // see, and its result stays uncommitted on the current branch.
+    const current = { ...common, env: { ...common.env, TEMP: cache, TMP: cache } };
     const bootstrapStatus = spawnSync(process.execPath, [
       currentUpgrade,
       'status',
@@ -1520,14 +1520,16 @@ test('the supported historical upgrade flow bootstraps every current extension b
       'bootstrap',
       '--format',
       'json',
-    ], common);
+    ], current);
     assert.equal(
       bootstrapStatus.status,
       0,
       (bootstrapStatus.stdout || '') + (bootstrapStatus.stderr || ''),
     );
-    assert.equal(JSON.parse(bootstrapStatus.stdout).status, 'up_to_date');
+    assert.equal(JSON.parse(bootstrapStatus.stdout).status, 'development');
 
+    const headBefore = git(workspace, ['rev-parse', 'HEAD']).stdout.trim();
+    const branchBefore = git(workspace, ['symbolic-ref', '--short', 'HEAD']).stdout.trim();
     const currentPlanned = spawnSync(process.execPath, [
       currentUpgrade,
       'plan',
@@ -1537,28 +1539,24 @@ test('the supported historical upgrade flow bootstraps every current extension b
       'bootstrap',
       '--format',
       'json',
-      '--out',
-      bootstrapPlanPath,
-    ], common);
+    ], current);
     assert.equal(currentPlanned.status, 10, (currentPlanned.stdout || '') + (currentPlanned.stderr || ''));
-    const currentPlan = JSON.parse(fs.readFileSync(bootstrapPlanPath, 'utf8'));
+    const currentPlan = JSON.parse(currentPlanned.stdout);
     assert.equal(currentPlan.from_ref, 'bootstrap');
     assert.equal(currentPlan.to_ref, 'bootstrap');
+    const coreChanges = currentPlan.changes.filter((/** @type {{ group: string }} */ change) => change.group === 'core');
     assert.deepEqual(
-      [
-        ...currentPlan.buckets.add,
-        ...currentPlan.buckets.remove,
-        ...currentPlan.buckets.replace,
-      ].map((entry) => entry.path).sort(),
+      coreChanges.map((/** @type {{ path: string }} */ change) => change.path),
       extensionPaths,
-      'the fresh same-ref plan authorizes only the missing Dude extension runtime',
+      'the fresh same-ref preview adds every and only candidate Dude runtime byte',
     );
+    assert.ok(coreChanges.every((/** @type {{ op: string }} */ change) => change.op === 'add'));
     assert.deepEqual(
-      currentPlan.buckets.add
-        .map((entry) => entry.path)
-        .filter((relPath) => relPath.startsWith('.github/extensions/')),
-      extensionPaths,
-      'current planner adds every and only candidate Dude runtime byte',
+      currentPlan.changes
+        .filter((/** @type {{ group: string }} */ change) => change.group !== 'core')
+        .map((/** @type {{ path: string }} */ change) => change.path),
+      ['.dude/metadata/upgrade-log.md'],
+      'only the upgrade log entry joins the missing runtime',
     );
     assert.doesNotMatch(
       JSON.stringify(currentPlan),
@@ -1569,13 +1567,14 @@ test('the supported historical upgrade flow bootstraps every current extension b
       currentUpgrade,
       'apply',
       '--plan',
-      bootstrapPlanPath,
+      currentPlan.id,
       '--confirm',
       'confirm-upgrade',
       '--format',
       'json',
-    ], common);
+    ], current);
     assert.equal(currentApplied.status, 0, (currentApplied.stdout || '') + (currentApplied.stderr || ''));
+    assert.equal(JSON.parse(currentApplied.stdout).outcome, 'applied');
     assert.deepEqual(
       listRelativeFiles(workspace)
         .filter((relPath) => relPath.startsWith('.github/extensions/dude/')),
@@ -1592,9 +1591,15 @@ test('the supported historical upgrade flow bootstraps every current extension b
     for (const [relPath, bytes] of unrelatedExtensionBytes) {
       assert.deepEqual(fs.readFileSync(path.join(workspace, ...relPath.split('/'))), bytes, relPath);
     }
+    assert.equal(git(workspace, ['rev-parse', 'HEAD']).stdout.trim(), headBefore, 'the update made no commit');
+    assert.equal(git(workspace, ['symbolic-ref', '--short', 'HEAD']).stdout.trim(), branchBefore, 'the branch is unchanged');
+    assert.equal(git(workspace, ['diff', '--cached', '--name-only']).stdout, '', 'nothing is staged');
+    const uncommitted = git(workspace, ['status', '--porcelain', '--untracked-files=all']).stdout;
+    for (const relPath of extensionPaths) assert.ok(uncommitted.includes(`?? ${relPath}\n`), relPath);
+    assert.ok(uncommitted.includes(' M .dude/metadata/upgrade-log.md\n'), uncommitted);
 
-    // A subsequent normal @dude upgrade repeats status then full planning. It
-    // proves byte completeness and stops at a true no-op without another apply.
+    // A subsequent normal @dude upgrade prepares again from the full core
+    // inventory and stops at a true no-op without another apply.
     const finalStatus = spawnSync(process.execPath, [
       currentUpgrade,
       'status',
@@ -1604,9 +1609,9 @@ test('the supported historical upgrade flow bootstraps every current extension b
       'bootstrap',
       '--format',
       'json',
-    ], common);
+    ], current);
     assert.equal(finalStatus.status, 0, (finalStatus.stdout || '') + (finalStatus.stderr || ''));
-    assert.equal(JSON.parse(finalStatus.stdout).status, 'up_to_date');
+    assert.equal(JSON.parse(finalStatus.stdout).status, 'development');
     const finalPlan = spawnSync(process.execPath, [
       currentUpgrade,
       'plan',
@@ -1616,21 +1621,10 @@ test('the supported historical upgrade flow bootstraps every current extension b
       'bootstrap',
       '--format',
       'json',
-      '--out',
-      noOpPlanPath,
-    ], common);
+    ], current);
     assert.equal(finalPlan.status, 0, (finalPlan.stdout || '') + (finalPlan.stderr || ''));
-    const noOpPlan = JSON.parse(fs.readFileSync(noOpPlanPath, 'utf8'));
-    assert.deepEqual(
-      {
-        add: noOpPlan.summary.add,
-        remove: noOpPlan.summary.remove,
-        replace: noOpPlan.summary.replace,
-      },
-      { add: 0, remove: 0, replace: 0 },
-      'the supported follow-up plan is a true no-op',
-    );
-    assert.equal(git(workspace, ['status', '--porcelain']).stdout, '');
+    assert.equal(JSON.parse(finalPlan.stdout).status, 'nothing_to_update', 'the supported follow-up preview is a true no-op');
+    assert.equal(git(workspace, ['status', '--porcelain', '--untracked-files=all']).stdout, uncommitted);
 
     writeBootstrapPack(workspace);
     const composePath = path.join(workspace, '.github/skills/dude-compose/compose.mjs');
@@ -1683,8 +1677,6 @@ test('an existing development install records its base release through a later e
   const workspace = path.join(sandbox, 'workspace');
   const cache = path.join(sandbox, 'cache');
   const olderPlanPath = path.join(sandbox, 'older-engine-plan.json');
-  const recordPlanPath = path.join(sandbox, 'record-plan.json');
-  const noOpPlanPath = path.join(sandbox, 'no-op-plan.json');
   const recordPath = path.join(workspace, ...BASE_RELEASE_PATH.split('/'));
   try {
     fs.cpSync(path.join(repoRoot, 'src'), path.join(candidate, 'src'), { recursive: true });
@@ -1742,50 +1734,54 @@ test('an existing development install records its base release through a later e
 
     // The second explicit upgrade, through the updated engine, previews only
     // the metadata change and writes nothing before its fresh confirmation.
+    const currentEnv = { ...env, TEMP: cache, TMP: cache };
+    /** @param {string[]} args */
+    const current = (args) => spawnSync(process.execPath, [upgradeScript, ...args], { cwd: workspace, encoding: 'utf8', env: currentEnv });
     const headBefore = git(workspace, ['rev-parse', 'HEAD']).stdout.trim();
-    const preview = upgrade(['plan', ...selection]);
+    const branchBefore = git(workspace, ['symbolic-ref', '--short', 'HEAD']).stdout.trim();
+    const preview = current(['plan', ...selection]);
     assert.equal(preview.status, 10, `${preview.stdout}${preview.stderr}`);
     assert.ok(preview.stdout.includes('Base release record: (none) -> v1.3.0\n'), preview.stdout);
-    const planned = upgrade(['plan', ...selection, '--format', 'json', '--out', recordPlanPath]);
+    const planned = current(['plan', ...selection, '--format', 'json']);
     assert.equal(planned.status, 10, `${planned.stdout}${planned.stderr}`);
-    const recordPlan = JSON.parse(fs.readFileSync(recordPlanPath, 'utf8'));
-    assert.equal(recordPlan.schema_version, 2);
+    const recordPlan = JSON.parse(planned.stdout);
+    assert.deepEqual(recordPlan.counts.core, { added: 0, replaced: 0, removed: 0 }, 'the remaining difference is metadata only');
     assert.deepEqual(
-      [recordPlan.summary.add, recordPlan.summary.replace, recordPlan.summary.remove],
-      [0, 0, 0],
-      'the remaining difference is metadata only',
+      recordPlan.changes.map((/** @type {{ path: string, op: string }} */ change) => [change.path, change.op]),
+      [[BASE_RELEASE_PATH, 'add'], ['.dude/metadata/upgrade-log.md', 'replace']],
     );
-    assert.deepEqual(recordPlan.local.base_release, {
-      path: BASE_RELEASE_PATH,
-      state: { type: 'missing' },
-      record: null,
-      desired: { source_repo: candidate, base_release: 'v1.3.0' },
-    });
-    const unconfirmed = upgrade(['apply', '--plan', recordPlanPath, '--format', 'json']);
+    assert.deepEqual(recordPlan.base_release, { from: null, to: 'v1.3.0', changed: true });
+    const unconfirmed = current(['apply', '--plan', recordPlan.id, '--format', 'json']);
     assert.equal(unconfirmed.status, 40, `${unconfirmed.stdout}${unconfirmed.stderr}`);
     assert.equal(fs.existsSync(recordPath), false, 'the record was written before confirmation');
     assert.equal(git(workspace, ['rev-parse', 'HEAD']).stdout.trim(), headBefore);
     assert.equal(git(workspace, ['status', '--porcelain']).stdout, '');
 
-    const applied = upgrade(['apply', '--plan', recordPlanPath, '--confirm', 'confirm-upgrade', '--format', 'json']);
+    const applied = current(['apply', '--plan', recordPlan.id, '--confirm', 'confirm-upgrade', '--format', 'json']);
     assert.equal(applied.status, 0, `${applied.stdout}${applied.stderr}`);
+    assert.equal(JSON.parse(applied.stdout).outcome, 'applied');
     assert.equal(
       fs.readFileSync(recordPath, 'utf8'),
       renderDevelopmentBaseRelease({ source_repo: candidate, base_release: 'v1.3.0' }),
     );
-    const committed = git(workspace, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD']).stdout
-      .trim()
-      .split('\n')
-      .sort();
-    assert.ok(committed.includes(BASE_RELEASE_PATH), committed.join(', '));
-    assert.deepEqual(committed.filter((relPath) => relPath.startsWith('.github/')), []);
+    // The record and its log entry stay uncommitted on the same branch and commit.
+    assert.equal(git(workspace, ['rev-parse', 'HEAD']).stdout.trim(), headBefore);
+    assert.equal(git(workspace, ['symbolic-ref', '--short', 'HEAD']).stdout.trim(), branchBefore);
+    assert.equal(git(workspace, ['diff', '--cached', '--name-only']).stdout, '');
+    assert.deepEqual(
+      git(workspace, ['status', '--porcelain', '--untracked-files=all']).stdout.split('\n').filter(Boolean).sort(),
+      [' M .dude/metadata/upgrade-log.md', `?? ${BASE_RELEASE_PATH}`],
+    );
 
     // A later normal upgrade is a true no-op.
-    const finalPlan = upgrade(['plan', ...selection, '--format', 'json', '--out', noOpPlanPath]);
+    const finalPlan = current(['plan', ...selection, '--format', 'json']);
     assert.equal(finalPlan.status, 0, `${finalPlan.stdout}${finalPlan.stderr}`);
-    const noOpPlan = JSON.parse(fs.readFileSync(noOpPlanPath, 'utf8'));
-    assert.deepEqual(noOpPlan.local.base_release.record, noOpPlan.local.base_release.desired);
-    assert.equal(git(workspace, ['status', '--porcelain']).stdout, '');
+    assert.equal(JSON.parse(finalPlan.stdout).status, 'nothing_to_update');
+    assert.equal(
+      git(workspace, ['status', '--porcelain', '--untracked-files=all']).stdout.split('\n').filter(Boolean).length,
+      2,
+      'the no-op preview wrote nothing',
+    );
   } finally {
     fs.rmSync(sandbox, { recursive: true, force: true });
   }

@@ -424,12 +424,15 @@ Updating the bundle leaves your product code and active feature work in place.
 ```text
 @dude upgrade --dry-run
 @dude upgrade
-@dude upgrade --rollback
+@dude upgrade --all
 ```
 
-Preview first, then apply, and roll back only if you need to. Manifest metadata
-and the namespace convention for base ownership are described in
-[docs/upgrading.md](docs/upgrading.md).
+Preview first, then reply `confirm upgrade` to apply exactly that preview;
+`--all` also updates the installed out-of-the-box packs. The changes stay
+uncommitted on your current branch for you to review and commit, and a new
+session loads them. Git cannot recover uncommitted edits that an update
+overwrites in Dude-owned files. Manifest metadata and the namespace convention
+for base ownership are described in [docs/upgrading.md](docs/upgrading.md).
 
 ## Detailed Docs
 

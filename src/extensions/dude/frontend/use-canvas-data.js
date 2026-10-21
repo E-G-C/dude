@@ -205,6 +205,9 @@ const initial = {
   packs: null, packsLoading: false, discovering: false, importAttempt: null,
   rootKey: null, loading: true, selecting: false, connected: false,
   issues: {}, attempts: {}, authorityChanged: false,
+  // 072: this session's update state as the server last answered it, and the
+  // closed code of the last read that failed. Null is unknown, not "no update".
+  updates: null, updatesError: null,
 };
 
 // Last readable pack and project facts may remain inspectable, but never
@@ -314,6 +317,75 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
     current.current = next;
     setData(next);
   }, []);
+
+  // 072: the session's update state, outside the coalesced refresh loop. It is
+  // read when Canvas starts, on each payload-free `updates` event, on reconnect
+  // and on visible focus, never on a timer; one read runs at a time and an event
+  // during it asks for one more. An action answers with the state after it.
+  // Answers are adopted in the order their requests started, so an older read
+  // never replaces what a newer action answered.
+  const updatesWork = useRef({ started: 0, adopted: 0, reading: false, again: false });
+  const adoptUpdates = useCallback((owner, turn, change) => {
+    const work = updatesWork.current;
+    if (lifetime.current !== owner || owner.signal.aborted || turn < work.adopted) return;
+    work.adopted = turn;
+    update(change);
+  }, [update]);
+  /** One state read, started now and adopted unless something newer was: `{ ok: true, value }` or `{ ok: false, code }`. */
+  const fetchUpdates = useCallback(owner => {
+    const turn = ++updatesWork.current.started;
+    return json('/api/updates', { signal: owner.signal }).then(value => {
+      adoptUpdates(owner, turn, { updates: value, updatesError: null });
+      return { ok: true, value };
+    }, error => {
+      const code = error.code || 'connection_lost';
+      adoptUpdates(owner, turn, { updatesError: code });
+      return { ok: false, code };
+    });
+  }, [adoptUpdates]);
+  const readUpdates = useCallback(() => {
+    const owner = lifetime.current, work = updatesWork.current;
+    if (!owner || owner.signal.aborted) return;
+    if (work.reading) { work.again = true; return; }
+    work.reading = true;
+    void fetchUpdates(owner).finally(() => {
+      work.reading = false;
+      if (work.again && lifetime.current === owner) { work.again = false; readUpdates(); }
+    });
+  }, [fetchUpdates]);
+  /**
+   * One authoritative read of the update state (072), started now and never
+   * joined to a read already running, which may predate what it must settle:
+   * after OK's answer was lost, only a read that began afterwards can show
+   * whether the update started. It sends nothing else and never retries.
+   */
+  const rereadUpdates = useCallback(async () => {
+    const owner = lifetime.current;
+    if (!owner || owner.signal.aborted) return { ok: false, code: 'connection_lost' };
+    return fetchUpdates(owner);
+  }, [fetchUpdates]);
+  /**
+   * One closed body of the update action route (072): check, later, preview,
+   * cancel, or apply with the ready result's ID. It never throws and never
+   * retries: the answer is `{ ok: true, value }` with the state after it, or
+   * `{ ok: false, code }` with the route's refusal code, `connection_lost` when
+   * no answer arrived. A refusal is followed by one read of the current state.
+   * A lost answer says nothing about what happened: the caller reads again
+   * (rereadUpdates) before it claims anything, and nothing is sent again.
+   */
+  const updateAction = useCallback(async body => {
+    const owner = lifetime.current;
+    if (!owner || owner.signal.aborted) return { ok: false, code: 'connection_lost' };
+    const turn = ++updatesWork.current.started;
+    try {
+      const value = await json('/api/updates/action', { body, signal: owner.signal });
+      adoptUpdates(owner, turn, { updates: value, updatesError: null });
+      return { ok: true, value };
+    } catch (error) {
+      readUpdates();
+      return { ok: false, code: error.code || 'connection_lost' };
+    }
+  }, [adoptUpdates, readUpdates]);
 
   const queue = useCallback((workspace = false, packs = packsWanted.current) => {
     const owner = lifetime.current;
@@ -425,16 +497,20 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
     // StrictMode cleanup must not share an in-flight loop with its successor.
     work.current = { epoch: 0, running: false, workspace: false, needs: false,
       packs: false, packController: null, timer: null, discoverController: null, discoverWaiters: [] };
+    updatesWork.current = { started: 0, adopted: 0, reading: false, again: false };
     const events = new EventSource('/events');
-    const complete = () => { update({ connected: true }); queue(true); };
+    const complete = () => { update({ connected: true }); queue(true); readUpdates(); };
     events.addEventListener('open', complete);
     events.addEventListener('workspace', () => queue(true));
     // Permission/delivery phases do not change pack facts. Workspace/result
     // events still reread them; provider replacement invalidates them above.
     events.addEventListener('needs-you', () => queue(false, false));
+    // 072: the update state changed; the event carries nothing, so read it again.
+    events.addEventListener('updates', readUpdates);
     events.addEventListener('error', () => update({ connected: false }));
     const focus = async () => {
       if (document.visibilityState === 'hidden') return;
+      readUpdates();
       const epoch = work.current.epoch;
       try {
         const value = await json('/api/freshness', { signal: owner.signal });
@@ -450,6 +526,7 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
     document.addEventListener('visibilitychange', focus);
     window.addEventListener('pagehide', close);
     queue(true);
+    readUpdates();
     return () => {
       owner.abort();
       work.current.packController?.abort();
@@ -461,7 +538,7 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
       document.removeEventListener('visibilitychange', focus);
       window.removeEventListener('pagehide', close);
     };
-  }, [queue, update]);
+  }, [queue, update, readUpdates]);
 
   // One explicit discovery, the only read that acquires catalogs: the default
   // plus each saved source, once. It is not part of the automatic loop, so an
@@ -755,5 +832,5 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
     refresh: () => queue(true), reconcile: () => queue(),
     // Reload packs is the existing full workspace refresh plus the one explicit catalog discovery.
     reloadPacks: () => { if (!packsWanted.current) return Promise.resolve(null); queue(true, false); return discover(); }, addSource, removeSource,
-    respond, capture, packAction, requestImport, openReview, readHistory, readAbout };
+    rereadUpdates, updateAction, respond, capture, packAction, requestImport, openReview, readHistory, readAbout };
 }

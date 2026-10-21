@@ -207,9 +207,10 @@ Dude includes explicit operational skills for common failure modes:
   adaptation, or one bounded clean local/public-GitHub directory through
   read-only analysis and planning before exact-plan apply. See
   [Importing agents and skills](commands.md#importing-agents-and-skills).
-- `dude-bundle-upgrade` — refresh the installed Dude bundle from upstream using a
-  seeded manifest, dry-run report, explicit `confirm upgrade` gate, safety tag,
-  and rollback path. See [Upgrading the bundle](commands.md#upgrading-the-bundle).
+- `dude-bundle-upgrade` — update the installed Dude bundle from upstream using a
+  seeded manifest, a preview of the exact file changes, and an explicit
+  `confirm upgrade` gate, leaving the changes uncommitted on the current branch.
+  See [Upgrading the bundle](commands.md#upgrading-the-bundle).
 
 These skills strengthen execution discipline without changing the main workflow.
 

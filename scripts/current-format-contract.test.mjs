@@ -30,7 +30,8 @@ import {
   writeCoreOutput,
 } from './build-release.mjs';
 import { TIER, classifyPath, enumerateCorePaths } from '../src/skills/dude-engine/lib/ownership.mjs';
-import { classifyPlan, scanCoreInventoryPaths } from '../src/skills/dude-bundle-upgrade/upgrade.mjs';
+import { scanCoreInventoryPaths } from '../src/skills/dude-bundle-upgrade/upgrade.mjs';
+import { isDeploymentPath } from '../src/skills/dude-bundle-upgrade/lib/release-source.mjs';
 import { resolveMutationPath } from '../src/skills/dude-engine/lib/workspace-paths.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -2701,11 +2702,12 @@ test('upgrade recovery guidance is current-only in source and generated copies',
     assert.match(content, /external or manual recovery/i);
     assert.match(content, /install or copy a current bundle engine|reinstall the current bundle/i);
     assert.match(content, /no in-bundle migration/i);
-    assert.match(content, /cryptographically random suffix/);
-    assert.match(content, /existing plan bytes are never overwritten/);
-    assert.match(content, /metadata manifest, log, branch, and commit transition/i);
-    assert.match(content, /hooks are disabled only for.*branch checkout.*commit/i);
-    assert.match(content, /safety tag and upgrade branch/i);
+    assert.match(content, /opaque ID: the folder's cryptographically\s+random name followed by a digest/);
+    assert.match(content, /Every\s+new `plan` for the workspace, including a dry run, replaces the earlier one/);
+    assert.match(content, /stays uncommitted on the\s+current branch|stay uncommitted on the\s+current branch/i);
+    assert.match(content, /`apply` never touches HEAD, the branch, or the index/);
+    assert.match(content, /Never repeat an apply automatically/);
+    assert.doesNotMatch(content, /rollback --tag|--rollback|packs-preview|packs-apply|confirm-packs|skip-removals|safety tag/);
     assert.match(content, /locally controlled workspace without concurrent hostile mutation/);
   }
   assert.equal(generated, source);
@@ -2850,7 +2852,7 @@ test('optional-pack contracts retain target safety, exact ownership, complete in
   assert.match(design, /exact canonical `spec_path` equality is the only owner match/);
 });
 
-test('public docs retain current verbs, resolved lifecycle, canonical manifest, and upgrade rollback', () => {
+test('public docs retain current verbs, resolved lifecycle, canonical manifest, and current upgrade commands', () => {
   const commands = read('docs/commands.md');
   const readme = read('README.md');
   const reference = read('docs/reference.md');
@@ -2926,7 +2928,10 @@ test('public docs retain current verbs, resolved lifecycle, canonical manifest, 
   const upgrading = read('docs/upgrading.md');
   assert.match(upgrading, /one manifest at `\.dude\/metadata\/bundle-manifest\.md`/);
   assert.match(upgrading, /@dude upgrade --dry-run/);
-  assert.match(upgrading, /@dude upgrade --rollback/);
+  assert.match(upgrading, /@dude upgrade --all --dry-run/);
+  assert.doesNotMatch(upgrading, /@dude upgrade --rollback/);
+  assert.doesNotMatch(readme, /@dude upgrade --rollback/);
+  assert.doesNotMatch(commands, /@dude upgrade[^\n]*--rollback|post-core refresh|separate confirmation/);
   assert.match(upgrading, /does not translate project-state, profile, or manifest\s+formats/);
 });
 
@@ -3010,8 +3015,8 @@ test('agent configuration, projection, compose, upgrade, and CI docs describe th
   assert.match(compose, /`remove`, `list`, and\s+`status` do not load that configuration or the renderer/);
   assert.match(compose, /existing complete predecessor profile can make one in-memory transition/i);
   assert.match(upgrade, /existing `.github\/skills\/dude-engine\/\*\*` ownership recursively includes/);
-  assert.match(upgrade, /rollback\s+restorability/i);
-  assert.match(upgrading, /ignored\s+and untracked[\s\S]{0,120}refuses/i);
+  assert.match(upgrade, /one\s+all-or-restored batch/i);
+  assert.match(upgrading, /all-or-restored batch[\s\S]{0,300}rollback boundary/i);
 
   assert.equal(ci.includes('.claude'), false);
   assert.equal(
@@ -10331,23 +10336,20 @@ test('T007 the saved sources file is project-owned: releases never seed it and u
     assert.equal(built.files.some((file) => path.posix.basename(file) === 'pack-sources.md'), false);
     assert.equal(fs.existsSync(path.join(release, ...relative.split('/'))), false);
 
-    // Upgrades: the planner and the local inventory list core files only, so a project's file
-    // is never added, replaced, or removed, and its bytes stay as the project left them.
+    // Upgrades: acquisition selects deployment files only, and the core inventory lists core files
+    // only, so a project's file is never fetched, added, replaced, or removed, and its bytes stay
+    // as the project left them.
     const write = (root, file, content) => {
       fs.mkdirSync(path.dirname(path.join(root, ...file.split('/'))), { recursive: true });
       fs.writeFileSync(path.join(root, ...file.split('/')), content);
     };
-    const upstream = path.join(sandbox, 'upstream');
     const project = path.join(sandbox, 'project');
     const core = '.github/skills/dude-fixture/SKILL.md';
-    write(upstream, core, 'upstream core bytes\n');
     write(project, core, 'project core bytes\n');
     const projectFile = '# Pack Sources\n\n```json\n{"sources":[{"type":"local","location":"../team-packs"}]}\n```\n';
     write(project, relative, projectFile);
-    const plan = classifyPlan(upstream, project);
-    assert.deepEqual(plan.replace.map((entry) => entry.path), [core], 'the plan ran over the fixture');
-    const planned = [plan.replace, plan.add, plan.remove, plan.advisory, plan.upToDatePaths].flat().map((entry) => entry.path);
-    assert.deepEqual(planned.filter((file) => file.startsWith('.dude/')), []);
+    assert.equal(isDeploymentPath(relative), false, 'an upgrade never acquires the sources file');
+    assert.equal(isDeploymentPath(core), true, 'the acquisition selector ran over the fixture');
     assert.deepEqual(enumerateCorePaths(project), [core]);
     assert.deepEqual(scanCoreInventoryPaths(project, 'project'), [core]);
     assert.equal(fs.readFileSync(path.join(project, ...relative.split('/')), 'utf8'), projectFile);

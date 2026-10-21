@@ -1,182 +1,359 @@
 #!/usr/bin/env node
 // @ts-check
 /**
- * Engine for dude-bundle-upgrade (Node port of upgrade.sh / upgrade.ps1).
+ * Engine for dude-bundle-upgrade: check for, prepare, and apply one exact
+ * Dude release in place on the current branch.
  *
- * Pulls the newest base bundle from upstream and overlays it onto this project,
- * replacing only core-owned engine files. Ownership is derived from the shared
- * namespace classifier in `dude-engine`, which recognizes three tiers:
- * core (`dude-<slug>`), pack (`dude-pack-<pack>-*`), and local (`dude-local-*`).
- * Pack and local files are preserved across a core upgrade.
+ * - `status` lists release tags only, within five seconds, and writes nothing.
+ * - `plan` resolves the target commit, acquires its deployment bytes
+ *   (`lib/release-source.mjs`), and hands them to that release's own staging
+ *   function, which prepares every intended byte in a temporary snapshot and
+ *   retains one prepared result under an opaque ID.
+ * - `apply --plan <id> --confirm confirm-upgrade` hands the retained result to
+ *   the retained target engine, which rechecks it and writes exactly its bytes
+ *   as one all-or-restored batch. The changes stay uncommitted; HEAD, the
+ *   branch, and the index are not touched.
+ * - `discard --plan <id>` releases a prepared result that will not be applied.
  *
- * Subcommands: status | plan | apply | rollback | help
+ * The staging contract an installed engine requires of its target release is
+ * `UPGRADE_STAGING_CONTRACT`, `stageUpgrade`, and `applyPreparedUpgrade`. A
+ * prepared result lives in `<os.tmpdir()>/dude-up-<random>/`: `release/` holds
+ * the acquired deployment files, `stage/` the staged bytes, and `prepared.json`
+ * the result's description, whose top-level `workspace` names the workspace it
+ * belongs to and which marks each written file that the release makes
+ * executable. Its ID is the folder's random name followed by the start of a
+ * digest of that description and every retained release file, so `apply`
+ * verifies the reviewed result before it runs any retained code. `apply`,
+ * `discard`, and a replacing `plan` first invalidate a result by renaming its
+ * description to `released.json`, which no command accepts, then remove the
+ * folder as best they can and name any folder they cannot remove. A target
+ * without the contract is refused as unsupported.
  *
  * Exit codes:
- *   0   no changes (up_to_date) or successful action
+ *   0   status reported, nothing to update, or a successful apply or discard
  *   10  plan ready, changes detected
- *   40  invalid input, malformed manifest, unreachable upstream, or post-apply lint failure
+ *   40  invalid input, a refusal, or an apply that did not succeed
  *
- * Dependency-free beyond Node.js (>= 20) and git. Node is a documented
- * maintenance-time dependency.
+ * Dependency-free beyond Node.js (>= 20) and Git.
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { enumerateCorePaths, classifyPath, TIER } from '../dude-engine/lib/ownership.mjs';
-import { resolveReleaseRef, pickLatestReleaseTag } from '../dude-engine/lib/release-channel.mjs';
+import { belongsToPack, classifyPath, TIER } from '../dude-engine/lib/ownership.mjs';
+import { RELEASE_CHANNEL } from '../dude-engine/lib/release-channel.mjs';
 import {
   DEVELOPMENT_INSTALLED_REF,
   parseDevelopmentBaseRelease,
   renderDevelopmentBaseRelease,
-  validateDevelopmentBaseRelease,
 } from '../dude-engine/lib/development-base-release.mjs';
+import { WORKSPACE_PATHS, resolveMutationPath } from '../dude-engine/lib/workspace-paths.mjs';
 import {
-  WORKSPACE_PATHS,
-  resolveMutationPath,
-} from '../dude-engine/lib/workspace-paths.mjs';
+  ACQUISITION_DEADLINE_MS,
+  ReleaseSourceError,
+  acquireRelease,
+  compareReleaseTags,
+  deadlineSignal,
+  foregroundGitEnvironment,
+  githubReleaseUrl,
+  isGitHubHost,
+  isRemoteAddress,
+  isStableReleaseTag,
+  latestStableRelease,
+  observeRoot,
+  resolveTarget,
+  runOwned,
+} from './lib/release-source.mjs';
 
-// Re-exported so existing importers (upgrade.test.mjs) keep a stable entry point.
-export { pickLatestReleaseTag };
+export const UPGRADE_STAGING_CONTRACT = 1;
 
-const ROOT = process.cwd();
-const CACHE_ROOT = path.join(process.env.TMPDIR || '/tmp', 'dude-upgrade-cache');
-const PLANS_DIR = path.join(CACHE_ROOT, 'plans');
-const LOCAL_MANIFEST_PATH = path.join(ROOT, ...WORKSPACE_PATHS.BUNDLE_MANIFEST.split('/'));
-const LINT_PATH = path.join(ROOT, '.github/skills/dude-lint/lint.mjs');
-const DEFAULT_SOURCE = 'https://github.com/E-G-C/dude';
-const DEFAULT_REF = 'main';
-const PLAN_KIND = 'dude-upgrade-plan';
-const PLAN_SCHEMA_VERSION = 2;
-const PLAN_IDENTITY_SCOPE = 'same-host-filesystem';
-const COMMIT_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
-const BASE_RELEASE_PATH = WORKSPACE_PATHS.DEVELOPMENT_BASE_RELEASE;
+const CONTRACT_MARKER = `export const UPGRADE_STAGING_CONTRACT = ${UPGRADE_STAGING_CONTRACT};`;
+const CONFIRM_TOKEN = 'confirm-upgrade';
+const PREPARED_PREFIX = 'dude-up-';
+// A prepared folder is named by 16 random hex digits; the ID adds 16 more,
+// the start of the digest that binds the result (see `resultDigest`).
+const FOLDER_NAME_RE = /^[0-9a-f]{16}$/;
+const PREPARED_ID_RE = /^[0-9a-f]{32}$/;
+const PREPARED_FILE = 'prepared.json';
+// An invalidated result's description, which no command accepts.
+const RELEASED_FILE = 'released.json';
+const PREPARED_KIND = 'dude-prepared-upgrade';
+const MIB = 1_048_576;
+// One prepared result fits the atomic batch's fixed upgrade bound.
+const MAX_CHANGES = 8_192;
+const MAX_RETAINED_BYTES = 256 * MIB;
+// A whole preparation ends within the core acquisition window plus this window
+// for each pack it prepares; each pack fetch keeps Compose's own smaller bound.
+const PACK_WINDOW_MS = 130_000;
+const COMPOSE_OUTPUT_BYTES = 1 * MIB;
+// This release's Compose, run as a child process to prepare each pack.
+const COMPOSE_CLI = fileURLToPath(new URL('../dude-compose/compose.mjs', import.meta.url));
+const LINT_DEADLINE_MS = 120_000;
+const LINT_OUTPUT_BYTES = 16 * MIB;
+const LOCAL_GIT_DEADLINE_MS = 30_000;
+const PACK_LOCATIONS = Object.freeze(['.github/agents', '.github/skills', '.github/instructions', '.github/prompts']);
+const MANIFEST = WORKSPACE_PATHS.BUNDLE_MANIFEST;
+const BASE_RELEASE = WORKSPACE_PATHS.DEVELOPMENT_BASE_RELEASE;
+const UPGRADE_LOG = WORKSPACE_PATHS.UPGRADE_LOG;
+const PROFILE = WORKSPACE_PATHS.PROFILE;
+const ANSI_RE = /\u001b\[[0-9;]*m/g;
+// The permission apply writes for a file the reviewed result marks executable:
+// Git's executable file mode.
+const EXECUTABLE_MODE = 0o755;
 
-// ----- logging (stderr) ------------------------------------------------------
+/**
+ * @typedef {{ location: string, requested_ref: string, resolved_ref: string, commit: string }} SourceIdentity
+ * @typedef {{ sha256: string, size: number }} FileState
+ * @typedef {{ path: string, group: 'core' | 'metadata' | 'pack', pack: string | null,
+ *   op: 'add' | 'replace' | 'remove', before: FileState | null, after: FileState | null,
+ *   executable?: true }} Change
+ * @typedef {(event: Readonly<{ phase: string, pack?: string, completed?: number, total?: number }>) => void} ProgressListener
+ */
+
+/* ---------------------------------------------------------------- output */
+
 const color = Boolean(process.stderr.isTTY);
-const YEL = color ? '\u001b[33m' : '';
 const RED = color ? '\u001b[31m' : '';
-const GRN = color ? '\u001b[32m' : '';
-const CYA = color ? '\u001b[36m' : '';
 const RST = color ? '\u001b[0m' : '';
-/** @param {string} m */
-const logInfo = (m) => process.stderr.write(`${CYA}[upgrade]${RST} ${m}\n`);
-/** @param {string} m */
-const logWarn = (m) => process.stderr.write(`${YEL}[upgrade]${RST} ${m}\n`);
-/** @param {string} m */
-const logError = (m) => process.stderr.write(`${RED}[upgrade]${RST} ${m}\n`);
-/** @param {string} m */
-const logDebug = (m) => {
-  if (process.env.UPGRADE_DEBUG) process.stderr.write(`[upgrade] ${m}\n`);
-};
-/** @param {string} s */
-const out = (s) => process.stdout.write(s);
+/** @param {string} message */
+const logError = (message) => process.stderr.write(`${RED}[upgrade]${RST} ${message}\n`);
+/** @param {string} text */
+const out = (text) => process.stdout.write(text);
+/** @param {unknown} value */
+const writeJson = (value) => out(`${JSON.stringify(value, null, 2)}\n`);
 
-// ----- small fs/sha/date helpers --------------------------------------------
-/** @param {string} p @returns {boolean} */
-const isDir = (p) => {
-  try {
-    return fs.statSync(p).isDirectory();
-  } catch {
-    return false;
-  }
-};
-/** @param {string} p @returns {boolean} */
-const isFile = (p) => {
-  try {
-    return fs.statSync(p).isFile();
-  } catch {
-    return false;
-  }
-};
-/** @param {string} p @returns {boolean} */
-const exists = (p) => {
-  try {
-    fs.statSync(p);
-    return true;
-  } catch {
-    return false;
-  }
-};
-/** @param {string} p @returns {string} */
-const read = (p) => fs.readFileSync(p, 'utf8');
-/** @param {string} s @returns {string} */
-const shortSha = (s) => String(s).slice(0, 12);
-/** @param {string} r @returns {string} filesystem-safe form of a git ref */
-const sanitizeRef = (r) => String(r).replace(/[^A-Za-z0-9._-]/g, '_') || 'none';
+/* --------------------------------------------------------------- helpers */
 
-/** @returns {string} ISO-8601 UTC with no milliseconds. */
-const isoNow = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
-/** @param {string} iso @param {number} secs @returns {string} */
-const isoAddSeconds = (iso, secs) =>
-  new Date(Date.parse(iso) + secs * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
-/** @returns {string} compact UTC stamp YYYYMMDD-HHMMSS */
-function stampNow() {
-  const d = new Date();
-  const p2 = (n) => String(n).padStart(2, '0');
-  return (
-    `${d.getUTCFullYear()}${p2(d.getUTCMonth() + 1)}${p2(d.getUTCDate())}` +
-    `-${p2(d.getUTCHours())}${p2(d.getUTCMinutes())}${p2(d.getUTCSeconds())}`
-  );
+/**
+ * How long one Compose child may prepare a pack from `location`. A github.com
+ * pack is read over HTTPS within Compose's own 120-second bound. Any other
+ * source may be cloned by Compose's synchronous Git, so its child is stopped
+ * at the core acquisition window, before that Git's 60-second deadline.
+ * @param {string} location
+ */
+export function composeStopWindowMs(location) {
+  return isGitHubHost(location) ? PACK_WINDOW_MS : ACQUISITION_DEADLINE_MS;
 }
-/** @param {string} iso @returns {number | null} epoch seconds or null */
-function isoToEpoch(iso) {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return null;
-  const canonical = new Date(t).toISOString().replace(/\.\d{3}Z$/, 'Z');
-  return canonical === iso ? Math.floor(t / 1000) : null;
+
+/**
+ * A Compose child's environment: the same noninteractive Git environment as
+ * core acquisition, with every temporary root inside `temporary`.
+ * @param {string} temporary
+ * @param {NodeJS.ProcessEnv} [base]
+ * @returns {NodeJS.ProcessEnv}
+ */
+export function composeEnvironment(temporary, base = process.env) {
+  return { ...foregroundGitEnvironment(base), TMPDIR: temporary, TMP: temporary, TEMP: temporary };
 }
-/** @param {string} a @param {string} b @returns {number} */
+
+/** @param {string} a @param {string} b */
 const codeUnitCompare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
-/** @param {string | Buffer} bytes @returns {string} */
+/** @param {Buffer} bytes */
 const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
-/** @param {string} absolutePath @param {boolean} [bigint] */
-function lstatOrNull(absolutePath, bigint = false) {
+/** @param {Buffer | null} bytes @returns {FileState | null} */
+const stateOf = (bytes) => (bytes === null ? null : { sha256: sha256(bytes), size: bytes.length });
+/** @param {FileState | null} left @param {FileState | null} right */
+const sameState = (left, right) => (left === null || right === null
+  ? left === right
+  : left.sha256 === right.sha256 && left.size === right.size);
+/** @returns {string} ISO 8601 UTC at seconds precision. */
+const isoNow = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+/** @param {unknown} error */
+const errorMessage = (error) => (error instanceof Error ? error.message : String(error));
+
+/**
+ * An expected refusal: `reason` classifies it for structured callers.
+ * @param {string} reason
+ * @param {string} detail
+ * @param {Record<string, unknown>} [extra]
+ */
+function refusal(reason, detail, extra = {}) {
+  return Object.assign(new Error(detail), { reason, ...extra });
+}
+
+/**
+ * Refuse once the preparation's caller cancelled it or its deadline passed.
+ * The absolute deadline (a `Date.now()` time) is read from the clock, because
+ * local work runs synchronously and never yields to a timer.
+ * @param {AbortSignal | undefined} signal
+ * @param {string} [timeoutDetail]
+ * @param {number} [deadlineAt]
+ */
+function checkStopped(signal, timeoutDetail = 'the preparation did not finish in time', deadlineAt = Infinity) {
+  if (signal?.aborted) {
+    throw /** @type {any} */ (signal.reason)?.name === 'TimeoutError'
+      ? refusal('timeout', timeoutDetail)
+      : refusal('cancelled', 'the preparation was cancelled');
+  }
+  if (Date.now() >= deadlineAt) throw refusal('timeout', timeoutDetail);
+}
+
+/** @param {unknown} error @param {string | null} note @returns {unknown} */
+function withNote(error, note) {
+  if (note && error instanceof Error) error.message = `${error.message}; ${note}`;
+  return error;
+}
+
+/** @param {string} absolutePath */
+function lstatOrNull(absolutePath) {
   try {
-    return bigint
-      ? fs.lstatSync(absolutePath, { bigint: true })
-      : fs.lstatSync(absolutePath);
+    return fs.lstatSync(absolutePath);
   } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null;
+    if (/** @type {NodeJS.ErrnoException} */ (error)?.code === 'ENOENT') return null;
     throw error;
   }
 }
-/** @param {string} absolutePath */
-function directoryIdentity(absolutePath) {
-  const stat = lstatOrNull(absolutePath, true);
-  if (!stat || !stat.isDirectory() || stat.isSymbolicLink()) {
-    throw new Error(`expected a real directory: ${absolutePath}`);
-  }
-  return {
-    device: String(stat.dev),
-    inode: String(stat.ino),
-  };
-}
+
 /**
- * Read one expected mutation state and the exact bytes it was hashed from.
- * @param {string} root @param {string} relativePath
- * @returns {{ state: { type: 'missing' } | { type: 'file', sha256: string }, bytes: Buffer | null }}
+ * The bytes of one regular file under `root`, or null when it is absent.
+ * Symbolic links, unsafe parents, and other file types refuse.
+ * @param {string} root
+ * @param {string} relativePath
+ * @returns {Buffer | null}
  */
-function readExpectedState(root, relativePath) {
+function readFileOrNull(root, relativePath) {
   const absolutePath = resolveMutationPath(root, relativePath);
-  const stat = lstatOrNull(absolutePath, true);
-  if (!stat) return { state: { type: 'missing' }, bytes: null };
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw new Error(`expected regular file at ${relativePath}`);
-  }
-  const bytes = fs.readFileSync(absolutePath);
-  return { state: { type: 'file', sha256: sha256(bytes) }, bytes };
+  const stat = lstatOrNull(absolutePath);
+  if (!stat) return null;
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`expected a regular file at ${relativePath}`);
+  return fs.readFileSync(absolutePath);
 }
+
+/** @param {string} root @param {string} relativePath @param {Buffer | string} bytes */
+function writeFileUnder(root, relativePath, bytes) {
+  const absolutePath = path.join(root, ...relativePath.split('/'));
+  fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+  fs.writeFileSync(absolutePath, bytes);
+}
+
 /** @param {string} root @param {string} relativePath */
-function snapshotExpectedState(root, relativePath) {
-  return readExpectedState(root, relativePath).state;
+function removeFileUnder(root, relativePath) {
+  fs.rmSync(path.join(root, ...relativePath.split('/')), { force: true });
 }
 
 /**
- * Parse a base release record from regular-file bytes. A malformed payload is
- * unknown provenance (null), never an error; unsafe file types fail earlier.
+ * Every regular file at or under one relative path, sorted.
+ * @param {string} root
+ * @param {string} relativePath
+ * @returns {string[]}
+ */
+function listFiles(root, relativePath) {
+  const stat = lstatOrNull(resolveMutationPath(root, relativePath));
+  if (!stat) return [];
+  if (stat.isSymbolicLink()) throw new Error(`${relativePath} is a symbolic link`);
+  if (stat.isFile()) return [relativePath];
+  if (!stat.isDirectory()) throw new Error(`${relativePath} is not a regular file or directory`);
+  return fs.readdirSync(path.join(root, ...relativePath.split('/')))
+    .sort(codeUnitCompare)
+    .flatMap((name) => listFiles(root, `${relativePath}/${name}`));
+}
+
+/** @param {string} fromRoot @param {string} toRoot @param {string} relativePath */
+function copyTree(fromRoot, toRoot, relativePath) {
+  for (const file of listFiles(fromRoot, relativePath)) {
+    writeFileUnder(toRoot, file, /** @type {Buffer} */ (readFileOrNull(fromRoot, file)));
+  }
+}
+
+/* ------------------------------------------------------------- manifest */
+
+/** @param {string} content @returns {string | null} the fenced ```json block body */
+function extractManifestJson(content) {
+  const match = /```json\s*\r?\n([\s\S]*?)\r?\n```/.exec(content);
+  return match ? match[1] : null;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string[]} error messages (empty when valid)
+ */
+function validateMetadataManifest(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return ['the JSON is malformed'];
+  const obj = /** @type {Record<string, unknown>} */ (value);
+  /** @type {string[]} */
+  const errors = [];
+  for (const key of Object.keys(obj)) {
+    if (!['source_repo', 'source_ref', 'installed_ref'].includes(key)) errors.push(`unsupported field '${key}'`);
+  }
+  if (typeof obj.source_repo !== 'string' || !obj.source_repo) errors.push('missing source_repo');
+  if (typeof obj.source_ref !== 'string' || !obj.source_ref) errors.push('missing source_ref');
+  // installed_ref may be empty on a fresh install but is always a string: a
+  // version tag or a branch/ref name.
+  if (obj.installed_ref !== undefined && typeof obj.installed_ref !== 'string') errors.push('installed_ref must be a string');
+  return errors;
+}
+
+function localManifestError() {
+  return `canonical bundle manifest missing or malformed at ${MANIFEST}; install or copy a current bundle engine and metadata, or reinstall the current bundle while preserving project data`;
+}
+
+/**
+ * Read and validate the bundle manifest under `root`.
+ * @param {string} root
+ * @param {'local' | 'target'} label
+ * @returns {{ bytes: Buffer, data: { source_repo: string, source_ref: string, installed_ref: string } }}
+ */
+function readManifest(root, label) {
+  let bytes = null;
+  let parsed = null;
+  try {
+    bytes = readFileOrNull(root, MANIFEST);
+    const body = bytes && extractManifestJson(bytes.toString('utf8'));
+    parsed = body ? JSON.parse(body) : null;
+  } catch {
+    parsed = null;
+  }
+  const errors = validateMetadataManifest(parsed);
+  if (!bytes || errors.length > 0) {
+    throw label === 'local'
+      ? refusal('invalid-manifest', localManifestError())
+      : refusal('invalid-target', `the target release has no valid ${MANIFEST}: ${errors[0] ?? 'missing'}`);
+  }
+  return {
+    bytes,
+    data: {
+      source_repo: parsed.source_repo,
+      source_ref: parsed.source_ref,
+      installed_ref: typeof parsed.installed_ref === 'string' ? parsed.installed_ref : '',
+    },
+  };
+}
+
+/**
+ * Rewrite only the fenced ```json block, preserving the surrounding markdown.
+ * @param {Buffer} originalBytes
+ * @param {{ source_repo: string, source_ref: string, installed_ref: string }} data
+ */
+function renderManifest(originalBytes, data) {
+  const lines = originalBytes.toString('utf8').split('\n');
+  /** @type {string[]} */
+  const before = [];
+  let index = 0;
+  for (; index < lines.length; index += 1) {
+    before.push(lines[index]);
+    if (/^```json\s*$/.test(lines[index])) {
+      index += 1;
+      break;
+    }
+  }
+  /** @type {string[]} */
+  const after = [];
+  let closed = false;
+  for (; index < lines.length; index += 1) {
+    if (!closed && /^```\s*$/.test(lines[index])) closed = true;
+    if (closed) after.push(lines[index]);
+  }
+  return Buffer.from([...before, JSON.stringify(data, null, 2), ...after].join('\n'));
+}
+
+/* -------------------------------------------------- base release record */
+
+/**
+ * A base release record from regular-file bytes. A malformed payload is
+ * unknown provenance (null), never an error.
  * @param {Buffer | null} bytes
  * @returns {{ source_repo: string, base_release: string } | null}
  */
@@ -185,46 +362,30 @@ function usableBaseRelease(bytes) {
   try {
     const { source_repo: sourceRepo, base_release: baseRelease } = parseDevelopmentBaseRelease(bytes);
     return { source_repo: sourceRepo, base_release: baseRelease };
-  } catch (error) {
-    logDebug(`base release record is unusable: ${error instanceof Error ? error.message : String(error)}`);
+  } catch {
     return null;
   }
 }
 
 /**
- * The record a reviewed refresh leaves locally. Only a `main` target from an
- * upstream development bundle carries provenance: the upstream record must
- * belong to that bundle's manifest source, and the local copy is bound to the
- * outgoing manifest's selected source. Everything else leaves no record.
- * @param {{
- *   toRef: string,
- *   sourceLocation: string,
- *   upstreamManifest: Record<string, unknown> | null,
- *   upstreamRecord: { source_repo: string, base_release: string } | null,
- * }} evidence
- * @returns {{ source_repo: string, base_release: string } | null}
+ * The record an upgrade leaves. Only a `main` target from an upstream
+ * development bundle carries provenance: the upstream record must belong to
+ * that bundle's manifest source, and the local copy is bound to the selected
+ * source. Everything else leaves no record.
+ * @param {{ toRef: string, sourceLocation: string,
+ *   upstreamManifest: { source_repo: string, installed_ref: string },
+ *   upstreamRecord: { source_repo: string, base_release: string } | null }} evidence
  */
 function desiredBaseRelease({ toRef, sourceLocation, upstreamManifest, upstreamRecord }) {
-  if (toRef !== DEVELOPMENT_INSTALLED_REF || !upstreamRecord || !upstreamManifest
-      || upstreamManifest.installed_ref !== DEVELOPMENT_INSTALLED_REF
-      || upstreamManifest.source_repo !== upstreamRecord.source_repo) {
+  if (toRef !== DEVELOPMENT_INSTALLED_REF || !upstreamRecord
+    || upstreamManifest.installed_ref !== DEVELOPMENT_INSTALLED_REF
+    || upstreamManifest.source_repo !== upstreamRecord.source_repo) {
     return null;
   }
   return { source_repo: sourceLocation, base_release: upstreamRecord.base_release };
 }
 
-/**
- * Read the fixed record's expected state and bytes for planning. The record
- * may be absent or a regular file; any other type is refused before a plan.
- * @param {string} root @param {'upstream' | 'local'} label
- */
-function readBaseReleaseEvidence(root, label) {
-  try {
-    return readExpectedState(root, BASE_RELEASE_PATH);
-  } catch (error) {
-    throw new Error(`${label} base release record must be absent or a regular file: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
+/* ---------------------------------------------------------- core inventory */
 
 /**
  * Enumerate core files while refusing namespace candidates hidden from the
@@ -301,1855 +462,1109 @@ export function scanCoreInventoryPaths(root, label) {
   return results.sort(codeUnitCompare);
 }
 
-/** @param {string} root @param {string} label */
-function snapshotCoreInventory(root, label) {
-  return scanCoreInventoryPaths(root, label).map((relativePath) => {
-    const state = snapshotExpectedState(root, relativePath);
-    if (state.type !== 'file') throw new Error(`${label} path disappeared: ${relativePath}`);
-    return { path: relativePath, type: 'file', sha256: state.sha256 };
+/* --------------------------------------------------------- workspace Git */
+
+/** @param {string} root @param {string[]} args */
+function workspaceGit(root, args) {
+  return spawnSync('git', args, {
+    cwd: root,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: LOCAL_GIT_DEADLINE_MS,
+    maxBuffer: 16 * MIB,
   });
 }
 
-/** @param {unknown} value @returns {value is Record<string, any>} */
-const isRecord = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-
-/** @param {unknown} state */
-function projectExpectedState(state) {
-  if (!isRecord(state)) return state;
-  if (state.type === 'missing') return { type: state.type };
-  return {
-    type: state.type,
-    sha256: state.sha256,
-  };
+/** @param {string} root */
+function requireWorkTree(root) {
+  const result = workspaceGit(root, ['rev-parse', '--is-inside-work-tree']);
+  if (/** @type {NodeJS.ErrnoException | undefined} */ (result.error)?.code === 'ENOENT') {
+    throw refusal('git-missing', 'Git is required to check or prepare an upgrade; install Git and try again');
+  }
+  if (result.status !== 0 || result.stdout.trim() !== 'true') {
+    throw refusal('not-a-work-tree', "not a Git working tree (run 'git init' in the project root, then try again)");
+  }
 }
 
-/** @param {unknown} value @param {(entry: Record<string, any>) => object} mapEntry */
-function projectArray(value, mapEntry) {
-  return Array.isArray(value)
-    ? value.map((entry) => (isRecord(entry) ? mapEntry(entry) : entry))
-    : value;
-}
-
-/** @param {unknown} value */
-function projectBaseReleaseRecord(value) {
-  return isRecord(value)
-    ? { source_repo: value.source_repo, base_release: value.base_release }
-    : value;
+/** The current branch name, or `detached at <commit>`. @param {string} root */
+function currentBranch(root) {
+  const symbolic = workspaceGit(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  if (symbolic.status === 0 && symbolic.stdout.trim()) return symbolic.stdout.trim();
+  const head = workspaceGit(root, ['rev-parse', '--verify', '--quiet', 'HEAD']);
+  if (head.status === 0 && head.stdout.trim()) return `detached at ${head.stdout.trim().slice(0, 12)}`;
+  throw refusal('not-a-work-tree', 'the current branch could not be read');
 }
 
 /**
- * Reconstruct the exact schema-v2 digest projection in canonical key order.
- * Unknown fields are excluded here and rejected by strict apply validation.
- * @param {Record<string, any>} plan
- */
-export function canonicalPlanProjection(plan) {
-  return {
-    kind: plan.kind,
-    schema_version: plan.schema_version,
-    plan_id: plan.plan_id,
-    created_at: plan.created_at,
-    ttl_warn_at: plan.ttl_warn_at,
-    ttl_expire_at: plan.ttl_expire_at,
-    scope: isRecord(plan.scope) ? {
-      identity_scope: plan.scope.identity_scope,
-      workspace_path: plan.scope.workspace_path,
-      workspace_realpath: plan.scope.workspace_realpath,
-      workspace_identity: isRecord(plan.scope.workspace_identity) ? {
-        device: plan.scope.workspace_identity.device,
-        inode: plan.scope.workspace_identity.inode,
-      } : plan.scope.workspace_identity,
-    } : plan.scope,
-    source: isRecord(plan.source) ? {
-      type: plan.source.type,
-      location: plan.source.location,
-      identity: plan.source.identity,
-      requested_ref: plan.source.requested_ref,
-      resolved_ref: plan.source.resolved_ref,
-      resolved_commit: plan.source.resolved_commit,
-    } : plan.source,
-    from_ref: plan.from_ref,
-    to_ref: plan.to_ref,
-    cache: isRecord(plan.cache) ? {
-      root_path: plan.cache.root_path,
-      root_realpath: plan.cache.root_realpath,
-      root_identity: isRecord(plan.cache.root_identity) ? {
-        device: plan.cache.root_identity.device,
-        inode: plan.cache.root_identity.inode,
-      } : plan.cache.root_identity,
-      manifest: isRecord(plan.cache.manifest) ? {
-        path: plan.cache.manifest.path,
-        type: plan.cache.manifest.type,
-        sha256: plan.cache.manifest.sha256,
-      } : plan.cache.manifest,
-      base_release: isRecord(plan.cache.base_release) ? {
-        path: plan.cache.base_release.path,
-        state: projectExpectedState(plan.cache.base_release.state),
-      } : plan.cache.base_release,
-      inventory: projectArray(plan.cache.inventory, (entry) => ({
-        path: entry.path,
-        type: entry.type,
-        sha256: entry.sha256,
-      })),
-    } : plan.cache,
-    local: isRecord(plan.local) ? {
-      manifest: isRecord(plan.local.manifest) ? {
-        path: plan.local.manifest.path,
-        state: projectExpectedState(plan.local.manifest.state),
-        data: isRecord(plan.local.manifest.data) ? {
-          source_repo: plan.local.manifest.data.source_repo,
-          source_ref: plan.local.manifest.data.source_ref,
-          installed_ref: plan.local.manifest.data.installed_ref,
-        } : plan.local.manifest.data,
-      } : plan.local.manifest,
-      upgrade_log: isRecord(plan.local.upgrade_log) ? {
-        path: plan.local.upgrade_log.path,
-        state: projectExpectedState(plan.local.upgrade_log.state),
-      } : plan.local.upgrade_log,
-      base_release: isRecord(plan.local.base_release) ? {
-        path: plan.local.base_release.path,
-        state: projectExpectedState(plan.local.base_release.state),
-        record: projectBaseReleaseRecord(plan.local.base_release.record),
-        desired: projectBaseReleaseRecord(plan.local.base_release.desired),
-      } : plan.local.base_release,
-      core_inventory: projectArray(plan.local.core_inventory, (entry) => ({
-        path: entry.path,
-        state: projectExpectedState(entry.state),
-      })),
-    } : plan.local,
-    summary: isRecord(plan.summary) ? {
-      replace: plan.summary.replace,
-      add: plan.summary.add,
-      remove: plan.summary.remove,
-      advisory: plan.summary.advisory,
-      up_to_date: plan.summary.up_to_date,
-    } : plan.summary,
-    buckets: isRecord(plan.buckets) ? {
-      replace: projectArray(plan.buckets.replace, (entry) => ({
-        path: entry.path,
-        added_lines: entry.added_lines,
-        removed_lines: entry.removed_lines,
-      })),
-      add: projectArray(plan.buckets.add, (entry) => ({ path: entry.path })),
-      remove: projectArray(plan.buckets.remove, (entry) => ({ path: entry.path })),
-      advisory: projectArray(plan.buckets.advisory, (entry) => ({
-        path: entry.path,
-        kind: entry.kind,
-      })),
-      up_to_date: projectArray(plan.buckets.up_to_date, (entry) => ({ path: entry.path })),
-    } : plan.buckets,
-  };
-}
-
-/** @param {Record<string, any>} plan @returns {string} */
-export function planDigest(plan) {
-  return sha256(JSON.stringify(canonicalPlanProjection(plan)));
-}
-
-/** @param {Record<string, any>} plan @returns {string} */
-function serializeUpgradePlan(plan) {
-  return `${JSON.stringify({ ...canonicalPlanProjection(plan), digest: plan.digest }, null, 2)}\n`;
-}
-
-/**
- * Run git in ROOT (or a given cwd).
- * @param {string[]} args
- * @param {string} [cwd]
- * @returns {{ status: number, stdout: string, stderr: string }}
- */
-function git(args, cwd = ROOT) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
-  return { status: r.status === null ? 1 : r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
-}
-/** @returns {boolean} */
-const hasGit = () => spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0;
-
-/** @param {string} hooksPath @param {string[]} args @param {string} [cwd] */
-function gitWithoutHooks(hooksPath, args, cwd = ROOT) {
-  return git(['-c', `core.hooksPath=${hooksPath}`, ...args], cwd);
-}
-
-/**
- * Find the required canonical manifest in an upstream tree.
+ * Touched paths with uncommitted or staged edits, from a status read that
+ * takes no optional index lock. Committed customizations are not detectable.
  * @param {string} root
- * @returns {string | null}
+ * @param {string[]} touched
  */
-export function findUpstreamManifestPath(root) {
-  const canonical = path.join(root, ...WORKSPACE_PATHS.BUNDLE_MANIFEST.split('/'));
-  try {
-    if (fs.lstatSync(canonical).isFile()) return canonical;
-  } catch {
-    // missing or not readable
+function knownDirtyPaths(root, touched) {
+  const prefix = workspaceGit(root, ['rev-parse', '--show-prefix']);
+  const status = workspaceGit(root, [
+    '--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.github', '.dude/metadata',
+  ]);
+  if (prefix.status !== 0 || status.status !== 0) {
+    throw refusal('git-failed', `could not read the working tree status: ${(status.stderr || prefix.stderr || '').trim()}`);
   }
-  return null;
-}
-
-/** @returns {string} */
-function localManifestError() {
-  return `canonical bundle manifest missing or malformed at ${WORKSPACE_PATHS.BUNDLE_MANIFEST}; install or copy a current bundle engine and metadata, or reinstall the current bundle while preserving project data`;
-}
-
-// ----- manifest parsing ------------------------------------------------------
-/** @param {string} content @returns {string | null} the fenced ```json block body */
-function extractManifestJson(content) {
-  const m = /```json\s*\n([\s\S]*?)\n```/.exec(content);
-  return m ? m[1] : null;
-}
-/** @param {string} jsonText @returns {Record<string, unknown> | null} */
-function parseManifest(jsonText) {
-  try {
-    const o = JSON.parse(jsonText);
-    return o && typeof o === 'object' ? o : null;
-  } catch {
-    return null;
-  }
-}
-/**
- * @param {Record<string, unknown> | null} obj
- * @param {string} label
- * @returns {string[]} error messages (empty when valid)
- */
-function validateMetadataManifest(obj, label) {
-  /** @type {string[]} */
-  const errors = [];
-  if (!obj) return [`${label} JSON is malformed`];
-  for (const key of Object.keys(obj)) {
-    if (!['source_repo', 'source_ref', 'installed_ref'].includes(key)) {
-      errors.push(`${label} has unsupported field '${key}'`);
+  const relativeTo = prefix.stdout.trim();
+  /** @type {Set<string>} */
+  const dirty = new Set();
+  const tokens = status.stdout.split('\0');
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token.length < 4) continue;
+    const named = [token.slice(3)];
+    if (token[0] === 'R' || token[0] === 'C') {
+      named.push(tokens[index + 1] ?? '');
+      index += 1;
+    }
+    for (const name of named) {
+      if (name.startsWith(relativeTo)) dirty.add(name.slice(relativeTo.length));
     }
   }
-  if (!obj.source_repo) errors.push(`${label} is missing source_repo`);
-  if (!obj.source_ref) errors.push(`${label} is missing source_ref`);
-  // installed_ref is optional (empty on a fresh install) but, when present,
-  // must be a string — a version tag or a branch/ref name, never a raw sha.
-  if (obj.installed_ref !== undefined && typeof obj.installed_ref !== 'string') {
-    errors.push(`${label} installed_ref must be a string`);
-  }
-  return errors;
+  return touched.filter((relativePath) => dirty.has(relativePath));
 }
 
-const local = {
-  json: /** @type {Record<string, unknown> | null} */ (null),
-  source_repo: '',
-  source_ref: '',
-  installed_ref: '',
-};
-/** @returns {boolean} true on success */
-function loadLocalManifest() {
-  if (!isFile(LOCAL_MANIFEST_PATH)) return false;
-  const body = extractManifestJson(read(LOCAL_MANIFEST_PATH));
-  if (!body) return false;
-  const obj = parseManifest(body);
-  if (!obj) return false;
-  if (validateMetadataManifest(obj, 'local manifest').length) return false;
-  local.json = obj;
-  local.source_repo = String(obj.source_repo || '');
-  local.source_ref = String(obj.source_ref || '');
-  local.installed_ref = String(obj.installed_ref || '');
-  return true;
-}
-
-// ----- upstream resolution ---------------------------------------------------
-const upstream = { source: '', ref: '', resolvedRef: '', channel: false };
-/** @param {string} srcOverride @param {string} refOverride */
-function resolveUpstream(srcOverride, refOverride) {
-  upstream.source = srcOverride || local.source_repo || DEFAULT_SOURCE;
-  upstream.ref = refOverride || local.source_ref || DEFAULT_REF;
-  const r = resolveReleaseRef(upstream.source, upstream.ref);
-  upstream.channel = r.channel;
-  upstream.resolvedRef = r.resolvedRef;
-}
-/** @returns {string} human display of the ref (channel shows the resolved tag) */
-function refDisplay() {
-  return upstream.channel && upstream.resolvedRef
-    ? `${upstream.ref} (${upstream.resolvedRef})`
-    : upstream.ref;
-}
-/** @param {string} url @returns {string} owner/repo or '' */
-function githubOwnerRepo(url) {
-  const m = /^https:\/\/github\.com\/([^/]+)\/([^/]+)/.exec(url.replace(/\.git$/, ''));
-  return m ? `${m[1]}/${m[2]}` : '';
-}
+/* ------------------------------------------------------------------ lint */
 
 /**
- * Fetch only the canonical upstream bundle-manifest.md.
- * @returns {Promise<{ path: string | null, error: string }>}
+ * Run the retained target linter against the workspace. A normal failure
+ * report is a readable result; a crash, timeout, oversized output, or a report
+ * whose summary and exit status disagree is not.
+ * @param {string} lintPath
+ * @param {string} workspace
+ * @returns {{ ok: true, failures: string[] } | { ok: false, detail: string }}
  */
-async function fetchUpstreamManifestOnly() {
-  fs.mkdirSync(CACHE_ROOT, { recursive: true });
-  const outDir = fs.mkdtempSync(path.join(CACHE_ROOT, 'manifest-'));
-  const outFile = path.join(outDir, 'bundle-manifest.md');
-
-  if (isDir(upstream.source)) {
-    const lm = findUpstreamManifestPath(upstream.source);
-    if (lm && isFile(lm)) {
-      fs.copyFileSync(lm, outFile);
-      return { path: outFile, error: '' };
-    }
-    fs.rmSync(outDir, { recursive: true, force: true });
+function runTargetLint(lintPath, workspace) {
+  const result = spawnSync(process.execPath, [lintPath, workspace], {
+    cwd: workspace,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: LINT_DEADLINE_MS,
+    maxBuffer: LINT_OUTPUT_BYTES,
+  });
+  if (result.error) {
+    const code = /** @type {NodeJS.ErrnoException} */ (result.error).code;
     return {
-      path: null,
-      error: `local upstream source is missing required canonical metadata at ${WORKSPACE_PATHS.BUNDLE_MANIFEST}; old-path manifests are not accepted`,
+      ok: false,
+      detail: code === 'ETIMEDOUT' ? `it did not finish within ${LINT_DEADLINE_MS / 1_000} seconds`
+        : code === 'ENOBUFS' ? `its report exceeded ${LINT_OUTPUT_BYTES / MIB} MiB`
+          : result.error.message,
+    };
+  }
+  if (result.signal) return { ok: false, detail: `it was stopped by ${result.signal}` };
+  const lines = result.stdout.split('\n').map((line) => line.replace(ANSI_RE, '').replace(/\r$/, ''));
+  const roots = [workspace, workspace.split(path.sep).join('/')];
+  const failures = lines.filter((line) => line.startsWith('[FAIL]')).map((line) => {
+    let text = line.slice('[FAIL]'.length).trim();
+    for (const root of roots) text = text.split(root).join('<root>');
+    return text;
+  });
+  const summaries = lines
+    .map((line) => /^\[INFO\]\s+Findings: \d+ warning\(s\), (\d+) failure\(s\)$/.exec(line.trim()))
+    .filter((match) => match !== null);
+  const summary = summaries.at(-1);
+  if (!summary || Number(summary[1]) !== failures.length || result.status !== (failures.length > 0 ? 1 : 0)) {
+    return { ok: false, detail: `its report was unreadable (exit ${result.status})` };
+  }
+  return { ok: true, failures };
+}
+
+/**
+ * Failures in `after` that `before` does not account for, by identity and
+ * occurrence count; a same-count replacement is still new.
+ * @param {string[]} before
+ * @param {string[]} after
+ */
+function introducedFailures(before, after) {
+  /** @type {Map<string, number>} */
+  const remaining = new Map();
+  for (const failure of before) remaining.set(failure, (remaining.get(failure) ?? 0) + 1);
+  /** @type {string[]} */
+  const introduced = [];
+  for (const failure of after) {
+    const left = remaining.get(failure) ?? 0;
+    if (left > 0) remaining.set(failure, left - 1);
+    else introduced.push(failure);
+  }
+  return introduced;
+}
+
+/* ------------------------------------------------------------- changes */
+
+/**
+ * Whether the regular file at `relativePath` under `root` is executable. No
+ * file is on Windows, which has no such permission.
+ * @param {string} root
+ * @param {string} relativePath
+ */
+function isExecutable(root, relativePath) {
+  return process.platform !== 'win32' && (fs.lstatSync(resolveMutationPath(root, relativePath)).mode & 0o111) !== 0;
+}
+
+/**
+ * Actual byte differences between the workspace and the staged snapshot. A
+ * file that differs only in permission is no change. An added or replaced file
+ * is marked `executable` when its source in `executableRoot` is executable:
+ * the acquired release for core files, the target's own Compose projection
+ * for pack files, and no source for metadata.
+ * @param {string[]} paths
+ * @param {string} workspace
+ * @param {string} stageRoot
+ * @param {Change['group']} group
+ * @param {string | null} pack
+ * @param {string | null} executableRoot
+ * @returns {Change[]}
+ */
+function diffPaths(paths, workspace, stageRoot, group, pack, executableRoot) {
+  /** @type {Change[]} */
+  const changes = [];
+  for (const relativePath of paths) {
+    const before = readFileOrNull(workspace, relativePath);
+    const after = readFileOrNull(stageRoot, relativePath);
+    if (before === null && after === null) continue;
+    if (before !== null && after !== null && before.equals(after)) continue;
+    /** @type {Change} */
+    const change = {
+      path: relativePath,
+      group,
+      pack,
+      op: before === null ? 'add' : after === null ? 'remove' : 'replace',
+      before: stateOf(before),
+      after: stateOf(after),
+    };
+    if (after !== null && executableRoot !== null && isExecutable(executableRoot, relativePath)) change.executable = true;
+    changes.push(change);
+  }
+  return changes;
+}
+
+/** @param {Change[]} changes */
+function countChanges(changes) {
+  const empty = () => ({ added: 0, replaced: 0, removed: 0 });
+  /** @type {{ core: ReturnType<typeof empty>, metadata: ReturnType<typeof empty>, packs: Record<string, ReturnType<typeof empty>> }} */
+  const counts = { core: empty(), metadata: empty(), packs: {} };
+  for (const change of changes) {
+    const bucket = change.group === 'pack'
+      ? (counts.packs[/** @type {string} */ (change.pack)] ??= empty())
+      : counts[change.group];
+    bucket[change.op === 'add' ? 'added' : change.op === 'remove' ? 'removed' : 'replaced'] += 1;
+  }
+  return counts;
+}
+
+/** @param {{ added: number, replaced: number, removed: number }} counts */
+function describeCounts(counts) {
+  return `${counts.replaced} replaced, ${counts.added} added, ${counts.removed} removed`;
+}
+
+/**
+ * Copy every workspace entry in one pack's namespace, so Compose sees the
+ * same recorded files and the same foreign destinations as the project.
+ * @param {string} workspace
+ * @param {string} stageRoot
+ * @param {string} name
+ */
+function copyPackNamespace(workspace, stageRoot, name) {
+  for (const location of PACK_LOCATIONS) {
+    const stat = lstatOrNull(resolveMutationPath(workspace, location));
+    if (!stat?.isDirectory() || stat.isSymbolicLink()) continue;
+    for (const entry of fs.readdirSync(path.join(workspace, ...location.split('/'))).sort(codeUnitCompare)) {
+      if (belongsToPack(`${location}/${entry}`, name)) copyTree(workspace, stageRoot, `${location}/${entry}`);
+    }
+  }
+}
+
+/**
+ * Refresh one eligible pack in the staging copy through this release's own
+ * Compose, run as a child process this one owns. Compose's other-host Git is
+ * synchronous and its own deadline stops only Git's launcher, so a deadline, a
+ * cancellation, or the observed folder bound stops the whole child process tree
+ * from here, as for core acquisition. That stop ends Compose before its Git, so
+ * a Git that ends first cannot release Compose into its full-clone fallback.
+ * Compose keeps its temporary roots in `temporary`; anything left there once
+ * Compose ends by itself is material a process may still use, so it is kept
+ * and reported rather than removed.
+ * @param {{
+ *   name: string,
+ *   stageRoot: string,
+ *   source: SourceIdentity,
+ *   temporary: string,
+ *   env: NodeJS.ProcessEnv,
+ *   windowMs: number,
+ *   signal: AbortSignal,
+ *   cancelled: () => boolean,
+ *   deadline: AbortSignal,
+ *   deadlineDetail: string,
+ * }} input
+ */
+async function refreshPackInChild({
+  name, stageRoot, source, temporary, env, windowMs, signal, cancelled, deadline, deadlineDetail,
+}) {
+  /** @param {string} detail @param {boolean} [cleanupConfirmed] */
+  const failed = (detail, cleanupConfirmed = true) => refusal(
+    'pack-failed',
+    `pack "${name}" could not be prepared from ${source.location} at ${source.commit.slice(0, 12)}: ${detail}; prepare without packs for a core-only result`,
+    { pack: name, cleanupConfirmed },
+  );
+  let result;
+  const packDeadline = deadlineSignal(windowMs, signal);
+  try {
+    result = await runOwned(process.execPath, [
+      COMPOSE_CLI, 'refresh', name,
+      '--root', stageRoot,
+      '--library', path.join(stageRoot, 'library', 'packs'),
+      // An explicit source at the exact target commit: the project's own
+      // `library/` cannot take precedence.
+      '--source', source.location,
+      '--ref', source.commit,
+      '--json',
+    ], {
+      name: 'Compose',
+      env,
+      signal: packDeadline.signal,
+      deadlineLabel: `it did not finish within ${windowMs / 1_000} seconds`,
+      maxOutput: COMPOSE_OUTPUT_BYTES,
+    });
+  } catch (error) {
+    const cleanupConfirmed = /** @type {any} */ (error)?.cleanupConfirmed !== false;
+    if (cancelled()) throw refusal('cancelled', 'the preparation was cancelled', { cleanupConfirmed });
+    if (deadline.aborted) throw refusal('timeout', deadlineDetail, { cleanupConfirmed });
+    throw failed(errorMessage(error), cleanupConfirmed);
+  } finally {
+    packDeadline.dispose();
+  }
+  if (fs.readdirSync(temporary).length > 0) {
+    throw failed('Compose ended but left temporary material that a process may still use', false);
+  }
+  /** @type {any} */
+  let answer = null;
+  try {
+    answer = JSON.parse(result.stdout.toString('utf8'));
+  } catch {
+    answer = null;
+  }
+  if (answer?.ok !== true) {
+    const stderr = result.stderr.split('\n').map((line) => line.trim()).find(Boolean);
+    throw failed(typeof answer?.error === 'string' ? answer.error
+      : `Compose ended without a result (exit ${result.code})${stderr ? `: ${stderr}` : ''}`);
+  }
+}
+
+/* ===================================================== staging contract */
+
+/**
+ * The staging contract, run from the target release's retained files:
+ * prepare every intended byte of one upgrade in `preparedRoot/stage` and
+ * retain the result for a later apply. Core files come from this release,
+ * selected eligible packs from this release's Compose at the target commit,
+ * and the manifest, base release record, and one upgrade-log entry follow
+ * from them. A result with no actual difference retains nothing.
+ *
+ * The whole preparation, counted from `startedAt`, ends within the core
+ * acquisition window plus one pack window for each pack it prepares. Packs are
+ * prepared by Compose child processes whose temporary roots stay inside
+ * `preparedRoot`, which is observed while they run. A failure that could not
+ * confirm a child process stopped carries `cleanupConfirmed: false`: the caller
+ * must keep `preparedRoot` and name it.
+ * @param {{
+ *   workspaceRoot: string,
+ *   preparedRoot: string,
+ *   source: SourceIdentity,
+ *   includePacks: boolean,
+ *   startedAt?: number,
+ *   signal?: AbortSignal,
+ *   onProgress?: ProgressListener,
+ * }} input
+ */
+export async function stageUpgrade({
+  workspaceRoot, preparedRoot, source, includePacks, startedAt = Date.now(), signal, onProgress,
+}) {
+  /** @param {{ phase: string, pack?: string, completed?: number, total?: number }} event */
+  const progress = (event) => onProgress?.(Object.freeze(event));
+  const workspace = fs.realpathSync.native(workspaceRoot);
+  const releaseRoot = path.join(preparedRoot, 'release');
+  const stageRoot = path.join(preparedRoot, 'stage');
+  checkStopped(signal);
+  requireWorkTree(workspace);
+  const branch = currentBranch(workspace);
+  const local = readManifest(workspace, 'local');
+  const target = readManifest(releaseRoot, 'target');
+  for (const required of ['.github/agents', '.github/skills/dude-lint/lint.mjs', '.github/instructions/dude.instructions.md']) {
+    if (!lstatOrNull(path.join(releaseRoot, ...required.split('/')))) {
+      throw refusal('invalid-target', `the target release is missing ${required}`);
+    }
+  }
+  const fromRef = local.data.installed_ref;
+  const toRef = source.resolved_ref;
+
+  progress({ phase: 'staging-core' });
+  const targetCore = scanCoreInventoryPaths(releaseRoot, 'target release');
+  const currentCore = scanCoreInventoryPaths(workspace, 'workspace');
+  fs.mkdirSync(stageRoot);
+  for (const relativePath of targetCore) {
+    writeFileUnder(stageRoot, relativePath, /** @type {Buffer} */ (readFileOrNull(releaseRoot, relativePath)));
+  }
+  /** @type {Map<string, Buffer | null>} */
+  const metadata = new Map();
+  for (const relativePath of [MANIFEST, BASE_RELEASE, UPGRADE_LOG, PROFILE]) {
+    const bytes = readFileOrNull(workspace, relativePath);
+    metadata.set(relativePath, bytes);
+    if (bytes !== null) writeFileUnder(stageRoot, relativePath, bytes);
+  }
+
+  // Eligible packs: installed membership whose recorded source matches the
+  // bundle upstream. A catalog name alone is neither.
+  const compose = await import('../dude-compose/compose.mjs');
+  const status = compose.cmdStatus({ root: workspace });
+  if (!status.ok) throw refusal('invalid-profile', `${PROFILE} is invalid: ${status.error}`);
+  const { describeBuiltinSources, matchesRecordedSource } = await import('../dude-engine/lib/pack-sources.mjs');
+  const upstream = describeBuiltinSources({
+    root: workspace,
+    upstream: { source_repo: source.location, source_ref: source.requested_ref },
+  }).find((builtin) => builtin.builtin === 'bundle-upstream');
+  /** @type {Record<string, { files: string[], source: unknown }>} */
+  const installed = status.result.installed;
+  const eligible = Object.keys(installed)
+    .filter((name) => upstream !== undefined && matchesRecordedSource(upstream, installed[name].source))
+    .sort(codeUnitCompare);
+  const refreshPacks = includePacks && eligible.length > 0;
+  const budgetMs = ACQUISITION_DEADLINE_MS + (refreshPacks ? eligible.length : 0) * PACK_WINDOW_MS;
+  // One absolute deadline counted from `startedAt`. An exhausted budget is
+  // refused here, and the clock is read again between the steps that follow
+  // and immediately before the result is retained.
+  const deadlineAt = startedAt + budgetMs;
+  const deadlineDetail = `the preparation did not finish within ${budgetMs / 1_000} seconds`;
+  checkStopped(signal, deadlineDetail, deadlineAt);
+
+  /** @type {Change[]} */
+  const packChanges = [];
+  /** @type {string[]} */
+  const affected = [];
+  /** @type {string[]} */
+  const unchanged = [];
+  if (refreshPacks) {
+    for (const name of eligible) copyPackNamespace(workspace, stageRoot, name);
+    // Compose's temporary roots, inside this prepared folder; its Git gets the
+    // same noninteractive environment as core acquisition.
+    const temporary = path.join(preparedRoot, 'tmp');
+    fs.mkdirSync(temporary);
+    const env = composeEnvironment(temporary);
+    const windowMs = composeStopWindowMs(source.location);
+    // The same deadline as a timer, which stops a pack's child process.
+    const deadline = deadlineSignal(Math.max(0, deadlineAt - Date.now()), signal);
+    const observed = observeRoot(preparedRoot, deadline.signal);
+    try {
+      for (const [index, name] of eligible.entries()) {
+        checkStopped(signal, deadlineDetail, deadlineAt);
+        progress({ phase: 'preparing-pack', pack: name, completed: index, total: eligible.length });
+        const profileBefore = /** @type {Buffer} */ (readFileOrNull(stageRoot, PROFILE));
+        await refreshPackInChild({
+          name,
+          stageRoot,
+          source,
+          temporary,
+          env,
+          windowMs,
+          signal: observed.signal,
+          cancelled: () => Boolean(signal?.aborted),
+          deadline: deadline.signal,
+          deadlineDetail,
+        });
+        const recorded = [...installed[name].files, ...compose.readProfile(stageRoot).installed[name].files];
+        /** @type {Set<string>} */
+        const files = new Set();
+        for (const entry of recorded) {
+          for (const file of listFiles(workspace, entry)) files.add(file);
+          for (const file of listFiles(stageRoot, entry)) files.add(file);
+        }
+        const changes = diffPaths([...files].sort(codeUnitCompare), workspace, stageRoot, 'pack', name, stageRoot);
+        if (changes.length === 0) {
+          // No projected-file difference: keep the pack's existing record.
+          writeFileUnder(stageRoot, PROFILE, profileBefore);
+          unchanged.push(name);
+        } else {
+          affected.push(name);
+          packChanges.push(...changes);
+        }
+      }
+    } finally {
+      observed.stop();
+      deadline.dispose();
+    }
+    fs.rmdirSync(temporary);
+  }
+  checkStopped(signal, deadlineDetail, deadlineAt);
+  progress({ phase: 'comparing' });
+
+  const nextManifest = { source_repo: source.location, source_ref: source.requested_ref, installed_ref: toRef };
+  if (local.data.source_repo !== nextManifest.source_repo
+    || local.data.source_ref !== nextManifest.source_ref
+    || local.data.installed_ref !== nextManifest.installed_ref) {
+    writeFileUnder(stageRoot, MANIFEST, renderManifest(local.bytes, nextManifest));
+  }
+  const localRecordBytes = /** @type {Buffer | null} */ (metadata.get(BASE_RELEASE));
+  const localRecord = usableBaseRelease(localRecordBytes);
+  const desired = desiredBaseRelease({
+    toRef,
+    sourceLocation: source.location,
+    upstreamManifest: target.data,
+    upstreamRecord: usableBaseRelease(readFileOrNull(releaseRoot, BASE_RELEASE)),
+  });
+  if (desired === null) {
+    if (localRecordBytes !== null) removeFileUnder(stageRoot, BASE_RELEASE);
+  } else if (localRecord?.source_repo !== desired.source_repo || localRecord?.base_release !== desired.base_release) {
+    // Records compare by value, so an equal record in other bytes stays.
+    writeFileUnder(stageRoot, BASE_RELEASE, renderDevelopmentBaseRelease(desired));
+  }
+
+  const corePaths = [...new Set([...currentCore, ...targetCore])].sort(codeUnitCompare);
+  const changes = [
+    ...diffPaths(corePaths, workspace, stageRoot, 'core', null, releaseRoot),
+    ...diffPaths([MANIFEST, BASE_RELEASE, ...(refreshPacks ? [PROFILE] : [])], workspace, stageRoot, 'metadata', null, null),
+    ...packChanges,
+  ];
+  const packs = {
+    eligible,
+    selected: includePacks,
+    affected,
+    unchanged,
+    not_selected: includePacks ? [] : eligible,
+  };
+  const baseRelease = {
+    from: localRecord?.base_release ?? (localRecordBytes ? '(unusable)' : null),
+    to: desired?.base_release ?? null,
+    changed: changes.some((change) => change.path === BASE_RELEASE),
+  };
+  if (changes.length === 0) {
+    return {
+      status: 'nothing_to_update',
+      id: null,
+      from_ref: fromRef,
+      to_ref: toRef,
+      source,
+      branch,
+      include_packs: includePacks,
+      packs,
+      detail: `the installed bundle already matches ${toRef}`,
     };
   }
 
-  const ownerRepo = githubOwnerRepo(upstream.source);
-  let rawMissing = false;
-  if (ownerRepo) {
-    const rawUrl = `https://raw.githubusercontent.com/${ownerRepo}/${upstream.resolvedRef}/${WORKSPACE_PATHS.BUNDLE_MANIFEST}`;
-    logDebug(`fetching upstream manifest via raw url: ${rawUrl}`);
-    try {
-      const res = await fetch(rawUrl, { signal: AbortSignal.timeout(30000) });
-      if (res.ok) {
-        fs.writeFileSync(outFile, await res.text());
-        return { path: outFile, error: '' };
-      }
-      rawMissing = res.status === 404;
-    } catch {
-      /* fall back to clone */
-    }
+  // One immutable log entry, written now as part of the prepared bytes.
+  const createdAt = isoNow();
+  const counts = countChanges(changes);
+  const packSummary = Object.entries(counts.packs).map(([name, packCounts]) => `${name} (${describeCounts(packCounts)})`);
+  const logBefore = /** @type {Buffer | null} */ (metadata.get(UPGRADE_LOG));
+  const entry = [
+    '',
+    `## ${createdAt} — upgrade`,
+    `- from: ${fromRef || '(none)'}`,
+    `- to: ${toRef}`,
+    `- ref: ${source.requested_ref}`,
+    `- commit: ${source.commit}`,
+    `- core: ${describeCounts(counts.core)}`,
+    `- packs: ${packSummary.length > 0 ? packSummary.join('; ') : 'none'}`,
+    ...(baseRelease.changed ? [`- base release record: ${baseRelease.from ?? '(none)'} -> ${baseRelease.to ?? '(none)'}`] : []),
+    `- notes: left uncommitted on ${branch}`,
+    '',
+  ].join('\n');
+  const logPrefix = logBefore === null ? Buffer.from('# Upgrade Log\n')
+    : logBefore.length > 0 && logBefore[logBefore.length - 1] !== 0x0a ? Buffer.concat([logBefore, Buffer.from('\n')])
+      : logBefore;
+  writeFileUnder(stageRoot, UPGRADE_LOG, Buffer.concat([logPrefix, Buffer.from(entry)]));
+  changes.push(...diffPaths([UPGRADE_LOG], workspace, stageRoot, 'metadata', null, null));
+  changes.sort((left, right) => codeUnitCompare(left.path, right.path));
+
+  const retained = changes.reduce((sum, change) => sum + (change.before?.size ?? 0) + (change.after?.size ?? 0), 0);
+  if (changes.length > MAX_CHANGES || retained > MAX_RETAINED_BYTES) {
+    throw refusal('too-large', `the update changes ${changes.length} files and ${retained} bytes, beyond the ${MAX_CHANGES}-file and ${MAX_RETAINED_BYTES / MIB} MiB upgrade bound`);
   }
 
-  if (hasGit()) {
-    const cloneDir = path.join(outDir, 'clone');
-    logDebug(`shallow-cloning upstream for manifest only: ${upstream.source} @ ${upstream.resolvedRef}`);
-    let r = git(['clone', '--quiet', '--depth=1', '--branch', upstream.resolvedRef, upstream.source, cloneDir]);
-    if (r.status !== 0) {
-      fs.rmSync(cloneDir, { recursive: true, force: true });
-      r = git(['clone', '--quiet', upstream.source, cloneDir]);
-      if (r.status === 0) r = git(['checkout', '--quiet', upstream.resolvedRef], cloneDir);
+  checkStopped(signal, deadlineDetail, deadlineAt);
+  const dirtyPaths = knownDirtyPaths(workspace, changes.map((change) => change.path));
+  const guardPaths = [MANIFEST, BASE_RELEASE, UPGRADE_LOG, ...(refreshPacks ? [PROFILE] : [])];
+  const prepared = {
+    kind: PREPARED_KIND,
+    contract: UPGRADE_STAGING_CONTRACT,
+    workspace,
+    created_at: createdAt,
+    branch,
+    source,
+    from_ref: fromRef,
+    to_ref: toRef,
+    include_packs: includePacks,
+    packs,
+    base_release: baseRelease,
+    guards: guardPaths.map((relativePath) => ({
+      path: relativePath,
+      state: stateOf(/** @type {Buffer | null} */ (metadata.get(relativePath))),
+    })),
+    changes,
+    dirty_paths: dirtyPaths,
+  };
+  checkStopped(signal, deadlineDetail, deadlineAt);
+  fs.writeFileSync(path.join(preparedRoot, PREPARED_FILE), `${JSON.stringify(prepared, null, 2)}\n`, { flag: 'wx' });
+  return publicReport(prepared);
+}
+
+/**
+ * What a reviewer sees of a prepared result: no hashes. The installed engine
+ * adds the ID, which binds this description and the retained release files.
+ * @param {Record<string, any>} prepared
+ */
+function publicReport(prepared) {
+  /** @type {Change[]} */
+  const changes = prepared.changes;
+  return {
+    status: 'ready',
+    from_ref: prepared.from_ref,
+    to_ref: prepared.to_ref,
+    source: prepared.source,
+    branch: prepared.branch,
+    include_packs: prepared.include_packs,
+    counts: countChanges(changes),
+    changes: changes.map(({ path: relativePath, group, pack, op }) => ({ path: relativePath, group, pack, op })),
+    packs: prepared.packs,
+    base_release: prepared.base_release,
+    dirty_paths: prepared.dirty_paths,
+  };
+}
+
+/**
+ * The description an installed engine read and verified, checked for a shape
+ * this engine can apply.
+ * @param {unknown} prepared
+ * @returns {Record<string, any>}
+ */
+function checkPrepared(prepared) {
+  const value = /** @type {any} */ (prepared);
+  if (value?.kind !== PREPARED_KIND || value.contract !== UPGRADE_STAGING_CONTRACT
+    || !Array.isArray(value.changes) || !Array.isArray(value.guards)) {
+    throw refusal('not-found', 'the prepared upgrade has an unsupported format; prepare the upgrade again');
+  }
+  return value;
+}
+
+/**
+ * Recheck a prepared result against the workspace and build its batch: the
+ * branch, every guarded record, every touched path's preimage or absence, and
+ * every retained staged byte must still match. A file the result marks
+ * executable is written with the executable mode; the batch keeps every other
+ * replaced file's permission. Throws the first difference.
+ * @param {Record<string, any>} prepared
+ * @param {string} workspace
+ * @param {string} stageRoot
+ * @returns {import('../dude-feature-definition/atomic-file-batch.mjs').AtomicFileChange[]}
+ */
+function freshBatch(prepared, workspace, stageRoot) {
+  const branch = currentBranch(workspace);
+  if (branch !== prepared.branch) throw new Error(`the current branch is ${branch}, not ${prepared.branch}`);
+  for (const guard of prepared.guards) {
+    if (!sameState(stateOf(readFileOrNull(workspace, guard.path)), guard.state)) {
+      throw new Error(`${guard.path} changed since the preview`);
     }
-    const lm = findUpstreamManifestPath(cloneDir);
-    if (r.status === 0 && lm && isFile(lm)) {
-      fs.copyFileSync(lm, outFile);
-      return { path: outFile, error: '' };
+  }
+  /** @type {import('../dude-feature-definition/atomic-file-batch.mjs').AtomicFileChange[]} */
+  const batch = [];
+  for (const change of /** @type {Change[]} */ (prepared.changes)) {
+    if (change.executable !== undefined && (change.executable !== true || change.after === null)) {
+      throw new Error(`the prepared permission for ${change.path} is invalid`);
     }
-    if (r.status === 0) {
-      fs.rmSync(outDir, { recursive: true, force: true });
+    const current = readFileOrNull(workspace, change.path);
+    if (!sameState(stateOf(current), change.before)) throw new Error(`${change.path} changed since the preview`);
+    /** @type {Buffer | 'missing'} */
+    let staged = 'missing';
+    if (change.after !== null) {
+      staged = /** @type {Buffer} */ (readFileOrNull(stageRoot, change.path));
+      if (!sameState(stateOf(staged), change.after)) throw new Error(`the prepared bytes for ${change.path} changed`);
+    }
+    batch.push({ path: change.path, expected: current ?? 'missing', staged, ...(change.executable ? { mode: EXECUTABLE_MODE } : {}) });
+  }
+  return batch;
+}
+
+/**
+ * The apply contract, run from the target release's retained files: recheck
+ * the prepared result against the workspace, then write exactly its staged
+ * bytes, executable where it marks them, as one all-or-restored batch. The
+ * same retained linter runs before the batch and again inside its rollback
+ * boundary; only newly introduced failures, or a check that cannot be read,
+ * restore the batch. The recheck runs again after the first check,
+ * immediately before the batch. `prepared`
+ * is the description the installed engine read and verified against the ID
+ * before it imported this code. `onProgress`, when given, hears
+ * `{ phase: 'checking' }` once: after every file is written, immediately
+ * before the bundle check runs again. A refusal before writing reports
+ * nothing, and a listener that throws changes nothing.
+ * @param {{ workspaceRoot: string, preparedRoot: string, prepared: unknown, onProgress?: ProgressListener }} input
+ */
+export async function applyPreparedUpgrade({ workspaceRoot, preparedRoot, prepared: description, onProgress }) {
+  const prepared = checkPrepared(description);
+  const workspace = fs.realpathSync.native(workspaceRoot);
+  const stageRoot = path.join(preparedRoot, 'stage');
+  /** @type {Change[]} */
+  const changes = prepared.changes;
+  const base = {
+    from_ref: prepared.from_ref,
+    to_ref: prepared.to_ref,
+    branch: prepared.branch,
+    counts: countChanges(changes),
+    changes: changes.map(({ path: relativePath, group, pack, op }) => ({ path: relativePath, group, pack, op })),
+  };
+  /** @param {string} reason */
+  const nothingChanged = (reason) => ({ ...base, outcome: 'nothing_changed', reason });
+
+  if (prepared.workspace !== workspace) return nothingChanged('this result was prepared for another workspace');
+  try {
+    freshBatch(prepared, workspace, stageRoot);
+  } catch (error) {
+    return nothingChanged(`${errorMessage(error)}; prepare the upgrade again`);
+  }
+
+  const lintPath = fileURLToPath(new URL('../dude-lint/lint.mjs', import.meta.url));
+  const before = runTargetLint(lintPath, workspace);
+  if (!before.ok) return nothingChanged(`the bundle check could not run before writing: ${before.detail}`);
+  const { applyAtomicFileBatch } = await import('../dude-feature-definition/atomic-file-batch.mjs');
+  let batch;
+  try {
+    batch = freshBatch(prepared, workspace, stageRoot);
+  } catch (error) {
+    return nothingChanged(`${errorMessage(error)}; prepare the upgrade again`);
+  }
+  /** @type {string[]} */
+  let introduced = [];
+  /** @type {string[]} */
+  let remaining = [];
+  try {
+    applyAtomicFileBatch({ root: workspace, changes: batch, bound: 'upgrade' }, () => {
+      // Every file is written: the bundle check that decides the outcome starts now.
+      try {
+        onProgress?.(Object.freeze({ phase: 'checking' }));
+      } catch {
+        // A listener only observes; it never changes or restores the application.
+      }
+      const after = runTargetLint(lintPath, workspace);
+      if (!after.ok) throw new Error(`the bundle check could not run after writing: ${after.detail}`);
+      introduced = introducedFailures(before.failures, after.failures);
+      remaining = after.failures;
+      if (introduced.length > 0) throw new Error(`the update introduced ${introduced.length} new bundle check failure(s)`);
+    });
+  } catch (error) {
+    const failure = /** @type {any} */ (error);
+    if (failure?.code === 'ATOMIC_FILE_BATCH_ROLLBACK_FAILED') {
+      const paths = [...new Set(failure.rollbackErrors.map((/** @type {{ path: string | null }} */ entry) => entry.path)
+        .filter(Boolean))].sort(codeUnitCompare);
       return {
-        path: null,
-        error: `fetched upstream tree is missing required canonical metadata at ${WORKSPACE_PATHS.BUNDLE_MANIFEST}; old-path manifests are not accepted`,
+        ...base,
+        outcome: 'restoration_unconfirmed',
+        reason: errorMessage(failure.cause ?? failure),
+        paths,
+        new_failures: introduced,
       };
     }
+    return { ...base, outcome: 'restored', reason: errorMessage(error), new_failures: introduced };
   }
-
-  fs.rmSync(outDir, { recursive: true, force: true });
-  return {
-    path: null,
-    error: rawMissing
-      ? `upstream ref is missing required canonical metadata at ${WORKSPACE_PATHS.BUNDLE_MANIFEST}`
-      : '',
-  };
+  return { ...base, outcome: 'applied', existing_failures: remaining };
 }
 
-/**
- * Fetch the full upstream tree. Returns the tree root path or null.
- * @returns {string | null}
- */
-function fetchUpstreamTree() {
-  fs.mkdirSync(CACHE_ROOT, { recursive: true });
+/* ======================================================== installed side */
 
-  if (isDir(upstream.source)) {
-    if (!findUpstreamManifestPath(upstream.source)) {
-      logError(`local upstream source is missing required canonical metadata at ${WORKSPACE_PATHS.BUNDLE_MANIFEST}; old-path manifests are not accepted`);
-      return null;
-    }
-    return upstream.source;
-  }
-
-  if (!hasGit()) {
-    logError('git is required to fetch upstream tree');
-    return null;
-  }
-
-  const key = crypto
-    .createHash('sha256')
-    .update(`${upstream.source}|${upstream.resolvedRef}`)
-    .digest('hex')
-    .slice(0, 12);
-  const dest = path.join(CACHE_ROOT, `upstream-${key}`);
-
-  if (isDir(path.join(dest, '.git'))) {
-    if (findUpstreamManifestPath(dest)) return dest;
-    fs.rmSync(dest, { recursive: true, force: true });
-  }
-
-  fs.rmSync(dest, { recursive: true, force: true });
-  logInfo(`fetching upstream tree: ${upstream.source} @ ${refDisplay()}`);
-  if (git(['clone', '--quiet', '--depth=1', '--branch', upstream.resolvedRef, upstream.source, dest]).status === 0) {
-    if (findUpstreamManifestPath(dest)) return dest;
-    fs.rmSync(dest, { recursive: true, force: true });
-    logError(`fetched upstream tree is missing required canonical metadata at ${WORKSPACE_PATHS.BUNDLE_MANIFEST}`);
-    return null;
-  }
-  fs.rmSync(dest, { recursive: true, force: true });
-  if (git(['clone', '--quiet', upstream.source, dest]).status === 0) {
-    if (git(['checkout', '--quiet', upstream.resolvedRef], dest).status === 0) {
-      if (findUpstreamManifestPath(dest)) return dest;
-      fs.rmSync(dest, { recursive: true, force: true });
-      logError(`fetched upstream tree is missing required canonical metadata at ${WORKSPACE_PATHS.BUNDLE_MANIFEST}`);
-      return null;
-    }
-  }
-  fs.rmSync(dest, { recursive: true, force: true });
-  logError(`failed to fetch upstream from ${upstream.source} @ ${refDisplay()}`);
-  return null;
+/** @param {string} folderName the 16 random hex digits that name a prepared folder */
+function preparedRootFor(folderName) {
+  return path.join(os.tmpdir(), `${PREPARED_PREFIX}${folderName}`);
 }
 
-// ----- classification --------------------------------------------------------
-/**
- * LCS length of two line arrays (rolling DP).
- * @param {string[]} a @param {string[]} b @returns {number}
- */
-function lcsLen(a, b) {
-  const n = a.length;
-  const m = b.length;
-  let prev = new Int32Array(m + 1);
-  let curr = new Int32Array(m + 1);
-  for (let i = 1; i <= n; i += 1) {
-    for (let j = 1; j <= m; j += 1) {
-      if (a[i - 1] === b[j - 1]) curr[j] = prev[j - 1] + 1;
-      else curr[j] = prev[j] >= curr[j - 1] ? prev[j] : curr[j - 1];
-    }
-    const t = prev;
-    prev = curr;
-    curr = t;
-  }
-  return prev[m];
-}
-/**
- * Added/removed line counts, matching `diff -u <local> <upstream>` +/- totals.
- * @param {string} localFile @param {string} upstreamFile
- * @returns {{ added: number, removed: number }}
- */
-function diffPlusMinus(localFile, upstreamFile) {
-  if (!isFile(localFile) || !isFile(upstreamFile)) return { added: 0, removed: 0 };
-  return diffPlusMinusBytes(fs.readFileSync(localFile), fs.readFileSync(upstreamFile));
-}
-/** @param {Buffer} localBytes @param {Buffer} upstreamBytes */
-function diffPlusMinusBytes(localBytes, upstreamBytes) {
-  const a = localBytes.toString('utf8').split('\n');
-  const b = upstreamBytes.toString('utf8').split('\n');
-  const l = lcsLen(a, b);
-  return { added: b.length - l, removed: a.length - l };
-}
-/** @param {string} a @param {string} b @returns {boolean} byte-equal */
-function filesEqual(a, b) {
+/** @param {Buffer} bytes @returns {string | null} the workspace a description belongs to */
+function descriptionWorkspace(bytes) {
   try {
-    return fs.readFileSync(a).equals(fs.readFileSync(b));
+    const workspace = JSON.parse(bytes.toString('utf8'))?.workspace;
+    return typeof workspace === 'string' ? workspace : null;
   } catch {
-    return false;
+    return null;
+  }
+}
+
+/** @param {string} filePath @returns {Buffer | null} */
+function readOrNull(filePath) {
+  try {
+    return fs.readFileSync(filePath);
+  } catch {
+    return null;
   }
 }
 
 /**
- * @typedef {Object} Plan
- * @property {{path: string, added_lines: number, removed_lines: number}[]} replace
- * @property {{path: string}[]} add
- * @property {{path: string}[]} remove
- * @property {{path: string, kind: string}[]} advisory
- * @property {number} upToDate
- * @property {{path: string}[]} upToDatePaths
+ * The digest that binds a prepared result: its description and every retained
+ * release file, by relative path and content. Anything in the release tree
+ * other than folders and regular files fails. Returns the 16 hex digits an ID
+ * carries.
+ * @param {string} preparedRoot
+ * @param {Buffer} description
  */
-
-/**
- * Classify every core-owned file into replace/add/remove + advisories.
- * @param {string} utree upstream tree root
- * @param {string} [root] local repo root (defaults to the process cwd)
- * @returns {Plan}
- */
-export function classifyPlan(utree, root = ROOT) {
-  // Observable seam (debug-gated, non-behavioral): apply consumes the persisted
-  // buckets directly and must never re-derive a plan here. The apply-time
-  // regression asserts this marker is absent when UPGRADE_DEBUG is set.
-  logDebug('classifyPlan: classifying upstream core tree against local workspace');
-  const localPaths = enumerateCorePaths(root);
-  const localSet = new Set(localPaths);
-  const upstreamPaths = enumerateCorePaths(utree);
-  const upstreamSet = new Set(upstreamPaths);
-
-  /** @type {Plan} */
-  const plan = { replace: [], add: [], remove: [], advisory: [], upToDate: 0, upToDatePaths: [] };
-
-  for (const p of upstreamPaths) {
-    const localDisk = path.join(root, p);
-    const upstreamFile = path.join(utree, p);
-    if (!localSet.has(p)) {
-      plan.add.push({ path: p });
-      continue;
+function resultDigest(preparedRoot, description) {
+  const releaseRoot = path.join(preparedRoot, 'release');
+  /** @type {[string, string][]} */
+  const files = [];
+  /** @param {string} relativeDirectory */
+  const walk = (relativeDirectory) => {
+    const absoluteDirectory = path.join(releaseRoot, ...relativeDirectory.split('/').filter(Boolean));
+    const entries = fs.readdirSync(absoluteDirectory, { withFileTypes: true })
+      .sort((left, right) => codeUnitCompare(left.name, right.name));
+    for (const entry of entries) {
+      const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(relativePath);
+      else if (entry.isFile()) files.push([relativePath, sha256(fs.readFileSync(path.join(absoluteDirectory, entry.name)))]);
+      else throw new Error(`the retained release has a link or special file at ${relativePath}`);
     }
-    if (!isFile(localDisk)) {
-      plan.replace.push({ path: p, added_lines: 0, removed_lines: 0 });
-      continue;
-    }
-    if (filesEqual(localDisk, upstreamFile)) {
-      plan.upToDate += 1;
-      plan.upToDatePaths.push({ path: p });
-    } else {
-      const { added, removed } = diffPlusMinus(localDisk, upstreamFile);
-      plan.replace.push({ path: p, added_lines: added, removed_lines: removed });
-    }
-  }
-
-  for (const p of localPaths) {
-    if (!upstreamSet.has(p)) plan.remove.push({ path: p });
-  }
-
-  // Advisories: project-tier agents/skills outside core/pack/local namespaces.
-  const agentsDir = path.join(root, '.github/agents');
-  if (isDir(agentsDir)) {
-    for (const e of fs.readdirSync(agentsDir, { withFileTypes: true }).sort((a, b) => codeUnitCompare(a.name, b.name))) {
-      if (!e.isFile() || !e.name.endsWith('.agent.md')) continue;
-      if (e.name === 'dude.agent.md') continue;
-      const rel = `.github/agents/${e.name}`;
-      if (classifyPath(rel) === TIER.PROJECT) {
-        plan.advisory.push({ path: rel, kind: 'unreserved_local_agent' });
-      }
-    }
-  }
-  const skillsDir = path.join(root, '.github/skills');
-  if (isDir(skillsDir)) {
-    for (const e of fs.readdirSync(skillsDir, { withFileTypes: true }).sort((a, b) => codeUnitCompare(a.name, b.name))) {
-      if (!e.isDirectory() || e.name === 'project') continue;
-      if (classifyPath(`.github/skills/${e.name}/`) !== TIER.PROJECT) continue;
-      const skillMd = path.join(skillsDir, e.name, 'SKILL.md');
-      if (!isFile(skillMd)) continue;
-      plan.advisory.push({ path: `.github/skills/${e.name}/SKILL.md`, kind: 'unreserved_local_skill' });
-    }
-  }
-
-  for (const bucket of [plan.replace, plan.add, plan.remove, plan.advisory, plan.upToDatePaths]) {
-    bucket.sort((a, b) => codeUnitCompare(a.path, b.path));
-  }
-
-  return plan;
-}
-
-// ----- emitters --------------------------------------------------------------
-/**
- * @param {string} kind @param {string} upstreamRef @param {string} detail
- */
-function emitStatusText(kind, upstreamRef, detail) {
-  let head;
-  if (kind === 'up_to_date') head = `${GRN}up to date${RST}`;
-  else if (kind === 'upgrade_available') head = `${YEL}upgrade available${RST}`;
-  else if (kind === 'offline') head = `${YEL}upgrade status unavailable (${detail})${RST}`;
-  else head = `${RED}error (${detail})${RST}`;
-  out(`Bundle: ${head}\n`);
-  out(`  Source:    ${upstream.source} @ ${refDisplay()}\n`);
-  out(`  Installed: ${local.installed_ref || '(none)'}\n`);
-  if ((kind === 'upgrade_available' || kind === 'up_to_date') && upstreamRef) {
-    out(`  Latest:    ${upstreamRef}\n`);
-  }
-  if (kind === 'upgrade_available') out('  Next:      @dude upgrade --dry-run\n');
-}
-/**
- * @param {string} kind @param {string} upstreamRef @param {string} detail
- */
-function emitStatusJson(kind, upstreamRef, detail) {
-  out(
-    `${JSON.stringify(
-      {
-        status: kind,
-        source: upstream.source,
-        ref: upstream.ref,
-        installed_ref: local.installed_ref,
-        upstream_ref: upstreamRef,
-        detail,
-      },
-      null,
-      2,
-    )}\n`,
-  );
-}
-
-/**
- * @param {Plan} plan @param {string} planId @param {string} fromRef
- * @param {string} toRef @param {string} cacheDir @param {boolean} metadataChange
- * @param {Record<string, any>} baseRelease the persisted `local.base_release`
- */
-function emitPlanText(plan, planId, fromRef, toRef, cacheDir, metadataChange, baseRelease) {
-  out(`Upgrade report: ${fromRef || '(none)'} -> ${toRef}\n`);
-  out(`Source: ${upstream.source} @ ${refDisplay()}\n`);
-  out(`Plan ID: ${planId}\n`);
-  out(`Cache: ${cacheDir}\n\n`);
-
-  /** @param {string} label @param {string[]} rows @param {number} count */
-  const list = (label, rows, count) => {
-    out(`${label} (${count}):\n`);
-    if (count === 0) out('  (none)\n');
-    else for (const r of rows) out(`  ${r}\n`);
-    out('\n');
   };
-  list(
-    'Will replace (overwrite)',
-    plan.replace.map((r) => `${r.path}  [+${r.added_lines} / -${r.removed_lines}]`),
-    plan.replace.length,
-  );
-  list('Will add', plan.add.map((r) => r.path), plan.add.length);
-  list('Will remove', plan.remove.map((r) => r.path), plan.remove.length);
-  list('Advisories', plan.advisory.map((r) => `${r.path}  (${r.kind})`), plan.advisory.length);
-  out(`Up to date: ${plan.upToDate}\n`);
-  const recordedBase = baseRelease.record?.base_release
-    || (baseRelease.state.type === 'file' ? '(unusable)' : '(none)');
-  const targetBase = baseRelease.desired?.base_release || '(none)';
-  out(baseReleaseTransitionNeeded(baseRelease)
-    ? `Base release record: ${recordedBase} -> ${targetBase}\n`
-    : `Base release record: ${targetBase}, unchanged\n`);
+  walk('');
+  return sha256(Buffer.from(JSON.stringify({ description: sha256(description), release: files }))).slice(0, 16);
+}
 
-  const total = plan.replace.length + plan.add.length + plan.remove.length;
-  if (total === 0 && !metadataChange) {
-    out(`\n${GRN}Already up to date.${RST} Nothing to apply.\n`);
-  } else {
-    out(`\n${GRN}Ready to apply.${RST} Reply "confirm upgrade" to proceed.\n`);
-    if (plan.replace.length > 0 || plan.remove.length > 0) {
-      out(`${YEL}Note:${RST} any local edits to files in the Replace or Remove list will be\n`);
-      out('discarded. Base files are upstream-owned; copy them under .github/agents/dude-local-<slug>.agent.md\n');
-      out('or .github/skills/dude-local-<slug>/ before upgrading if you need to keep edits.\n');
-    }
+/**
+ * Invalidate a prepared result: rename its description so no command accepts
+ * its ID again, whatever happens to the rest of its folder.
+ * @param {string} preparedRoot
+ */
+function invalidatePrepared(preparedRoot) {
+  fs.renameSync(path.join(preparedRoot, PREPARED_FILE), path.join(preparedRoot, RELEASED_FILE));
+}
+
+/** @param {string} preparedRoot @returns {string | null} a removal failure, or null */
+function releasePrepared(preparedRoot) {
+  try {
+    fs.rmSync(preparedRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    return null;
+  } catch (error) {
+    return `the prepared upgrade at ${preparedRoot} could not be removed, so it was kept there: ${errorMessage(error)}`;
   }
 }
 
-/** @param {string} cacheRoot */
-function snapshotSource(cacheRoot) {
-  const head = git(['rev-parse', 'HEAD^{commit}'], cacheRoot);
-  const resolved = git(['rev-parse', `${upstream.resolvedRef}^{commit}`], cacheRoot);
-  const resolvedCommit = head.stdout.trim().toLowerCase();
-  if (head.status !== 0 || !COMMIT_PATTERN.test(resolvedCommit)) {
-    throw new Error('upstream cache does not have a concrete git commit');
+/**
+ * A new preparation replaces every earlier result for the same workspace. Each
+ * one is invalidated first, so its ID is never accepted again, and then
+ * removed. If one cannot be invalidated, the new preparation is refused rather
+ * than leave two usable results.
+ * @param {string} workspace
+ * @returns {string[]} the folders that could not be removed
+ */
+function releaseSuperseded(workspace) {
+  /** @type {string[]} */
+  const notes = [];
+  for (const name of fs.readdirSync(os.tmpdir())) {
+    if (!name.startsWith(PREPARED_PREFIX) || !FOLDER_NAME_RE.test(name.slice(PREPARED_PREFIX.length))) continue;
+    const preparedRoot = path.join(os.tmpdir(), name);
+    const description = readOrNull(path.join(preparedRoot, PREPARED_FILE));
+    if (!description || descriptionWorkspace(description) !== workspace) continue;
+    try {
+      invalidatePrepared(preparedRoot);
+    } catch (error) {
+      if (/** @type {NodeJS.ErrnoException} */ (error)?.code === 'ENOENT') continue;
+      throw refusal(
+        'invalidation-failed',
+        `the earlier prepared upgrade at ${preparedRoot} could not be invalidated, so no new one was prepared: ${errorMessage(error)}; discard it or remove that folder, then prepare again`,
+      );
+    }
+    const note = releasePrepared(preparedRoot);
+    if (note) notes.push(note);
   }
-  if (resolved.status !== 0 || resolved.stdout.trim().toLowerCase() !== resolvedCommit) {
-    throw new Error(`upstream cache HEAD does not match resolved ref ${upstream.resolvedRef}`);
+  return notes;
+}
+
+/** @param {string} id */
+function notFound(id) {
+  return refusal('not-found', `prepared upgrade ${id} was not found: it was applied, discarded, or replaced, or never prepared; run plan again`);
+}
+
+/**
+ * Find this workspace's prepared result by ID: its folder and the description
+ * bytes read now, which are all that is used from here on.
+ * @param {unknown} id
+ * @param {string} workspace
+ */
+function lookupPrepared(id, workspace) {
+  if (typeof id !== 'string' || !PREPARED_ID_RE.test(id)) throw refusal('invalid-input', `not a prepared upgrade ID: ${String(id)}`);
+  const preparedRoot = preparedRootFor(id.slice(0, 16));
+  const description = readOrNull(path.join(preparedRoot, PREPARED_FILE));
+  const owner = description && descriptionWorkspace(description);
+  if (!description || owner === null) throw notFound(id);
+  if (owner !== workspace) throw refusal('other-workspace', `prepared upgrade ${id} belongs to another workspace: ${owner}`);
+  return { preparedRoot, description };
+}
+
+/**
+ * Import the retained target engine, refusing a release without the staging
+ * contract before running any of its code.
+ * @param {string} preparedRoot
+ * @param {string} label
+ */
+async function loadTargetEngine(preparedRoot, label) {
+  const enginePath = path.join(preparedRoot, 'release', '.github', 'skills', 'dude-bundle-upgrade', 'upgrade.mjs');
+  const unsupported = refusal(
+    'unsupported-target',
+    `the target release ${label} does not support staged upgrades; choose a release that does`,
+  );
+  let text = null;
+  try {
+    text = fs.readFileSync(enginePath, 'utf8');
+  } catch {
+    throw unsupported;
   }
-  if (git(['status', '--porcelain=v1', '--untracked-files=all'], cacheRoot).stdout.trim()) {
-    throw new Error('upstream source working tree must be clean before planning');
+  if (!text.includes(CONTRACT_MARKER)) throw unsupported;
+  const engine = await import(pathToFileURL(enginePath).href);
+  if (engine.UPGRADE_STAGING_CONTRACT !== UPGRADE_STAGING_CONTRACT
+    || typeof engine.stageUpgrade !== 'function'
+    || typeof engine.applyPreparedUpgrade !== 'function') {
+    throw unsupported;
   }
-  if (isDir(upstream.source)) {
+  return engine;
+}
+
+/** @param {unknown} error */
+function sourceRefusal(error) {
+  return error instanceof ReleaseSourceError ? refusal(error.code, error.message) : error;
+}
+
+/**
+ * The release check for an installation: read the manifest, then, only for a
+ * latest-channel install with a stable installed version, list the source's
+ * tags. Pinned and development installs make no lookup. Nothing is written.
+ * @param {{ root?: string, source?: string, ref?: string, signal?: AbortSignal }} [input]
+ */
+export async function checkInstallation({ root = process.cwd(), source, ref, signal } = {}) {
+  const result = {
+    status: '',
+    channel: /** @type {string | null} */ (null),
+    source: source || null,
+    ref: ref || null,
+    installed_ref: /** @type {string | null} */ (null),
+    available_ref: /** @type {string | null} */ (null),
+    release_url: /** @type {string | null} */ (null),
+    checked_at: /** @type {string | null} */ (null),
+    detail: '',
+  };
+  let manifest;
+  try {
+    manifest = readManifest(root, 'local');
+  } catch (error) {
+    return { ...result, status: 'installation_unavailable', detail: errorMessage(error) };
+  }
+  const location = source || manifest.data.source_repo;
+  const requested = ref || manifest.data.source_ref;
+  const installed = manifest.data.installed_ref;
+  Object.assign(result, { source: location, ref: requested, installed_ref: installed });
+  if (requested !== RELEASE_CHANNEL) {
+    const channel = isStableReleaseTag(requested) ? 'pinned' : 'development';
     return {
-      type: 'local-path',
-      location: upstream.source,
-      identity: fs.realpathSync(upstream.source),
-      requested_ref: upstream.ref,
-      resolved_ref: upstream.resolvedRef,
-      resolved_commit: resolvedCommit,
+      ...result,
+      status: channel,
+      channel,
+      detail: channel === 'pinned'
+        ? `pinned to ${requested}; release checks do not apply`
+        : `tracks ${requested}; release checks do not apply`,
     };
   }
-  const origin = git(['config', '--get', 'remote.origin.url'], cacheRoot);
-  if (origin.status !== 0 || !origin.stdout.trim()) {
-    throw new Error('upstream cache is missing its source identity');
+  result.channel = 'latest';
+  if (!isRemoteAddress(location)) {
+    return { ...result, status: 'check_failed', detail: 'a local-path source does not support ref latest; pass an explicit local branch or tag with --ref' };
   }
+  if (!isStableReleaseTag(installed)) {
+    return { ...result, status: 'installation_unavailable', detail: `the installed version ${installed || '(none)'} is not a stable release tag` };
+  }
+  let latest;
+  try {
+    latest = await latestStableRelease({ source: location, signal });
+  } catch (error) {
+    return { ...result, status: 'check_failed', detail: errorMessage(error) };
+  }
+  const checkedAt = isoNow();
+  if (!latest) return { ...result, status: 'no_stable_releases', checked_at: checkedAt, detail: `no stable releases are published at ${location}` };
+  const newer = compareReleaseTags(latest, installed) > 0;
   return {
-    type: 'git-remote',
-    location: upstream.source,
-    identity: origin.stdout.trim(),
-    requested_ref: upstream.ref,
-    resolved_ref: upstream.resolvedRef,
-    resolved_commit: resolvedCommit,
+    ...result,
+    status: newer ? 'upgrade_available' : 'up_to_date',
+    available_ref: latest,
+    release_url: newer ? githubReleaseUrl(location, latest) : null,
+    checked_at: checkedAt,
   };
 }
 
 /**
- * @param {Plan} classified
- * @param {{plan_id: string, from_ref: string, to_ref: string, cache_dir: string, created_at: string, ttl_warn: string, ttl_expire: string}} meta
+ * Prepare one upgrade: resolve the exact target, acquire it into a new owned
+ * temporary folder, and hand it to the target release's staging function.
+ * A ready result stays retained under an ID that binds its description and
+ * every retained release file; anything else retains nothing, except material
+ * a process may still use, which is kept and named.
+ * @param {{ root?: string, source?: string, ref?: string, includePacks?: boolean,
+ *   signal?: AbortSignal, onProgress?: ProgressListener }} [input]
  */
-function buildUpgradePlan(classified, meta) {
-  const workspacePath = path.resolve(ROOT);
-  const cacheRoot = path.resolve(meta.cache_dir);
-  const cacheInventory = snapshotCoreInventory(cacheRoot, 'upstream cache');
-  const cacheManifestPath = resolveMutationPath(cacheRoot, WORKSPACE_PATHS.BUNDLE_MANIFEST);
-  const cacheManifestStat = lstatOrNull(cacheManifestPath);
-  if (!cacheManifestStat?.isFile() || cacheManifestStat.isSymbolicLink()) {
-    throw new Error(`upstream cache manifest is not a regular file at ${WORKSPACE_PATHS.BUNDLE_MANIFEST}`);
+export async function prepareUpgrade({ root = process.cwd(), source, ref, includePacks = false, signal, onProgress } = {}) {
+  const startedAt = Date.now();
+  const workspace = fs.realpathSync.native(root);
+  requireWorkTree(workspace);
+  const manifest = readManifest(workspace, 'local');
+  const location = source || manifest.data.source_repo;
+  const requested = ref || manifest.data.source_ref;
+  if (requested === RELEASE_CHANNEL && !isRemoteAddress(location)) {
+    throw refusal('invalid-input', 'a local-path source does not support ref latest; pass an explicit local branch or tag with --ref');
   }
-  const cacheManifestBytes = fs.readFileSync(cacheManifestPath);
-  const localManifestState = snapshotExpectedState(ROOT, WORKSPACE_PATHS.BUNDLE_MANIFEST);
-  const upgradeLogState = snapshotExpectedState(ROOT, WORKSPACE_PATHS.UPGRADE_LOG);
-  const upstreamBaseRelease = readBaseReleaseEvidence(cacheRoot, 'upstream');
-  const localBaseRelease = readBaseReleaseEvidence(ROOT, 'local');
-  const source = snapshotSource(cacheRoot);
-  const localPaths = [
-    ...classified.replace.map((entry) => entry.path),
-    ...classified.add.map((entry) => entry.path),
-    ...classified.remove.map((entry) => entry.path),
-    ...classified.upToDatePaths.map((entry) => entry.path),
-  ].sort(codeUnitCompare);
-  const addPaths = new Set(classified.add.map((entry) => entry.path));
-  const localCoreInventory = localPaths.map((relativePath) => ({
-    path: relativePath,
-    state: addPaths.has(relativePath)
-      ? { type: 'missing' }
-      : snapshotExpectedState(ROOT, relativePath),
-  }));
-  const plan = {
-    kind: PLAN_KIND,
-    schema_version: PLAN_SCHEMA_VERSION,
-    plan_id: meta.plan_id,
-    created_at: meta.created_at,
-    ttl_warn_at: meta.ttl_warn,
-    ttl_expire_at: meta.ttl_expire,
-    scope: {
-      identity_scope: PLAN_IDENTITY_SCOPE,
-      workspace_path: workspacePath,
-      workspace_realpath: fs.realpathSync(workspacePath),
-      workspace_identity: directoryIdentity(workspacePath),
-    },
-    source,
-    from_ref: meta.from_ref,
-    to_ref: meta.to_ref,
-    cache: {
-      root_path: cacheRoot,
-      root_realpath: fs.realpathSync(cacheRoot),
-      root_identity: directoryIdentity(cacheRoot),
-      manifest: {
-        path: WORKSPACE_PATHS.BUNDLE_MANIFEST,
-        type: 'file',
-        sha256: sha256(cacheManifestBytes),
-      },
-      base_release: {
-        path: BASE_RELEASE_PATH,
-        state: upstreamBaseRelease.state,
-      },
-      inventory: cacheInventory,
-    },
-    local: {
-      manifest: {
-        path: WORKSPACE_PATHS.BUNDLE_MANIFEST,
-        state: localManifestState,
-        data: {
-          source_repo: local.source_repo,
-          source_ref: local.source_ref,
-          installed_ref: local.installed_ref,
-        },
-      },
-      upgrade_log: {
-        path: WORKSPACE_PATHS.UPGRADE_LOG,
-        state: upgradeLogState,
-      },
-      base_release: {
-        path: BASE_RELEASE_PATH,
-        state: localBaseRelease.state,
-        record: usableBaseRelease(localBaseRelease.bytes),
-        desired: desiredBaseRelease({
-          toRef: meta.to_ref,
-          sourceLocation: source.location,
-          upstreamManifest: parseManifest(extractManifestJson(cacheManifestBytes.toString('utf8')) || ''),
-          upstreamRecord: usableBaseRelease(upstreamBaseRelease.bytes),
-        }),
-      },
-      core_inventory: localCoreInventory,
-    },
-    summary: {
-      replace: classified.replace.length,
-      add: classified.add.length,
-      remove: classified.remove.length,
-      advisory: classified.advisory.length,
-      up_to_date: classified.upToDatePaths.length,
-    },
-    buckets: {
-      replace: classified.replace,
-      add: classified.add,
-      remove: classified.remove,
-      advisory: classified.advisory,
-      up_to_date: classified.upToDatePaths,
-    },
-    digest: '',
-  };
-  plan.digest = planDigest(plan);
-  return plan;
-}
-
-/** @param {Record<string, any>} plan @returns {string} */
-function buildPlanJson(plan) {
-  return serializeUpgradePlan(plan);
-}
-
-/**
- * Persist a plan under a collision-resistant ID without ever replacing bytes.
- * @param {{
- *   plansDir: string,
- *   baseId: string,
- *   suffixFactory?: () => string,
- *   maxAttempts?: number,
- *   buildBytes: (planId: string) => string | Buffer,
- * }} options
- */
-export function persistUniquePlan(options) {
-  const {
-    plansDir,
-    baseId,
-    suffixFactory = () => crypto.randomBytes(12).toString('hex'),
-    maxAttempts = 8,
-    buildBytes,
-  } = options;
-  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) {
-    throw new Error('plan persistence requires at least one allocation attempt');
+  // Compose reads a local folder source as its working tree, so packs from it
+  // could not come from the exact target commit; through a Git address they do.
+  if (includePacks && !isRemoteAddress(location)) {
+    throw refusal(
+      'invalid-input',
+      '--all needs the source as a Git address, such as a file: URL, so that packs come from the exact target commit; a local folder path would be read as its current working tree. Prepare without --all, or pass --source with a Git address',
+    );
   }
-  fs.mkdirSync(plansDir, { recursive: true });
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const suffix = suffixFactory();
-    if (!/^[A-Za-z0-9._-]+$/.test(suffix)) throw new Error('plan ID suffix is invalid');
-    const planId = `${baseId}-${suffix}`;
-    const planPath = path.join(plansDir, `${planId}.json`);
-    const bytes = buildBytes(planId);
-    let descriptor;
+  // Earlier results' folders that could not be removed are named with this one.
+  const kept = releaseSuperseded(workspace);
+  /** @param {(string | null)[]} more */
+  const cleanupNote = (...more) => [...kept, ...more].filter(Boolean).join('; ') || null;
+  onProgress?.(Object.freeze({ phase: 'fetching' }));
+  const acquisition = deadlineSignal(ACQUISITION_DEADLINE_MS, signal);
+  try {
+    const deadlineLabel = `the release was not fetched within ${ACQUISITION_DEADLINE_MS / 1_000} seconds`;
+    const env = foregroundGitEnvironment();
+    let target;
     try {
-      descriptor = fs.openSync(planPath, 'wx', 0o600);
-      fs.writeFileSync(descriptor, bytes);
-      fs.closeSync(descriptor);
-      descriptor = undefined;
-      return { planId, planPath };
-    } catch (writeError) {
-      if (descriptor !== undefined) {
-        try {
-          fs.closeSync(descriptor);
-        } catch {
-          // Preserve the original persistence error.
-        }
-        fs.rmSync(planPath, { force: true });
-      }
-      if (writeError && typeof writeError === 'object' && 'code' in writeError && writeError.code === 'EEXIST') {
-        continue;
-      }
-      throw writeError;
-    }
-  }
-  throw new Error(`could not allocate a unique upgrade plan after ${maxAttempts} attempts`);
-}
-
-/** @param {boolean} condition @param {string} detail */
-function requirePlanSchema(condition, detail) {
-  if (!condition) throw new Error(`plan schema is invalid: ${detail}; re-run 'plan'`);
-}
-
-/** @param {Record<string, any>} value @param {string[]} keys @param {string} label */
-function requireExactKeys(value, keys, label) {
-  requirePlanSchema(isRecord(value), `${label} must be an object`);
-  const actual = Object.keys(value).sort(codeUnitCompare);
-  const expected = [...keys].sort(codeUnitCompare);
-  requirePlanSchema(
-    actual.length === expected.length && actual.every((key, index) => key === expected[index]),
-    `${label} fields must be exactly ${keys.join(', ')}`,
-  );
-}
-
-/** @param {unknown} value @param {string} label @param {boolean} [allowEmpty] */
-function requireString(value, label, allowEmpty = false) {
-  requirePlanSchema(typeof value === 'string' && (allowEmpty || value.length > 0), `${label} must be a string`);
-}
-
-/** @param {unknown} value @param {string} label */
-function requireCount(value, label) {
-  requirePlanSchema(Number.isSafeInteger(value) && value >= 0, `${label} must be a non-negative integer`);
-}
-
-/** @param {Record<string, any>} identity @param {string} label @param {boolean} [file] */
-function validateIdentityShape(identity, label) {
-  requireExactKeys(identity, ['device', 'inode'], label);
-  for (const key of ['device', 'inode']) {
-    requirePlanSchema(typeof identity[key] === 'string' && /^\d+$/.test(identity[key]), `${label}.${key} must be decimal`);
-  }
-}
-
-/** @param {Record<string, any>} state @param {string} label @param {boolean} [allowMissing] */
-function validateExpectedStateShape(state, label, allowMissing = true) {
-  requirePlanSchema(isRecord(state), `${label} must be an object`);
-  if (state.type === 'missing') {
-    requirePlanSchema(allowMissing, `${label} must describe a regular file`);
-    requireExactKeys(state, ['type'], label);
-    return;
-  }
-  requireExactKeys(state, ['type', 'sha256'], label);
-  requirePlanSchema(state.type === 'file', `${label}.type must be file or missing`);
-  requirePlanSchema(typeof state.sha256 === 'string' && /^[a-f0-9]{64}$/.test(state.sha256), `${label}.sha256 must be lowercase SHA-256`);
-}
-
-/** @param {unknown} value @param {string} label */
-function validateBaseReleaseShape(value, label) {
-  if (value === null) return;
-  requireExactKeys(/** @type {Record<string, any>} */ (value), ['source_repo', 'base_release'], label);
-  let usable = true;
-  try {
-    validateDevelopmentBaseRelease(value);
-  } catch {
-    usable = false;
-  }
-  requirePlanSchema(usable, `${label} must be null or a usable base release record`);
-}
-
-/** @param {unknown} value @param {string} label */
-function requireAbsolutePath(value, label) {
-  requireString(value, label);
-  requirePlanSchema(path.isAbsolute(value) && path.resolve(value) === value, `${label} must be an absolute canonical path`);
-}
-
-/** @param {string} relativePath @param {string} label @param {boolean} [core] */
-function validatePlanPath(relativePath, label, core = true) {
-  requireString(relativePath, label);
-  const normalized = relativePath.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
-  const unsafe = normalized !== relativePath
-    || path.posix.isAbsolute(relativePath)
-    || path.win32.isAbsolute(relativePath)
-    || relativePath.split('/').some((part) => !part || part === '.' || part === '..');
-  requirePlanSchema(!unsafe, `plan contains unsafe path: ${relativePath}`);
-  requirePlanSchema(
-    classifyPath(relativePath) === (core ? TIER.CORE : TIER.PROJECT),
-    `${label} has invalid ownership: ${relativePath}`,
-  );
-}
-
-/** @param {Record<string, any>} plan */
-function validatePlanShape(plan) {
-  requireExactKeys(plan, [
-    'kind', 'schema_version', 'plan_id', 'created_at', 'ttl_warn_at', 'ttl_expire_at',
-    'scope', 'source', 'from_ref', 'to_ref', 'cache', 'local', 'summary', 'buckets', 'digest',
-  ], 'plan');
-  requirePlanSchema(plan.kind === PLAN_KIND && plan.schema_version === PLAN_SCHEMA_VERSION, 'unsupported upgrade plan schema');
-  for (const key of ['plan_id', 'created_at', 'ttl_warn_at', 'ttl_expire_at', 'to_ref']) {
-    requireString(plan[key], `plan.${key}`);
-  }
-  requireString(plan.from_ref, 'plan.from_ref', true);
-  requirePlanSchema(typeof plan.digest === 'string' && /^[a-f0-9]{64}$/.test(plan.digest), 'plan.digest must be lowercase SHA-256');
-
-  requireExactKeys(plan.scope, ['identity_scope', 'workspace_path', 'workspace_realpath', 'workspace_identity'], 'plan.scope');
-  requireString(plan.scope.identity_scope, 'plan.scope.identity_scope');
-  requireAbsolutePath(plan.scope.workspace_path, 'plan.scope.workspace_path');
-  requireAbsolutePath(plan.scope.workspace_realpath, 'plan.scope.workspace_realpath');
-  validateIdentityShape(plan.scope.workspace_identity, 'plan.scope.workspace_identity');
-
-  requireExactKeys(plan.source, ['type', 'location', 'identity', 'requested_ref', 'resolved_ref', 'resolved_commit'], 'plan.source');
-  for (const key of ['type', 'location', 'identity', 'requested_ref', 'resolved_ref', 'resolved_commit']) {
-    requireString(plan.source[key], `plan.source.${key}`);
-  }
-
-  requireExactKeys(plan.cache, ['root_path', 'root_realpath', 'root_identity', 'manifest', 'base_release', 'inventory'], 'plan.cache');
-  requireAbsolutePath(plan.cache.root_path, 'plan.cache.root_path');
-  requireAbsolutePath(plan.cache.root_realpath, 'plan.cache.root_realpath');
-  validateIdentityShape(plan.cache.root_identity, 'plan.cache.root_identity');
-  requireExactKeys(plan.cache.manifest, ['path', 'type', 'sha256'], 'plan.cache.manifest');
-  requireString(plan.cache.manifest.path, 'plan.cache.manifest.path');
-  requireString(plan.cache.manifest.type, 'plan.cache.manifest.type');
-  requirePlanSchema(typeof plan.cache.manifest.sha256 === 'string' && /^[a-f0-9]{64}$/.test(plan.cache.manifest.sha256), 'plan.cache.manifest.sha256 must be lowercase SHA-256');
-  requireExactKeys(plan.cache.base_release, ['path', 'state'], 'plan.cache.base_release');
-  requireString(plan.cache.base_release.path, 'plan.cache.base_release.path');
-  validateExpectedStateShape(plan.cache.base_release.state, 'plan.cache.base_release.state');
-  requirePlanSchema(Array.isArray(plan.cache.inventory), 'plan.cache.inventory must be an array');
-  for (const [index, entry] of plan.cache.inventory.entries()) {
-    requireExactKeys(entry, ['path', 'type', 'sha256'], `plan.cache.inventory[${index}]`);
-    requireString(entry.path, `plan.cache.inventory[${index}].path`);
-    requireString(entry.type, `plan.cache.inventory[${index}].type`);
-    requirePlanSchema(typeof entry.sha256 === 'string' && /^[a-f0-9]{64}$/.test(entry.sha256), `plan.cache.inventory[${index}].sha256 must be lowercase SHA-256`);
-  }
-
-  requireExactKeys(plan.local, ['manifest', 'upgrade_log', 'base_release', 'core_inventory'], 'plan.local');
-  requireExactKeys(plan.local.manifest, ['path', 'state', 'data'], 'plan.local.manifest');
-  requireString(plan.local.manifest.path, 'plan.local.manifest.path');
-  validateExpectedStateShape(plan.local.manifest.state, 'plan.local.manifest.state', false);
-  requireExactKeys(plan.local.manifest.data, ['source_repo', 'source_ref', 'installed_ref'], 'plan.local.manifest.data');
-  requireString(plan.local.manifest.data.source_repo, 'plan.local.manifest.data.source_repo');
-  requireString(plan.local.manifest.data.source_ref, 'plan.local.manifest.data.source_ref');
-  requireString(plan.local.manifest.data.installed_ref, 'plan.local.manifest.data.installed_ref', true);
-  requireExactKeys(plan.local.upgrade_log, ['path', 'state'], 'plan.local.upgrade_log');
-  requireString(plan.local.upgrade_log.path, 'plan.local.upgrade_log.path');
-  validateExpectedStateShape(plan.local.upgrade_log.state, 'plan.local.upgrade_log.state');
-  requireExactKeys(plan.local.base_release, ['path', 'state', 'record', 'desired'], 'plan.local.base_release');
-  requireString(plan.local.base_release.path, 'plan.local.base_release.path');
-  validateExpectedStateShape(plan.local.base_release.state, 'plan.local.base_release.state');
-  validateBaseReleaseShape(plan.local.base_release.record, 'plan.local.base_release.record');
-  validateBaseReleaseShape(plan.local.base_release.desired, 'plan.local.base_release.desired');
-  requirePlanSchema(Array.isArray(plan.local.core_inventory), 'plan.local.core_inventory must be an array');
-  for (const [index, entry] of plan.local.core_inventory.entries()) {
-    requireExactKeys(entry, ['path', 'state'], `plan.local.core_inventory[${index}]`);
-    requireString(entry.path, `plan.local.core_inventory[${index}].path`);
-    validateExpectedStateShape(entry.state, `plan.local.core_inventory[${index}].state`);
-  }
-
-  requireExactKeys(plan.summary, ['replace', 'add', 'remove', 'advisory', 'up_to_date'], 'plan.summary');
-  for (const key of ['replace', 'add', 'remove', 'advisory', 'up_to_date']) requireCount(plan.summary[key], `plan.summary.${key}`);
-  requireExactKeys(plan.buckets, ['replace', 'add', 'remove', 'advisory', 'up_to_date'], 'plan.buckets');
-  for (const key of ['replace', 'add', 'remove', 'advisory', 'up_to_date']) {
-    requirePlanSchema(Array.isArray(plan.buckets[key]), `plan.buckets.${key} must be an array`);
-  }
-  for (const [index, entry] of plan.buckets.replace.entries()) {
-    requireExactKeys(entry, ['path', 'added_lines', 'removed_lines'], `plan.buckets.replace[${index}]`);
-    requireString(entry.path, `plan.buckets.replace[${index}].path`);
-    requireCount(entry.added_lines, `plan.buckets.replace[${index}].added_lines`);
-    requireCount(entry.removed_lines, `plan.buckets.replace[${index}].removed_lines`);
-  }
-  for (const key of ['add', 'remove', 'up_to_date']) {
-    for (const [index, entry] of plan.buckets[key].entries()) {
-      requireExactKeys(entry, ['path'], `plan.buckets.${key}[${index}]`);
-      requireString(entry.path, `plan.buckets.${key}[${index}].path`);
-    }
-  }
-  for (const [index, entry] of plan.buckets.advisory.entries()) {
-    requireExactKeys(entry, ['path', 'kind'], `plan.buckets.advisory[${index}]`);
-    requireString(entry.path, `plan.buckets.advisory[${index}].path`);
-    requireString(entry.kind, `plan.buckets.advisory[${index}].kind`);
-  }
-}
-
-/** @param {{path: string}[]} entries @param {string} label */
-function validateSortedUniquePaths(entries, label) {
-  const paths = entries.map((entry) => entry.path);
-  const sorted = [...paths].sort(codeUnitCompare);
-  requirePlanSchema(paths.every((entry, index) => entry === sorted[index]), `${label} must use canonical code-unit ordering`);
-  requirePlanSchema(new Set(paths).size === paths.length, `${label} contains duplicate paths`);
-  return paths;
-}
-
-/** @param {Record<string, any>} plan */
-function manifestTransitionNeeded(plan) {
-  return plan.local.manifest.data.source_repo !== plan.source.location
-    || plan.local.manifest.data.source_ref !== plan.source.requested_ref
-    || plan.local.manifest.data.installed_ref !== plan.to_ref;
-}
-
-/**
- * Whether the reviewed record must be written or removed. Comparison is by
- * value, so an equal record in other bytes (such as CRLF) stays untouched;
- * any file present when no record should remain is removed.
- * @param {Record<string, any>} baseRelease the plan's `local.base_release`
- */
-function baseReleaseTransitionNeeded(baseRelease) {
-  return baseRelease.desired === null
-    ? baseRelease.state.type !== 'missing'
-    : !evidenceEqual(baseRelease.record, baseRelease.desired);
-}
-
-/** @param {Record<string, any>} plan */
-function metadataTransitionNeeded(plan) {
-  return manifestTransitionNeeded(plan) || baseReleaseTransitionNeeded(plan.local.base_release);
-}
-
-/** @param {Record<string, any>} plan */
-function validatePlanInvariants(plan) {
-  requirePlanSchema(plan.scope.identity_scope === PLAN_IDENTITY_SCOPE, `unsupported identity scope: ${plan.scope.identity_scope}`);
-  requirePlanSchema(['local-path', 'git-remote'].includes(plan.source.type), 'plan.source.type must be local-path or git-remote');
-  requirePlanSchema(COMMIT_PATTERN.test(plan.source.resolved_commit), 'plan.source.resolved_commit must be a lowercase concrete commit');
-  requirePlanSchema(
-    plan.source.type !== 'local-path' || plan.source.requested_ref !== 'latest',
-    'local-path source does not support ref latest; re-run plan with an explicit local branch or tag',
-  );
-  if (plan.source.requested_ref === 'latest') {
-    const release = resolveReleaseRef(plan.source.location, plan.source.requested_ref);
-    requirePlanSchema(
-      release.channel && /^v\d+\.\d+\.\d+$/.test(release.resolvedRef),
-      'plan latest ref must resolve to a stable release tag',
-    );
-    requirePlanSchema(
-      release.resolvedRef === plan.source.resolved_ref,
-      'plan latest resolved ref must equal the highest stable release tag',
-    );
-  } else {
-    requirePlanSchema(
-      plan.source.requested_ref === plan.source.resolved_ref,
-      'plan literal requested ref must equal its resolved ref',
-    );
-  }
-  requirePlanSchema(plan.to_ref === plan.source.resolved_ref, 'plan.to_ref must equal plan.source.resolved_ref');
-  requirePlanSchema(plan.from_ref === plan.local.manifest.data.installed_ref, 'plan.from_ref must equal the reviewed installed_ref');
-  requirePlanSchema(plan.cache.manifest.path === WORKSPACE_PATHS.BUNDLE_MANIFEST && plan.cache.manifest.type === 'file', 'plan.cache.manifest must identify the canonical manifest');
-  requirePlanSchema(plan.local.manifest.path === WORKSPACE_PATHS.BUNDLE_MANIFEST, 'plan.local.manifest must identify the canonical manifest');
-  requirePlanSchema(plan.local.upgrade_log.path === WORKSPACE_PATHS.UPGRADE_LOG, 'plan.local.upgrade_log must identify the canonical upgrade log');
-  requirePlanSchema(
-    plan.cache.base_release.path === BASE_RELEASE_PATH && plan.local.base_release.path === BASE_RELEASE_PATH,
-    'plan base release evidence must identify the base release record',
-  );
-  requirePlanSchema(
-    plan.local.base_release.record === null || plan.local.base_release.state.type === 'file',
-    'plan base release preimage evidence is invalid',
-  );
-  const desiredRecord = plan.local.base_release.desired;
-  requirePlanSchema(
-    desiredRecord === null || (plan.to_ref === DEVELOPMENT_INSTALLED_REF
-      && plan.cache.base_release.state.type === 'file'
-      && desiredRecord.source_repo === plan.source.location),
-    'plan base release target is invalid',
-  );
-
-  const timestamps = [plan.created_at, plan.ttl_warn_at, plan.ttl_expire_at];
-  const epochs = timestamps.map((value) => isoToEpoch(value));
-  requirePlanSchema(
-    timestamps.every((value, index) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value) && epochs[index] !== null),
-    'plan timestamps must be canonical UTC ISO-8601 values',
-  );
-  requirePlanSchema(epochs[1] - epochs[0] === 3600 && epochs[2] - epochs[0] === 86400, 'plan TTL metadata is inconsistent');
-
-  /** @type {Map<string, string>} */
-  const bucketByPath = new Map();
-  for (const key of ['replace', 'add', 'remove', 'up_to_date']) {
-    validateSortedUniquePaths(plan.buckets[key], `plan.buckets.${key}`);
-    for (const entry of plan.buckets[key]) {
-      validatePlanPath(entry.path, `plan.buckets.${key}`);
-      requirePlanSchema(!bucketByPath.has(entry.path), `plan buckets are invalid: duplicate path ${entry.path}`);
-      bucketByPath.set(entry.path, key);
-    }
-    requirePlanSchema(plan.summary[key] === plan.buckets[key].length, `plan.summary.${key} does not match its bucket`);
-  }
-  validateSortedUniquePaths(plan.buckets.advisory, 'plan.buckets.advisory');
-  requirePlanSchema(plan.summary.advisory === plan.buckets.advisory.length, 'plan.summary.advisory does not match its bucket');
-  for (const entry of plan.buckets.advisory) {
-    validatePlanPath(entry.path, 'plan.buckets.advisory', false);
-    requirePlanSchema(
-      ['unreserved_local_agent', 'unreserved_local_skill'].includes(entry.kind),
-      `plan advisory kind is invalid: ${entry.kind}`,
-    );
-  }
-
-  validateSortedUniquePaths(plan.cache.inventory, 'plan.cache.inventory');
-  const expectedCachePaths = [...bucketByPath.entries()]
-    .filter(([, bucket]) => bucket !== 'remove')
-    .map(([relativePath]) => relativePath)
-    .sort(codeUnitCompare);
-  const cachePaths = plan.cache.inventory.map((entry) => entry.path);
-  requirePlanSchema(JSON.stringify(cachePaths) === JSON.stringify(expectedCachePaths), 'plan cache inventory does not match reviewed buckets');
-  for (const entry of plan.cache.inventory) {
-    validatePlanPath(entry.path, 'plan.cache.inventory');
-    requirePlanSchema(entry.type === 'file', `plan cache inventory type is invalid: ${entry.path}`);
-  }
-
-  validateSortedUniquePaths(plan.local.core_inventory, 'plan.local.core_inventory');
-  const expectedLocalPaths = [...bucketByPath.keys()].sort(codeUnitCompare);
-  const localPaths = plan.local.core_inventory.map((entry) => entry.path);
-  requirePlanSchema(JSON.stringify(localPaths) === JSON.stringify(expectedLocalPaths), 'plan local inventory does not match reviewed buckets');
-  const cacheByPath = new Map(plan.cache.inventory.map((entry) => [entry.path, entry]));
-  const localByPath = new Map(plan.local.core_inventory.map((entry) => [entry.path, entry]));
-  for (const [relativePath, bucket] of bucketByPath) {
-    validatePlanPath(relativePath, 'plan.local.core_inventory');
-    const cacheEntry = cacheByPath.get(relativePath);
-    const localEntry = localByPath.get(relativePath);
-    requirePlanSchema(Boolean(localEntry), `plan local inventory is missing ${relativePath}`);
-    if (bucket === 'add') {
-      requirePlanSchema(localEntry.state.type === 'missing' && Boolean(cacheEntry), `plan Add evidence is invalid: ${relativePath}`);
-    } else if (bucket === 'remove') {
-      requirePlanSchema(localEntry.state.type === 'file' && !cacheEntry, `plan Remove evidence is invalid: ${relativePath}`);
-    } else if (bucket === 'replace') {
-      requirePlanSchema(
-        localEntry.state.type === 'file' && Boolean(cacheEntry) && localEntry.state.sha256 !== cacheEntry.sha256,
-        `plan Replace evidence is invalid: ${relativePath}`,
-      );
-    } else {
-      requirePlanSchema(
-        localEntry.state.type === 'file' && Boolean(cacheEntry) && localEntry.state.sha256 === cacheEntry.sha256,
-        `plan up-to-date evidence is invalid: ${relativePath}`,
-      );
-    }
-  }
-
-}
-
-/** @param {string} planPath */
-function parseUpgradePlan(planPath) {
-  const stat = lstatOrNull(planPath);
-  if (!stat || !stat.isFile() || stat.isSymbolicLink()) {
-    throw new Error(`plan file malformed: ${planPath} is not a regular file`);
-  }
-  const bytes = fs.readFileSync(planPath);
-  let parsed;
-  try {
-    parsed = JSON.parse(bytes.toString('utf8'));
-  } catch {
-    throw new Error(`plan file malformed: ${planPath}`);
-  }
-  if (!isRecord(parsed) || parsed.kind !== PLAN_KIND || parsed.schema_version !== PLAN_SCHEMA_VERSION) {
-    throw new Error("unsupported upgrade plan schema; re-run 'plan' with the current engine");
-  }
-  validatePlanShape(parsed);
-  if (bytes.toString('utf8') !== serializeUpgradePlan(parsed)) {
-    throw new Error("plan is not canonical; re-run 'plan'");
-  }
-  if (planDigest(parsed) !== parsed.digest) {
-    throw new Error("plan digest mismatch; the digest is a consistency check, not authentication; re-run 'plan'");
-  }
-  validatePlanInvariants(parsed);
-  return parsed;
-}
-
-/** @param {unknown} actual @param {unknown} expected */
-function evidenceEqual(actual, expected) {
-  return JSON.stringify(actual) === JSON.stringify(expected);
-}
-
-/** @param {string} root @param {string} relativePath @param {Record<string, any>} expected @param {string} label */
-function verifyExpectedState(root, relativePath, expected, label) {
-  let actual;
-  try {
-    actual = snapshotExpectedState(root, relativePath);
-  } catch {
-    throw new Error(`${label}: ${relativePath}`);
-  }
-  if (!evidenceEqual(actual, expected)) throw new Error(`${label}: ${relativePath}`);
-  return resolveMutationPath(root, relativePath);
-}
-
-/** @param {Record<string, any>} plan @param {boolean} skipRemovals */
-function plannedWritePaths(plan, skipRemovals) {
-  const operationPaths = [
-    ...plan.buckets.add.map((entry) => entry.path),
-    ...plan.buckets.replace.map((entry) => entry.path),
-    ...(skipRemovals ? [] : plan.buckets.remove.map((entry) => entry.path)),
-  ];
-  const hasReviewedTransition = plan.summary.add + plan.summary.replace + plan.summary.remove > 0
-    || metadataTransitionNeeded(plan);
-  if (hasReviewedTransition) {
-    operationPaths.push(WORKSPACE_PATHS.BUNDLE_MANIFEST, WORKSPACE_PATHS.UPGRADE_LOG);
-  }
-  // Clearing obsolete provenance is a metadata transition, never a deferrable
-  // Remove-bucket entry, so --skip-removals does not retain the record.
-  if (baseReleaseTransitionNeeded(plan.local.base_release)) operationPaths.push(BASE_RELEASE_PATH);
-  return [...new Set(operationPaths)].sort(codeUnitCompare);
-}
-
-/** @param {Record<string, any>} plan */
-function verifyWorkspaceEvidence(plan) {
-  const workspacePath = path.resolve(ROOT);
-  if (plan.scope.workspace_path !== workspacePath) {
-    throw new Error('reviewed workspace path changed; re-run plan in this workspace');
-  }
-  let workspaceRealpath;
-  let workspaceIdentity;
-  try {
-    workspaceRealpath = fs.realpathSync(workspacePath);
-    workspaceIdentity = directoryIdentity(workspacePath);
-  } catch {
-    throw new Error('reviewed workspace identity changed; re-run plan in this workspace');
-  }
-  if (plan.scope.workspace_realpath !== workspaceRealpath
-      || !evidenceEqual(plan.scope.workspace_identity, workspaceIdentity)) {
-    throw new Error('reviewed workspace identity changed; re-run plan in this workspace');
-  }
-}
-
-/** @param {Record<string, any>} plan */
-function verifySourceEvidence(plan) {
-  const cacheRoot = plan.cache.root_path;
-  const head = git(['rev-parse', 'HEAD^{commit}'], cacheRoot);
-  if (head.status !== 0 || head.stdout.trim().toLowerCase() !== plan.source.resolved_commit) {
-    throw new Error('reviewed resolved commit changed; re-run plan');
-  }
-  const resolved = git(['rev-parse', `${plan.source.resolved_ref}^{commit}`], cacheRoot);
-  if (resolved.status !== 0 || resolved.stdout.trim().toLowerCase() !== plan.source.resolved_commit) {
-    throw new Error('reviewed resolved ref changed; re-run plan');
-  }
-  if (plan.source.type === 'local-path') {
-    let sourceRealpath;
-    try {
-      sourceRealpath = fs.realpathSync(plan.source.location);
-    } catch {
-      throw new Error('reviewed local source identity changed; re-run plan');
-    }
-    if (sourceRealpath !== plan.source.identity || sourceRealpath !== plan.cache.root_realpath) {
-      throw new Error('reviewed local source identity changed; re-run plan');
-    }
-  } else {
-    const origin = git(['config', '--get', 'remote.origin.url'], cacheRoot);
-    if (origin.status !== 0
-        || origin.stdout.trim() !== plan.source.identity
-        || origin.stdout.trim() !== plan.source.location) {
-      throw new Error('reviewed source identity changed; re-run plan');
-    }
-  }
-}
-
-/** @param {Record<string, any>} plan */
-function verifyCacheEvidence(plan) {
-  const cacheRoot = plan.cache.root_path;
-  const rootStat = lstatOrNull(cacheRoot);
-  if (!rootStat) throw new Error('reviewed cache root is missing; re-run plan');
-  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
-    throw new Error('reviewed cache root type changed; re-run plan');
-  }
-  let realRoot;
-  let rootIdentity;
-  try {
-    realRoot = fs.realpathSync(cacheRoot);
-    rootIdentity = directoryIdentity(cacheRoot);
-  } catch {
-    throw new Error('reviewed cache root identity changed; re-run plan');
-  }
-  if (realRoot !== plan.cache.root_realpath || !evidenceEqual(rootIdentity, plan.cache.root_identity)) {
-    throw new Error('reviewed cache root identity changed; re-run plan');
-  }
-
-  verifySourceEvidence(plan);
-
-  /** @type {Map<string, Buffer>} */
-  const cacheBytes = new Map();
-  for (const entry of plan.cache.inventory) {
-    let absolutePath;
-    let stat;
-    try {
-      absolutePath = resolveMutationPath(cacheRoot, entry.path);
-      stat = lstatOrNull(absolutePath);
+      target = await resolveTarget({ source: location, ref: requested, env, signal: acquisition.signal, deadlineLabel });
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      if (/symbolic link/i.test(detail)) throw new Error(`reviewed cache contains symbolic link: ${entry.path}`);
-      throw new Error(`reviewed cache type changed: ${entry.path}`);
+      throw withNote(sourceRefusal(error), cleanupNote());
     }
-    if (!stat?.isFile() || stat.isSymbolicLink()) {
-      if (!stat) throw new Error(`reviewed cache inventory changed: missing ${entry.path}`);
-      throw new Error(`reviewed cache type changed: ${entry.path}`);
+    const installed = manifest.data.installed_ref;
+    if (requested === RELEASE_CHANNEL && isStableReleaseTag(installed) && compareReleaseTags(target.resolvedRef, installed) < 0) {
+      const cleanup = cleanupNote();
+      return {
+        status: 'nothing_to_update',
+        id: null,
+        from_ref: installed,
+        to_ref: target.resolvedRef,
+        detail: `the installed ${installed} is newer than the latest release ${target.resolvedRef}, and a release check never offers a downgrade`,
+        ...(cleanup ? { cleanup } : {}),
+      };
     }
-    const bytes = fs.readFileSync(absolutePath);
-    if (sha256(bytes) !== entry.sha256) throw new Error(`reviewed cache bytes changed: ${entry.path}`);
-    cacheBytes.set(entry.path, bytes);
-  }
 
-  for (const entry of plan.buckets.remove) {
-    let absolutePath;
+    let folderName = '';
+    let preparedRoot = '';
+    for (let attempt = 0; attempt < 8 && !preparedRoot; attempt += 1) {
+      folderName = crypto.randomBytes(8).toString('hex');
+      try {
+        fs.mkdirSync(preparedRootFor(folderName));
+        preparedRoot = preparedRootFor(folderName);
+      } catch (error) {
+        if (/** @type {NodeJS.ErrnoException} */ (error)?.code !== 'EEXIST') throw error;
+      }
+    }
+    if (!preparedRoot) throw withNote(refusal('failed', 'could not allocate a prepared upgrade folder'), cleanupNote());
+    let report;
+    /** @type {string | null} */
+    let id = null;
     try {
-      absolutePath = resolveMutationPath(cacheRoot, entry.path);
+      await acquireRelease({ source: location, target, destination: preparedRoot, env, signal: acquisition.signal, deadlineLabel });
+      const engine = await loadTargetEngine(preparedRoot, target.resolvedRef);
+      report = await engine.stageUpgrade({
+        workspaceRoot: workspace,
+        preparedRoot,
+        source: { location, requested_ref: target.requestedRef, resolved_ref: target.resolvedRef, commit: target.commit },
+        includePacks,
+        startedAt,
+        signal,
+        onProgress,
+      });
+      if (report?.status === 'ready') {
+        id = `${folderName}${resultDigest(preparedRoot, fs.readFileSync(path.join(preparedRoot, PREPARED_FILE)))}`;
+      }
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      if (/symbolic link/i.test(detail)) throw new Error(`reviewed cache contains symbolic link: ${entry.path}`);
-      throw new Error(`reviewed cache type changed: ${entry.path}`);
+      const failure = /** @type {any} */ (error);
+      if (failure?.cleanupConfirmed === false) {
+        // A process may still write there: keep the folder and say where.
+        throw withNote(refusal(
+          failure.reason ?? failure.code ?? 'failed',
+          `${errorMessage(error)}; a process could not be confirmed stopped, so its temporary material was kept at ${preparedRoot}`,
+          typeof failure.pack === 'string' ? { pack: failure.pack } : {},
+        ), cleanupNote());
+      }
+      throw withNote(sourceRefusal(error), cleanupNote(releasePrepared(preparedRoot)));
     }
-    if (lstatOrNull(absolutePath)) throw new Error(`reviewed cache inventory changed: unexpected ${entry.path}`);
+    if (id !== null) {
+      const { status, ...rest } = report;
+      const cleanup = cleanupNote();
+      return { status, id, ...rest, ...(cleanup ? { cleanup } : {}) };
+    }
+    const cleanup = cleanupNote(releasePrepared(preparedRoot));
+    return cleanup ? { ...report, cleanup } : report;
+  } finally {
+    acquisition.dispose();
   }
+}
 
-  let actualInventory;
+/**
+ * Apply one retained prepared result through its own retained target engine.
+ * The result is invalidated first, so it can never apply twice, and its ID is
+ * checked against the retained description and release files before any
+ * retained code runs. Its folder is then removed as best it can be; a folder
+ * that cannot be removed is named. The caller owns confirmation. `onProgress`
+ * goes to the retained target engine, which reports when its bundle check after
+ * writing starts (see `applyPreparedUpgrade`).
+ * @param {{ root?: string, id: string, onProgress?: ProgressListener }} input
+ */
+export async function applyUpgrade({ root = process.cwd(), id, onProgress }) {
+  const workspace = fs.realpathSync.native(root);
+  const { preparedRoot, description } = lookupPrepared(id, workspace);
   try {
-    actualInventory = snapshotCoreInventory(cacheRoot, 'reviewed cache');
+    invalidatePrepared(preparedRoot);
   } catch (error) {
-    throw error instanceof Error ? error : new Error(String(error));
+    if (/** @type {NodeJS.ErrnoException} */ (error)?.code === 'ENOENT') throw notFound(id);
+    return {
+      id,
+      outcome: 'nothing_changed',
+      reason: `the prepared upgrade could not be marked as used, so nothing was applied: ${errorMessage(error)}; it is still at ${preparedRoot}`,
+    };
   }
-  if (!evidenceEqual(actualInventory, plan.cache.inventory)) {
-    throw new Error('reviewed cache inventory changed; re-run plan');
-  }
-
-  const manifestPath = resolveMutationPath(cacheRoot, WORKSPACE_PATHS.BUNDLE_MANIFEST);
-  const manifestStat = lstatOrNull(manifestPath);
-  if (!manifestStat?.isFile() || manifestStat.isSymbolicLink()) {
-    throw new Error('reviewed upstream manifest type changed; re-run plan');
-  }
-  const manifestBytes = fs.readFileSync(manifestPath);
-  if (sha256(manifestBytes) !== plan.cache.manifest.sha256) {
-    throw new Error('reviewed upstream manifest changed; re-run plan');
-  }
-  const manifestBody = extractManifestJson(manifestBytes.toString('utf8'));
-  const manifestObject = manifestBody ? parseManifest(manifestBody) : null;
-  const manifestErrors = validateMetadataManifest(manifestObject, 'upstream manifest');
-  if (manifestErrors.length) throw new Error(`reviewed upstream manifest is invalid: ${manifestErrors[0]}`);
-
-  let upstreamBaseRelease;
-  try {
-    upstreamBaseRelease = readExpectedState(cacheRoot, BASE_RELEASE_PATH);
-  } catch {
-    throw new Error('reviewed upstream base release record type changed; re-run plan');
-  }
-  if (!evidenceEqual(upstreamBaseRelease.state, plan.cache.base_release.state)) {
-    throw new Error('reviewed upstream base release record changed; re-run plan');
-  }
-  // Apply writes the reviewed values; this only refuses a plan whose frozen
-  // target no longer follows from its own verified evidence.
-  const expectedBaseRelease = desiredBaseRelease({
-    toRef: plan.to_ref,
-    sourceLocation: plan.source.location,
-    upstreamManifest: manifestObject,
-    upstreamRecord: usableBaseRelease(upstreamBaseRelease.bytes),
-  });
-  if (!evidenceEqual(expectedBaseRelease, plan.local.base_release.desired)) {
-    throw new Error('reviewed base release target does not match its upstream evidence; re-run plan');
-  }
-
-  const sourceStatus = git(['status', '--porcelain=v1', '--untracked-files=all'], cacheRoot);
-  if (sourceStatus.status !== 0) throw new Error('could not inspect the reviewed source working tree; re-run plan');
-  if (sourceStatus.stdout.trim()) {
-    throw new Error('reviewed source working tree changed; re-run plan');
-  }
-  return cacheBytes;
-}
-
-/** @param {Record<string, any>} plan */
-function verifyLocalEvidence(plan) {
-  const manifestPath = resolveMutationPath(ROOT, WORKSPACE_PATHS.BUNDLE_MANIFEST);
-  const upgradeLogPath = resolveMutationPath(ROOT, WORKSPACE_PATHS.UPGRADE_LOG);
-  const actualManifestData = {
-    source_repo: local.source_repo,
-    source_ref: local.source_ref,
-    installed_ref: local.installed_ref,
+  /** @param {Record<string, unknown>} result */
+  const released = (result) => {
+    const cleanup = releasePrepared(preparedRoot);
+    return { id, ...result, ...(cleanup ? { cleanup } : {}) };
   };
-  if (!evidenceEqual(actualManifestData, plan.local.manifest.data)) {
-    throw new Error('reviewed bundle manifest values changed; re-run plan');
-  }
-  const actualManifestState = snapshotExpectedState(ROOT, WORKSPACE_PATHS.BUNDLE_MANIFEST);
-  if (!evidenceEqual(actualManifestState, plan.local.manifest.state)) {
-    throw new Error('reviewed bundle manifest bytes changed; re-run plan');
-  }
-  let actualLogState;
+  let prepared;
   try {
-    actualLogState = snapshotExpectedState(ROOT, WORKSPACE_PATHS.UPGRADE_LOG);
+    if (resultDigest(preparedRoot, description) !== id.slice(16)) throw new Error('the digest differs');
+    prepared = JSON.parse(description.toString('utf8'));
   } catch {
-    throw new Error('reviewed upgrade log state changed; re-run plan');
+    return released({ outcome: 'nothing_changed', reason: 'the prepared upgrade changed since the preview; prepare the upgrade again' });
   }
-  if (!evidenceEqual(actualLogState, plan.local.upgrade_log.state)) {
-    throw new Error('reviewed upgrade log state changed; re-run plan');
-  }
-  let localBaseRelease;
+  let result;
   try {
-    localBaseRelease = readExpectedState(ROOT, BASE_RELEASE_PATH);
-  } catch {
-    throw new Error('reviewed base release record type changed; re-run plan');
-  }
-  if (!evidenceEqual(localBaseRelease.state, plan.local.base_release.state)
-      || !evidenceEqual(usableBaseRelease(localBaseRelease.bytes), plan.local.base_release.record)) {
-    throw new Error('reviewed base release record changed; re-run plan');
-  }
-  const baseReleasePath = resolveMutationPath(ROOT, BASE_RELEASE_PATH);
-
-  const bucketByPath = new Map();
-  for (const key of ['replace', 'add', 'remove', 'up_to_date']) {
-    for (const entry of plan.buckets[key]) bucketByPath.set(entry.path, key);
-  }
-  /** @type {Map<string, string>} */
-  const mutationTargets = new Map();
-  for (const entry of plan.local.core_inventory) {
-    const bucket = bucketByPath.get(entry.path);
-    const label = `reviewed local state changed: ${bucket}`;
-    const absolutePath = verifyExpectedState(ROOT, entry.path, entry.state, label);
-    if (bucket !== 'up_to_date') mutationTargets.set(entry.path, absolutePath);
-  }
-
-  const mutatesBundle = plan.summary.replace + plan.summary.add + plan.summary.remove > 0
-    || metadataTransitionNeeded(plan);
-  if (mutatesBundle) {
-    mutationTargets.set(WORKSPACE_PATHS.BUNDLE_MANIFEST, manifestPath);
-    if (plan.local.upgrade_log.state.type === 'file') {
-      mutationTargets.set(WORKSPACE_PATHS.UPGRADE_LOG, upgradeLogPath);
-    }
-  }
-  let actualCorePaths;
-  try {
-    actualCorePaths = scanCoreInventoryPaths(ROOT, 'reviewed local workspace');
+    const engine = await loadTargetEngine(preparedRoot, 'prepared for this upgrade');
+    result = await engine.applyPreparedUpgrade({ workspaceRoot: workspace, preparedRoot, prepared, onProgress });
   } catch (error) {
-    throw error instanceof Error ? error : new Error(String(error));
+    throw withNote(error, releasePrepared(preparedRoot));
   }
-  const expectedExistingPaths = plan.local.core_inventory
-    .filter((entry) => entry.state.type === 'file')
-    .map((entry) => entry.path);
-  if (!evidenceEqual(actualCorePaths, expectedExistingPaths)) {
-    throw new Error('reviewed local core inventory changed; re-run plan');
-  }
-
-  const manifestBytes = fs.readFileSync(manifestPath);
-  mutationTargets.delete(WORKSPACE_PATHS.BUNDLE_MANIFEST);
-  mutationTargets.delete(WORKSPACE_PATHS.UPGRADE_LOG);
-  return { manifestPath, upgradeLogPath, baseReleasePath, manifestBytes, mutationTargets };
+  return released(result);
 }
 
 /**
- * Refuse, before the first write, to create a destination root that the
- * project's Git-based rollback could not restore.
- *
- * A root the safety tag cannot capture — ignored and holding no tracked file —
- * would survive `git reset --hard` as an unrecoverable partial update. Roots the
- * project already tracks continue through the existing rollback path unchanged.
- * @param {Record<string, any>} plan
+ * Release a prepared result that will not be applied: invalidate it, then
+ * remove its folder as best it can be, naming a folder that remains.
+ * @param {{ root?: string, id: string }} input
  */
-function verifyRestorableDestinations(plan) {
-  /** @type {Set<string>} */
-  const roots = new Set();
-  for (const entry of [...plan.buckets.add, ...plan.buckets.replace]) {
-    const segments = entry.path.split('/');
-    for (let depth = 1; depth < segments.length; depth += 1) {
-      roots.add(segments.slice(0, depth).join('/'));
-    }
-  }
-  // Shallowest first, so the refusal names the outermost unrestorable root.
-  for (const root of [...roots].sort(codeUnitCompare)) {
-    // Every destination root is a directory the plan would create, so it must be
-    // probed as one. `git check-ignore -- <root>` cannot match a directory-only
-    // pattern such as `generated-output/` while the directory is still absent from disk;
-    // the trailing-slash pathname makes git treat it as a directory and match.
-    // Both forms are probed so no previously refused root becomes accepted.
-    const ignored = git(['check-ignore', '--quiet', '--', root]).status === 0
-      || git(['check-ignore', '--quiet', '--', `${root}/`]).status === 0;
-    if (!ignored) continue;
-    const tracked = git(['ls-files', '--', root]);
-    if (tracked.status === 0 && tracked.stdout.trim()) continue;
-    throw new Error(
-      `destination root ${root} is git-ignored and holds no tracked file, so rollback could not restore it; `
-      + `un-ignore ${root} or track a file in it, then re-run 'apply'`,
-    );
-  }
-  // A reviewed record write or removal is staged by exact path. An ignored,
-  // untracked record could be neither committed nor restored by rollback.
-  if (baseReleaseTransitionNeeded(plan.local.base_release)
-      && git(['check-ignore', '--quiet', '--', BASE_RELEASE_PATH]).status === 0) {
-    const tracked = git(['ls-files', '--', BASE_RELEASE_PATH]);
-    if (!(tracked.status === 0 && tracked.stdout.trim())) {
-      throw new Error(
-        `destination ${BASE_RELEASE_PATH} is git-ignored and untracked, so the upgrade commit and rollback could not include it; `
-        + `un-ignore ${BASE_RELEASE_PATH}, then re-run 'apply'`,
-      );
-    }
-  }
-}
-
-/** @param {Record<string, any>} plan */
-function preflightApply(plan) {
-  const expiry = isoToEpoch(plan.ttl_expire_at);
-  if (expiry === null || Math.floor(Date.now() / 1000) > expiry) {
-    throw new Error(`plan expired (created ${plan.created_at}, expired ${plan.ttl_expire_at}); re-run 'plan'`);
-  }
-  verifyWorkspaceEvidence(plan);
-  const localStatus = git(['status', '--porcelain']);
-  if (localStatus.status !== 0) throw new Error('failed to inspect the local Git working tree');
-  if (localStatus.stdout.trim()) throw new Error('working tree is dirty; commit or stash changes before applying');
-  const localEvidence = verifyLocalEvidence(plan);
-  const cacheBytes = verifyCacheEvidence(plan);
-  for (const entry of plan.buckets.replace) {
-    const target = localEvidence.mutationTargets.get(entry.path);
-    const upstreamBytes = cacheBytes.get(entry.path);
-    if (!target || !upstreamBytes) throw new Error(`reviewed Replace evidence is incomplete: ${entry.path}`);
-    const lineCounts = diffPlusMinusBytes(fs.readFileSync(target), upstreamBytes);
-    if (lineCounts.added !== entry.added_lines || lineCounts.removed !== entry.removed_lines) {
-      throw new Error(`reviewed Replace line metadata changed: ${entry.path}; re-run plan`);
-    }
-  }
-  verifyRestorableDestinations(plan);
-  return { ...localEvidence, cacheBytes };
-}
-
-// ----- manifest write --------------------------------------------------------
-/**
- * Rewrite only the fenced ```json block in the local manifest, preserving the
- * surrounding markdown wrapper.
- * @param {Buffer} originalBytes @param {string} sourceRepo @param {string} sourceRef
- * @param {string} installedRef
- */
-function renderManifest(originalBytes, sourceRepo, sourceRef, installedRef) {
-  const lines = originalBytes.toString('utf8').split('\n');
-  /** @type {string[]} */
-  const pre = [];
-  let i = 0;
-  for (; i < lines.length; i += 1) {
-    pre.push(lines[i]);
-    if (/^```json\s*$/.test(lines[i])) {
-      i += 1;
-      break;
-    }
-  }
-  /** @type {string[]} */
-  const post = [];
-  let closed = false;
-  for (; i < lines.length; i += 1) {
-    if (!closed && /^```\s*$/.test(lines[i])) {
-      closed = true;
-      post.push(lines[i]);
-      continue;
-    }
-    if (closed) post.push(lines[i]);
-  }
-  const jsonText = JSON.stringify(
-    {
-      source_repo: sourceRepo,
-      source_ref: sourceRef,
-      installed_ref: installedRef,
-    },
-    null,
-    2,
-  );
-  return Buffer.from([...pre, jsonText, ...post].join('\n'));
-}
-
-// ----- lint ------------------------------------------------------------------
-/** @returns {'OK' | 'FAIL' | 'SKIPPED'} */
-function runLint() {
-  if (!isFile(LINT_PATH)) return 'SKIPPED';
-  const r = spawnSync('node', [LINT_PATH], { cwd: ROOT, stdio: 'ignore' });
-  return r.status === 0 ? 'OK' : 'FAIL';
-}
-
-/** @param {string} value */
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** @param {string} planArgument */
-function loadPersistedPlan(planArgument) {
-  let planPath = planArgument;
-  if (!isFile(planPath)) planPath = path.join(PLANS_DIR, `${planArgument}.json`);
-  if (!isFile(planPath)) throw new Error(`plan not found: ${planArgument}`);
-  return parseUpgradePlan(planPath);
-}
-
-/** @param {string} relativePath */
-function readHeadFile(relativePath) {
-  const result = git(['show', `HEAD:${relativePath}`]);
-  if (result.status !== 0) throw new Error(`committed core result is missing ${relativePath}`);
-  return result.stdout;
-}
-
-/**
- * Exact committed bytes of one path, or null when HEAD does not contain it.
- * @param {string} relativePath
- * @returns {Buffer | null}
- */
-function readHeadBytesOrNull(relativePath) {
-  const listed = git(['ls-tree', '--name-only', 'HEAD', '--', relativePath]);
-  if (listed.status !== 0) throw new Error(`could not inspect committed ${relativePath}`);
-  if (listed.stdout.trim() !== relativePath) return null;
-  const result = spawnSync('git', ['show', `HEAD:${relativePath}`], { cwd: ROOT });
-  if (result.status !== 0 || !Buffer.isBuffer(result.stdout)) throw new Error(`could not read committed ${relativePath}`);
-  return result.stdout;
-}
-
-/**
- * Validate that the reviewed plan already produced the current committed core
- * result. This deliberately reads only committed evidence; pack preview must
- * not create another plan or state record.
- * @param {Record<string, any>} plan
- */
-function verifyCommittedCoreBoundary(plan) {
-  verifyWorkspaceEvidence(plan);
-  const status = git(['status', '--porcelain']);
-  if (status.status !== 0) throw new Error('failed to inspect the local Git working tree');
-  if (status.stdout.trim()) throw new Error('working tree is dirty; commit or stash changes before refreshing packs');
-
-  const manifestText = readHeadFile(WORKSPACE_PATHS.BUNDLE_MANIFEST);
-  const manifestBody = extractManifestJson(manifestText);
-  const manifest = manifestBody ? parseManifest(manifestBody) : null;
-  const manifestErrors = validateMetadataManifest(manifest, 'committed bundle manifest');
-  if (manifestErrors.length) throw new Error(`committed bundle manifest is invalid: ${manifestErrors[0]}`);
-  if (manifest.source_repo !== plan.source.location
-      || manifest.source_ref !== plan.source.requested_ref
-      || manifest.installed_ref !== plan.to_ref) {
-    throw new Error('committed bundle manifest does not match the reviewed core plan');
-  }
-  const committedBaseRelease = readHeadBytesOrNull(BASE_RELEASE_PATH);
-  const reviewedBaseRelease = plan.local.base_release.desired;
-  if (reviewedBaseRelease === null
-    ? committedBaseRelease !== null
-    : !evidenceEqual(usableBaseRelease(committedBaseRelease), reviewedBaseRelease)) {
-    throw new Error('committed base release record does not match the reviewed core plan');
-  }
-
-  const log = readHeadFile(WORKSPACE_PATHS.UPGRADE_LOG);
-  const entry = log.split(/^## /m).filter(Boolean).at(-1) || '';
-  const branch = new RegExp(`^- notes: plan_id=${escapeRegExp(plan.plan_id)}; branch=([^\\n]+)$`, 'm').exec(entry)?.[1] || '';
-  const safetyTag = /^- safety tag: ([^\n]+)$/m.exec(entry)?.[1] || '';
-  if (!branch || !safetyTag
-      || !new RegExp(`^- to:\\s+${escapeRegExp(plan.to_ref)}$`, 'm').test(entry)
-      || !new RegExp(`^- ref:\\s+${escapeRegExp(plan.source.requested_ref)}$`, 'm').test(entry)
-      || !/^- lint: \[OK\]$/m.test(entry)) {
-    throw new Error('latest committed upgrade log entry does not confirm the reviewed core plan and successful lint');
-  }
-  const currentBranch = git(['rev-parse', '--abbrev-ref', 'HEAD']);
-  if (currentBranch.status !== 0 || currentBranch.stdout.trim() !== branch) {
-    throw new Error('current branch is not the upgrade branch recorded for the reviewed core plan');
-  }
-  const tagCommit = git(['rev-parse', '--verify', `${safetyTag}^{commit}`]);
-  const parent = git(['rev-parse', '--verify', 'HEAD^']);
-  if (tagCommit.status !== 0 || parent.status !== 0 || tagCommit.stdout.trim() !== parent.stdout.trim()) {
-    throw new Error('recorded core safety tag does not bound the current committed core result');
-  }
-  const head = git(['rev-parse', 'HEAD']);
-  if (head.status !== 0) throw new Error('could not resolve committed core result');
-  return { branch, safetyTag, coreCommit: head.stdout.trim() };
-}
-
-async function loadInstalledCompose() {
-  const composePath = path.join(ROOT, '.github', 'skills', 'dude-compose', 'compose.mjs');
-  if (!isFile(composePath)) throw new Error(`upgraded bundle is missing Compose engine: ${composePath}`);
-  const key = sha256(fs.readFileSync(composePath));
-  const compose = await import(`${pathToFileURL(composePath).href}?sha256=${key}`);
-  for (const name of ['cmdStatus', 'cmdPreviewRefresh', 'cmdRefresh']) {
-    if (typeof compose[name] !== 'function') throw new Error(`upgraded Compose engine has no ${name} export`);
-  }
-  return compose;
-}
-
-/** @param {string[]} argv @param {boolean} apply */
-async function cmdPacks(argv, apply) {
-  const { flags, error } = parseFlags(
-    argv,
-    new Set(['plan', 'confirm', 'format']),
-    new Set(),
-  );
-  const format = flags.format || 'text';
-  if (error || (format !== 'text' && format !== 'json')) {
-    logError(error || `invalid --format: ${format} (expected text|json)`);
-    return 40;
-  }
-  if (!flags.plan) {
-    logError('--plan is required (path or plan id)');
-    return 40;
-  }
-  if (apply && flags.confirm !== 'confirm-packs') {
-    logError("packs-apply requires --confirm with literal string 'confirm-packs'");
-    return 40;
-  }
-  if (!apply && flags.confirm) {
-    logError('packs-preview does not accept --confirm');
-    return 40;
-  }
-  if (!hasGit() || git(['rev-parse', '--is-inside-work-tree']).status !== 0) {
-    logError('not a git working tree or git missing');
-    return 40;
-  }
-
-  let plan;
-  let boundary;
-  let compose;
+export function discardUpgrade({ root = process.cwd(), id }) {
+  const { preparedRoot } = lookupPrepared(id, fs.realpathSync.native(root));
   try {
-    plan = loadPersistedPlan(flags.plan);
-    boundary = verifyCommittedCoreBoundary(plan);
-    compose = await loadInstalledCompose();
-  } catch (failure) {
-    logError(failure instanceof Error ? failure.message : String(failure));
-    return 40;
+    invalidatePrepared(preparedRoot);
+  } catch (error) {
+    if (/** @type {NodeJS.ErrnoException} */ (error)?.code === 'ENOENT') throw notFound(id);
+    throw refusal('invalidation-failed', `prepared upgrade ${id} could not be discarded: ${errorMessage(error)}; it is still at ${preparedRoot}`);
   }
-
-  const installed = compose.cmdStatus({ root: ROOT });
-  if (!installed.ok) {
-    logError(installed.error || 'installed pack profile is invalid');
-    return 40;
-  }
-  const names = installed.result.enabled_packs.slice().sort(codeUnitCompare);
-  // Pass only the commit, never `source`: an explicit Compose source is exclusive
-  // and would skip a local catalog. Without one, Compose keeps the local target
-  // authoritative, and otherwise reads the manifest repository at this commit.
-  // The committed-boundary check above has already tied that repository to the plan.
-  const ref = plan.source.resolved_commit;
-  if (!apply) {
-    const packs = [];
-    for (const name of names) {
-      const preview = await compose.cmdPreviewRefresh({ root: ROOT, library: path.join(ROOT, 'library', 'packs'), name, ref });
-      if (!preview.ok) {
-        const output = {
-          status: 'failed',
-          core_commit: boundary.coreCommit,
-          safety_tag: boundary.safetyTag,
-          upgrade_branch: boundary.branch,
-          packs,
-          failed: { name, reason: preview.error, mutation: preview.mutation || 'uncertain' },
-        };
-        if (format === 'json') out(`${JSON.stringify(output, null, 2)}\n`);
-        else logError(`pack preview failed for "${name}": ${preview.error}`);
-        return 40;
-      }
-      packs.push(preview.result);
-    }
-    const output = {
-      status: 'previewed',
-      core_commit: boundary.coreCommit,
-      safety_tag: boundary.safetyTag,
-      upgrade_branch: boundary.branch,
-      packs,
-      pack_confirmation_required: names.length > 0,
-    };
-    if (format === 'json') out(`${JSON.stringify(output, null, 2)}\n`);
-    else if (names.length === 0) out('No installed packs to refresh; pack confirmation is not required.\n');
-    else for (const pack of packs) out(`Previewed ${pack.previewed}: ${pack.replaced.length} replaced, ${pack.added.length} added, ${pack.removed.length} removed\n`);
-    return 0;
-  }
-
-  /** @type {string[]} */
-  const successful = [];
-  if (names.length === 0) {
-    const output = {
-      status: 'core_only',
-      core_commit: boundary.coreCommit,
-      successful,
-      failed: null,
-      not_attempted: [],
-      pack_commit: 'none',
-      lint: 'SKIPPED',
-      clean: true,
-      safety_tag: boundary.safetyTag,
-      upgrade_branch: boundary.branch,
-      review: `git diff <target-branch>...${boundary.branch}`,
-      rollback: `node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback --tag ${boundary.safetyTag}`,
-    };
-    if (format === 'json') out(`${JSON.stringify(output, null, 2)}\n`);
-    else out('No installed packs to refresh; core upgrade remains committed and clean.\n');
-    return 0;
-  }
-  /** @type {string[]} */
-  const candidatePaths = [];
-  let failed = null;
-  let operationalFailure = '';
-  for (let index = 0; index < names.length; index += 1) {
-    const name = names[index];
-    const refreshed = await compose.cmdRefresh({ root: ROOT, library: path.join(ROOT, 'library', 'packs'), name, ref });
-    if (!refreshed.ok) {
-      failed = { name, reason: refreshed.error, mutation: refreshed.mutation || 'uncertain' };
-      if (failed.mutation === 'uncertain') {
-        operationalFailure = `pack "${name}" failed with uncertain rollback state`;
-      }
-      break;
-    }
-    successful.push(name);
-    candidatePaths.push(...refreshed.result.replaced, ...refreshed.result.added, ...refreshed.result.removed, ...refreshed.result.files);
-  }
-
-  let lint = 'SKIPPED';
-  let packCommit = 'none';
-  if (!operationalFailure) {
-    lint = runLint();
-    const stagePaths = [...new Set([...candidatePaths, WORKSPACE_PATHS.PROFILE])].sort(codeUnitCompare);
-    if (stagePaths.length > 1) {
-      const add = git(['add', '-A', '--', ...stagePaths]);
-      if (add.status !== 0) {
-        operationalFailure = `git add failed while staging refreshed pack paths: ${add.stderr.trim() || 'unknown error'}`;
-      } else {
-        const staged = git(['diff', '--cached', '--quiet', '--', ...stagePaths]);
-        if (staged.status !== 0 && staged.status !== 1) {
-          operationalFailure = `could not inspect staged refreshed pack paths: ${staged.stderr.trim() || 'unknown error'}`;
-        } else if (staged.status === 1) {
-          const hooksPath = fs.mkdtempSync(path.join(CACHE_ROOT, 'disabled-hooks-'));
-          const commit = gitWithoutHooks(hooksPath, ['commit', '-q', '-m', `chore: refresh installed Dude packs after ${plan.to_ref}`]);
-          fs.rmSync(hooksPath, { recursive: true, force: true });
-          if (commit.status !== 0) {
-            operationalFailure = `git commit failed for refreshed pack paths: ${commit.stderr.trim() || 'unknown error'}`;
-          } else {
-            packCommit = git(['rev-parse', 'HEAD']).stdout.trim();
-          }
-        }
-      }
-    }
-    if (!operationalFailure && lint === 'FAIL') {
-      operationalFailure = 'post-refresh lint reported failures';
-    }
-  }
-
-  const notAttempted = failed ? names.slice(names.indexOf(failed.name) + 1) : [];
-  const treeStatus = git(['status', '--porcelain']);
-  const clean = treeStatus.status === 0 && treeStatus.stdout.trim() === '';
-  if (!operationalFailure && !clean) {
-    operationalFailure = treeStatus.status === 0
-      ? 'working tree is dirty after pack refresh'
-      : `failed to inspect the local Git working tree after pack refresh: ${treeStatus.stderr.trim() || 'unknown error'}`;
-  }
-  const output = {
-    status: operationalFailure ? 'operational_failure' : (failed ? 'partial_failure' : 'applied'),
-    core_commit: boundary.coreCommit,
-    successful,
-    failed,
-    not_attempted: notAttempted,
-    pack_commit: packCommit,
-    lint,
-    clean,
-    safety_tag: boundary.safetyTag,
-    upgrade_branch: boundary.branch,
-    review: `git diff <target-branch>...${boundary.branch}`,
-    rollback: `node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback --tag ${boundary.safetyTag}`,
-    ...(operationalFailure ? { error: operationalFailure } : {}),
-  };
-  if (format === 'json') out(`${JSON.stringify(output, null, 2)}\n`);
-  else {
-    out(`Core retained: ${boundary.coreCommit}\n`);
-    out(`Successful packs: ${successful.length ? successful.join(', ') : 'none'}\n`);
-    if (failed) out(`Failed pack: ${failed.name}: ${failed.reason}\n`);
-    if (notAttempted.length) out(`Not attempted: ${notAttempted.join(', ')}\n`);
-    out(`Pack commit: ${packCommit}\nLint: [${lint}]\nWorking tree clean: ${clean ? 'yes' : 'no'}\n`);
-    out(`Review: ${output.review}\nRollback: ${output.rollback}\n`);
-    if (operationalFailure) logError(operationalFailure);
-  }
-  return operationalFailure ? 40 : 0;
+  const cleanup = releasePrepared(preparedRoot);
+  return { status: 'discarded', id, ...(cleanup ? { cleanup } : {}) };
 }
 
-// ----- flag parsing ----------------------------------------------------------
+/* ==================================================================== CLI */
+
 /**
  * @param {string[]} argv
  * @param {Set<string>} valued flags that take a value
@@ -2159,553 +1574,222 @@ async function cmdPacks(argv, apply) {
 function parseFlags(argv, valued, bools) {
   /** @type {Record<string, string>} */
   const flags = {};
-  for (let i = 0; i < argv.length; i += 1) {
-    const a = argv[i];
-    const eq = a.indexOf('=');
-    if (a.startsWith('--') && eq !== -1) {
-      const k = a.slice(2, eq);
-      if (!valued.has(k) && !bools.has(k)) return { flags, error: `unknown flag: ${a}` };
-      flags[k] = a.slice(eq + 1);
-    } else if (a.startsWith('--')) {
-      const k = a.slice(2);
-      if (bools.has(k)) flags[k] = '1';
-      else if (valued.has(k)) {
-        flags[k] = argv[i + 1] || '';
-        i += 1;
-      } else return { flags, error: `unknown flag: ${a}` };
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    const eq = arg.indexOf('=');
+    if (arg.startsWith('--') && eq !== -1) {
+      const key = arg.slice(2, eq);
+      if (!valued.has(key)) return { flags, error: `unknown flag: ${arg}` };
+      flags[key] = arg.slice(eq + 1);
+    } else if (arg.startsWith('--')) {
+      const key = arg.slice(2);
+      if (bools.has(key)) flags[key] = '1';
+      else if (valued.has(key)) {
+        flags[key] = argv[index + 1] ?? '';
+        index += 1;
+      } else return { flags, error: `unknown flag: ${arg}` };
     } else {
-      return { flags, error: `unknown flag: ${a}` };
+      return { flags, error: `unexpected argument: ${arg}` };
     }
   }
   return { flags };
 }
 
-// ----- subcommands -----------------------------------------------------------
-/** @param {string[]} argv @returns {Promise<number>} */
-async function cmdStatus(argv) {
-  const { flags, error } = parseFlags(argv, new Set(['format', 'source', 'ref']), new Set());
+/**
+ * @param {string[]} argv
+ * @param {string[]} valued
+ * @param {string[]} [bools]
+ */
+function readFlags(argv, valued, bools = []) {
+  const { flags, error } = parseFlags(argv, new Set(['format', ...valued]), new Set(bools));
   const format = flags.format || 'text';
   if (error || (format !== 'text' && format !== 'json')) {
     logError(error || `invalid --format: ${format} (expected text|json)`);
-    return 40;
+    return null;
   }
-
-  if (!hasGit() || git(['rev-parse', '--is-inside-work-tree']).status !== 0) {
-    const reason = !hasGit()
-      ? 'git is not installed; install git and re-run'
-      : "not a git working tree (run 'git init' in the project root, then re-run)";
-    upstream.source = flags.source || 'unknown';
-    upstream.ref = flags.ref || 'unknown';
-    if (format === 'json') emitStatusJson('error', '', reason);
-    else logError(reason);
-    return 40;
-  }
-
-  if (!loadLocalManifest()) {
-    upstream.source = flags.source || 'unknown';
-    upstream.ref = flags.ref || 'unknown';
-    const detail = localManifestError();
-    if (format === 'json') emitStatusJson('error', '', detail);
-    else logError(detail);
-    return 40;
-  }
-  resolveUpstream(flags.source || '', flags.ref || '');
-
-  if (isDir(upstream.source) && upstream.ref === 'latest') {
-    const detail = 'local-path source does not support ref latest; pass an explicit local branch or tag with --ref';
-    if (format === 'json') emitStatusJson('error', '', detail);
-    else logError(detail);
-    return 40;
-  }
-
-  if (upstream.channel && !upstream.resolvedRef) {
-    const detail = 'no releases published yet';
-    if (format === 'json') emitStatusJson('offline', '', detail);
-    else emitStatusText('offline', '', detail);
-    return 0;
-  }
-
-  const fetchedManifest = await fetchUpstreamManifestOnly();
-  if (!fetchedManifest.path) {
-    if (fetchedManifest.error) {
-      if (format === 'json') emitStatusJson('error', '', fetchedManifest.error);
-      else logError(fetchedManifest.error);
-      return 40;
-    }
-    if (format === 'json') emitStatusJson('offline', '', 'could not reach upstream');
-    else emitStatusText('offline', '', 'could not reach upstream');
-    return 0;
-  }
-
-  const body = extractManifestJson(read(fetchedManifest.path));
-  const obj = body ? parseManifest(body) : null;
-  const errs = validateMetadataManifest(obj, 'upstream manifest');
-  if (errs.length) {
-    if (format === 'json') emitStatusJson('error', '', errs[0]);
-    else {
-      logError('upstream manifest invalid:');
-      for (const e of errs) process.stderr.write(`  ${e}\n`);
-    }
-    return 40;
-  }
-
-  const upstreamRef = upstream.resolvedRef;
-  const kind = upstreamRef && upstreamRef === local.installed_ref ? 'up_to_date' : 'upgrade_available';
-  if (format === 'json') emitStatusJson(kind, upstreamRef, '');
-  else emitStatusText(kind, upstreamRef, '');
-  return 0;
+  return { flags, format };
 }
 
-/** @param {string[]} argv @returns {number} */
-function cmdPlan(argv) {
-  const { flags, error } = parseFlags(argv, new Set(['format', 'source', 'ref', 'out']), new Set());
-  const format = flags.format || 'text';
-  if (error || (format !== 'text' && format !== 'json')) {
-    logError(error || `invalid --format: ${format} (expected text|json)`);
-    return 40;
-  }
-  if (!hasGit() || git(['rev-parse', '--is-inside-work-tree']).status !== 0) {
-    logError(
-      !hasGit()
-        ? 'git is not installed; install git and re-run'
-        : "not a git working tree (run 'git init' in the project root, then re-run)",
-    );
-    return 40;
-  }
-  if (!loadLocalManifest()) {
-    logError(localManifestError());
-    return 40;
-  }
-  resolveUpstream(flags.source || '', flags.ref || '');
-
-  if (isDir(upstream.source) && upstream.ref === 'latest') {
-    logError('local-path source does not support ref latest; pass an explicit local branch or tag with --ref');
-    return 40;
-  }
-
-  if (upstream.channel && !upstream.resolvedRef) {
-    logError('no releases published yet on the release channel; nothing to upgrade to');
-    return 40;
-  }
-
-  const utree = fetchUpstreamTree();
-  if (!utree) return 40;
-
-  const upstreamManifest = findUpstreamManifestPath(utree);
-  if (!upstreamManifest) {
-    logError(`upstream tree is missing ${WORKSPACE_PATHS.BUNDLE_MANIFEST}`);
-    return 40;
-  }
-  const obj = parseManifest(extractManifestJson(read(upstreamManifest)) || '');
-  const errs = validateMetadataManifest(obj, 'upstream manifest');
-  if (errs.length) {
-    logError('upstream manifest invalid:');
-    for (const e of errs) process.stderr.write(`  ${e}\n`);
-    return 40;
-  }
-
-  for (const need of [
-    '.github/agents',
-    '.github/skills/dude-lint',
-    '.github/instructions/dude.instructions.md',
-  ]) {
-    if (!exists(path.join(utree, need))) {
-      logError(`upstream tree is missing required path: ${need}`);
-      return 40;
-    }
-  }
-
-  const plan = classifyPlan(utree);
-
-  const toRef = upstream.resolvedRef;
-  const fromRef = local.installed_ref;
-  const createdAt = isoNow();
-  const planIdBase = `${stampNow()}-${sanitizeRef(fromRef)}-${sanitizeRef(toRef)}`;
-  let persistedPlan;
-  let planJson = '';
-  let persisted;
-  try {
-    persisted = persistUniquePlan({
-      plansDir: PLANS_DIR,
-      baseId: planIdBase,
-      buildBytes: (candidatePlanId) => {
-        persistedPlan = buildUpgradePlan(plan, {
-          plan_id: candidatePlanId,
-          from_ref: fromRef,
-          to_ref: toRef,
-          cache_dir: utree,
-          created_at: createdAt,
-          ttl_warn: isoAddSeconds(createdAt, 3600),
-          ttl_expire: isoAddSeconds(createdAt, 86400),
-        });
-        planJson = buildPlanJson(persistedPlan);
-        return planJson;
-      },
-    });
-  } catch (planError) {
-    logError(planError instanceof Error ? planError.message : String(planError));
-    return 40;
-  }
-  const { planId, planPath } = persisted;
-  if (flags.out) {
-    try {
-      fs.copyFileSync(planPath, flags.out, fs.constants.COPYFILE_EXCL);
-    } catch (copyError) {
-      fs.rmSync(planPath, { force: true });
-      const existsError = copyError && typeof copyError === 'object' && 'code' in copyError
-        && copyError.code === 'EEXIST';
-      logError(existsError
-        ? `--out already exists; refusing to overwrite: ${flags.out}`
-        : `failed to write --out plan: ${copyError instanceof Error ? copyError.message : String(copyError)}`);
-      return 40;
-    }
-  }
-
-  if (format === 'json') out(planJson);
-  else {
-    emitPlanText(
-      plan,
-      planId,
-      fromRef,
-      toRef,
-      utree,
-      metadataTransitionNeeded(persistedPlan),
-      persistedPlan.local.base_release,
-    );
-    out(`\nPlan saved: ${planPath}\n`);
-  }
-
-  return plan.replace.length + plan.add.length + plan.remove.length === 0
-    && !metadataTransitionNeeded(persistedPlan) ? 0 : 10;
+/** @param {unknown} error @param {string} format */
+function reportRefusal(error, format) {
+  const failure = /** @type {any} */ (error);
+  const reason = typeof failure?.reason === 'string' ? failure.reason : 'failed';
+  const detail = errorMessage(error);
+  if (format === 'json') {
+    writeJson({ status: 'refused', reason, detail, ...(typeof failure?.pack === 'string' ? { pack: failure.pack } : {}) });
+  } else logError(detail);
+  return 40;
 }
 
-/** @param {string[]} argv @returns {number} */
-function cmdApply(argv) {
-  const { flags, error } = parseFlags(
-    argv,
-    new Set(['plan', 'confirm', 'format']),
-    new Set(['skip-removals']),
+/** @param {Awaited<ReturnType<typeof checkInstallation>>} result */
+function formatStatus(result) {
+  const heads = {
+    upgrade_available: `update available (${result.available_ref})`,
+    up_to_date: 'up to date',
+    no_stable_releases: 'no stable releases found',
+    check_failed: `couldn't check (${result.detail})`,
+    pinned: result.detail,
+    development: result.detail,
+    installation_unavailable: `installation information unavailable (${result.detail})`,
+  };
+  const lines = [`Bundle: ${heads[/** @type {keyof typeof heads} */ (result.status)]}`];
+  if (result.source) lines.push(`  Source:    ${result.source} @ ${result.ref}`);
+  if (result.installed_ref !== null) lines.push(`  Installed: ${result.installed_ref || '(none)'}`);
+  if (result.available_ref) lines.push(`  Latest:    ${result.available_ref}`);
+  if (result.release_url) lines.push(`  What's new: ${result.release_url}`);
+  if (result.status === 'upgrade_available') lines.push('  Next:      @dude upgrade --dry-run');
+  return `${lines.join('\n')}\n`;
+}
+
+/** @param {Record<string, any>} report @param {boolean} dryRun */
+function formatPlan(report, dryRun) {
+  const note = report.cleanup ? `Note: ${report.cleanup}\n` : '';
+  if (report.status !== 'ready') return `Nothing to update: ${report.detail}.\n${note}`;
+  const { source } = report;
+  const lines = [
+    `Upgrade preview: ${report.from_ref || '(none)'} -> ${report.to_ref}`,
+    `Source: ${source.location} @ ${source.requested_ref}${source.resolved_ref !== source.requested_ref ? ` (${source.resolved_ref})` : ''}, commit ${source.commit.slice(0, 12)}`,
+    dryRun ? 'Dry run: nothing was retained or written.' : `Prepared ID: ${report.id}`,
+    `Branch: ${report.branch} (the changes stay uncommitted)`,
+    '',
+    `Core: ${describeCounts(report.counts.core)}`,
+    `Metadata: ${describeCounts(report.counts.metadata)}`,
+  ];
+  for (const [name, counts] of Object.entries(report.counts.packs)) lines.push(`Pack ${name}: ${describeCounts(/** @type {any} */ (counts))}`);
+  if (report.base_release.changed) {
+    lines.push(`Base release record: ${report.base_release.from ?? '(none)'} -> ${report.base_release.to ?? '(none)'}`);
+  }
+  if (report.packs.unchanged.length > 0) lines.push(`Packs with no changes: ${report.packs.unchanged.join(', ')}`);
+  if (report.packs.not_selected.length > 0) {
+    lines.push(`Eligible packs not included (add --all to include them): ${report.packs.not_selected.join(', ')}`);
+  }
+  lines.push('', 'Files:');
+  for (const change of report.changes) {
+    lines.push(`  ${change.op.padEnd(7)} ${change.group === 'pack' ? `pack ${change.pack}` : change.group}: ${change.path}`);
+  }
+  if (report.dirty_paths.length > 0) {
+    lines.push('', 'Uncommitted or staged edits this update overwrites:', ...report.dirty_paths.map((/** @type {string} */ p) => `  ${p}`));
+  }
+  lines.push(
+    '',
+    `Warning: applying overwrites local customizations in these files on branch ${report.branch} and leaves the changes uncommitted.`,
+    'Git cannot recover pre-existing uncommitted edits that the update overwrites. Start a new session afterward to load the updated Dude.',
   );
-  const format = flags.format || 'text';
-  if (error || (format !== 'text' && format !== 'json')) {
-    logError(error || `invalid --format: ${format} (expected text|json)`);
-    return 40;
-  }
-  try {
-    resolveMutationPath(ROOT, WORKSPACE_PATHS.BUNDLE_MANIFEST);
-  } catch (pathError) {
-    logError(pathError instanceof Error ? pathError.message : String(pathError));
-    return 40;
-  }
-  if (!hasGit() || git(['rev-parse', '--is-inside-work-tree']).status !== 0) {
-    logError('not a git working tree or git missing');
-    return 40;
-  }
-  if (!flags.plan) {
-    logError('--plan is required (path or plan id)');
-    return 40;
-  }
-  if (!flags.confirm) {
-    logError("--confirm is required (use 'confirm-upgrade')");
-    return 40;
-  }
-  if (flags.confirm !== 'confirm-upgrade') {
-    logError(`invalid --confirm token: ${flags.confirm} (expected literal string 'confirm-upgrade')`);
-    return 40;
-  }
-  if (!loadLocalManifest()) {
-    logError(localManifestError());
-    return 40;
-  }
-
-  let planPath = flags.plan;
-  if (!isFile(planPath)) planPath = path.join(PLANS_DIR, `${flags.plan}.json`);
-  if (!isFile(planPath)) {
-    logError(`plan not found: ${flags.plan}`);
-    return 40;
-  }
-  let planObj;
-  try {
-    planObj = parseUpgradePlan(planPath);
-  } catch (planError) {
-    logError(planError instanceof Error ? planError.message : String(planError));
-    return 40;
-  }
-  const fromRef = planObj.from_ref;
-  const toRef = planObj.to_ref;
-  const planSource = planObj.source.location;
-  const planRef = planObj.source.requested_ref;
-  const planId = planObj.plan_id;
-  const plan = planObj.buckets;
-  const skipRemovals = Boolean(flags['skip-removals']);
-  const writePaths = plannedWritePaths(planObj, skipRemovals);
-
-  let preflight;
-  try {
-    preflight = preflightApply(planObj);
-  } catch (preflightError) {
-    logError(preflightError instanceof Error ? preflightError.message : String(preflightError));
-    return 40;
-  }
-
-  const total = plan.replace.length + plan.add.length + plan.remove.length;
-  if (total === 0 && !metadataTransitionNeeded(planObj)) {
-    logInfo('nothing to apply (no changes)');
-    return 0;
-  }
-
-  // ---- Safety net ----
-  const safetyTagBase = `dude-pre-upgrade-${stampNow()}`;
-  let safetyTag = safetyTagBase;
-  let tagProbe = git(['show-ref', '--verify', '--quiet', `refs/tags/${safetyTag}`]);
-  if (tagProbe.status !== 0 && tagProbe.status !== 1) {
-    logError('failed to inspect existing safety tags');
-    return 40;
-  }
-  for (let suffix = 2; tagProbe.status === 0; suffix += 1) {
-    safetyTag = `${safetyTagBase}-${suffix}`;
-    tagProbe = git(['show-ref', '--verify', '--quiet', `refs/tags/${safetyTag}`]);
-    if (tagProbe.status !== 0 && tagProbe.status !== 1) {
-      logError('failed to inspect existing safety tags');
-      return 40;
-    }
-  }
-  let upgradeBranch = `chore/dude-upgrade-${sanitizeRef(toRef)}`;
-  let branchProbe = git(['show-ref', '--verify', '--quiet', `refs/heads/${upgradeBranch}`]);
-  if (branchProbe.status !== 0 && branchProbe.status !== 1) {
-    logError('failed to inspect existing upgrade branches');
-    return 40;
-  }
-  if (branchProbe.status === 0) {
-    const branchBase = `${upgradeBranch}-${stampNow()}`;
-    upgradeBranch = branchBase;
-    branchProbe = git(['show-ref', '--verify', '--quiet', `refs/heads/${upgradeBranch}`]);
-    if (branchProbe.status !== 0 && branchProbe.status !== 1) {
-      logError('failed to inspect existing upgrade branches');
-      return 40;
-    }
-    for (let suffix = 2; branchProbe.status === 0; suffix += 1) {
-      upgradeBranch = `${branchBase}-${suffix}`;
-      branchProbe = git(['show-ref', '--verify', '--quiet', `refs/heads/${upgradeBranch}`]);
-      if (branchProbe.status !== 0 && branchProbe.status !== 1) {
-        logError('failed to inspect existing upgrade branches');
-        return 40;
-      }
-    }
-  }
-  fs.mkdirSync(CACHE_ROOT, { recursive: true });
-  const disabledHooksPath = fs.mkdtempSync(path.join(CACHE_ROOT, 'disabled-hooks-'));
-  logInfo(`creating safety tag: ${safetyTag}`);
-  if (git(['tag', safetyTag]).status !== 0) {
-    fs.rmSync(disabledHooksPath, { recursive: true, force: true });
-    logError(`failed to create safety tag: ${safetyTag}`);
-    return 40;
-  }
-  logInfo(`creating upgrade branch: ${upgradeBranch}`);
-  if (gitWithoutHooks(disabledHooksPath, ['checkout', '--quiet', '-b', upgradeBranch]).status !== 0) {
-    fs.rmSync(disabledHooksPath, { recursive: true, force: true });
-    logError(`failed to create upgrade branch: ${upgradeBranch}`);
-    return 40;
-  }
-  const manifestOutput = renderManifest(preflight.manifestBytes, planSource, planRef, toRef);
-
-  // ---- File operations ----
-  /** @type {string[]} */
-  const appliedPaths = [];
-  /** @type {string[]} */
-  const skippedRemoves = [];
-  for (const { path: p } of plan.add) {
-    const target = preflight.mutationTargets.get(p);
-    const bytes = preflight.cacheBytes.get(p);
-    if (!target || !bytes) throw new Error(`validated Add evidence missing for ${p}`);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, bytes);
-    appliedPaths.push(p);
-  }
-  for (const { path: p } of plan.replace) {
-    const target = preflight.mutationTargets.get(p);
-    const bytes = preflight.cacheBytes.get(p);
-    if (!target || !bytes) throw new Error(`validated Replace evidence missing for ${p}`);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, bytes);
-    appliedPaths.push(p);
-  }
-  if (skipRemovals) {
-    for (const { path: p } of plan.remove) skippedRemoves.push(p);
-  } else {
-    for (const { path: p } of plan.remove) {
-      const target = preflight.mutationTargets.get(p);
-      if (!target) throw new Error(`validated Remove evidence missing for ${p}`);
-      fs.rmSync(target, { force: true });
-      appliedPaths.push(p);
-    }
-  }
-
-  // ---- Rewrite manifest ----
-  fs.writeFileSync(preflight.manifestPath, manifestOutput);
-
-  // ---- Reconcile the reviewed base release record ----
-  if (baseReleaseTransitionNeeded(planObj.local.base_release)) {
-    const reviewedBaseRelease = planObj.local.base_release.desired;
-    if (reviewedBaseRelease) {
-      fs.writeFileSync(preflight.baseReleasePath, renderDevelopmentBaseRelease(reviewedBaseRelease));
-    } else {
-      fs.rmSync(preflight.baseReleasePath, { force: true });
-    }
-  }
-
-  // ---- Append upgrade-log entry (placeholder patched after lint) ----
-  const logPath = preflight.upgradeLogPath;
-  const actualRemoved = plan.remove.length - skippedRemoves.length;
-  const ts = isoNow().replace('T', ' ').replace('Z', '');
-  const entry =
-    `\n## ${ts} — upgrade\n` +
-    `- from: ${fromRef || '(none)'}\n` +
-    `- to:   ${toRef}\n` +
-    `- ref:  ${planRef}\n` +
-    `- replaced: ${plan.replace.length}\n` +
-    `- added:    ${plan.add.length}\n` +
-    `- removed:  ${actualRemoved}\n` +
-    `- removals_deferred:   ${skippedRemoves.length}\n` +
-    `- preserved: project files outside the base namespace\n` +
-    `- safety tag: ${safetyTag}\n` +
-    `- lint: __LINT_RESULT__\n` +
-    `- notes: plan_id=${planId}; branch=${upgradeBranch}\n`;
-  fs.appendFileSync(logPath, entry);
-
-  // ---- Run lint, patch placeholder ----
-  const lintResult = runLint();
-  fs.writeFileSync(logPath, read(logPath).replace('__LINT_RESULT__', `[${lintResult}]`));
-
-  // ---- Stage + commit ----
-  const addResult = git(['add', '-A', '--', ...writePaths]);
-  if (addResult.status !== 0) {
-    fs.rmSync(disabledHooksPath, { recursive: true, force: true });
-    logError(`git add failed while staging reviewed upgrade paths: ${addResult.stderr.trim() || 'unknown error'}`);
-    return 40;
-  }
-  const commitResult = gitWithoutHooks(disabledHooksPath, [
-    'commit', '-q', '-m', `chore: upgrade Dude bundle to ${toRef}`,
-  ]);
-  fs.rmSync(disabledHooksPath, { recursive: true, force: true });
-  if (commitResult.status !== 0) {
-    logError(`git commit failed for reviewed upgrade paths: ${commitResult.stderr.trim() || 'unknown error'}`);
-    return 40;
-  }
-  // ---- Report ----
-  if (format === 'json') {
-    out(
-      `${JSON.stringify(
-        {
-          status: 'applied',
-          from_ref: fromRef,
-          to_ref: toRef,
-          safety_tag: safetyTag,
-          upgrade_branch: upgradeBranch,
-          counts: {
-            replaced: plan.replace.length,
-            added: plan.add.length,
-            removed: actualRemoved,
-            removals_deferred: skippedRemoves.length,
-          },
-          lint: lintResult,
-        },
-        null,
-        2,
-      )}\n`,
-    );
-  } else {
-    out(`Applied: ${fromRef || '(none)'} -> ${toRef}\n`);
-    out(`  replaced:             ${plan.replace.length}\n`);
-    out(`  added:                ${plan.add.length}\n`);
-    out(`  removed:              ${actualRemoved}\n`);
-    out(`  removals deferred:    ${skippedRemoves.length}\n`);
-    out(`  safety tag:           ${safetyTag}\n`);
-    out(`  upgrade branch:       ${upgradeBranch}\n`);
-    out(`  lint:                 [${lintResult}]\n\n`);
-    out(`Review:  git diff <target-branch>...${upgradeBranch}\n`);
-    out(`Rollback: node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback --tag ${safetyTag}\n`);
-  }
-
-  if (lintResult === 'FAIL') {
-    logError(`post-apply lint reported failures; review and consider 'rollback --tag ${safetyTag}'`);
-    return 40;
-  }
-  return 0;
+  if (!dryRun) lines.push(`Reply "confirm upgrade" to apply prepared result ${report.id}.`);
+  return `${lines.join('\n')}\n${note}`;
 }
 
-/** @param {string[]} argv @returns {number} */
-function cmdRollback(argv) {
-  const { flags, error } = parseFlags(argv, new Set(['tag', 'format']), new Set());
-  const format = flags.format || 'text';
-  if (error || (format !== 'text' && format !== 'json')) {
-    logError(error || `invalid --format: ${format} (expected text|json)`);
-    return 40;
-  }
-  try {
-    resolveMutationPath(ROOT, WORKSPACE_PATHS.BUNDLE_MANIFEST);
-  } catch (pathError) {
-    logError(pathError instanceof Error ? pathError.message : String(pathError));
-    return 40;
-  }
-  if (!hasGit() || git(['rev-parse', '--is-inside-work-tree']).status !== 0) {
-    logError('not a git working tree or git missing');
-    return 40;
-  }
-  if (git(['status', '--porcelain']).stdout.trim()) {
-    logError('working tree is dirty; commit or stash changes before rollback');
-    return 40;
-  }
-
-  let tag = flags.tag || '';
-  if (!tag) {
-    const r = git(['tag', '--list', 'dude-pre-upgrade-*', '--sort=-creatordate']);
-    tag = r.stdout.split('\n')[0].trim();
-    if (!tag) {
-      logError('no dude-pre-upgrade-* tag found; nothing to rollback to');
-      return 40;
+/** @param {Record<string, any>} result */
+function formatApply(result) {
+  /** @type {string[]} */
+  const lines = [];
+  if (result.outcome === 'applied') {
+    lines.push(
+      `Applied ${result.from_ref || '(none)'} -> ${result.to_ref} on branch ${result.branch}; the changes are uncommitted.`,
+      `  Core: ${describeCounts(result.counts.core)}`,
+      `  Metadata: ${describeCounts(result.counts.metadata)}`,
+      ...Object.entries(result.counts.packs).map(([name, counts]) => `  Pack ${name}: ${describeCounts(/** @type {any} */ (counts))}`),
+    );
+    if (result.existing_failures.length > 0) {
+      lines.push(`Existing bundle check failures, unchanged by this update (${result.existing_failures.length}):`,
+        ...result.existing_failures.map((/** @type {string} */ failure) => `  ${failure}`));
     }
-  }
-  if (git(['rev-parse', '--verify', tag]).status !== 0) {
-    logError(`tag not found: ${tag}`);
-    return 40;
-  }
-
-  const restoredSha = git(['rev-parse', tag]).stdout.trim();
-  const currentBranch = git(['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim();
-  logInfo(`resetting ${currentBranch} to safety tag: ${tag} (${shortSha(restoredSha)})`);
-  if (git(['reset', '--hard', tag]).status !== 0) {
-    logError(`git reset --hard ${tag} failed`);
-    return 40;
-  }
-
-  const logPath = resolveMutationPath(ROOT, WORKSPACE_PATHS.UPGRADE_LOG);
-  if (isFile(logPath)) {
-    const ts = isoNow().replace('T', ' ').replace('Z', '');
-    fs.appendFileSync(
-      logPath,
-      `\n## ${ts} — rollback\n` +
-        `- restored: ${restoredSha}\n` +
-        `- safety tag: ${tag}\n` +
-        `- branch: ${currentBranch}\n` +
-        `- notes: appended uncommitted; commit or discard as desired\n`,
+    lines.push(
+      'Review with `git status` and `git diff`, then commit. Before committing, `git restore -- <path>` returns a',
+      'modified or deleted tracked file to its staged version, which is its committed version unless you staged a change',
+      'to it (`git restore --source=HEAD -- <path>` takes the committed version); delete an untracked file the update added',
+      '(for example `git clean -f -- <path>`). After committing, revert that commit.',
+      'Git cannot recover pre-existing uncommitted edits that the update overwrote. Start a new session to load the updated Dude.',
     );
-  }
-
-  const lintResult = runLint() === 'FAIL' ? 'FAIL' : 'OK';
-  if (format === 'json') {
-    out(
-      `${JSON.stringify(
-        { status: 'rolled_back', tag, restored_sha: restoredSha, branch: currentBranch, lint: lintResult },
-        null,
-        2,
-      )}\n`,
-    );
+  } else if (result.outcome === 'nothing_changed') {
+    lines.push(`Nothing changed: ${result.reason}`);
+  } else if (result.outcome === 'restored') {
+    lines.push(`Files restored: ${result.reason}`);
+    for (const failure of result.new_failures) lines.push(`  new failure: ${failure}`);
   } else {
-    out(`Rolled back ${currentBranch} to ${tag} (${shortSha(restoredSha)})\n`);
-    out(`Lint: [${lintResult}]\n`);
-    out('Note: rollback log entry appended uncommitted; review and commit if desired.\n');
+    lines.push(`Restoration unconfirmed: ${result.reason}`, 'Inspect these paths:', ...result.paths.map((/** @type {string} */ p) => `  ${p}`));
   }
+  if (result.cleanup) lines.push(`Note: ${result.cleanup}`);
+  return `${lines.join('\n')}\n`;
+}
+
+/** @param {string[]} argv */
+async function cmdStatus(argv) {
+  const parsed = readFlags(argv, ['source', 'ref']);
+  if (!parsed) return 40;
+  const result = await checkInstallation({ root: process.cwd(), source: parsed.flags.source, ref: parsed.flags.ref });
+  if (parsed.format === 'json') writeJson(result);
+  else out(formatStatus(result));
+  return result.status === 'installation_unavailable' ? 40 : 0;
+}
+
+/** @param {string[]} argv */
+async function cmdPlan(argv) {
+  const parsed = readFlags(argv, ['source', 'ref'], ['all', 'dry-run']);
+  if (!parsed) return 40;
+  const { flags, format } = parsed;
+  const dryRun = Boolean(flags['dry-run']);
+  let report;
+  try {
+    report = await prepareUpgrade({ root: process.cwd(), source: flags.source, ref: flags.ref, includePacks: Boolean(flags.all) });
+  } catch (error) {
+    return reportRefusal(error, format);
+  }
+  if (dryRun && report.status === 'ready') {
+    const notes = [report.cleanup];
+    try {
+      notes.push(discardUpgrade({ root: process.cwd(), id: report.id }).cleanup);
+    } catch (error) {
+      notes.push(errorMessage(error));
+    }
+    const cleanup = notes.filter(Boolean).join('; ');
+    report = { ...report, id: null, ...(cleanup ? { cleanup } : {}) };
+  }
+  if (format === 'json') writeJson({ ...report, dry_run: dryRun });
+  else out(formatPlan(report, dryRun));
+  return report.status === 'ready' ? 10 : 0;
+}
+
+/** @param {string[]} argv */
+async function cmdApply(argv) {
+  const parsed = readFlags(argv, ['plan', 'confirm']);
+  if (!parsed) return 40;
+  const { flags, format } = parsed;
+  if (!flags.plan) {
+    logError('--plan <id> is required');
+    return 40;
+  }
+  if (flags.confirm !== CONFIRM_TOKEN) {
+    logError(`apply requires --confirm with the literal token '${CONFIRM_TOKEN}'`);
+    return 40;
+  }
+  let result;
+  try {
+    result = await applyUpgrade({ root: process.cwd(), id: flags.plan });
+  } catch (error) {
+    return reportRefusal(error, format);
+  }
+  if (format === 'json') writeJson(result);
+  else out(formatApply(result));
+  return result.outcome === 'applied' ? 0 : 40;
+}
+
+/** @param {string[]} argv */
+async function cmdDiscard(argv) {
+  const parsed = readFlags(argv, ['plan']);
+  if (!parsed) return 40;
+  if (!parsed.flags.plan) {
+    logError('--plan <id> is required');
+    return 40;
+  }
+  let result;
+  try {
+    result = discardUpgrade({ root: process.cwd(), id: parsed.flags.plan });
+  } catch (error) {
+    return reportRefusal(error, parsed.format);
+  }
+  if (parsed.format === 'json') writeJson(result);
+  else out(`Discarded prepared upgrade ${result.id}; nothing was written.\n${result.cleanup ? `Note: ${result.cleanup}\n` : ''}`);
   return 0;
 }
 
@@ -2716,66 +1800,43 @@ USAGE
   node .github/skills/dude-bundle-upgrade/upgrade.mjs <subcommand> [flags]
 
 SUBCOMMANDS
-  status     compare local manifest against upstream manifest (read-only)
-  plan       fetch upstream tree, classify every file, persist plan (read-only)
-  apply      apply a persisted plan: safety tag + branch + writes + commit
-  packs-preview  preview installed-pack refreshes after a committed core apply
-  packs-apply    refresh installed packs after preview and confirmation
-  rollback   reset HEAD to the most recent dude-pre-upgrade-* safety tag
-  help       this message
+  status    check the recorded release channel for a newer stable release (writes nothing)
+  plan      prepare the exact target and report every file it changes (writes no project file)
+  apply     apply one prepared result in place; the changes stay uncommitted
+  discard   release a prepared result that will not be applied
+  help      this message
 
 FLAGS (status, plan)
-  --format text|json   output format (default: text)
-  --source <s>         override manifest source_repo (URL or local path)
-  --ref <r>            override manifest source_ref (branch, tag, or sha)
+  --source <s>          override the manifest source_repo (URL or local path)
+  --ref <r>             override the manifest source_ref (latest, tag, branch, or commit)
 
 FLAGS (plan)
-  --out <path>         write plan.json here too; refuse if the path exists
+  --all                 also refresh installed packs whose recorded source is the bundle upstream
+  --dry-run             report the changes and retain nothing
 
-FLAGS (apply)
-  --plan <id|path>     required: persisted plan from a previous \`plan\` run
-  --confirm <token>    required: must be the literal string 'confirm-upgrade'
-  --skip-removals      keep Remove-bucket files instead of deleting them
-  --format text|json   output format (default: text)
+FLAGS (apply, discard)
+  --plan <id>           required: the prepared ID that plan reported
+  --confirm <token>     apply only: the literal token 'confirm-upgrade'
 
-FLAGS (packs-preview)
-  --plan <id|path>     required: committed core upgrade plan
-  --format text|json   output format (default: text)
-
-FLAGS (packs-apply)
-  --plan <id|path>     required: committed core upgrade plan
-  --confirm <token>    required: must be the literal string 'confirm-packs'
-  --format text|json   output format (default: text)
-
-FLAGS (rollback)
-  --tag <name>         specific safety tag to restore (default: most recent)
-  --format text|json   output format (default: text)
+FLAGS (all)
+  --format text|json    output format (default: text)
 
 EXIT CODES
-  0   no changes, up-to-date, or action succeeded
+  0   status reported, nothing to update, or apply/discard succeeded
   10  plan ready, changes detected
-  40  invalid input, malformed manifest, unreachable upstream, or post-apply lint failure
+  40  invalid input, a refusal, or an apply that did not succeed
 
 NOTES
-  Core files are identified by the namespace convention (.github/agents/dude*.agent.md,
-  .github/skills/dude-*/**, .github/instructions/dude.instructions.md) excluding the
-  reserved dude-pack-* and dude-local-* tiers, and are upstream-owned: they will be
-  silently overwritten on apply. To customize a base agent or skill, copy it under the
-  reserved dude-local-<slug> namespace and edit there.
-
-  \`apply\` does not push or merge. It leaves the upgrade commit on a local
-  chore/dude-upgrade-<sha> branch for the user to review and merge.
-
-ENVIRONMENT
-  UPGRADE_DEBUG=1      enable debug logging on stderr
-  TMPDIR               override default /tmp for the upgrade cache
+  Apply writes the prepared bytes in place on the current branch as one
+  all-or-restored batch. It creates no tag, branch, or commit and does not
+  stage anything. Git cannot recover pre-existing uncommitted edits that it
+  overwrites. Start a new session afterward to load the updated Dude.
 `);
 }
 
-// ----- main dispatch ---------------------------------------------------------
-/** @returns {Promise<number>} */
-async function main() {
-  const [, , sub, ...rest] = process.argv;
+/** @param {string[]} argv @returns {Promise<number>} */
+async function main(argv) {
+  const [sub, ...rest] = argv;
   switch (sub) {
     case 'status':
       return cmdStatus(rest);
@@ -2783,12 +1844,8 @@ async function main() {
       return cmdPlan(rest);
     case 'apply':
       return cmdApply(rest);
-    case 'packs-preview':
-      return cmdPacks(rest, false);
-    case 'packs-apply':
-      return cmdPacks(rest, true);
-    case 'rollback':
-      return cmdRollback(rest);
+    case 'discard':
+      return cmdDiscard(rest);
     case 'help':
     case '-h':
     case '--help':
@@ -2801,7 +1858,7 @@ async function main() {
   }
 }
 
-/** @param {string} metaUrl @param {string|undefined} argv1 @returns {boolean} */
+/** @param {string} metaUrl @param {string | undefined} argv1 @returns {boolean} */
 export function isMainModule(metaUrl, argv1) {
   if (!argv1) return false;
   try {
@@ -2812,5 +1869,8 @@ export function isMainModule(metaUrl, argv1) {
 }
 
 if (isMainModule(import.meta.url, process.argv[1])) {
-  main().then((code) => process.exit(code));
+  main(process.argv.slice(2)).then((code) => process.exit(code), (error) => {
+    logError(errorMessage(error));
+    process.exit(40);
+  });
 }

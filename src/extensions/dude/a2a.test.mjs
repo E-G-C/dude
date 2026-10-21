@@ -2519,6 +2519,11 @@ function copiedExtensionHarness() {
     filter: (source) => !source.endsWith('.test.mjs'),
   });
   fs.cpSync(ENGINE_SOURCE_ROOT, path.join(root, 'src/skills/dude-engine'), { recursive: true });
+  // The update controller imports the bundle-upgrade engine when the extension loads.
+  fs.cpSync(path.resolve(ENGINE_SOURCE_ROOT, '../dude-bundle-upgrade'), path.join(root, 'src/skills/dude-bundle-upgrade'), {
+    recursive: true,
+    filter: (source) => !source.endsWith('.test.mjs'),
+  });
   fs.mkdirSync(path.join(root, 'src/skills/dude-compose'), { recursive: true });
   fs.copyFileSync(path.resolve(ENGINE_SOURCE_ROOT, '../dude-compose/compose.mjs'),
     path.join(root, 'src/skills/dude-compose/compose.mjs'));

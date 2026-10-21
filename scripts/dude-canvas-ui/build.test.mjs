@@ -832,10 +832,10 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   assert.ok(application.length > 100_000, 'the application bundle must contain the browser runtime');
   const gzip = gzipSync(applicationBytes, { level: 9 });
   const repeatedGzip = gzipSync(applicationBytes, { level: 9 });
-  assert.equal(applicationBytes.length, 1_141_224, 'committed app.js raw byte size');
+  assert.equal(applicationBytes.length, 1_183_488, 'committed app.js raw byte size');
   assert.equal(
     sha256(applicationBytes),
-    '1d3271f702cfad403847c9870a7a21a28bb2652bd2bccb8b56a340ae1461569f',
+    '7c245184a0239dbcc100169f466c6b8c84d31e906f203187e35ca3ca1697e10e',
     'committed app.js raw SHA-256',
   );
   assertPortableGzip(gzip, repeatedGzip, applicationBytes, 'Node zlib level-9 app.js');
@@ -909,7 +909,7 @@ test('metafile-derived legal inventory contains every contributing package and c
       name: '@fluentui/react-menu',
       version: '9.25.4',
       inputCount: 36,
-      bytesInOutput: 31_651,
+      bytesInOutput: 31_660,
     },
     {
       name: '@fluentui/react-motion-components-preview',
@@ -921,7 +921,7 @@ test('metafile-derived legal inventory contains every contributing package and c
       name: '@fluentui/react-tooltip',
       version: '9.10.5',
       inputCount: 6,
-      bytesInOutput: 8_328,
+      bytesInOutput: 8_323,
     },
   ], 'the shipped menu, motion implementation, and tooltip contribute real app.js bytes');
   for (const { name, version } of menuGraphPackages) {
@@ -1166,6 +1166,9 @@ function assertT011WorkspaceContract() {
       '/api/packs/sources',
       '/api/packs?discover=1',
       '/api/refresh',
+      // 072: this session's update state and its one closed action route.
+      '/api/updates',
+      '/api/updates/action',
       '/api/work-index',
     ].sort(),
   );
@@ -1472,7 +1475,12 @@ test('074 About reads through the shared helper, bound to the hook lifetime and 
   assert.match(reader, /return json\('\/api\/about', \{ signal: read\.signal \}\)/);
   assert.match(reader, /\}, \[\]\);/, 'a stable reader cannot rerun an entry read');
   assert.match(hook, /respond, capture, packAction, requestImport, openReview, readHistory, readAbout \};/);
-  for (const exact of ['About · Read only', 'Settings sections', 'Recorded installation metadata; installed files are not verified.',
+  // 072 replaces the footer's "About · Read only" with the recorded installed version, and the
+  // channel row's label with "Update channel"; the rest of About's copy is unchanged. The footer's
+  // version is a template literal, so its fixed parts are what the published bundle keeps.
+  assert.equal(bundle.includes('About · Read only'), false, 'About has actions, so its footer no longer claims Read only');
+  for (const exact of ['About · Reading…', '`Installed ${', 'About · Installation information unavailable', 'Update channel', 'Settings sections',
+    'Recorded installation metadata; installed files are not verified.',
     'Recorded installation metadata is unavailable, so no version is shown.', 'https://github.com/E-G-C/dude',
     'Development (main), based on ', '["installedRef","sourceRef","baseRelease"]']) {
     assert.equal(bundle.includes(exact), true, `published app.js retains About copy: ${exact}`);
