@@ -8953,7 +8953,9 @@ isolatedTest('T003 an unconfirmed stop keeps its root and its reader slot, at mo
     const expired = await Promise.all(waiting);
     for (const { coverage, elapsed } of expired) {
       assert.deepEqual(coverage, { state: 'unavailable', reason: 'catalog_timeout', message: 'The catalog read timed out. Reload to try a fresh read.' });
-      assert.ok(elapsed >= 60_000 && elapsed < 62_500, `the wait ended with its window: ${elapsed.toFixed(0)} ms`);
+      // Node starts and truncates timers in whole milliseconds of the event loop's clock, which on Linux can be the
+      // coarse monotonic clock, so a wait can end a few milliseconds before a window measured with `performance.now()`.
+      assert.ok(elapsed >= 60_000 - 5 && elapsed < 62_500, `the wait ended with its window: ${elapsed.toFixed(0)} ms`);
     }
     assert.equal(spy.readers().length, 4, 'no slot was ever released into another reader');
     assert.equal(fs.readdirSync(fixture.scratch).length, 4, 'the kept roots stay; nothing reclaims them');
