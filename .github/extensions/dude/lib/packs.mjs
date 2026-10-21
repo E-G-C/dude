@@ -77,7 +77,7 @@ const READER_BUDGET_MS = Object.freeze({ local: 5_000, github: 30_000, git: 55_0
 const ACQUISITION_WINDOW_MS = 60_000;
 // A timed-out or cancelled reader has this long to confirm that its whole
 // process tree stopped before its read reports unconfirmed cleanup.
-const STOP_CONFIRM_MS = 2_000;
+export const STOP_CONFIRM_MS = 2_000;
 // No more helpers than this are active at once, across every read in this process.
 const MAX_READERS = 4;
 // No more reads than this wait for a slot, across every read in this process. A
@@ -95,7 +95,8 @@ const READER = fileURLToPath(new URL('./catalog-reader.mjs', import.meta.url));
 const PACK_ACTION = fileURLToPath(new URL('./pack-action.mjs', import.meta.url));
 // A pack action child has this long to reach its write gate, or to answer its
 // preview: above Compose's own 120-second bound for one selected GitHub pack.
-const PACK_ACTION_DEADLINE_MS = 130_000;
+// A Canvas update preparation allows the same window for each pack it prepares.
+export const PACK_ACTION_DEADLINE_MS = 130_000;
 const CATALOG_FAILURES = Object.freeze({
   catalog_timeout: 'The catalog read timed out. Reload to try a fresh read.',
   catalog_cleanup_failed: 'The catalog reader could not confirm process cleanup.',
@@ -234,6 +235,29 @@ function readerLaunch(root, script) {
     : { args: [script, root], env: {} };
 }
 
+/**
+ * How to run `script` as a plain Node child whose own children are started
+ * with `process.execPath` too, as the bundle upgrade engine starts its linter
+ * and Compose. A helper relaunched through the CLI's single executable (see
+ * `readerLaunch`) would give those children that executable, which runs no
+ * script of theirs, so a child that the CLI's executable would relaunch through
+ * its bootstrap is the `node` on PATH instead, which the bundle-maintenance
+ * scripts require (docs/setup.md). Spawning that bare name searches PATH from
+ * the spawn's environment, after the spawn's working directory on Windows. A
+ * host that is Node itself, with or without a bootstrap, runs the script with
+ * its own executable. No launch variable is set either way: the script imports
+ * no CLI or SDK module.
+ * @param {string} root
+ * @param {string} script the helper module's absolute path
+ * @returns {{ command: string, args: string[] }}
+ */
+export function nodeChildLaunch(root, script) {
+  const relaunched = readerLaunch(root, script).args[0] !== script;
+  const executable = path.basename(process.execPath).toLowerCase();
+  const node = executable === 'node' || executable === 'node.exe';
+  return { command: relaunched && !node ? 'node' : process.execPath, args: [script, root] };
+}
+
 /** An empty `credential.helper` in `GIT_CONFIG_PARAMETERS`' oldest format, which every Git reads. */
 const CREDENTIAL_HELPER_RESET = "'credential.helper='";
 /** In a reader's temporary root: the empty folder that is its Git's home (named to the reader by `CATALOG_GIT_HOME_ENV`), and the file that carries the user's own Git configuration. */
@@ -345,13 +369,14 @@ async function readerGitEnvironment(environment, temporary) {
 
 /**
  * Stop the reader's whole process tree, including the real Git behind a PATH
- * wrapper. `done(true)` confirms the stop only for a tree kill that reported
- * no failure. A stop that is never confirmed ends at the caller's stop window,
+ * wrapper; a Canvas update child (upgrade-action.mjs) is stopped the same way.
+ * `done(true)` confirms the stop only for a tree kill that reported no
+ * failure. A stop that is never confirmed ends at the caller's stop window,
  * which reports it as unconfirmed.
  * @param {import('node:child_process').ChildProcess} child
  * @param {(stopped: boolean) => void} done
  */
-function stopTree(child, done) {
+export function stopTree(child, done) {
   if (process.platform === 'win32') {
     childProcess.execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'],
       { timeout: STOP_CONFIRM_MS, windowsHide: true }, error => {

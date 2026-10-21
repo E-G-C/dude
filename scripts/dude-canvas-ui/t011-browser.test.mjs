@@ -40,7 +40,7 @@ const BROWSER = process.env.DUDE_CANVAS_BROWSER
   ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
 const REQUIRED = process.env.DUDE_CANVAS_BROWSER_REQUIRED === '1';
 const DEADLINE = 20_000;
-const PUBLISHED_APP_SHA256 = '1d3271f702cfad403847c9870a7a21a28bb2652bd2bccb8b56a340ae1461569f';
+const PUBLISHED_APP_SHA256 = '7c245184a0239dbcc100169f466c6b8c84d31e906f203187e35ca3ca1697e10e';
 /*
  * 085 App theme: every Canvas server here serves `/` with the one Canvas
  * preference, read from this owned, project-relative home, never the real
@@ -4030,7 +4030,7 @@ test('075 About: production provider shows the recorded base and retains work, d
         ['Dude version', ABOUT_KNOWN_BASE],
         ['Author', 'Enrique Gonzalez'],
         ['Repository', 'https://github.com/E-G-C/dude'],
-        ['Recorded channel/ref', 'Development (main)'],
+        ['Update channel', 'Development (main)'],
       ],
       note: 'Recorded installation metadata; installed files are not verified.',
       link: {
@@ -4039,7 +4039,7 @@ test('075 About: production provider shows the recorded base and retains work, d
         target: '_blank',
         rel: 'noopener noreferrer',
       },
-      footer: 'About · Read only',
+      footer: `About · ${ABOUT_KNOWN_BASE}`,
       reloadVisible: false,
       selectedSection: 'about',
     });
@@ -18573,7 +18573,7 @@ test('085 App theme: Review saves, restores, seals, and captures under both appe
       if (await evaluate(page, `${control}.checked`) !== value) await click(page, control);
       await until(() => evaluate(page, `${control}.checked === ${value} && !document.querySelector('[data-appearance-pending]')
         && document.documentElement.getAttribute('data-dude-follow-app-theme') === '${value}'`), `follow ${value}`);
-      assert.equal(fs.readFileSync(PREFERENCE_FILE, 'utf8'), JSON.stringify({ followAppTheme: value }));
+      assert.equal(fs.readFileSync(PREFERENCE_FILE, 'utf8'), JSON.stringify({ followAppTheme: value, checkForUpdatesOnSessionStart: true }));
     };
     /** Draw one box with a comment and save it. @param {string} label */
     const annotate = async (label) => {

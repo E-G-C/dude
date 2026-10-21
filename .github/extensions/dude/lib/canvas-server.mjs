@@ -5,7 +5,9 @@
  * One loopback HTTP server per open canvas instance. It serves a closed route
  * allowlist only: the browser application, lifecycle event stream, viewport
  * report, private projection paths, and optional bounded Needs You operations.
- * Human handoffs belong to the joined provider, not a Canvas instance.
+ * Human handoffs belong to the joined provider, not a Canvas instance. The
+ * update routes read and act on the extension's one update controller, whose
+ * write gate this server enforces (see `UPDATES_ROUTE`).
  *
  * Dependency-free ESM, Node >= 20. `stdout` belongs to JSON-RPC, so nothing
  * here writes to it — every user-visible line goes through the injected `log`.
@@ -35,7 +37,8 @@ import { REVIEW_LIMITS, ReviewError } from './review.mjs';
 import { addPackSource, packActionRevision, readPacks, removePackSource, runPackAction } from './packs.mjs';
 import { readProjectArtifacts } from './project-artifacts.mjs';
 import { readInstallationRecord } from './about.mjs';
-import { parseCanvasPreferences, readCanvasPreferences, writeCanvasPreferences } from './canvas-preferences.mjs';
+import { parseCanvasPreferencePatch, readCanvasPreferences, saveCanvasPreference } from './canvas-preferences.mjs';
+import { UpdateError } from './bundle-upgrade.mjs';
 
 const UI_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
 
@@ -92,20 +95,24 @@ const ABOUT_UNAVAILABLE = Object.freeze({
 });
 
 /**
- * The user's one Canvas preference, which every instance shares through one
+ * The user's two Canvas preferences, which every instance shares through one
  * file outside every repository (see `canvas-preferences.mjs`). Two exact
  * requests with closed bodies:
  *
- *   GET  -> 200 {"followAppTheme":<boolean>}, false when nothing was saved
- *   POST {"followAppTheme":<boolean>} -> 200 {"followAppTheme":<the saved boolean>}
+ *   GET  -> 200 {"followAppTheme":<boolean>,"checkForUpdatesOnSessionStart":<boolean>},
+ *           false and true when nothing was saved
+ *   POST {"followAppTheme":<boolean>} or {"checkForUpdatesOnSessionStart":<boolean>}
+ *        -> 200 the complete saved document, the other choice kept
  *
  * A malformed or unreadable preference is 503 {"error":"preference_unreadable"},
- * never false. A failed save is 500 {"error":"preference_write_failed"} and
+ * never the defaults, and a save over it is refused with the same answer and
+ * writes nothing. A failed save is 500 {"error":"preference_write_failed"} and
  * leaves the previous preference in place. A save needs this instance's own
- * Origin (403) and a JSON content type (415); any other body, including a root,
- * path or extra field, is 400 {"error":"invalid_input"}, or 413 past the body
- * limit. A read with a body is 400, and another method, a query or a suffix is
- * 404. Neither involves a workspace, pack, Needs You request or agent.
+ * Origin (403) and a JSON content type (415); any other body, including both
+ * keys, a root, path or extra field, is 400 {"error":"invalid_input"}, or 413
+ * past the body limit. A read with a body is 400, and another method, a query
+ * or a suffix is 404. Neither involves a workspace, pack, Needs You request or
+ * agent, and saving either choice starts no update check.
  */
 const PREFERENCES_ROUTE = '/api/canvas-preferences';
 
@@ -209,8 +216,10 @@ function parseSourceBody(value) {
  *   after it was allowed to write is uncertain.
  * - apply 409 {error}: `changed` (an unknown or spent token, or installed packs,
  *   saved sources or the workspace changed since the preview; nothing was
- *   written), `busy` (another apply runs; the token is kept), or `cancelled`
- *   (stopped before writing; nothing changed).
+ *   written), `busy` (another apply runs; the token is kept), `cancelled`
+ *   (stopped before writing; nothing changed), or `update_in_progress` or
+ *   `new_session_required` (a Canvas update was admitted before this apply
+ *   could write; nothing was written).
  * - cancel 200 {cancelled:true} before writing starts, which also discards an
  *   unused token, else 409 {error:'too_late'}, and the apply answers its real
  *   result.
@@ -247,6 +256,200 @@ function parseActionBody(value) {
 }
 
 /**
+ * The Canvas update routes (072), over the extension's one update controller
+ * (`bundle-upgrade.mjs`). They involve no Needs You request, waiter, receipt or
+ * session message, and the browser names no repository, ref, root, path,
+ * command, executable, file list or bytes: the server derives all of them.
+ *
+ *   GET  /api/updates         -> 200 this session's update state; it reads the
+ *                                installation record and acquires nothing
+ *   POST /api/updates/action  -> 200 the state after one closed operation:
+ *     {"op":"check"}                          one release check (eligible installs only)
+ *     {"op":"later"}                          hide the notice for this session
+ *     {"op":"preview","includePacks":<bool>}  prepare the newest release, replacing the live update
+ *     {"op":"cancel"}                         dispose the live update before it writes
+ *     {"op":"apply","id":<32 hex>}            OK: apply exactly that ready result, once
+ *
+ * Refusals change nothing: 409 {"error": not_eligible | no_update | stale |
+ * busy | update_in_progress | new_session_required | too_late |
+ * identity_mismatch}, 400 or 413 {"error":"invalid_input"}, 403 for another
+ * origin, 415 for another content type, 404 for another method, query or
+ * suffix, and 503 {"error":"updates_unavailable"} for a Canvas with no current
+ * workspace or no controller. `busy` refuses OK while another Canvas change of
+ * this process can still write (see `committing`). Progress and outcomes
+ * arrive as `updates` events on /events, which carry no payload: the browser
+ * reads the state again.
+ */
+const UPDATES_ROUTE = '/api/updates';
+const UPDATES_ACTION_ROUTE = '/api/updates/action';
+const UPDATES_UNAVAILABLE = Object.freeze({ error: 'updates_unavailable', message: 'This Canvas has no current workspace.' });
+
+/**
+ * The closed bodies of the update action route. Anything else, including a
+ * root, path, repository, ref, command or file list, is refused as input.
+ * @param {unknown} value
+ * @returns {{ op: 'check' | 'later' | 'cancel' } | { op: 'preview', includePacks: boolean } | { op: 'apply', id: string }}
+ */
+function parseUpdateBody(value) {
+  const invalid = () => new UpdateError('invalid_input', 400);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid();
+  const body = /** @type {Record<string, unknown>} */ (value);
+  const keys = Object.keys(body);
+  if ((body.op === 'check' || body.op === 'later' || body.op === 'cancel') && keys.length === 1) return { op: body.op };
+  if (body.op === 'preview' && keys.length === 2 && typeof body.includePacks === 'boolean') {
+    return { op: 'preview', includePacks: body.includePacks };
+  }
+  if (body.op === 'apply' && keys.length === 2 && typeof body.id === 'string' && /^[0-9a-f]{32}$/.test(body.id)) {
+    return { op: 'apply', id: body.id };
+  }
+  throw invalid();
+}
+
+/**
+ * The workspace-changing actions an old Canvas stops at the update write gate:
+ * every Needs You response, capture and Review write, imports, saved sources
+ * and pack actions.
+ */
+const GATED_ROUTES = Object.freeze([
+  '/api/needs-you/respond', '/api/needs-you/capture-receipt', '/api/needs-you/capture',
+  '/api/needs-you/review/open', '/api/needs-you/review/save', '/api/needs-you/review/seal',
+  ...Object.keys(PROVIDER_REQUEST_ROUTES), SOURCES_ROUTE, ACTION_ROUTE,
+]);
+
+/**
+ * Admitted Canvas workspace changes, in any Canvas of this process, that can
+ * still commit without asking the update write gate again: a Needs You action
+ * or an import request from its admission, a pack removal from its start, and a
+ * pack install or refresh once its write gate said go. OK is refused as `busy`
+ * while one holds a slot. A source change holds none, because its last gate
+ * check comes immediately before its synchronous save. Like the gate, this is
+ * in-process only.
+ */
+let committing = 0;
+
+/**
+ * Hold one commit slot until the returned function releases it, once.
+ * @returns {() => void}
+ */
+function holdCommit() {
+  committing += 1;
+  let held = true;
+  return () => {
+    if (!held) return;
+    held = false;
+    committing -= 1;
+  };
+}
+
+/**
+ * The update write gate's refusal of a workspace-changing action, or null while
+ * the gate is open. Each action asks when its request arrives, again once its
+ * body is read, and at its last check before it writes.
+ * @param {CanvasInstance} instance
+ * @returns {'update_in_progress' | 'new_session_required' | null}
+ */
+function gateRefusal(instance) {
+  const gate = instance.updates?.gate ?? 'open';
+  return gate === 'open' ? null : gate === 'applying' ? 'update_in_progress' : 'new_session_required';
+}
+
+/** Refuse a workspace-changing action once an update was admitted. @param {CanvasInstance} instance */
+function requireOpenWriteGate(instance) {
+  const refusal = gateRefusal(instance);
+  if (refusal) throw new UpdateError(refusal);
+}
+
+/** @param {unknown} value */
+const escapeHtml = value => String(value).replace(/[&<>"']/g, character => `&#${character.charCodeAt(0)};`);
+
+/** The inert page's whole style: Fluent's page colors and type, or the GitHub app's while following it. */
+const INERT_STYLE = [
+  ':root{color-scheme:light dark}',
+  'body{margin:0;background:#ffffff;color:#242424;font-family:"Segoe UI","Segoe UI Web (West European)",-apple-system,BlinkMacSystemFont,Roboto,"Helvetica Neue",sans-serif;font-size:14px;line-height:20px}',
+  '@media (prefers-color-scheme:dark){body{background:#292929;color:#ffffff}}',
+  ':root[data-dude-follow-app-theme="true"] body{background:var(--background-color-default,Canvas);color:var(--text-color-default,CanvasText);font-family:var(--font-sans,"Segoe UI",-apple-system,BlinkMacSystemFont,Roboto,"Helvetica Neue",sans-serif)}',
+  'main{box-sizing:border-box;max-width:76ch;padding:24px;display:flex;flex-direction:column;gap:12px;overflow-wrap:anywhere}',
+  'p,h1,ul{margin:0}',
+  '.eyebrow{font-size:12px;line-height:16px;color:#616161}',
+  '@media (prefers-color-scheme:dark){.eyebrow{color:#adadad}}',
+  ':root[data-dude-follow-app-theme="true"] .eyebrow{color:inherit}',
+  'h1{font-size:20px;line-height:28px;font-weight:600}',
+  'code{font-family:Consolas,"Courier New",Courier,monospace;font-size:12px}',
+  'ul{padding-left:20px}',
+  '@media (max-width:479px){main{padding:16px 8px}}',
+].join('\n');
+
+/**
+ * The page an old Canvas serves once an update has started writing: inert, with
+ * no script and no application bundle, built by this process's own code rather
+ * than read from the files the update may have replaced. Its words follow this
+ * session's update: applying, installed, restored, or restoration unconfirmed
+ * with the paths to inspect. Below them come the outcome's cleanup sentence and
+ * every temporary folder this session kept, with why: after a reload this page
+ * is the only one the old session can show.
+ * @param {any} state the update controller's state
+ * @param {boolean} followAppTheme
+ */
+function inertPage(state, followAppTheme) {
+  const update = state.update ?? {};
+  const code = (/** @type {unknown} */ value) => `<code>${escapeHtml(value)}</code>`;
+  /** @type {string} */
+  let title;
+  /** @type {string[]} */
+  let body;
+  if (update.phase === 'applied') {
+    title = `Start a new session to use Dude ${escapeHtml(update.toRef)}`;
+    body = [
+      `<p>Dude ${escapeHtml(update.toRef)} is installed in this project, but this session still runs ${escapeHtml(state.runningRef ?? update.fromRef)}. Canvas can't be used in this session anymore.</p>`,
+      `<p>The changes are uncommitted on ${code(update.branch)}. Review and commit them when you're ready.</p>`,
+    ];
+  } else if (update.phase === 'restored') {
+    title = 'Start a new session to keep using Canvas';
+    body = ['<p>The update didn\'t finish, and Dude restored your files. Canvas stops in a session once an update starts writing files.</p>'];
+  } else if (update.phase === 'restoration_unconfirmed') {
+    const paths = Array.isArray(update.paths) ? update.paths : [];
+    title = 'Start a new session to keep using Canvas';
+    body = paths.length > 0 ? [
+      '<p>The update didn\'t finish, and Dude couldn\'t confirm that these files were put back:</p>',
+      `<ul>${paths.map(file => `<li>${code(file)}</li>`).join('')}</ul>`,
+      '<p>Inspect them before you start a new session, for example with git status.</p>',
+    ] : ['<p>The update didn\'t finish, and Dude couldn\'t confirm that your files were put back. Inspect them before you start a new session, for example with git status.</p>'];
+  } else {
+    title = 'Dude is updating this project';
+    body = ['<p>Canvas can\'t be used while the update writes and checks files. Reload this page to see the result.</p>'];
+  }
+  if (typeof update.cleanup === 'string' && update.cleanup) body.push(`<p>${escapeHtml(update.cleanup)}</p>`);
+  const kept = Array.isArray(state.kept) ? state.kept : [];
+  if (kept.length > 0) {
+    body.push(
+      '<p>Dude kept these temporary folders because it couldn\'t confirm that they were cleaned up:</p>',
+      `<ul>${kept.map((/** @type {any} */ entry) => `<li>${code(entry.root)}: ${escapeHtml(entry.reason)}</li>`).join('')}</ul>`,
+      '<p>Remove them yourself once nothing uses them.</p>',
+    );
+  }
+  return [
+    '<!doctype html>',
+    `<html lang="en" data-dude-follow-app-theme="${followAppTheme}">`,
+    '<head>',
+    '<meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    '<meta name="color-scheme" content="light dark">',
+    '<title>Dude</title>',
+    `<style>\n${INERT_STYLE}\n</style>`,
+    '</head>',
+    '<body>',
+    '<main aria-labelledby="handoff-title">',
+    '<p class="eyebrow">Dude</p>',
+    `<h1 id="handoff-title">${title}</h1>`,
+    ...body,
+    '</main>',
+    '</body>',
+    '</html>',
+    '',
+  ].join('\n');
+}
+
+/**
  * @typedef {object} CanvasInstance
  * @property {string} instanceId
  * @property {import('node:http').Server} server
@@ -263,6 +466,8 @@ function parseActionBody(value) {
  * @property {PackReadSlot|null} catalogRead The coalesced explicit discovery, which also acquires catalogs.
  * @property {PackToken|null} packToken The one pack action token: the last unblocked preview's, until used or replaced.
  * @property {PackApply|null} packApply The one pack action apply that runs, if any.
+ * @property {ReturnType<import('./bundle-upgrade.mjs').createBundleUpgrade>|null} updates The extension's one update controller.
+ * @property {(()=>void)|null} unsubscribeUpdates
  */
 /** @typedef {{root:string,controller:AbortController,readers:number,promise:Promise<Awaited<ReturnType<typeof readPacks>> & {project: Awaited<ReturnType<typeof readProjectArtifacts>>}>}} PackReadSlot */
 /**
@@ -273,7 +478,8 @@ function parseActionBody(value) {
  *   binding: import('./packs.mjs').PackBinding }} PackToken
  */
 /**
- * @typedef {{ token: string, went: boolean, changed: boolean, cancel: () => void, promise: Promise<unknown> | null }} PackApply
+ * @typedef {{ token: string, went: boolean, changed: boolean, refused: 'update_in_progress' | 'new_session_required' | null,
+ *   cancel: () => void, promise: Promise<unknown> | null }} PackApply
  */
 
 /**
@@ -418,7 +624,9 @@ async function readInstalledSurface(instance, root, signal, discover) {
  * One closed body of the pack action route (see `ACTION_ROUTE`). The preview's
  * token binds what the apply must still find, and is spent before anything else
  * happens. The child's write gate answers go only while the workspace is still
- * the previewed one, nothing was cancelled and the Canvas lifetime goes on.
+ * the previewed one, nothing was cancelled, the Canvas lifetime goes on and no
+ * update was admitted. An apply that may write holds a commit slot until it
+ * ends (see `committing`).
  * @param {CanvasInstance} instance
  * @param {import('node:http').ServerResponse} res
  * @param {ReturnType<typeof parseActionBody>} body
@@ -433,6 +641,8 @@ async function handlePackAction(instance, res, body) {
     }
   };
   current();
+  // Admitted only now that its body is read: an update may have been admitted meanwhile.
+  requireOpenWriteGate(instance);
   if (body.op === 'cancel') {
     const running = instance.packApply;
     if (instance.packToken?.token === body.token) instance.packToken = null;
@@ -484,28 +694,101 @@ async function handlePackAction(instance, res, body) {
     const stop = new AbortController();
     const signal = AbortSignal.any([instance.signal, disconnected.signal, stop.signal]);
     /** @type {PackApply} */
-    const apply = { token: bound.token, went: bound.operation === 'remove', changed: false, cancel: () => stop.abort(), promise: null };
-    const running = runPackAction(root, signal, { op: 'apply', operation: bound.operation, name: bound.name, binding: bound.binding }, {
-      gate: () => {
-        if (signal.aborted) return false;
-        try { current(); } catch { apply.changed = true; return false; }
-        if (!unchanged()) { apply.changed = true; return false; }
-        apply.went = true;
-        return true;
-      },
-    });
-    apply.promise = running;
-    instance.packApply = apply;
+    const apply = { token: bound.token, went: bound.operation === 'remove', changed: false, refused: null,
+      cancel: () => stop.abort(), promise: null };
+    // A removal may write from its start; an install or a refresh only once its write gate says go.
+    let release = apply.went ? holdCommit() : null;
     try {
+      const running = runPackAction(root, signal, { op: 'apply', operation: bound.operation, name: bound.name, binding: bound.binding }, {
+        gate: () => {
+          if (signal.aborted) return false;
+          const refusal = gateRefusal(instance);
+          if (refusal) { apply.refused = refusal; return false; }
+          try { current(); } catch { apply.changed = true; return false; }
+          if (!unchanged()) { apply.changed = true; return false; }
+          apply.went = true;
+          release = holdCommit();
+          return true;
+        },
+      });
+      apply.promise = running;
+      instance.packApply = apply;
       const { outcome } = await running;
       if (res.destroyed) return;
-      if (!apply.went && apply.changed) sendJson(res, 409, { error: 'changed' });
+      if (!apply.went && apply.refused) sendJson(res, 409, { error: apply.refused });
+      else if (!apply.went && apply.changed) sendJson(res, 409, { error: 'changed' });
       else if (!apply.went && signal.aborted) sendJson(res, 409, { error: 'cancelled' });
       else sendJson(res, 200, outcome);
     } finally {
+      release?.();
       if (instance.packApply === apply) instance.packApply = null;
     }
   } finally { res.off('close', onClose); }
+}
+
+/**
+ * The two update routes (see `UPDATES_ROUTE`). The shared Host/Origin guard has
+ * already run, and its opaque Review exception never reaches them.
+ * @param {CanvasInstance} instance
+ * @param {import('node:http').IncomingMessage} req
+ * @param {import('node:http').ServerResponse} res
+ * @param {string} pathname
+ */
+async function handleUpdates(instance, req, res, pathname) {
+  const read = pathname === UPDATES_ROUTE;
+  if (req.url !== pathname || req.method !== (read ? 'GET' : 'POST')) {
+    sendJson(res, 404, { error: 'Not found.' });
+    return;
+  }
+  if (read && (Number(req.headers['content-length'] ?? 0) !== 0 || req.headers['transfer-encoding'])) {
+    sendJson(res, 400, { error: 'invalid_input' });
+    return;
+  }
+  if (!read && req.headers.origin !== new URL(instance.url).origin) {
+    sendJson(res, 403, { error: 'Same-origin action required.' });
+    return;
+  }
+  if (!read && req.headers['content-type']?.split(';', 1)[0].trim().toLowerCase() !== 'application/json') {
+    sendJson(res, 415, { error: 'JSON action required.' });
+    return;
+  }
+  const updates = instance.updates;
+  const root = instance.readInput?.root;
+  if (!updates || !root) {
+    sendJson(res, 503, UPDATES_UNAVAILABLE);
+    return;
+  }
+  /** Root and lifetime, checked as the other workspace routes check them. */
+  const current = () => {
+    if (instance.signal.aborted || instance.readInput?.root !== root || !updates.matchesRoot(root)) {
+      throw new UpdateError('identity_mismatch');
+    }
+  };
+  try {
+    const body = read ? null : parseUpdateBody(await readJsonBody(req));
+    current();
+    let state;
+    if (!body) state = await updates.read();
+    else if (body.op === 'check') state = await updates.check();
+    else if (body.op === 'later') state = await updates.later();
+    else if (body.op === 'cancel') state = await updates.cancel();
+    else if (body.op === 'preview') state = await updates.preview({ includePacks: body.includePacks, owner: instance.instanceId });
+    else {
+      // Another Canvas change of this process that can still write is let finish first.
+      if (committing > 0) throw new UpdateError('busy');
+      state = await updates.apply({ id: body.id });
+    }
+    if (res.destroyed) return;
+    // A read is delivered only to the still-current workspace; an action's result is its own.
+    if (read) current();
+    sendJson(res, 200, state);
+  } catch (error) {
+    if (res.headersSent || res.destroyed) return;
+    if (error instanceof UpdateError) sendJson(res, error.status, { error: error.code });
+    else if (error instanceof NeedsYouError || error instanceof SyntaxError) {
+      sendJson(res, error instanceof NeedsYouError ? error.status : 400, { error: 'invalid_input' });
+    } else sendJson(res, 503, UPDATES_UNAVAILABLE);
+  }
 }
 
 /**
@@ -515,6 +798,36 @@ async function handlePackAction(instance, res, body) {
  */
 async function handleRequest(instance, req, res) {
   const { pathname } = new URL(req.url ?? '/', instance.url);
+
+  // The update write gate: from an admitted update apply, this Canvas serves
+  // none of its interface assets, which the update may be replacing, and admits
+  // no workspace-changing action. A reload gets the inert page instead. An
+  // apply the engine refused before writing reopens the gate; any write
+  // attempt keeps it closed for this process. Each action asks the gate again
+  // once its body is read, and at its last check before it writes.
+  const refusal = gateRefusal(instance);
+  if (refusal) {
+    if (Object.hasOwn(ASSET_ROUTES, pathname) || Object.hasOwn(REVIEW_ASSET_ROUTES, pathname)) {
+      if (req.method !== 'GET' || pathname !== '/') {
+        sendJson(res, 404, { error: 'Not found.' });
+        return;
+      }
+      const [state, read] = await Promise.all([/** @type {NonNullable<CanvasInstance['updates']>} */ (instance.updates).read(), readCanvasPreferences()]);
+      res.writeHead(200, { 'Cache-Control': 'no-store', 'Content-Type': 'text/html; charset=utf-8',
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'" });
+      res.end(inertPage(state, !('error' in read) && read.followAppTheme));
+      return;
+    }
+    if (req.method === 'POST' && GATED_ROUTES.includes(pathname)) {
+      sendJson(res, 409, { error: refusal });
+      return;
+    }
+  }
+
+  if (pathname === UPDATES_ROUTE || pathname === UPDATES_ACTION_ROUTE) {
+    await handleUpdates(instance, req, res, pathname);
+    return;
+  }
 
   if (instance.needsYou && req.method === 'GET' && req.url === pathname
     && pathname.startsWith('/review-source/')) {
@@ -576,19 +889,24 @@ async function handleRequest(instance, req, res) {
       }
       const isReview = pathname.startsWith('/api/needs-you/review/');
       const body = await readJsonBody(req, isReview ? REVIEW_LIMITS.bodyBytes : NEEDS_YOU_LIMITS.bodyBytes);
-      const reviewOptions = { signal: instance.signal, origin: new URL(instance.url).origin };
-      let result;
-      if (pathname === '/api/needs-you/review/open') result = await provider.openReview(body, reviewOptions);
-      else if (pathname === '/api/needs-you/review/save') result = await provider.saveReview(body, reviewOptions);
-      else if (pathname === '/api/needs-you/review/seal') result = await provider.sealReview(body, reviewOptions);
-      else {
-        result = pathname === '/api/needs-you/respond'
-          ? await provider.respond(body, { signal: instance.signal })
-          : pathname === '/api/needs-you/capture-receipt'
-            ? await provider.issueCaptureReceipt(body)
-            : await provider.captureIdea(body, { signal: instance.signal });
-      }
-      sendJson(res, 202, result);
+      // Admitted only now that its body is read; it may write until it ends, so OK waits for it.
+      requireOpenWriteGate(instance);
+      const release = holdCommit();
+      try {
+        const reviewOptions = { signal: instance.signal, origin: new URL(instance.url).origin };
+        let result;
+        if (pathname === '/api/needs-you/review/open') result = await provider.openReview(body, reviewOptions);
+        else if (pathname === '/api/needs-you/review/save') result = await provider.saveReview(body, reviewOptions);
+        else if (pathname === '/api/needs-you/review/seal') result = await provider.sealReview(body, reviewOptions);
+        else {
+          result = pathname === '/api/needs-you/respond'
+            ? await provider.respond(body, { signal: instance.signal })
+            : pathname === '/api/needs-you/capture-receipt'
+              ? await provider.issueCaptureReceipt(body)
+              : await provider.captureIdea(body, { signal: instance.signal });
+        }
+        sendJson(res, 202, result);
+      } finally { release(); }
       return;
     }
     sendJson(res, 404, { error: 'Not found.' });
@@ -647,9 +965,14 @@ async function handleRequest(instance, req, res) {
     const provider = instance.needsYou;
     const body = await readJsonBody(req, NEEDS_YOU_LIMITS.bodyBytes);
     if (instance.signal.aborted || !provider.matchesRoot(instance.readInput.root)) throw new NeedsYouError('identity_mismatch');
+    // Admitted only now that its body is read; it may hand off until it ends, so OK waits for it.
+    requireOpenWriteGate(instance);
+    const release = holdCommit();
     // Only a provider-issued prepare/submit receipt crosses this boundary.
     // The import's preview, consent, and all writes remain with the owner.
-    sendJson(res, 202, await provider[PROVIDER_REQUEST_ROUTES[pathname]](body, { signal: instance.signal }));
+    try {
+      sendJson(res, 202, await provider[PROVIDER_REQUEST_ROUTES[pathname]](body, { signal: instance.signal }));
+    } finally { release(); }
     return;
   }
 
@@ -680,15 +1003,22 @@ async function handleRequest(instance, req, res) {
       }
     };
     current();
+    // Admitted only now that its body is read. It holds no commit slot: the
+    // update write gate is asked again immediately before its synchronous save.
+    requireOpenWriteGate(instance);
     // A browser that goes away stops the read, and nothing is saved after that.
     const disconnected = new AbortController();
     const onClose = () => disconnected.abort();
     res.once('close', onClose);
     try {
       const signal = AbortSignal.any([instance.signal, disconnected.signal]);
+      const beforeCommit = () => {
+        current();
+        requireOpenWriteGate(instance);
+      };
       const result = body.op === 'add'
-        ? await addPackSource(root, signal, body, { beforeCommit: current })
-        : await removePackSource(root, signal, body, { beforeCommit: current });
+        ? await addPackSource(root, signal, body, { beforeCommit })
+        : await removePackSource(root, signal, body, { beforeCommit });
       if (res.destroyed) return;
       if (result.ok) {
         const { ok, ...saved } = result;
@@ -832,15 +1162,16 @@ async function handleRequest(instance, req, res) {
       sendJson(res, 415, { error: 'JSON action required.' });
       return;
     }
-    let preferences = null, refusal = 400;
-    try { preferences = parseCanvasPreferences(await readJsonBody(req)); }
+    let patch = null, refusal = 400;
+    try { patch = parseCanvasPreferencePatch(await readJsonBody(req)); }
     catch (error) { if (error instanceof NeedsYouError) refusal = error.status; }
-    if (!preferences) {
+    if (!patch) {
       sendJson(res, refusal, { error: 'invalid_input' });
       return;
     }
-    const saved = await writeCanvasPreferences(preferences.followAppTheme);
-    sendJson(res, 'error' in saved ? 500 : 200, saved);
+    // Saving either choice starts no update check.
+    const saved = await saveCanvasPreference(patch);
+    sendJson(res, !('error' in saved) ? 200 : saved.error === 'preference_unreadable' ? 503 : 500, saved);
     return;
   }
 
@@ -943,10 +1274,14 @@ function safeLogger(log) {
  * @param {{root:string,target?:string}|null} readInput
  * @param {AbortSignal} signal
  * @param {CanvasInstance['needsYou']} needsYou
+ * @param {CanvasInstance['updates']} updates
  * @returns {Promise<CanvasInstance>}
  */
-async function startInstance(instanceId, log, projection, readInput, signal, needsYou) {
+async function startInstance(instanceId, log, projection, readInput, signal, needsYou, updates) {
   if (needsYou && (!readInput || !needsYou.matchesRoot(readInput.root))) {
+    throw new NeedsYouError('identity_mismatch');
+  }
+  if (updates && (!readInput || !updates.matchesRoot(readInput.root))) {
     throw new NeedsYouError('identity_mismatch');
   }
   let initialProjection = projection;
@@ -972,6 +1307,8 @@ async function startInstance(instanceId, log, projection, readInput, signal, nee
     catalogRead: null,
     packToken: null,
     packApply: null,
+    updates,
+    unsubscribeUpdates: null,
   };
 
   instance.server.on('request', (req, res) => {
@@ -993,6 +1330,8 @@ async function startInstance(instanceId, log, projection, readInput, signal, nee
       const actionRoute = req.url?.startsWith(ACTION_ROUTE) ?? false;
       const providerRequest = sourcesRoute || actionRoute || Object.keys(PROVIDER_REQUEST_ROUTES).some((route) => req.url?.startsWith(route));
       if (res.headersSent) res.end();
+      // The update write gate's refusal, asked again after a gated action was admitted.
+      else if (error instanceof UpdateError) sendJson(res, error.status, { error: error.code });
       else if (error instanceof ReviewError && (req.url?.startsWith('/api/needs-you/review/')
         || req.url?.startsWith('/api/needs-you/respond') || req.url?.startsWith('/review-source/'))) {
         sendJson(res, error.status, { error: error.code, message: error.message });
@@ -1035,16 +1374,17 @@ async function startInstance(instanceId, log, projection, readInput, signal, nee
 
   const address = instance.server.address();
   instance.url = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}/`;
-  instance.unsubscribeNeedsYou = needsYou?.subscribe((hint) => {
-    // Invalidation only: never put answer/consent/intent payloads in an SSE log.
+  /** Invalidation only: never put answer, consent, intent or update payloads in an SSE log. @param {string} event */
+  const invalidate = event => {
     for (const client of instance.eventClients) {
-      const event = hint === 'workspace' ? 'workspace' : 'needs-you';
       if (!client.write(`event: ${event}\ndata: {"refresh":true}\n\n`)) {
         instance.eventClients.delete(client);
         client.end();
       }
     }
-  }) ?? null;
+  };
+  instance.unsubscribeNeedsYou = needsYou?.subscribe((hint) => invalidate(hint === 'workspace' ? 'workspace' : 'needs-you')) ?? null;
+  instance.unsubscribeUpdates = updates?.subscribe(() => invalidate('updates')) ?? null;
   return instance;
 }
 
@@ -1056,13 +1396,14 @@ async function startInstance(instanceId, log, projection, readInput, signal, nee
  * @param {unknown} [projection] one complete read-only projection
  * @param {{root:string,target?:string}|null} [readInput] canonical refresh input
  * @param {CanvasInstance['needsYou']} [needsYou] shared joined-provider handoff
+ * @param {CanvasInstance['updates']} [updates] the extension's one update controller
  * @returns {Promise<CanvasInstance>}
  */
-export function openInstance(instanceId, log, projection = null, readInput = null, needsYou = null) {
+export function openInstance(instanceId, log, projection = null, readInput = null, needsYou = null, updates = null) {
   let entry = instances.get(instanceId);
   if (!entry) {
     const controller = new AbortController();
-    const starting = startInstance(instanceId, log, projection, readInput, controller.signal, needsYou);
+    const starting = startInstance(instanceId, log, projection, readInput, controller.signal, needsYou, updates);
     const ownedEntry = {
       controller,
       pending: starting,
@@ -1093,6 +1434,8 @@ export function openInstance(instanceId, log, projection = null, readInput = nul
 async function stopInstance(instance) {
   instance.unsubscribeNeedsYou?.();
   instance.unsubscribeNeedsYou = null;
+  instance.unsubscribeUpdates?.();
+  instance.unsubscribeUpdates = null;
   for (const client of instance.eventClients) client.end();
   instance.eventClients.clear();
   // Also await an acquisition whose last HTTP reader already disconnected.
@@ -1102,6 +1445,9 @@ async function stopInstance(instance) {
   // apply that had not started writing; one that had finishes first.
   instance.packToken = null;
   await instance.packApply?.promise?.catch(() => null);
+  // An update this Canvas started ends with it, unless it started writing:
+  // that one finishes or restores whatever happens to this Canvas.
+  await instance.updates?.release(instance.instanceId).catch(() => null);
   if (!instance.server.listening) return;
   await new Promise((resolve) => instance.server.close(() => resolve(undefined)));
 }

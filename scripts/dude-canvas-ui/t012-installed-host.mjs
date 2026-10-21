@@ -58,6 +58,20 @@
  * product: Git's own protocol names the release, and this checkout's Git
  * objects name the packs at its commit. An unreachable network or GitHub, or a
  * spent anonymous GitHub API allowance, reports BLOCKED, never a pass.
+ *
+ * Feature 072 T003 ends the run with the Canvas bundle update, driven through the real loaded Dude
+ * extension of the installed host. One ordinary tagged local upstream (a newer tag with a real change,
+ * built from this workspace's bytes, with an added and a removed skill and a version bump) feeds one
+ * disposable consumer per case, each on its own host whose model refuses every request. The first case
+ * shows the session notice and About status of the real check, the one-dialog preview, a Cancel that
+ * changes nothing, and one OK whose Applying then Checking come from the real boundary, with the old
+ * extension, still loaded, replacing its own files on disk; the old server then refuses every
+ * workspace-changing request, serves no replacement asset, and gives a reload the inert "Start a new
+ * session" page; a new host session then reads the installed version as its running one. Three more
+ * cases hold the update at its real boundaries: a read-only file the update must replace (Files
+ * restored), a browser closed while the update is mid-flight (the update still finishes), and, on
+ * Windows, a file another process holds open (Restoration unconfirmed, with its path). No case repeats
+ * an update by itself or has an agent turn, and every process a case started is confirmed gone.
  */
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -168,6 +182,8 @@ const RUN = fileURLToPath(pathToFileURL(fs.realpathSync(fs.mkdtempSync(path.join
 const PREFERENCE_HOME = fs.mkdtempSync(path.join(ROOT, '.dude-canvas-test-085-'));
 process.on('exit', () => fs.rmSync(PREFERENCE_HOME, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
 const DEADLINE = 30_000;
+/** How long a Canvas close may take: its server waits for a browser to drop a connection it never used. */
+const CANVAS_CLOSE_DEADLINE = 25_000;
 const MAX_MODEL_BODY = 4 * 1024 * 1024;
 const REVIEW_SLUG = 'dude-canvas-workspace-integration';
 const REVIEW_ID = '062';
@@ -232,20 +248,23 @@ const installedAboutRows = (version, channel) => [
   ['Dude version', version],
   ['Author', 'Enrique Gonzalez'],
   ['Repository', 'https://github.com/E-G-C/dude'],
-  ['Recorded channel/ref', channel],
+  ['Update channel', channel],
 ];
 /**
  * The two installed records About is observed with. The release case is the
  * builder's own release metadata, which carries no base record; the pack
  * fixture that observes it names its own workspace as the upstream
  * (`seedLocalUpstream`). The development case is pre-seeded before its host
- * starts, as a confirmed `main` upgrade leaves it.
+ * starts, as a confirmed `main` upgrade leaves it. 072 names the channel row
+ * "Update channel" and shows the recorded version in the footer, in place of
+ * "Read only", so each case carries the footer it must show.
  */
 const RELEASE_ABOUT = Object.freeze({
   label: 'release',
   recorded: { installedRef: 'v0.0.0-t012', sourceRef: 'latest', sourceRepo: INSTALLED_SOURCE_REPO, baseRecord: null },
   baseRelease: null,
-  rows: installedAboutRows('Recorded ref (v0.0.0-t012)', 'Stable releases (latest)'),
+  rows: installedAboutRows('Recorded ref (v0.0.0-t012)', 'Latest release'),
+  footer: 'About · Recorded ref (v0.0.0-t012)',
 });
 const DEVELOPMENT_ABOUT = Object.freeze({
   label: 'development',
@@ -257,8 +276,9 @@ const DEVELOPMENT_ABOUT = Object.freeze({
   },
   baseRelease: 'v1.3.0',
   rows: installedAboutRows('Development (main), based on v1.3.0', 'Development (main)'),
+  footer: 'About · Development (main), based on v1.3.0',
 });
-const SOURCE_APP_SHA256 = '1d3271f702cfad403847c9870a7a21a28bb2652bd2bccb8b56a340ae1461569f';
+const SOURCE_APP_SHA256 = '7c245184a0239dbcc100169f466c6b8c84d31e906f203187e35ca3ca1697e10e';
 const TASKS_PATH = path.posix.join(path.posix.dirname(SPEC_PATH), 'tasks.md');
 const DONE_IDEA_PATH = '.dude/ideas/052-dude-canvas-ui.md';
 const DONE_SPEC_PATH = '.dude/specs/052-dude-canvas-ui/spec.md';
@@ -4408,6 +4428,15 @@ function windowsHostEnvironment(data) {
   };
 }
 
+/**
+ * The temporary folder a host owns: the `tmp` folder `createInstalledHost` makes in the host's data
+ * folder. Where a host is given it (see `ownedTemporary`), the product writes there and a probe reads there.
+ * @param {string} data
+ */
+function hostTemporary(data) {
+  return path.join(data, 'tmp');
+}
+
 /** Windows path identity for one executable. @param {string} actual @param {string} expected */
 function sameExecutable(actual, expected) {
   return path.resolve(actual).toLowerCase() === path.resolve(expected).toLowerCase();
@@ -4791,12 +4820,18 @@ async function driveDefaultSourceDiscovery() {
  * `approve` is the one case-specific permission decision: a case that scripts
  * its own owner tool calls approves exactly those, by call and content. The
  * session is checked here, and every other request is still rejected.
+ * `ownedTemporary` gives a case whose probes read the host's temporary folder
+ * (an update's roots, a marker a process leaves) a folder of its own on every
+ * platform. The product finds it with `os.tmpdir()`, which reads TMPDIR on POSIX
+ * and TEMP on Windows, so all three name it; Windows already does this for every
+ * host. Only the temporary roots change: HOME and the XDG roots stay as below.
  * @param {{
  *   root:string,
  *   data:string,
  *   modelUrl:string,
  *   caseName:string,
  *   approve?:(request:any)=>boolean,
+ *   ownedTemporary?:boolean,
  * }} options
  */
 async function createInstalledHost(options) {
@@ -4847,6 +4882,10 @@ async function createInstalledHost(options) {
     });
     fs.mkdirSync(env.APPDATA, { recursive: true });
     fs.mkdirSync(env.LOCALAPPDATA, { recursive: true });
+  }
+  if (options.ownedTemporary) {
+    const temporary = hostTemporary(options.data);
+    Object.assign(env, { TEMP: temporary, TMP: temporary, TMPDIR: temporary });
   }
   const record = {
     caseName: options.caseName,
@@ -5106,14 +5145,19 @@ async function createInstalledHost(options) {
 
 /** @param {Awaited<ReturnType<typeof createInstalledHost>>} host */
 async function closeInstalledHost(host) {
+  // A Canvas close returns once its server has closed, and Node keeps a connection that has not yet
+  // completed a request, such as the speculative one a browser opens for a page load, until the browser
+  // drops it: Edge does so after about ten seconds. The wait is bounded well above that, and recorded.
+  const closing = Date.now();
   try {
     await bounded('canvas.close', () => host.session.rpc.canvas.close({
       instanceId: host.canvas.instanceId,
-    }), 8_000);
+    }), CANVAS_CLOSE_DEADLINE);
     host.record.cleanup.canvasClosed = true;
   } catch (error) {
     host.record.cleanup.canvasCloseError = safeError(error);
   }
+  host.record.cleanup.canvasCloseMs = Date.now() - closing;
   try {
     await bounded('session.disconnect', () => host.session.disconnect(), 8_000);
     host.record.cleanup.sessionDisconnected = true;
@@ -5325,7 +5369,7 @@ async function observeInstalledAbout(page, canvasUrl, root, name, cliVersions, e
       target: '_blank',
       rel: 'noopener noreferrer',
     },
-    footer: 'About · Read only',
+    footer: expected.footer,
     reloadVisible: false,
     selectedSection: 'about',
   }, `the installed UI displays the recorded ${expected.label} metadata, credit, and the official repository`);
@@ -5383,6 +5427,9 @@ function installedParity(root) {
     'lib/projection.mjs',
     'lib/packs.mjs',
     'lib/pack-action.mjs',
+    // 072: the update controller and its action child, which the installed extension runs and replaces.
+    'lib/bundle-upgrade.mjs',
+    'lib/upgrade-action.mjs',
     'lib/catalog-reader.mjs',
     'lib/needs-you.mjs',
     'lib/project-artifacts.mjs',
@@ -5428,6 +5475,7 @@ function installedParity(root) {
     'dude-compose/SKILL.md',
     'dude-lint/lint.mjs',
     'dude-bundle-upgrade/upgrade.mjs',
+    'dude-bundle-upgrade/lib/release-source.mjs',
     'dude-bundle-import/SKILL.md',
   ]) {
     const authored = sourceBytes(`src/skills/${relative}`);
@@ -5517,16 +5565,29 @@ async function driveBlankCapture(page, canvasUrl, intent, modelState, developmen
     about.returnedDraftSha256 = sha256(intent);
   }
   await click(page, button('Save'));
-  await visible(page, 'Awaiting acknowledgment');
-  await until(async () => modelState.modelError
-    || await evaluate(page, `document.body.innerText.includes('Idea saved')`), 'installed blank capture');
+  // The CLI 1.0.99-2 host reports the delivered message only after its send settles, so a capture shows
+  // Delivery uncertain for a few seconds before Awaiting acknowledgment, or goes straight to its saved
+  // result when the owner acknowledges first. All three are the same owner round trip, so this waits for
+  // the owner's acknowledged result, which is what the case asserts, and keeps the states it saw.
+  /** @type {string[]} */
+  const captureStates = [];
+  await until(async () => {
+    if (modelState.modelError) return true;
+    const title = await evaluate(page, `(() => {
+      const text = document.body.innerText;
+      return ['Idea saved', 'Awaiting acknowledgment', 'Delivery uncertain', 'Responding'].find((entry) => text.includes(entry)) ?? null;
+    })()`);
+    if (title && captureStates.at(-1) !== title) captureStates.push(title);
+    return title === 'Idea saved';
+  }, 'installed blank capture');
   if (modelState.modelError) throw new Error(modelState.modelError);
+  assert.equal(captureStates.at(-1), 'Idea saved');
   await click(page, button('Overview'));
   assert.deepEqual(runtimeErrors, []);
   assert.equal(network.filter((entry) => entry.path === '/api/needs-you/capture').length, 1);
   assert.equal(network.filter((entry) => entry.path === '/api/about').length, development ? 1 : 0);
   if (development) assert.deepEqual(foreignNetwork, [], 'installed About rendering contacts no other origin');
-  return { network, foreignNetwork, about, screenshot: await screenshot(page, `blank-${sha256(intent).slice(0, 8)}`) };
+  return { network, foreignNetwork, about, captureStates, screenshot: await screenshot(page, `blank-${sha256(intent).slice(0, 8)}`) };
 }
 
 /**
@@ -7755,6 +7816,1586 @@ async function driveApproval(page, expectedBrowsingNumber = null) {
   return { screenshot: await screenshot(page, 'installed-review-c-approved') };
 }
 
+/* =====================================================================================
+ * 072 Canvas bundle update, installed-host acceptance (T003).
+ *
+ * The real Dude extension, loaded by the installed CLI in a disposable consumer, replaces
+ * its own deployed files through the Canvas update route. The upstream is an ordinary
+ * tagged Git repository built from the current workspace bytes with the release builder,
+ * so the consumer's release already carries the update capability and the engine's staging
+ * contract. v1.1.0 is a real change: five files of the running extension, including the
+ * update controller and its action child, replaced; one skill added; one removed; and the
+ * version bumped. Nothing here contacts a network or writes this checkout.
+ * ================================================================================== */
+const UPGRADE_FROM = 'v1.0.0';
+const UPGRADE_TO = 'v1.1.0';
+/** The next release, whose bundle check waits for the driver (see UPGRADE_HELD_LINT). */
+const UPGRADE_HELD_TO = 'v1.2.0';
+/** The release after it, whose bundle check also finds one new failure once it is in place. */
+const UPGRADE_BROKEN_TO = 'v1.3.0';
+const UPGRADE_MANIFEST = '.dude/metadata/bundle-manifest.md';
+const UPGRADE_LOG = '.dude/metadata/upgrade-log.md';
+const UPGRADE_ENTRY = '.github/extensions/dude/extension.mjs';
+const UPGRADE_CONTROLLER = '.github/extensions/dude/lib/bundle-upgrade.mjs';
+const UPGRADE_CHILD = '.github/extensions/dude/lib/upgrade-action.mjs';
+const UPGRADE_BUNDLE = '.github/extensions/dude/ui/assets/app.js';
+const UPGRADE_NOTICE = '.github/extensions/dude/ui/review/NOTICE.txt';
+const UPGRADE_ADDED = '.github/skills/dude-fixture-added/SKILL.md';
+const UPGRADE_RETIRED = '.github/skills/dude-retired/SKILL.md';
+const UPGRADE_LINT = '.github/skills/dude-lint/lint.mjs';
+const UPGRADE_LINT_REAL = '.github/skills/dude-lint/lint-real.mjs';
+const UPGRADE_BROKEN_SKILL = '.github/skills/dude-broken/SKILL.md';
+/** What a process that loads the replaced entry module leaves in its temporary folder. */
+const UPGRADE_LOADED_MARKER = 'dude-release-loaded.txt';
+/** The files of the running extension that v1.1.0 replaces, controller and child included. */
+const UPGRADE_REPLACED = Object.freeze([
+  UPGRADE_ENTRY, UPGRADE_CONTROLLER, UPGRADE_CHILD, UPGRADE_BUNDLE, UPGRADE_NOTICE,
+]);
+/** Every interface asset an old server serves until its write gate closes. */
+const UPGRADE_ASSET_ROUTES = Object.freeze([
+  '/assets/app.js', '/assets/app.js.LEGAL.txt', '/review/engine.mjs', '/review/geometry.mjs',
+  '/review/shapes.mjs', '/review/inspector.mjs', '/review/panel.mjs', '/review/capture.mjs',
+  '/review/bridge.mjs', '/review/styles.css', '/review/NOTICE.txt',
+]);
+/** Every workspace-changing POST an old server refuses at its write gate, before it reads a body. */
+const UPGRADE_GATED_POSTS = Object.freeze([
+  '/api/packs/action', '/api/packs/sources', '/api/imports/request', '/api/needs-you/respond',
+  '/api/needs-you/capture-receipt', '/api/needs-you/capture', '/api/needs-you/review/open',
+  '/api/needs-you/review/save', '/api/needs-you/review/seal',
+]);
+const UPGRADE_BROKEN_FILE = '---\nname: "dude-wrong"\ndescription: "Use when testing a fixture failure."\n---\n\n# Broken\n';
+const UPGRADE_RETIRED_FILE = '---\nname: "dude-retired"\ndescription: "Use when testing a retired fixture skill."\n---\n\n# Retired\n';
+const UPGRADE_ADDED_FILE = '---\nname: "dude-fixture-added"\ndescription: "Use when testing an added fixture skill."\n---\n\n# Added\n';
+/**
+ * A release whose bundle check waits for the driver, then runs the unchanged check and reports exactly
+ * what it reports. Each run marks beside the consumer that it is waiting and goes only when the driver
+ * lets that run go, for at most 60 seconds. The file the update adds tells the run after writing from
+ * the one before. Only the wait is the fixture's: the verdict stays the real linter's, which is what
+ * makes the moment after every file is written, and before the check decides, a window the driver can
+ * act in rather than race.
+ */
+const UPGRADE_HELD_LINT = `#!/usr/bin/env node
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root = path.resolve(process.argv[2] || '.');
+const run = fs.existsSync(path.join(root, ${JSON.stringify(UPGRADE_ADDED)})) ? 'after' : 'before';
+const marker = (name) => path.join(path.dirname(root), path.basename(root) + '.' + run + '-' + name);
+fs.writeFileSync(marker('waiting'), '');
+for (let waited = 0; waited < 60000 && !fs.existsSync(marker('go')); waited += 20) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+}
+const real = spawnSync(process.execPath, [fileURLToPath(new URL('./lint-real.mjs', import.meta.url)), ...process.argv.slice(2)], {
+  encoding: 'utf8', windowsHide: true, maxBuffer: 16 * 1024 * 1024,
+});
+process.stdout.write(real.stdout);
+process.stderr.write(real.stderr);
+process.exit(real.status ?? 1);
+`;
+
+/** @param {string} cwd @param {...string} args */
+function upgradeGit(cwd, ...args) {
+  const result = command('git', args, { cwd, windowsHide: true, timeout: 120_000 });
+  assert.equal(result.exitCode, 0, `git ${args.join(' ')} in ${cwd}\n${result.stdout}${result.stderr}`);
+  // Only the end is trimmed: a status line's first column may be a space.
+  return result.stdout.trimEnd();
+}
+
+/** A new repository on main with its own identity and no line-ending conversion. @param {string} root */
+function upgradeRepository(root) {
+  upgradeGit(path.dirname(root), 'init', '-q', '-b', 'main', root);
+  for (const [name, value] of [['user.name', 'Update Fixture'], ['user.email', 'update-fixture@example.invalid'],
+    ['core.autocrlf', 'false'], ['commit.gpgsign', 'false']]) upgradeGit(root, 'config', name, value);
+}
+
+/** @param {string} root @param {string} message */
+function upgradeCommit(root, message) {
+  upgradeGit(root, 'add', '-A');
+  upgradeGit(root, 'commit', '-q', '-m', message);
+}
+
+/** Rewrite only the manifest's fenced JSON payload. @param {string} root @param {Record<string, string>} payload */
+function upgradeManifest(root, payload) {
+  const file = path.join(root, ...UPGRADE_MANIFEST.split('/'));
+  const current = fs.readFileSync(file, 'utf8');
+  const next = current.replace(/```json\r?\n[\s\S]*?\r?\n```/,
+    () => `\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``);
+  assert.notEqual(next, current);
+  fs.writeFileSync(file, next);
+}
+
+/**
+ * The fixture's appendix to each file v1.1.0 replaces, in that file's own syntax. Only the entry module
+ * changes what a process does: one that loads it says so in its temporary folder, so a new session shows
+ * that it loaded the replaced module and the old one, which never reloads it, shows that it did not.
+ * @param {string} relative
+ */
+function upgradeAppendix(relative) {
+  if (relative === UPGRADE_ENTRY) {
+    return [
+      '',
+      `// Dude ${UPGRADE_TO} release fixture: this entry module was replaced while ${UPGRADE_FROM} was loaded.`,
+      `// A process that loads it says so in its temporary folder, which no ${UPGRADE_FROM} process does.`,
+      '{',
+      "  const [{ writeFileSync }, { join }, { tmpdir }] = await Promise.all([import('node:fs'), import('node:path'), import('node:os')]);",
+      `  writeFileSync(join(tmpdir(), '${UPGRADE_LOADED_MARKER}'), '${UPGRADE_TO}\\n');`,
+      '}',
+      '',
+    ].join('\n');
+  }
+  return relative.endsWith('.txt') ? `\nDude ${UPGRADE_TO} release fixture\n`
+    : relative.endsWith('.js') ? `\n/* Dude ${UPGRADE_TO} release fixture */\n`
+      : `\n// Dude ${UPGRADE_TO} release fixture: replaced while ${UPGRADE_FROM} was loaded.\n`;
+}
+
+/**
+ * The change set the engine must report for a consumer on v1.0.0 that updates to `tag`, written by
+ * hand from what the fixture changes, never read back from the product, in the engine's order.
+ * @param {string} tag
+ */
+function expectedUpgradeChanges(tag) {
+  /** @type {{ path: string, group: string, pack: null, op: string }[]} */
+  const changes = [
+    { path: UPGRADE_MANIFEST, group: 'metadata', pack: null, op: 'replace' },
+    { path: UPGRADE_LOG, group: 'metadata', pack: null, op: 'add' },
+    ...UPGRADE_REPLACED.map((relative) => ({ path: relative, group: 'core', pack: null, op: 'replace' })),
+    { path: UPGRADE_ADDED, group: 'core', pack: null, op: 'add' },
+    { path: UPGRADE_RETIRED, group: 'core', pack: null, op: 'remove' },
+  ];
+  if (tag !== UPGRADE_TO) {
+    changes.push({ path: UPGRADE_LINT, group: 'core', pack: null, op: 'replace' },
+      { path: UPGRADE_LINT_REAL, group: 'core', pack: null, op: 'add' });
+  }
+  if (tag === UPGRADE_BROKEN_TO) changes.push({ path: UPGRADE_BROKEN_SKILL, group: 'core', pack: null, op: 'add' });
+  return changes.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+/**
+ * The ordinary tagged upstream and the consumer template, built once from the current source.
+ * v1.0.0 is the finished release plus one retired fixture skill; a consumer on it runs the new
+ * extension. v1.1.0, an annotated tag, is the real change and the version bump. The two later
+ * releases are published only when a case needs them (`publishUpgradeRelease`), after the cases
+ * that must see v1.1.0 as the latest. The template carries what an update must never touch: an
+ * uncommitted edit, a staged file, an untracked file, and a defined workflow record.
+ * @param {string} base a short folder under this run
+ */
+function buildUpgradeFixture(base) {
+  fs.mkdirSync(base, { recursive: true });
+  const upstream = path.join(base, 'up');
+  const source = pathToFileURL(upstream).href;
+  buildRelease({ repoRoot: ROOT, outDir: upstream, ref: UPGRADE_FROM });
+  const canonical = parseManifestDocument(
+    fs.readFileSync(path.join(upstream, ...UPGRADE_MANIFEST.split('/'))), 'upgrade fixture manifest').data;
+  write(upstream, UPGRADE_RETIRED, UPGRADE_RETIRED_FILE);
+  upgradeRepository(upstream);
+  upgradeCommit(upstream, `release ${UPGRADE_FROM}`);
+  upgradeGit(upstream, 'tag', UPGRADE_FROM);
+
+  const template = path.join(base, 'tpl');
+  fs.cpSync(upstream, template, {
+    recursive: true,
+    filter: (from) => path.relative(upstream, from).split(path.sep)[0] !== '.git',
+  });
+  upgradeManifest(template, { source_repo: source, source_ref: 'latest', installed_ref: UPGRADE_FROM });
+  write(template, 'README.md', '# Consumer project\n');
+  write(template, 'src/app.js', 'export const answer = 42;\n');
+  write(template, '.dude/ideas/001-consumer-notes.md', [
+    '---', 'title: Consumer notes', 'slug: consumer-notes', 'status: defined',
+    'spec_path: .dude/specs/001-consumer-notes/spec.md', '---', '',
+    '## Idea', '', 'Keep one workflow record the update must not touch.', '',
+    '## Coordinator Log', '', '- 2026-10-01T00:00:00Z - Synthetic consumer workflow fixture created.', '',
+  ].join('\n'));
+  write(template, '.dude/specs/001-consumer-notes/spec.md', '# Consumer notes\n');
+  write(template, '.dude/specs/001-consumer-notes/tasks.md', [
+    '<!-- audit log: .dude/ideas/001-consumer-notes.md#coordinator-log -->', '# Tasks', '',
+    '- [~] T001@c0ffee01 [P] [Shared] Consumer workflow task the update must not touch.', '',
+  ].join('\n'));
+  upgradeRepository(template);
+  upgradeCommit(template, `consumer on ${UPGRADE_FROM}`);
+  write(template, 'src/app.js', 'export const answer = 43; // uncommitted local edit\n');
+  write(template, 'staged-notes.md', 'staged before the update\n');
+  upgradeGit(template, 'add', 'staged-notes.md');
+  write(template, 'scratch/todo.txt', 'untracked local file\n');
+  const lint = command(process.execPath, [path.join(template, '.github/skills/dude-lint/lint.mjs'), template],
+    { windowsHide: true });
+  assert.equal(lint.exitCode, 0, `the consumer must start lint-clean:\n${lint.stdout}`);
+
+  for (const relative of UPGRADE_REPLACED) {
+    write(upstream, relative, Buffer.concat([fs.readFileSync(path.join(upstream, ...relative.split('/'))),
+      Buffer.from(upgradeAppendix(relative))]));
+  }
+  write(upstream, UPGRADE_ADDED, UPGRADE_ADDED_FILE);
+  fs.rmSync(path.join(upstream, ...path.posix.dirname(UPGRADE_RETIRED).split('/')), { recursive: true });
+  upgradeManifest(upstream, { ...canonical, installed_ref: UPGRADE_TO });
+  upgradeCommit(upstream, `release ${UPGRADE_TO}`);
+  upgradeGit(upstream, 'tag', '-a', UPGRADE_TO, '-m', `Release ${UPGRADE_TO}`);
+
+  /** @param {string[]} files the target's bytes, by SHA-256 */
+  const hashes = (files) => Object.fromEntries(files.map((relative) => [
+    relative, sha256(fs.readFileSync(path.join(upstream, ...relative.split('/')))),
+  ]));
+  const fixture = {
+    base, upstream, source, template, canonical,
+    /** The target's bytes for every file it writes, by release tag. */
+    targets: { [UPGRADE_TO]: hashes([...UPGRADE_REPLACED, UPGRADE_ADDED]) },
+    published: /** @type {string[]} */ ([UPGRADE_FROM, UPGRADE_TO]),
+    tags: upgradeGit(upstream, 'tag', '--list').split('\n'),
+  };
+  return fixture;
+}
+
+/**
+ * Publish the next release into the upstream: v1.2.0 holds its bundle check (the real one, behind the
+ * wait), and v1.3.0 adds one skill the real check fails. Each is one commit past the one before.
+ * @param {ReturnType<typeof buildUpgradeFixture>} fixture
+ * @param {string} tag
+ */
+function publishUpgradeRelease(fixture, tag) {
+  assert.ok([UPGRADE_HELD_TO, UPGRADE_BROKEN_TO].includes(tag));
+  if (tag === UPGRADE_BROKEN_TO && !fixture.published.includes(UPGRADE_HELD_TO)) publishUpgradeRelease(fixture, UPGRADE_HELD_TO);
+  assert.equal(fixture.published.includes(tag), false, `${tag} is published once`);
+  const { upstream } = fixture;
+  if (tag === UPGRADE_HELD_TO) {
+    fs.renameSync(path.join(upstream, ...UPGRADE_LINT.split('/')), path.join(upstream, ...UPGRADE_LINT_REAL.split('/')));
+    write(upstream, UPGRADE_LINT, UPGRADE_HELD_LINT);
+  } else {
+    write(upstream, UPGRADE_BROKEN_SKILL, UPGRADE_BROKEN_FILE);
+  }
+  upgradeManifest(upstream, { ...fixture.canonical, installed_ref: tag });
+  upgradeCommit(upstream, `release ${tag}`);
+  upgradeGit(upstream, 'tag', tag);
+  fixture.published.push(tag);
+  fixture.tags = upgradeGit(upstream, 'tag', '--list').split('\n');
+  const files = [...UPGRADE_REPLACED, UPGRADE_ADDED, UPGRADE_LINT, UPGRADE_LINT_REAL,
+    ...(tag === UPGRADE_BROKEN_TO ? [UPGRADE_BROKEN_SKILL] : [])];
+  fixture.targets[tag] = Object.fromEntries(files.map((relative) => [
+    relative, sha256(fs.readFileSync(path.join(upstream, ...relative.split('/')))),
+  ]));
+}
+
+/** One disposable consumer: a copy of the template, uncommitted and staged state included. @param {ReturnType<typeof buildUpgradeFixture>} fixture @param {string} name */
+function newUpgradeConsumer(fixture, name) {
+  const root = path.join(fixture.base, name);
+  fs.cpSync(fixture.template, root, { recursive: true });
+  return root;
+}
+
+/** Every regular file below a consumer except Git's own folder, by relative path with its SHA-256. @param {string} root */
+function upgradeTree(root) {
+  /** @type {Record<string, string>} */
+  const files = {};
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (!(directory === root && entry.name === '.git')) visit(absolute);
+      } else if (entry.isFile()) files[path.relative(root, absolute).split(path.sep).join('/')] = hashFile(absolute);
+    }
+  };
+  visit(root);
+  return files;
+}
+
+/**
+ * What an update changed between two trees, by the exact paths.
+ * @param {Record<string, string>} before @param {Record<string, string>} after
+ */
+function upgradeDelta(before, after) {
+  const paths = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort();
+  return {
+    added: paths.filter((relative) => before[relative] === undefined),
+    removed: paths.filter((relative) => after[relative] === undefined),
+    changed: paths.filter((relative) => before[relative] !== undefined && after[relative] !== undefined
+      && before[relative] !== after[relative]),
+  };
+}
+
+/**
+ * HEAD, branch, index content and staged paths: what an update must never move. The index is
+ * compared by `ls-files -s`, not by its file, which a status read may rewrite without changing it.
+ * @param {string} root
+ */
+function upgradeGitState(root) {
+  return {
+    head: upgradeGit(root, 'rev-parse', 'HEAD'),
+    branch: upgradeGit(root, 'symbolic-ref', '--short', 'HEAD'),
+    index: sha256(upgradeGit(root, 'ls-files', '-s')),
+    staged: upgradeGit(root, 'diff', '--cached', '--name-only').split('\n').filter(Boolean),
+    status: upgradeGit(root, '--no-optional-locks', 'status', '--porcelain=v1', '--untracked-files=all')
+      .split('\n').map((line) => line.trimEnd()).filter(Boolean).sort(),
+  };
+}
+
+/** A model that nobody may call: an update starts no agent turn, so any request is recorded as the failure. @param {string} label */
+function createSilentModel(label) {
+  const state = { requests: 0, modelError: /** @type {string|null} */ (null) };
+  const server = http.createServer((req, res) => {
+    state.requests += 1;
+    state.modelError = `the ${label} host asked the model for a turn, which an update never does`;
+    note(`${label}-model-refusal`, { error: state.modelError });
+    req.resume();
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: `Bounded 072 ${label} fixture has no turn` } }));
+  });
+  server.requestTimeout = 10_000;
+  server.headersTimeout = 10_000;
+  return { server, state };
+}
+
+/**
+ * Every process on the machine with its parent and full command line, from the OS table: CIM on
+ * Windows, `ps` elsewhere.
+ * @returns {{ pid: number, ppid: number, name: string, commandLine: string }[]}
+ */
+function listProcesses() {
+  if (WINDOWS) {
+    const result = windowsQuery('Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine '
+      + '| ConvertTo-Json -Compress');
+    assert.ok(result.exitCode === 0 && !result.error, `Windows process table unavailable: ${result.error ?? result.stderr}`);
+    const rows = JSON.parse(result.stdout || '[]');
+    return (Array.isArray(rows) ? rows : [rows]).map((row) => ({
+      pid: Number(row.ProcessId), ppid: Number(row.ParentProcessId), name: String(row.Name ?? ''),
+      commandLine: String(row.CommandLine ?? ''),
+    }));
+  }
+  const result = command('/bin/ps', ['-axo', 'pid=,ppid=,command=']);
+  assert.equal(result.exitCode, 0, `process table unavailable: ${result.error ?? result.stderr}`);
+  return result.stdout.split('\n').map((line) => /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line)).filter(Boolean)
+    .map((match) => ({ pid: Number(match[1]), ppid: Number(match[2]), name: path.basename(match[3].split(' ')[0]), commandLine: match[3] }));
+}
+
+/**
+ * The processes whose command line names one of these folders, in either slash form: whatever this
+ * run started under them, such as a host, the update child, Git, a browser, or a lock holder.
+ * @param {string[]} folders
+ */
+function ownedProcesses(folders) {
+  const normal = (value) => value.replaceAll('\\', '/').toLowerCase();
+  const names = folders.map(normal);
+  return listProcesses()
+    .filter((row) => row.pid !== process.pid && names.some((folder) => normal(row.commandLine).includes(folder)))
+    .map(({ pid, ppid, name, commandLine }) => ({ pid, ppid, name, commandLine: commandLine.slice(0, 300) }));
+}
+
+/**
+ * Wait for every process named under these folders to stop; what remains after the window is a leftover.
+ * @param {string[]} folders @param {number} [ms]
+ */
+async function leftoverProcesses(folders, ms = 20_000) {
+  const end = Date.now() + ms;
+  for (;;) {
+    const left = ownedProcesses(folders);
+    if (left.length === 0 || Date.now() >= end) return left;
+    await delay(500);
+  }
+}
+
+/**
+ * The newest stable release an upstream lists, by Git's own protocol and the shared release rule: the
+ * oracle for the release check, which does not use the product.
+ * @param {string} source
+ */
+function upgradeLatestRelease(source) {
+  const listed = command('git', ['ls-remote', '--tags', '--', source], {
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    windowsHide: true,
+  });
+  assert.equal(listed.exitCode, 0, `git ls-remote could not list ${source}: ${listed.error ?? listed.stderr}`);
+  /** @type {Set<string>} */
+  const tags = new Set();
+  for (const line of listed.stdout.split(/\r?\n/)) {
+    const match = /^[0-9a-f]{40}\trefs\/tags\/([^^\s]+)(?:\^\{\})?$/.exec(line);
+    if (match) tags.add(match[1]);
+  }
+  const tag = pickLatestReleaseTag([...tags]);
+  assert.ok(tag, `${source} lists no stable release tag`);
+  return tag;
+}
+
+/** Added, replaced and removed counts by group, from a change list. @param {{ group: string, op: string }[]} changes */
+function upgradeCounts(changes) {
+  const counts = {
+    core: { added: 0, replaced: 0, removed: 0 },
+    metadata: { added: 0, replaced: 0, removed: 0 },
+    packs: {},
+  };
+  for (const change of changes) {
+    counts[/** @type {'core' | 'metadata'} */ (change.group)][
+      /** @type {'added' | 'replaced' | 'removed'} */ ({ add: 'added', replace: 'replaced', remove: 'removed' }[change.op])
+    ] += 1;
+  }
+  return counts;
+}
+
+/** The update state, as the browser reads it. @param {string} canvasUrl */
+async function readUpdates(canvasUrl) {
+  const response = await fetch(new URL('/api/updates', canvasUrl), { signal: AbortSignal.timeout(10_000) });
+  assert.equal(response.status, 200, `GET /api/updates answered ${response.status}`);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  return response.json();
+}
+
+/** One closed update action, from the Canvas's own origin. @param {string} canvasUrl @param {unknown} body */
+const postUpdate = (canvasUrl, body) => postCanvas(canvasUrl, '/api/updates/action', body);
+
+/**
+ * @param {string} canvasUrl @param {(state: any) => boolean} predicate @param {string} label @param {number} [ms]
+ */
+function untilUpdates(canvasUrl, predicate, label, ms = 120_000) {
+  return until(async () => {
+    const state = await readUpdates(canvasUrl);
+    return predicate(state) ? state : null;
+  }, label, ms);
+}
+
+/**
+ * The gate and phase the server reported, in order, as the real page was told them: the page's own reads of
+ * the update state and its answer to OK, which the product makes on its `updates` events and at OK and never
+ * on a timer. One read of the driver's own, before OK, starts the list. It is made by listening, never by
+ * polling: every state read opens the bundle manifest, a Windows rename over a file that is open fails with
+ * EPERM, and the update replaces that very file at its start and puts it back at its end, so a poll could turn
+ * a clean update into a restored one. The page's reads fall at OK and at each phase change, which no rename
+ * waits for. Every use ends in a `finally`, which puts the page's `fetch` back.
+ * @param {Cdp} page @param {string} canvasUrl
+ */
+async function watchUpdatePhases(page, canvasUrl) {
+  /** @type {{ gate: string, phase: string | null, installedRef: string | null }[]} */
+  const seen = [];
+  /** @param {{ gate: string, phase: string | null, installedRef: string | null }} row */
+  const add = (row) => {
+    const last = seen.at(-1);
+    if (!last || last.gate !== row.gate || last.phase !== row.phase) seen.push(row);
+  };
+  const before = await readUpdates(canvasUrl);
+  add({ gate: before.gate, phase: before.update?.phase ?? null, installedRef: before.installation.installedRef });
+  // Each answer is copied as it arrives; an older answer never replaces a newer one, as the page itself decides.
+  await evaluate(page, `(() => {
+    if (window.__upgradeFetch) return;
+    window.__upgradeFetch = window.fetch;
+    window.__upgradeStates = [];
+    let calls = 0, adopted = 0;
+    window.fetch = (input, init) => {
+      const turn = ++calls;
+      const answer = window.__upgradeFetch.call(window, input, init);
+      answer.then((response) => {
+        try {
+          const path = new URL(typeof input === 'string' ? input : input.url, location.href).pathname;
+          if (path !== '/api/updates' && path !== '/api/updates/action') return;
+          response.clone().json().then((state) => {
+            if (typeof state?.gate !== 'string' || turn < adopted) return;
+            adopted = turn;
+            window.__upgradeStates.push({ gate: state.gate, phase: state.update?.phase ?? null,
+              installedRef: state.installation?.installedRef ?? null });
+          }, () => {});
+        } catch { /* an answer that cannot be copied is not an observation */ }
+      }, () => {});
+      return answer;
+    };
+  })()`);
+  let stopped = false;
+  return {
+    seen,
+    keys: () => seen.map((row) => `${row.gate}/${row.phase}`),
+    /** Puts the page's fetch back and takes what the page was told; calling it again is harmless. */
+    stop: async () => {
+      if (stopped) return;
+      stopped = true;
+      try {
+        const told = await evaluate(page, `(() => {
+          if (window.__upgradeFetch) { window.fetch = window.__upgradeFetch; delete window.__upgradeFetch; }
+          return window.__upgradeStates ?? [];
+        })()`);
+        for (const row of told) add(row);
+      } catch {
+        // A page that is gone has told all it will.
+      }
+    },
+  };
+}
+
+/**
+ * A disposable consumer on its own installed host, which never has an agent turn: the model server
+ * refuses every request and counts it. `root` is a new copy of the template unless a consumer that an
+ * earlier session updated is given, as the next session of the same project.
+ * @param {ReturnType<typeof buildUpgradeFixture>} fixture
+ * @param {string} name
+ * @param {string} [root]
+ */
+async function startUpgradeSession(fixture, name, root = newUpgradeConsumer(fixture, name)) {
+  const model = createSilentModel(name);
+  modelServers.push(model.server);
+  const modelUrl = await listen(model.server);
+  const data = path.join(RUN, `${name}-runtime`);
+  const before = { tree: upgradeTree(root), git: upgradeGitState(root) };
+  const host = await createInstalledHost({ root, data, modelUrl, caseName: name, ownedTemporary: true });
+  hosts.push(host);
+  // The folder the product writes its update roots and a loaded module's marker to is the one the probes read.
+  const temporary = hostTemporary(data);
+  assert.deepEqual([host.record.childEnvironment.TEMP, host.record.childEnvironment.TMP, host.record.childEnvironment.TMPDIR],
+    [temporary, temporary, temporary], `${name}: the host's temporary folder is its own`);
+  return {
+    name, root, data, model, host, before,
+    canvasUrl: host.record.canvas.url,
+    extension: { ...host.record.extension, process: host.record.extensionProcess },
+    startedAt: Date.now(),
+  };
+}
+
+/** @param {Awaited<ReturnType<typeof startUpgradeSession>>} session */
+async function closeUpgradeSession(session) {
+  await closeInstalledHost(session.host);
+  await closeServer(session.model.server);
+}
+
+/**
+ * Whether the extension this session started is still the very process that runs: its entry in the
+ * host's own list, and its process by pid and parent, and by start time where the OS table gives one
+ * (Windows does; elsewhere both are absent and equal). An update never restarts it.
+ * @param {Awaited<ReturnType<typeof startUpgradeSession>>} session
+ */
+async function observeExtension(session) {
+  const listing = await session.host.session.rpc.extensions.list();
+  const entry = listing.extensions.find((/** @type {any} */ candidate) => candidate.id === 'project:dude');
+  const live = entry?.pid ? processRow(entry.pid) : null;
+  const first = session.extension.process;
+  return {
+    status: entry?.status ?? null,
+    pid: entry?.pid ?? null,
+    sameProcess: Boolean(live && live.pid === first.pid && live.ppid === first.ppid && live.started === first.started),
+    process: live,
+  };
+}
+
+/** The update's own temporary roots in a host's own temporary folder: a preparation's, then an application's. @param {{ data: string }} session */
+function upgradeRoots(session) {
+  return fs.readdirSync(hostTemporary(session.data)).filter((name) => /^dude-(?:cu|up)-/.test(name)).sort();
+}
+
+/** Where this host's Canvas would save a preference, which a check must never create. @param {{ host: { record: any } }} session */
+function upgradePreferenceFile(session) {
+  return path.join(session.host.record.childEnvironment.COPILOT_HOME, 'extensions', 'dude', 'artifacts', 'canvas-preferences.json');
+}
+
+/**
+ * An update is no agent turn: the model was never called, the session received no message and ran no
+ * tool, and Needs you holds no request, capture or import.
+ * @param {Awaited<ReturnType<typeof startUpgradeSession>>} session
+ */
+async function observeNoAgentTurn(session) {
+  const events = { ...session.host.record.events };
+  assert.deepEqual([session.model.state.requests, session.model.state.modelError], [0, null],
+    `${session.name}: the model was never called`);
+  const turns = UPGRADE_TURN_EVENTS.filter((type) => (events[type] ?? 0) > 0);
+  assert.deepEqual(turns, [], `${session.name}: the session ran no turn`);
+  assert.equal(session.host.record.permissions.length, 0, `${session.name}: no tool asked for permission`);
+  const feed = await readNeedsYou(session.canvasUrl);
+  assert.deepEqual([feed.requests.length, feed.captures.length, feed.importRequests?.length ?? 0], [0, 0, 0],
+    `${session.name}: Needs you holds nothing`);
+  return { modelRequests: session.model.state.requests, events, needsYou: { requests: 0, captures: 0, importRequests: 0 } };
+}
+
+/** The session events that only an agent turn, a message or a tool produces. */
+const UPGRADE_TURN_EVENTS = Object.freeze([
+  'user.message', 'assistant.turn_start', 'assistant.message', 'assistant.message_delta', 'assistant.turn_end',
+  'tool.execution_start', 'tool.user_requested',
+]);
+
+/**
+ * The inert server page an old Canvas gives a reload once an update is applying or has written.
+ * @param {string} canvasUrl
+ */
+async function readInertPage(canvasUrl) {
+  const response = await fetch(new URL('/', canvasUrl), { signal: AbortSignal.timeout(10_000) });
+  const text = await response.text();
+  return {
+    status: response.status,
+    cacheControl: response.headers.get('cache-control'),
+    contentType: response.headers.get('content-type'),
+    csp: response.headers.get('content-security-policy'),
+    title: /<h1 id="handoff-title">([^<]*)<\/h1>/.exec(text)?.[1] ?? null,
+    scripts: (text.match(/<script/gi) ?? []).length,
+    namesBundle: /app\.js|\/assets\//i.test(text),
+    text,
+  };
+}
+
+/** The bytes an old server serves for each of its interface routes. @param {string} canvasUrl */
+async function readServedAssets(canvasUrl) {
+  /** @type {Record<string, { status: number, bytes: number, sha256: string }>} */
+  const served = {};
+  for (const route of UPGRADE_ASSET_ROUTES) {
+    const response = await fetch(new URL(route, canvasUrl), { signal: AbortSignal.timeout(10_000) });
+    const bytes = Buffer.from(await response.arrayBuffer());
+    served[route] = { status: response.status, bytes: bytes.length, sha256: sha256(bytes) };
+  }
+  return served;
+}
+
+/**
+ * The old server at its write gate. From the moment OK is admitted, every interface asset the update may
+ * be replacing is a 404 and no replacement byte is served, every workspace-changing POST is refused
+ * before it reads a body, and every further update action is refused. Reads that change nothing, such as
+ * the update state, are still served. Refusals name the gate: `update_in_progress` while the update
+ * applies, `new_session_required` once it has written.
+ * @param {string} canvasUrl
+ * @param {{ refusal: 'update_in_progress' | 'new_session_required', replaced?: Record<string, string> }} options
+ */
+async function observeOldServerGate(canvasUrl, { refusal, replaced = {} }) {
+  const served = await readServedAssets(canvasUrl);
+  const replacements = new Set(Object.values(replaced));
+  for (const route of UPGRADE_ASSET_ROUTES) {
+    assert.equal(served[route].status, 404, `${route} is not served at the write gate`);
+    assert.equal(replacements.has(served[route].sha256), false, `${route} serves no replacement byte`);
+  }
+  const body = await (await fetch(new URL(UPGRADE_ASSET_ROUTES[0], canvasUrl), { signal: AbortSignal.timeout(10_000) })).json();
+  assert.deepEqual(body, { error: 'Not found.' });
+  /** @type {Record<string, { status: number, body: unknown }>} */
+  const posts = {};
+  for (const route of UPGRADE_GATED_POSTS) {
+    posts[route] = await postCanvas(canvasUrl, route, {});
+    assert.deepEqual(posts[route], { status: 409, body: { error: refusal } }, `${route} is refused at the write gate`);
+  }
+  /** @type {Record<string, { status: number, body: unknown }>} */
+  const actions = {};
+  for (const request of [{ op: 'check' }, { op: 'preview', includePacks: true }, { op: 'apply', id: '0'.repeat(32) }]) {
+    actions[request.op] = await postUpdate(canvasUrl, request);
+    assert.deepEqual(actions[request.op], { status: 409, body: { error: refusal } }, `${request.op} is refused at the write gate`);
+  }
+  actions.cancel = await postUpdate(canvasUrl, { op: 'cancel' });
+  assert.deepEqual(actions.cancel, { status: 409, body: { error: 'too_late' } }, 'nothing cancels a write');
+  const read = await readUpdates(canvasUrl);
+  return { assetsServed: served, posts, actions, stateStillServed: read.gate };
+}
+
+/** What the Needs you notice says. @param {Cdp} page */
+function upgradeNotice(page) {
+  return evaluate(page, `(() => {
+    const bar = document.querySelector('[data-update-notice]');
+    if (!bar) return null;
+    const words = (name) => (bar.getAttribute(name) ?? '').split(' ').map((id) => document.getElementById(id)?.textContent ?? '').join(' ');
+    return { name: words('aria-labelledby'), description: words('aria-describedby'),
+      buttons: [...bar.querySelectorAll('button')].map((node) => node.textContent) };
+  })()`);
+}
+
+/** What About's Updates section and its facts say. @param {Cdp} page */
+function upgradeAbout(page) {
+  return evaluate(page, `(() => {
+    const section = document.querySelector('[data-about-panel]:not([hidden]) [data-about-updates]');
+    if (!section) return null;
+    return {
+      tone: section.querySelector('[data-update-status]')?.getAttribute('data-update-status'),
+      line: section.querySelector('[data-update-line]')?.textContent,
+      detail: section.querySelector('[data-update-detail]')?.textContent ?? null,
+      time: section.querySelector('[data-update-detail] time')?.getAttribute('datetime') ?? null,
+      actions: [...section.querySelectorAll('[data-update-actions] button')].map((node) => node.textContent),
+      rows: [...document.querySelectorAll('[data-about-facts] > div')].map((row) => [
+        row.querySelector('dt').textContent, row.querySelector('dd').textContent.replace(/\\s+/g, ' ').trim()]),
+      footer: document.querySelector('footer')?.textContent,
+    };
+  })()`);
+}
+
+/** What the update dialog shows, says, and offers. @param {Cdp} page */
+function upgradeDialog(page) {
+  return evaluate(page, `(() => {
+    const dialog = document.querySelector('[data-update-dialog]');
+    if (!dialog?.open) return null;
+    const body = dialog.querySelector('[data-update-body]'), primary = dialog.querySelector('[data-update-primary]');
+    const files = dialog.querySelector('[data-update-files]');
+    return {
+      phase: dialog.getAttribute('data-update-phase'), modal: dialog.matches(':modal'),
+      name: document.getElementById(dialog.getAttribute('aria-labelledby'))?.textContent, busy: body?.getAttribute('aria-busy'),
+      version: dialog.querySelector('[data-update-version]')?.textContent.replace(/\\s+/g, ' ').trim() ?? null,
+      counts: [...dialog.querySelectorAll('[data-update-counts]')].map((section) => ({ heading: section.querySelector('h3').textContent,
+        rows: [...section.querySelectorAll('dt')].map((term) => [term.textContent, term.nextElementSibling.textContent]) })),
+      bars: [...body.querySelectorAll('.fui-MessageBar')].map((bar) => ({ title: bar.querySelector('.fui-MessageBarTitle')?.textContent,
+        lines: [...bar.querySelectorAll('.fui-MessageBarBody > div > *')].map((line) => line.tagName === 'UL'
+          ? [...line.querySelectorAll('li')].map((item) => item.textContent) : line.textContent) })),
+      details: [...body.querySelectorAll('details:not([data-update-files])')].map((node) => ({
+        summary: node.querySelector('summary').textContent, text: node.querySelector('p')?.textContent })),
+      files: files ? { summary: files.querySelector('summary').textContent,
+        rows: [...files.querySelectorAll('li')].map((item) => [item.children[0].textContent, item.querySelector('code').textContent]) } : null,
+      text: body?.innerText, cancel: dialog.querySelector('[data-update-cancel]')?.textContent ?? null,
+      primary: primary ? { text: primary.textContent, disabled: primary.disabled } : null,
+      closeDisabled: dialog.querySelector('[data-update-close]')?.disabled ?? null,
+      live: dialog.querySelector('[data-update-live]')?.textContent,
+    };
+  })()`);
+}
+
+/** @param {Cdp} page @param {string} phase @param {number} [ms] */
+function untilUpgradePhase(page, phase, ms = 120_000) {
+  return until(async () => {
+    const dialog = await upgradeDialog(page);
+    return dialog?.phase === phase ? dialog : null;
+  }, `the update dialog in ${phase}`, ms);
+}
+
+/** Needs you, where the notice sits under the page title. @param {Cdp} page */
+async function openUpgradeNeedsYou(page) {
+  await click(page, `document.querySelector('#dude-tab-needs')`);
+  await until(() => evaluate(page, `document.querySelector('#dude-tab-needs')?.getAttribute('aria-selected') === 'true'`),
+    'the Needs you tab');
+}
+
+/**
+ * Settings > About with its Updates section settled: the facts and this session's check have both read.
+ * @param {Cdp} page
+ */
+async function openUpgradeAbout(page) {
+  await click(page, `document.querySelector('#dude-tab-settings')`);
+  await until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+    ?.getAttribute('aria-busy') === 'false'`), 'the Settings pack read');
+  await click(page, `document.querySelector('[data-settings-section="about"]')`);
+  await until(() => evaluate(page, `document.querySelector('[data-about-facts]')?.getAttribute('aria-busy') === 'false'`),
+    'the About facts', 15_000);
+  return until(async () => {
+    const about = await upgradeAbout(page);
+    return about && about.tone !== 'busy' ? about : null;
+  }, 'settled About updates', 15_000);
+}
+
+/**
+ * Record each phase the dialog shows, with whether it offered Cancel, from inside the page, so a phase
+ * that lasts a fraction of a second is still seen. Returns the reader.
+ * @param {Cdp} page
+ */
+async function recordUpgradePhases(page) {
+  await evaluate(page, `(() => {
+    window.__upgradeShown = [];
+    const note = () => {
+      const dialog = document.querySelector('[data-update-dialog]');
+      const phase = dialog?.open ? dialog.getAttribute('data-update-phase') : null;
+      if (window.__upgradeShown.at(-1)?.phase === phase) return;
+      window.__upgradeShown.push({ phase, live: dialog?.querySelector('[data-update-live]')?.textContent ?? null,
+        cancel: Boolean(dialog?.querySelector('[data-update-cancel]')),
+        closeDisabled: dialog?.querySelector('[data-update-close]')?.disabled ?? null,
+        primary: dialog?.querySelector('[data-update-primary]')?.textContent ?? null });
+    };
+    new MutationObserver(note).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
+    note();
+  })()`);
+  return () => evaluate(page, 'window.__upgradeShown.filter((entry) => entry.phase)');
+}
+
+/**
+ * What this page sent to the Canvas's update route, which Canvas request left the origin, and what threw.
+ * @param {Cdp} page @param {string} canvasUrl
+ */
+function watchUpgradeRequests(page, canvasUrl) {
+  const origin = new URL(canvasUrl).origin;
+  /** @type {any[]} */
+  const actions = [], errors = [];
+  /** @type {string[]} */
+  const foreign = [];
+  const stops = [
+    page.on('Network.requestWillBeSent', (event) => {
+      let url;
+      try { url = new URL(event.request.url); } catch { return; }
+      if (url.origin === origin) {
+        if (url.pathname === '/api/updates/action' && event.request.method === 'POST') actions.push(JSON.parse(event.request.postData));
+      } else if (/^https?:$/.test(url.protocol) && !['127.0.0.1', 'localhost'].includes(url.hostname)) {
+        foreign.push(event.request.url);
+      }
+    }),
+    page.on('Runtime.exceptionThrown', (event) => errors.push(event)),
+  ];
+  return { actions, foreign, errors, stop: () => { for (const stop of stops) stop(); } };
+}
+
+/**
+ * The held bundle check's markers beside one consumer (see UPGRADE_HELD_LINT): whether the run before or
+ * after writing is waiting, and letting each go.
+ * @param {string} root
+ */
+function heldUpgradeCheck(root) {
+  /** @param {'before' | 'after'} run @param {string} name */
+  const marker = (run, name) => path.join(path.dirname(root), `${path.basename(root)}.${run}-${name}`);
+  return {
+    /** @param {'before' | 'after'} run */
+    waiting: (run) => fs.existsSync(marker(run, 'waiting')),
+    /** @param {'before' | 'after'} run */
+    go: (run) => fs.writeFileSync(marker(run, 'go'), ''),
+    release() {
+      for (const run of /** @type {const} */ (['before', 'after'])) fs.writeFileSync(marker(run, 'go'), '');
+    },
+  };
+}
+
+/**
+ * A Windows process that holds one file open so that nothing can replace, rename or delete it while it is
+ * held: .NET's FileShare.Read, which is how an indexer or a scanner holds a file and what Node never does,
+ * because libuv shares every mode. It starts first and locks on command, so a lock lands within
+ * milliseconds. The driver owns it and confirms that it stopped.
+ */
+function startLockHolder() {
+  assert.ok(WINDOWS_POWERSHELL, 'a lock holder runs only on Windows');
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "[Console]::Out.WriteLine('ready'); [Console]::Out.Flush()",
+    '$path = [Console]::In.ReadLine()',
+    '$stream = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)',
+    "[Console]::Out.WriteLine('locked'); [Console]::Out.Flush()",
+    '$null = [Console]::In.ReadLine()',
+    '$stream.Dispose()',
+    "[Console]::Out.WriteLine('released'); [Console]::Out.Flush()",
+  ].join('; ');
+  const child = spawn(WINDOWS_POWERSHELL, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
+    { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  let output = '';
+  child.stdout.on('data', (chunk) => { output += chunk; });
+  child.stderr.on('data', (chunk) => { output += `[stderr] ${chunk}`; });
+  const closed = new Promise((resolve) => child.once('close', resolve));
+  /** @param {string} word */
+  const said = async (word) => {
+    try {
+      await until(() => output.includes(word), `the lock holder said ${word}`, 30_000);
+    } catch (error) {
+      throw new Error(`${safeError(error)}\nthe lock holder's output: ${output}`);
+    }
+  };
+  return {
+    pid: /** @type {number} */ (child.pid),
+    ready: said('ready'),
+    /** @param {string} file */
+    async lock(file) {
+      child.stdin.write(`${file}\n`);
+      await said('locked');
+    },
+    async release() {
+      if (child.exitCode === null) {
+        child.stdin.write('release\n');
+        await Promise.race([closed, delay(10_000)]);
+      }
+    },
+    /** Whatever happened, no holder outlives its case. */
+    async stop() {
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+      await Promise.race([closed, delay(10_000)]);
+      return { exitCode: child.exitCode, signal: child.signalCode, running: child.exitCode === null && child.signalCode === null };
+    },
+  };
+}
+
+/**
+ * The first half of every failure case: the session's own check finds the release, the notice names it, and
+ * the one dialog opens, prepares through the real extension, and shows the reviewed result.
+ * @param {Cdp} page
+ * @param {ReturnType<typeof buildUpgradeFixture>} fixture
+ * @param {Awaited<ReturnType<typeof startUpgradeSession>>} session
+ * @param {string} tag
+ */
+async function openUpgradePreview(page, fixture, session, tag) {
+  assert.equal(upgradeLatestRelease(fixture.source), tag, 'Git itself names the newer release');
+  const checked = await untilUpdates(session.canvasUrl, (state) => state.check !== null, 'the session-start check', 60_000);
+  assert.deepEqual({ ...checked.check, checkedAt: null }, {
+    status: 'update_available', installedRef: UPGRADE_FROM, availableRef: tag, releaseUrl: null, checkedAt: null, message: null,
+  });
+  await navigate(page, session.canvasUrl, 1440);
+  await openUpgradeNeedsYou(page);
+  const notice = await until(() => upgradeNotice(page), 'the update notice');
+  assert.deepEqual(notice, { name: `Dude ${tag} is available`, description: `You have ${UPGRADE_FROM}.`, buttons: ['Review update', 'Later'] });
+  await click(page, `document.querySelector('[data-update-review]')`);
+  const ready = await untilUpgradePhase(page, 'ready', 180_000);
+  const preview = (await readUpdates(session.canvasUrl)).update;
+  const expected = expectedUpgradeChanges(tag);
+  assert.deepEqual({ ...preview, id: null }, {
+    phase: 'ready', includePacks: true, packChoice: null, id: null, fromRef: UPGRADE_FROM, toRef: tag, releaseUrl: null,
+    branch: 'main', counts: upgradeCounts(expected), changes: expected, dirtyPaths: [],
+    packs: { eligible: [], affected: [], unchanged: [], notSelected: [] },
+  }, 'the reviewed result is exactly the change the fixture made');
+  assert.equal(ready.files.summary, `Show files (${expected.length})`);
+  assert.deepEqual(upgradeTree(session.root), session.before.tree, 'preparing changed no file');
+  return { checked, ready, preview, expected };
+}
+
+/**
+ * After an outcome that wrote, nothing runs again by itself: after a wait, the update state and the
+ * project are exactly what they were, no update or check process runs, and no update root exists.
+ * @param {Awaited<ReturnType<typeof startUpgradeSession>>} session
+ * @param {any} state @param {Record<string, string>} tree @param {number} [ms]
+ */
+async function observeNoReplay(session, state, tree, ms = 4_000) {
+  await delay(ms);
+  assert.deepEqual(await readUpdates(session.canvasUrl), state, 'the update state did not change by itself');
+  assert.deepEqual(upgradeTree(session.root), tree, 'the project did not change by itself');
+  const running = ownedProcesses([session.root]).filter((row) => /upgrade-action\.mjs|dude-lint|lint(?:-real)?\.mjs/i.test(row.commandLine));
+  assert.deepEqual(running, [], 'no update or check process runs after the outcome');
+  assert.deepEqual(upgradeRoots(session), [], 'no update root remains');
+  return { waitedMs: ms, updateProcesses: running.length };
+}
+
+/**
+ * US1 and US5 in the installed host: the session-start check and its notice, About's status, one dialog,
+ * Cancel before writing, one OK, the self-replacement, the old server's write gate, and a new session
+ * that reads the installed target. The consumer updates from v1.0.0 to v1.1.0 through the real loaded
+ * extension, which runs its own update controller, whose child replaces the controller and itself.
+ * `evidence` is the manifest's own record of the case, filled as it goes so a failure keeps what it saw.
+ * @param {ReturnType<typeof buildUpgradeFixture>} fixture
+ * @param {Cdp} page
+ * @param {string[]} cliVersions
+ * @param {Record<string, any>} evidence
+ */
+async function runUpgradeSelfUpdate(fixture, page, cliVersions, evidence) {
+  const started = Date.now();
+  const session = await startUpgradeSession(fixture, 'upgrade-self');
+  const { root, canvasUrl } = session;
+  const expected = expectedUpgradeChanges(UPGRADE_TO);
+  const target = fixture.targets[UPGRADE_TO];
+  const trace = watchUpgradeRequests(page, canvasUrl);
+  Object.assign(evidence, { session: session.name, root, data: session.data, extension: session.extension });
+  /** @param {string} relative */
+  const onDisk = (relative) => path.join(root, ...relative.split('/'));
+
+  // What the old server serves before anything changes: exactly its deployed files.
+  const servedBefore = await readServedAssets(canvasUrl);
+  for (const route of UPGRADE_ASSET_ROUTES) {
+    assert.equal(servedBefore[route].status, 200, `${route} is served before OK`);
+    assert.equal(servedBefore[route].sha256, session.before.tree[`.github/extensions/dude/ui${route}`],
+      `${route} is the deployed file`);
+  }
+  evidence.servedBefore = servedBefore;
+
+  // (a) The session-start check, which the extension ran by itself once the session joined: the real
+  // engine listed the real upstream's tags. Git's own protocol names the release it must have found.
+  assert.equal(upgradeLatestRelease(fixture.source), UPGRADE_TO, 'Git itself names the newer release');
+  const checked = await untilUpdates(canvasUrl, (state) => state.check !== null, 'the session-start check', 60_000);
+  assert.deepEqual(checked.installation, { channel: 'latest', installedRef: UPGRADE_FROM, sourceRef: 'latest' });
+  assert.equal(checked.runningRef, UPGRADE_FROM);
+  assert.match(checked.check.checkedAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+  assert.deepEqual({ ...checked.check, checkedAt: null }, {
+    status: 'update_available', installedRef: UPGRADE_FROM, availableRef: UPGRADE_TO, releaseUrl: null, checkedAt: null, message: null,
+  });
+  assert.deepEqual(checked.notice, { installedRef: UPGRADE_FROM, availableRef: UPGRADE_TO, releaseUrl: null });
+  assert.deepEqual([checked.checking, checked.update, checked.gate, checked.kept], [false, null, 'open', []]);
+  assert.deepEqual(upgradeTree(root), session.before.tree, 'the session-start check changed no file');
+  assert.equal(fs.existsSync(upgradePreferenceFile(session)), false, 'the check saved no preference');
+  assert.deepEqual(upgradeRoots(session), [], 'the check made no temporary folder');
+  evidence.check = checked;
+
+  // The notice, under the Needs you title, and About's status: both come from that one check.
+  await navigate(page, canvasUrl, 1440);
+  await openUpgradeNeedsYou(page);
+  const notice = await until(() => upgradeNotice(page), 'the update notice');
+  assert.deepEqual(notice, {
+    name: `Dude ${UPGRADE_TO} is available`, description: `You have ${UPGRADE_FROM}.`, buttons: ['Review update', 'Later'],
+  });
+  evidence.notice = { ...notice, screenshot: await screenshot(page, 'bundle-upgrade-notice') };
+  const about = await openUpgradeAbout(page);
+  assert.deepEqual({ tone: about.tone, line: about.line, time: about.time, actions: about.actions, footer: about.footer }, {
+    tone: 'available', line: `Dude ${UPGRADE_TO} is available.`, time: checked.check.checkedAt,
+    actions: [`Update to ${UPGRADE_TO}`, 'Check for updates'], footer: `About · Installed ${UPGRADE_FROM}`,
+  });
+  assert.deepEqual(about.rows, [['Dude version', UPGRADE_FROM], ['Author', 'Enrique Gonzalez'],
+    ['Repository', INSTALLED_SOURCE_REPO], ['Update channel', 'Latest release']]);
+  for (const version of cliVersions.filter(Boolean)) {
+    assert.equal(JSON.stringify(about).includes(version), false, `About must not substitute installed CLI version ${version} for the recorded Dude release`);
+  }
+  evidence.about = { ...about, screenshot: await screenshot(page, 'bundle-upgrade-about') };
+  await openUpgradeNeedsYou(page);
+  await until(() => upgradeNotice(page), 'the notice again after About');
+
+  // (b) One dialog: it opens at once, preparing, and the real extension's update child prepares in its own
+  // temporary root. The project does not change while it prepares.
+  const phasesShown = await recordUpgradePhases(page);
+  await click(page, `document.querySelector('[data-update-review]')`);
+  const preparing = await until(() => upgradeDialog(page), 'the update dialog');
+  assert.deepEqual({ phase: preparing.phase, modal: preparing.modal, name: preparing.name, busy: preparing.busy,
+    cancel: preparing.cancel, primary: preparing.primary },
+  { phase: 'preparing', modal: true, name: 'Update Dude', busy: 'true', cancel: 'Cancel', primary: null });
+  assert.match(preparing.text, /Nothing in your project changes until you select OK\./);
+  const children = [];
+  for (let attempt = 0; attempt < 8 && children.length === 0; attempt += 1) {
+    if ((await upgradeDialog(page))?.phase !== 'preparing') break;
+    children.push(...ownedProcesses([root]).filter((row) => /upgrade-action\.mjs/.test(row.commandLine)));
+  }
+  assert.equal(children.length > 0, true, 'the extension started an update child to prepare');
+  assert.equal(children[0].ppid, session.extension.pid, 'the extension itself started the update child');
+  evidence.preparing = { dialog: preparing, child: children[0] };
+  const ready = await untilUpgradePhase(page, 'ready', 180_000);
+  const preview = (await readUpdates(canvasUrl)).update;
+  assert.match(preview.id, /^[0-9a-f]{32}$/);
+  assert.deepEqual({ ...preview, id: null }, {
+    phase: 'ready', includePacks: true, packChoice: null, id: null, fromRef: UPGRADE_FROM, toRef: UPGRADE_TO, releaseUrl: null,
+    branch: 'main', counts: upgradeCounts(expected), changes: expected, dirtyPaths: [],
+    packs: { eligible: [], affected: [], unchanged: [], notSelected: [] },
+  }, 'the reviewed result is exactly the change the fixture made');
+  assert.equal(ready.version, `${UPGRADE_FROM} to ${UPGRADE_TO}`);
+  assert.deepEqual(ready.counts, [{ heading: 'Changes', rows: [
+    ['Dude core', '1 added, 5 replaced, 1 removed'], ['Metadata', '1 added, 1 replaced']] }]);
+  const words = { add: 'Added', replace: 'Replaced', remove: 'Removed' };
+  assert.deepEqual(ready.files.rows.map((row) => `${row[0]} ${row[1]}`).sort(),
+    expected.map((change) => `${words[/** @type {'add'|'replace'|'remove'} */ (change.op)]} ${change.path}`).sort());
+  assert.equal(ready.files.summary, `Show files (${expected.length})`);
+  assert.deepEqual(ready.primary, { text: 'OK', disabled: false });
+  assert.match(ready.text, new RegExp(`Changes stay uncommitted on main\\. Start a new session afterward to use ${UPGRADE_TO.replace(/\./g, '\\.')}\\.`));
+  assert.deepEqual(upgradeTree(root), session.before.tree, 'preparing changed no file');
+  assert.deepEqual(upgradeGitState(root), session.before.git, 'preparing moved nothing in Git');
+  assert.equal(upgradeRoots(session).length, 1, 'only the live preview keeps a root');
+  evidence.firstPreview = { id: preview.id, dialog: ready, screenshot: await screenshot(page, 'bundle-upgrade-ready') };
+
+  // (e) Cancel before writing changes nothing: the preparation is discarded, its root removed, and the
+  // notice stays.
+  await click(page, `document.querySelector('[data-update-cancel]')`);
+  await until(async () => !(await upgradeDialog(page)), 'the dialog closed by Cancel');
+  const cancelled = await untilUpdates(canvasUrl, (state) => state.update === null, 'the cancelled preview discarded');
+  await until(() => upgradeRoots(session).length === 0, 'the cancelled preview\'s root removed', 30_000);
+  assert.deepEqual(upgradeTree(root), session.before.tree, 'Cancel changed no file');
+  assert.deepEqual(upgradeGitState(root), session.before.git, 'Cancel moved nothing in Git');
+  assert.deepEqual([cancelled.gate, cancelled.kept, cancelled.notice === null], ['open', [], false], 'Cancel keeps the notice');
+  assert.equal((await postUpdate(canvasUrl, { op: 'apply', id: preview.id })).body.error, 'stale', 'a cancelled result never applies');
+  evidence.cancel = { actions: [...trace.actions], state: cancelled };
+
+  // The same dialog prepares again and the reviewed result is the same change under a new ID.
+  await click(page, `document.querySelector('[data-update-review]')`);
+  await untilUpgradePhase(page, 'ready', 180_000);
+  const second = (await readUpdates(canvasUrl)).update;
+  assert.notEqual(second.id, preview.id, 'a new preparation has its own ID');
+  assert.deepEqual(second.changes, expected);
+
+  // (b)+(c)+(d) One OK. Applying, then Checking when the target engine says its check after writing has
+  // started, then the outcome; the server's own phases are read beside the dialog's.
+  const phases = await watchUpdatePhases(page, canvasUrl);
+  let success;
+  try {
+    await click(page, `document.querySelector('[data-update-primary]')`);
+    success = await untilUpgradePhase(page, 'success', 180_000);
+  } finally {
+    // However the wait ends, the watcher stops; left running, it would keep the driver alive after its cleanup.
+    await phases.stop();
+  }
+  const shown = await phasesShown();
+  assert.deepEqual(trace.actions.map((action) => action.op), ['preview', 'cancel', 'preview', 'apply'], 'one OK');
+  const applying = shown.find((entry) => entry.phase === 'applying');
+  assert.deepEqual({ cancel: applying.cancel, closeDisabled: applying.closeDisabled, primary: applying.primary },
+    { cancel: false, closeDisabled: true, primary: null }, 'Applying offers no Cancel, no Close and no OK');
+  const afterReady = shown.map((entry) => entry.phase).slice(shown.map((entry) => entry.phase).lastIndexOf('ready') + 1);
+  assert.deepEqual(afterReady, afterReady.includes('checking') ? ['applying', 'checking', 'success'] : ['applying', 'success'],
+    'the dialog moves forward only, from OK to the outcome');
+  const keys = phases.keys();
+  assert.deepEqual(keys, ['open/ready', 'applying/applying', ...keys.includes('applying/checking') ? ['applying/checking'] : [], 'closed/applied'],
+    'the server went from Applying to the outcome, and the gate closed with it');
+  assert.deepEqual({ bars: success.bars, counts: success.counts, primary: success.primary?.text, cancel: success.cancel, live: success.live }, {
+    bars: [{ title: `Dude ${UPGRADE_TO} is installed`,
+      lines: [`This session still runs ${UPGRADE_FROM}. Start a new session to use ${UPGRADE_TO}.`] }],
+    counts: [{ heading: 'Changes applied', rows: [['Dude core', '1 added, 5 replaced, 1 removed'], ['Metadata', '1 added, 1 replaced']] }],
+    primary: 'Done', cancel: null, live: `Dude ${UPGRADE_TO} is installed. Start a new session to use it.`,
+  });
+  assert.match(success.text, /Changes are uncommitted on main\. Review and commit them when you're ready\./);
+  evidence.apply = {
+    uiPhases: shown, serverPhases: phases.seen, actions: [...trace.actions], dialog: success,
+    checkingShownInDialog: afterReady.includes('checking'), checkingSeenByServer: keys.includes('applying/checking'),
+    screenshot: await screenshot(page, 'bundle-upgrade-success'),
+  };
+  const done = await readUpdates(canvasUrl);
+  assert.deepEqual(done.installation, { channel: 'latest', installedRef: UPGRADE_TO, sourceRef: 'latest' }, 'the version installed on disk');
+  assert.equal(done.runningRef, UPGRADE_FROM, 'the session still runs the version it started with');
+  assert.deepEqual([done.gate, done.notice, done.kept, done.update.phase, done.update.existingFailures, done.update.cleanup],
+    ['closed', null, [], 'applied', [], null]);
+
+  // The exact applied files: the reviewed change set, the target's own bytes, and nothing else; HEAD, the
+  // branch, the index and the staged file are what they were; unrelated and workflow files are byte-identical.
+  const after = upgradeTree(root);
+  const delta = upgradeDelta(session.before.tree, after);
+  assert.deepEqual(delta, {
+    added: [UPGRADE_LOG, UPGRADE_ADDED].sort(), removed: [UPGRADE_RETIRED], changed: [UPGRADE_MANIFEST, ...UPGRADE_REPLACED].sort(),
+  }, 'exactly the reviewed files changed');
+  for (const [relative, hash] of Object.entries(target)) assert.equal(after[relative], hash, `${relative} is the target's bytes`);
+  assert.deepEqual(parseManifestDocument(fs.readFileSync(onDisk(UPGRADE_MANIFEST)), 'updated manifest').data,
+    { source_repo: fixture.source, source_ref: 'latest', installed_ref: UPGRADE_TO });
+  const log = fs.readFileSync(onDisk(UPGRADE_LOG), 'utf8');
+  for (const line of [`- from: ${UPGRADE_FROM}`, `- to: ${UPGRADE_TO}`, '- ref: latest', '- notes: left uncommitted on main']) {
+    assert.equal(log.includes(line), true, `the upgrade log records ${line}`);
+  }
+  const gitAfter = upgradeGitState(root);
+  assert.deepEqual({ ...gitAfter, status: null }, { ...session.before.git, status: null }, 'HEAD, branch, index and staging are unchanged');
+  assert.deepEqual(gitAfter.status, [...session.before.git.status,
+    `?? ${UPGRADE_LOG}`, `?? ${UPGRADE_ADDED}`, ` D ${UPGRADE_RETIRED}`, ` M ${UPGRADE_MANIFEST}`,
+    ...UPGRADE_REPLACED.map((relative) => ` M ${relative}`)].sort(), 'the changes are uncommitted on main');
+  const preserved = ['README.md', 'src/app.js', 'staged-notes.md', 'scratch/todo.txt', '.dude/ideas/001-consumer-notes.md',
+    '.dude/specs/001-consumer-notes/spec.md', '.dude/specs/001-consumer-notes/tasks.md'];
+  for (const relative of preserved) assert.equal(after[relative], session.before.tree[relative], `${relative} is byte-identical`);
+  evidence.disk = { delta, git: gitAfter, preserved, targetHashes: target };
+
+  // (c) Self-replacement: the old extension, still loaded, replaced its own deployed files, including the
+  // controller and the child it runs. It is still the very process it was, and it has not reloaded anything.
+  const extension = await observeExtension(session);
+  assert.deepEqual({ status: extension.status, sameProcess: extension.sameProcess }, { status: 'running', sameProcess: true },
+    'the update neither restarted nor stopped the extension');
+  assert.equal(fs.existsSync(path.join(hostTemporary(session.data), UPGRADE_LOADED_MARKER)), false, 'the old process never loaded the replaced entry module');
+  assert.equal(fs.readFileSync(onDisk(UPGRADE_ENTRY), 'utf8').includes(UPGRADE_LOADED_MARKER), true, 'the replaced entry module is on disk');
+  evidence.selfReplacement = {
+    replaced: UPGRADE_REPLACED.map((relative) => ({ path: relative, before: session.before.tree[relative], after: after[relative] })),
+    extension, markerBeforeNewSession: false,
+  };
+
+  // (d) The old server at its write gate: no interface asset, no replacement byte, no workspace change.
+  const gate = await observeOldServerGate(canvasUrl, { refusal: 'new_session_required', replaced: target });
+  assert.deepEqual(upgradeTree(root), after, 'the refused requests wrote nothing');
+  const page1 = await readInertPage(canvasUrl);
+  assert.deepEqual({ status: page1.status, cacheControl: page1.cacheControl, scripts: page1.scripts, namesBundle: page1.namesBundle,
+    title: page1.title, csp: page1.csp }, {
+    status: 200, cacheControl: 'no-store', scripts: 0, namesBundle: false, title: `Start a new session to use Dude ${UPGRADE_TO}`,
+    csp: "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+  });
+  assert.match(page1.text, new RegExp(`Dude ${UPGRADE_TO.replace(/\./g, '\\.')} is installed in this project, but this session still runs ${UPGRADE_FROM.replace(/\./g, '\\.')}\\.`));
+  assert.match(page1.text, /The changes are uncommitted on <code>main<\/code>\./);
+  const other = await session.host.session.rpc.canvas.open({
+    extensionId: 'project:dude', canvasId: 'dude', instanceId: `upgrade-self-other-${randomUUID()}`,
+  });
+  const otherPage = await readInertPage(other.url);
+  assert.deepEqual([otherPage.status, otherPage.title, otherPage.scripts], [200, page1.title, 0], 'another Canvas of the process is gated too');
+  assert.equal((await fetch(new URL('/assets/app.js', other.url))).status, 404);
+  await session.host.session.rpc.canvas.close({ instanceId: other.instanceId });
+  evidence.gate = { ...gate, inertPage: { ...page1, text: undefined, words: page1.text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() },
+    otherCanvas: { title: otherPage.title, assetStatus: 404 } };
+
+  // Done leads to the in-app handoff; a reload gets the same words from the server, with no application.
+  await click(page, `document.querySelector('[data-update-primary]')`);
+  const handoff = await until(() => evaluate(page, `(() => {
+    const main = document.querySelector('[data-update-handoff]');
+    return main && { phase: main.getAttribute('data-update-handoff'),
+      name: document.getElementById(main.getAttribute('aria-labelledby'))?.textContent, text: main.innerText,
+      controls: main.querySelectorAll('button, a, input, [tabindex="0"]').length };
+  })()`), 'the in-app handoff');
+  assert.deepEqual({ phase: handoff.phase, name: handoff.name, controls: handoff.controls },
+    { phase: 'applied', name: `Start a new session to use Dude ${UPGRADE_TO}`, controls: 0 });
+  evidence.handoff = { ...handoff, screenshot: await screenshot(page, 'bundle-upgrade-handoff') };
+  await page.send('Page.navigate', { url: canvasUrl });
+  await until(() => evaluate(page, `document.querySelector('h1')?.textContent === ${JSON.stringify(`Start a new session to use Dude ${UPGRADE_TO}`)}`),
+    'the inert page after a reload');
+  assert.deepEqual(await evaluate(page, `({ scripts: document.scripts.length, controls: document.querySelectorAll('button, a, input').length })`),
+    { scripts: 0, controls: 0 });
+  evidence.reload = { screenshot: await screenshot(page, 'bundle-upgrade-reload') };
+
+  // Zero agent turns, no Needs you request, nothing outside Canvas, every update root gone.
+  assert.deepEqual(trace.foreign, [], 'the update reached nothing outside the Canvas origin');
+  assert.deepEqual(trace.errors, [], 'the Canvas threw no exception');
+  trace.stop();
+  evidence.noAgentTurn = await observeNoAgentTurn(session);
+  await until(() => upgradeRoots(session).length === 0, 'every update root removed', 30_000);
+  evidence.roots = upgradeRoots(session);
+  assert.deepEqual(upgradeTree(root), after, 'nothing changed after the outcome');
+  const finalExtension = await observeExtension(session);
+  assert.equal(finalExtension.sameProcess, true, 'the old extension still runs when the session ends');
+  evidence.sessionRecord = { sessionId: session.host.record.sessionId, extensionAtEnd: finalExtension };
+  await page.send('Page.navigate', { url: 'about:blank' });
+  await closeUpgradeSession(session);
+
+  // (h) A NEW session on the same project reads the installed target: the version on disk is the version
+  // that runs, the check against the same upstream finds nothing newer, and the replaced entry module is
+  // the one this process loaded.
+  const next = await startUpgradeSession(fixture, 'upgrade-next', root);
+  const fresh = await untilUpdates(next.canvasUrl, (state) => state.check !== null, 'the next session\'s check', 60_000);
+  assert.deepEqual(fresh.installation, { channel: 'latest', installedRef: UPGRADE_TO, sourceRef: 'latest' });
+  assert.equal(fresh.runningRef, UPGRADE_TO, 'the new session runs the version installed on disk');
+  assert.deepEqual({ ...fresh.check, checkedAt: null }, {
+    status: 'up_to_date', installedRef: UPGRADE_TO, availableRef: UPGRADE_TO, releaseUrl: null, checkedAt: null, message: null,
+  });
+  assert.deepEqual([fresh.notice, fresh.update, fresh.gate, fresh.kept], [null, null, 'open', []]);
+  const marker = await until(() => {
+    const file = path.join(hostTemporary(next.data), UPGRADE_LOADED_MARKER);
+    return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+  }, 'the replaced entry module loaded by the new session', 30_000);
+  assert.equal(marker, `${UPGRADE_TO}\n`);
+  const servedNext = await readServedAssets(next.canvasUrl);
+  assert.equal(servedNext['/assets/app.js'].sha256, target[UPGRADE_BUNDLE], 'the new session serves the replacement interface');
+  assert.notEqual(servedNext['/assets/app.js'].sha256, servedBefore['/assets/app.js'].sha256);
+  assert.deepEqual((await readAbout(next.canvasUrl)).body, { installedRef: UPGRADE_TO, sourceRef: 'latest', baseRelease: null });
+  const nextTrace = watchUpgradeRequests(page, next.canvasUrl);
+  await navigate(page, next.canvasUrl, 1440);
+  const nextAbout = await openUpgradeAbout(page);
+  assert.deepEqual({ tone: nextAbout.tone, line: nextAbout.line, time: nextAbout.time, footer: nextAbout.footer, actions: nextAbout.actions },
+    { tone: 'current', line: 'Dude is up to date.', time: fresh.check.checkedAt, footer: `About · Installed ${UPGRADE_TO}`, actions: ['Check for updates'] });
+  assert.deepEqual(nextAbout.rows[0], ['Dude version', UPGRADE_TO]);
+  await openUpgradeNeedsYou(page);
+  assert.equal(await upgradeNotice(page), null, 'an up-to-date session has no notice');
+  assert.deepEqual(nextTrace.errors, []);
+  nextTrace.stop();
+  evidence.nextSession = {
+    session: next.name, sessionId: next.host.record.sessionId, state: fresh, marker, servedAppSha256: servedNext['/assets/app.js'].sha256,
+    about: { ...nextAbout, screenshot: await screenshot(page, 'bundle-upgrade-next-session') },
+    noAgentTurn: await observeNoAgentTurn(next), extension: next.extension,
+  };
+  assert.deepEqual(upgradeTree(root), after, 'the new session changed no file');
+  await page.send('Page.navigate', { url: 'about:blank' });
+  await closeUpgradeSession(next);
+  evidence.elapsedMs = Date.now() - started;
+}
+
+/**
+ * A permission failure on a file the update replaces (US4): the file is read-only by the time OK is
+ * confirmed, Windows refuses the replacement, and the update ends as Files restored, the project exactly as
+ * it was, with nothing replayed. Windows only: a POSIX file's own mode does not stop a rename over it.
+ * @param {ReturnType<typeof buildUpgradeFixture>} fixture
+ * @param {Cdp} page
+ * @param {Record<string, any>} evidence
+ */
+async function runUpgradePermissionFailure(fixture, page, evidence) {
+  if (!WINDOWS) {
+    Object.assign(evidence, { applicable: false, reason: `A read-only file blocks a replacement only on Windows; not run on ${process.platform}.` });
+    return;
+  }
+  const started = Date.now();
+  const session = await startUpgradeSession(fixture, 'upgrade-permission');
+  const { root, canvasUrl } = session;
+  const trace = watchUpgradeRequests(page, canvasUrl);
+  const file = path.join(root, ...UPGRADE_NOTICE.split('/'));
+  Object.assign(evidence, { applicable: true, session: session.name, root, data: session.data, extension: session.extension });
+  try {
+    const { ready, preview } = await openUpgradePreview(page, fixture, session, UPGRADE_TO);
+    evidence.preview = { id: preview.id, dialog: ready };
+    // The permission failure arrives between the preview and OK: the file the update replaces is read-only,
+    // and Windows refuses to write it or to rename another file over it.
+    fs.chmodSync(file, 0o444);
+    assert.throws(() => fs.closeSync(fs.openSync(file, 'r+')), { code: 'EPERM' }, 'Windows refuses a write to the read-only file');
+    evidence.permission = { file: UPGRADE_NOTICE, attribute: 'read-only', writeOpen: 'EPERM' };
+    const phasesShown = await recordUpgradePhases(page);
+    const phases = await watchUpdatePhases(page, canvasUrl);
+    let restored;
+    try {
+      await click(page, `document.querySelector('[data-update-primary]')`);
+      restored = await untilUpgradePhase(page, 'restored', 180_000);
+    } finally {
+      await phases.stop();
+    }
+    const shown = await phasesShown();
+    assert.deepEqual(trace.actions.map((action) => action.op), ['preview', 'apply'], 'one OK');
+    assert.deepEqual(phases.keys(), ['open/ready', 'applying/applying', 'closed/restored']);
+    assert.deepEqual(shown.map((entry) => entry.phase).slice(-3), ['ready', 'applying', 'restored']);
+    const state = await readUpdates(canvasUrl);
+    const destination = path.join(fs.realpathSync.native(root), ...UPGRADE_NOTICE.split('/'));
+    assert.equal(state.update.phase, 'restored');
+    assert.match(state.update.message, /^EPERM: operation not permitted, rename /);
+    assert.equal(state.update.message.endsWith(`-> '${destination}'`), true, 'the failure names the file Windows refused');
+    assert.deepEqual([state.update.newFailures, state.update.cleanup, state.gate, state.notice], [[], null, 'closed', null]);
+    assert.deepEqual([state.installation.installedRef, state.runningRef], [UPGRADE_FROM, UPGRADE_FROM], 'the disk still has the old version');
+    assert.deepEqual({ bars: restored.bars, details: restored.details, cancel: restored.cancel, primary: restored.primary }, {
+      bars: [{ title: 'Update failed', lines: ["Files restored. The update didn't finish, so Dude put the previous files back.",
+        'Start a new session to keep using Canvas.'] }],
+      details: [{ summary: 'Error message', text: state.update.message }], cancel: 'Close', primary: null,
+    });
+    evidence.outcome = { state, dialog: restored, uiPhases: shown, serverPhases: phases.seen, screenshot: await screenshot(page, 'bundle-upgrade-permission-restored') };
+    // Honest: every file is exactly as it was, nothing is left behind, and the read-only file is untouched.
+    assert.deepEqual(upgradeTree(root), session.before.tree, 'Files restored: every byte is as it was, and no temporary file remains');
+    assert.deepEqual(upgradeGitState(root), session.before.git, 'Git did not move');
+    assert.equal(fs.statSync(file).mode & 0o222, 0, 'the read-only file is still read-only');
+    evidence.restoration = { delta: upgradeDelta(session.before.tree, upgradeTree(root)), git: upgradeGitState(root) };
+    evidence.gate = await observeOldServerGate(canvasUrl, { refusal: 'new_session_required', replaced: fixture.targets[UPGRADE_TO] });
+    const inert = await readInertPage(canvasUrl);
+    assert.deepEqual([inert.status, inert.title, inert.scripts, inert.namesBundle], [200, 'Start a new session to keep using Canvas', 0, false]);
+    assert.match(inert.text, /The update didn't finish, and Dude restored your files\. Canvas stops in a session once an update starts writing files\./);
+    // Nothing runs again by itself, and asking again is refused.
+    evidence.noReplay = await observeNoReplay(session, await readUpdates(canvasUrl), upgradeTree(root));
+    await click(page, `document.querySelector('[data-update-cancel]')`);
+    const handoff = await until(() => evaluate(page, `(() => {
+      const main = document.querySelector('[data-update-handoff]');
+      return main && { phase: main.getAttribute('data-update-handoff'),
+        name: document.getElementById(main.getAttribute('aria-labelledby'))?.textContent,
+        controls: main.querySelectorAll('button, a, input, [tabindex="0"]').length };
+    })()`), 'the in-app handoff');
+    assert.deepEqual(handoff, { phase: 'restored', name: 'Start a new session to keep using Canvas', controls: 0 });
+    assert.deepEqual(trace.foreign, []);
+    assert.deepEqual(trace.errors, []);
+    evidence.noAgentTurn = await observeNoAgentTurn(session);
+    const extension = await observeExtension(session);
+    assert.deepEqual({ status: extension.status, sameProcess: extension.sameProcess }, { status: 'running', sameProcess: true });
+    evidence.extensionAtEnd = extension;
+  } finally {
+    trace.stop();
+    try { fs.chmodSync(file, 0o666); } catch { /* The case failed before it made the file read-only. */ }
+  }
+  await page.send('Page.navigate', { url: 'about:blank' });
+  await closeUpgradeSession(session);
+  evidence.elapsedMs = Date.now() - started;
+}
+
+/**
+ * Closing the browser after OK cancels nothing (US5). The target's bundle check is held twice: before writing,
+ * where the update child is already running and every file is still the old one, and after writing, where the
+ * update is mid-flight with every file written and that same child still running its old script from memory.
+ * The case then closes the browser and the Canvas that started it; the update finishes by itself, and nothing
+ * else could have stopped it.
+ * @param {ReturnType<typeof buildUpgradeFixture>} fixture
+ * @param {Record<string, any>} evidence
+ */
+async function runUpgradeBrowserClosure(fixture, evidence) {
+  const started = Date.now();
+  publishUpgradeRelease(fixture, UPGRADE_HELD_TO);
+  const session = await startUpgradeSession(fixture, 'upgrade-close');
+  const { root } = session;
+  const held = heldUpgradeCheck(root);
+  const expected = expectedUpgradeChanges(UPGRADE_HELD_TO);
+  const target = fixture.targets[UPGRADE_HELD_TO];
+  Object.assign(evidence, { session: session.name, root, data: session.data, extension: session.extension });
+  const own = await startBrowser();
+  let stopped = false;
+  try {
+    const trace = watchUpgradeRequests(own.page, session.canvasUrl);
+    const { preview } = await openUpgradePreview(own.page, fixture, session, UPGRADE_HELD_TO);
+    evidence.preview = { id: preview.id, changes: expected.length };
+    const phasesShown = await recordUpgradePhases(own.page);
+    const childFile = path.join(root, ...UPGRADE_CHILD.split('/'));
+    const updateChildren = () => ownedProcesses([root]).filter((row) => /upgrade-action\.mjs/.test(row.commandLine));
+    await click(own.page, `document.querySelector('[data-update-primary]')`);
+    // The target's check before writing waits first. The update child is running by then, and every file the
+    // update replaces, its own script included, is still the old one: the child is seen alive before that
+    // script is replaced, which no clock or OS start time is needed to show.
+    await until(() => held.waiting('before'), 'the held bundle check before writing', 120_000);
+    const running = await until(() => {
+      const rows = updateChildren();
+      return rows.length === 1 ? rows : null;
+    }, 'one update child applies', 30_000);
+    assert.equal(running[0].ppid, session.extension.pid, 'the extension itself started the update child');
+    for (const relative of UPGRADE_REPLACED) {
+      assert.equal(sha256(fs.readFileSync(path.join(root, ...relative.split('/')))), session.before.tree[relative],
+        `${relative} is still the old file while the check before writing waits`);
+    }
+    held.go('before');
+    // Every file is written, and the target's check after writing waits: the update is mid-flight.
+    await until(() => held.waiting('after'), 'the held bundle check after writing', 120_000);
+    const checking = await untilUpdates(session.canvasUrl, (state) => state.update?.phase === 'checking', 'the server in Checking', 30_000);
+    const dialog = await untilUpgradePhase(own.page, 'checking', 30_000);
+    assert.deepEqual({ cancel: dialog.cancel, closeDisabled: dialog.closeDisabled, primary: dialog.primary, live: dialog.live },
+      { cancel: null, closeDisabled: true, primary: null, live: 'Checking the updated files.' }, 'Checking offers no Cancel, no Close and no OK');
+    assert.deepEqual((await phasesShown()).map((entry) => entry.phase).slice(-3), ['ready', 'applying', 'checking']);
+    assert.deepEqual(trace.actions.map((action) => action.op), ['preview', 'apply'], 'one OK');
+    const written = upgradeDelta(session.before.tree, upgradeTree(root));
+    assert.deepEqual(written, {
+      added: [UPGRADE_LOG, UPGRADE_ADDED, UPGRADE_LINT_REAL].sort(), removed: [UPGRADE_RETIRED],
+      changed: [UPGRADE_MANIFEST, ...UPGRADE_REPLACED, UPGRADE_LINT].sort(),
+    }, 'every reviewed file is already written while the check waits');
+    // The same child is still running, with its old script in memory, while that very file on disk is now the
+    // target's: it was alive before the replacement and is alive after it.
+    const apply = updateChildren();
+    assert.deepEqual(apply.map((row) => row.pid), [running[0].pid], 'the one update child is the one seen before writing');
+    assert.equal(apply[0].ppid, session.extension.pid, 'the extension itself started the update child');
+    assert.equal(sha256(fs.readFileSync(childFile)), target[UPGRADE_CHILD], 'the child\'s own script on disk is now the target\'s');
+    evidence.midFlight = {
+      state: checking, dialog, delta: written, applyChild: apply[0], childScript: UPGRADE_CHILD,
+      childBeforeWriting: { process: running[0], scriptSha256: session.before.tree[UPGRADE_CHILD] },
+      childMidFlight: { process: apply[0], scriptSha256: target[UPGRADE_CHILD] },
+      screenshot: await screenshot(own.page, 'bundle-upgrade-closure-checking'),
+    };
+    assert.deepEqual([trace.foreign, trace.errors], [[], []], 'the Canvas reached nothing outside its origin and threw nothing');
+    trace.stop();
+    // Close the browser.
+    const browserPid = own.browser.pid;
+    own.page.close();
+    await stopBrowser(own.browser);
+    stopped = true;
+    assert.equal(browserPid ? processRow(browserPid) : null, null, 'the owned browser stopped');
+    assert.deepEqual(await leftoverProcesses([own.profile], 15_000), [], 'no process of the closed browser remains');
+    // Close the Canvas that started the update, and open another: the only way to read the state again.
+    const reopened = await reopenInstalledCanvas(session.host);
+    session.canvasUrl = `${new URL(reopened.url).origin}/`;
+    const during = await readUpdates(session.canvasUrl);
+    assert.deepEqual([during.gate, during.update.phase], ['applying', 'checking'], 'closing the browser and the Canvas cancelled nothing');
+    const gateWhileApplying = await observeOldServerGate(session.canvasUrl, { refusal: 'update_in_progress', replaced: target });
+    const working = await readInertPage(session.canvasUrl);
+    assert.deepEqual([working.status, working.title, working.scripts], [200, 'Dude is updating this project', 0],
+      'a reload while it applies gets the inert page');
+    evidence.afterClosure = { state: during, gate: gateWhileApplying, inertPage: working.title };
+    // Now let the check go: the update finishes by itself.
+    held.go('after');
+    const done = await untilUpdates(session.canvasUrl, (state) => state.update && !['applying', 'checking'].includes(state.update.phase),
+      'the update to end', 120_000);
+    assert.equal(done.update.phase, 'applied', JSON.stringify(done.update));
+    assert.deepEqual([done.gate, done.update.existingFailures, done.update.cleanup, done.kept, done.runningRef, done.installation.installedRef],
+      ['closed', [], null, [], UPGRADE_FROM, UPGRADE_HELD_TO], 'finished, with the target on disk and the old version running');
+    const after = upgradeTree(root);
+    assert.deepEqual(upgradeDelta(session.before.tree, after), {
+      added: [UPGRADE_LOG, UPGRADE_ADDED, UPGRADE_LINT_REAL].sort(), removed: [UPGRADE_RETIRED],
+      changed: [UPGRADE_MANIFEST, ...UPGRADE_REPLACED, UPGRADE_LINT].sort(),
+    }, 'exactly the reviewed files');
+    for (const [relative, hash] of Object.entries(target)) assert.equal(after[relative], hash, `${relative} is the target's bytes`);
+    const gitAfter = upgradeGitState(root);
+    assert.deepEqual({ ...gitAfter, status: null }, { ...session.before.git, status: null }, 'HEAD, branch, index and staging are unchanged');
+    evidence.outcome = { state: done, git: gitAfter };
+    evidence.gate = await observeOldServerGate(session.canvasUrl, { refusal: 'new_session_required', replaced: target });
+    // A reload, from a browser that did not exist when the update started. It stops before the Canvas
+    // closes: a page that loads only a document leaves the browser holding a connection it never used,
+    // which keeps the server from closing until the browser itself goes.
+    const later = await startBrowser();
+    try {
+      await later.page.send('Page.navigate', { url: session.canvasUrl });
+      await until(() => evaluate(later.page, `document.querySelector('h1')?.textContent === ${JSON.stringify(`Start a new session to use Dude ${UPGRADE_HELD_TO}`)}`),
+        'the inert page in a later browser');
+      evidence.inertPage = { screenshot: await screenshot(later.page, 'bundle-upgrade-closure-reload') };
+    } finally {
+      later.page.close();
+      await stopBrowser(later.browser);
+    }
+    assert.deepEqual(await leftoverProcesses([later.profile], 15_000), [], 'no process of the later browser remains');
+    evidence.noAgentTurn = await observeNoAgentTurn(session);
+    const extension = await observeExtension(session);
+    assert.deepEqual({ status: extension.status, sameProcess: extension.sameProcess }, { status: 'running', sameProcess: true });
+    evidence.extensionAtEnd = extension;
+    await until(() => upgradeRoots(session).length === 0, 'every update root removed', 30_000);
+  } finally {
+    held.release();
+    if (!stopped) {
+      own.page.close();
+      await stopBrowser(own.browser);
+    }
+  }
+  await closeUpgradeSession(session);
+  evidence.elapsedMs = Date.now() - started;
+}
+
+/**
+ * A held lock on a file the update has written (US4): the target's check after writing fails, the update
+ * restores every file it can, a process that holds one file open stops Windows from restoring it, and the
+ * update says exactly that, Restoration unconfirmed with the path, and repeats nothing. Windows only.
+ * @param {ReturnType<typeof buildUpgradeFixture>} fixture
+ * @param {Cdp} page
+ * @param {Record<string, any>} evidence
+ */
+async function runUpgradeHeldLock(fixture, page, evidence) {
+  if (!WINDOWS) {
+    Object.assign(evidence, { applicable: false, reason: `A held share-mode lock is a Windows file behavior; not run on ${process.platform}.` });
+    return;
+  }
+  const started = Date.now();
+  publishUpgradeRelease(fixture, UPGRADE_BROKEN_TO);
+  const session = await startUpgradeSession(fixture, 'upgrade-lock');
+  const { root, canvasUrl } = session;
+  const held = heldUpgradeCheck(root);
+  held.go('before');
+  const holder = startLockHolder();
+  const trace = watchUpgradeRequests(page, canvasUrl);
+  const file = path.join(root, ...UPGRADE_NOTICE.split('/'));
+  const target = fixture.targets[UPGRADE_BROKEN_TO];
+  Object.assign(evidence, { applicable: true, session: session.name, root, data: session.data, extension: session.extension, file: UPGRADE_NOTICE });
+  try {
+    const { ready, preview } = await openUpgradePreview(page, fixture, session, UPGRADE_BROKEN_TO);
+    evidence.preview = { id: preview.id, dialog: ready };
+    await holder.ready;
+    const phasesShown = await recordUpgradePhases(page);
+    const phases = await watchUpdatePhases(page, canvasUrl);
+    let unconfirmed;
+    try {
+      await click(page, `document.querySelector('[data-update-primary]')`);
+      // Every file is written, the target's check waits, and the check will find the broken skill.
+      await until(() => held.waiting('after'), 'the held bundle check after writing', 120_000);
+      await untilUpdates(canvasUrl, (state) => state.update?.phase === 'checking', 'the server in Checking', 30_000);
+      await untilUpgradePhase(page, 'checking', 30_000);
+      const written = upgradeDelta(session.before.tree, upgradeTree(root));
+      assert.deepEqual(written, {
+        added: [UPGRADE_LOG, UPGRADE_ADDED, UPGRADE_LINT_REAL, UPGRADE_BROKEN_SKILL].sort(), removed: [UPGRADE_RETIRED],
+        changed: [UPGRADE_MANIFEST, ...UPGRADE_REPLACED, UPGRADE_LINT].sort(),
+      }, 'every reviewed file is written while the check waits');
+      // Another process now holds one written file open without sharing writes or deletes: Windows refuses a
+      // write, a rename over it and a delete, and still lets it be read.
+      await holder.lock(file);
+      assert.throws(() => fs.closeSync(fs.openSync(file, 'r+')), { code: 'EBUSY' }, 'Windows refuses a write to the held file');
+      assert.equal(sha256(fs.readFileSync(file)), target[UPGRADE_NOTICE], 'the held file is readable and holds the new bytes');
+      evidence.lock = { file: UPGRADE_NOTICE, holderPid: holder.pid, writeOpen: 'EBUSY', heldDuring: 'Checking, after every file was written',
+        screenshot: await screenshot(page, 'bundle-upgrade-lock-checking') };
+      held.go('after');
+      unconfirmed = await untilUpgradePhase(page, 'unconfirmed', 180_000);
+    } finally {
+      await phases.stop();
+    }
+    const shown = await phasesShown();
+    assert.deepEqual(trace.actions.map((action) => action.op), ['preview', 'apply'], 'one OK');
+    assert.deepEqual(phases.keys(), ['open/ready', 'applying/applying', 'applying/checking', 'closed/restoration_unconfirmed']);
+    assert.deepEqual(shown.map((entry) => entry.phase).slice(-4), ['ready', 'applying', 'checking', 'unconfirmed']);
+    const state = await readUpdates(canvasUrl);
+    assert.equal(state.update.phase, 'restoration_unconfirmed');
+    assert.deepEqual(state.update.paths, [UPGRADE_NOTICE], 'exactly the held file is unconfirmed');
+    assert.equal(state.update.message, 'the update introduced 1 new bundle check failure(s)');
+    assert.equal(state.update.newFailures.length, 1);
+    assert.match(state.update.newFailures[0], /dude-broken.*dude-wrong|dude-wrong.*dude-broken/);
+    assert.deepEqual([state.gate, state.notice, state.update.cleanup], ['closed', null, null]);
+    assert.deepEqual([state.installation.installedRef, state.runningRef], [UPGRADE_FROM, UPGRADE_FROM], 'every record but the held file went back');
+    assert.deepEqual({ bars: unconfirmed.bars, details: unconfirmed.details, cancel: unconfirmed.cancel, primary: unconfirmed.primary }, {
+      bars: [{ title: 'Update failed', lines: ["Restoration unconfirmed. Dude couldn't confirm that these files were put back:", [UPGRADE_NOTICE],
+        "Inspect them before you start a new session, for example with git status. Dude won't repeat the update on its own."] }],
+      details: [{ summary: 'Error message', text: [state.update.message, ...state.update.newFailures].join('\n') }],
+      cancel: 'Close', primary: null,
+    });
+    evidence.outcome = { state, dialog: unconfirmed, uiPhases: shown, serverPhases: phases.seen,
+      screenshot: await screenshot(page, 'bundle-upgrade-lock-unconfirmed') };
+    // Honest: the report names the one file that was not put back, and that file really is not. Every other
+    // file is exactly as it was, and no temporary file remains.
+    const tree = upgradeTree(root);
+    assert.deepEqual(upgradeDelta(session.before.tree, tree), { added: [], removed: [], changed: [UPGRADE_NOTICE] },
+      'only the unconfirmed file differs from the project before the update');
+    assert.equal(tree[UPGRADE_NOTICE], target[UPGRADE_NOTICE], 'the unconfirmed file still holds the update\'s bytes');
+    const git = upgradeGitState(root);
+    assert.deepEqual({ ...git, status: null }, { ...session.before.git, status: null });
+    assert.deepEqual(git.status, [...session.before.git.status, ` M ${UPGRADE_NOTICE}`].sort(), 'git status shows only that file');
+    evidence.restoration = { delta: upgradeDelta(session.before.tree, tree), git };
+    evidence.gate = await observeOldServerGate(canvasUrl, { refusal: 'new_session_required', replaced: target });
+    const inert = await readInertPage(canvasUrl);
+    assert.deepEqual([inert.status, inert.title, inert.scripts], [200, 'Start a new session to keep using Canvas', 0]);
+    assert.equal(inert.text.includes(`<li><code>${UPGRADE_NOTICE}</code></li>`), true, 'the inert page lists the path to inspect');
+    assert.match(inert.text, /Inspect them before you start a new session, for example with git status\./);
+    // The lock ends. Nothing restores, repeats or reports anything by itself.
+    await holder.release();
+    evidence.noReplay = await observeNoReplay(session, await readUpdates(canvasUrl), tree, 5_000);
+    assert.equal(upgradeTree(root)[UPGRADE_NOTICE], target[UPGRADE_NOTICE], 'the released file was not restored by itself');
+    assert.deepEqual(trace.foreign, []);
+    assert.deepEqual(trace.errors, []);
+    evidence.noAgentTurn = await observeNoAgentTurn(session);
+    const extension = await observeExtension(session);
+    assert.deepEqual({ status: extension.status, sameProcess: extension.sameProcess }, { status: 'running', sameProcess: true });
+    evidence.extensionAtEnd = extension;
+  } finally {
+    held.release();
+    trace.stop();
+    evidence.holderStopped = await holder.stop();
+  }
+  assert.equal(evidence.holderStopped.running, false, 'the lock holder stopped');
+  assert.equal(processRow(holder.pid), null, 'the lock holder is gone from the process table');
+  await page.send('Page.navigate', { url: 'about:blank' });
+  await closeUpgradeSession(session);
+  evidence.elapsedMs = Date.now() - started;
+}
+
+/**
+ * The 072 acceptance: one ordinary tagged upstream, then each case on its own disposable consumer and host.
+ * The manifest holds the case from its start, so a failure keeps the evidence of everything before it.
+ * @param {{ page: Cdp }} browserState
+ * @param {string[]} cliVersions
+ */
+async function driveInstalledBundleUpgrade(browserState, cliVersions) {
+  const started = Date.now();
+  const fixture = buildUpgradeFixture(path.join(RUN, 'u'));
+  /** @type {Record<string, any>} */
+  const evidence = {
+    task: 'T003@a87d52c6',
+    fixture: { upstream: fixture.upstream, source: fixture.source, tags: fixture.tags, targets: fixture.targets },
+    self: {}, permission: {}, closure: {}, lock: {},
+  };
+  manifest.upgradeCase = evidence;
+  note('bundle-upgrade-fixture', { source: fixture.source, tags: fixture.tags });
+  const { page } = browserState;
+  // The cases that must see v1.1.0 as the newest release come first; the next two publish their own.
+  await runUpgradeSelfUpdate(fixture, page, cliVersions, evidence.self);
+  note('bundle-upgrade-self-update-passed', {
+    sessionId: evidence.self.sessionRecord?.sessionId, nextSessionId: evidence.self.nextSession?.sessionId,
+    checkingShownInDialog: evidence.self.apply?.checkingShownInDialog, elapsedMs: evidence.self.elapsedMs,
+  });
+  await runUpgradePermissionFailure(fixture, page, evidence.permission);
+  note('bundle-upgrade-permission-passed', { applicable: evidence.permission.applicable, elapsedMs: evidence.permission.elapsedMs });
+  await runUpgradeBrowserClosure(fixture, evidence.closure);
+  note('bundle-upgrade-closure-passed', { sessionId: evidence.closure.session, elapsedMs: evidence.closure.elapsedMs });
+  await runUpgradeHeldLock(fixture, page, evidence.lock);
+  note('bundle-upgrade-lock-passed', { applicable: evidence.lock.applicable, elapsedMs: evidence.lock.elapsedMs });
+  // Every process this case started under its own folders is gone. The trailing separator keeps this
+  // run's other folders, such as the shared browser's profile, from matching by prefix.
+  evidence.leftoverProcesses = await leftoverProcesses([`${fixture.base}${path.sep}`]);
+  assert.deepEqual(evidence.leftoverProcesses, [], 'no process of the 072 case outlives it');
+  evidence.fixture.tags = fixture.tags;
+  evidence.fixture.targets = fixture.targets;
+  evidence.elapsedMs = Date.now() - started;
+  return evidence;
+}
+
 const workspaceSourcePreimages = workspaceSourceHashes();
 const manifest = {
   task: 'T005@e062a5b8',
@@ -7788,6 +9429,7 @@ const manifest = {
   taskWalkthrough: null,
   reviewCase: null,
   installedControls: null,
+  upgradeCase: null,
   desktopPanelCapability: null,
   cleanup: {},
   result: 'RUNNING',
@@ -8835,6 +10477,9 @@ try {
     uncertainSession: uncertainHost.record.sessionId,
   });
 
+  // 072 Canvas bundle update, installed-host acceptance (T003).
+  manifest.upgradeCase = await driveInstalledBundleUpgrade(browserState, Object.values(manifest.installedCliVersion));
+
   for (const [relative, expected] of Object.entries(APPROVED_HASHES)) {
     assert.equal(sha256(sourceBytes(relative)), expected, `approved mock changed during run: ${relative}`);
   }
@@ -8899,6 +10544,13 @@ try {
   }
   manifest.endedAt = new Date().toISOString();
   manifest.hosts = hosts.map((host) => host.record);
+  // Everything this run started under its own roots (every host and its extension, the update child, Git,
+  // a lock holder, each browser) is gone before the roots are removed.
+  try {
+    manifest.cleanup.leftoverProcesses = await leftoverProcesses([`${RUN}${path.sep}`, `${PREFERENCE_HOME}${path.sep}`]);
+  } catch (error) {
+    manifest.cleanup.leftoverProcessProbeError = safeError(error);
+  }
   try {
     manifest.cleanup.approvedMockRechecked = Object.entries(APPROVED_HASHES).every(
       ([relative, expected]) => sha256(sourceBytes(relative)) === expected,
@@ -8921,6 +10573,11 @@ try {
     else if (manifest.cleanup.uiBrowserStillRunning !== false) {
       cleanupFailures.push('UI browser still running after cleanup');
     }
+  }
+  if (manifest.cleanup.leftoverProcessProbeError) {
+    cleanupFailures.push('process leftover probe failed');
+  } else if (!Array.isArray(manifest.cleanup.leftoverProcesses) || manifest.cleanup.leftoverProcesses.length > 0) {
+    cleanupFailures.push('processes this run started are still running or were not scanned');
   }
   if (manifest.cleanup.approvedMockRechecked !== true) {
     cleanupFailures.push('approved mocks changed or could not be rechecked after the run');
@@ -8959,6 +10616,15 @@ try {
     hostPackRead: manifest.packCase?.hostPackRead?.coverage?.catalog?.state ?? null,
     taskWalkthrough: manifest.taskWalkthrough?.browser?.status ?? null,
     reviewSubmissions: manifest.reviewCase?.model?.rounds?.map((entry) => entry.submissionId) ?? [],
+    bundleUpgrade: manifest.upgradeCase && {
+      selfUpdate: manifest.upgradeCase.self?.apply?.uiPhases?.map((entry) => entry.phase) ?? null,
+      newSessionRunningRef: manifest.upgradeCase.self?.nextSession?.state?.runningRef ?? null,
+      permissionFailure: manifest.upgradeCase.permission?.outcome?.state?.update?.phase ?? null,
+      browserClosed: manifest.upgradeCase.closure?.outcome?.state?.update?.phase ?? null,
+      heldLock: manifest.upgradeCase.lock?.outcome?.state?.update?.phase ?? null,
+      elapsedMs: manifest.upgradeCase.elapsedMs ?? null,
+    },
+    leftoverProcesses: manifest.cleanup.leftoverProcesses?.length ?? null,
     error: manifest.error ?? null,
   })}\n`);
 }

@@ -30,6 +30,14 @@ const MISSING = 'missing';
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 const MAX_DEFINITION_ARTIFACT_BYTES = 1_048_576;
 const MAX_ATOMIC_ARRAY_ENTRIES = 64;
+// The bundle upgrade's fixed ceiling: one release's changed files and their
+// retained preimages and postimages. Only `bound: 'upgrade'` selects it.
+const UPGRADE_BATCH_CHANGES = 8_192;
+const UPGRADE_BATCH_BYTES = 256 * 1_048_576;
+// The permission bits a change may supply for the file it writes. Windows has
+// no such permissions, so there the batch changes no file mode at all.
+const PERMISSION_BITS = 0o777;
+const POSIX_PERMISSIONS = process.platform !== 'win32';
 const ASYNC_FUNCTION_PROTOTYPE = Object.getPrototypeOf(async function () {});
 const GENERATOR_FUNCTION_PROTOTYPE = Object.getPrototypeOf(function* () {});
 const ASYNC_GENERATOR_FUNCTION_PROTOTYPE = Object.getPrototypeOf(async function* () {});
@@ -37,16 +45,22 @@ const DEFINITION_RECOVERY_COORDINATOR_CAPABILITIES = new WeakMap();
 const DEFINITION_RECOVERY_PREPARATIONS = new WeakMap();
 
 /**
- * @typedef {{path: string, expected: Buffer | 'missing', staged: Buffer}} AtomicFileChange
- * @typedef {(view: ReadonlyArray<Readonly<{path: string, staged: Buffer}>>) => unknown} AtomicFileValidator
+ * A change whose `staged` value is `'missing'` deletes its expected file. A
+ * change that writes may supply `mode`, the permission bits (0 to 0o777) its
+ * file gets; without one, a replaced file keeps its existing permission and a
+ * new file gets the default.
+ * @typedef {{path: string, expected: Buffer | 'missing', staged: Buffer | 'missing', mode?: number}} AtomicFileChange
+ * @typedef {(view: ReadonlyArray<Readonly<{path: string, staged: Buffer | 'missing'}>>) => unknown} AtomicFileValidator
  * @typedef {(view: ReadonlyArray<Readonly<{path: string, expected: Buffer | 'missing', staged: Buffer}>>) => unknown} DefinitionReconciliationValidator
  * @typedef {(event: Readonly<{operation: string, path: string | null, index: number}>) => unknown} FailureInjector
  * @typedef {{
  *   path: string,
  *   expected: Buffer | 'missing',
- *   staged: Buffer,
+ *   staged: Buffer | 'missing',
+ *   mode: number | null,
  *   absolutePath: string,
  *   priorBytes: Buffer | null,
+ *   priorMode: number | null,
  *   temporaryPath: string | null,
  * }} PreparedChange
  */
@@ -80,15 +94,15 @@ function assertClosedRecord(value, label, required, optional = []) {
   }
 }
 
-/** @param {unknown} value @param {string} label */
-function assertDenseArray(value, label) {
+/** @param {unknown} value @param {string} label @param {number} [maxEntries] */
+function assertDenseArray(value, label, maxEntries = MAX_ATOMIC_ARRAY_ENTRIES) {
   if (!Array.isArray(value) || utilTypes.isProxy(value)) throw new TypeError(`${label} must be an array`);
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Array.prototype && prototype !== null) {
     throw new TypeError(`${label} must have a plain array prototype`);
   }
-  if (value.length > MAX_ATOMIC_ARRAY_ENTRIES) {
-    throw new TypeError(`${label} exceeds the ${MAX_ATOMIC_ARRAY_ENTRIES}-entry bound`);
+  if (value.length > maxEntries) {
+    throw new TypeError(`${label} exceeds the ${maxEntries}-entry bound`);
   }
   const indexes = new Set(Array.from({ length: value.length }, (_, index) => String(index)));
   for (const key of Reflect.ownKeys(value)) {
@@ -203,11 +217,11 @@ function lstatOrNull(absolutePath) {
 function inspectTarget(root, relativePath) {
   const absolutePath = resolveMutationPath(root, relativePath);
   const current = lstatOrNull(absolutePath);
-  if (!current) return { absolutePath, bytes: null };
+  if (!current) return { absolutePath, bytes: null, mode: null };
   if (current.isSymbolicLink() || !current.isFile()) {
     throw new Error(`atomic file target must be a regular file: ${relativePath}`);
   }
-  return { absolutePath, bytes: fs.readFileSync(absolutePath) };
+  return { absolutePath, bytes: fs.readFileSync(absolutePath), mode: current.mode & PERMISSION_BITS };
 }
 
 /**
@@ -289,6 +303,45 @@ function ensureParentDirectories(root, change, createdDirectories, failureInject
 }
 
 /**
+ * Remove the directories a deletion left empty, up to but excluding the root,
+ * so an emptied skill folder does not outlive its last file. Restoring a
+ * deleted file recreates them.
+ * @param {string} root
+ * @param {PreparedChange} change
+ * @param {FailureInjector | undefined} failureInjector
+ * @param {number} index
+ */
+function pruneEmptyParents(root, change, failureInjector, index) {
+  const parts = change.path.split('/').slice(0, -1);
+  for (let length = parts.length; length > 0; length -= 1) {
+    const directory = path.join(root, ...parts.slice(0, length));
+    const current = lstatOrNull(directory);
+    if (!current || current.isSymbolicLink() || !current.isDirectory() || fs.readdirSync(directory).length > 0) return;
+    inject(failureInjector, 'prune-directory', parts.slice(0, length).join('/'), index);
+    fs.rmdirSync(directory);
+  }
+}
+
+/**
+ * Recreate the parent directories of a file being restored after a deletion
+ * removed them.
+ * @param {string} root
+ * @param {PreparedChange} change
+ */
+function restoreParentDirectories(root, change) {
+  const parts = change.path.split('/').slice(0, -1);
+  let cursor = root;
+  for (let index = 0; index < parts.length; index += 1) {
+    cursor = path.join(cursor, parts[index]);
+    const current = lstatOrNull(cursor);
+    if (!current) fs.mkdirSync(cursor);
+    else if (current.isSymbolicLink() || !current.isDirectory()) {
+      throw new Error(`atomic file target has unsafe parent: ${parts.slice(0, index + 1).join('/')}`);
+    }
+  }
+}
+
+/**
  * @param {string} root
  * @param {PreparedChange} change
  * @param {Buffer} bytes
@@ -330,6 +383,11 @@ function writeSiblingTemp(
   try {
     inject(failureInjector, `${kind}-write`, change.path, index);
     fs.writeFileSync(descriptor, bytes);
+    // The rename keeps this file's permission: a restored file gets its
+    // original one; a written file its supplied one, else a replaced file its
+    // existing one. A new file without a supplied one keeps the default.
+    const mode = kind === 'rollback' ? change.priorMode : change.mode ?? change.priorMode;
+    if (mode !== null && POSIX_PERMISSIONS) fs.fchmodSync(descriptor, mode);
   } finally {
     fs.closeSync(descriptor);
   }
@@ -406,7 +464,9 @@ export function assertDefinitionRecoveryWritable(options) {
 /**
  * Public atomic batch entry kept adjacent to the filesystem-free tracked
  * refusal guard; the implementation is declared later in this module.
- * @param {{root:string,changes:AtomicFileChange[],validators?:AtomicFileValidator[],failureInjector?:FailureInjector}} options
+ * `bound: 'upgrade'` selects the bundle upgrade's fixed ceiling instead of the
+ * default 64 entries.
+ * @param {{root:string,changes:AtomicFileChange[],validators?:AtomicFileValidator[],failureInjector?:FailureInjector,bound?:'upgrade'}} options
  * @param {AtomicFileValidator} [afterApply]
  */
 export function applyAtomicFileBatch(options, afterApply) {
@@ -1690,21 +1750,32 @@ export function applyDefinitionRecovery(options) {
 /**
  * Apply complete bytes in path order. The batch is all-or-restored only for
  * failures caught by this process; no process-loss or power-loss claim is made.
+ * A deletion (`staged: 'missing'`) needs an expected regular file; removing
+ * it also removes the directories it leaves empty, and restoration recreates
+ * them. On POSIX each written file gets its change's `mode`, or a replaced
+ * file keeps its existing permission, and restoration puts back each replaced
+ * or deleted file's original permission with its bytes; Windows modes are
+ * never changed.
  *
  * @param {{
  *   root: string,
  *   changes: AtomicFileChange[],
  *   validators?: AtomicFileValidator[],
  *   failureInjector?: FailureInjector,
+ *   bound?: 'upgrade',
  * }} options
  * @param {(() => void) | undefined} [afterApply]
  */
 function applyAtomicFileBatchInternal(options, afterApply) {
-  assertClosedRecord(options, 'atomic file batch options', ['root', 'changes'], ['validators', 'failureInjector']);
+  assertClosedRecord(options, 'atomic file batch options', ['root', 'changes'], ['validators', 'failureInjector', 'bound']);
   if (typeof options.root !== 'string' || options.root.length === 0) {
     throw new TypeError('atomic file batch root must be a non-empty string');
   }
-  assertDenseArray(options.changes, 'changes');
+  if (options.bound !== undefined && options.bound !== 'upgrade') {
+    throw new TypeError('atomic file batch bound must be "upgrade" when present');
+  }
+  const upgradeBound = options.bound === 'upgrade';
+  assertDenseArray(options.changes, 'changes', upgradeBound ? UPGRADE_BATCH_CHANGES : MAX_ATOMIC_ARRAY_ENTRIES);
   if (options.changes.length === 0) throw new TypeError('changes must not be empty');
 
   const validatorInput = options.validators ?? [];
@@ -1721,11 +1792,12 @@ function applyAtomicFileBatchInternal(options, afterApply) {
   const failureInjector = options.failureInjector;
   const root = path.resolve(options.root);
   const seenPaths = new Set();
+  let retainedBytes = 0;
   /** @type {PreparedChange[]} */
   const changes = [];
   for (let index = 0; index < options.changes.length; index += 1) {
     const change = options.changes[index];
-    assertClosedRecord(change, `changes[${index}]`, ['path', 'expected', 'staged']);
+    assertClosedRecord(change, `changes[${index}]`, ['path', 'expected', 'staged'], ['mode']);
     if (typeof change.path !== 'string') throw new TypeError(`changes[${index}].path must be a string`);
     assertCanonicalPath(change.path);
     if (seenPaths.has(change.path)) throw new Error(`duplicate atomic file path: ${change.path}`);
@@ -1733,13 +1805,29 @@ function applyAtomicFileBatchInternal(options, afterApply) {
     if (change.expected !== MISSING && !Buffer.isBuffer(change.expected)) {
       throw new TypeError(`changes[${index}].expected must be a Buffer or "missing"`);
     }
-    if (!Buffer.isBuffer(change.staged)) throw new TypeError(`changes[${index}].staged must be a Buffer`);
+    if (change.staged !== MISSING && !Buffer.isBuffer(change.staged)) {
+      throw new TypeError(`changes[${index}].staged must be a Buffer or "missing"`);
+    }
+    if (change.staged === MISSING && change.expected === MISSING) {
+      throw new Error(`atomic file change must change its target: ${change.path}`);
+    }
+    if (change.mode !== undefined && (!Number.isInteger(change.mode) || change.mode < 0
+      || change.mode > PERMISSION_BITS || change.staged === MISSING)) {
+      throw new TypeError(`changes[${index}].mode must be permission bits from 0 to 0o777 for a file the change writes`);
+    }
+    retainedBytes += (change.expected === MISSING ? 0 : change.expected.length)
+      + (change.staged === MISSING ? 0 : change.staged.length);
+    if (upgradeBound && retainedBytes > UPGRADE_BATCH_BYTES) {
+      throw new RangeError(`changes exceed the ${UPGRADE_BATCH_BYTES}-byte upgrade bound`);
+    }
     changes.push({
       path: change.path,
       expected: change.expected === MISSING ? MISSING : Buffer.from(change.expected),
-      staged: Buffer.from(change.staged),
+      staged: change.staged === MISSING ? MISSING : Buffer.from(change.staged),
+      mode: change.mode ?? null,
       absolutePath: '',
       priorBytes: null,
+      priorMode: null,
       temporaryPath: null,
     });
   }
@@ -1760,6 +1848,7 @@ function applyAtomicFileBatchInternal(options, afterApply) {
     assertExpected(change, current);
     change.absolutePath = current.absolutePath;
     change.priorBytes = current.bytes === null ? null : Buffer.from(current.bytes);
+    change.priorMode = current.mode;
   }
 
   const createdDirectories = /** @type {Array<{absolutePath: string, path: string}>} */ ([]);
@@ -1769,6 +1858,7 @@ function applyAtomicFileBatchInternal(options, afterApply) {
   try {
     for (let index = 0; index < changes.length; index += 1) {
       const change = changes[index];
+      if (change.staged === MISSING) continue;
       ensureParentDirectories(root, change, createdDirectories, failureInjector, index);
       change.temporaryPath = writeSiblingTemp(
         root,
@@ -1786,7 +1876,7 @@ function applyAtomicFileBatchInternal(options, afterApply) {
       inject(failureInjector, 'validate', null, index);
       const view = Object.freeze(changes.map((change) => Object.freeze({
         path: change.path,
-        staged: Buffer.from(change.staged),
+        staged: change.staged === MISSING ? MISSING : Buffer.from(change.staged),
       })));
       assertSynchronousResult(validators[index](view), 'validators');
     }
@@ -1798,13 +1888,19 @@ function applyAtomicFileBatchInternal(options, afterApply) {
 
     for (let index = 0; index < changes.length; index += 1) {
       const change = changes[index];
-      inject(failureInjector, 'rename', change.path, index);
+      inject(failureInjector, change.staged === MISSING ? 'delete' : 'rename', change.path, index);
       if (resolveMutationPath(root, change.path) !== change.absolutePath) {
         throw new Error(`atomic file path changed before apply: ${change.path}`);
       }
       const destination = lstatOrNull(change.absolutePath);
       if (destination && (destination.isSymbolicLink() || !destination.isFile())) {
         throw new Error(`atomic file target became unsafe: ${change.path}`);
+      }
+      if (change.staged === MISSING) {
+        assertExpected(change, inspectTarget(root, change.path));
+        fs.unlinkSync(change.absolutePath);
+        pruneEmptyParents(root, change, failureInjector, index);
+        continue;
       }
       if (change.temporaryPath === null) throw new Error(`missing staged temporary file: ${change.path}`);
       assertStagedTemporaryFile(change.temporaryPath, change.path, change.staged);
@@ -1835,7 +1931,9 @@ function applyAtomicFileBatchInternal(options, afterApply) {
             throw new Error(`new atomic file still exists after rollback: ${change.path}`);
           }
         } else {
-          if (current.bytes === null || !current.bytes.equals(change.priorBytes)) {
+          if (current.bytes === null || !current.bytes.equals(change.priorBytes)
+            || (POSIX_PERMISSIONS && current.mode !== change.priorMode)) {
+            if (current.bytes === null) restoreParentDirectories(root, change);
             const restoreTemporary = writeSiblingTemp(
               root,
               change,
@@ -1855,7 +1953,8 @@ function applyAtomicFileBatchInternal(options, afterApply) {
             temporaryPaths.delete(restoreTemporary);
           }
           const restored = inspectTarget(root, change.path);
-          if (restored.bytes === null || !restored.bytes.equals(change.priorBytes)) {
+          if (restored.bytes === null || !restored.bytes.equals(change.priorBytes)
+            || (POSIX_PERMISSIONS && restored.mode !== change.priorMode)) {
             throw new Error(`atomic file target could not be restored: ${change.path}`);
           }
         }

@@ -59,6 +59,8 @@ export const useCanvasStyles = makeStyles({
   title: {
     margin: 0, fontFamily: DISPLAY_FONT, fontSize: tokens.fontSizeBase500, lineHeight: tokens.lineHeightBase500,
     fontWeight: tokens.fontWeightSemibold, overflowWrap: 'anywhere',
+    // A page title that takes focus (navigation, Later, the old-session page) shows the approved ring, not the browser's.
+    '&:focus-visible': { outline: `${tokens.strokeWidthThick} solid ${tokens.colorStrokeFocus2}`, outlineOffset: tokens.strokeWidthThick },
   },
   subheading: { margin: 0, fontSize: tokens.fontSizeBase400, lineHeight: tokens.lineHeightBase400, fontWeight: tokens.fontWeightSemibold },
   eyebrow: { color: tokens.colorNeutralForeground2, fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200, overflowWrap: 'anywhere' },
@@ -543,6 +545,8 @@ export const useCanvasStyles = makeStyles({
     '&:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '-2px' },
   },
   aboutBody: {
+    // Positioned, so its visually hidden live regions stay inside the panel's scroller rather than the page's.
+    position: 'relative',
     boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0,
     maxWidth: `calc(76ch + 2 * ${tokens.spacingHorizontalL})`,
     padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalL} ${tokens.spacingVerticalXXL}`,
@@ -639,6 +643,88 @@ export const useCanvasStyles = makeStyles({
     },
   },
   pathList: { listStyleType: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, minWidth: 0 },
+  // 072: updates. Existing tokens only: Needs you's MessageBar, About's rows and
+  // measure, 085's switch and pending line, and 083's dialog with Needs you's
+  // Checkbox. The notice joins the Needs you column as the title's next item.
+  noticeSlot: { display: 'contents' },
+  // The notice's buttons wrap under its words; at 300px or less each takes the row (narrowBarActions).
+  noticeActions: { flexWrap: 'wrap', rowGap: tokens.spacingVerticalS, '& button': { minWidth: 0 } },
+  // About's Updates section, after the recorded rows and their note.
+  aboutUpdates: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0, marginTop: tokens.spacingVerticalM },
+  updateStatus: {
+    display: 'flex', alignItems: 'flex-start', gap: tokens.spacingHorizontalS, minWidth: 0,
+    // At 300px or less the icon moves above its words, as message bars do there.
+    '@container (max-width: 300px)': { flexDirection: 'column', gap: tokens.spacingVerticalXS },
+  },
+  updateStatusIcon: {
+    display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto', width: '20px', height: '20px',
+    color: tokens.colorNeutralForeground3,
+  },
+  updateStatusAvailable: { color: tokens.colorBrandForeground1 },
+  updateStatusCurrent: { color: tokens.colorStatusSuccessForeground1 },
+  updateStatusWarning: { color: tokens.colorStatusWarningForeground3 },
+  updateStatusText: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS, minWidth: 0, overflowWrap: 'anywhere',
+    '& p': { margin: 0 },
+  },
+  updateActions: { paddingTop: 0, '& button': { maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere' } },
+  updateLinkIcon: { marginInlineStart: tokens.spacingHorizontalXXS, verticalAlign: '-2px' },
+  // The update dialog: 083's surface, header, scrolling body, and footer.
+  updateVersion: {
+    margin: 0, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
+    minWidth: 0, fontSize: tokens.fontSizeBase400, lineHeight: tokens.lineHeightBase400,
+    '@container (max-width: 300px)': { fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300 },
+  },
+  updateFrom: { color: tokens.colorNeutralForeground2 },
+  updateTo: { fontWeight: tokens.fontWeightSemibold },
+  updateArrow: { flexShrink: 0, color: tokens.colorNeutralForeground2 },
+  updateVersionLink: { fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300 },
+  updatePacks: { alignSelf: 'flex-start', maxWidth: '100%', '& label': { minWidth: 0, overflowWrap: 'anywhere' } },
+  updateLine: { margin: 0, overflowWrap: 'anywhere' },
+  updateSection: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, minWidth: 0 },
+  updateCounts: {
+    margin: 0, display: 'grid', gridTemplateColumns: 'minmax(0, max-content) minmax(0, 1fr)', minWidth: 0,
+    gap: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalL}`,
+    '& dt': { color: tokens.colorNeutralForeground2, overflowWrap: 'anywhere' },
+    '& dd': { margin: 0, minWidth: 0, overflowWrap: 'anywhere' },
+    '@container (max-width: 300px)': { gridTemplateColumns: 'minmax(0, 1fr)', rowGap: 0, '& dd + dt': { marginTop: tokens.spacingVerticalXS } },
+  },
+  updatePaths: { marginBlock: tokens.spacingVerticalXXS },
+  // The kept folders (072): each path over its reason, 8px apart.
+  updateKept: { gap: tokens.spacingVerticalS, '& > li': { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS, minWidth: 0 } },
+  // Show files keeps 083's disclosure; its rows are an operation column and a wrapping path.
+  updateFiles: { '& ul': { paddingInlineStart: 0, marginBlock: `${tokens.spacingVerticalXS} 0` }, '& li + li': { marginTop: 0 } },
+  updateFilesGroup: {
+    margin: `${tokens.spacingVerticalS} 0 0`, fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300,
+    fontWeight: tokens.fontWeightSemibold,
+  },
+  updateFileList: {
+    listStyleType: 'none', display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, minWidth: 0,
+    '& > li': {
+      display: 'grid', gridTemplateColumns: '5.5em minmax(0, 1fr)', columnGap: tokens.spacingHorizontalS, alignItems: 'baseline', minWidth: 0,
+    },
+    '@container (max-width: 300px)': { '& > li': { gridTemplateColumns: 'minmax(0, 1fr)' } },
+  },
+  updateOp: { color: tokens.colorNeutralForeground2, fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200 },
+  updateFilePath: {
+    display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`, minWidth: 0,
+    '& code': { minWidth: 0 },
+  },
+  pill: {
+    display: 'inline-flex', alignItems: 'center', flex: '0 0 auto', minHeight: '20px', padding: `0 ${tokens.spacingHorizontalSNudge}`,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusCircular,
+    backgroundColor: tokens.colorNeutralBackground3, color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200, whiteSpace: 'nowrap',
+  },
+  // The old-session page: what the old Canvas shows once an update started writing. Words only, no control.
+  handoff: {
+    boxSizing: 'border-box', minHeight: '100dvh', minWidth: 0, padding: tokens.spacingHorizontalXXL,
+    backgroundColor: tokens.colorNeutralBackground1, color: tokens.colorNeutralForeground1,
+    '@media (max-width: 479px)': { padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalS}` },
+  },
+  handoffBody: { maxWidth: '76ch', display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0, overflowWrap: 'anywhere',
+    '& p': { margin: 0 } },
+  handoffText: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0 },
   // A path list takes the sheet's full width so a path usually stays on one line.
   pathsRow: { gridTemplateColumns: 'minmax(0, 1fr)', rowGap: tokens.spacingVerticalXS },
   nowrap: { whiteSpace: 'nowrap' },
