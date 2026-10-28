@@ -20,8 +20,8 @@ agent and skill descriptions, UI copy, and email.
 
 - `dude-pack-writing-avoid-ai-tropes` — the canonical reference for AI writing
   tells and how to remove them. Triggers on requests like "make this sound less
-  like AI", "remove the AI tropes", "de-slop this", "too many em dashes", or
-  "why does this read like ChatGPT".
+  like AI", "humanize this", "remove the AI tropes", "de-slop this", "too many
+  em dashes", or "why does this read like ChatGPT".
   Ships `repetition.mjs`, a deterministic cross-file repetition check.
 - `dude-pack-writing-style` — positive guidance for professional voice,
   plain-language definitions, document structure, readable explanations, and
@@ -46,6 +46,14 @@ The readability additions draw on
 (MIT): make starting easy, keep current state visible, and reduce distractions.
 These principles extend the existing skills; they do not add an imported skill,
 a session mode, or assumptions about the reader.
+
+The trope catalog also draws on Wikipedia's
+[Signs of AI writing](https://en.wikipedia.org/w/index.php?title=Wikipedia:Signs_of_AI_writing&oldid=1382312561)
+field guide (CC BY-SA 4.0; revision of 2026-10-27) and
+[`blader/humanizer`](https://github.com/blader/humanizer/blob/d4b81278e6604e237bf32f0f7ce5c217aee94269/SKILL.md)
+(MIT; v3.1.0). The skill restates their patterns in its own words for general
+prose and treats them as editing heuristics. It omits signs specific to
+Wikipedia markup and editing processes and imports neither source.
 
 ## Install / remove
 

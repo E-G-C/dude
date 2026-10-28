@@ -33,6 +33,7 @@ namespace, which the engine treats as a distinct ownership tier:
 | `a2a` | one read-only A2A JavaScript advisor + protocol and JavaScript knowledge skills in catalog source | after disposable Compose and actual-advice validation, you need source-backed A2A protocol or JavaScript SDK advice |
 | `newsroom` | newsroom writer + event deep-fetcher agents + article / calendar-event / static-safe-time skills | you publish news & events to a Hugo/Docsy site's News section |
 | `writing` | avoid-AI-writing-tropes and professional-style prose-quality skills | you want a canonical guard against AI writing tells and consistent prose voice |
+| `academic-writing` | academic writer + read-only deliverable verifier + coursework foundation and instructions | you need source-grounded coursework drafting, APA guidance, and independent deliverable checks after installing `writing` |
 | `design` | design-proposal workflow + frontend-aesthetics judgment guidance | you want a visual design workflow overlaid on the task lifecycle |
 | `strata` | Strata visual system: planes-and-rules elevation, two palettes, type scale, 4/8 spacing, motion, token validator | you choose Strata as a project's visual system |
 | `clearline` | Clearline visual system: calm neutrals, four accents, Inter type, 8-pt grid, shared left edge, optional brand-mark slot | you choose Clearline as a project's visual system |
