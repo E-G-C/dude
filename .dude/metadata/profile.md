@@ -117,7 +117,7 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
       ],
       "source": {
         "type": "local",
-        "location": "/Users/eg/work/dude/library/packs"
+        "location": "C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-fluffy-potato\\library\\packs"
       }
     }
   }
