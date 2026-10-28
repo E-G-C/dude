@@ -19,6 +19,7 @@ const REPOSITORY_ROOT = path.resolve(
 
 const EXPECTED_CATALOG_USE_CASES = new Map([
   ['a2a', ['software-development']],
+  ['academic-writing', ['academic-writing', 'apa-citations', 'coursework']],
   ['authoring', ['bundle-authoring']],
   ['beads', ['work-tracking']],
   ['clearline', ['ui', 'visual-design']],

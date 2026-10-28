@@ -44,6 +44,10 @@ neutral, and appropriate for the audience rather than robotic or promotional.
   well across cultures.
 - Use standard American English, a single space after periods, and Oxford
   commas. Avoid exclamation points unless the quoted content requires one.
+- Hyphenate a compound modifier before a noun ("a well-documented API") and
+  usually not after it ("the API is well documented"). Leave an "-ly" adverb
+  unhyphenated ("a newly created file"), and follow the dictionary for terms
+  it always hyphenates, such as "self-evident".
 - Expand unfamiliar acronyms on first use and keep terminology consistent.
 - Prefer familiar words: "use", "before", and "if" rather than "utilize",
   "prior to", and "in the event that". Keep necessary technical terms and
@@ -81,6 +85,10 @@ in stages. Structure should help retrieval rather than advertise the template.
   document, duplicate sections, or include competing drafts.
 - Choose headings from the reader's questions and tasks. Use standard Markdown
   and apply bold emphasis sparingly.
+- Use sentence-case headings unless the format or house style requires title
+  case, as APA does. Nest heading levels in order, let headings separate
+  sections without a horizontal rule between each, and do not repeat a title
+  the page already displays.
 - Keep paragraphs readable; two to four sentences is a useful default, not a
   quota.
 - Use concise tables only when shared columns improve comparison. Do not repeat
@@ -149,6 +157,9 @@ These are defaults, not reasons to damage the requested artifact.
   wasteful.
 - After repeated failed fixes, stop varying the patch and identify the assumption
   that the evidence now calls into question.
+- Match a writing sample the user supplies, or the established voice of a
+  document you are revising, instead of imposing these defaults. The editing
+  pass in `dude-pack-writing-avoid-ai-tropes` lists what to match.
 - Follow the requested format and applicable system, repository, and workflow
   rules when they conflict with this skill.
 

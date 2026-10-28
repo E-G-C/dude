@@ -72,6 +72,20 @@ const PACK_CATALOG = Object.freeze({
       },
     },
   },
+  'academic-writing': {
+    manifestAgents: [
+      'dude-pack-academic-writing-deliverable-verifier',
+      'dude-pack-academic-writing-writer',
+    ],
+    agents: {
+      'dude-pack-academic-writing-deliverable-verifier': {
+        modelClass: 'inherit', tools: ['read', 'search'],
+      },
+      'dude-pack-academic-writing-writer': {
+        modelClass: 'inherit', tools: ['read', 'edit', 'search', 'execute'],
+      },
+    },
+  },
   authoring: {
     manifestAgents: [
       'dude-pack-authoring-agent-smith',
@@ -767,7 +781,7 @@ test('preserves the T005 catalog manifests, source metadata, and local delegatio
     }
     assert.doesNotThrow(() => projection.validateAgentSet(records), `${pack} local source set`);
   }
-  assert.equal(sourceCount, 32, 'the complete catalog retains its 32 authoritative pack sources');
+  assert.equal(sourceCount, 34, 'the complete catalog retains its 34 authoritative pack sources');
 });
 
 test('keeps coding roles on stable leaf identities and canonical Copilot projections', async () => {
