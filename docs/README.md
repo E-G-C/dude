@@ -22,4 +22,5 @@ Read only what you need:
 - [Repository development workflow](commands.md#repository-development-workflow) for core, pack, project-local, and docs-only changes.
 - [Pack catalog](../library/packs/README.md) — the 17 optional expansions, including tracked work, domain specialists, visual systems, release tooling, and writing support.
 - [Starting from a PRD draft](prd-drafts.md) — turn a longer markdown PRD into Dude files.
+- [Agent coordination roadmap (proposed)](agent-coordination-roadmap.md) — planning input for collision-safe feature capture and later agent communication, not a feature definition.
 - [Definition and execution reference](reference.md) — deeper ownership, task, and quality rules.
