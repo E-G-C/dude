@@ -1,0 +1,601 @@
+{
+  "revision": "067 round 3",
+  "designStanding": "exploring; no approval or product implementation",
+  "kind": "Representative visual observations only; no functional suite or tests authored.",
+  "capturedAt": "2026-10-23T17:25:57.469Z",
+  "previewPath": ".dude/specs/067-work-type-presentation/design/work-type-presentation.html",
+  "hashConvention": "SHA-256 of actual file bytes, not a line-ending alias",
+  "runtimeAssets": [
+    "work-type-presentation.html (self-contained; no external script)"
+  ],
+  "supportingAssets": [
+    "work-type-presentation.js",
+    "work-type-presentation.js.LEGAL.txt (45 bundled packages)",
+    "source/"
+  ],
+  "assets": [
+    {
+      "path": "work-type-presentation.html",
+      "bytes": 885073,
+      "sha256": "abad36e29cdc30453d020a484f1a671cdec1d7d87fee9316815e56917c77a11b"
+    },
+    {
+      "path": "work-type-presentation.js",
+      "bytes": 869085,
+      "sha256": "66084dc6887b9aa2c7d1942ef8e0af7cbe54cfa64c7af6b53b8ab2c2b20c6bba"
+    },
+    {
+      "path": "work-type-presentation.js.LEGAL.txt",
+      "bytes": 65638,
+      "sha256": "20c1596d99736bf8f9c18e6e056c97495c9362c406a9984c889361706f002758"
+    },
+    {
+      "path": "source/work-type-presentation.jsx",
+      "bytes": 97846,
+      "sha256": "f509832a7afbada1d03d23bf0c667a915e4e7477fadabbd799741e3334bf1319"
+    },
+    {
+      "path": "source/styles.js",
+      "bytes": 67149,
+      "sha256": "f13a5970b1bfa31b215720b5a3d7fb726739c1c5a3e38d8a715374748a756c1b"
+    },
+    {
+      "path": "source/theme.js",
+      "bytes": 30756,
+      "sha256": "5c1a341cce6e8643b6503ecb56d61c15d843171ead58becd0c4b0ed462c3f25f"
+    },
+    {
+      "path": "source/fixtures.json",
+      "bytes": 35431,
+      "sha256": "aa454217fb9614062915547fc5f3958fc47c78e6f0a968a2c0751d32b3a749a6"
+    },
+    {
+      "path": "source/repository-snapshot.json",
+      "bytes": 82314,
+      "sha256": "f53d4beb27823d584f94adc5852457d7f2b179d4feedacece59b4a33f41fc1ab"
+    }
+  ],
+  "sourceNote": "Only source comments were clarified after capturing. A fresh mock-only rebuild reproduced the identical rendered runtime; the HTML and all screenshot bytes stayed unchanged.",
+  "host": "File URL in owned headless Edge; not the app WebView2 or exact app preview host",
+  "browser": "Edg/156.0.4314.15",
+  "networkPolicy": "HTML CSP connect-src none; boot rejects fetch; CDP blocks HTTP(S) and WebSocket URLs",
+  "aggregateObservations": {
+    "screenshots": 16,
+    "visuallyInspected": 16,
+    "allViewsHadZeroHorizontalOverflow": true,
+    "clippedElementCount": 0,
+    "horizontalScrollerCount": 0,
+    "consoleProblems": [],
+    "classificationPlaceholderFrames": 0,
+    "pageRequestSchemes": [
+      "file:"
+    ],
+    "webSockets": [],
+    "contrastScope": "Six representative first-screen samples using the retained pixel-measurement helper; not full contrast or accessibility certification."
+  },
+  "convention": "Existing Canvas and Fluent v9 composition; familiar description-first capture with read-only secondary words, like automatic categorization rather than a ticket-category form. No new layout, palette, or workflow.",
+  "fluent": {
+    "components": [
+      "FluentProvider",
+      "Field",
+      "Textarea",
+      "Button",
+      "MessageBar",
+      "DataGrid",
+      "List",
+      "TabList",
+      "Toolbar"
+    ],
+    "themes": "Existing ordinary and app-following light/dark themes reused byte for byte.",
+    "tokens": "Quiet word lines use colorNeutralForeground2, fontSizeBase200 and lineHeightBase200. Other Fluent styling and tokens retained."
+  },
+  "frames": [
+    {
+      "file": "01-capture-description-only-light-1440.png",
+      "sha256": "f1377ebb472b2e895fd844f26b7167af95b9f434011179b76570489543d9edc1",
+      "query": "scenario=M12-default&tone=light&controls=hide",
+      "viewport": [
+        1440,
+        900,
+        1
+      ],
+      "appearance": "ordinary light",
+      "observation": "One empty description field, the supplied two-line helper, and Submit, Save, Cancel. No category control or metadata explanation.",
+      "capture": {
+        "textFields": 1,
+        "categoryControls": 0,
+        "disabledActions": [],
+        "disabledReason": null,
+        "status": null
+      },
+      "visibleContrast": {
+        "textSamples": 25,
+        "minimumTextRatio": 4.952,
+        "textBelowRequired": 0,
+        "fieldBoundaryMinimum": 6.193,
+        "fieldBoundaryBelowThree": 0
+      }
+    },
+    {
+      "file": "02-capture-pending-question-dark-768.png",
+      "sha256": "5fa01d80151d1516ac2f51c6c5bbd24bda1ceb895b960a662c47e9ca3ba1e003",
+      "query": "scenario=M12-pending-question&tone=dark&controls=hide",
+      "viewport": [
+        768,
+        900,
+        1
+      ],
+      "appearance": "ordinary dark",
+      "observation": "The pending-question notice gives the next step. Submit and Save are disabled and both name that same notice; Cancel remains available.",
+      "capture": {
+        "textFields": 1,
+        "categoryControls": 0,
+        "disabledActions": [
+          "Submit",
+          "Save"
+        ],
+        "disabledReason": "Answer the pending question firstFinish the pending question in Needs you before submitting. Your draft is kept.",
+        "status": null
+      },
+      "visibleContrast": {
+        "textSamples": 26,
+        "minimumTextRatio": 5.106,
+        "textBelowRequired": 0,
+        "fieldBoundaryMinimum": 6.483,
+        "fieldBoundaryBelowThree": 0
+      }
+    },
+    {
+      "file": "03-capture-saved-submit-app-light-1440.png",
+      "sha256": "3411c62cbb06b42c4b6dfe3d1245b21b94811e36bc2caf7b7b875d5b6e367b84",
+      "query": "scenario=M12-saved-submit&tone=light&controls=hide&appearance=app",
+      "viewport": [
+        1440,
+        900,
+        1
+      ],
+      "appearance": "app-following light",
+      "observation": "Saved after Submit identifies 914, continuation in chat, and the saved path. No classification result appears in the message.",
+      "capture": {
+        "textFields": 1,
+        "categoryControls": 0,
+        "disabledActions": [
+          "Submit",
+          "Save"
+        ],
+        "disabledReason": "Saved Saved as work item 914. Dude will keep brainstorming it with you in chat. .dude/ideas/914-the-export-button-is-hidden-on-small-screens.md",
+        "status": "Saved Saved as work item 914. Dude will keep brainstorming it with you in chat. .dude/ideas/914-the-export-button-is-hidden-on-small-screens.md"
+      },
+      "visibleContrast": {
+        "textSamples": 27,
+        "minimumTextRatio": 5.852,
+        "textBelowRequired": 0,
+        "fieldBoundaryMinimum": 5.852,
+        "fieldBoundaryBelowThree": 0
+      }
+    },
+    {
+      "file": "04-capture-saved-save-app-dark-600.png",
+      "sha256": "4bdef68f21fdb3420be7d00a2caf5f876a1c6e64c677cf0a66e5026ccda9f396",
+      "query": "scenario=M12-saved-save&tone=dark&controls=hide&appearance=app",
+      "viewport": [
+        600,
+        900,
+        1
+      ],
+      "appearance": "app-following dark",
+      "observation": "Saved after Save keeps the vague description for later and says nothing else started. No classification appears in the message.",
+      "capture": {
+        "textFields": 1,
+        "categoryControls": 0,
+        "disabledActions": [
+          "Submit",
+          "Save"
+        ],
+        "disabledReason": "Saved Saved as work item 914 for later. Nothing else was started. .dude/ideas/914-make-onboarding-feel-less-overwhelming.md",
+        "status": "Saved Saved as work item 914 for later. Nothing else was started. .dude/ideas/914-make-onboarding-feel-less-overwhelming.md"
+      },
+      "visibleContrast": {
+        "textSamples": 25,
+        "minimumTextRatio": 6.895,
+        "textBelowRequired": 0,
+        "fieldBoundaryMinimum": 6.895,
+        "fieldBoundaryBelowThree": 0
+      }
+    },
+    {
+      "file": "05-capture-uncertain-light-768.png",
+      "sha256": "6cb237fa3572dad1363ea873efb409021aa4ae54df4e53cd117962090846c7f1",
+      "query": "scenario=M12-uncertain&tone=light&controls=hide",
+      "viewport": [
+        768,
+        900,
+        1
+      ],
+      "appearance": "ordinary light",
+      "observation": "Uncertain delivery keeps the text and disables both sends. The notice directs the reader to chat rather than a resend.",
+      "capture": {
+        "textFields": 1,
+        "categoryControls": 0,
+        "disabledActions": [
+          "Submit",
+          "Save"
+        ],
+        "disabledReason": "Not sure it reached DudeCanvas couldn't confirm delivery, so it won't send this again. Check the chat; if Dude saves it, this changes to Saved. Your draft stays here.",
+        "status": "Not sure it reached DudeCanvas couldn't confirm delivery, so it won't send this again. Check the chat; if Dude saves it, this changes to Saved. Your draft stays here."
+      }
+    },
+    {
+      "file": "06-captured-details-app-light-1440.png",
+      "sha256": "da16bb6fc20456cb1744795c08c95b7c2d5c63dbad852f93a73cdf32b9c326c0",
+      "query": "scenario=M3&tone=light&controls=hide&appearance=app",
+      "viewport": [
+        1440,
+        900,
+        1
+      ],
+      "appearance": "app-following light",
+      "observation": "Repository 087 has its title, Captured stage, sourced description, next-step explanation, and one progress summary. No classification line or correction instruction.",
+      "header": {
+        "stage": "Captured",
+        "words": "",
+        "labeledFacts": 0
+      }
+    },
+    {
+      "file": "07-classified-design-details-dark-1440.png",
+      "sha256": "3c354b8f6c6f475538adb1f21b2d2d3d68b520621bbedcdcb18268c32d10a6d2",
+      "query": "scenario=M4&tone=dark&controls=hide",
+      "viewport": [
+        1440,
+        900,
+        1
+      ],
+      "appearance": "ordinary dark",
+      "observation": "904 shows New · Design as quiet words below Defined. Design approval and the current design-review request remain separate report rows.",
+      "header": {
+        "stage": "Defined",
+        "words": "New · Design",
+        "labeledFacts": 0
+      },
+      "waiting": [
+        "Waiting for you Design review from dude A current request. It adds no gate and doesn’t change the stage. From Needs you, request rq-904-design-review"
+      ],
+      "requiredGates": [
+        "Required gate Design approval The design workflow needs your approval of the exact mock before implementation starts. From spec.md"
+      ],
+      "visibleContrast": {
+        "textSamples": 68,
+        "minimumTextRatio": 5.18,
+        "textBelowRequired": 0,
+        "fieldBoundaryMinimum": null,
+        "fieldBoundaryBelowThree": 0
+      }
+    },
+    {
+      "file": "08-list-wide-light-1440.png",
+      "sha256": "c2c5f1d1408d3c60db6b4ffaf816b88c17207ccc9ffd02caa624c2d7625e350b",
+      "query": "scenario=M1&tone=light&controls=hide",
+      "viewport": [
+        1440,
+        900,
+        1
+      ],
+      "appearance": "ordinary light",
+      "observation": "The list retains Name, Status, Progress and capture numbers. Quiet words match the handoff; missing and unknown values add no placeholders.",
+      "list": {
+        "layout": "grid",
+        "rows": [
+          {
+            "number": "901",
+            "words": "Fix · Code"
+          },
+          {
+            "number": "902",
+            "words": "New · Writing"
+          },
+          {
+            "number": "903",
+            "words": "New · Video"
+          },
+          {
+            "number": "904",
+            "words": "New · Design"
+          },
+          {
+            "number": "905",
+            "words": "Maintenance · Code"
+          },
+          {
+            "number": "906",
+            "words": "Exploration"
+          },
+          {
+            "number": "907",
+            "words": "Maintenance · Writing"
+          },
+          {
+            "number": "908",
+            "words": ""
+          },
+          {
+            "number": "909",
+            "words": "Design"
+          },
+          {
+            "number": "910",
+            "words": "Fix · Writing"
+          },
+          {
+            "number": "911",
+            "words": "Exploration"
+          },
+          {
+            "number": "912",
+            "words": ""
+          },
+          {
+            "number": "913",
+            "words": "New · Code"
+          }
+        ]
+      },
+      "rowAccessibleExamples": [
+        "901. Retry failed uploads. Fix, Code. Stage: In progress. 2 of 5 tasks. .dude/ideas/901-retry-failed-uploads.md",
+        "908. Search results empty state. Stage: Captured. Progress not established. .dude/ideas/908-search-results-empty-state.md",
+        "909. Docs site navigation. Design. Stage: Defined, Next by recorded dependencies. 0 of 2 tasks. .dude/ideas/909-docs-site-navigation.md",
+        "912. Title unavailable. Stage: Stage unavailable. Progress not established. .dude/ideas/912-export-history.md"
+      ]
+    },
+    {
+      "file": "09-list-compact-saved-vague-app-dark-600.png",
+      "sha256": "ad6ad5727c0d84b191bab9e41e00c52929ee6460d676330aed23206d17cdd8ee",
+      "query": "scenario=M12-saved-save&tone=dark&controls=hide&appearance=app",
+      "viewport": [
+        600,
+        900,
+        1
+      ],
+      "appearance": "app-following dark",
+      "observation": "At 600px the compact list retains number, title, stage, progress, and any known words. Saved vague fixture 914 has no word line. 912 still says Stage unavailable.",
+      "list": {
+        "layout": "compact",
+        "rows": [
+          {
+            "number": "901",
+            "words": "Fix · Code"
+          },
+          {
+            "number": "902",
+            "words": "New · Writing"
+          },
+          {
+            "number": "903",
+            "words": "New · Video"
+          },
+          {
+            "number": "904",
+            "words": "New · Design"
+          },
+          {
+            "number": "905",
+            "words": "Maintenance · Code"
+          },
+          {
+            "number": "906",
+            "words": "Exploration"
+          },
+          {
+            "number": "907",
+            "words": "Maintenance · Writing"
+          },
+          {
+            "number": "908",
+            "words": ""
+          },
+          {
+            "number": "909",
+            "words": "Design"
+          },
+          {
+            "number": "910",
+            "words": "Fix · Writing"
+          },
+          {
+            "number": "911",
+            "words": "Exploration"
+          },
+          {
+            "number": "912",
+            "words": ""
+          },
+          {
+            "number": "913",
+            "words": "New · Code"
+          },
+          {
+            "number": "914",
+            "words": ""
+          }
+        ]
+      },
+      "rowAccessibleExamples": [
+        "901. Retry failed uploads. Fix, Code. Stage: In progress. 2 of 5 tasks. .dude/ideas/901-retry-failed-uploads.md",
+        "908. Search results empty state. Stage: Captured. Progress not established. .dude/ideas/908-search-results-empty-state.md",
+        "909. Docs site navigation. Design. Stage: Defined, Next by recorded dependencies. 0 of 2 tasks. .dude/ideas/909-docs-site-navigation.md",
+        "912. Title unavailable. Stage: Stage unavailable. Progress not established. .dude/ideas/912-export-history.md",
+        "914. Make onboarding feel less overwhelming. Stage: Captured. Progress not established. .dude/ideas/914-make-onboarding-feel-less-overwhelming.md"
+      ],
+      "visibleContrast": {
+        "textSamples": 63,
+        "minimumTextRatio": 6.601,
+        "textBelowRequired": 0,
+        "fieldBoundaryMinimum": 6.895,
+        "fieldBoundaryBelowThree": 0
+      }
+    },
+    {
+      "file": "10-details-known-word-only-light-768.png",
+      "sha256": "14273c8bade242dae9d632db50fadf3446b6421179a3a5fa62c141a1d5dde0b1",
+      "query": "scenario=M1&tone=light&controls=hide",
+      "viewport": [
+        768,
+        900,
+        1
+      ],
+      "appearance": "ordinary light",
+      "observation": "909 shows only Design. Its unknown intent causes no error, placeholder, instruction, or design-review guidance.",
+      "header": {
+        "stage": "Defined",
+        "words": "Design",
+        "labeledFacts": 0
+      }
+    },
+    {
+      "file": "11-details-unreadable-record-dark-600.png",
+      "sha256": "6af6e2efd7b171302ff5d4ccc8971647504e498c51d425da3c848f179d7b9dcb",
+      "query": "scenario=M1&tone=dark&controls=hide",
+      "viewport": [
+        600,
+        900,
+        1
+      ],
+      "appearance": "ordinary dark",
+      "observation": "912 still exposes unavailable stage and instruction evidence. It has no classification line.",
+      "header": {
+        "stage": "Stage unavailable",
+        "words": "",
+        "labeledFacts": 0
+      }
+    },
+    {
+      "file": "12-capture-200-percent-top-app-light.png",
+      "sha256": "9262c1826417e05a112e00a9a5ad057b2f41f40a25d8cace5435a69b000750b3",
+      "query": "scenario=M12-default&tone=light&controls=hide&appearance=app",
+      "viewport": [
+        720,
+        450,
+        2
+      ],
+      "appearance": "app-following light",
+      "observation": "Emulated 200%: 720x450 CSS pixels at scale 2. Helper and description reflow; the panel scrolls vertically, without horizontal overflow.",
+      "capture": {
+        "textFields": 1,
+        "categoryControls": 0,
+        "disabledActions": [],
+        "disabledReason": null,
+        "status": null
+      }
+    },
+    {
+      "file": "13-capture-200-percent-actions-app-light.png",
+      "sha256": "16b849374a88c1b4c74ba7d346ab9356b92195c4139cb371faf2cf871be7a547",
+      "query": "scenario=M12-default&tone=light&controls=hide&appearance=app",
+      "viewport": [
+        720,
+        450,
+        2
+      ],
+      "appearance": "app-following light",
+      "observation": "Emulated 200% after scrolling: all three capture actions are reachable and fully visible; the workspace footer stays fixed.",
+      "capture": {
+        "textFields": 1,
+        "categoryControls": 0,
+        "disabledActions": [],
+        "disabledReason": null,
+        "status": null
+      }
+    },
+    {
+      "file": "14-save-as-work-item-app-dark-768.png",
+      "sha256": "fd9890bded179a33c1aafaea5a594d94ed75a7acc06d1a6eb11c9f634bf8da60",
+      "query": "scenario=S2&tone=dark&controls=hide&appearance=app",
+      "viewport": [
+        768,
+        900,
+        1
+      ],
+      "appearance": "app-following dark",
+      "observation": "Save as work item uses the supplied short text-only notice, Text to save, and Save this text. The existing session request remains separate."
+    },
+    {
+      "file": "15-advisory-request-details-app-dark-1440.png",
+      "sha256": "4de80de6394ab8cb1c952eff4d5caa73f6d24331d4d041050e6049f01a606c6f",
+      "query": "scenario=M14b&tone=dark&controls=hide&appearance=app",
+      "viewport": [
+        1440,
+        900,
+        1
+      ],
+      "appearance": "app-following dark",
+      "observation": "911 shows Exploration only. Its advisory request appears as Waiting for you, with no required gate and no change from Defined.",
+      "header": {
+        "stage": "Defined",
+        "words": "Exploration",
+        "labeledFacts": 0
+      },
+      "waiting": [
+        "Waiting for you Clarification from dude A current request. It adds no gate and doesn’t change the stage. From Needs you, request rq-911-clarification"
+      ]
+    },
+    {
+      "file": "16-capture-saved-existing-light-1440.png",
+      "sha256": "0097211d9b45b85b3b2f50b03e8171d6ed3e546b5b0ce2dce36ae28a507dc41d",
+      "query": "scenario=M12-saved-existing&tone=light&controls=hide",
+      "viewport": [
+        1440,
+        900,
+        1
+      ],
+      "appearance": "ordinary light",
+      "observation": "Saved to 901 shows the exact supplied owner note and the existing saved path, with no comparison of internal notes.",
+      "capture": {
+        "textFields": 1,
+        "categoryControls": 0,
+        "disabledActions": [
+          "Submit",
+          "Save"
+        ],
+        "disabledReason": "Saved Saved as work item 901 for later. Nothing else was started. Matched the existing work item 901 Retry failed uploads. .dude/ideas/901-retry-failed-uploads.md",
+        "status": "Saved Saved as work item 901 for later. Nothing else was started. Matched the existing work item 901 Retry failed uploads. .dude/ideas/901-retry-failed-uploads.md"
+      }
+    }
+  ],
+  "interactions": [
+    {
+      "action": "Submit clear fixture text, then inspect saved row",
+      "savedMessage": "Saved as work item 914. Dude will keep brainstorming it with you in chat.\n.dude/ideas/914-the-export-button-is-hidden-on-small-screens.md",
+      "details": {
+        "heading": "914\nThe export button is hidden on small screens",
+        "stage": "Captured",
+        "words": "Fix · Code"
+      }
+    }
+  ],
+  "inlineRuntimeSha256": "66084dc6887b9aa2c7d1942ef8e0af7cbe54cfa64c7af6b53b8ab2c2b20c6bba",
+  "preservation": {
+    "round2Embedded": "variants/round-2-embedded/; original HTML, runtime, license, all five source files, plus mechanical before-spec.md and before-plan.md copies under definition/",
+    "round2HtmlSha256": "c5c35834d4394a34d25ad99c6c853e97d4b75e5ef11bb6a7597ce194e0406529",
+    "round2RuntimeSha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3",
+    "preexistingEvidenceFiles": 285,
+    "preexistingEvidenceInventorySha256BeforeAndAfter": "702e0c1356af233bb781f7108d3360881213204898b89c7c43eba37e1cac62d4",
+    "inventoryConvention": "Sorted lines of design-relative Windows path, space, actual SHA-256, joined with LF; round-1, pre-fix round-2, old screenshots and verification only. New round-3 evidence excluded.",
+    "repositoryData": "Snapshot data unchanged except its purpose sentence. No classification backfill.",
+    "productScope": "No writes outside this design directory; no product build, tasks, definitions, metadata, Git, Beads, installs, approvals, or test files."
+  },
+  "cleanup": {
+    "ownedBrowserPid": 39828,
+    "closedGracefully": true,
+    "killedPids": [],
+    "survivors": [],
+    "profileRemoved": true,
+    "scratchDirectoryRemoved": true
+  },
+  "limits": [
+    "No screen reader, other browser engine, actual app endpoint, product build, or full functional runner.",
+    "Behavior will be checked independently by the Tester. Prior reports are evidence for prior bytes only.",
+    "The inherited search popup can cover a form when keyboard focus enters Search work; no navigation redesign was made.",
+    "Fluent announcements plus the polite capture status region retain the prior pattern; screen-reader duplicate speech was not checked.",
+    "200% is device-metrics emulation, not the app host zoom. Representative geometry and contrast observations are not full behavioral verification."
+  ]
+}

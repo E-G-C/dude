@@ -1,0 +1,682 @@
+[
+  {
+    "rel": "plan.md",
+    "sha": "95765c278251004bdd40447d6acafcecff5465b488f5dea49c59e33bc3092455",
+    "bytes": 26647
+  },
+  {
+    "rel": "spec.md",
+    "sha": "1b4fa79a2e66fb1b163a03f74442158c6e35be495e48646b99231766fb29f21a",
+    "bytes": 26138
+  },
+  {
+    "rel": "tasks.md",
+    "sha": "c3b84da140b4a976adbe4a4081198ab7a01b68feff1dfa1edd196f2b10d5a394",
+    "bytes": 944
+  },
+  {
+    "rel": "design/work-type-presentation.html",
+    "sha": "420a174d5085abe602d7b43a7bfc975a822fe629bd9b36176e1175653d257c1c",
+    "bytes": 17300
+  },
+  {
+    "rel": "design/work-type-presentation.js",
+    "sha": "f3cd9c04d34dc16d810cd7b03651ad5b1fc1bc414e91ff2ba8d5a65d11213bd0",
+    "bytes": 868935
+  },
+  {
+    "rel": "design/work-type-presentation.js.LEGAL.txt",
+    "sha": "20c1596d99736bf8f9c18e6e056c97495c9362c406a9984c889361706f002758",
+    "bytes": 65638
+  },
+  {
+    "rel": "design/screenshots/capture-log.json",
+    "sha": "f6c7c53ba073e1c9d0202df23e1c113aafdc07021b54b0ad5c123eda5f142a43",
+    "bytes": 43865
+  },
+  {
+    "rel": "design/screenshots/interaction-capture-intent-options-1440x900-light.png",
+    "sha": "1257a95243d9bfd07e4b98e54b66942778eeca02cbbac1eb0607f5139a25223e",
+    "bytes": 52849
+  },
+  {
+    "rel": "design/screenshots/interaction-capture-saved-row-in-list-1440x900-light.png",
+    "sha": "a81e60f87ad94f3b594a07cde5126ef980d8fca93cfcfe6a9cac58b3bb5a7a09",
+    "bytes": 98067
+  },
+  {
+    "rel": "design/screenshots/interaction-capture-submit-responding-1440x900-light.png",
+    "sha": "6632600815de952574977d3788d673d00eed5a47acecaebea1c5460ee3151896",
+    "bytes": 73094
+  },
+  {
+    "rel": "design/screenshots/interaction-capture-submit-saved-1440x900-light.png",
+    "sha": "12cfe4055b84d11b50bc0ba7aad795e2e14d6c30b7bf0d8b8d05d5d71597da6b",
+    "bytes": 79154
+  },
+  {
+    "rel": "design/screenshots/interaction-capture-submit-sending-1440x900-light.png",
+    "sha": "c578e020022288a38907722e7632a10fe4b33bdc67e4e327031538475a9d7647",
+    "bytes": 76735
+  },
+  {
+    "rel": "design/screenshots/interaction-clear-returns-to-search-1440x900-light.png",
+    "sha": "ffc94d41b6cbb3e637b7a0c3ad09a6b1a61ac69731610148b7cd1c66c0cabd8c",
+    "bytes": 80675
+  },
+  {
+    "rel": "design/screenshots/interaction-keyboard-focus-now-1440x900-light.png",
+    "sha": "b76dfbfe6d7399b4958ed1d5c200e550b7624d10541c52c9c20a10c34235c282",
+    "bytes": 90179
+  },
+  {
+    "rel": "design/screenshots/interaction-rail-expanded-1440x900-light.png",
+    "sha": "45de7adb5688f0870fbc94eb3b2ec5f4054b42b81c2152215870a6eee48b5900",
+    "bytes": 84174
+  },
+  {
+    "rel": "design/screenshots/interaction-respond-opens-needs-you-1440x900-light.png",
+    "sha": "3d5f977838fd025fff97c5ddd337d89bf0acb8586d35af2db952b7e7a58e8407",
+    "bytes": 73870
+  },
+  {
+    "rel": "design/screenshots/interaction-row-enter-opens-now-1440x900-light.png",
+    "sha": "ee182481d70cb5d172825ae16f192ec59d5f609615f10175242c22e998d61f08",
+    "bytes": 85547
+  },
+  {
+    "rel": "design/screenshots/interaction-row-keyboard-focus-1440x900-light.png",
+    "sha": "d50d6b8357d46939acd93939e1036732da607c1c7667f88853c4b0df35b3c7f5",
+    "bytes": 42783
+  },
+  {
+    "rel": "design/screenshots/interaction-search-upload-1440x900-light.png",
+    "sha": "ee7022917dc0bf9a72718edcb8d9358af39df90c3c711d14bd642f3feb49cca0",
+    "bytes": 43040
+  },
+  {
+    "rel": "design/screenshots/m01-overview-wide-1440x900-app-dark.png",
+    "sha": "83808b899e7e56123a5a600274d69df25b9d35ffe053de5f6ef9983296c51728",
+    "bytes": 84674
+  },
+  {
+    "rel": "design/screenshots/m01-overview-wide-1440x900-app-light.png",
+    "sha": "2e389a253d7a0c1881670d5939e5bc5bba80f556c18ce157ff8e6d7bfaf78a50",
+    "bytes": 83936
+  },
+  {
+    "rel": "design/screenshots/m01-overview-wide-1440x900-dark.png",
+    "sha": "c37a3474a3cef4c49da675b0e88720c13a07fbb7e784472532edfe3a6e3f9052",
+    "bytes": 80694
+  },
+  {
+    "rel": "design/screenshots/m01-overview-wide-1440x900-light.png",
+    "sha": "e981455d3d223e7e2aabd98c9eddf1d715324d907ca4503e41de633ef9e6af19",
+    "bytes": 85928
+  },
+  {
+    "rel": "design/screenshots/m01-overview-wide-768x900-light.png",
+    "sha": "c013865eddf0eaa2373de859b37bd248ae6c0b46579ea973656a284fa8d41f06",
+    "bytes": 71018
+  },
+  {
+    "rel": "design/screenshots/m01-overview-wide-lower-rows-1440x900-light.png",
+    "sha": "25938eb6c8c561fd9bad4a83d4c3231f811b99c8602ecaed3795a77c246d7395",
+    "bytes": 83433
+  },
+  {
+    "rel": "design/screenshots/m02-overview-compact-600x900-dark.png",
+    "sha": "d7819272a3e938af22ad1ada1841eae4b4621eff49a5531458d71699f94d5fa3",
+    "bytes": 61155
+  },
+  {
+    "rel": "design/screenshots/m02-overview-compact-600x900-light.png",
+    "sha": "876850e0b97315b0aab400304539af4377478afd043d3e41877a73c464760e25",
+    "bytes": 60286
+  },
+  {
+    "rel": "design/screenshots/m03-now-087-captured-1440x900-light.png",
+    "sha": "7b36784eec59e9390d12ba5fef073beb144f5bc201622fe1934767449335e9f5",
+    "bytes": 112690
+  },
+  {
+    "rel": "design/screenshots/m04-now-904-design-request-1440x900-dark.png",
+    "sha": "0d32cfb8222d2387325cb93e8a14859e4f05c5b32bf655b091b7ece8c642f620",
+    "bytes": 90744
+  },
+  {
+    "rel": "design/screenshots/m04-now-904-design-request-1440x900-light.png",
+    "sha": "ce43d15074705b469fcac3e1c246ff1fbfa4783dd1b8917f3dae9e78b8e45fbd",
+    "bytes": 100871
+  },
+  {
+    "rel": "design/screenshots/m05-now-901-docked-1280x900-light.png",
+    "sha": "a275a21228c03e8efc8fbeee7892077329c006394f058c88876455fd4329efad",
+    "bytes": 115290
+  },
+  {
+    "rel": "design/screenshots/m05-now-901-docked-1440x900-app-dark.png",
+    "sha": "4faa86e3c47c0ed360e9e5cef3adcfb2892aa3b34af6f8d395f0b5b78dc8fa47",
+    "bytes": 114201
+  },
+  {
+    "rel": "design/screenshots/m05-now-901-docked-progress-1280x900-light.png",
+    "sha": "c406a383d91458b7994182634040289ec290996c4ba9df10b2b5f5cdd44e581a",
+    "bytes": 112687
+  },
+  {
+    "rel": "design/screenshots/m05-now-901-inflow-768x900-light.png",
+    "sha": "db7f6e5d96c02b210f6ac59f12bc380e8bfdb3beea98ee8edbe6b5dc7a60098f",
+    "bytes": 72586
+  },
+  {
+    "rel": "design/screenshots/m06-now-902-two-phases-1440x900-light.png",
+    "sha": "493133b46fd74bfac35efe18db7221f5a2fe6a88965a6640a432e24aadb58639",
+    "bytes": 92119
+  },
+  {
+    "rel": "design/screenshots/m06-now-902-two-phases-progress-1440x900-light.png",
+    "sha": "3b131fbadd48d4c6ca3a569e2cb3f0a07bd45ae80d9792cb0f80f06cc27409f1",
+    "bytes": 69079
+  },
+  {
+    "rel": "design/screenshots/m07-now-903-blocked-1440x900-light.png",
+    "sha": "16c43efca7934c4cad196b76e651824751ebe6c55371e8682c079ed6b5958f65",
+    "bytes": 94396
+  },
+  {
+    "rel": "design/screenshots/m07-now-903-blocked-progress-1440x900-light.png",
+    "sha": "d57714132f978e63145754e213c1bf8a785b8f64c69c5c4c9e62a4a844d1a7a1",
+    "bytes": 74663
+  },
+  {
+    "rel": "design/screenshots/m08-now-066-completed-1440x900-light.png",
+    "sha": "720dbff348af13560df5e89533fe81e0dc2ff7001b958090fc3f96615b394515",
+    "bytes": 103329
+  },
+  {
+    "rel": "design/screenshots/m09-now-078-closed-1440x900-light.png",
+    "sha": "7e6282130dd666e6c445ebcdaa11a1a689ad64bc08a3381f9254e17211c9c26d",
+    "bytes": 125336
+  },
+  {
+    "rel": "design/screenshots/m10-now-907-tracked-1440x900-light.png",
+    "sha": "ca9f01bb17472667f40097c7813249985496c85ba5116e6c51b878cf078835a1",
+    "bytes": 90731
+  },
+  {
+    "rel": "design/screenshots/m10-now-907-tracked-progress-1440x900-light.png",
+    "sha": "2cd5e945155270bf52de72a4c66ffcfa23db58fdfed8e402fc3f0948a4cca142",
+    "bytes": 70766
+  },
+  {
+    "rel": "design/screenshots/m11a-now-910-partial-progress-1440x900-light.png",
+    "sha": "b6ec24e357f06aa35631ec81865ea52b37127c1c0e28a812baa9362150dd4381",
+    "bytes": 84273
+  },
+  {
+    "rel": "design/screenshots/m11b-now-067-unavailable-1440x900-app-dark.png",
+    "sha": "6dd4709f67920a776b8798321758bb54f5c931e54c1db5be2c9c2734dab615e2",
+    "bytes": 100254
+  },
+  {
+    "rel": "design/screenshots/m11b-now-067-unavailable-1440x900-light.png",
+    "sha": "0d176b3f3e8ea4627e0fda4533d2558cfc3d544da0715ef471da128420c85641",
+    "bytes": 103371
+  },
+  {
+    "rel": "design/screenshots/m12-capture-chosen-1440x900-light.png",
+    "sha": "bbfc2313451cb0ff25a1dcfa4eebf9a866f4fac9b77d9184bf1a242e3d6d441f",
+    "bytes": 54203
+  },
+  {
+    "rel": "design/screenshots/m12-capture-chosen-600x900-dark.png",
+    "sha": "73d3e4925dd5ca0bce56ac82274c08ee2bbde66114ad86766e4a9d81cec7815e",
+    "bytes": 47413
+  },
+  {
+    "rel": "design/screenshots/m12-capture-default-1440x900-light.png",
+    "sha": "7394717ffbaf18acd7c593b877a5f2e5f90577651c598782f0f3cef5f6b6e8f6",
+    "bytes": 64178
+  },
+  {
+    "rel": "design/screenshots/m12-capture-invalid-1440x900-light.png",
+    "sha": "96f62aa1addd7542889297927b3c5dc8093bde38ae59d0c10ad5ec9c6734af59",
+    "bytes": 62092
+  },
+  {
+    "rel": "design/screenshots/m12-capture-kept-1440x900-light.png",
+    "sha": "9e6e0893e2ff31189d51c085a91d4763ea4cbf85177c95094863e0982cbd99d3",
+    "bytes": 72016
+  },
+  {
+    "rel": "design/screenshots/m12-capture-kept-200pct-zoom-light.png",
+    "sha": "2fbfea24838eb5d4cc62ea551ef09fd85a4c1e7b6fa3c532b52e3a37022743bc",
+    "bytes": 135560
+  },
+  {
+    "rel": "design/screenshots/m12-capture-missing-1440x900-light.png",
+    "sha": "898bd6119532937d2473b7d7e0947b44a8db241a194b2cb67b9ffc31b4043c45",
+    "bytes": 70854
+  },
+  {
+    "rel": "design/screenshots/m12-capture-saved-1440x900-app-dark.png",
+    "sha": "bfffdb575491a51e6d576ae17265a70ceabfe9bd795ed6a46be7784ddbedba76",
+    "bytes": 66389
+  },
+  {
+    "rel": "design/screenshots/m12-capture-saved-1440x900-light.png",
+    "sha": "3d910bd9a7b0e777c820a6a343dd238d1b8099c3cd98f9154a382a8df6371f32",
+    "bytes": 64194
+  },
+  {
+    "rel": "design/screenshots/m12-capture-sending-1440x900-light.png",
+    "sha": "9c506b55212c4d5f5b0ee23a1966b0ab9937fb1dc3b4295d47c419c35ac52bcf",
+    "bytes": 61426
+  },
+  {
+    "rel": "design/screenshots/m12-capture-uncertain-1440x900-light.png",
+    "sha": "60b244418d752224bb68d755f22759ff2b90e82e45c1b177e726b44671d131fe",
+    "bytes": 60917
+  },
+  {
+    "rel": "design/screenshots/m12-capture-waiting-1440x900-light.png",
+    "sha": "b4e08df587f19fd8fde443d3f7cf75d25b6ff33e8b58751fe1d34839cef77635",
+    "bytes": 61894
+  },
+  {
+    "rel": "design/screenshots/m13-now-904-200pct-zoom-light.png",
+    "sha": "e5aa4b9975396cb576fffdaeef974468719ef57031881937c8156b41755936f8",
+    "bytes": 115331
+  },
+  {
+    "rel": "design/screenshots/m13-now-904-768x900-dark.png",
+    "sha": "e96ece74168c9315bbe5d1625c3a3e072f620a378c80828efac981319b8da77e",
+    "bytes": 64068
+  },
+  {
+    "rel": "design/screenshots/m13-overview-200pct-zoom-app-dark.png",
+    "sha": "3bba60f4afcc30e28eee538b85154f9108b18757752cb96857a3f19f81d79f4c",
+    "bytes": 132253
+  },
+  {
+    "rel": "design/screenshots/m13-overview-200pct-zoom-light.png",
+    "sha": "61896b186374942a4e1c473dc05ac44d6a74482528042d086488fa83eaf5e532",
+    "bytes": 128768
+  },
+  {
+    "rel": "design/screenshots/m14a-now-910-blocking-1440x900-light.png",
+    "sha": "6279e5ea1879df60008770cb20b0801395440dd7d1e5f24b254ddc94c6d29e3a",
+    "bytes": 95444
+  },
+  {
+    "rel": "design/screenshots/m14a-now-910-blocking-progress-1440x900-light.png",
+    "sha": "ed23d4f8eb87c082cb17d8c8bf9c46a5a0a37e0607bc76d8f415236b36251afa",
+    "bytes": 71808
+  },
+  {
+    "rel": "design/screenshots/m14b-now-911-advisory-progress-1440x900-light.png",
+    "sha": "6b63600d9042233d90d19249c9398f0219934053324bb15f24927bcbb116b73e",
+    "bytes": 83080
+  },
+  {
+    "rel": "design/screenshots/s1-blank-workspace-1440x900-light.png",
+    "sha": "3b284faa111d5b362a32a99bdf574dd9a0c84ced2a0c0c68c4de12bd97b29bca",
+    "bytes": 47634
+  },
+  {
+    "rel": "design/screenshots/s2-needs-you-save-as-work-item-1440x900-light.png",
+    "sha": "80985e8003a7b1f5ed3bb9c5859ef9d501ae22b952a97f37d3b1a4e1d1b69a2b",
+    "bytes": 63503
+  },
+  {
+    "rel": "design/screenshots/s3-repository-list-1440x900-light.png",
+    "sha": "956b5f928cabbdfbed4395d4f7bb440b95ae0a2a7f3891810db89e5a17bccbef",
+    "bytes": 97587
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/k-finder-popup-over-capture-1440x900-light.png",
+    "sha": "a3ab015c8491d76195dde2881bdf1ca22db11e3c8fc7e3d2059e975502e8d7b6",
+    "bytes": 85856
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/k-working-on-vs-browsing-1440x900-light.png",
+    "sha": "4919b66ca44b25020870190f52dffab88ecdcf8d1c21f6ae5b5f02e1cae2d145",
+    "bytes": 63220
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m1-grid-1440x900-light.png",
+    "sha": "7d9fb3ab78cf66eadadab63d43c98711cadf5d382dd9c8d3cae67ecc4b0e8d7f",
+    "bytes": 70619
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m1-strip-expanded-1440x900-light.png",
+    "sha": "165389ac86996615d658d76bb17c03ccf266c862cc2bd848017a0b378f4ea9ea",
+    "bytes": 77600
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m10-now-907-1440x900-light.png",
+    "sha": "471e9de37b0c50d7eda6c0f0d486bf7518752a37cdc001e78c91af4592810a44",
+    "bytes": 71083
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m11a-now-910-partial-1440x900-light.png",
+    "sha": "84c63bf04e32f3c7828c2c53610e9faff475f4f52edf11a2958e2aafcec46920",
+    "bytes": 75697
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m11b-now-067-partial-feed-1440x900-light.png",
+    "sha": "655f06db3ef6c22760d9c984d29e7c79ba4cba8cb1d66de72b0f4e23787458b1",
+    "bytes": 81802
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m11b-now-067-unavailable-1440x900-light.png",
+    "sha": "a29f649b3c775d5c98142e8f7532f7e017a445f1ddcfe7a1760729eb6de79f7e",
+    "bytes": 81855
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m12-chosen-1440x900-light.png",
+    "sha": "3908dab860c39a0625a0fe691a05c9eac31194f9004efe2ec18e003848580691",
+    "bytes": 48423
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m12-default-1440x900-light.png",
+    "sha": "93d3cf1abd7551bb55069191e66444b58b0f84b3997cc31ce291bc03b5c9b587",
+    "bytes": 47365
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m12-domain-options-1440x900-light.png",
+    "sha": "d9e70899808b7807c246b6bb6f3a7dfe7c8afb2b3b20ea485a52759888324a23",
+    "bytes": 51978
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m12-fixture-controls-1440x900-light.png",
+    "sha": "575bef7264ff497c4ac37d4384ead23b5a9999f38a641c4f6bc3974064db352d",
+    "bytes": 66895
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m12-invalid-1440x900-light.png",
+    "sha": "0f56b32942e592ef909001b335f80a5f5f94825ee1cca1c199a6c9eca2b77f5b",
+    "bytes": 56520
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m12-kept-1440x900-light.png",
+    "sha": "58a98e018beb8e3a6c6f0adc4a61f929b3095da7bb53adf63fe0c2f69bb614f1",
+    "bytes": 65160
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m12-missing-1440x900-light.png",
+    "sha": "8645d4b06bbb6ae4c13e236a7b01059dce792b5fddd4567e8bc0445894570542",
+    "bytes": 65185
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m12-refused-retry-1440x900-light.png",
+    "sha": "e1932c5a21d756ac68312c1e3d384cb4a394e8fa453365a0b8d6ffffb27c2a61",
+    "bytes": 60515
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m12-saved-1440x900-light.png",
+    "sha": "ec5c81c59436626862f359866a813c5c84a963213aa42871a2ef441ea50f4388",
+    "bytes": 58369
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m12-sending-1440x900-light.png",
+    "sha": "59aad6c0c994eaa12f4a7a3a9ebf06e752be85af763228ac2862a4ff488092e0",
+    "bytes": 54443
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m12-submit-saved-1440x900-light.png",
+    "sha": "5efc7039e13bdb2c4782605b01381f276e97a4b0b636aad6801988e6b227c670",
+    "bytes": 62068
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m12-uncertain-1440x900-light.png",
+    "sha": "b3473a9b64fc90c78830ba022638702545c8ebe2ddff037e5c249f702265e0a2",
+    "bytes": 55305
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m12-uncertain-no-replay-1440x900-light.png",
+    "sha": "b744c63f87b27523e02347148094db70f8765f500a9bee7a9b1e19e45410b107",
+    "bytes": 59925
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m12-waiting-1440x900-light.png",
+    "sha": "a7561416b52056a2e939d396d7ad31f15b063202d535f7337db4cf640f18fc19",
+    "bytes": 54720
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m1-app-dark-1440x900.png",
+    "sha": "32cc53f3a4030c91ab04603782f813940643b84491c150ceea18160dba17acb3",
+    "bytes": 85223
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m1-app-dark-720x450-2-200-emulated.png",
+    "sha": "c84f672d46b66fd46ab80e2b975e704e09b40e6bd1bc5ce2c57f24f4ab307a83",
+    "bytes": 132967
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m1-app-light-1440x900.png",
+    "sha": "fd0e5d3a70e032bf13d6e59b122183e9ec2ba989851c0b8ac622565ff34f83ad",
+    "bytes": 84313
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m1-dark-1440x900.png",
+    "sha": "786facd253ceb6f7aef4aa559eeeca2491fdbbd6c084df54d4e920924b8bfad9",
+    "bytes": 71183
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m1-light-1440x900.png",
+    "sha": "7d9fb3ab78cf66eadadab63d43c98711cadf5d382dd9c8d3cae67ecc4b0e8d7f",
+    "bytes": 70619
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m1-light-720x450-2-200-emulated.png",
+    "sha": "69b3ea4455dc9755056134123a9cf74407ebb77765df94dab7b4b3cd60aa86ee",
+    "bytes": 114910
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m1-light-768x900.png",
+    "sha": "273b6a68ff41d37a212e0425f0629bc392825ba2f39e4a9a1d8659654dc0ceb3",
+    "bytes": 62093
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m10-app-light-1440x900.png",
+    "sha": "6f9a7aa1eae1e600e4e572cad10e391155867e681ca61aa1c85560fe69d8e686",
+    "bytes": 84953
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m11b-app-dark-1440x900.png",
+    "sha": "cdd0ec9428638ff550892640fddc4034d9da1686080c84573b013af74a1fbbcf",
+    "bytes": 100725
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m11b-dark-1440x900.png",
+    "sha": "96aa2cc427e5032db1c56b2c767913c93af35744d1817724d1e276bd3338b5e2",
+    "bytes": 82575
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m12-invalid-app-dark-1440x900.png",
+    "sha": "9b856ba86809c113e1a47ad7a436d6b54a7fab19f10e3a9d7ee7f2e064a1a00a",
+    "bytes": 65492
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m12-kept-app-light-720x450-2-200-emulated.png",
+    "sha": "30085c184cfe4d6eefd36af8b01208ee27ab211ac348079e363c4b80862126b0",
+    "bytes": 115596
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m12-kept-dark-1440x900.png",
+    "sha": "f124e31b762065406dbc500aba7b680591b4e3b2f3d081e997e4cea735d84f04",
+    "bytes": 65256
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m12-kept-light-600x900.png",
+    "sha": "a49ecc75d3e488df4e05673bcc9a93a8fb1ca250afdb33be0840a311af934a5c",
+    "bytes": 53404
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m12-uncertain-dark-1440x900.png",
+    "sha": "f5568bd205998e7f19f9488f496f5baf9188f81f999e2acf034ddea77d34d981",
+    "bytes": 55852
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m14a-dark-1440x900.png",
+    "sha": "83606e8bbf91d913250c5009b4470fa5425b4072723bc1b38d6a06f8476b61f8",
+    "bytes": 75173
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m2-app-light-600x900.png",
+    "sha": "3a5fbc34958e95c196b11921aa7bc513691b2d321bf96ed60d8a78af21879970",
+    "bytes": 63502
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m2-dark-600x900.png",
+    "sha": "01f6d0e32cbb56416e47e764c0e44238b6b3dbf9150cf6d483bb4ac1610decf8",
+    "bytes": 54049
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m2-light-600x900.png",
+    "sha": "ac059f87cdce92b961d0cc4a479c8767145674b7435896d44f9b8f24be4962b9",
+    "bytes": 53423
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m4-app-light-1440x900.png",
+    "sha": "69f4c129af31c70aa2f26c5f7139983431ef6e9fa7c71a983a60a2af05005314",
+    "bytes": 94243
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m4-dark-1440x900.png",
+    "sha": "b1128ba63803d5e0a26f1cf3f379ceb45a7d3432f409027bee3809e4f1676a88",
+    "bytes": 79121
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m4-dark-768x900.png",
+    "sha": "9961cb44398928aece2db8a6379119d0ec939f55cba345586c16827ed3301a27",
+    "bytes": 56352
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m4-light-720x450-2-200-emulated.png",
+    "sha": "3b9c1d542563b569767ea031d2c559b437a5c427022ff7631e23f9031c9d46f4",
+    "bytes": 112220
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m5-app-dark-1280x900.png",
+    "sha": "5187003e9dad3c7686e348f4095845f662a0d034ef9d59c13f99e693393f06f8",
+    "bytes": 112415
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m5-dark-1280x900.png",
+    "sha": "b1591d4771401291f4a96bba22e32b0d7c0276f867788b715d5853d03ece4289",
+    "bytes": 93759
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m5-light-1280x900.png",
+    "sha": "f016c1b4314e0d37138ca9718e7415f1327ad5e1a14dcba2fe10aed9c9f9a1c3",
+    "bytes": 93683
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m5-light-720x450-2-200-emulated.png",
+    "sha": "da4a0d245777642e68d52479835a05619b61c9e18eb65910cb8961ec92d919b3",
+    "bytes": 109777
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m5-light-768x900.png",
+    "sha": "61d14c18df8f7c3291d6006081afe0f5ff2599c7491327d875347ffbb8dc0d40",
+    "bytes": 52608
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m6-app-dark-1440x900.png",
+    "sha": "bebe533a4bc37bb9937fbc4fdd124f521370d7b4fd804880c5bfbd0c1876308b",
+    "bytes": 84940
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-m7-dark-1440x900.png",
+    "sha": "61e4af1e7b34861cb116736c632936e56661cea907194a732bff0d82c0205f97",
+    "bytes": 74835
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m13-option-list-intent-dark-1440x900.png",
+    "sha": "cd4be55338b4e71f865ac7a96044e86979b65c251636e87dc93a57acaa390771",
+    "bytes": 47248
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m14a-now-910-1440x900-light.png",
+    "sha": "04312098c5f6e4e70e9503f0e4fb5af23c05a4eb6a2fca1876b8c98eff267366",
+    "bytes": 66261
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m14b-now-911-1440x900-light.png",
+    "sha": "34bdc189a974359234f40430541d9f42bbc482957ae0f8a3773f49e351e85597",
+    "bytes": 66012
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m2-compact-600x900-light.png",
+    "sha": "ac059f87cdce92b961d0cc4a479c8767145674b7435896d44f9b8f24be4962b9",
+    "bytes": 53423
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m3-now-087-1440x900-light.png",
+    "sha": "56d05a8337ea7663b50ef01d414c61569410f9dd74d4dc0266f78c4ba1572938",
+    "bytes": 91439
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m4-now-904-1440x900-light.png",
+    "sha": "b9683657710fc2665e6d2f593ef1cbcf72d7165538b626b7556eb6c2522b6841",
+    "bytes": 78152
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m5-now-901-docked-1440x900-light.png",
+    "sha": "eb9934efe8e73c5856340e001b572d666b7de80b1c31198f17f6f5618e623041",
+    "bytes": 95255
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m6-now-902-1440x900-light.png",
+    "sha": "41b8cddc9717c9ec25f5f75234585e98425088b5ab490f1a5d3081f7857a4bd8",
+    "bytes": 71333
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/m7-now-903-1440x900-light.png",
+    "sha": "12a34b5a2172458953ad08e9d612fdaf8e15da7b09ef2ac8263fe2b5e73f850d",
+    "bytes": 74286
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/s2-save-as-work-item-1440x900-light.png",
+    "sha": "fce28b8579679fda0c5271111efefb759cdab5b05d7e1f9743f9cc03d78cf403",
+    "bytes": 72135
+  },
+  {
+    "rel": "design/screenshots/verification-preapproval/s3-repository-1440x900-light.png",
+    "sha": "bebd2e1188112c46323702a3ab19ed09ef8fe8fa2c71bb2d196c511e7e7946ea",
+    "bytes": 80285
+  },
+  {
+    "rel": "design/source/fixtures.json",
+    "sha": "9993d27daa89589349a2bc2d951b7ada84ffcae6654cd2d8317fdc1927ba98d6",
+    "bytes": 33633
+  },
+  {
+    "rel": "design/source/repository-snapshot.json",
+    "sha": "ede80387aa93eabc1a8a1a3ebca59877a14995ee5deaf3ed66e1dd2232d02122",
+    "bytes": 82302
+  },
+  {
+    "rel": "design/source/styles.js",
+    "sha": "f13a5970b1bfa31b215720b5a3d7fb726739c1c5a3e38d8a715374748a756c1b",
+    "bytes": 67149
+  },
+  {
+    "rel": "design/source/theme.js",
+    "sha": "5c1a341cce6e8643b6503ecb56d61c15d843171ead58becd0c4b0ed462c3f25f",
+    "bytes": 30756
+  },
+  {
+    "rel": "design/source/work-type-presentation.jsx",
+    "sha": "95867936e6d306a51be68665db7ef1e210abb44f890b032ab59a9e977aeb1cf8",
+    "bytes": 100481
+  },
+  {
+    "rel": "design/verification/report.json",
+    "sha": "6eeeefb94aab09271ab569addc26e5ee5ad151f01a7204d2c4266eb9f68593c9",
+    "bytes": 44719
+  }
+]

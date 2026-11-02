@@ -4037,6 +4037,47 @@ test('B: RunState rejects every state with more than one pending authorization',
   }
 });
 
+test('067 Work type: Work acquires classified owners without changing classification or unclassified files', () => {
+  withWorkspace((root) => {
+    const ownerPath = path.join(root, IDEA_PATH);
+    const tasksPath = path.join(root, path.dirname(SPEC_PATH), 'tasks.md');
+    const original = ideaBytes();
+    fs.writeFileSync(ownerPath, original);
+    fs.writeFileSync(tasksPath, tasksBytes());
+    const input = {
+      root, specPath: SPEC_PATH, target: TARGET, lane: { kind: 'lightweight' },
+      currentRun: [], review: [], verification: [], lint: [],
+    };
+    const baseline = inspect(input);
+    assert.deepEqual(baseline.blockers, []);
+    for (const lines of [
+      'work_intent: fix\nwork_domain: code\n',
+      'work_intent:\nwork_domain: unknown\n',
+    ]) {
+      const classified = Buffer.from(original.toString('utf8')
+        .replace('---\n\n## Idea', `${lines}---\n\n## Idea`));
+      fs.writeFileSync(ownerPath, classified);
+      const entries = fs.readdirSync(root, { recursive: true }).sort();
+      const paths = [IDEA_PATH, SPEC_PATH, `${path.dirname(SPEC_PATH)}/tasks.md`];
+      const bytes = paths.map((relative) => fs.readFileSync(path.join(root, relative)));
+
+      const inspection = inspect(input);
+      const captured = collectEvidence(TARGET, rawInputs({
+        directIdeas: [{ path: IDEA_PATH, bytes: classified }],
+      }));
+
+      assert.deepEqual(inspection.blockers, []);
+      assert.deepEqual(inspection.items, baseline.items);
+      assert.equal(captured.find((item) => item.source === 'owner-log')?.status, 'present');
+      assert.deepEqual(resolveFeatureOwner({ root, specPath: SPEC_PATH }), {
+        owner: { ideaPath: IDEA_PATH, specPath: SPEC_PATH }, diagnostics: [],
+      });
+      assert.deepEqual(fs.readdirSync(root, { recursive: true }).sort(), entries);
+      assert.deepEqual(paths.map((relative) => fs.readFileSync(path.join(root, relative))), bytes);
+    }
+  });
+});
+
 test('inspect acquires one exact owner and canonical task while ignoring generated board bytes', () => {
   withWorkspace((root) => {
     const ownerPath = path.join(root, IDEA_PATH);

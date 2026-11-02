@@ -12,11 +12,34 @@ import {
 } from './feature-identity.mjs';
 import { WORKSPACE_PATHS } from './workspace-paths.mjs';
 
+/** @type {readonly string[]} */
+export const IDEA_CLASSIFICATION_KEYS = Object.freeze(['work_intent', 'work_domain']);
+/** @type {readonly string[]} */
+export const WORK_INTENTS = Object.freeze(['create', 'fix', 'maintain', 'explore']);
+/** @type {readonly string[]} */
+export const WORK_DOMAINS = Object.freeze(['code', 'design', 'writing', 'video']);
+
 /**
  * Canonical scalar keys permitted in an idea ledger's frontmatter.
  * @type {readonly string[]}
  */
-export const CANONICAL_IDEA_KEYS = Object.freeze(['title', 'slug', 'status', 'spec_path', 'depends-on']);
+export const CANONICAL_IDEA_KEYS = Object.freeze([
+  'title', 'slug', 'status', 'spec_path', 'depends-on', ...IDEA_CLASSIFICATION_KEYS,
+]);
+
+/**
+ * Read advisory classification; missing or unrecognized values are unrecorded.
+ * @param {ReadonlyMap<string, import('./feature-identity.mjs').FrontmatterScalar>} scalars
+ * @returns {{ workIntent: string | null, workDomain: string | null }}
+ */
+export function readWorkClassification(scalars) {
+  const workIntent = scalars.get('work_intent')?.value ?? '';
+  const workDomain = scalars.get('work_domain')?.value ?? '';
+  return {
+    workIntent: WORK_INTENTS.includes(workIntent) ? workIntent : null,
+    workDomain: WORK_DOMAINS.includes(workDomain) ? workDomain : null,
+  };
+}
 
 /**
  * @typedef {{

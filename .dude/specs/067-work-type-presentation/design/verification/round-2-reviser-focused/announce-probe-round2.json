@@ -1,0 +1,127 @@
+{
+ "browser": "Edg/156.0.4314.15",
+ "html": "C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka\\.dude\\specs\\067-work-type-presentation\\design\\work-type-presentation.html",
+ "outcomes": {
+  "saved": {
+   "ariaNotifyType": "function",
+   "ariaNotify": [
+    "normal: RespondingSending this capture. Don’t submit it again.",
+    "high: Work item savedThe owner acknowledged the capture, and Canvas read the saved work item back.Recorded: Intent F"
+   ],
+   "domLive": [
+    "RespondingSending this capture. Don’t submit it again.",
+    "Awaiting capture deliveryCapture delivery is being reconciled. No saved result is confirmed yet. Your text and",
+    "Work item savedThe owner acknowledged the capture, and Canvas read the saved work item back.Recorded: Intent F"
+   ],
+   "liveRegions": [
+    "status/polite/true: Work item savedThe owner acknowledged the capture, and Canva"
+   ],
+   "notices": [
+    "group: Work item saved"
+   ]
+  },
+  "kept": {
+   "ariaNotifyType": "function",
+   "ariaNotify": [
+    "normal: RespondingSending this capture. Don’t submit it again.",
+    "high: Work item savedThe owner acknowledged the capture, and Canvas read the saved work item back.It matched an exis",
+    "normal: Existing intent kept901 already had the intent Fix, so Dude kept it instead of Maintain. To change it, ask Dud"
+   ],
+   "domLive": [
+    "RespondingSending this capture. Don’t submit it again.",
+    "Awaiting capture deliveryCapture delivery is being reconciled. No saved result is confirmed yet. Your text and",
+    "Work item savedThe owner acknowledged the capture, and Canvas read the saved work item back.It matched an exis",
+    "Existing intent kept901 already had the intent Fix, so Dude kept it instead of Maintain. To change it, ask Dud"
+   ],
+   "liveRegions": [
+    "status/polite/true: Work item savedThe owner acknowledged the capture, and Canva",
+    "status/polite/true: Existing intent kept901 already had the intent Fix, so Dude "
+   ],
+   "notices": [
+    "group: Work item saved",
+    "group: Existing intent kept"
+   ]
+  },
+  "missing": {
+   "ariaNotifyType": "function",
+   "ariaNotify": [
+    "normal: RespondingSending this capture. Don’t submit it again.",
+    "high: Work item savedThe owner acknowledged the capture, and Canvas read the saved work item back.Recorded: Intent F",
+    "high: Domain not recordedYou chose Code, but the saved work item has no domain. To set it, ask Dude in chat."
+   ],
+   "domLive": [
+    "RespondingSending this capture. Don’t submit it again.",
+    "Awaiting capture deliveryCapture delivery is being reconciled. No saved result is confirmed yet. Your text and",
+    "Work item savedThe owner acknowledged the capture, and Canvas read the saved work item back.Recorded: Intent F",
+    "Domain not recordedYou chose Code, but the saved work item has no domain. To set it, ask Dude in chat."
+   ],
+   "liveRegions": [
+    "status/polite/true: Work item savedThe owner acknowledged the capture, and Canva",
+    "status/polite/true: Domain not recordedYou chose Code, but the saved work item h"
+   ],
+   "notices": [
+    "group: Work item saved",
+    "group: Domain not recorded"
+   ]
+  },
+  "uncertain": {
+   "ariaNotifyType": "function",
+   "ariaNotify": [
+    "normal: RespondingSending this capture. Don’t submit it again.",
+    "high: Delivery uncertainCanvas couldn’t confirm delivery, so it won’t send this again. Your text and choices stay he"
+   ],
+   "domLive": [
+    "RespondingSending this capture. Don’t submit it again.",
+    "Awaiting capture deliveryCapture delivery is being reconciled. No saved result is confirmed yet. Your text and",
+    "Delivery uncertainCanvas couldn’t confirm delivery, so it won’t send this again. Your text and choices stay he"
+   ],
+   "liveRegions": [
+    "status/polite/true: Delivery uncertainCanvas couldn’t confirm delivery, so it wo"
+   ],
+   "notices": [
+    "group: Delivery uncertain"
+   ]
+  },
+  "refused": {
+   "ariaNotifyType": "function",
+   "ariaNotify": [
+    "normal: RespondingSending this capture. Don’t submit it again.",
+    "high: Not sentDude didn’t accept the chosen intent or domain, so nothing was captured. Your text and choices are sti"
+   ],
+   "domLive": [
+    "RespondingSending this capture. Don’t submit it again.",
+    "Awaiting capture deliveryCapture delivery is being reconciled. No saved result is confirmed yet. Your text and",
+    "Not sentDude didn’t accept the chosen intent or domain, so nothing was captured. Your text and choices are sti"
+   ],
+   "liveRegions": [
+    "status/polite/true: Not sentDude didn’t accept the chosen intent or domain, so n"
+   ],
+   "notices": [
+    "group: Not sent"
+   ]
+  }
+ },
+ "cleanup": {
+  "owned": [
+   18960,
+   15336,
+   16052,
+   37248,
+   37224,
+   28608,
+   18544,
+   31044,
+   36348,
+   21308,
+   20076,
+   39676,
+   33884,
+   19060,
+   12104
+  ],
+  "closedGracefully": true,
+  "killed": [],
+  "survivors": [],
+  "profileRemoved": true
+ }
+}

@@ -16,7 +16,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { classifyPath, TIER } from '../dude-engine/lib/ownership.mjs';
-import { inventoryLifecycleIdentities } from '../dude-engine/lib/feature.mjs';
+import {
+  CANONICAL_IDEA_KEYS,
+  IDEA_CLASSIFICATION_KEYS,
+  WORK_DOMAINS,
+  WORK_INTENTS,
+  inventoryLifecycleIdentities,
+  readWorkClassification,
+} from '../dude-engine/lib/feature.mjs';
+import { parseFrontmatterScalars } from '../dude-engine/lib/feature-identity.mjs';
 import { loadAgentModelConfig } from '../dude-engine/lib/agent-model-map.mjs';
 import {
   BOARD_END as TASK_BOARD_END,
@@ -406,7 +414,7 @@ function realLedgerHeadings(content) {
 }
 
 /**
- * Validate body-only structure in one canonical idea ledger.
+ * Validate ledger structure and warn about unrecognized classification scalars.
  * @param {string} file
  * @param {(message: string) => void} report
  */
@@ -440,6 +448,22 @@ function validateLedgerStructure(file, report) {
     report(`${rel}  missing real '## Coordinator Log' heading outside fenced blocks`);
   } else if (headings.coordinatorLog > 1) {
     report(`${rel}  duplicate real '## Coordinator Log' headings outside fenced blocks`);
+  }
+
+  if (malformedIdeaPaths.has(rel)) return;
+  let frontmatter;
+  try {
+    frontmatter = parseFrontmatterScalars(content, { canonicalKeys: CANONICAL_IDEA_KEYS });
+  } catch {
+    // Noncanonical paths may not have reached the inventory's frontmatter pass.
+    return;
+  }
+  const { workIntent, workDomain } = readWorkClassification(frontmatter.scalars);
+  for (const key of IDEA_CLASSIFICATION_KEYS) {
+    const value = key === 'work_intent' ? workIntent : workDomain;
+    if (!frontmatter.scalars.has(key) || value !== null) continue;
+    const allowed = key === 'work_intent' ? WORK_INTENTS : WORK_DOMAINS;
+    warn(`${rel}  ${key} is empty or unrecognized (valid: ${allowed.join(', ')})`);
   }
 }
 
@@ -484,6 +508,9 @@ for (const diagnostic of featureInventory.diagnostics) {
   const report = diagnostic.severity === 'error' ? fail : warn;
   report(`${diagnostic.path}  ${diagnostic.message} [${diagnostic.code}]`);
 }
+const malformedIdeaPaths = new Set(featureInventory.diagnostics
+  .filter((diagnostic) => diagnostic.code === 'FEATURE_FRONTMATTER_MALFORMED')
+  .map((diagnostic) => diagnostic.path));
 
 /** @type {Map<string, FeatureRecord>} */
 const featuresByIdeaPath = new Map();

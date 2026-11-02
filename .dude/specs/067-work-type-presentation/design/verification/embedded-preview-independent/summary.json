@@ -1,0 +1,579 @@
+{
+  "kind": "independent-verification-binding",
+  "verifiedAt": "2026-10-20T13:34:37.450Z",
+  "tester": "dude-pack-coding-tester (separate context; did not author the change)",
+  "verdict": "PASS",
+  "criteria": {
+    "artifactRawBytesMatch": true,
+    "runtimeLegalUnchanged": true,
+    "preservedOldHtmlExact": true,
+    "inlineRuntimeEqualsUnchangedRuntime": true,
+    "bootGuardScriptByteIdenticalToOld": true,
+    "htmlDeltaVsOldIsCommentsCssRootFallbackOnly": true,
+    "cspOnlyNarrowedConnectNoneKept": true,
+    "packagingCheck": true,
+    "oldHtmlAppOriginBlankAndCspBlocked": true,
+    "currentHtmlThreeOriginsRenderClean": true,
+    "regressionRunner": true,
+    "workspaceUntouchedByMyRuns": true,
+    "cleanup": true
+  },
+  "scope": "Replica of the GitHub Copilot app local browser-preview origin in headless Edge. The actual app (Tauri 1.1.30 / WebView2 156.0.4314.36) was NOT driven or observed by the Tester or the Coder; no host console, endpoint, or restart was used.",
+  "limits": [
+    "Local engine is Edg/156.0.4314.15 headless; the app embeds WebView2 156.0.4314.36. Pixel/DOM parity is claimed only inside this engine.",
+    "Replica listens on loopback with an explicit port; the real host answers in-process with no port and any response headers beyond those the Coder read from its strings are unverified.",
+    "Whether the real host accepts an inline classic script is therefore corroborated by the CSP model only, not observed in the app.",
+    "The hostname-only control (old HTML renders at http://127.0.0.1) is Coder-supplied evidence; the Tester did not rerun it.",
+    "regress.mjs sets no failing exit code on a failed check; the verdict above was read from each check status, assertion count, and the equivalence map, not from the exit code."
+  ],
+  "notes": [
+    "One read-only `git status --short` was run during preflight, before the no-Git constraint was applied to it; no other Git command was run.",
+    "The current HTML differs from the preserved old HTML by more than the two edits the request describes (CSP script-src, inline runtime slot). It also gained documentation comment lines, a #root > .mock-boot CSS rule, and a visible fallback paragraph inside #root that the runtime replaces on render. See htmlDeltaVsPreservedOld; the regression check asserts the paragraph is gone after render and that #root holds the strip and window as before. Reported, not judged.",
+    "A first binding pass reported FAIL only because the Tester assumed exactly two edits; that over-strict check was replaced by the classified delta above. No product or runner assertion was changed.",
+    "now-901 screenshot: 112 px in a 16x16 left-rail icon box differ between the replica and file targets in the first run; in two scratch repeats the same two-state variant moved to the fixed-file target, so it is a screenshot timing state, not an origin difference. The runner compares M1 pixels, rows, Now 901, capture, Submit, and theme observations, all equal."
+  ],
+  "files": {
+    "currentHtmlRaw": {
+      "path": ".dude/specs/067-work-type-presentation/design/work-type-presentation.html",
+      "bytes": 890907,
+      "sha256": "c5c35834d4394a34d25ad99c6c853e97d4b75e5ef11bb6a7597ce194e0406529",
+      "expectedSha256": "c5c35834d4394a34d25ad99c6c853e97d4b75e5ef11bb6a7597ce194e0406529",
+      "match": true,
+      "expectedBytes": 890907,
+      "bytesMatch": true
+    },
+    "runtimeUnchanged": {
+      "path": ".dude/specs/067-work-type-presentation/design/work-type-presentation.js",
+      "bytes": 870043,
+      "sha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3",
+      "expectedSha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3",
+      "match": true
+    },
+    "legalUnchanged": {
+      "path": ".dude/specs/067-work-type-presentation/design/work-type-presentation.js.LEGAL.txt",
+      "bytes": 65638,
+      "sha256": "20c1596d99736bf8f9c18e6e056c97495c9362c406a9984c889361706f002758",
+      "expectedSha256": "20c1596d99736bf8f9c18e6e056c97495c9362c406a9984c889361706f002758",
+      "match": true
+    },
+    "preservedOldHtml": {
+      "path": ".dude/specs/067-work-type-presentation/design/variants/round-2-before-embedded-fix/work-type-presentation.html",
+      "bytes": 19070,
+      "sha256": "6eaf6bc8642e31d8e523a818ba9b9802ec63f2755a70cb48a92e10e07bc4cdc5",
+      "expectedSha256": "6eaf6bc8642e31d8e523a818ba9b9802ec63f2755a70cb48a92e10e07bc4cdc5",
+      "match": true
+    },
+    "preservedOldRuntimeCopy": {
+      "path": ".dude/specs/067-work-type-presentation/design/variants/round-2-before-embedded-fix/work-type-presentation.js",
+      "bytes": 870043,
+      "sha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3",
+      "expectedSha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3",
+      "match": true
+    },
+    "preservedOldLegalCopy": {
+      "path": ".dude/specs/067-work-type-presentation/design/variants/round-2-before-embedded-fix/work-type-presentation.js.LEGAL.txt",
+      "bytes": 65638,
+      "sha256": "20c1596d99736bf8f9c18e6e056c97495c9362c406a9984c889361706f002758",
+      "expectedSha256": "20c1596d99736bf8f9c18e6e056c97495c9362c406a9984c889361706f002758",
+      "match": true
+    }
+  },
+  "inlineRuntime": {
+    "runtimeSlots": 1,
+    "externalSlotsLeft": 0,
+    "inlineBytes": 870043,
+    "inlineSha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3",
+    "runtimeSha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3",
+    "inlineEqualsRuntimeBytes": true,
+    "scriptTagsOutsideInline": [
+      "<script>",
+      "<script data-runtime=\"work-type-presentation.js\">"
+    ],
+    "scriptTagsWithSrc": 0,
+    "runtimeUnsafeForInline": {
+      "closeScript": false,
+      "commentOpen": false,
+      "cr": false,
+      "nul": false
+    }
+  },
+  "htmlDeltaVsPreservedOld": {
+    "intendedEditsApplied": [
+      "CSP script-src narrowed to 'unsafe-inline'",
+      "external <script src> slot replaced by one inline classic <script data-runtime> holding the runtime"
+    ],
+    "bootGuardScriptByteIdentical": true,
+    "bootGuardBytes": 2322,
+    "remainingChangedLines": {
+      "onlyInCurrent": 34,
+      "onlyInOld": 8,
+      "byWhere": {
+        "current:htmlComment": 28,
+        "old:htmlComment": 7,
+        "current:styleBlock": 5,
+        "current:rootFallbackLine": 1,
+        "old:rootFallbackLine": 1
+      },
+      "outsideCommentStyleRootLine": []
+    },
+    "rootLineOld": "  <div id=\"root\"></div>",
+    "rootLineCurrent": "  <div id=\"root\"><p class=\"mock-boot\">Loading the 067 design preview. If this message stays, the preview script did not run here. Open this file in a desktop browser instead.</p></div>"
+  },
+  "csp": {
+    "old": "default-src 'none'; script-src 'unsafe-inline' file: http://127.0.0.1:*; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'",
+    "current": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'",
+    "missingDirectives": [],
+    "widened": [],
+    "narrowed": [
+      "script-src file:",
+      "script-src http://127.0.0.1:*"
+    ],
+    "connectSrcCurrent": "'none'",
+    "connectNoneUnchanged": true
+  },
+  "packaging": {
+    "observedByTesterShell": {
+      "exit": 0
+    },
+    "rerunInsideBinding": {
+      "exit": 0,
+      "stdout": {
+        "mode": "check",
+        "html": "work-type-presentation.html",
+        "runtime": "work-type-presentation.js",
+        "runtimeBytes": 870043,
+        "runtimeSha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3",
+        "inlineSha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3",
+        "inlineMatchesRuntime": true,
+        "htmlBytes": 890907,
+        "htmlSha256": "c5c35834d4394a34d25ad99c6c853e97d4b75e5ef11bb6a7597ce194e0406529",
+        "htmlSha256LfNormalized": "86343403ec5a4e3453b27843905acf5d2b7d394bf03602255a6f315898aebbc0",
+        "scriptSrc": "'unsafe-inline'"
+      },
+      "stderr": ""
+    },
+    "pass": true
+  },
+  "before": {
+    "command": "repro.mjs --html <preserved old HTML> --label before-independent --cases app-origin",
+    "exit": 0,
+    "browser": "Edg/156.0.4314.15",
+    "htmlSha256": "6eaf6bc8642e31d8e523a818ba9b9802ec63f2755a70cb48a92e10e07bc4cdc5",
+    "isPreservedOld": true,
+    "case": "app-origin",
+    "origin": "http://browser-preview-local.localhost:55712",
+    "rendered": false,
+    "rootElementChildren": 0,
+    "rows": 0,
+    "bodyBackground": "rgb(245, 245, 245)",
+    "cspViolations": [
+      {
+        "directive": "script-src-elem",
+        "blockedFile": "work-type-presentation.js",
+        "disposition": "enforce",
+        "policyScriptSrc": "script-src 'unsafe-inline' file: http://127.0.0.1:*"
+      }
+    ],
+    "networkBlockedReasons": [
+      "csp"
+    ],
+    "serverSaw": [
+      "GET /7d1457ce-0c2a-43d6-b6ce-2ebba98340aa/work-type-presentation.html -> 200 (19070 B)"
+    ],
+    "siblingRuntimeServedWhenFetchedDirectly": 200,
+    "exceptions": 0,
+    "logQuote": "error/security: Loading the script 'http://browser-preview-local.localhost:55712/7d1457ce-0c2a-43d6-b6ce-2ebba98340aa/work-type-presentation.js' violates the following Co",
+    "pass": true
+  },
+  "after": {
+    "command": "repro.mjs --html <current HTML> --label after-independent --cases file,app-origin,app-origin-single-file",
+    "exit": 0,
+    "browser": "Edg/156.0.4314.15",
+    "htmlSha256": "c5c35834d4394a34d25ad99c6c853e97d4b75e5ef11bb6a7597ce194e0406529",
+    "isCurrentRaw": true,
+    "cases": [
+      {
+        "case": "file",
+        "origin": "file://",
+        "rendered": true,
+        "rootElementChildren": 2,
+        "mockStrip": true,
+        "rows": 13,
+        "cspViolations": 0,
+        "exceptions": 0,
+        "consoleProblems": 0,
+        "logProblems": 0,
+        "failedRequests": 0,
+        "scriptSrcs": [
+          null,
+          null,
+          null
+        ],
+        "requestsSeen": [
+          "work-type-presentation.html"
+        ],
+        "serverSaw": null,
+        "siblingRuntimeFetchedDirectly": null
+      },
+      {
+        "case": "app-origin",
+        "origin": "http://browser-preview-local.localhost:61751",
+        "rendered": true,
+        "rootElementChildren": 2,
+        "mockStrip": true,
+        "rows": 13,
+        "cspViolations": 0,
+        "exceptions": 0,
+        "consoleProblems": 0,
+        "logProblems": 0,
+        "failedRequests": 0,
+        "scriptSrcs": [
+          null,
+          null,
+          null
+        ],
+        "requestsSeen": [
+          "work-type-presentation.html"
+        ],
+        "serverSaw": [
+          "GET /c66dd72f-a01e-42c1-a465-b6a57acc0440/work-type-presentation.html -> 200 (890907 B)"
+        ],
+        "siblingRuntimeFetchedDirectly": 200
+      },
+      {
+        "case": "app-origin-single-file",
+        "origin": "http://browser-preview-local.localhost:64919",
+        "rendered": true,
+        "rootElementChildren": 2,
+        "mockStrip": true,
+        "rows": 13,
+        "cspViolations": 0,
+        "exceptions": 0,
+        "consoleProblems": 0,
+        "logProblems": 0,
+        "failedRequests": 0,
+        "scriptSrcs": [
+          null,
+          null,
+          null
+        ],
+        "requestsSeen": [
+          "work-type-presentation.html"
+        ],
+        "serverSaw": [
+          "GET /863dc205-bd67-4685-a089-e9fe172712e3/work-type-presentation.html -> 200 (890907 B)"
+        ],
+        "siblingRuntimeFetchedDirectly": 404
+      }
+    ],
+    "pass": true
+  },
+  "regression": {
+    "command": "regress.mjs --package <067 spec dir>",
+    "exit": 0,
+    "browser": "Edg/156.0.4314.15",
+    "files": [
+      {
+        "path": "design/work-type-presentation.html",
+        "bytes": 890907,
+        "sha256": "c5c35834d4394a34d25ad99c6c853e97d4b75e5ef11bb6a7597ce194e0406529"
+      },
+      {
+        "path": "design/work-type-presentation.js",
+        "bytes": 870043,
+        "sha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3"
+      },
+      {
+        "path": "design/variants/round-2-before-embedded-fix/work-type-presentation.html",
+        "bytes": 19070,
+        "sha256": "6eaf6bc8642e31d8e523a818ba9b9802ec63f2755a70cb48a92e10e07bc4cdc5"
+      }
+    ],
+    "targets": [
+      {
+        "id": "round2-preimage-file",
+        "assertions": 276,
+        "checks": {
+          "render": "pass(5)",
+          "M1.list": "pass(189)",
+          "L.search-now": "pass(8)",
+          "M12.states": "pass(55)",
+          "M12.submit-saved": "pass(4)",
+          "A.theme": "pass(15)"
+        },
+        "failures": [],
+        "allRequiredPass": true,
+        "serverRequests": null
+      },
+      {
+        "id": "fixed-file",
+        "assertions": 277,
+        "checks": {
+          "render": "pass(6)",
+          "M1.list": "pass(189)",
+          "L.search-now": "pass(8)",
+          "M12.states": "pass(55)",
+          "M12.submit-saved": "pass(4)",
+          "A.theme": "pass(15)"
+        },
+        "failures": [],
+        "allRequiredPass": true,
+        "serverRequests": null
+      },
+      {
+        "id": "fixed-app-origin-replica",
+        "assertions": 277,
+        "checks": {
+          "render": "pass(6)",
+          "M1.list": "pass(189)",
+          "L.search-now": "pass(8)",
+          "M12.states": "pass(55)",
+          "M12.submit-saved": "pass(4)",
+          "A.theme": "pass(15)"
+        },
+        "failures": [],
+        "allRequiredPass": true,
+        "serverRequests": {
+          "total": 21,
+          "paths": [
+            "/<id>/work-type-presentation.html"
+          ],
+          "statuses": [
+            200
+          ]
+        }
+      }
+    ],
+    "equivalenceWithRound2File": {
+      "fixed-file": {
+        "m1Pixels": true,
+        "rows": true,
+        "now901": true,
+        "capture": true,
+        "submitSaved": true,
+        "theme": true
+      },
+      "fixed-app-origin-replica": {
+        "m1Pixels": true,
+        "rows": true,
+        "now901": true,
+        "capture": true,
+        "submitSaved": true,
+        "theme": true
+      }
+    },
+    "runnerCleanup": {
+      "closedGracefully": true,
+      "killed": [],
+      "survivors": [],
+      "profileRemoved": true
+    },
+    "pass": true
+  },
+  "repeatsOutsideWorkspace": [
+    {
+      "run": "xr2",
+      "allPass": true,
+      "assertions": {
+        "round2-preimage-file": 276,
+        "fixed-file": 277,
+        "fixed-app-origin-replica": 277
+      },
+      "equivalenceAllTrue": true,
+      "now901PngSha12": {
+        "fixed-app-origin-replica": "c02b1240703f",
+        "fixed-file": "2203cbd3f764",
+        "round2-preimage-file": "c02b1240703f"
+      }
+    },
+    {
+      "run": "xr3",
+      "allPass": true,
+      "assertions": {
+        "round2-preimage-file": 276,
+        "fixed-file": 277,
+        "fixed-app-origin-replica": 277
+      },
+      "equivalenceAllTrue": true,
+      "now901PngSha12": {
+        "fixed-app-origin-replica": "c02b1240703f",
+        "fixed-file": "2203cbd3f764",
+        "round2-preimage-file": "c02b1240703f"
+      }
+    }
+  ],
+  "preservation": {
+    "filesHashedBeforeRuns": 4095,
+    "filesHashedAfterRuns": 4114,
+    "excluded": [
+      ".git (directory)",
+      "node_modules"
+    ],
+    "duringMyRuns": {
+      "changed": [],
+      "removed": [],
+      "addedOutsideNewDirs": [],
+      "addedInsideNewDirs": 19
+    },
+    "coderBaselineToStartOfMyRuns": {
+      "baselineFiles": 4083,
+      "changed": [
+        ".dude/specs/067-work-type-presentation/design/work-type-presentation.html"
+      ],
+      "removed": [],
+      "added": [
+        ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview/after-app-origin-replica-m1-1440x900-light.png",
+        ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview/after-app-origin-replica-m1-app-dark-1440x900.png",
+        ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview/after-app-origin-replica-m12-submit-saved-1440x900-light.png",
+        ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview/after-app-origin-replica-now-901-1440x900-light.png",
+        ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview/after-scripts-blocked-boundary-message-1280x900.png",
+        ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview/before-round2-app-origin-replica-blank-1280x900.png",
+        ".dude/specs/067-work-type-presentation/design/variants/round-2-before-embedded-fix/work-type-presentation.html",
+        ".dude/specs/067-work-type-presentation/design/variants/round-2-before-embedded-fix/work-type-presentation.js",
+        ".dude/specs/067-work-type-presentation/design/variants/round-2-before-embedded-fix/work-type-presentation.js.LEGAL.txt",
+        ".dude/specs/067-work-type-presentation/design/verification/embedded-preview/evidence.json",
+        ".dude/specs/067-work-type-presentation/design/verification/embedded-preview/package-inline.mjs"
+      ]
+    },
+    "note": "'.git' appears as an added entry only because this worktree's .git is a pointer file that the baseline excluded by name.",
+    "pass": true
+  },
+  "cleanup": {
+    "perRunnerReport": {
+      "before": {
+        "ownedPids": 17,
+        "closedGracefully": true,
+        "killed": [],
+        "survivors": 0,
+        "profileRemoved": true
+      },
+      "after": {
+        "ownedPids": 17,
+        "closedGracefully": true,
+        "killed": [],
+        "survivors": 0,
+        "profileRemoved": true
+      },
+      "regress": {
+        "closedGracefully": true,
+        "killed": [],
+        "survivors": 0,
+        "profileRemoved": true
+      }
+    },
+    "osCheckAfterRuns": {
+      "edgeProcessesWithMyProfiles": 0,
+      "runnerNodeProcesses": 0,
+      "listenersOnMyReplicaPorts": 0,
+      "error": null
+    },
+    "replicaPortsChecked": [
+      55712,
+      61751,
+      64919,
+      63139,
+      64560,
+      54521
+    ],
+    "browserProfileDirsLeftInScratch": [],
+    "userBrowserOrAppTouched": false,
+    "pass": true
+  },
+  "evidenceFiles": [
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/verification/embedded-preview-independent/after.json",
+      "bytes": 8353,
+      "sha256": "96db16ad6cfd3c4cead13bc1fe92eda41d1518bd79a10c45049188ba92ec3bb5"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/verification/embedded-preview-independent/before.json",
+      "bytes": 5052,
+      "sha256": "3955722b41eba5774f92e13c3e732aeb93e0a67477153ec10991bdb0751e17d1"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/verification/embedded-preview-independent/interactions.json",
+      "bytes": 4125,
+      "sha256": "8cdcba036fbb77c5fa8648c28416fb70903c02d1980a109c61ba8b8dfd1f1ab7"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview-independent/after-independent-app-origin-single-file.png",
+      "bytes": 76512,
+      "sha256": "f6c7f06633794f2cabc3d6f0d54828cf4a3c49b8a1b409d8eb43aca8b6bdf9a1"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview-independent/after-independent-app-origin.png",
+      "bytes": 76512,
+      "sha256": "f6c7f06633794f2cabc3d6f0d54828cf4a3c49b8a1b409d8eb43aca8b6bdf9a1"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview-independent/after-independent-file.png",
+      "bytes": 76512,
+      "sha256": "f6c7f06633794f2cabc3d6f0d54828cf4a3c49b8a1b409d8eb43aca8b6bdf9a1"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview-independent/before-independent-app-origin.png",
+      "bytes": 5290,
+      "sha256": "43144fdb7e01f0b29df40c6997ae96a5cc431a746d62de3ba3aff8ea087eabba"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview-independent/fixed-app-origin-replica-m1-1440x900-light.png",
+      "bytes": 70692,
+      "sha256": "63ff5a6eef92e5020102520cc0665aa434c4abb40af41b1af26604448ba19c7d"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview-independent/fixed-app-origin-replica-m1-app-dark-1440x900.png",
+      "bytes": 88987,
+      "sha256": "a8ced973945c118c18f8f93268278596fcdc7b31b44a9f5620571de52f7e4b75"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview-independent/fixed-app-origin-replica-m12-submit-saved-1440x900-light.png",
+      "bytes": 62106,
+      "sha256": "39f8c10795b1d6b6fde55a7843a8bb21e76a7edab47f84c0991e15496670573f"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview-independent/fixed-app-origin-replica-now-901-1440x900-light.png",
+      "bytes": 74729,
+      "sha256": "2203cbd3f76445ca7c85f89ea576a61ed08c71119c9a6db620645346ba29fc3f"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview-independent/fixed-file-m1-1440x900-light.png",
+      "bytes": 70692,
+      "sha256": "63ff5a6eef92e5020102520cc0665aa434c4abb40af41b1af26604448ba19c7d"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview-independent/fixed-file-m1-app-dark-1440x900.png",
+      "bytes": 88987,
+      "sha256": "a8ced973945c118c18f8f93268278596fcdc7b31b44a9f5620571de52f7e4b75"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview-independent/fixed-file-m12-submit-saved-1440x900-light.png",
+      "bytes": 62106,
+      "sha256": "39f8c10795b1d6b6fde55a7843a8bb21e76a7edab47f84c0991e15496670573f"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview-independent/fixed-file-now-901-1440x900-light.png",
+      "bytes": 74716,
+      "sha256": "c02b1240703fc3897daa993c7c30037f6f39613a08f3df65260888490e8a5527"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview-independent/round2-preimage-file-m1-1440x900-light.png",
+      "bytes": 70692,
+      "sha256": "63ff5a6eef92e5020102520cc0665aa434c4abb40af41b1af26604448ba19c7d"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview-independent/round2-preimage-file-m1-app-dark-1440x900.png",
+      "bytes": 88987,
+      "sha256": "a8ced973945c118c18f8f93268278596fcdc7b31b44a9f5620571de52f7e4b75"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview-independent/round2-preimage-file-m12-submit-saved-1440x900-light.png",
+      "bytes": 62106,
+      "sha256": "39f8c10795b1d6b6fde55a7843a8bb21e76a7edab47f84c0991e15496670573f"
+    },
+    {
+      "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview-independent/round2-preimage-file-now-901-1440x900-light.png",
+      "bytes": 74716,
+      "sha256": "c02b1240703fc3897daa993c7c30037f6f39613a08f3df65260888490e8a5527"
+    }
+  ]
+}

@@ -1,0 +1,1099 @@
+import { buttonClassNames, makeStyles, messageBarBodyClassNames, messageBarClassNames, switchClassNames, tabClassNames, tokens } from '@fluentui/react-components';
+export { mergeClasses } from '@fluentui/react-components';
+
+// The shortest vertical palette that still works: one complete 36px tool slot
+// with room for its focus ring, beside the fixed 24px grip, the 36px
+// orientation switch, their two gaps, the palette padding, and its borders.
+const TOOLS_COLUMN_FLOOR = `calc(40px + 24px + 36px + 4 * ${tokens.spacingHorizontalXXS} + 2 * ${tokens.strokeWidthThin})`;
+
+// Page titles take the GitHub app's display face while Canvas follows it
+// (085), at Dude's own title sizes; otherwise the --dude-* role is unset and
+// they keep the body face. Inline code takes the app's relative code size.
+const DISPLAY_FONT = `var(--dude-font-display, ${tokens.fontFamilyBase})`;
+const INLINE_CODE_SIZE = `var(--dude-code-inline, ${tokens.fontSizeBase200})`;
+// The faint rule after the rail and after the command bar's title. While Canvas
+// follows the app, the rail shares the page's background, so the followed theme
+// sets --dude-separator-style and the rule is painted; otherwise it stays unset
+// and nothing is. Griffel emits the border-inline-end longhands but drops the
+// shorthand.
+const SEPARATOR_STYLE = 'var(--dude-separator-style, none)';
+
+// A message bar in a narrow Settings panel: at 300px or less its icon sits
+// above its title so the words keep their width.
+const NARROW_BAR = {
+  '@container (max-width: 300px)': {
+    gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateAreas: '"icon" "body" "secondaryActions"',
+    paddingLeft: tokens.spacingHorizontalS,
+    [`& .${messageBarClassNames.icon}`]: { marginRight: 0, marginBottom: tokens.spacingVerticalXS },
+  },
+};
+// Its actions start at the line's start, and at 300px or less take the full row.
+const NARROW_BAR_ACTIONS = {
+  '@container (max-width: 479px)': { justifyContent: 'flex-start' },
+  '@container (max-width: 300px)': {
+    paddingRight: tokens.spacingHorizontalS,
+    '& button': { width: '100%', minWidth: 0, maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere' },
+  },
+};
+
+// The approved workspace composition. Fluent owns color, type and spacing;
+// numbers below are responsive geometry and minimum interaction sizes.
+export const useCanvasStyles = makeStyles({
+  page: {
+    minHeight: '100dvh', backgroundColor: tokens.colorNeutralBackground2,
+    color: tokens.colorNeutralForeground1,
+    '@media (prefers-reduced-motion: reduce)': {
+      '& *, & *::before, & *::after': { animationDuration: '0s', transitionDuration: '0s', scrollBehavior: 'auto' },
+    },
+  },
+  app: { display: 'flex', flexDirection: 'column', height: '100dvh', minWidth: 0 },
+  titlebar: {
+    display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS, flexShrink: 0,
+    paddingInlineEnd: tokens.spacingHorizontalM,
+    borderInlineEndWidth: tokens.strokeWidthThin, borderInlineEndStyle: SEPARATOR_STYLE, borderInlineEndColor: tokens.colorNeutralStroke2,
+  },
+  workspaceLabel: {
+    color: tokens.colorNeutralForeground2, fontSize: tokens.fontSizeBase200,
+    '@media (max-width: 960px)': { display: 'none' },
+  },
+  title: {
+    margin: 0, fontFamily: DISPLAY_FONT, fontSize: tokens.fontSizeBase500, lineHeight: tokens.lineHeightBase500,
+    fontWeight: tokens.fontWeightSemibold, overflowWrap: 'anywhere',
+  },
+  subheading: { margin: 0, fontSize: tokens.fontSizeBase400, lineHeight: tokens.lineHeightBase400, fontWeight: tokens.fontWeightSemibold },
+  eyebrow: { color: tokens.colorNeutralForeground2, fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200, overflowWrap: 'anywhere' },
+  quiet: { color: tokens.colorNeutralForeground2 },
+  row: { display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS, flexWrap: 'wrap', minWidth: 0 },
+  between: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: tokens.spacingHorizontalM, flexWrap: 'wrap' },
+  stack: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0 },
+  tight: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, minWidth: 0 },
+  grow: { flexGrow: 1, minWidth: 0 },
+  commands: {
+    position: 'relative', display: 'flex', alignItems: 'center', flexShrink: 0, minWidth: 0,
+    gap: tokens.spacingHorizontalM,
+    padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalL}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '@media (max-width: 719px)': { gap: tokens.spacingHorizontalS, paddingInline: tokens.spacingHorizontalS },
+  },
+  refresh: { marginInlineStart: 'auto', flexShrink: 0, padding: 0 },
+  refreshButton: { '@media (max-width: 719px)': { minWidth: '32px', width: '32px', minHeight: '32px', height: '32px', padding: 0 } },
+  refreshLabel: {
+    '@media (max-width: 719px)': {
+      position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap',
+    },
+  },
+  shellBody: {
+    display: 'flex', flex: 1, minWidth: 0, minHeight: 0,
+  },
+  rail: {
+    boxSizing: 'border-box', position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center',
+    width: '48px', minHeight: 0, flexShrink: 0, gap: tokens.spacingVerticalL, paddingBlock: tokens.spacingVerticalS,
+    backgroundColor: tokens.colorNeutralBackground2,
+    borderInlineEndWidth: tokens.strokeWidthThin, borderInlineEndStyle: SEPARATOR_STYLE, borderInlineEndColor: tokens.colorNeutralStroke2,
+  },
+  railExpanded: {
+    width: '208px', alignItems: 'stretch', paddingInline: tokens.spacingHorizontalS,
+    '& > button': { alignSelf: 'flex-start' },
+  },
+  railToggle: { flexShrink: 0, width: '32px', minWidth: '32px', height: '32px', padding: 0 },
+  railContents: { display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, width: '100%' },
+  railList: { padding: 0, flex: 1, minHeight: 0, minWidth: 0, width: '100%' },
+  railDestinations: {
+    display: 'flex', flexDirection: 'column', alignItems: 'center', minHeight: 0,
+    overflowY: 'auto', overflowX: 'hidden', scrollbarWidth: 'none',
+    padding: tokens.spacingHorizontalXXS, gap: tokens.spacingVerticalXS,
+  },
+  railFooter: {
+    display: 'flex', justifyContent: 'center', flexShrink: 0, marginTop: 'auto',
+    marginInline: tokens.spacingHorizontalXS, paddingTop: tokens.spacingVerticalS,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+  },
+  railTab: {
+    boxSizing: 'border-box', width: '32px', minWidth: '32px', height: '32px', minHeight: '32px', padding: 0,
+    justifyContent: 'center', flexShrink: 0,
+  },
+  railTabExpanded: {
+    width: '100%', justifyContent: 'flex-start', paddingInline: tokens.spacingHorizontalS,
+  },
+  railLabel: {
+    fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200,
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  navLayer: { position: 'fixed', inset: 0, zIndex: 1000001 },
+  navDimmer: { position: 'fixed', inset: 0, backgroundColor: tokens.colorBackgroundOverlay },
+  navOverlay: {
+    position: 'relative', boxSizing: 'border-box', width: '260px', maxWidth: 'calc(100vw - 16px)',
+    height: '100dvh', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+    padding: tokens.spacingHorizontalM, backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    boxShadow: tokens.shadow16,
+  },
+  navHeading: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    gap: tokens.spacingHorizontalS, paddingBottom: tokens.spacingVerticalS, flexShrink: 0,
+  },
+  product: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0, containerType: 'inline-size' },
+  detail: {
+    flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', scrollbarGutter: 'stable',
+    backgroundColor: tokens.colorNeutralBackground1, padding: tokens.spacingHorizontalXXL,
+    '@container (max-width: 700px)': { padding: tokens.spacingHorizontalL },
+  },
+  measure: { maxWidth: '76ch', display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL },
+  overviewPanel: { padding: 0, scrollbarGutter: 'auto', '@container (max-width: 700px)': { padding: 0 } },
+  settingsPanel: { padding: 0, overflow: 'hidden', scrollbarGutter: 'auto', '@container (max-width: 700px)': { padding: 0 } },
+  settings: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0 },
+  // One compact header row: the page title and the Settings section tabs share
+  // the former Packs heading's 36px rhythm above one rule. At 479px or less the
+  // tabs drop their icons and take Fluent's small-tab sides, so the three keep
+  // that row where they fit. At 300px or less the full labels take as many
+  // equal 6.5em columns as hold "Appearance" whole, in as many rows as needed.
+  settingsHeader: {
+    display: 'flex', flexWrap: 'wrap', alignItems: 'stretch', flexShrink: 0, minWidth: 0,
+    columnGap: tokens.spacingHorizontalL, paddingInline: tokens.spacingHorizontalL,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '& h1': { paddingBlock: tokens.spacingVerticalXS, minWidth: 0 },
+    '& h1:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
+    '@container (max-width: 479px)': { columnGap: tokens.spacingHorizontalS, paddingInline: tokens.spacingHorizontalS },
+    '@container (max-width: 300px)': { '& h1': { flexBasis: '100%' } },
+  },
+  settingsSections: {
+    minWidth: 0,
+    '@container (max-width: 300px)': {
+      flexBasis: '100%', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 6.5em), 1fr))',
+    },
+  },
+  // Fluent's medium tab, trimmed to the approved 36px heading rhythm. Longhands
+  // replace Fluent's own padding longhands instead of competing with them. A
+  // hidden icon leaves its grid column, so its gap goes with it.
+  sectionTab: {
+    minHeight: '36px', paddingTop: tokens.spacingVerticalS, paddingBottom: tokens.spacingVerticalS,
+    '@container (min-width: 301px) and (max-width: 479px)': {
+      paddingLeft: tokens.spacingHorizontalSNudge, paddingRight: tokens.spacingHorizontalSNudge, columnGap: 0,
+      [`& .${tabClassNames.icon}`]: { display: 'none' },
+    },
+    '@container (max-width: 300px)': {
+      minWidth: 0, minHeight: '32px', columnGap: 0,
+      paddingTop: tokens.spacingVerticalSNudge, paddingBottom: tokens.spacingVerticalSNudge,
+      paddingLeft: tokens.spacingHorizontalXXS, paddingRight: tokens.spacingHorizontalXXS,
+      [`& .${tabClassNames.icon}`]: { display: 'none' },
+    },
+  },
+  packLayout: {
+    display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', flex: 1, minHeight: 0, minWidth: 0,
+    '&[hidden]': { display: 'none' },
+  },
+  packLayoutSelected: {
+    gridTemplateColumns: 'minmax(0, 1fr) 320px',
+    '@media (max-width: 1099px)': { gridTemplateColumns: 'minmax(0, 1fr)' },
+  },
+  packBrowser: { display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, containerType: 'inline-size' },
+  // The Packs views follow one rule by the Packs column's own width, not the
+  // viewport: one row of tabs from 480px, two columns from 301px, and at 300px
+  // or less a labeled View Dropdown (packView) replaces the strip. Only one of
+  // the two is ever rendered by the browser, so neither leaves a hidden stop.
+  packStrip: { flexShrink: 0, minWidth: 0 },
+  packTabs: {
+    // Four views of 140px, as the approved Packs strip draws them.
+    display: 'grid', gridAutoFlow: 'column', gridAutoColumns: 'minmax(0, 1fr)', maxWidth: '560px', minWidth: 0,
+    '@container (max-width: 479px)': { gridAutoFlow: 'row', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', maxWidth: 'none' },
+    '@container (max-width: 300px)': { display: 'none' },
+  },
+  packView: {
+    // Its inline listbox, now three options long, reaches the toolbar and paints above it.
+    position: 'relative', zIndex: 3,
+    display: 'none', minWidth: 0, padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS} ${tokens.spacingVerticalS}`,
+    '& label': { fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200, fontWeight: tokens.fontWeightSemibold },
+    '@container (max-width: 300px)': { display: 'block' },
+  },
+  packTab: {
+    minWidth: 0, minHeight: '36px', padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`, justifyContent: 'center',
+    '& > span': { minWidth: 0 },
+    '@container (max-width: 300px)': { paddingInline: tokens.spacingHorizontalXXS, minHeight: '32px' },
+  },
+  packTabCount: { fontSize: tokens.fontSizeBase200, fontWeight: tokens.fontWeightRegular },
+  // Whole-panel scrolling: at 300px or less the toolbar, rows, and pager scroll
+  // as one column at every height; at 301-479px they do so only below 560px of
+  // height. Otherwise only the rows scroll and the pager stays pinned below them.
+  packPanel: {
+    display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0,
+    // Add/import replaces the list panel without unmounting it.
+    '&[hidden]': { display: 'none' },
+    '@container (max-width: 300px)': { overflowY: 'auto', overscrollBehavior: 'contain' },
+    '@container (max-width: 479px)': {
+      '@media (max-height: 559px)': { overflowY: 'auto', overscrollBehavior: 'contain' },
+    },
+  },
+  packToolbar: {
+    // The inline Fluent listbox must paint above the sticky table header.
+    position: 'relative', zIndex: 2,
+    display: 'flex', gap: tokens.spacingHorizontalS, alignItems: 'center', flexShrink: 0, minWidth: 0,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    // Use case, Source and Clear stack as one column; Clear stays at the first row's end.
+    '@container (max-width: 479px)': {
+      flexDirection: 'column', alignItems: 'stretch', gap: tokens.spacingVerticalXS,
+      padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+    },
+  },
+  packFilterField: {
+    display: 'grid', gridTemplateColumns: 'max-content minmax(0, 1fr)', alignItems: 'center',
+    columnGap: tokens.spacingHorizontalS, flex: '1 1 300px', minWidth: 0, maxWidth: '420px',
+    '& label': { padding: 0, margin: 0, fontWeight: tokens.fontWeightSemibold },
+    '@container (max-width: 479px)': {
+      gridTemplateColumns: 'minmax(0, 1fr)', gap: tokens.spacingVerticalXS, flex: '0 0 auto', maxWidth: 'none',
+      '& label': { minHeight: '32px', display: 'flex', alignItems: 'center', fontSize: tokens.fontSizeBase200 },
+    },
+  },
+  // The first filter's label leaves room for Clear, which sits at the toolbar's top corner when stacked.
+  packFilterFirst: {
+    '@container (min-width: 301px) and (max-width: 479px)': { '& label': { paddingRight: '52px' } },
+  },
+  packFilter: {
+    minWidth: 0, width: '100%',
+    '& button': { minWidth: 0 },
+    '@container (max-width: 300px)': { '& button': { paddingInline: tokens.spacingHorizontalXS } },
+  },
+  packClear: {
+    flexShrink: 0, minWidth: 0,
+    '@container (min-width: 301px) and (max-width: 479px)': { position: 'absolute', top: tokens.spacingVerticalXS, right: tokens.spacingHorizontalS, paddingInline: tokens.spacingHorizontalS },
+    // At 300px or less Clear takes its own row below the filters.
+    '@container (max-width: 300px)': { alignSelf: 'flex-end', paddingInline: tokens.spacingHorizontalS },
+  },
+  packScroll: {
+    flex: 1, minHeight: 0, minWidth: 0, overflowY: 'auto', overscrollBehavior: 'contain',
+    '@container (max-width: 300px)': { flex: '0 0 auto', overflowY: 'visible' },
+    '@container (max-width: 479px)': { '@media (max-height: 559px)': { flex: '0 0 auto', overflowY: 'visible' } },
+  },
+  packTableHeader: {
+    position: 'sticky', top: 0, zIndex: 1, backgroundColor: tokens.colorNeutralBackground2,
+    '& [role="columnheader"]': { paddingBlock: 0, color: tokens.colorNeutralForeground2 },
+    '@container (max-width: 479px)': { position: 'absolute', clipPath: 'inset(50%)', width: '1px', height: '1px', overflow: 'hidden' },
+  },
+  packRow: {
+    cursor: 'pointer', minHeight: '44px',
+    // A focus return or Show in Installed scrolls a row into view; it must
+    // land below the sticky table header (33px), which the stacked rows do not draw.
+    scrollMarginTop: '33px',
+    '@container (max-width: 479px)': { flexDirection: 'column', alignItems: 'stretch', paddingBlock: tokens.spacingVerticalXS, scrollMarginTop: 0 },
+  },
+  packCell: {
+    boxSizing: 'border-box', flex: '1 1 0px', minWidth: 0,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`, overflowWrap: 'anywhere',
+    // A stacked cell wraps its value beneath its label when the value cannot sit beside it.
+    '@container (max-width: 479px)': { flex: 'auto', minHeight: 0, flexWrap: 'wrap', padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalM}` },
+  },
+  packNameCell: {
+    flexBasis: '30%', flexGrow: 0, color: tokens.colorBrandForeground2,
+    '@container (max-width: 479px)': { flexBasis: 'auto', minHeight: '28px' },
+  },
+  // Installed adds the Type column, so its Name column gives that width back.
+  packNameCellTyped: { flexBasis: '26%' },
+  packTypeCell: {
+    flex: '0 0 80px', color: tokens.colorNeutralForeground2,
+    // Between 480px and 760px the cells take half the side padding so Agent and Skill stay whole.
+    '@container (min-width: 480px) and (max-width: 760px)': { paddingInline: tokens.spacingHorizontalS },
+    '@container (max-width: 479px)': {
+      flex: 'auto', '& > span': { fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200 },
+    },
+  },
+  packSourceCell: {
+    color: tokens.colorNeutralForeground2,
+    '@container (min-width: 480px) and (max-width: 760px)': { paddingInline: tokens.spacingHorizontalS },
+    '@container (max-width: 479px)': { '& > span': { fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200 } },
+  },
+  packTagsCell: {
+    color: tokens.colorNeutralForeground2,
+    '@container (min-width: 480px) and (max-width: 760px)': { paddingInline: tokens.spacingHorizontalS },
+    '@container (max-width: 479px)': { '& > span': { fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200 } },
+  },
+  // The stacked rows label their values; a wide row has a header instead.
+  packCellLabel: {
+    display: 'none',
+    // Never broken mid-word: a long value wraps below its label instead of squeezing it.
+    '@container (max-width: 479px)': { display: 'inline', fontWeight: tokens.fontWeightSemibold, marginInlineEnd: tokens.spacingHorizontalXS, whiteSpace: 'nowrap' },
+  },
+  packRowNote: {
+    display: 'block', color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200,
+  },
+  packReadNotice: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, margin: 0,
+    padding: tokens.spacingHorizontalS, color: tokens.colorNeutralForeground2, overflowWrap: 'anywhere',
+  },
+  packPager: {
+    display: 'flex', alignItems: 'center', flexShrink: 0, gap: tokens.spacingHorizontalS,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalL}`, minWidth: 0,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground2,
+    '@container (max-width: 479px)': { paddingInline: tokens.spacingHorizontalS, gap: tokens.spacingHorizontalXS },
+  },
+  packMetrics: {
+    flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, textAlign: 'center',
+    fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200, overflowWrap: 'anywhere',
+  },
+  packPageButton: { flexShrink: 0, '@container (max-width: 479px)': { width: '28px', minWidth: '28px', paddingInline: tokens.spacingHorizontalXXS } },
+  packPageLabel: { '@container (max-width: 479px)': { display: 'none' } },
+  // Sources: the Installed/Available table pattern, with Source (and its written-out
+  // type), Location and ref, Status, and Scope. At 479px or less the header
+  // hides and each row stacks its complete, labeled values, as the pack rows do.
+  source_source: {
+    flexBasis: '24%', flexGrow: 0, color: tokens.colorBrandForeground2,
+    '@container (max-width: 479px)': { flexBasis: 'auto', minHeight: '28px' },
+  },
+  source_where: { flexBasis: '34%', flexGrow: 0, '@container (max-width: 479px)': { flexBasis: 'auto' } },
+  source_status: { flexBasis: '28%', flexGrow: 0, '@container (max-width: 479px)': { flexBasis: 'auto' } },
+  source_scope: { flexBasis: '14%', flexGrow: 0, '@container (max-width: 479px)': { flexBasis: 'auto' } },
+  sourceStack: { display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 },
+  sourceWhere: {
+    display: 'block', fontFamily: tokens.fontFamilyMonospace, fontSize: tokens.fontSizeBase200,
+    lineHeight: tokens.lineHeightBase200, overflowWrap: 'anywhere',
+    '@container (max-width: 479px)': { display: 'inline' },
+  },
+  sourceRef: {
+    marginTop: tokens.spacingVerticalXXS,
+    '@container (max-width: 479px)': { marginTop: 0, marginInlineStart: tokens.spacingHorizontalS },
+  },
+  // The status text is the fact; its glyph only repeats it, so no state rests on an icon or a color.
+  sourceStatus: { display: 'inline-flex', alignItems: 'flex-start', gap: tokens.spacingHorizontalXS, minWidth: 0 },
+  sourceGlyph: { flexShrink: 0, width: '16px', height: '16px', marginTop: '2px', color: tokens.colorNeutralForeground2 },
+  sourceGlyphWarn: { color: tokens.colorStatusWarningForeground1 },
+  sourcesToolbar: { flexWrap: 'wrap' },
+  sourceNote: { padding: tokens.spacingHorizontalS },
+  sourceOutcome: {
+    '@media (max-width: 479px)': {
+      gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateAreas: '"icon" "body" "secondaryActions"',
+      paddingLeft: tokens.spacingHorizontalS,
+      [`& .${messageBarClassNames.icon}`]: { marginRight: 0, marginBottom: tokens.spacingVerticalXS },
+    },
+  },
+  sourceOutcomeActions: { '@media (max-width: 479px)': { justifyContent: 'flex-start', paddingRight: tokens.spacingHorizontalS } },
+  sourcesFoot: {
+    flexShrink: 0, display: 'flex', justifyContent: 'center', minWidth: 0,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalL}`,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground2,
+    '@container (max-width: 479px)': { paddingInline: tokens.spacingHorizontalS },
+  },
+  // The Add and Remove dialogs use the shared pack dialog's geometry.
+  sourceDialog: { '&[open]': { maxHeight: 'calc(100dvh - 16px)' } },
+  sourceDialogFooter: { display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: tokens.spacingHorizontalS },
+  formNotes: {
+    margin: 0, paddingInlineStart: tokens.spacingHorizontalXL, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS,
+    color: tokens.colorNeutralForeground2, fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200, overflowWrap: 'anywhere',
+  },
+  shortControl: { maxWidth: '240px' },
+  packDetail: {
+    position: 'static', margin: 0, padding: 0, boxSizing: 'border-box', width: '320px', height: '100%', maxHeight: 'none',
+    minWidth: 0, minHeight: 0, maxWidth: 'none', overflow: 'hidden', color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground1, border: 0, borderInlineStart: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '&[open]': { display: 'flex', flexDirection: 'column' },
+    '&:modal': {
+      position: 'fixed', inset: '0 0 0 auto', width: 'min(420px, calc(100vw - 16px))', height: '100dvh',
+      border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAccessible}`, boxShadow: tokens.shadow16,
+    },
+    '&::backdrop': { backgroundColor: tokens.colorBackgroundOverlay },
+    '@media (max-width: 1099px)': {
+      position: 'fixed', inset: '0 0 0 auto', width: 'min(420px, calc(100vw - 16px))', height: '100dvh',
+    },
+  },
+  // The modal surface the source, pack action, and document reader dialogs share.
+  packDialog: {
+    padding: 0, boxSizing: 'border-box', width: 'min(560px, calc(100vw - 16px))',
+    maxWidth: 'none', maxHeight: 'calc(100dvh - 16px)', overflow: 'hidden',
+    color: tokens.colorNeutralForeground1, backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAccessible}`,
+    borderRadius: tokens.borderRadiusLarge, boxShadow: tokens.shadow16,
+    '&[open]': { display: 'flex', flexDirection: 'column' },
+    '&::backdrop': { backgroundColor: tokens.colorBackgroundOverlay },
+  },
+  packDetailHeader: {
+    display: 'flex', alignItems: 'flex-start', flexShrink: 0, gap: tokens.spacingHorizontalS,
+    padding: tokens.spacingHorizontalM, borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '& h2': { overflowWrap: 'anywhere' },
+  },
+  packDetailBody: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL,
+    flex: 1, minHeight: 0, minWidth: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: tokens.spacingHorizontalM,
+    '&:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '-2px' },
+  },
+  packDetailFooter: { flexShrink: 0, padding: tokens.spacingHorizontalS, borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}` },
+  packMetadata: {
+    margin: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: tokens.spacingVerticalXS,
+    '& dt': { color: tokens.colorNeutralForeground2 },
+    '& dd': { margin: 0, minWidth: 0, overflowWrap: 'anywhere' },
+    '& dd + dt': { marginTop: tokens.spacingVerticalS },
+  },
+  packMetadataHeading: { margin: 0, fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300, fontWeight: tokens.fontWeightSemibold },
+  packFiles: {
+    '& summary': { cursor: 'pointer', minHeight: '28px', color: tokens.colorBrandForeground1 },
+    '& summary:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
+    '& ul': { paddingInlineStart: tokens.spacingHorizontalXL, marginBlock: tokens.spacingVerticalS },
+    '& li + li': { marginTop: tokens.spacingVerticalXS },
+  },
+  // Details (080): one secondary button per document, labeled with its path,
+  // which wraps inside its button at any width.
+  packDocuments: {
+    margin: 0, padding: 0, listStyleType: 'none', minWidth: 0,
+    display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: tokens.spacingVerticalS,
+    '& > li': { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS, maxWidth: '100%', minWidth: 0, overflowWrap: 'anywhere' },
+  },
+  packDocument: { maxWidth: '100%', textAlign: 'start', overflowWrap: 'anywhere' },
+  // The document reader: the shared pack dialog, widened. It stays as tall as
+  // its document up to the viewport less 16px, and only its body scrolls.
+  packReader: { width: 'min(880px, calc(100vw - 16px))' },
+  // The pack action dialog (083): the shared pack dialog with the reader's header
+  // and body and the source dialogs' footer, at the approved mock's width. These
+  // add only what those lack: a container for the narrow rules, the mock's 12px
+  // body gap and footer sides, the status line, the items by kind, and the
+  // reason beside a disabled button. At 300px or less the parts keep their
+  // words' width: less padding, message bar icons above their text, and each
+  // footer button on its own row.
+  packActionDialog: {
+    width: 'min(480px, calc(100vw - 16px))',
+    containerType: 'inline-size',
+    '@container (max-width: 300px)': {
+      '& > header, & > div, & > footer': { paddingInline: tokens.spacingHorizontalS },
+      '& > footer button': { flex: '1 1 100%', minWidth: 0, maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere' },
+    },
+  },
+  // 12px between parts, where the details have 16px. Each part keeps its
+  // height; the body scrolls instead.
+  packActionBody: { gap: tokens.spacingVerticalM, '& > *': { flexShrink: 0 } },
+  packActionStatus: { display: 'flex', alignItems: 'flex-start', gap: tokens.spacingHorizontalS, minWidth: 0, overflowWrap: 'anywhere' },
+  packActionItems: {
+    listStyleType: 'none', margin: 0, padding: 0, minWidth: 0,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '& > li': {
+      display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', columnGap: tokens.spacingHorizontalM,
+      minWidth: 0, paddingBlock: tokens.spacingVerticalXS, borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    },
+  },
+  packActionItemName: { minWidth: 0, overflowWrap: 'anywhere' },
+  // The kind stays at the end of its line when a long name wraps.
+  packActionItemKind: { marginInlineStart: 'auto', color: tokens.colorNeutralForeground2 },
+  // 8px above and below, and 12px at the sides, in line with the body. This is
+  // the details footer's padding shorthand restated, so mergeClasses keeps only
+  // this one; the 300px rule above outranks it with its child selector.
+  packActionFooter: { alignItems: 'center', padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}` },
+  packActionNote: { flex: '1 1 14em', minWidth: 0 },
+  packActionMessage: { marginTop: tokens.spacingVerticalS },
+  packActionBar: {
+    '@container (max-width: 300px)': {
+      gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateAreas: '"icon" "body" "secondaryActions"',
+      paddingLeft: tokens.spacingHorizontalS,
+      [`& .${messageBarClassNames.icon}`]: { marginRight: 0, marginBottom: tokens.spacingVerticalXS },
+      // The mock's 8px after the text. The body's own 12px is a one-class
+      // reset style, which this two-class selector outranks in either order.
+      [`& .${messageBarBodyClassNames.root}`]: { paddingRight: tokens.spacingHorizontalS },
+    },
+  },
+  // A rendered document: Markdown as elements in the details' type and tokens,
+  // with no syntax colors. Headings sit under the reader's h2 (# is h3).
+  markdown: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0,
+    color: tokens.colorNeutralForeground1, overflowWrap: 'anywhere',
+    '& h3, & h4, & h5, & h6, & p, & ul, & ol, & blockquote, & pre, & hr': { margin: 0 },
+    '& h3, & h4, & h5, & h6, & strong, & th': { fontWeight: tokens.fontWeightSemibold },
+    '& h3': { fontSize: tokens.fontSizeBase500, lineHeight: tokens.lineHeightBase500 },
+    '& h4': { fontSize: tokens.fontSizeBase400, lineHeight: tokens.lineHeightBase400 },
+    '& h5, & h6': { fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300 },
+    '& > h3:not(:first-child), & > h4:not(:first-child)': { marginTop: tokens.spacingVerticalM },
+    '& ul, & ol': { paddingInlineStart: tokens.spacingHorizontalXXL },
+    '& li + li, & li > ul, & li > ol, & li > pre, & li > blockquote, & li > div': { marginTop: tokens.spacingVerticalXS },
+    '& li > p + p': { marginTop: tokens.spacingVerticalS },
+    '& blockquote': {
+      paddingInlineStart: tokens.spacingHorizontalM, color: tokens.colorNeutralForeground2,
+      borderInlineStart: `${tokens.strokeWidthThicker} solid ${tokens.colorNeutralStroke1}`,
+    },
+    '& blockquote > :not(:first-child)': { marginTop: tokens.spacingVerticalS },
+    '& hr': { border: 0, borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}` },
+  },
+  markdownCode: {
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`, borderRadius: tokens.borderRadiusMedium,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground3,
+    fontFamily: tokens.fontFamilyMonospace, fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200,
+    whiteSpace: 'pre-wrap', overflowWrap: 'anywhere',
+    '& code': { fontFamily: 'inherit', fontSize: 'inherit' },
+  },
+  markdownCodespan: {
+    padding: `0 ${tokens.spacingHorizontalXXS}`, borderRadius: tokens.borderRadiusSmall,
+    backgroundColor: tokens.colorNeutralBackground3, fontFamily: tokens.fontFamilyMonospace, fontSize: INLINE_CODE_SIZE,
+  },
+  // A too-wide table scrolls sideways in its own box. One that cannot fit even
+  // at its narrowest keeps readable columns, 12em each including padding,
+  // instead of one word per line.
+  markdownTable: {
+    maxWidth: '100%', overflowX: 'auto', overscrollBehaviorX: 'contain',
+    ':focus-visible': { outline: `${tokens.strokeWidthThick} solid ${tokens.colorStrokeFocus2}`, outlineOffset: tokens.strokeWidthThin },
+    '& table': { borderCollapse: 'collapse' },
+    '& th, & td': {
+      padding: `${tokens.spacingVerticalSNudge} ${tokens.spacingHorizontalS}`, textAlign: 'start', verticalAlign: 'top', overflowWrap: 'normal',
+    },
+    '& th': { borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1}` },
+    '& td': { borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}` },
+    '& code': { whiteSpace: 'nowrap' },
+    '&[data-wide] th, &[data-wide] td': { boxSizing: 'border-box', minWidth: '12em' },
+  },
+  settingsFooter: { maxHeight: '20dvh', overflowY: 'auto', overflowWrap: 'anywhere' },
+  // About is the classic desktop sheet: one focal product name over a ruled
+  // label/value list, in a panel that owns the vertical scroll. The row label
+  // column and the 76ch measure are geometry; Fluent owns color and type.
+  aboutPanel: {
+    flex: 1, minHeight: 0, minWidth: 0, overflowY: 'auto', overscrollBehavior: 'contain',
+    '&:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '-2px' },
+  },
+  aboutBody: {
+    boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0,
+    maxWidth: `calc(76ch + 2 * ${tokens.spacingHorizontalL})`,
+    padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalL} ${tokens.spacingVerticalXXL}`,
+    '@container (max-width: 479px)': { padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalS} ${tokens.spacingVerticalL}` },
+  },
+  aboutIdentity: {
+    margin: 0, fontSize: tokens.fontSizeBase600, lineHeight: tokens.lineHeightBase600,
+    fontWeight: tokens.fontWeightSemibold, overflowWrap: 'anywhere',
+  },
+  aboutFacts: { margin: 0, borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}` },
+  aboutRow: {
+    display: 'grid', gridTemplateColumns: 'minmax(0, 11.5em) minmax(0, 1fr)', alignItems: 'baseline',
+    columnGap: tokens.spacingHorizontalL, paddingBlock: tokens.spacingVerticalS,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '& dt': { color: tokens.colorNeutralForeground2, overflowWrap: 'anywhere' },
+    '& dd': { margin: 0, minWidth: 0, overflowWrap: 'anywhere' },
+    '@container (max-width: 479px)': {
+      gridTemplateColumns: 'minmax(0, 1fr)', rowGap: tokens.spacingVerticalXXS, paddingBlock: tokens.spacingVerticalSNudge,
+      '& dt': { fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200 },
+    },
+  },
+  aboutUnavailable: { color: tokens.colorNeutralForeground2 },
+  aboutReading: { justifyContent: 'flex-start', gap: tokens.spacingHorizontalSNudge },
+  aboutReadingLabel: { alignSelf: 'baseline' },
+  // Fluent's double-underline link focus, plus the product's focus outline.
+  // The same selector key lets mergeClasses replace Fluent's outline removal.
+  aboutLink: {
+    ':focus-visible': {
+      outlineWidth: tokens.strokeWidthThick, outlineStyle: 'solid', outlineColor: tokens.colorStrokeFocus2,
+      outlineOffset: tokens.strokeWidthThick, borderRadius: tokens.borderRadiusSmall,
+    },
+  },
+  aboutLinkIcon: { marginInlineStart: tokens.spacingHorizontalXS, verticalAlign: '-2px' },
+  aboutNote: { margin: 0 },
+  // Add/import reuses About's scrolling panel, measure, and ruled label/value
+  // rows. Its own geometry is the form, the accepted-forms list, and the request
+  // status with its one MessageBar.
+  importBody: {
+    boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL, minWidth: 0,
+    maxWidth: `calc(76ch + 2 * ${tokens.spacingHorizontalL})`,
+    padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalL} ${tokens.spacingVerticalXXL}`,
+    '@container (max-width: 479px)': { padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalS} ${tokens.spacingVerticalL}` },
+  },
+  importIntro: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS, minWidth: 0 },
+  importForm: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0 },
+  importAction: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: tokens.spacingVerticalXS, minWidth: 0 },
+  sourceForms: {
+    display: 'grid', gridTemplateColumns: 'max-content minmax(0, 1fr)', margin: 0,
+    columnGap: tokens.spacingHorizontalM, rowGap: tokens.spacingVerticalXXS,
+    fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200, minWidth: 0,
+    '& dt': { color: tokens.colorNeutralForeground3 },
+    '& dd': { margin: 0, minWidth: 0, fontFamily: tokens.fontFamilyMonospace, color: tokens.colorNeutralForeground2, overflowWrap: 'anywhere' },
+    '@container (max-width: 479px)': {
+      gridTemplateColumns: 'minmax(0, 1fr)', rowGap: 0,
+      '& dd + dt': { marginTop: tokens.spacingVerticalXS },
+    },
+  },
+  importRequest: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0, paddingTop: tokens.spacingVerticalL,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+  },
+  importRequestHeading: {
+    margin: 0, fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300, fontWeight: tokens.fontWeightSemibold,
+  },
+  // At 300px or less the status icon sits above its title so the words keep
+  // their width, and the Open Needs you action takes the full row.
+  importStatus: NARROW_BAR,
+  importStatusActions: NARROW_BAR_ACTIONS,
+  // Settings > Appearance (085) reuses About's panel and sheet. Its one bar or
+  // note follows the same narrow rule as Add/import's status.
+  narrowBar: NARROW_BAR,
+  // Retry keeps Fluent's medium button, as wide as its word.
+  narrowBarActions: { ...NARROW_BAR_ACTIONS, '& button': { minWidth: 0 } },
+  appearancePending: { justifyContent: 'flex-start', minHeight: '20px', overflowWrap: 'anywhere' },
+  // At 300px or less the label sits above its track, with Fluent's
+  // labelPosition="above" geometry, so its words stay whole and the hit area
+  // spans the field: a column root, a track with no top margin, and the input
+  // over the track's row.
+  followSwitch: {
+    // The switch hugs its track and label, as Fluent draws it outside a Field, so its focus ring does too.
+    justifySelf: 'start', maxWidth: '100%',
+    [`& .${switchClassNames.label}`]: { minWidth: 0, overflowWrap: 'anywhere' },
+    '@container (max-width: 300px)': {
+      flexDirection: 'column', width: '100%',
+      [`& .${switchClassNames.label}`]: {
+        order: -1, boxSizing: 'border-box', width: '100%', overflowWrap: 'break-word',
+        paddingTop: tokens.spacingVerticalXS, paddingBottom: tokens.spacingVerticalXS,
+        paddingLeft: tokens.spacingHorizontalS, paddingRight: tokens.spacingHorizontalS,
+      },
+      [`& .${switchClassNames.indicator}`]: { marginTop: 0 },
+      [`& .${switchClassNames.input}`]: {
+        top: 'auto', bottom: 0, left: 0, width: '100%', height: `calc(20px + ${tokens.spacingVerticalS})`,
+      },
+    },
+  },
+  pathList: { listStyleType: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, minWidth: 0 },
+  // A path list takes the sheet's full width so a path usually stays on one line.
+  pathsRow: { gridTemplateColumns: 'minmax(0, 1fr)', rowGap: tokens.spacingVerticalXS },
+  nowrap: { whiteSpace: 'nowrap' },
+  overview: { width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' },
+  overviewHeader: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS, padding: tokens.spacingHorizontalL, flexShrink: 0 },
+  overviewIntro: { margin: 0, maxWidth: '85ch', color: tokens.colorNeutralForeground2, overflowWrap: 'anywhere' },
+  selector: {
+    position: 'relative', flex: '1 1 440px', minWidth: 0, maxWidth: '620px',
+    '@media (max-width: 719px)': { position: 'static' },
+  },
+  workingOn: {
+    display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS, minWidth: 0,
+    boxSizing: 'border-box', minHeight: '32px', paddingInline: tokens.spacingHorizontalS,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderLeft: `${tokens.strokeWidthThicker} solid ${tokens.colorBrandStroke1}`,
+    borderRadius: tokens.borderRadiusMedium, backgroundColor: tokens.colorNeutralBackground1,
+  },
+  workingIdentity: { display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 },
+  workingCaption: { color: tokens.colorNeutralForeground2, fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase100 },
+  workingNumber: { lineHeight: tokens.lineHeightBase200 },
+  workingTitle: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, lineHeight: tokens.lineHeightBase200 },
+  workControls: {
+    display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS, minWidth: 0,
+    '@media (max-width: 479px)': { flexWrap: 'wrap', '& > :first-child': { flexBasis: '100%' } },
+  },
+  searchField: { flex: 1, minWidth: 0 },
+  scopeField: {
+    display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalXS, minWidth: 0, flexShrink: 0,
+    '& label': { padding: 0, margin: 0, fontSize: tokens.fontSizeBase200 },
+  },
+  scopeSelect: { minWidth: 0, width: '88px' },
+  finderPopup: {
+    position: 'absolute', top: `calc(100% + ${tokens.spacingVerticalS})`, insetInlineStart: 0, zIndex: 20,
+    display: 'flex', width: 'min(620px, calc(100vw - 200px))', maxHeight: 'min(560px, 60dvh)',
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium, boxShadow: tokens.shadow16,
+    '@media (max-width: 719px)': {
+      insetInline: tokens.spacingHorizontalL, width: 'auto', top: '100%',
+    },
+  },
+  workResults: { display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 },
+  workSummary: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS, flexShrink: 0,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+  },
+  workScroll: {
+    flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', minHeight: 0, minWidth: 0,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+  },
+  workName: { display: 'flex', alignItems: 'baseline', gap: tokens.spacingHorizontalM, minWidth: 0, overflowWrap: 'anywhere' },
+  workNumber: {
+    flexShrink: 0, minWidth: '3ch', fontFamily: tokens.fontFamilyMonospace,
+    fontWeight: tokens.fontWeightSemibold, color: tokens.colorBrandForeground1,
+  },
+  workHeader: { position: 'sticky', top: 0, zIndex: 1, backgroundColor: tokens.colorNeutralBackground2 },
+  workCell: { paddingTop: tokens.spacingVerticalS, paddingBottom: tokens.spacingVerticalS, overflowWrap: 'anywhere' },
+  workRow: { cursor: 'pointer' },
+  workSelected: {
+    backgroundColor: tokens.colorNeutralBackground1Selected,
+    boxShadow: `inset 3px 0 ${tokens.colorBrandStroke1}`,
+    '&:hover': { backgroundColor: tokens.colorNeutralBackground1Selected },
+    '& [data-work-number]': { color: tokens.colorBrandForeground2 },
+  },
+  workItem: {
+    minHeight: '48px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalM,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '&:last-child': { borderBottomWidth: 0 },
+  },
+  workItemText: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS, minWidth: 0, flexGrow: 1 },
+  columnName: { flex: '2.6 1 0px' },
+  columnStatus: { flex: '1 1 0px' },
+  columnProgress: { flex: '1.2 1 0px' },
+  progressCell: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS, minWidth: 0, width: '100%' },
+  cellLayout: { minWidth: 0, width: '100%', whiteSpace: 'normal' },
+  detailHeader: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS },
+  lead: { margin: 0, fontSize: tokens.fontSizeBase400, lineHeight: tokens.lineHeightBase400 },
+  prose: { margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300 },
+  instruction: {
+    margin: 0, padding: tokens.spacingHorizontalL, backgroundColor: tokens.colorNeutralBackground2,
+    borderRadius: tokens.borderRadiusMedium, fontSize: tokens.fontSizeBase300,
+    lineHeight: tokens.lineHeightBase400, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere',
+  },
+  contextView: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL, minWidth: 0 },
+  contextGrid: {
+    display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: tokens.spacingHorizontalXXL,
+    alignItems: 'start', minWidth: 0,
+    '@media (max-width: 1079px)': { gridTemplateColumns: 'minmax(0, 1fr)' },
+  },
+  contextMain: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXL, minWidth: 0 },
+  objectHeader: {
+    display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalL, minWidth: 0,
+    '& > div': { minWidth: 0 },
+  },
+  objectTitle: {
+    display: 'flex', alignItems: 'baseline', gap: tokens.spacingHorizontalM, margin: 0, fontFamily: DISPLAY_FONT,
+    fontSize: tokens.fontSizeHero700, lineHeight: tokens.lineHeightHero700, fontWeight: tokens.fontWeightSemibold,
+    overflowWrap: 'anywhere', minWidth: 0,
+    '& > span:last-child': { minWidth: 0 },
+    '@media (max-width: 719px)': { fontSize: tokens.fontSizeBase600, lineHeight: tokens.lineHeightBase600, gap: tokens.spacingHorizontalS },
+  },
+  nextRegion: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0,
+    padding: tokens.spacingHorizontalL, borderRadius: tokens.borderRadiusMedium,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderLeft: `${tokens.strokeWidthThicker} solid ${tokens.colorBrandStroke1}`,
+    backgroundColor: tokens.colorNeutralBackground2,
+    '& > p, & > div': { maxWidth: '85ch' },
+  },
+  contextSection: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0,
+    '& > p': { maxWidth: '85ch' },
+  },
+  contextDock: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL, minWidth: 0,
+    paddingInlineStart: tokens.spacingHorizontalL,
+    borderInlineStart: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '@media (max-width: 1079px)': {
+      paddingInlineStart: 0, borderInlineStartWidth: 0,
+      borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, paddingTop: tokens.spacingVerticalL,
+    },
+  },
+  propertySection: {
+    minWidth: 0,
+    '& > summary': {
+      cursor: 'pointer', minHeight: '32px', paddingBlock: tokens.spacingVerticalXS,
+      fontWeight: tokens.fontWeightSemibold, overflowWrap: 'anywhere',
+    },
+    '& > summary:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
+    '& > summary + *': { marginTop: tokens.spacingVerticalS },
+  },
+  taskFilters: { display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalXS },
+  taskCount: { fontVariantNumeric: 'tabular-nums', marginInlineStart: tokens.spacingHorizontalXS },
+  taskPhase: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS, minWidth: 0 },
+  taskLabel: {
+    margin: 0, fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300,
+    fontWeight: tokens.fontWeightSemibold, overflowWrap: 'anywhere',
+  },
+  taskRows: { listStyleType: 'none', margin: 0, padding: 0, minWidth: 0 },
+  taskRow: {
+    display: 'grid', gridTemplateColumns: '20px minmax(0, 1fr)', alignItems: 'start',
+    gap: tokens.spacingHorizontalS, width: '100%', minWidth: 0, minHeight: '48px', textAlign: 'start',
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`, fontWeight: tokens.fontWeightRegular,
+    color: tokens.colorNeutralForeground1, backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid transparent`,
+    borderBottomColor: tokens.colorNeutralStroke2, borderRadius: tokens.borderRadiusNone,
+    '&:hover': { backgroundColor: tokens.colorNeutralBackground1Hover },
+  },
+  taskMark: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '20px', height: '20px' },
+  taskTitle: { whiteSpace: 'normal', overflowWrap: 'anywhere', fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300 },
+  taskDoing: {
+    boxShadow: `inset 3px 0 ${tokens.colorBrandStroke1}`,
+    '& > span:first-child': { color: tokens.colorBrandForeground1 },
+  },
+  taskBlocked: {
+    boxShadow: `inset 3px 0 ${tokens.colorPaletteRedBorder2}`,
+    '& > span:first-child': { color: tokens.colorPaletteRedForeground1 },
+  },
+  taskInspected: {
+    backgroundColor: tokens.colorNeutralBackground2,
+    borderColor: tokens.colorNeutralStrokeAccessible, borderRadius: tokens.borderRadiusMedium,
+    '&:hover': { backgroundColor: tokens.colorNeutralBackground2 },
+  },
+  taskChip: {
+    fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200,
+    border: `${tokens.strokeWidthThin} dashed ${tokens.colorNeutralStrokeAccessible}`,
+    borderRadius: tokens.borderRadiusSmall, paddingInline: tokens.spacingHorizontalXS,
+  },
+  taskEmpty: {
+    margin: 0, padding: tokens.spacingHorizontalM,
+    border: `${tokens.strokeWidthThin} dashed ${tokens.colorNeutralStrokeAccessible}`, borderRadius: tokens.borderRadiusMedium,
+  },
+  taskDetail: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0,
+    padding: tokens.spacingHorizontalM, marginBlock: tokens.spacingVerticalXS,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAccessible}`, borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2,
+    '&:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
+  },
+  taskDetailDock: {
+    marginBlock: 0,
+    '& [data-task-instruction]': { maxHeight: '38dvh', overflowY: 'auto', overscrollBehavior: 'contain' },
+  },
+  taskSource: {
+    margin: 0, padding: tokens.spacingHorizontalS, fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300,
+    color: tokens.colorNeutralForeground1, backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusMedium,
+    whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', tabSize: 2,
+    '&:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
+  },
+  taskDependencies: {
+    listStyleType: 'none', margin: 0, padding: 0,
+    '& > li': { display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalS },
+  },
+  empty: { padding: tokens.spacingHorizontalL, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM },
+  footer: {
+    display: 'flex', gap: tokens.spacingHorizontalM, flexWrap: 'wrap', flexShrink: 0,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalL}`,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    color: tokens.colorNeutralForeground2, fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200,
+  },
+  // Like an editor's status strip, focused Review keeps one line available by
+  // keyboard/scroll instead of letting wrapped status text consume its stage.
+  focusedFooter: {
+    flexWrap: 'nowrap', whiteSpace: 'nowrap', overflowX: 'auto', overflowY: 'hidden',
+    boxSizing: 'border-box', height: '25px', minHeight: '25px',
+    '& > span': { flexShrink: 0 },
+    '&:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '-2px' },
+  },
+  readTime: { marginInlineStart: 'auto' },
+  back: { alignSelf: 'flex-start', flexShrink: 0 },
+  control: { minWidth: 0, width: '100%' },
+  actions: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: tokens.spacingHorizontalS, paddingTop: tokens.spacingVerticalS },
+  code: {
+    fontFamily: tokens.fontFamilyMonospace, fontSize: tokens.fontSizeBase200, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', margin: 0,
+    // Code inside running text, not a path list's item or a value block.
+    ':is(code):not(li > *)': { fontSize: INLINE_CODE_SIZE },
+  },
+  scope: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS,
+    borderLeft: `${tokens.strokeWidthThick} solid ${tokens.colorBrandStroke1}`,
+    padding: tokens.spacingHorizontalM, backgroundColor: tokens.colorNeutralBackground2,
+    overflowWrap: 'anywhere',
+  },
+  // Needs you keeps every control and target inside its column at the narrowest
+  // width: 8px panel sides and button sides (the shared detail padding is not
+  // touched), a label that still does not fit wraps inside its button, and the
+  // long owner-written targets give back the width their boxes and numbers used.
+  needsPanel: {
+    '@container (max-width: 300px)': {
+      // Griffel emits container rules by ascending width, so the shared 700px detail
+      // padding would follow and beat an equal-specificity rule here. The attribute
+      // raises this one's specificity instead of touching that shared rule.
+      '&[role="tabpanel"]': { paddingInline: tokens.spacingHorizontalS },
+      [`& .${buttonClassNames.root}`]: { maxWidth: '100%', paddingInline: tokens.spacingHorizontalS, overflowWrap: 'anywhere' },
+    },
+  },
+  needsScope: {
+    '@container (max-width: 300px)': {
+      padding: tokens.spacingHorizontalS,
+      '& ol': { paddingInlineStart: 0, listStylePosition: 'inside' },
+      '& li > p': { display: 'inline' },
+    },
+  },
+  consent: { maxWidth: '100%' },
+  consentLabel: { minWidth: 0, overflowWrap: 'anywhere' },
+  notice: {
+    minWidth: 0, overflowWrap: 'anywhere', flexShrink: 0,
+    '&[tabindex="-1"]:focus': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
+  },
+  requestOption: { width: '100%', justifyContent: 'start', textAlign: 'left', minHeight: '48px', whiteSpace: 'normal', overflowWrap: 'anywhere' },
+  hidden: { display: 'none' },
+  // The frozen mock can pan inside the stage; chrome stays outside its scroller.
+  review: { flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', containerType: 'inline-size' },
+  reviewBar: {
+    flexShrink: 0, display: 'flex', alignItems: 'center', minWidth: 0,
+    gap: tokens.spacingHorizontalS,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+  },
+  // Keep complete request identity readable without letting changed browsing
+  // labels or wrapping resize the already pinned review frame.
+  reviewIdentity: {
+    minWidth: 0, flexGrow: 1, height: `calc(${tokens.lineHeightBase200} + ${tokens.lineHeightBase300})`,
+    lineHeight: tokens.lineHeightBase200, overflowY: 'auto', overscrollBehavior: 'contain',
+    '&:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '-2px' },
+  },
+  reviewPrompt: {
+    margin: 0, minWidth: 0, overflowWrap: 'anywhere',
+    fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300, fontWeight: tokens.fontWeightSemibold,
+  },
+  reviewBarItem: { flexShrink: 0 },
+  // Exact path and revision stay one click away in an overlay, so revealing
+  // them cannot resize the admitted frame or push the mock down the panel.
+  // Like Notes and more, the surface scrolls itself once Fluent caps it at the
+  // room left in a short panel: a page scrollbar would still narrow the frame.
+  // It takes focus on open, so keyboard scrolling shows where focus is.
+  sourceSurface: {
+    boxSizing: 'border-box', overflowY: 'auto', overscrollBehavior: 'contain',
+    '&:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '-2px' },
+  },
+  sourceDetails: { maxWidth: '480px', display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS },
+  // The stage fills the actual remaining pane, not an estimated dvh band.
+  // Notices and forms live in a popover; their arrival, wrapping, or disclosure
+  // cannot resize an annotated iframe. The status strip has a stable height.
+  workspace: {
+    flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column',
+    gap: tokens.spacingVerticalXS, padding: tokens.spacingHorizontalXS,
+    overflow: 'hidden',
+    backgroundColor: tokens.colorNeutralBackground2,
+  },
+  canvasBand: { position: 'relative', flex: 1, minHeight: 0, minWidth: 0, display: 'flex' },
+  toolsMenuDismiss: { position: 'absolute', inset: 0, zIndex: 1 },
+  engineHost: {
+    flex: 1, minHeight: 0, minWidth: 0, display: 'flex',
+    // The unannotated frame fills the stage. The engine pins its validated
+    // size on first annotation and scrolls inside this host, below the palette.
+    '& .dude-review-engine': { minHeight: 0 },
+    '& .dude-review-frame': { minHeight: 0 },
+  },
+  // Both placements float over the stable stage. Horizontal leaves the entire
+  // vertical lane clear, even at 360px: a target covered by one is exposed by
+  // the other, including the bottom-left corner.
+  drawingToolbar: {
+    position: 'absolute', zIndex: 1, display: 'flex', boxSizing: 'border-box',
+    transform: 'translate(0px, 0px)', willChange: 'transform',
+    alignItems: 'center', minHeight: 0, minWidth: 0, gap: tokens.spacingHorizontalXXS,
+    padding: tokens.spacingHorizontalXXS,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium, boxShadow: tokens.shadow16,
+  },
+  // A short stage would otherwise spend its entire budget on the grip and the
+  // orientation switch, leaving the scroller under one tool slot, where no
+  // scroll offset can wholly reveal a tool. Keep the 8px float inset while it
+  // fits, then trade the bottom inset for that slot, and never the stage.
+  drawingToolbarVertical: {
+    insetInlineStart: tokens.spacingHorizontalS, top: tokens.spacingVerticalS,
+    flexDirection: 'column', alignItems: 'flex-start', width: '60px',
+    maxHeight: `clamp(calc(100% - 16px), ${TOOLS_COLUMN_FLOOR}, calc(100% - 8px))`,
+  },
+  drawingToolbarHorizontal: {
+    insetInlineEnd: tokens.spacingHorizontalS, bottom: tokens.spacingVerticalS,
+    width: 'max-content', maxWidth: 'calc(100% - 88px)',
+  },
+  // Vertical stays a single column: native wheel and Fluent arrow-key focus
+  // reveal tools inside the palette, without moving the mock. Horizontal rows
+  // wrap within their painted width. The orientation button never scrolls.
+  drawingTools: {
+    flex: '1 1 auto', padding: 0, minWidth: 0, minHeight: 0, flexWrap: 'nowrap',
+    gap: tokens.spacingHorizontalXXS, overscrollBehavior: 'contain',
+  },
+  drawingToolsVertical: {
+    // Leave room beside the buttons for either classic or overlay scrollbars.
+    width: '100%', alignItems: 'flex-start', overflowY: 'auto', overflowX: 'hidden', scrollbarGutter: 'stable',
+  },
+  drawingToolsHorizontal: { flexWrap: 'wrap' },
+  toolButton: { flexShrink: 0, width: '36px', height: '36px', minWidth: '36px', minHeight: '36px' },
+  // A grab strip, never a tool slot. It sits outside the scroller beside the
+  // orientation switch, so parked tools can always be moved back. Fluent's
+  // icon-only maximum would otherwise cap this strip at 32px.
+  toolGrip: {
+    flexShrink: 0, padding: 0, minWidth: '24px', minHeight: '24px', maxWidth: 'none', maxHeight: 'none',
+    touchAction: 'none', userSelect: 'none', cursor: 'grab',
+    '&:active': { cursor: 'grabbing' },
+  },
+  toolGripVertical: { width: '100%', height: '24px' },
+  toolGripHorizontal: { width: '24px', alignSelf: 'stretch' },
+  visuallyHidden: {
+    position: 'absolute', width: '1px', height: '1px', margin: '-1px', padding: 0,
+    overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap',
+  },
+  // Fixed rows keep counts and disabled/saving states from changing the stage.
+  reviewActions: {
+    position: 'relative',
+    flexShrink: 0, display: 'grid', gridTemplateColumns: 'auto auto auto minmax(0, 1fr)', gridAutoRows: '28px', minWidth: 0,
+    gap: tokens.spacingHorizontalXS, padding: `0 ${tokens.spacingHorizontalXXS}`,
+    '@container (max-width: 600px)': { gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' },
+  },
+  sendAction: { justifySelf: 'end', '@container (max-width: 600px)': { justifySelf: 'stretch' } },
+  reviewFeedback: {
+    position: 'absolute', zIndex: 2, insetInlineEnd: 0, top: `calc(100% + ${tokens.spacingVerticalXS})`,
+    width: '480px', maxWidth: '100%', maxHeight: '50dvh', overflowY: 'auto', overflowWrap: 'anywhere',
+  },
+  reviewFeedbackBody: {
+    display: 'flex', alignItems: 'flex-start', gap: tokens.spacingHorizontalXS,
+    '& > div': { flex: 1, minWidth: 0 },
+  },
+  reviewStatus: {
+    height: '28px', flexShrink: 0, minWidth: 0, display: 'flex', alignItems: 'center',
+    paddingInline: tokens.spacingHorizontalXS, gap: tokens.spacingHorizontalXS,
+  },
+  statusText: { minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' },
+  reviewNotice: { flex: '1 1 auto', minWidth: 0, maxWidth: '100%', justifyContent: 'flex-start' },
+  reviewDetails: {
+    boxSizing: 'border-box', width: 'min(600px, calc(100vw - 32px))',
+    overflowY: 'auto', overscrollBehavior: 'contain',
+  },
+  stage: { minWidth: 0, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS },
+  picker: { display: 'flex', alignItems: 'end', flexWrap: 'wrap', gap: tokens.spacingHorizontalS },
+  pickerField: { flex: '1 1 100%', minWidth: 0 },
+  drawer: { width: 'min(440px, 100vw)', maxWidth: '100vw' },
+  drawerBody: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL, paddingBottom: tokens.spacingVerticalXL, overflowWrap: 'anywhere' },
+  // Finishing and the capture answer stay out of the scroller, so a short
+  // panel keeps both visible without changing what the drawer body holds.
+  drawerFooter: {
+    flexShrink: 0, flexWrap: 'wrap', alignItems: 'center',
+    paddingTop: tokens.spacingVerticalS, paddingBottom: tokens.spacingVerticalM,
+    columnGap: tokens.spacingHorizontalS, rowGap: tokens.spacingVerticalXS,
+  },
+  // Master-detail, the way a mail list, a file list, or a layers panel does it:
+  // the list keeps its own bounded scrollport so revealing the marked row never
+  // moves the editor below it, and a long list cannot bury that editor. This
+  // lives inside the drawer overlay, so it cannot resize the reviewed frame.
+  annotationList: {
+    flexShrink: 0, maxHeight: 'min(320px, 40dvh)', overflowY: 'auto', overscrollBehavior: 'contain',
+    scrollbarGutter: 'stable', minWidth: 0,
+  },
+  annotationItem: {
+    position: 'relative',
+    '&:hover': { backgroundColor: tokens.colorNeutralBackground1Hover },
+    '&:active': { backgroundColor: tokens.colorNeutralBackground1Pressed },
+  },
+  // Fluent's own NavItem selection marker: a rounded brand bar on the leading
+  // edge, over the selected surface fill. The bar is a shape that only the
+  // selected row has, so the state does not rest on color alone, and Fluent's
+  // separate focus outline stays readable as the other state.
+  annotationItemSelected: {
+    backgroundColor: tokens.colorNeutralBackground1Selected,
+    '&:hover': { backgroundColor: tokens.colorNeutralBackground1Selected },
+    '&::after': {
+      content: '""', position: 'absolute', insetInlineStart: tokens.spacingHorizontalXS,
+      top: '50%', transform: 'translateY(-50%)',
+      width: '4px', height: '20px', borderRadius: tokens.borderRadiusCircular,
+      backgroundColor: tokens.colorCompoundBrandForeground1,
+      '@media (forced-colors: active)': { backgroundColor: 'Highlight', forcedColorAdjust: 'none' },
+    },
+  },
+  // The selected fill is lighter than the surface it sits on, so brand text
+  // needs the ramp step Fluent reserves for text, not the one it uses for the
+  // marker and the selected icon. `colorNeutralForeground2BrandSelected` is
+  // Fluent's selected-*icon* token in NavItem, and on the dark selected fill it
+  // clears the 3:1 graphics bar but not the 4.5:1 text bar.
+  // `colorBrandForeground2` is what Fluent's own Tab uses for selected label
+  // text on a tinted selected surface, one ramp step further from the fill.
+  annotationSelectedLabel: { color: tokens.colorBrandForeground2 },
+  commentEditor: { minWidth: 0, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS },
+  // The selected element's context summary is the mock's literal `textContent`,
+  // so it carries the source markup's own newlines and indentation. Rendered
+  // with the shared `prose` rule, that authoring whitespace paints as hundreds
+  // of empty pixels between a few words. Collapse it here the way a browser
+  // renders ordinary body copy: only this paragraph's display changes, the
+  // stored annotation text stays literal, and wrapping with `overflowWrap`
+  // from `prose` still carries long unbroken strings at any panel width.
+  contextText: { whiteSpace: 'normal' },
+  // The heading and its pending marker share one row, so naming the unsent
+  // state costs a short panel no height at all.
+  selectionHeading: {
+    display: 'flex', alignItems: 'center', flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalXS, minWidth: 0,
+  },
+  selectionState: { flexShrink: 0 },
+  // One reserved line beside the finish action, so wording changes never move
+  // that target. Fluent tokens carry the light and dark contrast.
+  commentStatus: {
+    display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalXS,
+    flex: '1 1 0px', minWidth: 0, minHeight: tokens.lineHeightBase200,
+  },
+  commentStatusMark: { flexShrink: 0, fontSize: '16px', color: tokens.colorStatusSuccessForeground1 },
+  geometry: { display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalS, '& > *': { flex: '1 1 80px', minWidth: 0 } },
+  historyImage: { display: 'block', width: '100%', height: 'auto', border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}` },
+});

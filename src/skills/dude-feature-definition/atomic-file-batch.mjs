@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { types as utilTypes } from 'node:util';
 
-import { resolveFeatureOwner } from '../dude-engine/lib/feature.mjs';
+import { IDEA_CLASSIFICATION_KEYS, resolveFeatureOwner } from '../dude-engine/lib/feature.mjs';
 import { parseFrontmatterScalars } from '../dude-engine/lib/feature-identity.mjs';
 import {
   BOARD_END,
@@ -491,7 +491,7 @@ function assertDefinitionOwner(bytes, specPath, state) {
   let frontmatter;
   try {
     frontmatter = parseFrontmatterScalars(bytes.toString('utf8'), {
-      canonicalKeys: ['title', 'slug', 'status', 'spec_path'],
+      canonicalKeys: ['title', 'slug', 'status', 'spec_path', ...IDEA_CLASSIFICATION_KEYS],
     });
   } catch (error) {
     throw new Error(`${state} definition owner is malformed`, { cause: error });
@@ -747,7 +747,7 @@ function inspectDefinitionRecoveryStructure(expectedByPath, stagedByPath, ownerP
   assertBalancedActiveDudeRegions(currentOwner, 'current owner');
   assertBalancedActiveDudeRegions(stagedOwner, 'staged owner');
   assertCoordinatorLogAppendOnly(currentOwner, stagedOwner);
-  assertProtectedOwnerSectionsUnchanged(currentOwner, stagedOwner);
+  assertProtectedOwnerBytesUnchanged(currentOwner, stagedOwner);
 
   for (const relativePath of [`${packagePrefix}plan.md`, specPath]) {
     const current = expectedByPath.get(relativePath);
@@ -815,12 +815,28 @@ function extractProtectedOwnerSections(bytes, state) {
 }
 
 /** @param {Buffer} current @param {Buffer} staged */
-function assertProtectedOwnerSectionsUnchanged(current, staged) {
+function assertProtectedOwnerBytesUnchanged(current, staged) {
   const currentSections = extractProtectedOwnerSections(current, 'current');
   const stagedSections = extractProtectedOwnerSections(staged, 'staged');
   for (const name of ['Idea', 'Open Questions', 'Assumptions']) {
     if (!currentSections.get(name)?.equals(stagedSections.get(name))) {
       throw new Error(`definition recovery must preserve complete ## ${name} section bytes`);
+    }
+  }
+  const currentFrontmatter = parseFrontmatterScalars(current);
+  const stagedFrontmatter = parseFrontmatterScalars(staged);
+  const currentLines = byteLines(current);
+  const stagedLines = byteLines(staged);
+  for (const key of IDEA_CLASSIFICATION_KEYS) {
+    const currentScalar = currentFrontmatter.scalars.get(key);
+    const stagedScalar = stagedFrontmatter.scalars.get(key);
+    if (!currentScalar && !stagedScalar) continue;
+    const currentLine = currentScalar && currentLines[currentScalar.lineIndex];
+    const stagedLine = stagedScalar && stagedLines[stagedScalar.lineIndex];
+    if (!currentLine || !stagedLine
+      || !current.subarray(currentLine.start, currentLine.end)
+        .equals(staged.subarray(stagedLine.start, stagedLine.end))) {
+      throw new Error(`definition recovery must preserve ${key} bytes`);
     }
   }
 }
@@ -1694,7 +1710,7 @@ export function applyDefinitionRecovery(options) {
   assertDefinitionOwner(currentOwner.bytes, options.specPath, 'current');
   assertDefinitionOwner(ownerChange.staged, options.specPath, 'staged');
   assertCoordinatorLogAppendOnly(currentOwner.bytes, ownerChange.staged);
-  assertProtectedOwnerSectionsUnchanged(currentOwner.bytes, ownerChange.staged);
+  assertProtectedOwnerBytesUnchanged(currentOwner.bytes, ownerChange.staged);
 
   let reconciliationEvidence;
 

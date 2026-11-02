@@ -1,0 +1,651 @@
+{
+  "schema": "dude-067-embedded-preview-evidence/1",
+  "generatedAt": "2026-10-20T13:17:46.948Z",
+  "scope": "Preview packaging diagnosis and repair only. No approval, no product UI change, no wording, fixture, theme, or interaction change.",
+  "rootCause": {
+    "confirmedOnActualHost": "The GitHub Copilot app browser preview loaded the mock from http://browser-preview-local.localhost/<id>/work-type-presentation.html, not file:, while its address bar showed the file: path.",
+    "reproducedMechanism": "At that origin, ./work-type-presentation.js resolves to http://browser-preview-local.localhost/<id>/work-type-presentation.js, which round 2's own CSP (script-src 'unsafe-inline' file: http://127.0.0.1:*) does not allow. Chromium blocks the request before it is sent; the inline bootstrap runs, #root stays empty, and only the #f5f5f5 page background shows.",
+    "notObserved": "The actual embedded host console and network log: its preview WebView2 exposes no DevTools endpoint, and enabling one needs an app or WebView2 policy change or restart, which was out of bounds."
+  },
+  "hostObservation": {
+    "method": "Read-only: process metadata (names, versions, selected flag names), a bounded string search of github.exe, and a byte scan of the preview profile History file that printed only URLs containing work-type-presentation or browser-preview-local.",
+    "app": {
+      "exe": "%LOCALAPPDATA%\\Programs\\GitHub Copilot\\github.exe",
+      "productName": "GitHub Copilot",
+      "fileVersion": "1.1.30",
+      "framework": "Tauri (identifier com.github.githubapp)"
+    },
+    "previewWebView2": {
+      "runtime": "156.0.4314.36",
+      "userDataDir": "%TEMP%\\github-app-browser-previews\\github-app-browser-preview-MA0QMQ\\EBWebView",
+      "remoteDebugging": "none"
+    },
+    "documentUrlInPreviewHistory": "http://browser-preview-local.localhost/babab7cf-25dd-4358-9103-c434c7d228cd/work-type-presentation.html",
+    "addressBarReported": "file:///C:/Work/GitHubAppRepos/copilot-worktrees/dude/e-g-c-symmetrical-eureka/... (user screenshot, via coordinator)",
+    "handlerStrings": [
+      "crates\\desktop-services\\src\\browser_preview_local.rs",
+      "register_browser_preview_local_file",
+      "Local preview file '…' cannot use a filesystem root or home directory as its asset root.",
+      "Local preview file '…' has no parent directory.",
+      "Local preview file '…' does not have a supported web asset extension.",
+      "text/html; charset=utf-8",
+      "text/javascript; charset=utf-8",
+      "no-store",
+      "nosniff",
+      "referrer-policy no-referrer",
+      "[browser-preview-local-file-not-found]"
+    ],
+    "handlerCspHeader": "No Content-Security-Policy string was found with this handler (the two nearby ones belong to the sign-in callback page and the tauri:// asset protocol)."
+  },
+  "replica": {
+    "what": "Loopback-only Node server mimicking the observed handler: /<uuid>/<file> from the registered file's parent directory, GET/HEAD, the observed Content-Type and no-store/nosniff/no-referrer headers, [browser-preview-local-file-not-found] 404. Chromium resolves browser-preview-local.localhost to loopback.",
+    "differencesFromHost": [
+      "explicit port (the app answers in-process with no port)",
+      "real TCP instead of WebView2 request interception",
+      "no Range support",
+      "headless Microsoft Edge 156.0.4314.15, not the app WebView2 156.0.4314.36"
+    ]
+  },
+  "before": {
+    "artifact": "round 2 (HTML 6eaf6bc8..., runtime 27646058...) at the canonical path",
+    "browser": "Edg/156.0.4314.15",
+    "files": [
+      {
+        "file": "work-type-presentation.html",
+        "bytes": 19070,
+        "sha256": "6eaf6bc8642e31d8e523a818ba9b9802ec63f2755a70cb48a92e10e07bc4cdc5"
+      },
+      {
+        "file": "work-type-presentation.js",
+        "bytes": 870043,
+        "sha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3"
+      }
+    ],
+    "cases": [
+      {
+        "case": "file",
+        "url": "file:///C:/Work/GitHubAppRepos/copilot-worktrees/dude/e-g-c-symmetrical-eureka/.dude/specs/067-work-type-presentation/design/work-type-presentation.html",
+        "origin": "file://",
+        "rendered": true,
+        "rootElementChildren": 2,
+        "rows": 13,
+        "mockStrip": true,
+        "bodyBackground": "rgb(245, 245, 245)",
+        "inlineBootstrapRan": true,
+        "cspViolations": [],
+        "consoleSecurity": [],
+        "failedRequests": [],
+        "exceptions": [],
+        "browserRequestsSeenByReplica": null
+      },
+      {
+        "case": "loopback-ip",
+        "url": "http://127.0.0.1:63463/bf49f034-60bc-401c-9d6e-c12f885aabeb/work-type-presentation.html",
+        "origin": "http://127.0.0.1:63463",
+        "rendered": true,
+        "rootElementChildren": 2,
+        "rows": 13,
+        "mockStrip": true,
+        "bodyBackground": "rgb(245, 245, 245)",
+        "inlineBootstrapRan": true,
+        "cspViolations": [],
+        "consoleSecurity": [],
+        "failedRequests": [],
+        "exceptions": [],
+        "browserRequestsSeenByReplica": [
+          "GET /bf49f034-60bc-401c-9d6e-c12f885aabeb/work-type-presentation.html -> 200 (19070 B)",
+          "GET /bf49f034-60bc-401c-9d6e-c12f885aabeb/work-type-presentation.js -> 200 (870043 B)"
+        ]
+      },
+      {
+        "case": "app-origin",
+        "url": "http://browser-preview-local.localhost:63463/bf49f034-60bc-401c-9d6e-c12f885aabeb/work-type-presentation.html",
+        "origin": "http://browser-preview-local.localhost:63463",
+        "rendered": false,
+        "rootElementChildren": 0,
+        "rows": 0,
+        "mockStrip": false,
+        "bodyBackground": "rgb(245, 245, 245)",
+        "inlineBootstrapRan": true,
+        "cspViolations": [
+          {
+            "directive": "script-src-elem",
+            "blockedURI": "http://browser-preview-local.localhost:63463/bf49f034-60bc-401c-9d6e-c12f885aabeb/work-type-presentation.js",
+            "disposition": "enforce"
+          }
+        ],
+        "consoleSecurity": [
+          "error/security: Loading the script 'http://browser-preview-local.localhost:63463/bf49f034-60bc-401c-9d6e-c12f885aabeb/work-type-presentation.js' violates the following Content Security Policy directive: \"script-src 'unsafe-inline' file: http://127.0.0.1:*\". No"
+        ],
+        "failedRequests": [
+          {
+            "type": "Script",
+            "blockedReason": "csp",
+            "url": "http://browser-preview-local.localhost:63463/bf49f034-60bc-401c-9d6e-c12f885aabeb/work-type-presentation.js"
+          }
+        ],
+        "exceptions": [],
+        "browserRequestsSeenByReplica": [
+          "GET /bf49f034-60bc-401c-9d6e-c12f885aabeb/work-type-presentation.html -> 200 (19070 B)"
+        ]
+      },
+      {
+        "case": "app-origin-single-file",
+        "url": "http://browser-preview-local.localhost:55641/7276c409-77de-4835-8e66-9fc5ba006507/work-type-presentation.html",
+        "origin": "http://browser-preview-local.localhost:55641",
+        "rendered": false,
+        "rootElementChildren": 0,
+        "rows": 0,
+        "mockStrip": false,
+        "bodyBackground": "rgb(245, 245, 245)",
+        "inlineBootstrapRan": true,
+        "cspViolations": [
+          {
+            "directive": "script-src-elem",
+            "blockedURI": "http://browser-preview-local.localhost:55641/7276c409-77de-4835-8e66-9fc5ba006507/work-type-presentation.js",
+            "disposition": "enforce"
+          }
+        ],
+        "consoleSecurity": [
+          "error/security: Loading the script 'http://browser-preview-local.localhost:55641/7276c409-77de-4835-8e66-9fc5ba006507/work-type-presentation.js' violates the following Content Security Policy directive: \"script-src 'unsafe-inline' file: http://127.0.0.1:*\". No"
+        ],
+        "failedRequests": [
+          {
+            "type": "Script",
+            "blockedReason": "csp",
+            "url": "http://browser-preview-local.localhost:55641/7276c409-77de-4835-8e66-9fc5ba006507/work-type-presentation.js"
+          }
+        ],
+        "exceptions": [],
+        "browserRequestsSeenByReplica": [
+          "GET /7276c409-77de-4835-8e66-9fc5ba006507/work-type-presentation.html -> 200 (19070 B)"
+        ]
+      }
+    ],
+    "cleanup": {
+      "closedGracefully": true,
+      "survivors": 0,
+      "profileRemoved": true
+    }
+  },
+  "intervention": {
+    "change": "round 2 with only 'self' added to script-src (temporary copy, not shipped)",
+    "browser": "Edg/156.0.4314.15",
+    "files": [
+      {
+        "file": "work-type-presentation.html",
+        "bytes": 19077,
+        "sha256": "0bf4ebaedae2e58e24adec39e2df261ce3858efd5c0e91d51aa0513ed7a75fb3"
+      },
+      {
+        "file": "work-type-presentation.js",
+        "bytes": 870043,
+        "sha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3"
+      }
+    ],
+    "cases": [
+      {
+        "case": "app-origin",
+        "url": "http://browser-preview-local.localhost:62111/1f796e36-c754-4424-ac70-6e5fd8a5ff34/work-type-presentation.html",
+        "origin": "http://browser-preview-local.localhost:62111",
+        "rendered": true,
+        "rootElementChildren": 2,
+        "rows": 13,
+        "mockStrip": true,
+        "bodyBackground": "rgb(245, 245, 245)",
+        "inlineBootstrapRan": true,
+        "cspViolations": [],
+        "consoleSecurity": [],
+        "failedRequests": [],
+        "exceptions": [],
+        "browserRequestsSeenByReplica": [
+          "GET /1f796e36-c754-4424-ac70-6e5fd8a5ff34/work-type-presentation.html -> 200 (19077 B)",
+          "GET /1f796e36-c754-4424-ac70-6e5fd8a5ff34/work-type-presentation.js -> 200 (870043 B)"
+        ]
+      },
+      {
+        "case": "app-origin-single-file",
+        "url": "http://browser-preview-local.localhost:62483/ddf2df61-24bc-40de-bd9f-e79e359dd522/work-type-presentation.html",
+        "origin": "http://browser-preview-local.localhost:62483",
+        "rendered": false,
+        "rootElementChildren": 0,
+        "rows": 0,
+        "mockStrip": false,
+        "bodyBackground": "rgb(245, 245, 245)",
+        "inlineBootstrapRan": true,
+        "cspViolations": [],
+        "consoleSecurity": [
+          "error/network: Failed to load resource: the server responded with a status of 404 (Not Found) http://browser-preview-local.localhost:62483/ddf2df61-24bc-40de-bd9f-e79e359dd522/work-type-presentation.js",
+          "error/security: Refused to execute script from 'http://browser-preview-local.localhost:62483/ddf2df61-24bc-40de-bd9f-e79e359dd522/work-type-presentation.js' because its MIME type ('text/plain') is not executable, and strict MIME type checking is enabled. http:"
+        ],
+        "failedRequests": [
+          {
+            "type": "Script",
+            "blockedReason": null,
+            "errorText": "net::ERR_ABORTED",
+            "url": "http://browser-preview-local.localhost:62483/ddf2df61-24bc-40de-bd9f-e79e359dd522/work-type-presentation.js"
+          }
+        ],
+        "exceptions": [],
+        "browserRequestsSeenByReplica": [
+          "GET /ddf2df61-24bc-40de-bd9f-e79e359dd522/work-type-presentation.html -> 200 (19077 B)",
+          "GET /ddf2df61-24bc-40de-bd9f-e79e359dd522/work-type-presentation.js -> 404 (102 B)"
+        ]
+      }
+    ],
+    "cleanup": {
+      "closedGracefully": true,
+      "survivors": 0,
+      "profileRemoved": true
+    }
+  },
+  "after": {
+    "artifact": "canonical single-file HTML",
+    "browser": "Edg/156.0.4314.15",
+    "files": [
+      {
+        "file": "work-type-presentation.html",
+        "bytes": 890907,
+        "sha256": "c5c35834d4394a34d25ad99c6c853e97d4b75e5ef11bb6a7597ce194e0406529"
+      },
+      {
+        "file": "work-type-presentation.js",
+        "bytes": 870043,
+        "sha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3"
+      }
+    ],
+    "cases": [
+      {
+        "case": "file",
+        "url": "file:///C:/Work/GitHubAppRepos/copilot-worktrees/dude/e-g-c-symmetrical-eureka/.dude/specs/067-work-type-presentation/design/work-type-presentation.html",
+        "origin": "file://",
+        "rendered": true,
+        "rootElementChildren": 2,
+        "rows": 13,
+        "mockStrip": true,
+        "bodyBackground": "rgb(245, 245, 245)",
+        "inlineBootstrapRan": true,
+        "cspViolations": [],
+        "consoleSecurity": [],
+        "failedRequests": [],
+        "exceptions": [],
+        "browserRequestsSeenByReplica": null
+      },
+      {
+        "case": "loopback-ip",
+        "url": "http://127.0.0.1:65496/bbf8b5d4-d0e5-4057-bf90-21f7f95e0be9/work-type-presentation.html",
+        "origin": "http://127.0.0.1:65496",
+        "rendered": true,
+        "rootElementChildren": 2,
+        "rows": 13,
+        "mockStrip": true,
+        "bodyBackground": "rgb(245, 245, 245)",
+        "inlineBootstrapRan": true,
+        "cspViolations": [],
+        "consoleSecurity": [],
+        "failedRequests": [],
+        "exceptions": [],
+        "browserRequestsSeenByReplica": [
+          "GET /bbf8b5d4-d0e5-4057-bf90-21f7f95e0be9/work-type-presentation.html -> 200 (890907 B)"
+        ]
+      },
+      {
+        "case": "app-origin",
+        "url": "http://browser-preview-local.localhost:65496/bbf8b5d4-d0e5-4057-bf90-21f7f95e0be9/work-type-presentation.html",
+        "origin": "http://browser-preview-local.localhost:65496",
+        "rendered": true,
+        "rootElementChildren": 2,
+        "rows": 13,
+        "mockStrip": true,
+        "bodyBackground": "rgb(245, 245, 245)",
+        "inlineBootstrapRan": true,
+        "cspViolations": [],
+        "consoleSecurity": [],
+        "failedRequests": [],
+        "exceptions": [],
+        "browserRequestsSeenByReplica": [
+          "GET /bbf8b5d4-d0e5-4057-bf90-21f7f95e0be9/work-type-presentation.html -> 200 (890907 B)"
+        ]
+      },
+      {
+        "case": "app-origin-single-file",
+        "url": "http://browser-preview-local.localhost:57104/0edef362-9a41-43c0-94cb-a08abbbf61e6/work-type-presentation.html",
+        "origin": "http://browser-preview-local.localhost:57104",
+        "rendered": true,
+        "rootElementChildren": 2,
+        "rows": 13,
+        "mockStrip": true,
+        "bodyBackground": "rgb(245, 245, 245)",
+        "inlineBootstrapRan": true,
+        "cspViolations": [],
+        "consoleSecurity": [],
+        "failedRequests": [],
+        "exceptions": [],
+        "browserRequestsSeenByReplica": [
+          "GET /0edef362-9a41-43c0-94cb-a08abbbf61e6/work-type-presentation.html -> 200 (890907 B)"
+        ]
+      },
+      {
+        "case": "app-origin-scripts-blocked",
+        "url": "http://browser-preview-local.localhost:65313/18d51686-7fec-4eb0-b694-087c86216071/work-type-presentation.html",
+        "origin": "http://browser-preview-local.localhost:65313",
+        "rendered": false,
+        "rootElementChildren": 1,
+        "rows": 0,
+        "mockStrip": false,
+        "bodyBackground": "rgb(245, 245, 245)",
+        "inlineBootstrapRan": false,
+        "rootText": "Loading the 067 design preview. If this message stays, the preview script did not run here. Open this file in a desktop browser instead.",
+        "cspViolations": [
+          {
+            "directive": "script-src-elem",
+            "blockedURI": "inline",
+            "disposition": "enforce"
+          },
+          {
+            "directive": "script-src-elem",
+            "blockedURI": "inline",
+            "disposition": "enforce"
+          }
+        ],
+        "consoleSecurity": [
+          "error/security: Executing inline script violates the following Content Security Policy directive 'script-src 'none''. Either the 'unsafe-inline' keyword, a hash ('sha256-bm0zvS+P8hkZh4XplqRiRBuQXed03uryD1zlxarHEXc='), or a nonce ('nonce-...') is required to en",
+          "error/security: Executing inline script violates the following Content Security Policy directive 'script-src 'none''. Either the 'unsafe-inline' keyword, a hash ('sha256-J2RgWHlHacDyvYvoJZOZadDlMjl4zkgXSux4O/0+wuM='), or a nonce ('nonce-...') is required to en"
+        ],
+        "failedRequests": [],
+        "exceptions": [],
+        "browserRequestsSeenByReplica": [
+          "GET /18d51686-7fec-4eb0-b694-087c86216071/work-type-presentation.html -> 200 (890907 B)"
+        ]
+      }
+    ],
+    "cleanup": {
+      "closedGracefully": true,
+      "survivors": 0,
+      "profileRemoved": true
+    }
+  },
+  "regression": {
+    "runner": "Temporary focused runner reusing round-2-independent/runner cdp.mjs, harness.mjs, probes.mjs, and oracle.mjs read-only; checkRow and the capture/theme assertions ported unchanged.",
+    "browser": "Edg/156.0.4314.15",
+    "files": [
+      {
+        "path": "design/work-type-presentation.html",
+        "bytes": 890907,
+        "sha256": "c5c35834d4394a34d25ad99c6c853e97d4b75e5ef11bb6a7597ce194e0406529"
+      },
+      {
+        "path": "design/work-type-presentation.js",
+        "bytes": 870043,
+        "sha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3"
+      },
+      {
+        "path": "design/variants/round-2-before-embedded-fix/work-type-presentation.html",
+        "bytes": 19070,
+        "sha256": "6eaf6bc8642e31d8e523a818ba9b9802ec63f2755a70cb48a92e10e07bc4cdc5"
+      }
+    ],
+    "targets": {
+      "round2-preimage-file": {
+        "url": "file:///C:/Work/GitHubAppRepos/copilot-worktrees/dude/e-g-c-symmetrical-eureka/.dude/specs/067-work-type-presentation/design/variants/round-2-before-embedded-fix/work-type-presentation.html?scenario=M1",
+        "assertions": 276,
+        "checks": [
+          {
+            "id": "render",
+            "status": "pass",
+            "assertions": 5
+          },
+          {
+            "id": "M1.list",
+            "status": "pass",
+            "assertions": 189
+          },
+          {
+            "id": "L.search-now",
+            "status": "pass",
+            "assertions": 8
+          },
+          {
+            "id": "M12.states",
+            "status": "pass",
+            "assertions": 55
+          },
+          {
+            "id": "M12.submit-saved",
+            "status": "pass",
+            "assertions": 4
+          },
+          {
+            "id": "A.theme",
+            "status": "pass",
+            "assertions": 15
+          }
+        ]
+      },
+      "fixed-file": {
+        "url": "file:///C:/Work/GitHubAppRepos/copilot-worktrees/dude/e-g-c-symmetrical-eureka/.dude/specs/067-work-type-presentation/design/work-type-presentation.html?scenario=M1",
+        "assertions": 277,
+        "checks": [
+          {
+            "id": "render",
+            "status": "pass",
+            "assertions": 6
+          },
+          {
+            "id": "M1.list",
+            "status": "pass",
+            "assertions": 189
+          },
+          {
+            "id": "L.search-now",
+            "status": "pass",
+            "assertions": 8
+          },
+          {
+            "id": "M12.states",
+            "status": "pass",
+            "assertions": 55
+          },
+          {
+            "id": "M12.submit-saved",
+            "status": "pass",
+            "assertions": 4
+          },
+          {
+            "id": "A.theme",
+            "status": "pass",
+            "assertions": 15
+          }
+        ]
+      },
+      "fixed-app-origin-replica": {
+        "url": "http://browser-preview-local.localhost:56634/6812e8da-099b-49fb-8c1a-a5649f920f89/work-type-presentation.html?scenario=M1",
+        "assertions": 277,
+        "checks": [
+          {
+            "id": "render",
+            "status": "pass",
+            "assertions": 6
+          },
+          {
+            "id": "M1.list",
+            "status": "pass",
+            "assertions": 189
+          },
+          {
+            "id": "L.search-now",
+            "status": "pass",
+            "assertions": 8
+          },
+          {
+            "id": "M12.states",
+            "status": "pass",
+            "assertions": 55
+          },
+          {
+            "id": "M12.submit-saved",
+            "status": "pass",
+            "assertions": 4
+          },
+          {
+            "id": "A.theme",
+            "status": "pass",
+            "assertions": 15
+          }
+        ],
+        "serverRequests": {
+          "total": 21,
+          "paths": [
+            "/<id>/work-type-presentation.html"
+          ],
+          "statuses": [
+            200
+          ]
+        }
+      }
+    },
+    "equivalenceWithRound2File": {
+      "fixed-file": {
+        "m1Pixels": true,
+        "rows": true,
+        "now901": true,
+        "capture": true,
+        "submitSaved": true,
+        "theme": true
+      },
+      "fixed-app-origin-replica": {
+        "m1Pixels": true,
+        "rows": true,
+        "now901": true,
+        "capture": true,
+        "submitSaved": true,
+        "theme": true
+      }
+    },
+    "equivalenceMeans": "Same observation as round 2 over file: for the M1 screenshot pixels (decoded RGBA), the 13 row probes including geometry, Now for 901, all nine capture states, the Submit sequence and final state, and the four theme backgrounds plus live Tone and Appearance reload.",
+    "cleanup": {
+      "closedGracefully": true,
+      "killed": [],
+      "survivors": [],
+      "profileRemoved": true
+    }
+  },
+  "packaging": {
+    "canonicalCheck": {
+      "exit": 0,
+      "mode": "check",
+      "html": "work-type-presentation.html",
+      "runtime": "work-type-presentation.js",
+      "runtimeBytes": 870043,
+      "runtimeSha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3",
+      "inlineSha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3",
+      "inlineMatchesRuntime": true,
+      "htmlBytes": 890907,
+      "htmlSha256": "c5c35834d4394a34d25ad99c6c853e97d4b75e5ef11bb6a7597ce194e0406529",
+      "htmlSha256LfNormalized": "86343403ec5a4e3453b27843905acf5d2b7d394bf03602255a6f315898aebbc0",
+      "scriptSrc": "'unsafe-inline'"
+    },
+    "negativeChecks": {
+      "roundTwoStillExternal": {
+        "exit": 1,
+        "stdout": "",
+        "error": "Error: the HTML still loads the runtime as a separate file"
+      },
+      "oneByteDriftInInlineRuntime": {
+        "exit": 1,
+        "error": null,
+        "inlineMatchesRuntime": false
+      },
+      "runtimeContainingCloseScript": {
+        "exit": 1,
+        "stdout": "",
+        "error": "Error: runtime contains </script; it cannot be inlined byte for byte"
+      }
+    }
+  },
+  "artifacts": {
+    "canonical": [
+      {
+        "path": ".dude/specs/067-work-type-presentation/design/work-type-presentation.html",
+        "bytes": 890907,
+        "sha256": "c5c35834d4394a34d25ad99c6c853e97d4b75e5ef11bb6a7597ce194e0406529",
+        "sha256LfNormalized": "86343403ec5a4e3453b27843905acf5d2b7d394bf03602255a6f315898aebbc0"
+      },
+      {
+        "path": ".dude/specs/067-work-type-presentation/design/work-type-presentation.js",
+        "bytes": 870043,
+        "sha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3",
+        "sha256LfNormalized": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3"
+      },
+      {
+        "path": ".dude/specs/067-work-type-presentation/design/work-type-presentation.js.LEGAL.txt",
+        "bytes": 65638,
+        "sha256": "20c1596d99736bf8f9c18e6e056c97495c9362c406a9984c889361706f002758",
+        "sha256LfNormalized": "20c1596d99736bf8f9c18e6e056c97495c9362c406a9984c889361706f002758"
+      }
+    ],
+    "historyVariant": [
+      {
+        "path": ".dude/specs/067-work-type-presentation/design/variants/round-2-before-embedded-fix/work-type-presentation.html",
+        "bytes": 19070,
+        "sha256": "6eaf6bc8642e31d8e523a818ba9b9802ec63f2755a70cb48a92e10e07bc4cdc5",
+        "sha256LfNormalized": "83c1ff9272e2d2e0b46de01e4d22f21a178ada4e347af17efb4d237bd43b9377"
+      },
+      {
+        "path": ".dude/specs/067-work-type-presentation/design/variants/round-2-before-embedded-fix/work-type-presentation.js",
+        "bytes": 870043,
+        "sha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3",
+        "sha256LfNormalized": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3"
+      },
+      {
+        "path": ".dude/specs/067-work-type-presentation/design/variants/round-2-before-embedded-fix/work-type-presentation.js.LEGAL.txt",
+        "bytes": 65638,
+        "sha256": "20c1596d99736bf8f9c18e6e056c97495c9362c406a9984c889361706f002758",
+        "sha256LfNormalized": "20c1596d99736bf8f9c18e6e056c97495c9362c406a9984c889361706f002758"
+      }
+    ],
+    "packager": {
+      "path": ".dude/specs/067-work-type-presentation/design/verification/embedded-preview/package-inline.mjs",
+      "bytes": 4142,
+      "sha256": "9a7338b7ba49b03329a687095bf924e03f9a545380e50a5bfb69b5bcf91440cf",
+      "sha256LfNormalized": "1bca9e759750f59e4838d882a607a90409d827d04684c71fa2834aaa9b6f5b4b"
+    },
+    "screenshots": [
+      {
+        "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview/before-round2-app-origin-replica-blank-1280x900.png",
+        "bytes": 5290,
+        "sha256": "43144fdb7e01f0b29df40c6997ae96a5cc431a746d62de3ba3aff8ea087eabba"
+      },
+      {
+        "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview/after-app-origin-replica-m1-1440x900-light.png",
+        "bytes": 70692,
+        "sha256": "63ff5a6eef92e5020102520cc0665aa434c4abb40af41b1af26604448ba19c7d"
+      },
+      {
+        "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview/after-app-origin-replica-now-901-1440x900-light.png",
+        "bytes": 74716,
+        "sha256": "c02b1240703fc3897daa993c7c30037f6f39613a08f3df65260888490e8a5527"
+      },
+      {
+        "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview/after-app-origin-replica-m12-submit-saved-1440x900-light.png",
+        "bytes": 62106,
+        "sha256": "39f8c10795b1d6b6fde55a7843a8bb21e76a7edab47f84c0991e15496670573f"
+      },
+      {
+        "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview/after-app-origin-replica-m1-app-dark-1440x900.png",
+        "bytes": 88987,
+        "sha256": "a8ced973945c118c18f8f93268278596fcdc7b31b44a9f5620571de52f7e4b75"
+      },
+      {
+        "path": ".dude/specs/067-work-type-presentation/design/screenshots/embedded-preview/after-scripts-blocked-boundary-message-1280x900.png",
+        "bytes": 8768,
+        "sha256": "bf585aa23a107faef8758754b7d6fe5b3d9025235afc83423e73bed60e8b708c"
+      }
+    ]
+  },
+  "limits": [
+    "The fix is verified in a replica of the app origin and headers, not inside the GitHub Copilot app itself; the in-app view needs one look by the user.",
+    "Query-string reloads (the mock strip Appearance control, ?tone, ?scenario) were exercised at the replica origin only; whether the app handler serves a URL with a query string is not observed.",
+    "Approval hashes: git stores this HTML with LF line endings (.gitattributes eol=lf); bind sha256LfNormalized, not the CRLF working-tree hash."
+  ]
+}

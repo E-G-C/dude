@@ -1,0 +1,216 @@
+{
+ "schema": "dude-067-round-3-independent-capture-log/1",
+ "generatedAt": "2026-10-23T18:28:51.781Z",
+ "role": "Independent Tester; fresh PNGs from this run only. The designer's screenshots/round-3 files are inputs, not evidence.",
+ "subject": {
+  "html": {
+   "sha256": "a583bd230b85e3bdabf9932e6d42f49252b3fb833c19732c3999625e9a24aeb2",
+   "bytes": 885326
+  },
+  "runtime": {
+   "sha256": "c0fb9406dda7ec20d5f8a410dbd09d833d63d8c406a5d433be586c8d6feb7e4a",
+   "bytes": 869338
+  },
+  "round2Html": "c5c35834d4394a34d25ad99c6c853e97d4b75e5ef11bb6a7597ce194e0406529"
+ },
+ "browser": "Edg/156.0.4314.15",
+ "method": "Headless Edge over CDP; file URL; Emulation.setDeviceMetricsOverride per frame; PNG bytes are the CDP screenshot as written (sha256 is of the raw file)",
+ "shots": [
+  {
+   "file": "01-capture-text-only-1440-light.png",
+   "scenario": "M12-default",
+   "query": "scenario=M12-default&tone=light&controls=hide",
+   "viewport": "1440x900",
+   "appearance": "light",
+   "typed": true,
+   "opened": null,
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-final/01-capture-text-only-1440-light.png",
+   "bytes": 39089,
+   "sha256": "d003298cbec7aea561f1b31b8176e4019b15268c5a9d7875e5861fc14beba2d2"
+  },
+  {
+   "file": "02-capture-pending-question-768-app-dark.png",
+   "scenario": "M12-pending-question",
+   "query": "scenario=M12-pending-question&tone=dark&appearance=app&controls=hide",
+   "viewport": "768x900",
+   "appearance": "app-dark",
+   "typed": false,
+   "opened": null,
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-final/02-capture-pending-question-768-app-dark.png",
+   "bytes": 47976,
+   "sha256": "584ad0bf27d700bd7c05dce31fe5f93600ea1be58df11e378385122db474b23e"
+  },
+  {
+   "file": "03-capture-saved-submit-1440-light.png",
+   "scenario": "M12-saved-submit",
+   "query": "scenario=M12-saved-submit&tone=light&controls=hide",
+   "viewport": "1440x900",
+   "appearance": "light",
+   "typed": false,
+   "opened": null,
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-final/03-capture-saved-submit-1440-light.png",
+   "bytes": 45553,
+   "sha256": "1883efcdcbadb787679715ce3f1a0cd2c901afa1a9f22461913ea5fe299b9ff4"
+  },
+  {
+   "file": "04-capture-saved-save-600-dark.png",
+   "scenario": "M12-saved-save",
+   "query": "scenario=M12-saved-save&tone=dark&controls=hide",
+   "viewport": "600x900",
+   "appearance": "dark",
+   "typed": false,
+   "opened": null,
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-final/04-capture-saved-save-600-dark.png",
+   "bytes": 39531,
+   "sha256": "d78fafcc01ef0d4eeff20ec199d151c51b5130e6ec9b1c55e2a06409d7bf8e9a"
+  },
+  {
+   "file": "05-capture-uncertain-1440-dark.png",
+   "scenario": "M12-uncertain",
+   "query": "scenario=M12-uncertain&tone=dark&controls=hide",
+   "viewport": "1440x900",
+   "appearance": "dark",
+   "typed": false,
+   "opened": null,
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-final/05-capture-uncertain-1440-dark.png",
+   "bytes": 47062,
+   "sha256": "446897c6b7a365cdf1b69a4000aca73d277f3ebfdcd5bf6133a57f94bbc0a1ae"
+  },
+  {
+   "file": "06-details-901-words-1440-light.png",
+   "scenario": "M5",
+   "query": "scenario=M5&tone=light&controls=hide",
+   "viewport": "1440x900",
+   "appearance": "light",
+   "typed": false,
+   "opened": null,
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-final/06-details-901-words-1440-light.png",
+   "bytes": 92260,
+   "sha256": "61554d8e7a11c8abd787fab5c9f4fd7576fb3673bccd76d36699526b1e85300a"
+  },
+  {
+   "file": "07-details-904-design-768-app-dark.png",
+   "scenario": "M4",
+   "query": "scenario=M4&tone=dark&appearance=app&controls=hide",
+   "viewport": "768x900",
+   "appearance": "app-dark",
+   "typed": false,
+   "opened": null,
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-final/07-details-904-design-768-app-dark.png",
+   "bytes": 69567,
+   "sha256": "5fce5ac7d89d57bc8e34f04a89d75cb63f27d728068c32d8b9f06d0f3f16d9d7"
+  },
+  {
+   "file": "08-details-909-design-only-1440-dark.png",
+   "scenario": "M1",
+   "query": "scenario=M1&tone=dark&controls=hide",
+   "viewport": "1440x900",
+   "appearance": "dark",
+   "typed": false,
+   "opened": ".dude/ideas/909-docs-site-navigation.md",
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-final/08-details-909-design-only-1440-dark.png",
+   "bytes": 73469,
+   "sha256": "c11275ef3da2c3627eb3904c71495787998dd7258b653a810ef1892d8f978180"
+  },
+  {
+   "file": "09-details-912-unreadable-600-dark.png",
+   "scenario": "M1",
+   "query": "scenario=M1&tone=dark&controls=hide",
+   "viewport": "600x900",
+   "appearance": "dark",
+   "typed": false,
+   "opened": ".dude/ideas/912-export-history.md",
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-final/09-details-912-unreadable-600-dark.png",
+   "bytes": 48723,
+   "sha256": "542bc0257b98a86fcb3ec5fb09018445cf7f5e27a6e68c7dfb2be32b78aabbb6"
+  },
+  {
+   "file": "10-list-wide-1440-light.png",
+   "scenario": "M1",
+   "query": "scenario=M1&tone=light&controls=hide",
+   "viewport": "1440x900",
+   "appearance": "light",
+   "typed": false,
+   "opened": null,
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-final/10-list-wide-1440-light.png",
+   "bytes": 71474,
+   "sha256": "c2c5f1d1408d3c60db6b4ffaf816b88c17207ccc9ffd02caa624c2d7625e350b"
+  },
+  {
+   "file": "11-list-compact-600-dark.png",
+   "scenario": "M2",
+   "query": "scenario=M2&tone=dark&controls=hide",
+   "viewport": "600x900",
+   "appearance": "dark",
+   "typed": false,
+   "opened": null,
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-final/11-list-compact-600-dark.png",
+   "bytes": 54253,
+   "sha256": "da038fcd903f67a434f55a718cbd9e7ca0105c35ac6f23e5eb0667acc35adae5"
+  },
+  {
+   "file": "12-capture-200pct-top-app-light.png",
+   "scenario": "M12-default",
+   "query": "scenario=M12-default&tone=light&appearance=app&controls=hide",
+   "viewport": "720x450@2 (200% emulated)",
+   "appearance": "app-light",
+   "typed": true,
+   "opened": null,
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-final/12-capture-200pct-top-app-light.png",
+   "bytes": 102983,
+   "sha256": "c9d6a089de641fedb3f0d5930186c8d883f9db04ebb90b52adb9e23dc39d6ec9"
+  },
+  {
+   "file": "13-capture-200pct-actions-app-light.png",
+   "scenario": "M12-default",
+   "query": "scenario=M12-default&tone=light&appearance=app&controls=hide",
+   "viewport": "720x450@2 (200% emulated)",
+   "appearance": "app-light",
+   "typed": true,
+   "scrolledToActions": true,
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-final/13-capture-200pct-actions-app-light.png",
+   "bytes": 98022,
+   "sha256": "4b72161692ca500e47a66903fdf1f4a4c01da5860d28a4427cabc3073971ef02"
+  },
+  {
+   "file": "14-capture-saved-appearance-light-1440.png",
+   "scenario": "M12-saved-submit",
+   "query": "scenario=M12-saved-submit&tone=light&controls=hide",
+   "viewport": "1440x900",
+   "appearance": "light",
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-final/14-capture-saved-appearance-light-1440.png",
+   "bytes": 45553,
+   "sha256": "1883efcdcbadb787679715ce3f1a0cd2c901afa1a9f22461913ea5fe299b9ff4"
+  },
+  {
+   "file": "15-capture-saved-appearance-dark-1440.png",
+   "scenario": "M12-saved-submit",
+   "query": "scenario=M12-saved-submit&tone=dark&controls=hide",
+   "viewport": "1440x900",
+   "appearance": "dark",
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-final/15-capture-saved-appearance-dark-1440.png",
+   "bytes": 45675,
+   "sha256": "0d316c862555e35102098c7c1eea7a4490f04c313c9e17a01de7cc1ee7af3154"
+  },
+  {
+   "file": "16-capture-saved-appearance-app-light-1440.png",
+   "scenario": "M12-saved-submit",
+   "query": "scenario=M12-saved-submit&tone=light&appearance=app&controls=hide",
+   "viewport": "1440x900",
+   "appearance": "app-light",
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-final/16-capture-saved-appearance-app-light-1440.png",
+   "bytes": 51652,
+   "sha256": "83d338389780d4877b1d2e82f3832189265de3fc91b58cec90c41576c4ac1b80"
+  },
+  {
+   "file": "17-capture-saved-appearance-app-dark-1440.png",
+   "scenario": "M12-saved-submit",
+   "query": "scenario=M12-saved-submit&tone=dark&appearance=app&controls=hide",
+   "viewport": "1440x900",
+   "appearance": "app-dark",
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-final/17-capture-saved-appearance-app-dark-1440.png",
+   "bytes": 51771,
+   "sha256": "70802101b293dd683b01e6bdc584f2959cfc11d1e1ebbffea11388170e47df74"
+  }
+ ]
+}

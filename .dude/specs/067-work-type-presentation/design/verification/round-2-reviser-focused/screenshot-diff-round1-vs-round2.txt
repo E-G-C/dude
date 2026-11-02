@@ -1,0 +1,32 @@
+k-finder-popup-over-capture-1440x900-light.png: 37610 px differ in [177,169]-[796,616]
+k-working-on-vs-browsing-1440x900-light.png: 42066 px differ in [72,41]-[1436,873]
+m1-grid-1440x900-light.png: 2659 px differ in [219,195]-[666,206]
+m1-strip-expanded-1440x900-light.png: 2659 px differ in [219,269]-[666,280]
+m10-now-907-1440x900-light.png: identical below the strip
+m11a-now-910-partial-1440x900-light.png: 1560 px differ in [72,501]-[1436,873]
+m11b-now-067-partial-feed-1440x900-light.png: 15574 px differ in [72,323]-[1436,871]
+m11b-now-067-unavailable-1440x900-light.png: 49528 px differ in [72,149]-[1436,873]
+m12-chosen-1440x900-light.png: identical below the strip
+m12-default-1440x900-light.png: identical below the strip
+m12-domain-options-1440x900-light.png: identical below the strip
+m12-fixture-controls-1440x900-light.png: identical below the strip
+m12-invalid-1440x900-light.png: identical below the strip
+m12-kept-1440x900-light.png: identical below the strip
+m12-missing-1440x900-light.png: identical below the strip
+m12-refused-retry-1440x900-light.png: identical below the strip
+m12-saved-1440x900-light.png: identical below the strip
+m12-sending-1440x900-light.png: identical below the strip
+m12-submit-saved-1440x900-light.png: identical below the strip
+m12-uncertain-1440x900-light.png: identical below the strip
+m12-uncertain-no-replay-1440x900-light.png: identical below the strip
+m12-waiting-1440x900-light.png: identical below the strip
+m14a-now-910-1440x900-light.png: 112 px differ in [8,185]-[10,226]
+m14b-now-911-1440x900-light.png: identical below the strip
+m2-compact-600x900-light.png: 2584 px differ in [64,229]-[568,256]
+m3-now-087-1440x900-light.png: identical below the strip
+m4-now-904-1440x900-light.png: identical below the strip
+m5-now-901-docked-1440x900-light.png: identical below the strip
+m6-now-902-1440x900-light.png: identical below the strip
+m7-now-903-1440x900-light.png: identical below the strip
+s2-save-as-work-item-1440x900-light.png: identical below the strip
+s3-repository-1440x900-light.png: 2651 px differ in [225,195]-[683,206]

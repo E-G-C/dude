@@ -302,6 +302,16 @@ with `# Idea: <title>` and frontmatter containing the exact unnumbered `slug:`,
 sections when they have content, plus `status:`, `spec_path:`, and the
 append-only `## Coordinator Log`.
 
+Dude may record two optional internal notes in that ledger: `work_intent`
+(`create`, `fix`, `maintain`, or `explore`) and `work_domain` (`code`, `design`,
+`writing`, or `video`). It records a value during capture or an explicit
+brainstorm only when your description and project context make it clear;
+otherwise it omits that key and asks no question just to classify the work.
+To correct a recorded value, tell Dude in chat in your own words, such as
+"This is design work, not writing." Dude keeps the correction on later
+brainstorms and leaves your text, stage, lifecycle status, tasks, approvals,
+and permissions unchanged.
+
 A resolved ledger is valid only with exact `status: resolved`, an exactly empty
 unnormalized `spec_path:` scalar, no owner claim, and no owner or metadata
 diagnostic. Otherwise it is unavailable rather than Completed.
@@ -885,6 +895,40 @@ Meaning: report the current lane, live artifact, next expected action, blockers,
 and tracked execution state when Beads is active, without importing or mutating
 anything. Read-only means Dude may still query Beads and the filesystem for the
 current state; it does not create, import, update, or close work.
+
+The cross-idea overview shows a stage beside each record. Its summary, groups,
+record order, dependency and order notes, and diagrams stay unchanged. Status
+uses these six stages; Canvas keeps its existing wording:
+
+| Stage | Meaning |
+| ----- | ------- |
+| Captured | Captured but not defined. |
+| Defined | Defined, with no task recorded in progress, done, or blocked. |
+| In progress | At least one task is in progress or done, some work remains, and no unfinished task is blocked. |
+| Blocked | An unfinished task is blocked or carries a blocker reason. |
+| Completed | At least one task is recorded, and every task is done. |
+| Closed | Resolved without a definition package. |
+
+Open or ready tasks alone remain Defined. Completed and Closed claim no
+verification, review, implementation, or release. When stage evidence cannot
+be read, the record says `stage unavailable`; a dependency or order note never
+changes its stage.
+
+For a request about one item, Dude also prints its read-only `progress <slug>`
+report. Recorded classification appears as plain words beside its name, such
+as Fix · Code, and unrecorded or unrecognized values show nothing. The report
+names the sources for its stage, current phases, design status, recorded
+design checkpoint, and required design approval gate, where present. It
+summarizes parts with nothing recorded in one sentence. Unreadable evidence
+makes only the affected parts unavailable, with a reason: unreadable tasks
+do not hide readable design status, checkpoints, or gates.
+
+The request part always says `Requests for you: unavailable. This view cannot
+read current requests.` It never reports None or infers waiting from a blank
+answer. When Tracked Execution is active, Dude passes `--tracked` to the
+overview and `progress` forms: defined work shows stage unavailable and phases
+not exposed because tracked work is authoritative and this view does not
+read it.
 
 Illustrative result:
 
@@ -2151,7 +2195,7 @@ The coordinator invokes them; they are not a background service.
 | `dude-compose/compose.mjs` | `list` / `status` / `add` / `remove` / `refresh` / `verify` optional packs and their installed-map records |
 | `dude-bundle-upgrade/upgrade.mjs` | refresh core files from the upstream source |
 | `dude-lightweight-execution/board.mjs` | `parse` / `ready` / `next` / `render` / `set` / `apply-states` / `diff` on `tasks.md` |
-| `dude-lightweight-execution/backlog.mjs` | read-only lifecycle views: default groups with dependency and order notes, `kanban`, and `flowchart <slug>` |
+| `dude-lightweight-execution/backlog.mjs` | read-only lifecycle views: default groups with stages and dependency and order notes, `kanban`, `flowchart <slug>`, and `progress <slug>`; `--tracked` on default and `progress` only |
 | `dude-work/driver.mjs` | autonomous Lightweight Work host integration: `claim` / `run` / `assess` / `respond` / `snapshot` / `diff` / `ownership`; its steps, flags, examples, and own exit codes are in `dude-work/COOKBOOK.md` |
 | `dude-team-expansion/scaffold-agent.mjs` | emit a lint-clean `.agent.md` skeleton (`--pack` updates `pack.md`) |
 | `dude-skill-authoring/scaffold-skill.mjs` | emit a lint-clean `SKILL.md` skeleton (`--pack` updates `pack.md`) |
@@ -2181,7 +2225,11 @@ Completed groups, then dependency and order notes: whether
 `depends-on:` dependency, each feature whose dependency data is unavailable, and
 any provisional relationship stated in an idea body, which never changes
 grouping. `kanban` prints current work as Mermaid, and `flowchart <slug>` prints
-one defined package's task graph.
+one defined package's task graph. Each record in the default form carries its
+stage. `progress <slug>` prints one item's report, selected by its exact
+frontmatter slug. `--tracked` is valid only on the default and `progress`
+forms; it leaves defined stages unavailable and phases not exposed rather
+than reading them from the Markdown mirror.
 
 ### Repo layout: source vs built bundle
 

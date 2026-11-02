@@ -2042,7 +2042,7 @@ test('T030 retired backlog report leaves only read-only views, source-generated 
     /Dude no longer updates `\.dude\/backlog\.md` or `\.dude\/backlog\.html`; if your project has copies from an earlier version, you can delete them\./,
   ]);
   assertGuidanceMatchesAll('docs/commands.md', [
-    /\| `dude-lightweight-execution\/backlog\.mjs` \| read-only lifecycle views: default groups with dependency and order notes, `kanban`, and `flowchart <slug>` \|/,
+    /\| `dude-lightweight-execution\/backlog\.mjs` \| read-only lifecycle views: default groups with stages and dependency and order notes, `kanban`, `flowchart <slug>`, and `progress <slug>`; `--tracked` on default and `progress` only \|/,
     /`backlog\.mjs` never writes\. Its default form prints the Current, Planned, and Completed groups, then dependency and order notes/,
     /provisional relationship stated in an idea body, which never changes grouping/,
   ]);
@@ -2164,13 +2164,14 @@ test("T005 cross-idea backlog binds lifecycle semantics and read-only status for
     "then dependency and order notes",
     "node .github/skills/dude-lightweight-execution/backlog.mjs kanban --root .",
     "node .github/skills/dude-lightweight-execution/backlog.mjs flowchart <slug> --root .",
+    "node .github/skills/dude-lightweight-execution/backlog.mjs progress <slug> --root .",
     "Mermaid for current work only",
     "No explicit feature order declared",
   ]);
   assertSectionRuleRejectsMutations(
     relative,
     heading,
-    "`@dude status` invokes the generated `backlog.mjs` read-only in three forms. Each renders on demand in the reply and writes no file:",
+    "`@dude status` invokes the generated `backlog.mjs` read-only in four forms. Each renders on demand in the reply and writes no file:",
   );
 });
 

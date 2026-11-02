@@ -7,7 +7,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { inventoryLifecycleIdentities } from '../dude-engine/lib/feature.mjs';
+import {
+  CANONICAL_IDEA_KEYS,
+  IDEA_CLASSIFICATION_KEYS,
+  inventoryLifecycleIdentities,
+} from '../dude-engine/lib/feature.mjs';
 import {
   parseFrontmatterScalars,
   parseIdeaIdentity,
@@ -24,7 +28,7 @@ const STAGE_NAMES = Object.freeze([
   'plan.md',
   'tasks.md',
 ]);
-const OWNER_KEYS = Object.freeze(['title', 'slug', 'status', 'spec_path', 'depends-on']);
+const OWNER_KEYS = CANONICAL_IDEA_KEYS;
 const REQUIRED_OWNER_KEYS = Object.freeze(['title', 'slug', 'status', 'spec_path']);
 const PROTECTED_SECTIONS = Object.freeze(['Idea', 'Open Questions', 'Assumptions']);
 const LEVEL_TWO_HEADING = /^ {0,3}##(?:[ \t]+|$)/;
@@ -211,10 +215,10 @@ function validateOwnerTransition(current, staged, specPath) {
 
   const currentLines = scanMarkdownVisibility(current, 'current idea', 'generic').lines;
   const stagedLines = scanMarkdownVisibility(staged, 'staged idea', 'generic').lines;
-  for (const key of ['title', 'slug', 'depends-on']) {
+  for (const key of ['title', 'slug', 'depends-on', ...IDEA_CLASSIFICATION_KEYS]) {
     const currentScalar = currentFrontmatter.scalars.get(key);
     const stagedScalar = stagedFrontmatter.scalars.get(key);
-    if (key === 'depends-on' && !currentScalar && !stagedScalar) continue;
+    if (!REQUIRED_OWNER_KEYS.includes(key) && !currentScalar && !stagedScalar) continue;
     const currentLine = currentScalar && currentLines[currentScalar.lineIndex];
     const stagedLine = stagedScalar && stagedLines[stagedScalar.lineIndex];
     if (!currentLine || !stagedLine

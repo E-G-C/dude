@@ -1,8 +1,8 @@
 ---
 title: Work Type Presentation
 slug: work-type-presentation
-status: draft
-spec_path:
+status: defined
+spec_path: .dude/specs/067-work-type-presentation/spec.md
 ---
 
 # Idea: Work Type Presentation
@@ -10,6 +10,26 @@ spec_path:
 ## Idea
 
 Captured bugs should not be presented as ideas or features just because they share Dude's idea container. Capture the accepted recommendation for later: show work type separately from lifecycle stage across Canvas capture, lists, and details, following GitHub's familiar issue-type versus workflow-state distinction.
+
+At 2026-10-23T16:30:21.227Z, the user wrote about this proposal:
+
+> Intent and Domain, this doe snot make sense to ask to the user. These are internals concepts. Think for a user perspective , review your work.
+
+At 2026-10-23T16:33:41.269Z, when Dude proposed capturing that correction here and then revising the definition and mock together, the user replied:
+
+> why you stopp[ed and skeme the obvious, do it
+
+With that reply, the user authorized this correction: people say what they want done in their own words and are never asked for intent or domain. Dude works out the classification itself, keeps it as an internal note, and shows it, if at all, only in plain words once it is established.
+
+At 2026-10-29T12:52:47.779Z, the user wrote:
+
+> a note, I'm not statisfied wit the current UI, however for the current features shoul I focus on the concepts rather that UI , i owuld tha be a fair statemett?
+
+Dude agreed and recommended splitting 067: 067 would keep the concepts and change no screens, so it would need no mock, while its Canvas parts would move to a later UI feature along with the user's UI concerns, and 087 would wait for that feature too.
+
+At 2026-10-29T12:56:40.960Z, the user replied:
+
+> split 067
 
 ## Open Questions
 
@@ -51,6 +71,54 @@ Questions 10 and 11 come from the discussion under Progress Reporting below and 
 No user-supplied assumptions recorded.
 
 <!-- dude:managed:start -->
+## Split: Concepts Stay, Canvas Moves To 089
+
+On 2026-10-29 the user asked whether current features should focus on concepts rather than the UI, and then chose to split this idea; both messages are quoted under Idea above. This section takes precedence over every earlier statement in this ledger that this idea will change Canvas screens, capture, wording, or presentation, including the parts of Correction: Classification Stays Internal, Current Direction In Plain Words, and Progress Reporting that say Canvas will show these concepts. Where an older section says otherwise, this section wins.
+
+What stays in 067 is the concepts, read through chat:
+
+- How Dude records the kind of work: the internal intent and domain note described under Correction: Classification Stays Internal below, which every existing workflow must accept and preserve. People are still never asked for it.
+- One shared stage rule.
+- A read-only progress report, assembled in one place outside Canvas so that 089 and any later reader, such as 087, receive the same report. `@dude status` is its first reader: the status overview shows each item's stage, and a status request about one item shows that item's report, with any recorded classification in plain words and nothing when none is recorded. Chat cannot see current requests for the user, so the report says that part is unavailable instead of claiming that nothing is waiting.
+
+067 changes no Canvas screen, so it needs no mock and no longer waits for mock approval. Canvas keeps showing what it shows today until 089 changes it, so most of these concept changes stay out of sight there until then.
+
+What moved to `.dude/ideas/089-dude-canvas-redesign.md`, along with the user's concerns about the current UI:
+
+- Neutral work-item wording in Canvas
+- The capture form's copy and status messages
+- Classification words in the Canvas work list and details
+- The stage and progress report shown in Canvas, including the stage words Canvas shows today
+- Waiting for you, based on the Canvas request feed
+- 067's design gate and its list of existing workspace parts to keep
+
+The spec at `.dude/specs/067-work-type-presentation/spec.md` lists the exact requirement and success-criterion IDs that moved. The mocks and verification under `.dude/specs/067-work-type-presentation/design/` stay where they are as reference input for 089; that folder also holds `pre-split-spec.md` and `pre-split-plan.md`, word-for-word copies of the spec and plan as they stood before the split, and nothing in it approves anything.
+
+The user's answer to question 3 kept this idea to presentation plus the classification its own Canvas screens need. With the split, those screens belong to 089, which will present the concepts that 067 defines; the answer slot itself is unchanged.
+
+087 now waits for 089, as Dude recommended and the user accepted with `split 067`. That is sequencing, not a declared dependency, and lifecycle numbers still show capture order only.
+
+## Correction: Classification Stays Internal
+
+On 2026-10-23 the user rejected asking people for intent and domain, calling them internal concepts, and authorized this correction; both messages are quoted under Idea above. It replaces every earlier statement in this ledger that people choose, confirm, or maintain intent or domain, including the question 1 disposition under Definition Disposition and the round 2 mock's capture fields. Where an older section says otherwise, this section wins.
+
+What people see:
+
+- Capture asks only for what the person wants, in their own words. It has no Intent or Domain field, no renamed category question, no hidden required value, no confirmation step for classification, and no text that teaches the categories. Making such a field optional would not remove the effort of reading and judging it.
+- Submit, Save, and Cancel keep their meanings: Submit saves the description and continues brainstorming in chat, Save keeps it for later and starts nothing else, and Cancel returns to Needs you and keeps the draft.
+- When capture cannot be sent, Canvas says why in plain words and names the next step, for example "Finish the pending question in Needs you before submitting. Your draft is kept." Wording such as "Waiting for the joined agent" and explanations of unfiled scope, owners, or internal metadata leave the capture form. The idle, current-request, cancellation, delivery, and uncertainty rules underneath stay as they are.
+- Lists and details lead with the title and description, the stage, the next useful step, any current request for the person, and truthful progress. Once Dude has established the classification, it can appear as quiet plain words, such as Fix · Code. Until then nothing appears: no Not set, Other, or Unrecognized text, no warning badge, and no instructions for maintaining it. A missing classification is not missing work, and it never reads as an unavailable record or run state.
+
+How Dude handles it:
+
+- Dude classifies the work itself from the person's unchanged description and the actual project context, through the existing brainstorm intake and Spec Lead normalization. No browser rule, title pattern, external classifier, new service, confidence store, or approval queue is involved.
+- The result is Dude's advisory internal note. It is not the person's words, it grants no permission, and it changes no route or gate. The person's original text is always kept.
+- When the classification is unclear, Dude leaves it out. Dude may ask one plain-language question when the outcome, scope, or route is genuinely unclear, but never only to complete the classification.
+- The note is kept once, in the optional `work_intent` and `work_domain` values of the existing ledger, and Canvas reads it through the existing projection; a later 087 view would read the same values. A capture or an explicit brainstorm can record it. If the person says it is wrong, their word wins, and Dude never replaces a recorded value by inference.
+- Existing records stay unclassified until a capture or brainstorm of that record establishes a value. Nothing is filled in bulk, and classification is never a prerequisite for definition or Work.
+
+This correction gives Dude no new permission to rewrite the person's words, redefine work, or act on an unknown value. It changes no permissions, routing, or gates, rewrites no unrelated history, and leaves the separate drafts 087 and 088 unchanged.
+
 ## Current Direction In Plain Words
 
 At 2026-10-19T19:47:07.882Z, the user described how this idea relates to 087:
@@ -61,11 +129,11 @@ Dude reads "677" there as this idea, 067. Dude then recommended a direction, and
 
 > we agree, capture in hte brainstorom the analysis so far, then recap ELI5,  ADHD  what would be the design and architecture, add mermaid driagrams to the idea to visualize the intent or idea,
 
-This section restates the agreed direction in plain words. The agreement does not accept every earlier label, proposal, or candidate outcome in this ledger, and it approves no schema, interface, mockup, or implementation. Points marked as Dude's recommendation or as open are not part of it. Progress Reporting below adds a later agreement under the same limits.
+This section restates the agreed direction in plain words. The agreement does not accept every earlier label, proposal, or candidate outcome in this ledger, and it approves no schema, interface, mockup, or implementation. Points marked as Dude's recommendation or as open are not part of it. Progress Reporting below adds a later agreement under the same limits. The 2026-10-23 correction above changes how intent and domain are recorded and shown, and the parts of this section that touch them now follow it.
 
 ### What You Would See
 
-Every work item would answer three questions:
+Dude would keep three separate answers for every work item:
 
 | Question | Term | Example |
 | --- | --- | --- |
@@ -73,15 +141,16 @@ Every work item would answer three questions:
 | What kind of work is it? | Domain | Code |
 | How far has it got? | Stage | In progress |
 
-Canvas lists and details would show all three, so an item might read Fix / Code / In progress. That is an example, not the status of any real item, and the exact words are still open.
+Canvas lists and details would always show the stage, and would show intent and domain in plain words only once Dude has established them, so an item might read Fix / Code / In progress, or just In progress. That is an example, not the status of any real item, and the exact words stay provisional until a mock is approved.
 
 - The three answers stay separate. Today Canvas uses one label, idea or feature, for both the kind of work and its stage, which is how a confirmed bug came to read as an idea.
 - Canvas would work out the stage from evidence Dude already records, such as whether the idea is defined and how its tasks stand. Nobody would enter it by hand.
+- Nobody enters intent or domain either. Dude works them out from the person's own description and the project, and leaves them out when it cannot tell.
 - The domain belongs to the request, whatever is installed. A video request is still Video when no installed pack can produce video.
 
 ### How It Works Underneath
 
-Intent and domain would be saved once, in the record Dude already keeps for the item. Lifecycle numbers, paths, and other current identities stay as they are. Canvas would read the saved values through its existing projection, the code that already gathers Dude's records into its lists and details. This idea would extend that code, not copy it. Saved values and on-screen words stay separate, so wording can change without rewriting records.
+Intent and domain would be saved once, as Dude's internal note in the record it already keeps for the item. Lifecycle numbers, paths, and other current identities stay as they are. Canvas would read the saved values through its existing projection, the code that already gathers Dude's records into its lists and details. This idea would extend that code, not copy it. Saved values and on-screen words stay separate, so wording can change without rewriting records.
 
 Later, 087 would read the same values the same way, instead of parsing labels or keeping its own copy. It would also bring information from its own sources: installed capabilities, proposed routes, and handoffs that actually happened. "Fix / Code" alone says nothing about which agent did the work.
 
@@ -101,22 +170,23 @@ graph TD
 
 ### Fixing A Wrong Value
 
-If an item's domain is wrong, such as Writing where it should be Design, one correction would update every view that reads the record, including a future 087 view. The correction changes no lifecycle stage and starts no work. How a correction, or a value Dude suggests, becomes saved is still open under question 1.
+If an item's recorded domain is wrong, such as Writing where it should be Design, the person tells Dude in chat, in their own words. Dude records what the person said once, and every view that reads the record shows it, including a future 087 view. The change touches no lifecycle stage and starts no work. Dude never replaces a recorded value by inference, and when it cannot tell, it records and shows nothing.
 
-Diagram 2, proposed: showing and correcting intent and domain. The open step is marked as needing clarification.
+Diagram 2, revised on 2026-10-23: how Dude records, shows, and corrects intent and domain. Nobody has to choose them.
 
 ```mermaid
 graph TD
-  A[Canvas shows a work item] --> B{Intent and domain recorded?}
-  B -->|Yes| C[Show the recorded values in plain words]
-  B -->|No| N[Show that a value is not set, wording open under question 2]
-  C --> E{User sets or corrects a value?}
+  A[Person describes the work in their own words] --> B{Description and project make intent and domain clear?}
+  B -->|Yes| R[Dude records them as its own note in the existing record]
+  B -->|No| K[Dude records nothing and asks no question just to classify]
+  R --> C[Canvas shows quiet plain words, for example Fix / Code]
+  K --> N[Canvas shows title, stage, and progress with no classification]
+  C --> E{Person tells Dude in chat what kind of work it really is?}
   N --> E
-  E -->|No| K[Item stays as it is]
-  E -->|Yes| Q[NEEDS CLARIFICATION: saving and confirmation policy, question 1]
-  Q --> U[Record updated, stage unchanged, nothing starts]
-  U --> L[Canvas list and details show the new value]
-  U -.->|future 087| M[087 view shows the new value]
+  E -->|No| S[Item stays as it is]
+  E -->|Yes| U[Dude records what the person said, stage unchanged, nothing starts]
+  U --> L[Canvas list and details show the new words]
+  U -.->|future 087| M[087 view shows the new words]
 ```
 
 ### Labels Do Not Grant Permission
@@ -180,6 +250,8 @@ Running Ship across several related features toward a shared, Epic-like outcome 
 This idea covers only what its own Canvas screens need now, including the progress report above. Naming 087 as a later reader justifies no extra fields, infrastructure, or 087 work. Graph rendering, workflow authoring, formal lifecycle hooks, new routing instrumentation, and cross-feature execution stay out. Workflow composition remains a separate outcome with no idea of its own, and 087 and `multi-feature-ship` stay separate drafts. The user wants to work on this idea first; lifecycle numbers still show capture order only.
 
 ### Still Open
+
+These points were open on 2026-10-19. Definition later settled questions 1, 2, 10, and 11 under Definition Disposition below, and the 2026-10-23 correction above replaced the parts about suggesting, saving, and showing a value that is not set.
 
 - Question 1, narrowed by the agreement to the existing work record: which exact fields hold intent and domain, how a suggestion or correction becomes a saved value, and what happens to existing records.
 - Question 2: initial wording for intent, domain, and stage, including whether Improve or Change joins the provisional Create, Fix, Maintain, and Explore, and how to show a value that is not set.
@@ -456,6 +528,32 @@ Each part has a different home:
 - This idea covers the presentation of intent, domain, and stage, and the shared classification behind it.
 - What each intent means, and how packs realize it, belongs to the uncaptured composition outcome in question 7.
 - 087 would later read the same classification through the same Canvas path and add its own sources, such as which domains have an installed producer.
+
+## Definition Disposition
+
+On 2026-10-29 the user's split, recorded under Split: Concepts Stay, Canvas Moves To 089 above, removed every Canvas screen from this package and ended its design gate. The design, mock, and task-hold statements below remain as history, and the last paragraph describes the current definition.
+
+On 2026-10-23 the user's correction, recorded under Correction: Classification Stays Internal above, superseded the question 1 disposition below and the round 2 mock's Intent and Domain capture fields. Those parts remain here as history.
+
+At 2026-10-20T01:57:02Z, under the user's explicit `@dude ship work-type-presentation`, the Spec Lead staged this first definition at `.dude/specs/067-work-type-presentation/spec.md`, reusing this ledger's number, title, and slug. Design is exploring. The primary mock will be authored at `.dude/specs/067-work-type-presentation/design/work-type-presentation.html` after publication, and `tasks.md` holds no task units until the user explicitly approves that exact mock.
+
+The answer slots above remain the user's and are unchanged. The choices below are Ship-authorized definition-owner dispositions drawn from the agreed direction and recorded evidence, not user answers. Each is reversible before implementation, and approving the mock confirms or changes the wording it shows.
+
+- Question 1, superseded on 2026-10-23: intent and domain are saved once in this record, only from the user's explicit choice in Canvas capture or in chat. Chat brainstorm is the correction route, so Canvas explains it and shows no edit control. Existing records stay Not set; nothing is inferred or filled in bulk. Definition and Work leave the values unchanged.
+- Question 2: the provisional intents are Create, Fix, Maintain, and Explore. Improve is not added now, because the 2026-10-15 scenario pass found no unmet need and a value added later breaks no record. The provisional domains are Code, Design, Writing, Video, and Other, with one primary domain and no contributing domains. Stages are Captured, Defined, In progress, Blocked, Completed, and Closed, derived from recorded evidence only.
+- Question 10: details show the stage, the current recorded phase or phases, the recorded design status, and required gates, each with its source, and summarize missing parts in one sentence. An unavailable request source reads as unavailable, never None.
+- Question 11: definitions may already name task phases in their domain's terms, and Canvas shows the recorded headings. Waiting for you appears only for a current request for this exact record; blank answer slots show nothing.
+- Questions 4 to 7 stay outside this package, following the answer to question 3.
+
+At 2026-10-20T05:53:08Z, under the same Ship, the Spec Lead settled the design to proposed. The round 2 canonical mock, authored by FluentUI in the design loop rather than by this definition, now exists at the path above and renders Option A: intent and domain as quiet secondary metadata in the existing workspace. It is a proposal, not an approved design, and `tasks.md` still holds no task units.
+
+At 2026-10-23T16:35:12Z, with the user's authorization of the correction above, the Spec Lead refined this definition. Capture asks only for the description and keeps today's capture request, Dude records intent and domain internally during capture or brainstorm when they are clear, and Canvas shows recorded values as quiet plain words and nothing otherwise. Other is dropped from the internal domains, because nobody picks a domain and an unrecorded domain already covers work outside the list. Design is exploring again: the round 2 mock at the path above is history for the rejected capture fields, the revised mock is not yet rendered, and `tasks.md` still holds no task units. The other dispositions above still stand.
+
+At 2026-10-23T18:22:14Z, the Spec Lead settled the design to proposed again. The round 3 canonical mock at the path above, authored in the design loop rather than by this definition, renders the correction: one description field with Submit, Save, and Cancel, recorded classification only as quiet plain words, nothing for an unknown value, and plain reasons for each status. It is a proposal, not an approved design, and `tasks.md` still holds no task units.
+
+Until the split, explicit approval of the exact canonical mock was the human-only gate before UI source changes or task derivation.
+
+At 2026-10-29T13:15:05Z, under the user's `split 067`, the Spec Lead re-defined this package at `.dude/specs/067-work-type-presentation/spec.md` without a design workflow. The package keeps the internal classification, the shared stage rule, and the read-only progress report, with `@dude status` as their first reader, and changes no Canvas screen. `tasks.md` now holds two serial open units: the classification foundation, then the status-backed progress report. The question dispositions above still stand for what stays here; where they describe Canvas details, Canvas wording, or the mock, that part moved to 089. Existing project and bundle guardrails cover this feature, and no guardrail candidate arose. This definition includes no implementation, task state, or Git action.
 <!-- dude:managed:end -->
 
 ## Coordinator Log
@@ -467,3 +565,17 @@ Each part has a different home:
 - 2026-10-19T18:24:51Z - brainstorm: Recorded the user's answer that this idea should show both intent and domain, and the user's intent-at-core framing with Dude's feedback; corrected the animation-pack, manifest, and pack-coupling facts; moved question 8 to 087 as its question 3; still draft, with no definition.
 - 2026-10-19T19:59:04Z - brainstorm: Recorded the user's agreement that this idea sets up the shared classification its own Canvas screens need, with 087 as a later reader, and answered question 3 from it; refined Dude's earlier analysis in place on domains without a producer, requested action versus intent, provisional intent names, Explore outputs, illustrative evidence, pack stages, and routing-map evidence; added a plain-language design and architecture recap with three Mermaid diagrams; still draft, with no definition or implementation.
 - 2026-10-19T22:10:35Z - brainstorm: Recorded the user's agreement to plan a minimal read-only progress report in this idea, keeping stage, domain phase, checkpoint, and gate apart and reading only existing evidence; noted today's partial phase support, corrected Dude's chat remark that no process is running, and added questions 10 and 11; recorded that Epic and multi-feature Ship are captured separately as `multi-feature-ship`, staged for first-capture publication; still draft, with no definition or implementation.
+- 2026-10-20T01:57:02Z - define: Staged first definition at .dude/specs/067-work-type-presentation/spec.md under the user's explicit Ship, with spec, plan, and header-only tasks; design is exploring, and the primary mock at .dude/specs/067-work-type-presentation/design/work-type-presentation.html is not yet created. Recorded Ship-authorized definition-owner dispositions for questions 1, 2, 10, and 11 and kept questions 4 to 7 out of scope without editing answer slots; explicit user approval of the exact mock remains required before task derivation or UI source changes. No new guardrails, implementation, task state, or Git action.
+- 2026-10-20T02:43:20Z - route: Assigned the canonical mock at .dude/specs/067-work-type-presentation/design/work-type-presentation.html to FluentUI within the Architect's capability envelope and the published spec's scenario matrix. Extend the existing Canvas workspace and preserve design variants; no product-source edits or implementation tasks before explicit approval of the exact mock.
+- 2026-10-20T05:53:08Z - define: Settled the design in .dude/specs/067-work-type-presentation/spec.md to proposed under the user's explicit Ship. Option A is rendered by the round 2 canonical mock at .dude/specs/067-work-type-presentation/design/work-type-presentation.html, and the Tester's final verification of that revision passed with four recorded observations; approved_direction stays empty. Recorded the mock's proposed labels Text to save and Captured description, and reconciled the plan's progress contract with the recorded design status and request source the mock shows. Not approved: tasks.md stays header-only, and explicit user approval of the exact mock remains required before task derivation or UI source changes. No implementation, task state, new guardrail, or Git action.
+- 2026-10-20T13:36:57Z - define: Recorded the preview packaging repair in .dude/specs/067-work-type-presentation/spec.md under the user's explicit Ship. The canonical mock at .dude/specs/067-work-type-presentation/design/work-type-presentation.html rendered blank in the GitHub Copilot app, whose preview served it from a browser-preview-local.localhost origin; a replica of that origin showed the round 2 content security policy blocking the separate runtime script. The HTML at the same path now embeds the unchanged runtime as one self-contained file, raw sha256:c5c35834d4394a34d25ad99c6c853e97d4b75e5ef11bb6a7597ce194e0406529, and the pre-fix files are preserved under .dude/specs/067-work-type-presentation/design/variants/round-2-before-embedded-fix/. An independent Tester verified the fix only in headless Edge, at that replica and from a file URL; a refresh in the app is still needed to confirm that it renders there. UI, fixtures, themes, and the header-only tasks.md are unchanged. Not approved: approved_direction stays empty, and explicit user approval of the exact mock remains required before task derivation or UI source changes. No product source, task state, or guardrail changed.
+- 2026-10-23T16:35:12Z - brainstorm: Recorded under Idea the user's 2026-10-23 feedback that intent and domain are internal concepts that people should not be asked for, and the user's authorization to capture this correction before revising the definition and mock. Added Correction: Classification Stays Internal: capture asks only for the outcome in the person's words, Dude classifies internally when clear and leaves it out otherwise, and Canvas shows classification only as quiet plain words once recorded. Revised Diagram 2 and the current-direction text to match, and marked the question 1 disposition and the round 2 capture fields as superseded history. Status stays defined with the same spec_path; open questions, answers, and assumptions are unchanged. No definition, mock, task, or implementation change.
+- 2026-10-23T16:35:12Z - define: Refined the definition at .dude/specs/067-work-type-presentation/spec.md, with its plan and tasks, from the 2026-10-23 correction at the user's authorization. Capture asks only for the description and keeps today's request shape; Dude records intent and domain internally when clear, with Other dropped from the internal domains; Canvas shows recorded values as quiet plain words and nothing otherwise; capture messages state their reason and next step in plain words. design_status returns to exploring with approved_direction empty and preview_path unchanged; the round 2 mock and its verification are history, and the revised mock is not yet rendered. tasks.md stays header-only, with zero task units kept, changed, dropped, or added. No implementation, task state, new guardrail, or Git action.
+- 2026-10-23T17:16:19Z - route: Assigned the round 3 canonical mock at .dude/specs/067-work-type-presentation/design/work-type-presentation.html to FluentUI for the user's text-first capture correction. Remove classification controls, placeholders, and maintenance instructions; retain useful progress and the self-contained preview packaging. Preserve round 2 and all prior evidence; no product implementation or approval.
+- 2026-10-23T18:22:14Z - define: Settled the design in .dude/specs/067-work-type-presentation/spec.md to proposed after the user's text-first correction. The round 3 canonical mock at .dude/specs/067-work-type-presentation/design/work-type-presentation.html, raw sha256:a583bd230b85e3bdabf9932e6d42f49252b3fb833c19732c3999625e9a24aeb2 with embedded runtime sha256:c0fb9406dda7ec20d5f8a410dbd09d833d63d8c406a5d433be586c8d6feb7e4a, has one description field with Submit, Save, and Cancel, shows recorded classification only as quiet words and nothing for unknown values, and states actual status reasons in plain words; round 2 and the initial round 3 stay under .dude/specs/067-work-type-presentation/design/variants/. The plan's shared projection also exposes the normalized workIntent and workDomain tokens beside classificationWords, so later readers such as 087 need not parse display words. Not approved: approved_direction stays empty, and tasks.md stays header-only, with zero task units kept, changed, dropped, or added. Explicit user approval of the exact mock remains required before task derivation or UI source changes. This definition changed no product source, mock, task state, or guardrail and took no Git action.
+- 2026-10-29T13:15:05Z - brainstorm: Recorded under Idea the user's 2026-10-29 question about focusing current features on concepts rather than UI and the reply `split 067`, and added a managed split section that keeps the internal classification, the shared stage rule, and the read-only progress report here, moves the Canvas parts to .dude/ideas/089-dude-canvas-redesign.md, and records 087's wait for 089 as accepted sequencing, not a declared dependency; status stays defined with the same spec_path, and open questions, answers, and assumptions are unchanged.
+- 2026-10-29T13:15:05Z - define: Re-defined .dude/specs/067-work-type-presentation/spec.md, with its plan and tasks, as a concept-only package under the user's `split 067`, with classification admission first and then the shared stage rule and read-only progress report read through `@dude status`, no Canvas change, the design workflow and mock gate removed, the moved requirement IDs and removed plan sections mapped for 089, byte-exact copies of the pre-split spec and plan added as .dude/specs/067-work-type-presentation/design/pre-split-spec.md and .dude/specs/067-work-type-presentation/design/pre-split-plan.md, the design folder kept as reference input that approves nothing, and two new serial open task units with none kept, changed, or dropped; no implementation, task state, new guardrail, or Git action.
+- 2026-10-30T21:08:51Z - execution-reconciliation: Applied the independently reviewed concept-only re-definition stage and two new serial open task units, T001@5e2b9c71 and T002@a83f0d46 (deps: T001@5e2b9c71), with no inherited state; kept 0, changed 0, dropped 0, new 2. The earlier package had no task units, archive, discovered work, or execution history to transfer. Preserved user sections and append-only history, kept the earlier Canvas mocks plus byte-exact copies of the pre-split spec and plan under the package's design folder as reference input for .dude/ideas/089-dude-canvas-redesign.md, recorded the task snapshot, and observed zero lint failures inside the rollback boundary. No implementation has started.
+- 2026-10-30T21:23:50Z - work: Claimed T001@5e2b9c71 for the user-authorized autonomous Work invocation; implementation has not started.
+- 2026-11-02T18:46:18Z - work: Claimed T002@a83f0d46 for the user-authorized autonomous Work invocation; implementation has not started.
+- 2026-11-02T21:33:47Z - work: Closed Work Type Presentation: both live canonical tasks (T001@5e2b9c71, T002@a83f0d46) are done through autonomous Work in the Ship invocation, each on its second attempt after a verification failure in an installed-host chat check (T001: a vague brainstorm recorded a classification; T002: the status reply summarized the progress report), with independent Tester and Reviewer acceptance of every attempt and no Canvas change. The one Rubber Duck retrospective dispatch completed and is recorded in retrospective.md. Nothing is committed; Git delivery awaits the user's decision.

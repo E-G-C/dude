@@ -59,6 +59,7 @@ Canvas **New idea** and an unfiled **Save as idea** use this same intake and mat
 - Set `status: draft` with an empty `spec_path:` only for a first or still-undefined draft. A brainstorm rerun of a ledger already at `status: defined` preserves that status and its exact `spec_path:`; never demote it or orphan its package.
 - A normal refresh of an exact `status: resolved` ledger preserves its empty path, retains its numbered physical path, and allocates no number. Reopen it only when the user explicitly asks to reopen through `brainstorm <slug>`; then return it to draft with an empty path and append one lifecycle event without allocating another number.
 - If the input contains separate bounded outcomes, ask one split question or propose separate idea ledgers.
+- Never ask a question only to classify work. The delegated Spec Lead may record an internal classification under the `dude-feature-definition` `## Brainstorm` rule.
 
 The user controls `## Idea`, open-question answers, and `## Assumptions`; during explicit brainstorm the delegated Spec Lead preserves them and maintains definition metadata, managed sections, and definition log events.
 

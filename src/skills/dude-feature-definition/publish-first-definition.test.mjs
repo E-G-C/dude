@@ -321,6 +321,73 @@ test("real CLI publishes a valid direct draft and exact five-file stage", () => 
   });
 });
 
+test("067 Work type: first definition preserves classified scalars and unclassified bytes", () => {
+  for (const lines of [
+    "work_intent: fix\n",
+    "work_domain: code\n",
+    "work_intent : \"fix\"  \nwork_domain:\t'code'\t\n",
+    "work_intent:\nwork_domain: unknown\n",
+    "",
+  ]) {
+    withFixture(({ root, stage, stageBytes }) => {
+      for (const name of ["current-idea.md", "staged-idea.md"]) {
+        stageBytes[name] = replaceBytes(stageBytes[name], "---\n\n## Idea", `${lines}---\n\n## Idea`);
+      }
+      write(root, IDEA_PATH, stageBytes["current-idea.md"]);
+      writeStage(stage, stageBytes);
+      writeSamePrefixPeer(root);
+      const before = snapshotTree(root);
+
+      const result = publish(root, stage);
+
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stderr, "");
+      assert.equal(result.stdout, `${SPEC_PATH}\n`);
+      assert.deepEqual(snapshotTree(root), expectedSuccessTree(before, stageBytes));
+      assertNoAtomicTempResidue(root);
+    });
+  }
+});
+
+test("067 Work type: first definition refuses added, removed, or changed classification lines before writes", () => {
+  for (const [key, value, other] of [
+    ["work_intent", "fix", "create"],
+    ["work_domain", "code", "design"],
+  ]) {
+    const line = `${key}: ${value}\n`;
+    for (const [name, currentLine, stagedLine] of [
+      ["value", line, `${key}: ${other}\n`],
+      ["addition", "", line],
+      ["removal", line, ""],
+      ["quotes", line, `${key}: "${value}"\n`],
+      ["spacing", line, `${key}:\t${value}\n`],
+      ["line ending", line, `${key}: ${value}\r\n`],
+    ]) {
+      withFixture(({ root, stage, stageBytes }) => {
+        stageBytes["current-idea.md"] = replaceBytes(
+          stageBytes["current-idea.md"], "---\n\n## Idea", `${currentLine}---\n\n## Idea`,
+        );
+        stageBytes["staged-idea.md"] = replaceBytes(
+          stageBytes["staged-idea.md"], "---\n\n## Idea", `${stagedLine}---\n\n## Idea`,
+        );
+        write(root, IDEA_PATH, stageBytes["current-idea.md"]);
+        writeStage(stage, stageBytes);
+        const before = snapshotTree(root);
+
+        const result = publish(root, stage);
+
+        assert.ifError(result.error);
+        assert.equal(result.status, 1, `${key} ${name}`);
+        assert.equal(result.stdout, "");
+        assert.equal(result.stderr, `[FAIL] staged idea must preserve ${key} bytes\n`, name);
+        assert.deepEqual(snapshotTree(root), before);
+        assertNoAtomicTempResidue(root);
+      });
+    }
+  }
+});
+
 test("canonical lint failure rolls back the owner and helper-created package tree", () => {
   withFixture(({ root, stage, stageBytes }) => {
     // Arrange

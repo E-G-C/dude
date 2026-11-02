@@ -13,6 +13,8 @@ import {
   resolveIdeaSelector,
   selectLifecycleIdeaSummary,
 } from './feature.mjs';
+import * as featureRuntime from './feature.mjs';
+import { parseFrontmatterScalars } from './feature-identity.mjs';
 
 const MODULE = fileURLToPath(new URL('./feature.mjs', import.meta.url));
 
@@ -86,6 +88,98 @@ function observeReadPaths(operation) {
     fs.readFileSync = originalReadFileSync;
   }
 }
+
+test('067 Work type: classification reads only the allowed tokens and leaves scalars unchanged', () => {
+  const { IDEA_CLASSIFICATION_KEYS, WORK_INTENTS, WORK_DOMAINS, readWorkClassification } = featureRuntime;
+  assert.deepEqual(IDEA_CLASSIFICATION_KEYS, ['work_intent', 'work_domain']);
+  assert.deepEqual(WORK_INTENTS, ['create', 'fix', 'maintain', 'explore']);
+  assert.deepEqual(WORK_DOMAINS, ['code', 'design', 'writing', 'video']);
+  assert.deepEqual(featureRuntime.CANONICAL_IDEA_KEYS, [
+    'title', 'slug', 'status', 'spec_path', 'depends-on', 'work_intent', 'work_domain',
+  ]);
+  const read = (lines) => {
+    const { scalars } = parseFrontmatterScalars(`---\n${lines}---\n`);
+    const before = structuredClone(scalars);
+    const result = readWorkClassification(scalars);
+    assert.deepEqual(scalars, before);
+    return result;
+  };
+  assert.deepEqual(read(''), { workIntent: null, workDomain: null });
+  for (const workIntent of WORK_INTENTS) {
+    assert.deepEqual(read(`work_intent: ${workIntent}\n`), { workIntent, workDomain: null });
+    for (const workDomain of WORK_DOMAINS) {
+      assert.deepEqual(read(`work_intent: ${workIntent}\nwork_domain: ${workDomain}\n`), {
+        workIntent, workDomain,
+      });
+    }
+  }
+  for (const workDomain of WORK_DOMAINS) {
+    assert.deepEqual(read(`work_domain: ${workDomain}\n`), { workIntent: null, workDomain });
+  }
+  for (const value of ['', '""', "''", 'unknown', 'Fix', 'code video']) {
+    assert.deepEqual(read(`work_intent: ${value}\nwork_domain: ${value}\n`), {
+      workIntent: null, workDomain: null,
+    }, value);
+  }
+  assert.deepEqual(read('work_intent: fix\nwork_domain: unknown\n'), { workIntent: 'fix', workDomain: null });
+  assert.deepEqual(read('work_intent:\nwork_domain: design\n'), { workIntent: null, workDomain: 'design' });
+});
+
+test('067 Work type: classification does not change inventory, selectors, ownership, or unclassified bytes', () => {
+  const root = temporaryRoot();
+  try {
+    define(root, '001', 'defined');
+    write(root, '.dude/ideas/002-draft.md', ledger('draft', '', 'draft'));
+    write(root, '.dude/ideas/003-resolved.md', ledger('resolved', '', 'resolved'));
+    write(root, '.dude/ideas/004-unclassified.md', ledger('draft', '', 'unclassified'));
+    const originals = new Map(['001-defined', '002-draft', '003-resolved'].map((stem) => {
+      const relative = `.dude/ideas/${stem}.md`;
+      return [relative, fs.readFileSync(path.join(root, relative), 'utf8')];
+    }));
+    const unclassified = fs.readFileSync(path.join(root, '.dude/ideas/004-unclassified.md'));
+    const inventory = inventoryLifecycleIdentities({ root });
+    const owner = resolveFeatureOwner({ root, specPath: '.dude/specs/001-defined/spec.md' });
+    const selection = resolveIdeaSelector({ root, slug: 'draft' });
+    for (const lines of [
+      'work_intent: fix\nwork_domain: code\n',
+      'work_intent:\nwork_domain: unknown\n',
+    ]) {
+      for (const [relative, original] of originals) {
+        write(root, relative, original.replace('---\n\n## Idea', `${lines}---\n\n## Idea`));
+      }
+      const before = snapshot(root);
+      assert.deepEqual(inventoryLifecycleIdentities({ root }), inventory);
+      assert.deepEqual(resolveFeatureOwner({ root, specPath: '.dude/specs/001-defined/spec.md' }), owner);
+      assert.deepEqual(resolveIdeaSelector({ root, slug: 'draft' }), selection);
+      assert.deepEqual(snapshot(root), before);
+      assert.deepEqual(fs.readFileSync(path.join(root, '.dude/ideas/004-unclassified.md')), unclassified);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('067 Work type: duplicate and structured classification keys keep the existing malformed diagnostic', () => {
+  const root = temporaryRoot();
+  try {
+    for (const lines of [
+      'work_intent: fix\nwork_intent: create\n',
+      'work_domain: code\nwork_domain: design\n',
+      'work_intent: [fix]\n',
+      'work_domain: {value: code}\n',
+    ]) {
+      write(root, '.dude/ideas/001-draft.md', ledger('draft', '', 'draft')
+        .replace('---\n\n## Idea', `${lines}---\n\n## Idea`));
+      assert.deepEqual(inventoryLifecycleIdentities({ root }).diagnostics.map(({ path, code, severity }) => ({
+        path, code, severity,
+      })), [{
+        path: '.dude/ideas/001-draft.md', code: 'FEATURE_FRONTMATTER_MALFORMED', severity: 'error',
+      }], lines);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('inventory returns exact records sorted by specPath then ideaPath', () => {
   const root = temporaryRoot();

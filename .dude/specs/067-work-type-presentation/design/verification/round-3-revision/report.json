@@ -1,0 +1,462 @@
+{
+  "author": "Coder, bounded mock revision; original round 3 authored by Fluent UI.",
+  "scope": "Engineering self-check of L6 and readable-empty 087; not independent verification or UI approval.",
+  "generatedAt": "2026-10-23T18:20:45.039Z",
+  "phase": "after",
+  "baselineEvidence": {
+    "report": "baseline-probe.json",
+    "source": "probe-baseline.mjs",
+    "sourceSha256": "13379ebc1defdc00d427e4006d8e349b690817fd11ce9cfac5ed619f566e5332",
+    "result": "Four L6 assertions failed as reproduced. One additional probe assertion incorrectly expected empty Activity for 087, which actually has two dated events. That initial result is retained; this probe checks the events against the unchanged snapshot."
+  },
+  "subject": {
+    "html": "a583bd230b85e3bdabf9932e6d42f49252b3fb833c19732c3999625e9a24aeb2",
+    "runtime": "c0fb9406dda7ec20d5f8a410dbd09d833d63d8c406a5d433be586c8d6feb7e4a"
+  },
+  "assertions": [
+    {
+      "pass": true,
+      "message": "Inline bytes match the raw runtime"
+    },
+    {
+      "pass": true,
+      "message": "No external JavaScript"
+    },
+    {
+      "pass": true,
+      "message": "Connections remain forbidden by CSP"
+    },
+    {
+      "pass": true,
+      "message": "Runtime remains a classic IIFE"
+    },
+    {
+      "pass": true,
+      "message": "file 912: executed the bound inline runtime"
+    },
+    {
+      "pass": true,
+      "message": "file 912: no invented task rows or count bar"
+    },
+    {
+      "pass": true,
+      "message": "file 912: no classification placeholders"
+    },
+    {
+      "pass": true,
+      "message": "file 912: zero CSP violations"
+    },
+    {
+      "pass": true,
+      "message": "file 912: zero browser errors or warnings"
+    },
+    {
+      "pass": true,
+      "message": "file 912: only the HTML document was requested"
+    },
+    {
+      "pass": true,
+      "message": "file 912: existing withheld notice retained"
+    },
+    {
+      "pass": true,
+      "message": "file 912: Tasks makes no false absence claim"
+    },
+    {
+      "pass": true,
+      "message": "file 912: Tasks says unavailable"
+    },
+    {
+      "pass": true,
+      "message": "file 912: Activity makes no false absence claim"
+    },
+    {
+      "pass": true,
+      "message": "file 912: Activity says unavailable"
+    },
+    {
+      "pass": true,
+      "message": "file 912: genuine stage unavailability retained"
+    },
+    {
+      "pass": true,
+      "message": "file 912: genuine progress unavailability retained"
+    },
+    {
+      "pass": true,
+      "message": "file 087: executed the bound inline runtime"
+    },
+    {
+      "pass": true,
+      "message": "file 087: no invented task rows or count bar"
+    },
+    {
+      "pass": true,
+      "message": "file 087: no classification placeholders"
+    },
+    {
+      "pass": true,
+      "message": "file 087: zero CSP violations"
+    },
+    {
+      "pass": true,
+      "message": "file 087: zero browser errors or warnings"
+    },
+    {
+      "pass": true,
+      "message": "file 087: only the HTML document was requested"
+    },
+    {
+      "pass": true,
+      "message": "file 087: readable draft remains Captured"
+    },
+    {
+      "pass": true,
+      "message": "file 087: legitimate empty Tasks copy unchanged"
+    },
+    {
+      "pass": true,
+      "message": "file 087: empty Tasks is not called unavailable"
+    },
+    {
+      "pass": true,
+      "message": "file 087: actual recorded Activity unchanged"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 912: executed the bound inline runtime"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 912: no invented task rows or count bar"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 912: no classification placeholders"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 912: zero CSP violations"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 912: zero browser errors or warnings"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 912: only the HTML document was requested"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 912: existing withheld notice retained"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 912: Tasks makes no false absence claim"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 912: Tasks says unavailable"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 912: Activity makes no false absence claim"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 912: Activity says unavailable"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 912: genuine stage unavailability retained"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 912: genuine progress unavailability retained"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 087: executed the bound inline runtime"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 087: no invented task rows or count bar"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 087: no classification placeholders"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 087: zero CSP violations"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 087: zero browser errors or warnings"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 087: only the HTML document was requested"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 087: readable draft remains Captured"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 087: legitimate empty Tasks copy unchanged"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 087: empty Tasks is not called unavailable"
+    },
+    {
+      "pass": true,
+      "message": "preview-host-replica 087: actual recorded Activity unchanged"
+    },
+    {
+      "pass": true,
+      "message": "Only the two mock artifacts and affected mock source changed; every other pre-existing design file is unchanged"
+    },
+    {
+      "pass": true,
+      "message": "src: unchanged (excluding installed node_modules)"
+    },
+    {
+      "pass": true,
+      "message": "library: unchanged (excluding installed node_modules)"
+    },
+    {
+      "pass": true,
+      "message": "scripts: unchanged (excluding installed node_modules)"
+    },
+    {
+      "pass": true,
+      "message": ".github: unchanged (excluding installed node_modules)"
+    },
+    {
+      "pass": true,
+      "message": "docs: unchanged (excluding installed node_modules)"
+    },
+    {
+      "pass": true,
+      "message": "README.md: unchanged (excluding installed node_modules)"
+    },
+    {
+      "pass": true,
+      "message": "Preserved initial byte copy: work-type-presentation.html"
+    },
+    {
+      "pass": true,
+      "message": "Preserved initial byte copy: work-type-presentation.js"
+    },
+    {
+      "pass": true,
+      "message": "Preserved initial byte copy: source/work-type-presentation.jsx"
+    },
+    {
+      "pass": true,
+      "message": "Owned browser processes and profile cleaned up"
+    },
+    {
+      "pass": true,
+      "message": "Owned temporary directory removed"
+    }
+  ],
+  "observations": [
+    {
+      "host": "file",
+      "number": "912",
+      "url": "file:///C:/Work/GitHubAppRepos/copilot-worktrees/dude/e-g-c-symmetrical-eureka/.dude/specs/067-work-type-presentation/design/work-type-presentation.html?scenario=M1&tone=dark&controls=hide",
+      "path": ".dude/ideas/912-export-history.md",
+      "stage": "Stage unavailable",
+      "progress": "Progress Stage Unavailable The record couldn’t be read, so its stage is unknown.",
+      "next": "Next step unavailable Current instruction unavailableThis record couldn’t be read. Task progress and detail are withheld. Refresh to read it again.",
+      "tasks": "Tasks Read only Task detail is unavailable because this record couldn’t be read.",
+      "activity": "Activity Activity is unavailable because this record couldn’t be read. Activity is separate from task verification and review results.",
+      "properties": "Selected record 912 · Title unavailable Stage unavailable · Progress not established .dude/ideas/912-export-history.md Open questions: Not exposed. These are not current requests.",
+      "counts": 0,
+      "words": 0,
+      "csp": [],
+      "executedHash": "c0fb9406dda7ec20d5f8a410dbd09d833d63d8c406a5d433be586c8d6feb7e4a",
+      "screenshot": "screenshots/round-3-revision/after-912-file.png",
+      "screenshotSha256": "5118e4b51c84712f5abe40425619c2af47e2b8648152d1f93d24024d7d75caa2"
+    },
+    {
+      "host": "file",
+      "number": "087",
+      "url": "file:///C:/Work/GitHubAppRepos/copilot-worktrees/dude/e-g-c-symmetrical-eureka/.dude/specs/067-work-type-presentation/design/work-type-presentation.html?scenario=M3&tone=light&controls=hide",
+      "path": ".dude/ideas/087-dude-canvas-routing-map.md",
+      "stage": "Captured",
+      "progress": "Progress Stage Captured From the idea ledger No definition, phase, or required gate is recorded yet. Recorded lifecycle state only. It doesn’t show live agent activity, verification, review, or release.",
+      "next": "No next step This work item is captured but not defined yet.",
+      "tasks": "Tasks Read only No tasks are recorded for this work item.",
+      "activity": "Activity 2026-10-19T18:24:51Z brainstorm: Took over question 8 from 067 as question 3, corrected what pack manifests declare, and added which views current records can support and a domain-coverage proposal; still draft, with no definition. 2026-10-19T14:59:35Z brainstorm: Staged the routing-map UI that the user explicitly asked to capture during the 067 pack-owned workflow discussion, as a separate draft for coordinator first-capture publication and a future brainstorm. No definition package, tasks, mock, or implementation was created. Activity is separate from task verification and review results.",
+      "properties": "Selected record 087 · Dude Canvas Routing Map Captured · Progress not established .dude/ideas/087-dude-canvas-routing-map.md Open questions: 3. These are not current requests.",
+      "counts": 0,
+      "words": 0,
+      "csp": [],
+      "executedHash": "c0fb9406dda7ec20d5f8a410dbd09d833d63d8c406a5d433be586c8d6feb7e4a",
+      "screenshot": "screenshots/round-3-revision/after-087-file.png",
+      "screenshotSha256": "55ccf207ebaa7b9726f21b6345e613d071b266e95b25f1129c0ebd651d9359b6"
+    },
+    {
+      "host": "preview-host-replica",
+      "number": "912",
+      "url": "http://browser-preview-local.localhost:57890/revision/work-type-presentation.html?scenario=M1&tone=dark&controls=hide",
+      "path": ".dude/ideas/912-export-history.md",
+      "stage": "Stage unavailable",
+      "progress": "Progress Stage Unavailable The record couldn’t be read, so its stage is unknown.",
+      "next": "Next step unavailable Current instruction unavailableThis record couldn’t be read. Task progress and detail are withheld. Refresh to read it again.",
+      "tasks": "Tasks Read only Task detail is unavailable because this record couldn’t be read.",
+      "activity": "Activity Activity is unavailable because this record couldn’t be read. Activity is separate from task verification and review results.",
+      "properties": "Selected record 912 · Title unavailable Stage unavailable · Progress not established .dude/ideas/912-export-history.md Open questions: Not exposed. These are not current requests.",
+      "counts": 0,
+      "words": 0,
+      "csp": [],
+      "executedHash": "c0fb9406dda7ec20d5f8a410dbd09d833d63d8c406a5d433be586c8d6feb7e4a",
+      "screenshot": "screenshots/round-3-revision/after-912-preview-host-replica.png",
+      "screenshotSha256": "cb8d33c6cd303a55a2a4d5d7bc10055b008dc23e83677ca1865a2ec9fc5b8582"
+    },
+    {
+      "host": "preview-host-replica",
+      "number": "087",
+      "url": "http://browser-preview-local.localhost:57890/revision/work-type-presentation.html?scenario=M3&tone=light&controls=hide",
+      "path": ".dude/ideas/087-dude-canvas-routing-map.md",
+      "stage": "Captured",
+      "progress": "Progress Stage Captured From the idea ledger No definition, phase, or required gate is recorded yet. Recorded lifecycle state only. It doesn’t show live agent activity, verification, review, or release.",
+      "next": "No next step This work item is captured but not defined yet.",
+      "tasks": "Tasks Read only No tasks are recorded for this work item.",
+      "activity": "Activity 2026-10-19T18:24:51Z brainstorm: Took over question 8 from 067 as question 3, corrected what pack manifests declare, and added which views current records can support and a domain-coverage proposal; still draft, with no definition. 2026-10-19T14:59:35Z brainstorm: Staged the routing-map UI that the user explicitly asked to capture during the 067 pack-owned workflow discussion, as a separate draft for coordinator first-capture publication and a future brainstorm. No definition package, tasks, mock, or implementation was created. Activity is separate from task verification and review results.",
+      "properties": "Selected record 087 · Dude Canvas Routing Map Captured · Progress not established .dude/ideas/087-dude-canvas-routing-map.md Open questions: 3. These are not current requests.",
+      "counts": 0,
+      "words": 0,
+      "csp": [],
+      "executedHash": "c0fb9406dda7ec20d5f8a410dbd09d833d63d8c406a5d433be586c8d6feb7e4a",
+      "screenshot": "screenshots/round-3-revision/after-087-preview-host-replica.png",
+      "screenshotSha256": "55ccf207ebaa7b9726f21b6345e613d071b266e95b25f1129c0ebd651d9359b6"
+    }
+  ],
+  "cleanup": {
+    "browser": {
+      "ownedBefore": [
+        {
+          "pid": 17920,
+          "ppid": 33216,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 33552,
+          "ppid": 17920,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 1448,
+          "ppid": 17920,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 37460,
+          "ppid": 17920,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 36228,
+          "ppid": 17920,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 37664,
+          "ppid": 17920,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 38524,
+          "ppid": 17920,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 16528,
+          "ppid": 17920,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 7108,
+          "ppid": 17920,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 19976,
+          "ppid": 17920,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 7240,
+          "ppid": 17920,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 22384,
+          "ppid": 17920,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 32788,
+          "ppid": 17920,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 33876,
+          "ppid": 17920,
+          "name": "msedge.exe"
+        }
+      ],
+      "closedGracefully": true,
+      "killed": [],
+      "survivorsAfter": [],
+      "profileRemoved": true
+    },
+    "replicaClosed": true,
+    "tempRemoved": true
+  },
+  "fatal": null,
+  "browser": "Edg/156.0.4314.15",
+  "preservation": {
+    "changed": [
+      "source/work-type-presentation.jsx",
+      "work-type-presentation.html",
+      "work-type-presentation.js"
+    ],
+    "protected": {
+      "src": {
+        "files": 156,
+        "digest": "628f15b4de6b3ba7209daedd12265f067b99a82a330323ee56b255b1d4ef0c21"
+      },
+      "library": {
+        "files": 230,
+        "digest": "da6bb2c1e9fd8e0ca2e7978e36904cde1cc7ab5f26a2ed9c5e0e755c20e6d016"
+      },
+      "scripts": {
+        "files": 27,
+        "digest": "b7efd9eeafbf3d62f7ab5c33925952f4d865e85ef3c2317b84060f3f0121a269"
+      },
+      ".github": {
+        "files": 199,
+        "digest": "4e420c42bab3889ce639b626514232920cd3f609285b0aaf6a2c967c8659cf3d"
+      },
+      "docs": {
+        "files": 9,
+        "digest": "6fe2b1d52b84697752d0eb6152c070aab7549c16f84f2ceeb92951aceba6573a"
+      },
+      "README.md": {
+        "files": 1,
+        "digest": "168d65c055df42f8505782ca2cf92ec66cd1c61fead2bd7e8c87f63ae259cb6a"
+      }
+    }
+  },
+  "counts": {
+    "assertions": 62,
+    "failed": 0
+  },
+  "result": "PASS"
+}

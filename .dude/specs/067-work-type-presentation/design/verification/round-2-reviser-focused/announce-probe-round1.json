@@ -1,0 +1,95 @@
+{
+ "browser": "Edg/156.0.4314.15",
+ "html": "C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka\\.dude\\specs\\067-work-type-presentation\\design\\variants\\round-1-initial\\work-type-presentation.html",
+ "outcomes": {
+  "saved": {
+   "ariaNotifyType": "function",
+   "ariaNotify": [
+    "normal: RespondingSending this capture. Don’t submit it again.",
+    "high: Work item savedThe owner acknowledged the capture, and Canvas read the saved work item back.Recorded: Intent F"
+   ],
+   "domLive": [],
+   "liveRegions": [],
+   "notices": [
+    "group: Work item saved"
+   ]
+  },
+  "kept": {
+   "ariaNotifyType": "function",
+   "ariaNotify": [
+    "normal: RespondingSending this capture. Don’t submit it again.",
+    "high: Work item savedThe owner acknowledged the capture, and Canvas read the saved work item back.It matched an exis",
+    "normal: Existing intent kept901 already had the intent Fix, so Dude kept it instead of Maintain. To change it, ask Dud"
+   ],
+   "domLive": [],
+   "liveRegions": [],
+   "notices": [
+    "group: Work item saved",
+    "group: Existing intent kept"
+   ]
+  },
+  "missing": {
+   "ariaNotifyType": "function",
+   "ariaNotify": [
+    "normal: RespondingSending this capture. Don’t submit it again.",
+    "high: Work item savedThe owner acknowledged the capture, and Canvas read the saved work item back.Recorded: Intent F",
+    "high: Domain not recordedYou chose Code, but the saved work item has no domain. To set it, ask Dude in chat."
+   ],
+   "domLive": [],
+   "liveRegions": [],
+   "notices": [
+    "group: Work item saved",
+    "group: Domain not recorded"
+   ]
+  },
+  "uncertain": {
+   "ariaNotifyType": "function",
+   "ariaNotify": [
+    "normal: RespondingSending this capture. Don’t submit it again.",
+    "high: Delivery uncertainCanvas couldn’t confirm delivery, so it won’t send this again. Your text and choices stay he"
+   ],
+   "domLive": [],
+   "liveRegions": [],
+   "notices": [
+    "group: Delivery uncertain"
+   ]
+  },
+  "refused": {
+   "ariaNotifyType": "function",
+   "ariaNotify": [
+    "normal: RespondingSending this capture. Don’t submit it again.",
+    "high: Not sentDude didn’t accept the chosen intent or domain, so nothing was captured. Your text and choices are sti"
+   ],
+   "domLive": [],
+   "liveRegions": [],
+   "notices": [
+    "group: Not sent"
+   ]
+  }
+ },
+ "cleanup": {
+  "owned": [
+   33224,
+   7808,
+   35712,
+   18132,
+   18460,
+   544,
+   10008,
+   34936,
+   15460,
+   24028,
+   26712,
+   19500,
+   31304,
+   18960,
+   13924,
+   13676,
+   24608
+  ],
+  "closedGracefully": true,
+  "killed": [],
+  "survivors": [],
+  "profileRemoved": true
+ }
+}

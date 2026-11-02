@@ -241,6 +241,50 @@ const emptyTrackedBoard = {
   runBd: async () => ({ status: 0, stdout: '[]', stderr: '' }),
 };
 
+test('067 Work type: classification leaves every selected projection unchanged apart from read times and ledger identities', async () => {
+  const root = temporaryRoot();
+  try {
+    const ideaPaths = [
+      draft(root, '001', 'captured'),
+      define(root, '002', 'defined', { tasks: '- [~] T001@aaaaaaaa Recorded work.\n' }).ideaPath,
+      resolved(root, '003', 'closed'),
+    ];
+    const originals = new Map(ideaPaths.map((relative) => [
+      relative, fs.readFileSync(path.join(root, relative), 'utf8'),
+    ]));
+    const comparable = (projection) => {
+      const copy = structuredClone(projection);
+      delete copy.readAt;
+      for (const source of copy.sources) {
+        if (source.kind === 'file' && originals.has(source.path)) source.contentIdentity = 'ledger bytes';
+      }
+      return copy;
+    };
+    const baseline = [];
+    for (const target of ideaPaths) {
+      baseline.push(comparable(await readNowProjection({ root, target }, emptyTrackedBoard)));
+    }
+    for (const lines of [
+      'work_intent: fix\n',
+      'work_domain: code\n',
+      'work_intent: fix\nwork_domain: code\n',
+      'work_intent:\nwork_domain: unknown\n',
+    ]) {
+      for (const [relative, original] of originals) {
+        write(root, relative, original.replace('---\n\n## Idea', `${lines}---\n\n## Idea`));
+      }
+      const before = contentSnapshot(root);
+      for (const [index, target] of ideaPaths.entries()) {
+        const projection = await readNowProjection({ root, target }, emptyTrackedBoard);
+        assert.deepEqual(comparable(projection), baseline[index], `${target}: ${lines}`);
+      }
+      assert.deepEqual(contentSnapshot(root), before);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('066 optional-Beads injected populated boards retain global precedence and never backfill instructions', async (t) => {
   const root = temporaryRoot();
   try {

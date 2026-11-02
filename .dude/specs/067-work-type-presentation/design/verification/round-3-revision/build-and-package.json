@@ -1,0 +1,50 @@
+{
+  "generatedAt": "2026-10-23T18:20:37.280Z",
+  "results": [
+    {
+      "command": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka\\.dude\\specs\\067-work-type-presentation\\design\\verification\\round-2-reviser-focused\\build-mock.mjs",
+        "--repo",
+        "C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka",
+        "--entry",
+        "C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka\\.dude\\specs\\067-work-type-presentation\\design\\source\\work-type-presentation.jsx",
+        "--outfile",
+        "C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka\\.dude\\specs\\067-work-type-presentation\\design\\work-type-presentation.js"
+      ],
+      "exit": 0,
+      "stdout": "{\"esbuild\":\"0.28.2\",\"outputs\":[\"work-type-presentation.js\",\"work-type-presentation.js.LEGAL.txt\"],\"packages\":45,\"bytes\":{\"js\":869338,\"legal\":65638}}\n",
+      "stderr": "",
+      "error": null
+    },
+    {
+      "command": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka\\.dude\\specs\\067-work-type-presentation\\design\\verification\\embedded-preview\\package-inline.mjs",
+        "--html",
+        "C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka\\.dude\\specs\\067-work-type-presentation\\design\\work-type-presentation.html",
+        "--runtime",
+        "C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka\\.dude\\specs\\067-work-type-presentation\\design\\work-type-presentation.js"
+      ],
+      "exit": 0,
+      "stdout": "{\"mode\":\"write\",\"html\":\"work-type-presentation.html\",\"runtime\":\"work-type-presentation.js\",\"runtimeBytes\":869338,\"runtimeSha256\":\"c0fb9406dda7ec20d5f8a410dbd09d833d63d8c406a5d433be586c8d6feb7e4a\",\"inlineSha256\":\"c0fb9406dda7ec20d5f8a410dbd09d833d63d8c406a5d433be586c8d6feb7e4a\",\"inlineMatchesRuntime\":true,\"htmlBytes\":885326,\"htmlSha256\":\"a583bd230b85e3bdabf9932e6d42f49252b3fb833c19732c3999625e9a24aeb2\",\"htmlSha256LfNormalized\":\"a583bd230b85e3bdabf9932e6d42f49252b3fb833c19732c3999625e9a24aeb2\",\"scriptSrc\":\"'unsafe-inline'\"}\n",
+      "stderr": "",
+      "error": null
+    },
+    {
+      "command": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka\\.dude\\specs\\067-work-type-presentation\\design\\verification\\embedded-preview\\package-inline.mjs",
+        "--html",
+        "C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka\\.dude\\specs\\067-work-type-presentation\\design\\work-type-presentation.html",
+        "--runtime",
+        "C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka\\.dude\\specs\\067-work-type-presentation\\design\\work-type-presentation.js",
+        "--check"
+      ],
+      "exit": 0,
+      "stdout": "{\"mode\":\"check\",\"html\":\"work-type-presentation.html\",\"runtime\":\"work-type-presentation.js\",\"runtimeBytes\":869338,\"runtimeSha256\":\"c0fb9406dda7ec20d5f8a410dbd09d833d63d8c406a5d433be586c8d6feb7e4a\",\"inlineSha256\":\"c0fb9406dda7ec20d5f8a410dbd09d833d63d8c406a5d433be586c8d6feb7e4a\",\"inlineMatchesRuntime\":true,\"htmlBytes\":885326,\"htmlSha256\":\"a583bd230b85e3bdabf9932e6d42f49252b3fb833c19732c3999625e9a24aeb2\",\"htmlSha256LfNormalized\":\"a583bd230b85e3bdabf9932e6d42f49252b3fb833c19732c3999625e9a24aeb2\",\"scriptSrc\":\"'unsafe-inline'\"}\n",
+      "stderr": "",
+      "error": null
+    }
+  ]
+}
