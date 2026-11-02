@@ -13,9 +13,9 @@ provides:
 
 # Academic Writing
 
-Reusable coursework guidance for assignments and discussions, with APA 7 source verification, student-appropriate depth, course-context isolation, one Markdown review draft per assignment question, user-confirmed content merges into one consolidated APA-formatted Word document as the official assignment draft and primary final deliverable, required worked-solution Markdown companions for problem answers, and conditional workbook and code deliverables.
+Reusable coursework guidance for assignments and discussions, with APA 7 source verification, student-appropriate depth, course-context isolation with a starter template, one Markdown review draft per assignment question, user-confirmed content merges into one consolidated APA-formatted Word document as the official assignment draft and primary final deliverable, required worked-solution Markdown companions for problem answers, and conditional workbook and code deliverables.
 
-Explicit task and instructor requirements govern citation style and output format. The pack also provides read-only academic deliverable findings. Assignment drafts are checked by default before approval and again after an approved merge; other writing is checked on request. Deterministic evidence is preferred where applicable, with contextual FIX/KEEP decisions and one bounded writer correction and recheck. Its verifier does not edit, approve, or grant merge authority.
+Explicit task and instructor requirements govern citation style and output format. The pack also provides read-only academic deliverable findings. Assignment drafts are checked by default before approval and again after an approved merge, and discussion drafts before they are presented; other writing is checked on request. Deterministic evidence is preferred where applicable, with contextual FIX/KEEP decisions and one bounded writer correction and recheck. Its verifier does not edit, approve, or grant merge authority.
 
 ## Prerequisites
 
