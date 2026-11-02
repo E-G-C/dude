@@ -212,6 +212,90 @@ function taskDocument(audit, options = {}) {
   ].filter((line, index, lines) => line || index === lines.length - 1).join('\n');
 }
 
+test('067 Work type: valid or absent classification values do not warn or change ledger bytes', () => {
+  const root = rootWithManifest();
+  try {
+    const files = new Map();
+    for (const [index, lines] of [
+      '',
+      'work_intent: create\nwork_domain: code\n',
+      'work_intent: fix\nwork_domain: design\n',
+      'work_intent: maintain\nwork_domain: writing\n',
+      'work_intent: explore\nwork_domain: video\n',
+    ].entries()) {
+      const slug = `idea-${index}`;
+      const relative = `.dude/ideas/${String(index + 1).padStart(3, '0')}-${slug}.md`;
+      const text = ledger({ slug }).replace('---\n\n## Idea', `${lines}---\n\n## Idea`);
+      write(root, relative, text);
+      files.set(relative, Buffer.from(text));
+    }
+
+    const result = lint(root);
+
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /0 warning\(s\), 0 failure\(s\)/);
+    for (const [relative, bytes] of files) assert.deepEqual(fs.readFileSync(path.join(root, relative)), bytes);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('067 Work type: each empty or unrecognized scalar gives one warning and no failure', () => {
+  for (const [key, allowed, other] of [
+    ['work_intent', 'create, fix, maintain, explore', 'work_domain: code\n'],
+    ['work_domain', 'code, design, writing, video', 'work_intent: fix\n'],
+  ]) {
+    for (const value of ['', '""', 'unknown', 'Fix']) {
+      const root = rootWithManifest();
+      try {
+        const relative = '.dude/ideas/001-invalid.md';
+        const text = ledger({ slug: 'invalid' }).replace(
+          '---\n\n## Idea', `${key}: ${value}\n${other}---\n\n## Idea`,
+        );
+        write(root, relative, text);
+        const healthy = ledger({ slug: 'healthy' });
+        write(root, '.dude/ideas/002-healthy.md', healthy);
+
+        const result = lint(root);
+
+        assert.equal(result.code, 0, result.output);
+        assert.deepEqual(result.output.split('\n').filter((line) => line.startsWith('[WARN]')), [
+          `[WARN]  ${relative}  ${key} is empty or unrecognized (valid: ${allowed})`,
+        ]);
+        assert.match(result.output, /1 warning\(s\), 0 failure\(s\)/);
+        assert.deepEqual(fs.readFileSync(path.join(root, relative)), Buffer.from(text));
+        assert.deepEqual(fs.readFileSync(path.join(root, '.dude/ideas/002-healthy.md')), Buffer.from(healthy));
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+  }
+});
+
+test('067 Work type: two invalid scalars warn once each and malformed ledgers add no classification warning', () => {
+  for (const [lines, warnings, failures] of [
+    ['work_intent:\nwork_domain: unknown\n', 2, 0],
+    ['work_intent:\nwork_domain: [code]\n', 0, 1],
+    ['work_intent:\nwork_intent: fix\n', 0, 1],
+    ['work_intent:\npriority: urgent\n', 0, 1],
+  ]) {
+    const root = rootWithManifest();
+    try {
+      write(root, '.dude/ideas/001-invalid.md', ledger({ slug: 'invalid' })
+        .replace('---\n\n## Idea', `${lines}---\n\n## Idea`));
+
+      const result = lint(root);
+
+      assert.equal(result.code, failures ? 1 : 0, result.output);
+      assert.equal(result.output.split('\n').filter((line) => line.startsWith('[WARN]')).length, warnings, result.output);
+      assert.match(result.output, new RegExp(`${warnings} warning\\(s\\), ${failures} failure\\(s\\)`));
+      if (failures) assert.match(result.output, /FEATURE_FRONTMATTER_MALFORMED/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
 test('lint accepts canonical draft and defined ideas and reports idea counts', () => {
   const root = rootWithManifest();
   try {
@@ -1661,12 +1745,19 @@ test('lint imports the feature library directly and does not reparse ownership m
   const source = fs.readFileSync(SCRIPT, 'utf8');
   assert.match(
     source,
-    /import \{ inventoryLifecycleIdentities \} from '\.\.\/dude-engine\/lib\/feature\.mjs';/,
+    /import \{[^}]*\binventoryLifecycleIdentities\b[^}]*\} from '\.\.\/dude-engine\/lib\/feature\.mjs';/,
   );
   assert.doesNotMatch(
     source,
-    /feature-identity\.mjs|parseFrontmatterScalars|parseSpecIdentity|resolveSpecIdentity/,
+    /parseSpecIdentity|resolveSpecIdentity|scalars\.get\(['"](?:status|spec_path)['"]\)/,
   );
+  const structureStart = source.indexOf('function validateLedgerStructure(');
+  const structureEnd = source.indexOf('function finishAndExit()', structureStart);
+  assert.ok(structureStart >= 0 && structureEnd > structureStart);
+  const structure = source.slice(structureStart, structureEnd);
+  assert.equal((structure.match(/parseFrontmatterScalars\(/g) || []).length, 1);
+  assert.match(structure, /readWorkClassification\(frontmatter\.scalars\)/);
+  assert.doesNotMatch(source.replace(structure, ''), /parseFrontmatterScalars\(/);
   assert.equal((source.match(/inventoryLifecycleIdentities\(\{ root: ROOT \}\)/g) || []).length, 1);
 });
 

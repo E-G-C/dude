@@ -119,11 +119,16 @@ Separate from lane-specific status, `@dude status` renders one read-only cross-i
 
 The where-are-we summary reports Current work (active plus blocked), Ready / Next, Ideas awaiting definition, Defined awaiting work, and Completed. It reports no all-history completion percentage.
 
-`@dude status` invokes the generated `backlog.mjs` read-only in three forms. Each renders on demand in the reply and writes no file:
+The default form shows each record's stage from the shared engine rule, or stage unavailable when its evidence cannot be read.
 
-- `node .github/skills/dude-lightweight-execution/backlog.mjs --root .` (text Current / Planned / Completed orientation, then dependency and order notes)
+`@dude status` invokes the generated `backlog.mjs` read-only in four forms. Each renders on demand in the reply and writes no file:
+
+- `node .github/skills/dude-lightweight-execution/backlog.mjs --root .` (text Current / Planned / Completed orientation with each record's stage, then dependency and order notes)
 - `node .github/skills/dude-lightweight-execution/backlog.mjs kanban --root .` (Mermaid for current work only)
 - `node .github/skills/dude-lightweight-execution/backlog.mjs flowchart <slug> --root .` (one defined package task `deps:` graph; `<slug>` is the exact unnumbered frontmatter selector, not the numbered filename)
+- `node .github/skills/dude-lightweight-execution/backlog.mjs progress <slug> --root .` (also print this item's progress report for a feature-scoped status request, using the same exact frontmatter selector)
+
+When the active lane is Tracked Execution, pass `--tracked` to the default and `progress` forms only: defined work shows stage unavailable and phases not exposed because tracked work is authoritative and this view does not read it.
 
 Output contains no wall-clock time, checkout name, or Git revision, so unchanged authoritative input bytes print identical text in differently named roots.
 
@@ -135,4 +140,4 @@ This current lifecycle and provenance contract supersedes only the affected curr
 
 Non-goal, not guarded: a task `deps:` key that names another feature task resolves as permanently unsatisfied because task dependency resolution is confined to one file. Keep cross-feature ordering in `depends-on:`, never in task `deps:`.
 
-Authoring caveat: lint accepts `depends-on:` on an idea, but `publish-first-definition.mjs` currently validates only the four owner keys (`title`, `slug`, `status`, `spec_path`). Add `depends-on:` after first definition, or declare it on a draft only while dropping it for first-definition publication and adding it back afterward. This current limitation is not changed here.
+Authoring caveat: first-definition publication accepts and preserves `depends-on:`, but definition recovery in `atomic-file-batch.mjs` still rejects that key on an owner ledger.

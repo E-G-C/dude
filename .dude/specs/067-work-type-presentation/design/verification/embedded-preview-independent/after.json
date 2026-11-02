@@ -1,0 +1,257 @@
+{
+  "label": "after-independent",
+  "runAt": "2026-10-20T13:25:19.349Z",
+  "browser": "Edg/156.0.4314.15",
+  "html": "C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka\\.dude\\specs\\067-work-type-presentation\\design\\work-type-presentation.html",
+  "files": [
+    {
+      "file": "work-type-presentation.html",
+      "bytes": 890907,
+      "sha256": "c5c35834d4394a34d25ad99c6c853e97d4b75e5ef11bb6a7597ce194e0406529"
+    },
+    {
+      "file": "work-type-presentation.js",
+      "bytes": 870043,
+      "sha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3"
+    }
+  ],
+  "replica": {
+    "plain": {
+      "port": 61751,
+      "ipv6Bound": true,
+      "siblings": true,
+      "extraHeaders": {}
+    },
+    "single": {
+      "port": 64919,
+      "ipv6Bound": true,
+      "siblings": false,
+      "extraHeaders": {}
+    }
+  },
+  "results": [
+    {
+      "case": "file",
+      "url": "file:///C:/Work/GitHubAppRepos/copilot-worktrees/dude/e-g-c-symmetrical-eureka/.dude/specs/067-work-type-presentation/design/work-type-presentation.html",
+      "renderedMs": 220,
+      "state": {
+        "href": "file:///C:/Work/GitHubAppRepos/copilot-worktrees/dude/e-g-c-symmetrical-eureka/.dude/specs/067-work-type-presentation/design/work-type-presentation.html",
+        "origin": "file://",
+        "title": "Dude Canvas, work type presentation: design preview (067 round 2, exploring)",
+        "readyState": "complete",
+        "rootElementChildren": 2,
+        "rootText": "MOCK CONTROLS Not part of Canvas · 067 round 2, exploring, not approved · Values are fixtures or a read-only repository snapshot Hide controls Scenario M1 Overview, wide list: every stage and classification state M2 Overview, compact list (",
+        "mockStrip": true,
+        "tabpanel": true,
+        "rows": 13,
+        "bootstrapRan": {
+          "mockTone": "light",
+          "bootstrapJson": true,
+          "toneHook": true
+        },
+        "bodyBackground": "rgb(245, 245, 245)",
+        "scripts": [
+          {
+            "src": null,
+            "inlineBytes": 2266,
+            "type": null
+          },
+          {
+            "src": null,
+            "inlineBytes": 47,
+            "type": "application/json"
+          },
+          {
+            "src": null,
+            "inlineBytes": 869957,
+            "type": null
+          }
+        ],
+        "csp": []
+      },
+      "console": [],
+      "logs": [],
+      "exceptions": [],
+      "requests": [
+        "file:///C:/Work/GitHubAppRepos/copilot-worktrees/dude/e-g-c-symmetrical-eureka/.dude/specs/067-work-type-presentation/design/work-type-presentation.html"
+      ],
+      "failed": [],
+      "responses": [
+        {
+          "url": "file:///C:/Work/GitHubAppRepos/copilot-worktrees/dude/e-g-c-symmetrical-eureka/.dude/specs/067-work-type-presentation/design/work-type-presentation.html",
+          "status": 200,
+          "mimeType": "text/html",
+          "type": "Document"
+        }
+      ],
+      "issues": [],
+      "serverLog": null,
+      "replicaSiblingScriptFetch": null,
+      "issueCodes": {
+        "GenericIssue": 14
+      },
+      "screenshot": "after-independent-file.png"
+    },
+    {
+      "case": "app-origin",
+      "url": "http://browser-preview-local.localhost:61751/c66dd72f-a01e-42c1-a465-b6a57acc0440/work-type-presentation.html",
+      "renderedMs": 238,
+      "state": {
+        "href": "http://browser-preview-local.localhost:61751/c66dd72f-a01e-42c1-a465-b6a57acc0440/work-type-presentation.html",
+        "origin": "http://browser-preview-local.localhost:61751",
+        "title": "Dude Canvas, work type presentation: design preview (067 round 2, exploring)",
+        "readyState": "complete",
+        "rootElementChildren": 2,
+        "rootText": "MOCK CONTROLS Not part of Canvas · 067 round 2, exploring, not approved · Values are fixtures or a read-only repository snapshot Hide controls Scenario M1 Overview, wide list: every stage and classification state M2 Overview, compact list (",
+        "mockStrip": true,
+        "tabpanel": true,
+        "rows": 13,
+        "bootstrapRan": {
+          "mockTone": "light",
+          "bootstrapJson": true,
+          "toneHook": true
+        },
+        "bodyBackground": "rgb(245, 245, 245)",
+        "scripts": [
+          {
+            "src": null,
+            "inlineBytes": 2266,
+            "type": null
+          },
+          {
+            "src": null,
+            "inlineBytes": 47,
+            "type": "application/json"
+          },
+          {
+            "src": null,
+            "inlineBytes": 869957,
+            "type": null
+          }
+        ],
+        "csp": []
+      },
+      "console": [],
+      "logs": [],
+      "exceptions": [],
+      "requests": [
+        "http://browser-preview-local.localhost:61751/c66dd72f-a01e-42c1-a465-b6a57acc0440/work-type-presentation.html"
+      ],
+      "failed": [],
+      "responses": [
+        {
+          "url": "http://browser-preview-local.localhost:61751/c66dd72f-a01e-42c1-a465-b6a57acc0440/work-type-presentation.html",
+          "status": 200,
+          "mimeType": "text/html",
+          "type": "Document"
+        }
+      ],
+      "issues": [],
+      "serverLog": [
+        "GET /c66dd72f-a01e-42c1-a465-b6a57acc0440/work-type-presentation.html -> 200 (890907 B)"
+      ],
+      "replicaSiblingScriptFetch": {
+        "status": 200,
+        "contentType": "text/javascript; charset=utf-8",
+        "bytes": 870043
+      },
+      "issueCodes": {
+        "GenericIssue": 14
+      },
+      "screenshot": "after-independent-app-origin.png"
+    },
+    {
+      "case": "app-origin-single-file",
+      "url": "http://browser-preview-local.localhost:64919/863dc205-bd67-4685-a089-e9fe172712e3/work-type-presentation.html",
+      "renderedMs": 239,
+      "state": {
+        "href": "http://browser-preview-local.localhost:64919/863dc205-bd67-4685-a089-e9fe172712e3/work-type-presentation.html",
+        "origin": "http://browser-preview-local.localhost:64919",
+        "title": "Dude Canvas, work type presentation: design preview (067 round 2, exploring)",
+        "readyState": "complete",
+        "rootElementChildren": 2,
+        "rootText": "MOCK CONTROLS Not part of Canvas · 067 round 2, exploring, not approved · Values are fixtures or a read-only repository snapshot Hide controls Scenario M1 Overview, wide list: every stage and classification state M2 Overview, compact list (",
+        "mockStrip": true,
+        "tabpanel": true,
+        "rows": 13,
+        "bootstrapRan": {
+          "mockTone": "light",
+          "bootstrapJson": true,
+          "toneHook": true
+        },
+        "bodyBackground": "rgb(245, 245, 245)",
+        "scripts": [
+          {
+            "src": null,
+            "inlineBytes": 2266,
+            "type": null
+          },
+          {
+            "src": null,
+            "inlineBytes": 47,
+            "type": "application/json"
+          },
+          {
+            "src": null,
+            "inlineBytes": 869957,
+            "type": null
+          }
+        ],
+        "csp": []
+      },
+      "console": [],
+      "logs": [],
+      "exceptions": [],
+      "requests": [
+        "http://browser-preview-local.localhost:64919/863dc205-bd67-4685-a089-e9fe172712e3/work-type-presentation.html"
+      ],
+      "failed": [],
+      "responses": [
+        {
+          "url": "http://browser-preview-local.localhost:64919/863dc205-bd67-4685-a089-e9fe172712e3/work-type-presentation.html",
+          "status": 200,
+          "mimeType": "text/html",
+          "type": "Document"
+        }
+      ],
+      "issues": [],
+      "serverLog": [
+        "GET /863dc205-bd67-4685-a089-e9fe172712e3/work-type-presentation.html -> 200 (890907 B)"
+      ],
+      "replicaSiblingScriptFetch": {
+        "status": 404,
+        "contentType": "text/plain; charset=utf-8",
+        "bytes": 102
+      },
+      "issueCodes": {
+        "GenericIssue": 14
+      },
+      "screenshot": "after-independent-app-origin-single-file.png"
+    }
+  ],
+  "cleanup": {
+    "ownedPids": [
+      21636,
+      33908,
+      34936,
+      12900,
+      27240,
+      3976,
+      39456,
+      22836,
+      8044,
+      18604,
+      22412,
+      20004,
+      23936,
+      13324,
+      29688,
+      528,
+      25292
+    ],
+    "closedGracefully": true,
+    "killed": [],
+    "survivors": [],
+    "profileRemoved": true
+  }
+}

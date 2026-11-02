@@ -452,6 +452,79 @@ function createDirectoryLink(target, link) {
   fs.symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir');
 }
 
+test('067 Work type: atomic re-definition preserves classified and unclassified owner bytes', () => {
+  for (const lines of [
+    'work_intent: fix\n',
+    'work_domain: code\n',
+    'work_intent : "fix"  \nwork_domain:\t\'code\'\t\n',
+    'work_intent:\nwork_domain: unknown\n',
+    '',
+  ]) {
+    withTemporaryDirectory((root) => {
+      const current = definitionFixtureBytes();
+      current.owner = Buffer.from(current.owner.toString('utf8')
+        .replace('---\n\n## Idea', `${lines}---\n\n## Idea`));
+      const staged = {
+        owner: Buffer.from(current.owner.toString('utf8').replace(
+          '- 2026-01-01 recovery authorized\n',
+          '- 2026-01-01 recovery authorized\n- Definition refreshed.\n',
+        )),
+        spec: Buffer.from('# Feature Specification\n\nRefreshed requirements.\n'),
+        plan: Buffer.from('# Implementation Plan\n\nRefreshed design.\n'),
+        tasks: definitionTasksBytes('Refreshed canonical task'),
+      };
+      writeDefinitionFixture(root, current);
+      const calls = {};
+
+      const result = applyDefinitionFixture(root, current, staged, { contractOptions: { calls } });
+
+      assert.deepEqual(result, { count: 4, paths: definitionScope() });
+      assert.deepEqual(calls, { reconciliation: 1, proposal: 1, review: 1, lint: 1, verification: 1 });
+      for (const [relativePath, bytes] of definitionBytesByPath(staged)) {
+        assert.deepEqual(fs.readFileSync(path.join(root, relativePath)), bytes);
+      }
+      assertNoAtomicTemps(root);
+    });
+  }
+});
+
+test('067 Work type: atomic re-definition refuses added, removed, or changed classification lines before writes', () => {
+  for (const [key, value, other] of [
+    ['work_intent', 'fix', 'create'],
+    ['work_domain', 'code', 'design'],
+  ]) {
+    const line = `${key}: ${value}\n`;
+    for (const [name, currentLine, stagedLine] of [
+      ['value', line, `${key}: ${other}\n`],
+      ['addition', '', line],
+      ['removal', line, ''],
+      ['quotes', line, `${key}: "${value}"\n`],
+      ['spacing', line, `${key}:\t${value}\n`],
+      ['line ending', line, `${key}: ${value}\r\n`],
+    ]) {
+      withTemporaryDirectory((root) => {
+        const current = definitionFixtureBytes();
+        const original = current.owner.toString('utf8');
+        current.owner = Buffer.from(original.replace('---\n\n## Idea', `${currentLine}---\n\n## Idea`));
+        const staged = {
+          ...current,
+          owner: Buffer.from(original.replace('---\n\n## Idea', `${stagedLine}---\n\n## Idea`)),
+        };
+        writeDefinitionFixture(root, current);
+        const before = snapshotTree(root);
+
+        assert.throws(
+          () => applyDefinitionFixture(root, current, staged),
+          new RegExp(`definition recovery must preserve ${key} bytes`),
+          `${key} ${name}`,
+        );
+
+        assertRestored(root, before);
+      });
+    }
+  }
+});
+
 test('T003 repair probe: Feature 014 rejects balanced Coordinator Log prefix corruption', () => {
   withTemporaryDirectory((root) => {
     const current = definitionFixtureBytes();

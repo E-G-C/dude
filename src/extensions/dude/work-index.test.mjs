@@ -356,6 +356,49 @@ function assertOptionalCounts(pair, owned, counts) {
   assert.deepEqual(pair.selected.diagnostics, []);
 }
 
+test('067 Work type: classification leaves the work index unchanged apart from read times and byte-derived identities', async () => {
+  const root = temporaryRoot();
+  try {
+    const records = [
+      idea(root, '001', 'captured'),
+      feature(root, '002', 'defined', '- [~] T001@aaaaaaaa Recorded work.\n'),
+      idea(root, '003', 'closed', 'resolved'),
+    ];
+    const originals = new Map(records.map(({ ideaPath }) => [
+      ideaPath, fs.readFileSync(path.join(root, ideaPath), 'utf8'),
+    ]));
+    const comparable = (index) => {
+      assert.equal(index.sourceIdentity, `sha256:${sha256(JSON.stringify(index.sources))}`);
+      return JSON.parse(JSON.stringify(index, (key, value) => {
+        if (key === 'readAt' || key === 'sourceIdentity') return undefined;
+        if (value?.kind === 'file' && originals.has(value.path) && 'contentIdentity' in value) {
+          return { ...value, contentIdentity: 'ledger bytes' };
+        }
+        return value;
+      }));
+    };
+    const baseline = comparable(await readWorkIndex({ root }, { runBd: emptyBoard }));
+    for (const lines of [
+      'work_intent: fix\n',
+      'work_domain: code\n',
+      'work_intent: fix\nwork_domain: code\n',
+      'work_intent:\nwork_domain: unknown\n',
+    ]) {
+      for (const [relative, original] of originals) {
+        write(root, relative, original.replace('---\n\n## Idea', `${lines}---\n\n## Idea`));
+      }
+      const before = optionalBeadsSnapshot(root);
+
+      const index = await readWorkIndex({ root }, { runBd: emptyBoard });
+
+      assert.deepEqual(comparable(index), baseline, lines);
+      assert.deepEqual(optionalBeadsSnapshot(root), before);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('066 optional-Beads real missing executable restores source and generated four-state reads without writes', async (t) => {
   const root = optionalBeadsRoot();
   try {

@@ -6,12 +6,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { inventoryLifecycleIdentities } from "../dude-engine/lib/feature.mjs";
+import { CANONICAL_IDEA_KEYS, inventoryLifecycleIdentities } from "../dude-engine/lib/feature.mjs";
 import { parseFrontmatterScalars, parseIdeaIdentity, parseSpecIdentity } from "../dude-engine/lib/feature-identity.mjs";
 import { parseTasks } from "../dude-engine/lib/tasks.mjs";
+import { workProgress, workStage } from "../dude-engine/lib/work-progress.mjs";
 import { WORKSPACE_PATHS, resolveWorkspacePath } from "../dude-engine/lib/workspace-paths.mjs";
 
-const IDEA_KEYS = Object.freeze(["title", "slug", "status", "spec_path", "depends-on"]);
 const BACKLOG_ORDER_PATH = `${WORKSPACE_PATHS.STATE_DIR}/backlog-order.md`;
 const CANONICAL_SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
 const CURRENT_GROUPS = Object.freeze([
@@ -303,7 +303,7 @@ export function collectLifecycleItems({ root }) {
     let dependencyAvailable = false;
     const localAuthorityIssues = [];
     try {
-      const frontmatter = parseFrontmatterScalars(content, { canonicalKeys: IDEA_KEYS });
+      const frontmatter = parseFrontmatterScalars(content, { canonicalKeys: CANONICAL_IDEA_KEYS });
       const parsedSlug = frontmatter.scalars.get("slug")?.value || file.identitySlug;
       slug = CANONICAL_SLUG_RE.test(parsedSlug) ? parsedSlug : file.identitySlug;
       // Display identity always resolves; only a canonical frontmatter slug carries authority.
@@ -666,16 +666,19 @@ export function renderCurrentMermaid(model) {
 }
 
 /** Render a compact plain-text status view. */
-export function renderText(model) {
+export function renderText(model, { tracked = false } = {}) {
   const s = model.summary;
   const lines = [
     `Where are we: current ${s.currentWork}; ready/next ${s.readyNext}; awaiting definition ${s.ideasAwaitingDefinition}; defined awaiting work ${s.definedAwaitingWork}; completed ${s.completed}`,
-    "",
   ];
+  if (tracked) lines.push("Defined work shows stage unavailable because tracked work is authoritative and this view does not read it.");
+  lines.push("");
   const add = (title, rows) => {
     lines.push(`${title} (${rows.length}):`);
     if (rows.length === 0) lines.push("  (none)");
-    else for (const item of rows) lines.push(`  ${item.number ? `${item.number} ` : ""}${item.slug}`);
+    else for (const item of rows) lines.push(
+      `  ${item.number ? `${item.number} ` : ""}${item.slug} · ${workStage(item, { tracked }) ?? "stage unavailable"}`,
+    );
     lines.push("");
   };
   add("Blocked", model.current.blocked);
@@ -720,14 +723,65 @@ export function renderFlowchart(tasks, meta = {}) {
   return lines.join("\n");
 }
 
-const HELP = `backlog — deterministic lifecycle orientation\n\nUsage:\n  node backlog.mjs [--root <dir>]\n  node backlog.mjs kanban [--root <dir>]\n  node backlog.mjs flowchart <idea-slug> [--root <dir>]\n\nThe default form prints Current, Planned, and Completed lifecycle groups, then\ndependency and order notes. kanban prints current work only. flowchart prints\none defined package task graph. Every form is read-only.\n`;
+/** Render the shared report without deriving any new progress facts. */
+function renderProgress(report) {
+  const { subject, words, stage, phases, design, checkpoints, gates, requests, unknown } = report;
+  const name = `${subject.number ? `${subject.number} ` : ""}${subject.slug}`;
+  const lines = [[name, ...words].join(" · ")];
+  lines.push(stage.value === null
+    ? `Stage: unavailable. ${stage.reason}`
+    : `Stage: ${stage.value} (${stage.source})`);
+  if (stage.value === "Closed") lines.push("Closing does not mean the work was implemented.");
+  if (phases.state === "current") {
+    for (const phase of phases.items) lines.push(`Current phase: ${phase} (${phases.source})`);
+  } else if (phases.state === "unavailable") lines.push(`Current phases: unavailable. ${phases.reason}`);
+  else if (phases.state === "not-exposed") lines.push(`Current phases: not exposed. ${phases.reason}`);
+  const label = (value) => value[0].toUpperCase() + value.slice(1).replaceAll("-", " ");
+  if (design?.status === "unavailable") {
+    lines.push(`Design status and required gates: unavailable. ${design.reason}`);
+  } else if (design) lines.push(`Design status: ${label(design.status)} (${design.source})`);
+  for (const checkpoint of checkpoints) lines.push(`Checkpoint: ${label(checkpoint.kind)} (${checkpoint.source})`);
+  for (const gate of gates) lines.push(`Required gate: ${label(gate.kind)} (${gate.source})`);
+  lines.push(`Requests for you: unavailable. ${requests.reason}`);
+  if (stage.value === "Captured") lines.push("No definition, phase, or gate is recorded yet.");
+  else if (unknown.length) {
+    const names = { phases: "current phase", design: "design status", gates: "required gate" };
+    const parts = unknown.map((part) => names[part]);
+    const joined = parts.length === 1 ? parts[0]
+      : parts.length === 2 ? parts.join(" or ")
+        : `${parts.slice(0, -1).join(", ")}, or ${parts.at(-1)}`;
+    lines.push(`No ${joined} is recorded.`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/** Select by frontmatter only, then reread only that item's report evidence. */
+function readProgress(root, slug, tracked) {
+  if (!CANONICAL_SLUG_RE.test(slug)) return null;
+  const model = collectLifecycleModel({ root });
+  const matches = model.items.filter((item) => item.frontmatterAvailable && item.slug === slug);
+  if (matches.length !== 1) return null;
+  const item = matches[0];
+  const ideaBytes = readSafeFile(root, item.ideaPath);
+  if (ideaBytes === null) return null;
+  const { scalars } = parseFrontmatterScalars(ideaBytes, { canonicalKeys: CANONICAL_IDEA_KEYS });
+  if (scalars.get("slug")?.value !== slug) return null;
+  const specBytes = item.ownerSpecPath ? readSafeFile(root, item.ownerSpecPath) : null;
+  const tasksBytes = item.ownerSpecPath
+    ? readSafeFile(root, `${item.ownerSpecPath.slice(0, -"spec.md".length)}tasks.md`)
+    : null;
+  return workProgress({ item, ideaBytes, specBytes, tasksBytes, tracked });
+}
+
+const HELP = `backlog — deterministic lifecycle orientation\n\nUsage:\n  node backlog.mjs [--tracked] [--root <dir>]\n  node backlog.mjs kanban [--root <dir>]\n  node backlog.mjs flowchart <idea-slug> [--root <dir>]\n  node backlog.mjs progress <idea-slug> [--tracked] [--root <dir>]\n\nThe default form prints Current, Planned, and Completed lifecycle groups with\neach record's stage, then dependency and order notes. kanban prints current work\nonly. flowchart prints one defined package task graph. progress prints one item's\nreport. --tracked leaves defined stages unavailable and phases not exposed because\nthis view does not read tracked work. Every form is read-only.\n`;
 
 export function parseArgs(argv) {
-  const output = { root: process.cwd(), command: undefined, slug: undefined, help: false, invalid: null };
+  const output = { root: process.cwd(), command: undefined, slug: undefined, tracked: false, help: false, invalid: null };
   const positionals = [];
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === "--help" || token === "-h") output.help = true;
+    else if (token === "--tracked") output.tracked = true;
     else if (token === "--root") {
       const root = argv[index + 1];
       if (!root || root.startsWith("--")) output.invalid = "--root requires a directory";
@@ -741,6 +795,9 @@ export function parseArgs(argv) {
   output.command = positionals[0];
   output.slug = positionals[1];
   if (positionals.length > 2) output.invalid = "too many positional arguments";
+  if (output.tracked && output.command !== undefined && output.command !== "progress") {
+    output.invalid = "unknown option: --tracked";
+  }
   return output;
 }
 
@@ -755,7 +812,7 @@ export function run(args) {
   }
   try {
     if (args.command === undefined) {
-      process.stdout.write(renderText(collectLifecycleModel({ root: args.root })));
+      process.stdout.write(renderText(collectLifecycleModel({ root: args.root }), { tracked: args.tracked }));
       return 0;
     }
     if (args.command === "kanban") {
@@ -775,6 +832,24 @@ export function run(args) {
         return 1;
       }
       process.stdout.write(renderFlowchart(matches[0].tasks, { slug: args.slug }));
+      return 0;
+    }
+    if (args.command === "progress") {
+      if (!args.slug) {
+        process.stderr.write("[FAIL] progress requires an idea slug\n");
+        return 1;
+      }
+      let report = null;
+      try {
+        report = readProgress(args.root, args.slug, args.tracked);
+      } catch {
+        // An unreadable selector cannot fall back to a display identity.
+      }
+      if (!report) {
+        process.stderr.write(`[FAIL] no single work item has slug ${args.slug}\n`);
+        return 1;
+      }
+      process.stdout.write(renderProgress(report));
       return 0;
     }
     process.stderr.write(`[FAIL] unknown command: ${args.command}\n`);

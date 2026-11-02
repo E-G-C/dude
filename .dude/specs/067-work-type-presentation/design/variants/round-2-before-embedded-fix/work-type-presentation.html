@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' file: http://127.0.0.1:*; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+  <title>Dude Canvas, work type presentation: design preview (067 round 2, exploring)</title>
+  <link rel="icon" href="data:,">
+  <script>
+    // Mock-only boot, not product code. ?tone=light|dark stands in for the device
+    // preference (the 052/063/074/085 preview convention). ?appearance=app turns on
+    // Follow GitHub app theme through the product's own bootstrap slot, and the
+    // bundle supplies 085's observed GitHub app variables. Every network call is
+    // refused before any product code runs.
+    (() => {
+      const params = new URLSearchParams(location.search);
+      const root = document.documentElement;
+      const QUERY = '(prefers-color-scheme: dark)';
+      const real = window.matchMedia.bind(window);
+      const device = real(QUERY);
+      const asked = params.get('tone');
+      let forced = asked === 'dark' ? true : asked === 'light' ? false : null;
+      const listeners = new Set();
+      const list = {
+        media: QUERY, onchange: null,
+        get matches() { return forced ?? device.matches; },
+        addEventListener(type, listener) { if (type === 'change') listeners.add(listener); },
+        removeEventListener(type, listener) { listeners.delete(listener); },
+        addListener(listener) { listeners.add(listener); },
+        removeListener(listener) { listeners.delete(listener); },
+        dispatchEvent() { return false; },
+      };
+      const notify = () => listeners.forEach(listener => listener({ matches: list.matches, media: QUERY }));
+      device.addEventListener('change', () => { if (forced === null) notify(); });
+      window.matchMedia = query => (String(query).replace(/\s+/g, ' ').trim() === QUERY ? list : real(query));
+      window.__mockSetTone = tone => { forced = tone === 'dark'; notify(); };
+      const app = params.get('appearance') === 'app';
+      const tone = list.matches ? 'dark' : 'light';
+      root.dataset.mockTone = tone;
+      if (app) { root.setAttribute('data-theme-tone', tone); root.setAttribute('data-theme-source', 'github-app-fixture'); }
+      const boot = document.createElement('script');
+      boot.type = 'application/json';
+      boot.id = 'dude-canvas-bootstrap';
+      boot.textContent = JSON.stringify({ followAppTheme: app, preferenceError: null });
+      document.head.append(boot);
+      window.fetch = () => Promise.reject(new TypeError('This mock makes no network requests.'));
+    })();
+  </script>
+  <!--
+    ==========================================================================
+    CANONICAL 067 PROPOSAL, ROUND 2 (exploring, NOT approved): Work Type
+    Presentation. Canvas shows what each work item is trying to do (intent),
+    what kind of work it is (domain), and how far it has got (stage), and the
+    details replace "Lifecycle and progress" with one read-only progress
+    report. No product UI source may change until the user explicitly
+    approves this exact file.
+    Primary artifact (preview_path):
+      .dude/specs/067-work-type-presentation/design/work-type-presentation.html
+    Owner: .dude/ideas/067-work-type-presentation.md
+    Spec: .dude/specs/067-work-type-presentation/spec.md (Mock Scenario Matrix
+    M1 to M14; Scope And Surfaces holds the Architect's capability envelope).
+    ==========================================================================
+
+    ROUND 2 (2026-10-20), revised after independent pre-approval verification.
+      Round 1 stays byte for byte, as history only, in
+      variants/round-1-initial/ (HTML, runtime, legal file, and source/). It
+      is not a live authority. Round 2 changes: the design-record review line
+      no longer says nothing is waiting when request coverage is partial or
+      unavailable (3); the Requests row names its source (4); capture
+      statuses sit in a status region (5); the work selector reads Browsing
+      as today's Canvas does (Unchanged); and the Overview's closed-count
+      sentence uses "work item" for a count of one.
+
+    BUILT ON TODAY'S CANVAS, NOT A NEW SYSTEM
+      The product view is React and Fluent UI v9 (@fluentui/react-components
+      9.74.7, react 19.2.8), bundled with the scoped esbuild 0.28.2 in
+      scripts/dude-canvas-ui. source/styles.js and source/theme.js are
+      verbatim copies of the product files:
+        styles.js  f13a5970b1bfa31b215720b5a3d7fb726739c1c5a3e38d8a715374748a756c1b
+        theme.js   5c1a341cce6e8643b6503ecb56d61c15d843171ead58becd0c4b0ed462c3f25f
+      source/work-type-presentation.jsx recomposes the affected surfaces from
+        app.jsx        7c7e439df57de98a21df675d8f44cf042aaff96de1040a91f9b428b32d0b6644
+        needs-you.jsx  b19a080165a7156e7c68e484559e33b1d82d199dda684370c38a442a0bc3f5ef
+      with the same classes, components, and markup. Continuity: 052's desktop
+      workspace; 062's single search with Working on and Clear, the expandable
+      rail, the compact list below 620px of list width, and the docked task
+      detail at 1080px and wider; 057's capture and response behavior; and
+      085's ordinary and app-following light and dark appearance (theme.js
+      unchanged). Navigation keeps its destinations and order.
+
+    WHAT 067 CHANGES (proposal; every word is provisional until approval)
+      1. Wording. Rail and Overview entry "New idea" becomes "New work item";
+         Needs you "Save as idea" becomes "Save as work item". The details
+         eyebrow is "Work item" for every record. No record is called an idea
+         or a feature because of its lifecycle. Orientation strings change:
+         "This feature is still an idea." -> "This work item is captured but
+         not defined yet."; "This idea is resolved." -> "This work item is
+         closed."; "This idea has no task definitions." -> "No tasks are
+         recorded for this work item." Stage words Idea, Verified, and
+         Completed without a package give way to Captured, Completed, Closed.
+      2. List rows (M1, M2). The Name cell gains one secondary line with the
+         recorded intent and domain, such as "Fix · Code", or "Unrecognized
+         intent · Design", or "Classification unavailable". Not set shows
+         nothing in the row. Status shows the stage from the shared rule, with
+         any existing note beneath it (Next by recorded dependencies, Recorded
+         for later, Waiting on a declared dependency). No new column, filter,
+         or sort; search matches the same fields as today. Each row's
+         accessible name says number, title, intent and domain (including Not
+         set), stage, progress, and path.
+      3. Details header. "Work item" eyebrow, the numbered title, then three
+         plain label/value pairs: Intent, Domain, Stage. Not set, Unrecognized,
+         and Unavailable read as words in regular weight, never by color.
+         Under the path: "Ask Dude in chat to set or change the intent or
+         domain. Changing them doesn't change the stage or start any work."
+         There is no edit control. Respond to request appears only for a
+         current request for this exact record. Review design, or one review
+         status line, appears only for a design definition or a current
+         preview request (FR-003). The line says "No current owner-qualified
+         preview request is waiting for this record." only with current
+         request coverage; unavailable coverage shows today's "The current
+         preview owner or Review capability is unavailable.", and partial
+         coverage says Canvas can't confirm whether one is waiting.
+      4. Progress report (replaces "Lifecycle and progress"). The ruled
+         label/value rows of 074's About sheet, one row per evidenced part,
+         each naming its source: Stage (with any note), Current phase or
+         Current phases (recorded headings), Phase "Not exposed" for tracked
+         work, Design status (with "Checkpoint reached" for Proposed or
+         Approved), Required gate "Design approval" (the only gate), Waiting
+         for you "<kind> from <owner>" for each current request ("It adds no
+         gate and doesn't change the stage."), and Requests "Status partial"
+         or "Status unavailable" with the reason and its source, "From Needs
+         you request coverage", never None. Parts without
+         evidence become one sentence, for example "No current phase, design
+         status, or required gate is recorded." Then today's counts, bar, and
+         recorded-state disclaimer, as counts only. Completed and Closed add
+         one sentence each: not a verification, review, or release result;
+         closing doesn't mean implemented. Recorded blockers now name the
+         blocker class (Plan gap) above the reason (M7).
+      5. New work item (M12). Under the description, two optional Fluent
+         Dropdown fields side by side, Intent (Not set, Create, Fix, Maintain,
+         Explore) and Domain (Not set, Code, Design, Writing, Video, Other),
+         both starting at Not set, plus one hint line. Submit, Save, Cancel,
+         destinations, and locking keep today's meaning; locking stays keyed
+         to the text. Statuses: Responding, Awaiting capture delivery,
+         Delivery uncertain (no resend; text and choices kept), Not sent
+         (refused value, retryable), Work item saved with "Recorded: Intent X
+         · Domain Y" from the read-back, plus "Existing intent kept" (notice)
+         or "Domain not recorded" (warning) when the record differs, and
+         Waiting for the joined agent. Every status keeps the draft. Each
+         capture status sits in a polite status region, as today's import
+         status does, so in-place changes are announced.
+      6. Needs you. "Save as work item" opens "Text to save" and "Save this
+         text" (was "Intent to retain" and "Capture this intent", renamed so
+         "intent" keeps one meaning). It sends no intent or domain.
+      7. Captured description. The details dock's "Captured intent" and
+         "What you wanted to do" become "Captured description", for the same
+         reason.
+      Unchanged: search, Show, Working on (Browsing while Needs you shows a
+      request for another scope) and Clear, the rail, the compact
+      list, the task inspector and dock, Next step, Tasks, Activity, Sources
+      and freshness, the status bar, and both appearance modes.
+
+    CAPABILITY ENVELOPE (spec, Scope And Surfaces)
+      Existing and live here: search and Show, Working on and Clear, the
+      expandable rail, row selection into Now, task inspection and filters,
+      Respond to request (opens Needs you on that request), and capture with
+      Submit, Save, and Cancel. Added by 067 and live here: the two optional
+      capture fields, read-only intent, domain, and stage, the progress
+      report, and the chat instruction. Labeled fixture transitions: Submit
+      and Save run a simulated owner (Responding, Awaiting capture delivery,
+      then the strip's Next capture result); Save this text does the same.
+      Mock actions that report in the strip instead of acting: Refresh (data
+      is frozen) and Review design (Review is unchanged and not in this
+      file). Settings and the response forms in Needs you are unchanged and
+      shown as dashed "Mock note" boxes, not as controls.
+
+    MOCK-ONLY CHROME (the strip above the window, never product UI)
+      Scenario (?scenario=M1 ... M14b, M12-<state>, S1 blank workspace, S2
+      Save as work item, S3 this repository), Data (fixtures, repository,
+      blank), Request feed (requests, idle, partial, unavailable), Capture
+      state (the nine M12 states), Next capture result, Appearance
+      (?appearance=app reloads with Follow GitHub app theme on), and Tone
+      (?tone=light|dark, live). ?controls=hide collapses the strip to one
+      line. The strip's last line reports fixture transitions and mock
+      actions.
+
+    DATA AND PROVENANCE
+      This repository: source/repository-snapshot.json, generated read-only
+      with the product's own projection readers (readWorkIndex and
+      readNowProjection). bd was injected as a missing executable, so no
+      Beads command ran. 91 records; no ledger carries work_intent or
+      work_domain, so every real record reads Not set and shows no
+      classification line. Full detail was captured for 066, 067, 078, 085
+      (app theme), and 087; other real records show their header and
+      progress report from list data, with dashed notes where rows or
+      activity were not captured.
+      Fixtures: source/fixtures.json. Records 901 to 913, four requests,
+      four feeds, nine capture presets, and the scenarios, each traced to the
+      spec's matrix, user stories, edge cases, or plan. None is a record of
+      this repository. Request and source revisions are "fixture-..." labels,
+      not hashes.
+      App-following appearance: 085's observed GitHub app variables
+      (2026-10-15), documented-contract keys only.
+
+    OPEN POINTS FOR THE APPROVAL ROUND
+      a. The plan's progress contract carries checkpoints only for Proposed
+         and Approved; the spec asks details to show the recorded design
+         status, including Exploring. This mock's report carries `design`.
+      b. Renames in 6 and 7 avoid two meanings of "intent"; approval can
+         revert them.
+      c. Single-value rows read "Fix" or "Code" alone; the vocabularies do
+         not overlap, and the accessible name names both fields.
+      d. Details say "No tasks are recorded yet." where today's section
+         showed "0 of 0 tasks"; the list's Progress column keeps today's text.
+      e. Classified rows grow by one line; unclassified rows, including every
+         record in this repository today, keep their current height.
+      f. The plan's progress.requests has no source field; this mock's report
+         names Needs you request coverage for the partial or unavailable row.
+
+    RUNTIME ASSETS (2): this file and work-type-presentation.js
+      (870043 bytes, SHA256 27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3).
+      Supporting: work-type-presentation.js.LEGAL.txt (45 bundled packages,
+      licenses collected with scripts/dude-canvas-ui/build.mjs's exported
+      collector); source/ (work-type-presentation.jsx, styles.js, theme.js,
+      fixtures.json, repository-snapshot.json); screenshots/; and
+      variants/round-1-initial/ (round 1, history only).
+      Build: esbuild 0.28.2 from scripts/dude-canvas-ui/node_modules with the
+      product build's options (keyborg alias, NODE_ENV production, minify,
+      es2022) except format iife, so the file opens from disk. The same
+      invocation rebuilds variants/round-1-initial/source/ into round 1's
+      runtime and legal file byte for byte.
+
+    RENDER EVIDENCE (screenshots/, not competing artifacts)
+      Captured in headless Microsoft Edge over a CDP pipe, one frame per
+      scenario: 1440x900, 1280x900 (docked task detail), 768x900 (in-flow
+      detail), 600x900 (list 552px wide, compact), and 200% zoom (720x450 CSS
+      px at device scale 2), in ordinary and app-following light and dark.
+      screenshots/capture-log.json records each frame's query, console
+      problems, WCAG contrast floor, overflow, clipping, unnamed controls, and
+      layout mode, plus the interaction script (live capture round trip,
+      search, keyboard row open, Clear, Intent options, rail, Respond, Tab walk).
+      These captures and capture-log.json show round 1 and were not retaken.
+      Round 2 evidence: verification/round-2-reviser-focused/ and
+      screenshots/verification-round-2-reviser-focused/.
+  -->
+  <style>
+    /* Document base copied from src/extensions/dude/ui/index.html. The mock
+       swaps prefers-color-scheme for data-mock-tone so ?tone works. */
+    :root { color-scheme: light dark; background: #f5f5f5; }
+    html, body, #root { min-width: 0; min-height: 100%; margin: 0; }
+    body { background: #f5f5f5; }
+    :root[data-mock-tone="dark"], :root[data-mock-tone="dark"] body { background: #141414; }
+    :root[data-dude-follow-app-theme="true"] body {
+      background: var(--background-color-default, #f5f5f5);
+      color: var(--text-color-default, #242424);
+      font-family: var(--font-sans, "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", sans-serif);
+    }
+    :root[data-dude-follow-app-theme="true"][data-mock-tone="dark"] body { background: var(--background-color-default, #141414); color: var(--text-color-default, #ffffff); }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+    }
+
+    /* Mock strip: deliberately not Fluent, with a dashed edge, so it never
+       reads as Canvas chrome. */
+    #mock-strip {
+      box-sizing: border-box; display: flex; flex-direction: column; gap: 4px; padding: 6px 12px;
+      font: 12px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: #fbf3d9; color: #2b2410; border-bottom: 2px dashed #8a6d1f;
+    }
+    :root[data-mock-tone="dark"] #mock-strip { background: #2f2a1a; color: #f6edd3; border-bottom-color: #c9a64a; }
+    #mock-strip .mock-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+    #mock-strip .mock-head strong { text-transform: uppercase; letter-spacing: .06em; }
+    #mock-strip .mock-head span { flex: 1 1 18em; min-width: 0; }
+    #mock-strip .mock-row { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+    #mock-strip .mock-field { display: inline-flex; align-items: center; gap: 4px; }
+    #mock-strip select, #mock-strip button {
+      font: inherit; color: inherit; background: transparent; border: 1px solid currentColor;
+      border-radius: 4px; padding: 1px 4px; max-width: 30em;
+    }
+    #mock-strip select option { color: #1b1b1b; background: #ffffff; }
+    #mock-strip button { cursor: pointer; padding: 1px 8px; }
+    #mock-strip :focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+    #mock-strip p { margin: 0; }
+    #mock-strip .mock-log { font-style: italic; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <noscript>This design preview needs JavaScript. It sends and saves nothing.</noscript>
+  <script src="./work-type-presentation.js"></script>
+</body>
+</html>

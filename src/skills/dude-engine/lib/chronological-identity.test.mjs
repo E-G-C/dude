@@ -497,6 +497,39 @@ test('T001 CLI exposes numeric inventory and rejects selector fallback', () => {
   }
 });
 
+test('067 Work type: first capture preserves classified and unclassified ledger bytes', () => {
+  for (const lines of [
+    'work_intent: fix\nwork_domain: code\n',
+    'work_intent:\nwork_domain: unknown\n',
+    '',
+  ]) {
+    const root = temporaryRoot();
+    try {
+      lintLayout(root);
+      const earlier = idea(root, '004', 'earlier');
+      const earlierBytes = fs.readFileSync(path.join(root, earlier));
+      const bytes = Buffer.from(ledger('new-idea').replace(
+        '---\n\n## Idea', `${lines}---\n\n## Idea`,
+      ));
+      const stage = path.join(root, 'stage.md');
+      fs.writeFileSync(stage, bytes);
+      const before = snapshot(root);
+
+      const result = run(CAPTURE, ['--root', root, '--slug', 'new-idea', '--stage', stage]);
+
+      assert.equal(result.status, 0, result.stderr);
+      const capturedPath = '.dude/ideas/005-new-idea.md';
+      assert.equal(result.stdout, `${capturedPath}\n`);
+      assert.deepEqual(fs.readFileSync(path.join(root, capturedPath)), bytes);
+      assert.deepEqual(fs.readFileSync(path.join(root, earlier)), earlierBytes);
+      assert.deepEqual(snapshot(root).filter((entry) => !entry.startsWith(`f ${capturedPath} `)), before);
+      assert.deepEqual(inventoryLifecycleIdentities({ root }).diagnostics, []);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
 test('T001 first capture allocates max-plus-one and leaves the workspace unchanged for duplicate and exhaustion diagnostics', () => {
   const root = temporaryRoot();
   const stage = path.join(root, 'stage.md');

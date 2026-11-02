@@ -1,0 +1,1136 @@
+{
+ "schema": "dude-067-preapproval-verification/1",
+ "verdict": "FAIL",
+ "verdictRule": "FAIL when any check fails or the runner errors. Observations are reported with their evidence and do not change the verdict.",
+ "generatedAt": "2026-10-20T04:49:41.612Z",
+ "startedAt": "2026-10-20T04:44:11.198Z",
+ "durationSeconds": 330,
+ "role": "Tester: independent, test-only, pre-approval. The designer capture-log.json was read as bounded prior art and is not used as evidence here.",
+ "command": "node \"C:\\Users\\EG\\AppData\\Local\\Temp\\dude-067-verify-20261019-234257-829bf3\\run.mjs\" --repo \"C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka\"",
+ "runner": {
+  "dir": "C:\\Users\\EG\\AppData\\Local\\Temp\\dude-067-verify-20261019-234257-829bf3",
+  "digest": "ff2969b0f0f721d52e3384fccf146feabe07daec4ba0effe60d2b850c501ee60",
+  "files": [
+   {
+    "name": "cdp.mjs",
+    "sha256": "a50d673e91cb5bc243c2316796a924fd740b46cd3f26cf24322bdcbaffa46d52"
+   },
+   {
+    "name": "checks-appearance.mjs",
+    "sha256": "66bec4de750cbd30ac15bc2d233d798884d1f1f4e0cef9e633a38c9129c09787"
+   },
+   {
+    "name": "checks-capture.mjs",
+    "sha256": "1c5cf363a29fac6beaef460553d2fc139b03ca77cfad68d6321fd1f68ed065a3"
+   },
+   {
+    "name": "checks-list.mjs",
+    "sha256": "a45c339f1f5cabbf5aee98ee5794540acae774b3cf7e263e8100c020c1435507"
+   },
+   {
+    "name": "checks-now.mjs",
+    "sha256": "c6ac0614b51bd4a3306c38df735bb660ad508f706cb325c1e3ce42b3d8c1983d"
+   },
+   {
+    "name": "checks-obs.mjs",
+    "sha256": "d26027e097085114a94c0257e00dc8683b0a2c4cc90cb72728378b6dbd6a69d6"
+   },
+   {
+    "name": "harness.mjs",
+    "sha256": "70755cdfe13b45d400e241abf2313c077e861061653e4b16bd8a8b75a5a5c31b"
+   },
+   {
+    "name": "oracle.mjs",
+    "sha256": "18d38485bc25748e84f79d50a59fd1b3db7f4407e54692dd5aaa1c92326cf8c2"
+   },
+   {
+    "name": "probes.mjs",
+    "sha256": "1cd40b7259c38fb22848d9c1818da0fa3bd007c7784676a869255874bf2217c4"
+   },
+   {
+    "name": "run.mjs",
+    "sha256": "555bd3f20d7c1d295661ee1c7e4a5b81187ac670909096bee5ded9ac862e7971"
+   }
+  ]
+ },
+ "environment": {
+  "node": "v24.21.0",
+  "platform": "win32 10.0.26220",
+  "browser": "Edg/156.0.4314.15",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+  "browserPath": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+  "method": "Headless Edge driven over CDP/WebSocket; file:// URL of the canonical HTML; Emulation.setDeviceMetricsOverride per frame; trusted Input.* mouse and key events"
+ },
+ "subject": {
+  "html": {
+   "path": ".dude/specs/067-work-type-presentation/design/work-type-presentation.html",
+   "sha256": "420a174d5085abe602d7b43a7bfc975a822fe629bd9b36176e1175653d257c1c",
+   "bytes": 17300
+  },
+  "runtime": {
+   "path": ".dude/specs/067-work-type-presentation/design/work-type-presentation.js",
+   "sha256": "f3cd9c04d34dc16d810cd7b03651ad5b1fc1bc414e91ff2ba8d5a65d11213bd0",
+   "bytes": 868935
+  },
+  "legal": {
+   "path": ".dude/specs/067-work-type-presentation/design/work-type-presentation.js.LEGAL.txt",
+   "sha256": "20c1596d99736bf8f9c18e6e056c97495c9362c406a9984c889361706f002758",
+   "bytes": 65638
+  },
+  "sources": {
+   "fixtures.json": {
+    "path": ".dude/specs/067-work-type-presentation/design/source/fixtures.json",
+    "sha256": "9993d27daa89589349a2bc2d951b7ada84ffcae6654cd2d8317fdc1927ba98d6",
+    "bytes": 33633
+   },
+   "repository-snapshot.json": {
+    "path": ".dude/specs/067-work-type-presentation/design/source/repository-snapshot.json",
+    "sha256": "ede80387aa93eabc1a8a1a3ebca59877a14995ee5deaf3ed66e1dd2232d02122",
+    "bytes": 82302
+   },
+   "work-type-presentation.jsx": {
+    "path": ".dude/specs/067-work-type-presentation/design/source/work-type-presentation.jsx",
+    "sha256": "95867936e6d306a51be68665db7ef1e210abb44f890b032ab59a9e977aeb1cf8",
+    "bytes": 100481
+   },
+   "styles.js": {
+    "path": ".dude/specs/067-work-type-presentation/design/source/styles.js",
+    "sha256": "f13a5970b1bfa31b215720b5a3d7fb726739c1c5a3e38d8a715374748a756c1b",
+    "bytes": 67149
+   },
+   "theme.js": {
+    "path": ".dude/specs/067-work-type-presentation/design/source/theme.js",
+    "sha256": "5c1a341cce6e8643b6503ecb56d61c15d843171ead58becd0c4b0ed462c3f25f",
+    "bytes": 30756
+   }
+  },
+  "networkBodySha256": "f3cd9c04d34dc16d810cd7b03651ad5b1fc1bc414e91ff2ba8d5a65d11213bd0"
+ },
+ "preservation": {
+  "digestBefore": {
+   "product": "89a445fe5702922e036cc2818aee5d31e3db2671d344348de9251e543b3b8870",
+   "ideas": "6b7d10693f9710d4f2fe69f1b2a4f8e52ab43feabb470366bd52a0146344cf39",
+   "pkg": "2edee9071d3dff0cfa9017fd26600ce08db22346a534698871011d7f2f152a57"
+  },
+  "digestAfter": {
+   "product": "89a445fe5702922e036cc2818aee5d31e3db2671d344348de9251e543b3b8870",
+   "ideas": "6b7d10693f9710d4f2fe69f1b2a4f8e52ab43feabb470366bd52a0146344cf39",
+   "pkg": "2edee9071d3dff0cfa9017fd26600ce08db22346a534698871011d7f2f152a57"
+  },
+  "filesHashed": {
+   "productUi": 89,
+   "ideas": 91,
+   "package": 72
+  },
+  "changed": {
+   "product": {
+    "changed": [],
+    "removed": [],
+    "added": []
+   },
+   "ideas": {
+    "changed": [],
+    "removed": [],
+    "added": []
+   },
+   "pkg": {
+    "changed": [],
+    "removed": [],
+    "added": []
+   }
+  },
+  "ownOutputFiles": 64,
+  "ownOutputRoots": [
+   ".dude/specs/067-work-type-presentation/design/verification",
+   ".dude/specs/067-work-type-presentation/design/screenshots/verification-preapproval"
+  ]
+ },
+ "counts": {
+  "checks": 70,
+  "passed": 61,
+  "failed": 2,
+  "observations": 7,
+  "assertions": 4633,
+  "screenshotsSaved": 63,
+  "frames": 156,
+  "detail": {
+   "fixtureRowsGrid": 13,
+   "fixtureRowsCompact": 13,
+   "repositoryRows": 91,
+   "rowEnterOpens": 26,
+   "nowViewsCrossChecked": 30,
+   "captureStatesStatic": 9,
+   "captureSubmitTransitions": 5,
+   "thresholdViewportWidthsSwept": 33,
+   "appearances": 4,
+   "viewports": 6
+  }
+ },
+ "measurements": {
+  "frames": 156,
+  "byTheme": {
+   "light": 39,
+   "dark": 39,
+   "app-light": 39,
+   "app-dark": 39
+  },
+  "byViewport": {
+   "1440x900": 100,
+   "768x900": 16,
+   "600x900": 16,
+   "720x450@2 (200% emulated)": 16,
+   "1280x900": 4,
+   "1080x900": 4
+  },
+  "byScenario": {
+   "M1": 12,
+   "M4": 16,
+   "M5": 24,
+   "M12-kept": 16,
+   "M2": 4,
+   "M3": 4,
+   "M6": 4,
+   "M7": 4,
+   "M8": 4,
+   "M9": 4,
+   "M10": 4,
+   "M11a": 4,
+   "M11b": 4,
+   "M14a": 4,
+   "M14b": 4,
+   "M12-default": 4,
+   "M12-chosen": 4,
+   "M12-sending": 4,
+   "M12-uncertain": 4,
+   "M12-saved": 4,
+   "M12-missing": 4,
+   "M12-invalid": 4,
+   "M12-waiting": 4,
+   "S1": 4,
+   "S2": 4,
+   "S3": 4
+  },
+  "textSamples": 24532,
+  "scrollPasses": 424,
+  "textMin": {
+   "ratio": 4.95,
+   "frame": "M1|light|1440x900",
+   "sample": "\"input placeholder: Number, title, slug, or path\" 14px fg[112,112,112] on bg[255,255,255]"
+  },
+  "textMinByTheme": {
+   "light": 4.95,
+   "dark": 5.11,
+   "app-light": 5.85,
+   "app-dark": 5.12
+  },
+  "textMinByViewport": {
+   "1440x900": 4.95,
+   "768x900": 4.95,
+   "600x900": 4.95,
+   "720x450@2 (200% emulated)": 4.95,
+   "1280x900": 5.12,
+   "1080x900": 5.12
+  },
+  "fieldBoundarySamples": 552,
+  "fieldBoundaryMin": {
+   "ratio": 5.85,
+   "frame": "M1|app-light|1440x900"
+  },
+  "mockStripTextMin": {
+   "ratio": 12.25,
+   "frame": "M1|dark|1440x900"
+  },
+  "focusStops": 104,
+  "focusWeakestIndicator": {
+   "ratio": 4.86,
+   "stop": "overview/app-dark/Overview"
+  },
+  "axFrames": 18,
+  "optionListTextSamples": 88,
+  "optionListLowest": {
+   "ratio": 11.25,
+   "at": "domain/app-light/720x450@2 (200% emulated)",
+   "text": "Not set"
+  },
+  "disabledTextMin": 1.65,
+  "framesWithFailures": []
+ },
+ "checks": [
+  {
+   "id": "B.binding",
+   "group": "bind",
+   "status": "pass",
+   "assertions": 11,
+   "title": "Artifact binding: runtime hash stated in the HTML matches the file; copied styles/theme equal the product files; stated product hashes match",
+   "notes": [
+    "legal sidecar 65638 chars"
+   ]
+  },
+  {
+   "id": "B.state",
+   "group": "bind",
+   "status": "pass",
+   "assertions": 6,
+   "title": "Package state matches the pre-approval hold: design exploring, no approval, tasks header-only, no ledger carries work_intent / work_domain, fixtures do not collide with real numbers",
+   "notes": [
+    "91 ledgers scanned read-only"
+   ]
+  },
+  {
+   "id": "K.contract-notes",
+   "group": "bind",
+   "status": "observation",
+   "assertions": 3,
+   "title": "Plan progress contract vs mock report: the recorded design status (\"Exploring\") has no progress field in the plan",
+   "failureCount": 1,
+   "failures": [
+    "plan Contracts list a progress.design (recorded design status) field to match the mock"
+   ],
+   "notes": [
+    "plan.md:L133 lists checkpoints only (design-proposed | design-approved) and L136 names \"design\" among unknown parts; the mock's progressReport adds report.design {status, source} at work-type-presentation.jsx:L277 so Exploring can be shown (spec US3.1 and Edge Cases; FR-027 limits checkpoints to Proposed and Approved). Additive, so not a failure of the mock; the plan contract needs the field, or the mock needs to derive it from projection.design, before settle."
+   ]
+  },
+  {
+   "id": "B.runtime-loaded",
+   "group": "bind",
+   "status": "pass",
+   "assertions": 3,
+   "title": "The browser executed the exact runtime file named by the HTML",
+   "notes": [
+    "network response body hash: f3cd9c04d34dc16d810cd7b03651ad5b1fc1bc414e91ff2ba8d5a65d11213bd0"
+   ]
+  },
+  {
+   "id": "M1.grid",
+   "group": "M1",
+   "status": "pass",
+   "assertions": 214,
+   "title": "M1 wide list: 13 fixture rows, every stage and classification state, no new column",
+   "notes": [
+    "row height classified 77-77px, unclassified 61-61px"
+   ],
+   "evidence": [
+    "m1-grid-1440x900-light"
+   ]
+  },
+  {
+   "id": "M1.no-filter",
+   "group": "M1",
+   "status": "pass",
+   "assertions": 10,
+   "title": "No type, intent, or domain filter, sort, or column; Show keeps Open / Closed / All; search ignores classification"
+  },
+  {
+   "id": "L.search-clear-working",
+   "group": "M1",
+   "status": "pass",
+   "assertions": 18,
+   "title": "Search, Show, Working on, Clear, and Back to Overview stay usable"
+  },
+  {
+   "id": "M2.compact",
+   "group": "M2",
+   "status": "pass",
+   "assertions": 175,
+   "title": "M2 compact list below 620px content width keeps number, title, classification, stage, progress",
+   "evidence": [
+    "m2-compact-600x900-light"
+   ]
+  },
+  {
+   "id": "M2.threshold",
+   "group": "M2",
+   "status": "pass",
+   "assertions": 72,
+   "title": "Layout switches on list content width (620px), not viewport width",
+   "notes": [
+    "narrowest grid: viewport 668 (content 620); widest compact: viewport 667 (content 619)"
+   ]
+  },
+  {
+   "id": "L.enter-grid",
+   "group": "M1",
+   "status": "pass",
+   "assertions": 117,
+   "title": "Row focus + Enter opens the matching Now record, grid layout, all 13 rows"
+  },
+  {
+   "id": "L.enter-compact",
+   "group": "M1",
+   "status": "pass",
+   "assertions": 117,
+   "title": "Row focus + Enter opens the matching Now record, compact layout, all 13 rows"
+  },
+  {
+   "id": "L.arrows-grid",
+   "group": "M1",
+   "status": "pass",
+   "assertions": 3,
+   "title": "Keyboard only: search -> ArrowDown reaches rows -> Enter opens (grid)"
+  },
+  {
+   "id": "L.arrows-compact",
+   "group": "M1",
+   "status": "pass",
+   "assertions": 3,
+   "title": "Keyboard only: search -> ArrowDown reaches rows -> Enter opens (compact)"
+  },
+  {
+   "id": "S3.repository",
+   "group": "M1",
+   "status": "pass",
+   "assertions": 5,
+   "title": "Repository snapshot: 91 actual records, every record Not set, stages follow the shared rule",
+   "notes": [
+    "repository stage counts: {\"Completed\":76,\"Closed\":6,\"Captured\":8,\"Defined\":1}"
+   ],
+   "evidence": [
+    "s3-repository-1440x900-light"
+   ]
+  },
+  {
+   "id": "R.fixture-identification",
+   "group": "M1",
+   "status": "pass",
+   "assertions": 7,
+   "title": "Fixtures 901-913 are visibly identified as fixtures, not as real records",
+   "evidence": [
+    "m1-strip-expanded-1440x900-light"
+   ]
+  },
+  {
+   "id": "N.M3",
+   "group": "M3",
+   "status": "pass",
+   "assertions": 11,
+   "title": "M3 captured draft (repository 087): neutral eyebrow, Not set, one summary sentence, chat instruction, no mock guidance",
+   "evidence": [
+    "m3-now-087-1440x900-light"
+   ]
+  },
+  {
+   "id": "N.M4",
+   "group": "M4",
+   "status": "pass",
+   "assertions": 18,
+   "title": "M4 design definition (fixture 904): design status, the design approval gate, Waiting for you, Respond to request",
+   "evidence": [
+    "m4-now-904-1440x900-light"
+   ]
+  },
+  {
+   "id": "N.M5",
+   "group": "M5",
+   "status": "pass",
+   "assertions": 22,
+   "title": "M5 one current phase (fixture 901): phase from its recorded heading; docked task detail at >=1080px, in-flow below",
+   "evidence": [
+    "m5-now-901-docked-1440x900-light"
+   ]
+  },
+  {
+   "id": "N.M6",
+   "group": "M6",
+   "status": "pass",
+   "assertions": 5,
+   "title": "M6 two current phases (fixture 902): both phases named; blank answer slot shows no waiting indicator",
+   "evidence": [
+    "m6-now-902-1440x900-light"
+   ]
+  },
+  {
+   "id": "N.M7",
+   "group": "M7",
+   "status": "pass",
+   "assertions": 6,
+   "title": "M7 blocked work (fixture 903): Blocked, blocker class and reason, the blocked phase is current",
+   "evidence": [
+    "m7-now-903-1440x900-light"
+   ]
+  },
+  {
+   "id": "N.M8",
+   "group": "M8",
+   "status": "pass",
+   "assertions": 4,
+   "title": "M8 all tasks done (repository 066): Completed, no verification / review / release claim"
+  },
+  {
+   "id": "N.M9",
+   "group": "M9",
+   "status": "pass",
+   "assertions": 5,
+   "title": "M9 closed without a package (repository 078): Closed, closing does not mean implemented, no delivery claim"
+  },
+  {
+   "id": "N.M10",
+   "group": "M10",
+   "status": "pass",
+   "assertions": 7,
+   "title": "M10 tracked work (fixture 907): Phase is explicitly \"Not exposed\", never back-filled from Markdown",
+   "evidence": [
+    "m10-now-907-1440x900-light"
+   ]
+  },
+  {
+   "id": "N.M11a",
+   "group": "M11",
+   "status": "pass",
+   "assertions": 5,
+   "title": "M11 partial request source (fixture 910): Status partial with its reason, never None",
+   "evidence": [
+    "m11a-now-910-partial-1440x900-light"
+   ]
+  },
+  {
+   "id": "N.M11b",
+   "group": "M11",
+   "status": "fail",
+   "assertions": 12,
+   "title": "M11 unavailable request source (repository 067): Status unavailable, never None; design record keeps its design gate",
+   "failureCount": 2,
+   "failures": [
+    "with request coverage unavailable, the page must not also state that no preview request is waiting for this record (header says: \"No current owner-qualified preview request is waiting for this record.\" while the Requests row says Status unavailable)",
+    "with request coverage partial, the page must not state that no preview request is waiting for this record (observed with ?feed=partial)"
+   ],
+   "notes": [
+    "cause: mock .dude/specs/067-work-type-presentation/design/source/work-type-presentation.jsx:L646 ReviewEntry returns that sentence for every non-matching feed, including coverage unavailable (L639); today's product src/extensions/dude/frontend/needs-you.jsx:L77 says \"The current preview owner or Review capability is unavailable.\" in that case and keeps the \"No current owner-qualified...\" sentence (L82) for current coverage only."
+   ],
+   "evidence": [
+    "m11b-now-067-unavailable-1440x900-light",
+    "m11b-now-067-partial-feed-1440x900-light"
+   ]
+  },
+  {
+   "id": "N.M14a",
+   "group": "M14",
+   "status": "pass",
+   "assertions": 10,
+   "title": "M14a current blocking request, no design workflow: Waiting for you as supporting detail, no gate, no blocker"
+  },
+  {
+   "id": "N.M14b",
+   "group": "M14",
+   "status": "pass",
+   "assertions": 11,
+   "title": "M14b current advisory request, no design workflow: Waiting for you as supporting detail, no gate, no blocker"
+  },
+  {
+   "id": "N.records",
+   "group": "M3-M14",
+   "status": "pass",
+   "assertions": 15,
+   "title": "Edge-case records: unrecognized, unreadable, intent-only, draft with open questions, unmet dependency, all-done, closed"
+  },
+  {
+   "id": "N.repo-not-set",
+   "group": "M1",
+   "status": "pass",
+   "assertions": 20,
+   "title": "Actual repository records read Not set in details (066, 067, 078, 085, 087)"
+  },
+  {
+   "id": "N.X-neutral",
+   "group": "M3-M14",
+   "status": "pass",
+   "assertions": 420,
+   "title": "Neutral work-item wording: no record is called an idea or feature; Now eyebrow is \"Work item\" (every fixture and detailed repository record)"
+  },
+  {
+   "id": "N.X-claims",
+   "group": "M3-M14",
+   "status": "pass",
+   "assertions": 150,
+   "title": "No live-agent, percentage, verification, review, release, or delivery claims in header or report"
+  },
+  {
+   "id": "N.X-none",
+   "group": "M3-M14",
+   "status": "fail",
+   "assertions": 96,
+   "title": "Request status is never rendered as None / nothing waiting in header or report",
+   "failureCount": 1,
+   "failures": [
+    "M11b says no request is waiting while request coverage is not current: found \"No current owner-qualified preview request is waiting\" in \"t change the stage or start any work. | No current owner-qualified preview request is waiting for this record. | Progres\""
+   ]
+  },
+  {
+   "id": "N.X-controls",
+   "group": "M3-M14",
+   "status": "pass",
+   "assertions": 107,
+   "title": "Correction is an Ask-in-chat instruction; no Change/Edit control or editable field exists in Now"
+  },
+  {
+   "id": "N.X-gates",
+   "group": "M3-M14",
+   "status": "pass",
+   "assertions": 34,
+   "title": "Design approval is the only required gate, and only while design is not approved"
+  },
+  {
+   "id": "N.X-unknown",
+   "group": "M3-M14",
+   "status": "pass",
+   "assertions": 310,
+   "title": "Parts without evidence collapse into exactly one readable sentence; no empty rows"
+  },
+  {
+   "id": "N.X-sources",
+   "group": "M3-M14",
+   "status": "pass",
+   "assertions": 56,
+   "title": "Every evidenced report part names its source"
+  },
+  {
+   "id": "N.X-guidance",
+   "group": "M3-M14",
+   "status": "pass",
+   "assertions": 25,
+   "title": "Mock / Review guidance appears only for design-workflow records or a current preview request"
+  },
+  {
+   "id": "N.X-provenance",
+   "group": "M1",
+   "status": "pass",
+   "assertions": 52,
+   "title": "Fixture identification stays visible in every fixture Now view: collapsed strip names the fixture set; expanded strip names the exact fixture and says every value is fixture data"
+  },
+  {
+   "id": "M12.entry",
+   "group": "M12",
+   "status": "pass",
+   "assertions": 3,
+   "title": "Entry points: the Overview \"New work item\" button and the rail destination open the form with focus in the description field"
+  },
+  {
+   "id": "M12.states",
+   "group": "M12",
+   "status": "pass",
+   "assertions": 171,
+   "title": "M12 nine capture states render truthfully (default, chosen, sending, uncertain, saved, kept, missing, invalid, waiting)"
+  },
+  {
+   "id": "M12.a11y-names",
+   "group": "M12",
+   "status": "pass",
+   "assertions": 17,
+   "title": "M12 field and control accessibility names: Describe the work, Intent (optional), Domain (optional), Submit, Save, Cancel"
+  },
+  {
+   "id": "M12.submit-saved",
+   "group": "M12",
+   "status": "pass",
+   "assertions": 14,
+   "title": "M12 real Submit with the saved outcome: Responding -> Awaiting capture delivery -> result; draft and choices retained",
+   "evidence": [
+    "m12-submit-saved-1440x900-light"
+   ]
+  },
+  {
+   "id": "M12.submit-kept",
+   "group": "M12",
+   "status": "pass",
+   "assertions": 13,
+   "title": "M12 real Save with the kept outcome: Responding -> Awaiting capture delivery -> result; draft and choices retained"
+  },
+  {
+   "id": "M12.submit-missing",
+   "group": "M12",
+   "status": "pass",
+   "assertions": 11,
+   "title": "M12 real Submit with the missing outcome: Responding -> Awaiting capture delivery -> result; draft and choices retained"
+  },
+  {
+   "id": "M12.submit-uncertain",
+   "group": "M12",
+   "status": "pass",
+   "assertions": 13,
+   "title": "M12 real Submit with the uncertain outcome: Responding -> Awaiting capture delivery -> result; draft and choices retained",
+   "evidence": [
+    "m12-uncertain-no-replay-1440x900-light"
+   ]
+  },
+  {
+   "id": "M12.submit-refused",
+   "group": "M12",
+   "status": "pass",
+   "assertions": 12,
+   "title": "M12 real Save with the refused outcome: Responding -> Awaiting capture delivery -> result; draft and choices retained"
+  },
+  {
+   "id": "M12.fixture-controls",
+   "group": "M12",
+   "status": "pass",
+   "assertions": 5,
+   "title": "Fixture controls sit outside product chrome and are labeled; they change fixture state without sending anything"
+  },
+  {
+   "id": "M12.cancel",
+   "group": "M12",
+   "status": "pass",
+   "assertions": 5,
+   "title": "Cancel returns to Needs you and preserves text, choices, and status when the form is reopened"
+  },
+  {
+   "id": "S2.save-as-work-item",
+   "group": "M12",
+   "status": "pass",
+   "assertions": 9,
+   "title": "Needs you \"Save as work item\": neutral labels, sends no intent or domain, truthful statuses",
+   "evidence": [
+    "s2-save-as-work-item-1440x900-light"
+   ]
+  },
+  {
+   "id": "S1.blank-workspace",
+   "group": "M12",
+   "status": "pass",
+   "assertions": 24,
+   "title": "Blank-workspace prompt and navigation use neutral work-item wording; destinations and order are unchanged"
+  },
+  {
+   "id": "X.probe-selftest",
+   "group": "bind",
+   "status": "pass",
+   "assertions": 8,
+   "title": "Measuring probes are live: injected clipped text, low-contrast text, a faint field boundary, and a focus ring that is removed are all flagged; good controls are accepted"
+  },
+  {
+   "id": "A.option-lists",
+   "group": "M13",
+   "status": "pass",
+   "assertions": 96,
+   "title": "Intent and Domain option lists (new UI): opened lists stay inside the viewport, show the selected option by a mark as well as color, and their text meets contrast",
+   "notes": [
+    "option-text samples 88; lowest {\"ratio\":11.25,\"at\":\"domain/app-light/720x450@2 (200% emulated)\",\"text\":\"Not set\"}"
+   ]
+  },
+  {
+   "id": "A.focus",
+   "group": "M13",
+   "status": "pass",
+   "assertions": 592,
+   "title": "Keyboard: Tab reaches the expected controls in order; each product stop shows a painted focus indicator (>= 3:1), stays in view, and is not obscured",
+   "notes": [
+    "stops measured 104 ({\"baseline\":88,\"blur-compare\":16}); indicator unmeasurable 0 []; weakest indicators [[4.86,\"overview/app-dark/Overview\"],[4.86,\"now/app-dark/Now\"],[5.12,\"overview/app-dark/Refresh\"],[5.12,\"overview/app-dark/Expand navigation pane\"]]"
+   ]
+  },
+  {
+   "id": "A.names",
+   "group": "M13",
+   "status": "pass",
+   "assertions": 188,
+   "title": "Accessibility tree: every interactive node has a name; row names carry number, title, intent, domain, stage, progress, path",
+   "notes": [
+    "AX frames audited 18; interactive nodes seen 279"
+   ]
+  },
+  {
+   "id": "A.theme",
+   "group": "M13",
+   "status": "pass",
+   "assertions": 14,
+   "title": "Ordinary and app-following light / dark variants apply; the device preference (prefers-color-scheme) is honored without ?tone"
+  },
+  {
+   "id": "A.console",
+   "group": "M13",
+   "status": "pass",
+   "assertions": 156,
+   "title": "No console errors, warnings, or uncaught exceptions while rendering any measured frame"
+  },
+  {
+   "id": "A.overflow-clipping",
+   "group": "M13",
+   "status": "pass",
+   "assertions": 624,
+   "title": "No page-wide horizontal scroll, off-screen text, or clipped / ellipsized text in rows, report, capture form, or details at any measured size"
+  },
+  {
+   "id": "A.text-contrast",
+   "group": "M13",
+   "status": "pass",
+   "assertions": 156,
+   "title": "Enabled product text meets WCAG 1.4.3 (4.5:1; 3:1 large) measured as computed text color over the actually rendered background"
+  },
+  {
+   "id": "A.control-contrast",
+   "group": "M13",
+   "status": "pass",
+   "assertions": 156,
+   "title": "Search, Show, Intent, Domain, and Describe-the-work boundaries reach 3:1 against their surroundings (best edge, from rendered pixels)"
+  },
+  {
+   "id": "A.target-size",
+   "group": "M13",
+   "status": "pass",
+   "assertions": 1,
+   "title": "New and essential controls are at least 24x24 CSS px (WCAG 2.5.8 measure; exceptions not evaluated)",
+   "notes": [
+    "other targets under 24px (listed for information; WCAG 2.5.8 spacing/inline exceptions not evaluated): []"
+   ]
+  },
+  {
+   "id": "A.mock-strip-legible",
+   "group": "M13",
+   "status": "pass",
+   "assertions": 156,
+   "title": "Mock-strip text (the fixture identification) is legible: contrast and inside the viewport"
+  },
+  {
+   "id": "K.working-on-browsing",
+   "group": "obs",
+   "status": "observation",
+   "assertions": 2,
+   "title": "Continuity: today's Canvas labels the selection \"Browsing\" (not \"Working on\") while a request for a different scope is open",
+   "failureCount": 2,
+   "failures": [
+    "group label while viewing a request for a different scope: expected \"Browsing\"; observed \"Working on\"",
+    "Needs you request scope explains that the selection is only being browsed: pattern /You are browsing/ not found in \"This request is about\\nThis session · no work item\\nOwner: dude\\nRequest: session-start · Revision: fixture-r1\\nSource: session\\nfixture-generation-1\""
+   ],
+   "notes": [
+    "product src/extensions/dude/frontend/app.jsx lines 184, 186 and src/extensions/dude/frontend/needs-you.jsx line 97; mock source mentions \"browsing\" 0 times",
+    "mock, selection 904 with the session request open: group label \"Working on\"; scope panel says \"This request is about This session · no work item Owner: dude Request: session-start · Revision: fixture-r1 Source: session fixture-generati\""
+   ],
+   "evidence": [
+    "k-working-on-vs-browsing-1440x900-light"
+   ]
+  },
+  {
+   "id": "K.requests-row-source",
+   "group": "obs",
+   "status": "observation",
+   "assertions": 1,
+   "title": "SC-006: the partial / unavailable Requests row gives a reason but no \"From <source>\" line, unlike every other report part",
+   "failureCount": 1,
+   "failures": [
+    "Requests row names its source"
+   ],
+   "notes": [
+    "Requests row detail lines: [\"Requests from one owner could not be read. Other requests for this work item may be missing.\"]"
+   ]
+  },
+  {
+   "id": "K.copy-plural",
+   "group": "obs",
+   "status": "observation",
+   "assertions": 1,
+   "title": "Wording: the Overview closing sentence reads \"1 closed work items\"",
+   "failureCount": 1,
+   "failures": [
+    "plural noun after a count of one: found \"1 closed work items\" in \"Closed includes 1 completed and 1 closed work items. Closing doesn’t mean the work was implemented. \""
+   ],
+   "notes": [
+    "observed: \"Closed includes 1 completed and 1 closed work items. Closing doesn’t mean the work was implemented. \""
+   ]
+  },
+  {
+   "id": "K.finder-popup-covers-form",
+   "group": "obs",
+   "status": "observation",
+   "assertions": 1,
+   "title": "Inherited 062 behavior: Tab from the command-bar search on a non-Overview tab opens the results popup, which stays open and can cover the New work item fields",
+   "failureCount": 1,
+   "failures": [
+    "the focused search field's popup does not cover the capture textarea"
+   ],
+   "notes": [
+    "search focused on the New work item tab: popup rows 13, textarea at [73,269,572,132], element at the textarea center: DIV:inside results popup",
+    "same rule in today's product: src/extensions/dude/frontend/app.jsx:L707; mock source L1294. Not introduced by 067; it affects the new fields on this keyboard path."
+   ],
+   "evidence": [
+    "k-finder-popup-over-capture-1440x900-light"
+   ]
+  },
+  {
+   "id": "K.capture-announcements",
+   "group": "obs",
+   "status": "observation",
+   "assertions": 5,
+   "title": "Capture status changes are exposed to assistive technology through a live region (observed with a MutationObserver during each real transition)",
+   "failureCount": 5,
+   "failures": [
+    "saved: a live region (not the mock strip) announces the status",
+    "kept: a live region (not the mock strip) announces the status",
+    "missing: a live region (not the mock strip) announces the status",
+    "uncertain: a live region (not the mock strip) announces the status",
+    "refused: a live region (not the mock strip) announces the status"
+   ],
+   "notes": [
+    "saved: product live-region text observed []",
+    "kept: product live-region text observed []",
+    "missing: product live-region text observed []",
+    "uncertain: product live-region text observed []",
+    "refused: product live-region text observed []",
+    "Fluent MessageBar renders role=group; the AriaLiveAnnouncer region (aria-live=assertive) received no mutation during a real Submit. The product Notice component is the same, so this is inherited; the 067-new statuses (Not sent, Existing intent kept, Domain not recorded) share it. WCAG 4.1.3 relevance is not asserted by the spec."
+   ]
+  },
+  {
+   "id": "K.designer-log-binding",
+   "group": "obs",
+   "status": "observation",
+   "assertions": 2,
+   "title": "Designer capture-log.json is bounded prior art: it carries no artifact hash and predates the final HTML bytes",
+   "failureCount": 2,
+   "failures": [
+    "the log binds the bytes it captured",
+    "the log is at least as new as the HTML"
+   ],
+   "notes": [
+    "capture-log.json 2026-10-20T03:29:06.332Z, HTML 2026-10-20T03:29:40.756Z (HTML is 34s newer); hash strings in log: 0"
+   ]
+  },
+  {
+   "id": "X.no-network",
+   "group": "M12",
+   "status": "pass",
+   "assertions": 5,
+   "title": "No network call, live provider, or ledger mutation: nothing left the page (CDP saw only file:// document and script loads); any fetch the unchanged theme hook attempted was refused by the mock before a request existed",
+   "notes": [
+    "700 browser requests observed across the run; types [\"Document\",\"Script\"]; schemes [\"file\"]",
+    "attempted-and-refused fetch calls: 4 (the unchanged theme.js re-reads /api/canvas-preferences on window focus; the mock's fetch stub rejected every one and CDP recorded no resulting request)"
+   ]
+  },
+  {
+   "id": "P.preservation",
+   "group": "bind",
+   "status": "pass",
+   "assertions": 5,
+   "title": "Product UI source, ledgers, and every pre-existing package file are byte-identical before and after the run"
+  },
+  {
+   "id": "P.cleanup",
+   "group": "bind",
+   "status": "pass",
+   "assertions": 2,
+   "title": "Owned browser processes and the temporary browser profile are gone"
+  }
+ ],
+ "cleanup": {
+  "ownedProcessesObserved": 9,
+  "ownedPids": [
+   38736,
+   27152,
+   19920,
+   34868,
+   37684,
+   28204,
+   19980,
+   4308,
+   38996
+  ],
+  "closedGracefully": true,
+  "killedPids": [],
+  "survivors": [],
+  "profileRemoved": true
+ },
+ "fatal": null,
+ "findings": [
+  {
+   "id": "N.M11b",
+   "title": "M11 unavailable request source (repository 067): Status unavailable, never None; design record keeps its design gate",
+   "failureCount": 2,
+   "failures": [
+    "with request coverage unavailable, the page must not also state that no preview request is waiting for this record (header says: \"No current owner-qualified preview request is waiting for this record.\" while the Requests row says Status unavailable)",
+    "with request coverage partial, the page must not state that no preview request is waiting for this record (observed with ?feed=partial)"
+   ],
+   "screenshot": [
+    "m11b-now-067-unavailable-1440x900-light",
+    "m11b-now-067-partial-feed-1440x900-light"
+   ]
+  },
+  {
+   "id": "N.X-none",
+   "title": "Request status is never rendered as None / nothing waiting in header or report",
+   "failureCount": 1,
+   "failures": [
+    "M11b says no request is waiting while request coverage is not current: found \"No current owner-qualified preview request is waiting\" in \"t change the stage or start any work. | No current owner-qualified preview request is waiting for this record. | Progres\""
+   ],
+   "screenshot": []
+  }
+ ],
+ "observations": [
+  {
+   "id": "K.contract-notes",
+   "title": "Plan progress contract vs mock report: the recorded design status (\"Exploring\") has no progress field in the plan",
+   "observed": [
+    "plan.md:L133 lists checkpoints only (design-proposed | design-approved) and L136 names \"design\" among unknown parts; the mock's progressReport adds report.design {status, source} at work-type-presentation.jsx:L277 so Exploring can be shown (spec US3.1 and Edge Cases; FR-027 limits checkpoints to Proposed and Approved). Additive, so not a failure of the mock; the plan contract needs the field, or the mock needs to derive it from projection.design, before settle."
+   ],
+   "unmet": [
+    "plan Contracts list a progress.design (recorded design status) field to match the mock"
+   ],
+   "screenshot": []
+  },
+  {
+   "id": "K.working-on-browsing",
+   "title": "Continuity: today's Canvas labels the selection \"Browsing\" (not \"Working on\") while a request for a different scope is open",
+   "observed": [
+    "product src/extensions/dude/frontend/app.jsx lines 184, 186 and src/extensions/dude/frontend/needs-you.jsx line 97; mock source mentions \"browsing\" 0 times",
+    "mock, selection 904 with the session request open: group label \"Working on\"; scope panel says \"This request is about This session · no work item Owner: dude Request: session-start · Revision: fixture-r1 Source: session fixture-generati\""
+   ],
+   "unmet": [
+    "group label while viewing a request for a different scope: expected \"Browsing\"; observed \"Working on\"",
+    "Needs you request scope explains that the selection is only being browsed: pattern /You are browsing/ not found in \"This request is about\\nThis session · no work item\\nOwner: dude\\nRequest: session-start · Revision: fixture-r1\\nSource: session\\nfixture-generation-1\""
+   ],
+   "screenshot": [
+    "k-working-on-vs-browsing-1440x900-light"
+   ]
+  },
+  {
+   "id": "K.requests-row-source",
+   "title": "SC-006: the partial / unavailable Requests row gives a reason but no \"From <source>\" line, unlike every other report part",
+   "observed": [
+    "Requests row detail lines: [\"Requests from one owner could not be read. Other requests for this work item may be missing.\"]"
+   ],
+   "unmet": [
+    "Requests row names its source"
+   ],
+   "screenshot": []
+  },
+  {
+   "id": "K.copy-plural",
+   "title": "Wording: the Overview closing sentence reads \"1 closed work items\"",
+   "observed": [
+    "observed: \"Closed includes 1 completed and 1 closed work items. Closing doesn’t mean the work was implemented. \""
+   ],
+   "unmet": [
+    "plural noun after a count of one: found \"1 closed work items\" in \"Closed includes 1 completed and 1 closed work items. Closing doesn’t mean the work was implemented. \""
+   ],
+   "screenshot": []
+  },
+  {
+   "id": "K.finder-popup-covers-form",
+   "title": "Inherited 062 behavior: Tab from the command-bar search on a non-Overview tab opens the results popup, which stays open and can cover the New work item fields",
+   "observed": [
+    "search focused on the New work item tab: popup rows 13, textarea at [73,269,572,132], element at the textarea center: DIV:inside results popup",
+    "same rule in today's product: src/extensions/dude/frontend/app.jsx:L707; mock source L1294. Not introduced by 067; it affects the new fields on this keyboard path."
+   ],
+   "unmet": [
+    "the focused search field's popup does not cover the capture textarea"
+   ],
+   "screenshot": [
+    "k-finder-popup-over-capture-1440x900-light"
+   ]
+  },
+  {
+   "id": "K.capture-announcements",
+   "title": "Capture status changes are exposed to assistive technology through a live region (observed with a MutationObserver during each real transition)",
+   "observed": [
+    "saved: product live-region text observed []",
+    "kept: product live-region text observed []",
+    "missing: product live-region text observed []",
+    "uncertain: product live-region text observed []"
+   ],
+   "unmet": [
+    "saved: a live region (not the mock strip) announces the status",
+    "kept: a live region (not the mock strip) announces the status",
+    "missing: a live region (not the mock strip) announces the status"
+   ],
+   "screenshot": []
+  },
+  {
+   "id": "K.designer-log-binding",
+   "title": "Designer capture-log.json is bounded prior art: it carries no artifact hash and predates the final HTML bytes",
+   "observed": [
+    "capture-log.json 2026-10-20T03:29:06.332Z, HTML 2026-10-20T03:29:40.756Z (HTML is 34s newer); hash strings in log: 0"
+   ],
+   "unmet": [
+    "the log binds the bytes it captured",
+    "the log is at least as new as the HTML"
+   ],
+   "screenshot": []
+  }
+ ],
+ "limitations": [
+  "200% reflow is emulated: Emulation.setDeviceMetricsOverride 720x450 CSS px at device scale factor 2 (the 1440x900 window at 200%). Edge browser-zoom UI and text-only zoom were not exercised.",
+  "Text contrast = computed text color (alpha composited) over the background pixels actually rendered behind the text with the text hidden, per visible text node; large text uses 3:1, other text 4.5:1; disabled controls and the dashed mock strip are reported separately. Field/dropdown boundary contrast = best edge pixel versus the pixel outside, from the screenshot. Focus indicator = pixel difference between a no-focus baseline and the focused frame, versus surrounding and inner background. Not measured: icons, glyphs, progress-bar fill, hover, pressed, selected, forced-colors, text-spacing. No WCAG 2.2 AA conformance claim is made beyond these measurements.",
+  "Target size measures only whether the element box is at least 24x24 CSS px (WCAG 2.5.8 spacing and inline exceptions not evaluated).",
+  "No screen reader was run. Names, roles, and descriptions come from the Chromium accessibility tree; live-region exposure was observed with a MutationObserver during real transitions.",
+  "One engine only: headless Microsoft Edge (Chromium) on Windows over CDP, driven against the mock under file://. No Firefox or WebKit, no embedded Copilot host, no real Canvas provider, no tracked (Beads) data; fixtures and the repository snapshot are mock data.",
+  "Keyboard coverage: Tab walks of the first stops on Overview, Now, and the capture form in all four appearances; grid arrow-key navigation exercised for the first three rows; real Enter exercised on every fixture row in both layouts.",
+  "Contrast and clipping are measured over the first screen plus scroll passes of the largest scrolling region (at most 8 passes); secondary scroll regions such as the docked aside were not scrolled. Overlap between adjacent elements is not measured outside screenshots.",
+  "The unrecognized-domain display is not exercised by any fixture (only an unrecognized intent, record 909). Capture timing relies on the mock timers (700 ms and 1700 ms).",
+  "This is pre-approval verification only: it is not UI approval, not implementation verification, and not release approval. The designer capture-log.json was read as bounded prior art and is not used as evidence."
+ ],
+ "scope": {
+  "acceptance": [
+   "M1",
+   "M2",
+   "M3-M11",
+   "M12",
+   "M13",
+   "M14"
+  ],
+  "notRun": [
+   "product build or product unit/browser suites (none exist for this mock)",
+   "host observation",
+   "any workflow, task, Git, Beads, or implementation step"
+  ]
+ },
+ "screenshots": [
+  "design/screenshots/verification-preapproval/m1-grid-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m2-compact-600x900-light.png",
+  "design/screenshots/verification-preapproval/s3-repository-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m1-strip-expanded-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m3-now-087-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m4-now-904-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m5-now-901-docked-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m6-now-902-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m7-now-903-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m10-now-907-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m11a-now-910-partial-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m11b-now-067-unavailable-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m11b-now-067-partial-feed-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m14a-now-910-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m14b-now-911-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m12-default-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m12-chosen-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m12-sending-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m12-uncertain-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m12-saved-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m12-kept-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m12-missing-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m12-invalid-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m12-waiting-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m12-domain-options-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m12-submit-saved-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m12-uncertain-no-replay-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m12-refused-retry-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m12-fixture-controls-1440x900-light.png",
+  "design/screenshots/verification-preapproval/s2-save-as-work-item-1440x900-light.png",
+  "design/screenshots/verification-preapproval/m13-m1-light-1440x900.png",
+  "design/screenshots/verification-preapproval/m13-m1-light-768x900.png",
+  "design/screenshots/verification-preapproval/m13-m5-light-768x900.png",
+  "design/screenshots/verification-preapproval/m13-m2-light-600x900.png",
+  "design/screenshots/verification-preapproval/m13-m12-kept-light-600x900.png",
+  "design/screenshots/verification-preapproval/m13-m1-light-720x450-2-200-emulated.png",
+  "design/screenshots/verification-preapproval/m13-m4-light-720x450-2-200-emulated.png",
+  "design/screenshots/verification-preapproval/m13-m5-light-720x450-2-200-emulated.png",
+  "design/screenshots/verification-preapproval/m13-m5-light-1280x900.png",
+  "design/screenshots/verification-preapproval/m13-m1-dark-1440x900.png",
+  "design/screenshots/verification-preapproval/m13-m4-dark-1440x900.png",
+  "design/screenshots/verification-preapproval/m13-m12-kept-dark-1440x900.png",
+  "design/screenshots/verification-preapproval/m13-m4-dark-768x900.png",
+  "design/screenshots/verification-preapproval/m13-m2-dark-600x900.png",
+  "design/screenshots/verification-preapproval/m13-m5-dark-1280x900.png",
+  "design/screenshots/verification-preapproval/m13-m1-app-light-1440x900.png",
+  "design/screenshots/verification-preapproval/m13-m4-app-light-1440x900.png",
+  "design/screenshots/verification-preapproval/m13-m2-app-light-600x900.png",
+  "design/screenshots/verification-preapproval/m13-m12-kept-app-light-720x450-2-200-emulated.png",
+  "design/screenshots/verification-preapproval/m13-m1-app-dark-1440x900.png",
+  "design/screenshots/verification-preapproval/m13-m1-app-dark-720x450-2-200-emulated.png",
+  "design/screenshots/verification-preapproval/m13-m5-app-dark-1280x900.png",
+  "design/screenshots/verification-preapproval/m13-m7-dark-1440x900.png",
+  "design/screenshots/verification-preapproval/m13-m11b-dark-1440x900.png",
+  "design/screenshots/verification-preapproval/m13-m14a-dark-1440x900.png",
+  "design/screenshots/verification-preapproval/m13-m12-uncertain-dark-1440x900.png",
+  "design/screenshots/verification-preapproval/m13-m10-app-light-1440x900.png",
+  "design/screenshots/verification-preapproval/m13-m6-app-dark-1440x900.png",
+  "design/screenshots/verification-preapproval/m13-m11b-app-dark-1440x900.png",
+  "design/screenshots/verification-preapproval/m13-m12-invalid-app-dark-1440x900.png",
+  "design/screenshots/verification-preapproval/m13-option-list-intent-dark-1440x900.png",
+  "design/screenshots/verification-preapproval/k-working-on-vs-browsing-1440x900-light.png",
+  "design/screenshots/verification-preapproval/k-finder-popup-over-capture-1440x900-light.png"
+ ]
+}

@@ -1,0 +1,144 @@
+{
+  "label": "before-independent",
+  "runAt": "2026-10-20T13:24:56.488Z",
+  "browser": "Edg/156.0.4314.15",
+  "html": "C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka\\.dude\\specs\\067-work-type-presentation\\design\\variants\\round-2-before-embedded-fix\\work-type-presentation.html",
+  "files": [
+    {
+      "file": "work-type-presentation.html",
+      "bytes": 19070,
+      "sha256": "6eaf6bc8642e31d8e523a818ba9b9802ec63f2755a70cb48a92e10e07bc4cdc5"
+    },
+    {
+      "file": "work-type-presentation.js",
+      "bytes": 870043,
+      "sha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3"
+    }
+  ],
+  "replica": {
+    "plain": {
+      "port": 55712,
+      "ipv6Bound": true,
+      "siblings": true,
+      "extraHeaders": {}
+    }
+  },
+  "results": [
+    {
+      "case": "app-origin",
+      "url": "http://browser-preview-local.localhost:55712/7d1457ce-0c2a-43d6-b6ce-2ebba98340aa/work-type-presentation.html",
+      "renderedMs": null,
+      "state": {
+        "href": "http://browser-preview-local.localhost:55712/7d1457ce-0c2a-43d6-b6ce-2ebba98340aa/work-type-presentation.html",
+        "origin": "http://browser-preview-local.localhost:55712",
+        "title": "Dude Canvas, work type presentation: design preview (067 round 2, exploring)",
+        "readyState": "complete",
+        "rootElementChildren": 0,
+        "rootText": "",
+        "mockStrip": false,
+        "tabpanel": false,
+        "rows": 0,
+        "bootstrapRan": {
+          "mockTone": "light",
+          "bootstrapJson": true,
+          "toneHook": true
+        },
+        "bodyBackground": "rgb(245, 245, 245)",
+        "scripts": [
+          {
+            "src": null,
+            "inlineBytes": 2266,
+            "type": null
+          },
+          {
+            "src": null,
+            "inlineBytes": 47,
+            "type": "application/json"
+          },
+          {
+            "src": "./work-type-presentation.js",
+            "inlineBytes": 0,
+            "type": null
+          }
+        ],
+        "csp": [
+          {
+            "directive": "script-src-elem",
+            "blockedURI": "http://browser-preview-local.localhost:55712/7d1457ce-0c2a-43d6-b6ce-2ebba98340aa/work-type-presentation.js",
+            "disposition": "enforce",
+            "sourceFile": null,
+            "policy": "default-src 'none'; script-src 'unsafe-inline' file: http://127.0.0.1:*; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'"
+          }
+        ]
+      },
+      "console": [],
+      "logs": [
+        "error/security: Loading the script 'http://browser-preview-local.localhost:55712/7d1457ce-0c2a-43d6-b6ce-2ebba98340aa/work-type-presentation.js' violates the following Content Security Policy directive: \"script-src 'unsafe-inline' file: http://127.0.0.1:*\". Note that 'script-src-elem' was not explic"
+      ],
+      "exceptions": [],
+      "requests": [
+        "http://browser-preview-local.localhost:55712/7d1457ce-0c2a-43d6-b6ce-2ebba98340aa/work-type-presentation.html",
+        "http://browser-preview-local.localhost:55712/7d1457ce-0c2a-43d6-b6ce-2ebba98340aa/work-type-presentation.js"
+      ],
+      "failed": [
+        {
+          "type": "Script",
+          "errorText": "",
+          "blockedReason": "csp",
+          "url": "http://browser-preview-local.localhost:55712/7d1457ce-0c2a-43d6-b6ce-2ebba98340aa/work-type-presentation.js"
+        }
+      ],
+      "responses": [
+        {
+          "url": "http://browser-preview-local.localhost:55712/7d1457ce-0c2a-43d6-b6ce-2ebba98340aa/work-type-presentation.html",
+          "status": 200,
+          "mimeType": "text/html",
+          "type": "Document"
+        }
+      ],
+      "issues": [
+        {
+          "code": "ContentSecurityPolicyIssue",
+          "details": "{\"contentSecurityPolicyIssueDetails\":{\"blockedURL\":\"http://browser-preview-local.localhost:55712/7d1457ce-0c2a-43d6-b6ce-2ebba98340aa/work-type-presentation.js\",\"violatedDirective\":\"script-src-elem\",\"isReportOnly\":false,\"contentSecurityPolicyViolationType\":\"kURLViolation\",\"sourceCodeLocation\":{\"url\":\"http://browser-preview-local.localhost:55712/7d1457ce-0c2a-43d6-b6ce-2ebba98340aa/work-type-presen"
+        }
+      ],
+      "serverLog": [
+        "GET /7d1457ce-0c2a-43d6-b6ce-2ebba98340aa/work-type-presentation.html -> 200 (19070 B)"
+      ],
+      "replicaSiblingScriptFetch": {
+        "status": 200,
+        "contentType": "text/javascript; charset=utf-8",
+        "bytes": 870043
+      },
+      "issueCodes": {
+        "ContentSecurityPolicyIssue": 1
+      },
+      "screenshot": "before-independent-app-origin.png"
+    }
+  ],
+  "cleanup": {
+    "ownedPids": [
+      19256,
+      26808,
+      14204,
+      24992,
+      12128,
+      11480,
+      4504,
+      35240,
+      4116,
+      32044,
+      10504,
+      17916,
+      13244,
+      7232,
+      3792,
+      20812,
+      36584
+    ],
+    "closedGracefully": true,
+    "killed": [],
+    "survivors": [],
+    "profileRemoved": true
+  }
+}

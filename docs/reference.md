@@ -104,6 +104,11 @@ the feature:
   `status: draft|defined|resolved`. A draft has an empty `spec_path:` before
   definition; a defined ledger carries the exact workspace-relative path to the
   package's `spec.md`.
+- Two optional internal frontmatter keys hold one unquoted token each:
+  `work_intent` accepts `create`, `fix`, `maintain`, or `explore`; `work_domain`
+  accepts `code`, `design`, `writing`, or `video`. Omit a key when no value is
+  clear. Empty or unrecognized values read as unrecorded and produce a lint
+  warning, not a failure. These notes change no workflow or permission.
 - A `resolved` ledger is terminal and package-less: it marks an outcome
   completed with no `.dude/specs/**` package ever owned by the idea. Its
   `spec_path:` is empty, and it never resolves as a defined owner. The backlog

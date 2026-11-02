@@ -1,0 +1,169 @@
+{
+  "runAt": "2026-10-20T13:26:14.920Z",
+  "browser": "Edg/156.0.4314.15",
+  "files": [
+    {
+      "path": "design/work-type-presentation.html",
+      "bytes": 890907,
+      "sha256": "c5c35834d4394a34d25ad99c6c853e97d4b75e5ef11bb6a7597ce194e0406529"
+    },
+    {
+      "path": "design/work-type-presentation.js",
+      "bytes": 870043,
+      "sha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3"
+    },
+    {
+      "path": "design/variants/round-2-before-embedded-fix/work-type-presentation.html",
+      "bytes": 19070,
+      "sha256": "6eaf6bc8642e31d8e523a818ba9b9802ec63f2755a70cb48a92e10e07bc4cdc5"
+    }
+  ],
+  "replica": {
+    "host": "browser-preview-local.localhost",
+    "port": 63139,
+    "ipv6Bound": true
+  },
+  "targets": {
+    "round2-preimage-file": {
+      "url": "file:///C:/Work/GitHubAppRepos/copilot-worktrees/dude/e-g-c-symmetrical-eureka/.dude/specs/067-work-type-presentation/design/variants/round-2-before-embedded-fix/work-type-presentation.html?scenario=M1",
+      "assertions": 276,
+      "checks": [
+        {
+          "id": "render",
+          "status": "pass",
+          "assertions": 5
+        },
+        {
+          "id": "M1.list",
+          "status": "pass",
+          "assertions": 189
+        },
+        {
+          "id": "L.search-now",
+          "status": "pass",
+          "assertions": 8
+        },
+        {
+          "id": "M12.states",
+          "status": "pass",
+          "assertions": 55
+        },
+        {
+          "id": "M12.submit-saved",
+          "status": "pass",
+          "assertions": 4
+        },
+        {
+          "id": "A.theme",
+          "status": "pass",
+          "assertions": 15
+        }
+      ]
+    },
+    "fixed-file": {
+      "url": "file:///C:/Work/GitHubAppRepos/copilot-worktrees/dude/e-g-c-symmetrical-eureka/.dude/specs/067-work-type-presentation/design/work-type-presentation.html?scenario=M1",
+      "assertions": 277,
+      "checks": [
+        {
+          "id": "render",
+          "status": "pass",
+          "assertions": 6
+        },
+        {
+          "id": "M1.list",
+          "status": "pass",
+          "assertions": 189
+        },
+        {
+          "id": "L.search-now",
+          "status": "pass",
+          "assertions": 8
+        },
+        {
+          "id": "M12.states",
+          "status": "pass",
+          "assertions": 55
+        },
+        {
+          "id": "M12.submit-saved",
+          "status": "pass",
+          "assertions": 4
+        },
+        {
+          "id": "A.theme",
+          "status": "pass",
+          "assertions": 15
+        }
+      ]
+    },
+    "fixed-app-origin-replica": {
+      "url": "http://browser-preview-local.localhost:63139/7814eed4-5eea-4ed5-9b53-f35a1bdaa058/work-type-presentation.html?scenario=M1",
+      "assertions": 277,
+      "checks": [
+        {
+          "id": "render",
+          "status": "pass",
+          "assertions": 6
+        },
+        {
+          "id": "M1.list",
+          "status": "pass",
+          "assertions": 189
+        },
+        {
+          "id": "L.search-now",
+          "status": "pass",
+          "assertions": 8
+        },
+        {
+          "id": "M12.states",
+          "status": "pass",
+          "assertions": 55
+        },
+        {
+          "id": "M12.submit-saved",
+          "status": "pass",
+          "assertions": 4
+        },
+        {
+          "id": "A.theme",
+          "status": "pass",
+          "assertions": 15
+        }
+      ],
+      "serverRequests": {
+        "total": 21,
+        "paths": [
+          "/<id>/work-type-presentation.html"
+        ],
+        "statuses": [
+          200
+        ]
+      }
+    }
+  },
+  "equivalenceWithRound2File": {
+    "fixed-file": {
+      "m1Pixels": true,
+      "rows": true,
+      "now901": true,
+      "capture": true,
+      "submitSaved": true,
+      "theme": true
+    },
+    "fixed-app-origin-replica": {
+      "m1Pixels": true,
+      "rows": true,
+      "now901": true,
+      "capture": true,
+      "submitSaved": true,
+      "theme": true
+    }
+  },
+  "cleanup": {
+    "closedGracefully": true,
+    "killed": [],
+    "survivors": [],
+    "profileRemoved": true
+  }
+}

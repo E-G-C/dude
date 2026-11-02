@@ -1,0 +1,155 @@
+{
+  "handoffVersion": 1,
+  "for": "Visual specialist revising the 067 canonical mock (round 3)",
+  "authority": "Input to the existing design loop only. It grants no runtime, product-source, approval, task, or Git authority and adds no Canvas capability.",
+  "owner": {
+    "ideaPath": ".dude/ideas/067-work-type-presentation.md",
+    "specPath": ".dude/specs/067-work-type-presentation/spec.md"
+  },
+  "previewPath": ".dude/specs/067-work-type-presentation/design/work-type-presentation.html",
+  "designStatus": "exploring",
+  "currentCanonical": {
+    "round": 2,
+    "htmlRawSha256": "c5c35834d4394a34d25ad99c6c853e97d4b75e5ef11bb6a7597ce194e0406529",
+    "runtimeSha256": "27646058794769c0f2bd8be825939969d0e5323978ce48174aec783bfd3ec2e3",
+    "standing": "History for the rejected classification fields. Not approved; its verification is not evidence for round 3."
+  },
+  "userFeedback": {
+    "at": "2026-10-23T16:30:21.227Z",
+    "text": "Intent and Domain, this doe snot make sense to ask to the user. These are internals concepts. Think for a user perspective , review your work."
+  },
+  "preserveFirst": "Before editing previewPath, copy the current canonical HTML and its source, fixture, runtime, and legal files unchanged to design/variants/round-2-embedded/. Leave round-1-initial and round-2-before-embedded-fix untouched. Keep the single self-contained HTML packaging.",
+  "remove": [
+    "Capture: the Intent (optional) and Domain (optional) dropdowns, their Not set options and hints, and the 'Optional intent and domain' group",
+    "Capture: the line about leaving either value Not set and asking Dude in chat to set it",
+    "Capture: 'New work item is unfiled. Your work selection is not attached to this draft.'",
+    "Capture: every 'Waiting for the joined agent' title",
+    "Capture: the refused-classification state, the 'Recorded: Intent ... Domain ...' line, the 'No intent or domain was sent' line, and the 'Existing ... kept' and '... not recorded' notices",
+    "Capture presets chosen, kept, missing, and invalid",
+    "Details: the Intent, Domain, and Stage facts list with Not set, Unrecognized, or Unavailable values, and the instruction to ask Dude in chat to set or change intent or domain",
+    "List: 'Unrecognized intent', 'Unrecognized domain', and 'Classification unavailable' text, and 'not set' or 'unavailable' classification wording in accessible names",
+    "Save as work item: 'through this unfiled request' and 'No intent or domain is sent; you can set them later in chat.'",
+    "Fixture and mock labels that say Not set, including the M3 and S3 labels and the repository snapshot's purpose text"
+  ],
+  "capture": {
+    "tabAndHeading": "New work item",
+    "lead": "What do you want done?",
+    "intro": "Describe it in your own words. Submit saves it and keeps brainstorming with you in chat. Save keeps it for later and starts nothing else.",
+    "fieldLabel": "Describe the work",
+    "actions": [
+      { "label": "Submit", "continuation": "brainstorm", "meaning": "Existing: save, then continue brainstorming in chat." },
+      { "label": "Save", "continuation": "capture_only", "meaning": "Existing: save for later without further discussion, definition, or execution." },
+      { "label": "Cancel", "meaning": "Existing: no runtime call; return to Needs you and keep the draft in this tab." }
+    ],
+    "footnote": "Cancel keeps your draft in this tab and returns to Needs you. It doesn't undo anything already sent. Reloading the page clears the draft.",
+    "validation": {
+      "empty": "Describe the work before submitting or saving.",
+      "tooLong": "This is too long to send. Shorten it and try again. Nothing was cut or sent."
+    },
+    "statuses": {
+      "rule": "One polite live status region; [title, body]. Show no classification in any status.",
+      "sending": ["Sending", "Sending this to Dude. Don't submit it again."],
+      "awaitingSave": ["Waiting for Dude to save it", "Dude has your text and is saving it. Nothing is confirmed yet, and your draft stays here."],
+      "uncertain": ["Not sure it reached Dude", "Canvas couldn't confirm delivery, so it won't send this again. Check the chat; if Dude saves it, this changes to Saved. Your draft stays here."],
+      "savedSubmit": ["Saved", "Saved as work item {number}. Dude will keep brainstorming it with you in chat."],
+      "savedSave": ["Saved", "Saved as work item {number} for later. Nothing else was started."],
+      "savedDetail": "After the body, show any owner note exactly as received, then the saved path as quiet code text, as today. {number} is the number in the saved file name.",
+      "notSent": ["Not sent", "Dude became busy before this could be sent, so nothing was sent or saved. Try again when Dude is free. Your draft stays here."]
+    },
+    "cannotSendNow": {
+      "rule": "While Submit and Save are disabled, show one notice for the first condition that applies, in this order. Both disabled buttons name it with aria-describedby. The conditions are today's; only the words change.",
+      "order": ["notConnected", "importInProgress", "pendingQuestion", "earlierCaptureUnconfirmed", "busy"],
+      "notConnected": ["Not connected to Dude", "Canvas can't reach your Dude chat session, so it can't send this now. Your draft is kept. You can also describe the work in chat."],
+      "importInProgress": ["Finish the import first", "An import from Add/import isn't finished yet. Submit and Save turn back on when it is. Your draft is kept."],
+      "pendingQuestion": ["Answer the pending question first", "Finish the pending question in Needs you before submitting. Your draft is kept."],
+      "earlierCaptureUnconfirmed": ["Your last capture isn't confirmed yet", "Submit and Save turn back on once Dude confirms it. If nothing changes, check the chat. Your draft is kept."],
+      "busy": ["Dude is busy", "Submit and Save turn back on when Dude finishes what it's doing in chat. Your draft is kept."]
+    },
+    "saveAsWorkItem": {
+      "action": "Save as work item",
+      "notice": ["Saves only this text", "Dude saves this text as a work item for later. It doesn't answer this question or give permission for anything."],
+      "fieldLabel": "Text to save",
+      "button": "Save this text",
+      "empty": "Enter the text to save.",
+      "statuses": "The capture statuses above, using savedSave when saved."
+    }
+  },
+  "classificationDisplay": {
+    "words": {
+      "intent": { "fix": "Fix", "create": "New", "maintain": "Maintenance", "explore": "Exploration" },
+      "domain": { "code": "Code", "design": "Design", "writing": "Writing", "video": "Video" }
+    },
+    "format": "Intent word, then domain word, joined by ' · '. One word when only one value is recorded. Nothing when neither is recorded or a value is unrecognized. Accessible text joins with ', '.",
+    "list": "Quiet secondary line under the title in the Name cell, only when there are words. No new column, filter, or sort.",
+    "details": "Header: eyebrow 'Work item', number and title, the stage, and a quiet line of words only when there are words. No labeled Intent, Domain, or Stage list and no correction instruction.",
+    "rowAccessibleName": "{number}. {title}. {words joined by ', ', when any}. Stage: {stage}{, note}. {progress}. {ideaPath}",
+    "neverShow": ["Not set", "Other", "Unrecognized", "Classification unavailable", "any instruction to set, confirm, or correct a classification", "warning or error styling for a missing or unknown classification"],
+    "unreadableRecord": "912 keeps today's unavailable stage and progress and says nothing about classification."
+  },
+  "fixtures": {
+    "meaning": "Classification on fixtures 901 to 913 stands for what Dude recorded during capture or brainstorm. Nobody chose it in Canvas.",
+    "expectedWords": {
+      "901": "Fix · Code", "902": "New · Writing", "903": "New · Video", "904": "New · Design", "905": "Maintenance · Code",
+      "906": "Exploration", "907": "Maintenance · Writing", "908": "", "909": "Design", "910": "Fix · Writing",
+      "911": "Exploration", "912": "", "913": "New · Code"
+    },
+    "changes": [
+      "911: change the domain from other to unrecorded.",
+      "909: keep its unrecognized intent to show that it is hidden.",
+      "Repository snapshot: no record holds a classification, so no repository row or details view shows classification words."
+    ],
+    "capture": {
+      "newRecordNumber": "914",
+      "clear": { "text": "The export button is hidden on small screens.", "recordedByDude": { "intent": "fix", "domain": "code" }, "afterSave": "Row 914 shows the words Fix · Code and the stage Captured." },
+      "vague": { "text": "Make onboarding feel less overwhelming.", "recordedByDude": null, "afterSave": "Row 914 shows no classification line and the stage Captured." },
+      "existing": { "text": "Uploads still stall on slow connections.", "matches": "901", "ownerNote": "Matched the existing work item 901 Retry failed uploads." }
+    }
+  },
+  "clarificationExample": {
+    "where": "In chat, during Submit's brainstorm. Save asks nothing.",
+    "text": "Make exports work for the finance team.",
+    "whyAsk": "Dude can't tell whether the outcome is a new spreadsheet export or a fix so the current CSV export opens correctly in Excel, and the answer changes scope.",
+    "question": "Do you want a new spreadsheet export for the finance team, or should the current CSV export open correctly in Excel?",
+    "neverAsk": ["Is this a Fix or a New item?", "Which domain is this: Code, Design, Writing, or Video?", "Please confirm the classification."],
+    "inMock": "No new surface. Render no classification question anywhere."
+  },
+  "scenarios": {
+    "unchanged": ["M4", "M5", "M6", "M7", "M8", "M9", "M10", "M11a", "M11b", "M13", "M14a", "M14b", "S1"],
+    "revised": {
+      "M1": "Wide list: rows show expectedWords or nothing; stage in Status; no new column.",
+      "M2": "Compact list under 620px of list width: number, title, any words, stage, and progress.",
+      "M3": "Now, repository 087 captured draft: eyebrow, title, captured description, stage Captured, one summary sentence; no classification text, placeholder, or instruction; no mock guidance.",
+      "S2": "Needs you, Save as work item on the session request, with the saveAsWorkItem copy.",
+      "S3": "This repository after 067: no record shows classification words."
+    },
+    "capturePresets": [
+      { "id": "M12-default", "text": "", "show": "intro, empty field, enabled actions" },
+      { "id": "M12-sending", "text": "clear", "status": "sending" },
+      { "id": "M12-awaiting", "text": "clear", "status": "awaitingSave" },
+      { "id": "M12-uncertain", "text": "clear", "status": "uncertain" },
+      { "id": "M12-saved-submit", "text": "clear", "status": "savedSubmit", "thenList": "row 914 with Fix · Code" },
+      { "id": "M12-saved-save", "text": "vague", "status": "savedSave", "thenList": "row 914 with no classification line" },
+      { "id": "M12-saved-existing", "text": "existing", "status": "savedSave", "note": "ownerNote" },
+      { "id": "M12-not-sent", "text": "clear", "status": "notSent", "retryable": true },
+      { "id": "M12-pending-question", "text": "clear", "cannotSendNow": "pendingQuestion" },
+      { "id": "M12-busy", "text": "clear", "cannotSendNow": "busy" },
+      { "id": "M12-not-connected", "text": "clear", "cannotSendNow": "notConnected" }
+    ],
+    "copyOnly": ["importInProgress", "earlierCaptureUnconfirmed", "validation.tooLong"]
+  },
+  "preservedInteractions": [
+    "052 desktop workspace and navigation destinations and order",
+    "062 single search with Show, Working on and Clear, expandable rail, compact list below 620px of list width, docked task detail at 1080px and wider",
+    "Row selection into Now, keyboard focus and Enter, task inspection",
+    "Progress report rows, sources, summary sentence, request coverage, Respond to request, and Review entry",
+    "057 capture behavior: provider receipt, Submit, Save, Cancel, locking, no replay after uncertainty, draft kept",
+    "085 ordinary and app-following light and dark appearance, 200% zoom reflow, WCAG 2.2 AA contrast",
+    "Fixture controls in the dashed strip outside product chrome, labeled as fixtures"
+  ],
+  "outOfScope": [
+    "Any classification field, choice, confirmation, hint, filter, sort, or edit control",
+    "A classifier, confidence score, or approval step in the mock",
+    "087 routing map and 088 multi-feature Ship",
+    "Product source, tasks, and approval"
+  ]
+}

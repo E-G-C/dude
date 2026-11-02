@@ -1,0 +1,2406 @@
+{
+ "snapshotVersion": 1,
+ "generatedAt": "2026-10-20T03:00:38Z",
+ "purpose": "Read-only snapshot of this repository for the 067 mock. No record carries work_intent or work_domain; every classification is Not set.",
+ "reader": {
+  "module": "src/extensions/dude/lib/projection.mjs",
+  "sha256": "c0675fdc23d0e4e1b3a6b6c4ec1b85d8eda87332b46046ec58708ea071d98c54",
+  "calls": [
+   "readWorkIndex({ root })",
+   "readNowProjection({ root, target }) for each curated record"
+  ],
+  "options": "runBd injected to report a missing bd executable (ENOENT), so no Beads command ran; host GIT_CONFIG_* variables removed for this read-only process so local tracker absence could be established from the filesystem."
+ },
+ "workspace": {
+  "workspaceId": "sha256:dce75f117a12547e78427dac1680d5fd9f3a9da57f888541563a788a9c7d22ec",
+  "readAt": "2026-10-20T03:00:37Z",
+  "coverage": {
+   "inventory": "current",
+   "work": "current"
+  }
+ },
+ "records": [
+  {
+   "ideaPath": ".dude/ideas/001-brainstorm-ideas-intake.md",
+   "specPath": ".dude/specs/001-brainstorm-ideas-intake/spec.md",
+   "title": "Brainstorm ideas intake",
+   "slug": "brainstorm-ideas-intake",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 13,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 13
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/002-remove-legacy-compatibility.md",
+   "specPath": ".dude/specs/002-remove-legacy-compatibility/spec.md",
+   "title": "Remove Legacy Compatibility From The Bundle",
+   "slug": "remove-legacy-compatibility",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 36,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 36
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/003-guarded-directory-artifact-import.md",
+   "specPath": ".dude/specs/003-guarded-directory-artifact-import/spec.md",
+   "title": "Guarded Directory Artifact Import",
+   "slug": "guarded-directory-artifact-import",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 10,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 10
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/004-pre-work-log-learning.md",
+   "specPath": ".dude/specs/004-pre-work-log-learning/spec.md",
+   "title": "Pre-work Log Learning",
+   "slug": "pre-work-log-learning",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 8,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 8
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/005-autonomous-work-modes.md",
+   "specPath": ".dude/specs/005-autonomous-work-modes/spec.md",
+   "title": "Autonomous Work Modes",
+   "slug": "autonomous-work-modes",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 8,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 8
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/006-simplify-context-footprint-audit.md",
+   "specPath": ".dude/specs/006-simplify-context-footprint-audit/spec.md",
+   "title": "Simplify Context Footprint Audit",
+   "slug": "simplify-context-footprint-audit",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 2,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 2
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/007-technical-docs-pack-remediation.md",
+   "specPath": ".dude/specs/007-technical-docs-pack-remediation/spec.md",
+   "title": "Technical Docs Pack Remediation",
+   "slug": "technical-docs-pack-remediation",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 9,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 9
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/008-automatic-core-dogfood-promotion.md",
+   "specPath": ".dude/specs/008-automatic-core-dogfood-promotion/spec.md",
+   "title": "Automatic Core Dogfood Promotion",
+   "slug": "automatic-core-dogfood-promotion",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 7,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 7
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/009-autonomous-learning-governance.md",
+   "specPath": ".dude/specs/009-autonomous-learning-governance/spec.md",
+   "title": "Autonomous Learning Governance",
+   "slug": "autonomous-learning-governance",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 9,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 9
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/010-core-autonomous-event-round-trip.md",
+   "specPath": ".dude/specs/010-core-autonomous-event-round-trip/spec.md",
+   "title": "Core Autonomous Event Round Trip",
+   "slug": "core-autonomous-event-round-trip",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 4,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 4
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/011-historical-core-dogfood-fixture-repair.md",
+   "specPath": ".dude/specs/011-historical-core-dogfood-fixture-repair/spec.md",
+   "title": "Historical Core Dogfood Fixture Repair",
+   "slug": "historical-core-dogfood-fixture-repair",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 2,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 2
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/012-core-dogfood-close-simplification.md",
+   "specPath": ".dude/specs/012-core-dogfood-close-simplification/spec.md",
+   "title": "Core Dogfood Close Simplification",
+   "slug": "core-dogfood-close-simplification",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/013-unattended-work-continuity.md",
+   "specPath": ".dude/specs/013-unattended-work-continuity/spec.md",
+   "title": "Unattended Work Continuity",
+   "slug": "unattended-work-continuity",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 6,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 6
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/014-autonomous-review-escalation-precedence.md",
+   "specPath": ".dude/specs/014-autonomous-review-escalation-precedence/spec.md",
+   "title": "Autonomous Review Escalation Precedence",
+   "slug": "autonomous-review-escalation-precedence",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/015-automatic-unchanged-intent-redefinition.md",
+   "specPath": ".dude/specs/015-automatic-unchanged-intent-redefinition/spec.md",
+   "title": "Automatic Unchanged-Intent Redefinition",
+   "slug": "automatic-unchanged-intent-redefinition",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 6,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 6
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/016-simplify-work-command.md",
+   "specPath": ".dude/specs/016-simplify-work-command/spec.md",
+   "title": "Simplify Work Command",
+   "slug": "simplify-work-command",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/017-ship-command.md",
+   "specPath": ".dude/specs/017-ship-command/spec.md",
+   "title": "Ship Command",
+   "slug": "ship-command",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/018-autonomous-runstate-continuity.md",
+   "specPath": ".dude/specs/018-autonomous-runstate-continuity/spec.md",
+   "title": "Autonomous RunState Continuity",
+   "slug": "autonomous-runstate-continuity",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 7,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 7
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/019-specialist-attestation-producer.md",
+   "specPath": ".dude/specs/019-specialist-attestation-producer/spec.md",
+   "title": "Specialist Attestation Producer",
+   "slug": "specialist-attestation-producer",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/020-task-scoped-skill-resolution.md",
+   "specPath": ".dude/specs/020-task-scoped-skill-resolution/spec.md",
+   "title": "Task-Scoped Skill Resolution",
+   "slug": "task-scoped-skill-resolution",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/021-topology-first-enforcement-reset.md",
+   "specPath": ".dude/specs/021-topology-first-enforcement-reset/spec.md",
+   "title": "Add A Topology-First Reset When Review Revisions Expand Enforcement Scope",
+   "slug": "topology-first-enforcement-reset",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/022-runner-reason-code-coverage-fix.md",
+   "specPath": ".dude/specs/022-runner-reason-code-coverage-fix/spec.md",
+   "title": "Runner Reason-Code And Coverage Fix",
+   "slug": "runner-reason-code-coverage-fix",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/023-first-definition-publish.md",
+   "specPath": ".dude/specs/023-first-definition-publish/spec.md",
+   "title": "First-Definition Publish",
+   "slug": "first-definition-publish",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/024-feature-focus-order.md",
+   "specPath": ".dude/specs/024-feature-focus-order/spec.md",
+   "title": "Feature Focus Order",
+   "slug": "feature-focus-order",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 5,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 5
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/025-backlog-report.md",
+   "specPath": ".dude/specs/025-backlog-report/spec.md",
+   "title": "Backlog Report",
+   "slug": "backlog-report",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 7,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 7
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/026-remove-unused-authority-surfaces.md",
+   "specPath": ".dude/specs/026-remove-unused-authority-surfaces/spec.md",
+   "title": "Remove Unused Authority Surfaces",
+   "slug": "remove-unused-authority-surfaces",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 5,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 5
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/027-backlog-report-usability.md",
+   "specPath": ".dude/specs/027-backlog-report-usability/spec.md",
+   "title": "Backlog Report Usability",
+   "slug": "backlog-report-usability",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 6,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 6
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": {
+    "status": "approved"
+   }
+  },
+  {
+   "ideaPath": ".dude/ideas/028-agent-orchestration-metadata.md",
+   "specPath": ".dude/specs/028-agent-orchestration-metadata/spec.md",
+   "title": "Agent Orchestration Metadata",
+   "slug": "agent-orchestration-metadata",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 12,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 12
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/029-bounded-owner-log-projection.md",
+   "specPath": ".dude/specs/029-bounded-owner-log-projection/spec.md",
+   "title": "Bounded Owner Log Projection",
+   "slug": "bounded-owner-log-projection",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/030-backlog-lifecycle-sync.md",
+   "specPath": ".dude/specs/030-backlog-lifecycle-sync/spec.md",
+   "title": "Backlog Lifecycle Sync",
+   "slug": "backlog-lifecycle-sync",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/031-transactional-pack-refresh.md",
+   "specPath": ".dude/specs/031-transactional-pack-refresh/spec.md",
+   "title": "Transactional Pack Refresh",
+   "slug": "transactional-pack-refresh",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/032-theme-agnostic-design-workflow.md",
+   "specPath": ".dude/specs/032-theme-agnostic-design-workflow/spec.md",
+   "title": "Theme-Agnostic And Technology-Independent Design Workflow",
+   "slug": "theme-agnostic-design-workflow",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/033-conversational-brainstorm-intake.md",
+   "specPath": ".dude/specs/033-conversational-brainstorm-intake/spec.md",
+   "title": "Conversational Brainstorm Intake Recognition",
+   "slug": "conversational-brainstorm-intake",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 2,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 2
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/034-github-issue-work-intake.md",
+   "specPath": ".dude/specs/034-github-issue-work-intake/spec.md",
+   "title": "GitHub Issue Work Intake",
+   "slug": "github-issue-work-intake",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/035-pack-catalog-refetch.md",
+   "specPath": ".dude/specs/035-pack-catalog-refetch/spec.md",
+   "title": "Pack Catalog Re-fetch",
+   "slug": "pack-catalog-refetch",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 4,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 4
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/036-upgrade-pack-guidance-correction.md",
+   "specPath": ".dude/specs/036-upgrade-pack-guidance-correction/spec.md",
+   "title": "Upgrade Pack Guidance Correction",
+   "slug": "upgrade-pack-guidance-correction",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 1,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 1
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/037-simplify-pack-updates.md",
+   "specPath": ".dude/specs/037-simplify-pack-updates/spec.md",
+   "title": "Simplify Pack Updates",
+   "slug": "simplify-pack-updates",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 6,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 6
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/038-bulk-pack-refresh.md",
+   "specPath": ".dude/specs/038-bulk-pack-refresh/spec.md",
+   "title": "Bulk Pack Refresh",
+   "slug": "bulk-pack-refresh",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 8,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 8
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/039-ship-checkpoint-autonomy.md",
+   "specPath": ".dude/specs/039-ship-checkpoint-autonomy/spec.md",
+   "title": "Ship Checkpoint Autonomy",
+   "slug": "ship-checkpoint-autonomy",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 7,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 7
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/040-recovery-continuation.md",
+   "specPath": ".dude/specs/040-recovery-continuation/spec.md",
+   "title": "Recovery Continuation",
+   "slug": "recovery-continuation",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/041-pack-discovery-metadata.md",
+   "specPath": ".dude/specs/041-pack-discovery-metadata/spec.md",
+   "title": "Pack Discovery Metadata",
+   "slug": "pack-discovery-metadata",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 4,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 4
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/042-pack-visual-neutrality.md",
+   "specPath": ".dude/specs/042-pack-visual-neutrality/spec.md",
+   "title": "Pack Visual Neutrality",
+   "slug": "pack-visual-neutrality",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 2,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 2
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/043-github-issue-intake-guidance.md",
+   "specPath": ".dude/specs/043-github-issue-intake-guidance/spec.md",
+   "title": "GitHub Issue Intake Guidance",
+   "slug": "github-issue-intake-guidance",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 2,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 2
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/044-persistent-design-mockups.md",
+   "specPath": ".dude/specs/044-persistent-design-mockups/spec.md",
+   "title": "Persistent Design Mockups",
+   "slug": "persistent-design-mockups",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 4,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 4
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/045-chronological-idea-numbering.md",
+   "specPath": ".dude/specs/045-chronological-idea-numbering/spec.md",
+   "title": "Chronological Idea Numbering",
+   "slug": "chronological-idea-numbering",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 5,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 5
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/046-good-enough-delivery.md",
+   "specPath": null,
+   "title": "Good Enough Delivery",
+   "slug": "good-enough-delivery",
+   "status": "resolved",
+   "kindBefore": "idea",
+   "group": "completed",
+   "lane": "definition",
+   "taskCounts": null,
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/047-core-dogfood-preview.md",
+   "specPath": null,
+   "title": "Core Dogfood Preview",
+   "slug": "core-dogfood-preview",
+   "status": "resolved",
+   "kindBefore": "idea",
+   "group": "completed",
+   "lane": "definition",
+   "taskCounts": null,
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/048-backlog-canvas.md",
+   "specPath": null,
+   "title": "Backlog Canvas",
+   "slug": "backlog-canvas",
+   "status": "resolved",
+   "kindBefore": "idea",
+   "group": "completed",
+   "lane": "definition",
+   "taskCounts": null,
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/049-visual-systems-pack.md",
+   "specPath": null,
+   "title": "Visual Systems Pack",
+   "slug": "visual-systems-pack",
+   "status": "resolved",
+   "kindBefore": "idea",
+   "group": "completed",
+   "lane": "definition",
+   "taskCounts": null,
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/050-completion-closeout-report.md",
+   "specPath": ".dude/specs/050-completion-closeout-report/spec.md",
+   "title": "Completion Closeout Report",
+   "slug": "completion-closeout-report",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 4,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 4
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/051-retrospective-rubber-duck-pack.md",
+   "specPath": ".dude/specs/051-retrospective-rubber-duck-pack/spec.md",
+   "title": "Retrospective Rubber Duck Pack",
+   "slug": "retrospective-rubber-duck-pack",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 5,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 5
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/052-dude-canvas-ui.md",
+   "specPath": ".dude/specs/052-dude-canvas-ui/spec.md",
+   "title": "Dude Canvas UI",
+   "slug": "dude-canvas-ui",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 13,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 13
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": {
+    "status": "approved"
+   }
+  },
+  {
+   "ideaPath": ".dude/ideas/053-design-stage-critique.md",
+   "specPath": null,
+   "title": "Design-Stage Critique",
+   "slug": "design-stage-critique",
+   "status": "draft",
+   "kindBefore": "idea",
+   "group": "awaiting-definition",
+   "lane": "definition",
+   "taskCounts": null,
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/054-mockup-opens-in-review.md",
+   "specPath": null,
+   "title": "Mockup Opens in Review",
+   "slug": "mockup-opens-in-review",
+   "status": "draft",
+   "kindBefore": "idea",
+   "group": "awaiting-definition",
+   "lane": "definition",
+   "taskCounts": null,
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/055-canvas-acceptance-reliability.md",
+   "specPath": ".dude/specs/055-canvas-acceptance-reliability/spec.md",
+   "title": "Canvas Acceptance Reliability",
+   "slug": "canvas-acceptance-reliability",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/056-ship-orphan-cleanup.md",
+   "specPath": ".dude/specs/056-ship-orphan-cleanup/spec.md",
+   "title": "Ship Orphan Cleanup",
+   "slug": "ship-orphan-cleanup",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/057-dude-canvas-needs-you.md",
+   "specPath": ".dude/specs/057-dude-canvas-needs-you/spec.md",
+   "title": "Dude Canvas Needs You",
+   "slug": "dude-canvas-needs-you",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 8,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 8
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": {
+    "status": "approved"
+   }
+  },
+  {
+   "ideaPath": ".dude/ideas/058-outcome-aligned-intake.md",
+   "specPath": null,
+   "title": "Outcome-Aligned Intake",
+   "slug": "outcome-aligned-intake",
+   "status": "draft",
+   "kindBefore": "idea",
+   "group": "awaiting-definition",
+   "lane": "definition",
+   "taskCounts": null,
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/059-annotation-direct-manipulation.md",
+   "specPath": ".dude/specs/059-annotation-direct-manipulation/spec.md",
+   "title": "Annotation Direct Manipulation",
+   "slug": "annotation-direct-manipulation",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 4,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 4
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": {
+    "status": "approved"
+   }
+  },
+  {
+   "ideaPath": ".dude/ideas/060-recoverable-work-handoffs.md",
+   "specPath": ".dude/specs/060-recoverable-work-handoffs/spec.md",
+   "title": "Recoverable Work Handoffs",
+   "slug": "recoverable-work-handoffs",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 4,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 4
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/061-work-inspection-source-capacity.md",
+   "specPath": ".dude/specs/061-work-inspection-source-capacity/spec.md",
+   "title": "Work Inspection Source Capacity",
+   "slug": "work-inspection-source-capacity",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 1,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 1
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/062-dude-canvas-workspace-integration.md",
+   "specPath": ".dude/specs/062-dude-canvas-workspace-integration/spec.md",
+   "title": "Dude Canvas Workspace Integration",
+   "slug": "dude-canvas-workspace-integration",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 5,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 5
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": {
+    "status": "approved"
+   }
+  },
+  {
+   "ideaPath": ".dude/ideas/063-dude-canvas-settings.md",
+   "specPath": ".dude/specs/063-dude-canvas-settings/spec.md",
+   "title": "Dude Canvas Settings",
+   "slug": "dude-canvas-settings",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 6,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 6
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": {
+    "status": "approved"
+   }
+  },
+  {
+   "ideaPath": ".dude/ideas/064-work-receipt-overflow-handling.md",
+   "specPath": ".dude/specs/064-work-receipt-overflow-handling/spec.md",
+   "title": "Work Receipt Overflow Handling",
+   "slug": "work-receipt-overflow-handling",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 4,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 4
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/065-work-history-event-compaction.md",
+   "specPath": ".dude/specs/065-work-history-event-compaction/spec.md",
+   "title": "Work History Event Compaction",
+   "slug": "work-history-event-compaction",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 2,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 2
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/066-canvas-without-beads.md",
+   "specPath": ".dude/specs/066-canvas-without-beads/spec.md",
+   "title": "Canvas Without Beads",
+   "slug": "canvas-without-beads",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 1,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 1
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/067-work-type-presentation.md",
+   "specPath": ".dude/specs/067-work-type-presentation/spec.md",
+   "title": "Work Type Presentation",
+   "slug": "work-type-presentation",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "defined-awaiting-work",
+   "lane": "definition",
+   "taskCounts": {
+    "total": 0,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 0
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": {
+    "status": "exploring"
+   }
+  },
+  {
+   "ideaPath": ".dude/ideas/068-agent-to-agent-communication.md",
+   "specPath": ".dude/specs/068-agent-to-agent-communication/spec.md",
+   "title": "Local and remote agent communication",
+   "slug": "agent-to-agent-communication",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 16,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 16
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": {
+    "status": "approved"
+   }
+  },
+  {
+   "ideaPath": ".dude/ideas/069-a2a-library-foundation.md",
+   "specPath": ".dude/specs/069-a2a-library-foundation/spec.md",
+   "title": "A2A library foundation",
+   "slug": "a2a-library-foundation",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 6,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 6
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/070-dude-canvas-skill-customization.md",
+   "specPath": null,
+   "title": "Dude Canvas Skill Customization",
+   "slug": "dude-canvas-skill-customization",
+   "status": "draft",
+   "kindBefore": "idea",
+   "group": "awaiting-definition",
+   "lane": "definition",
+   "taskCounts": null,
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/071-dude-canvas-pack-authoring.md",
+   "specPath": null,
+   "title": "Dude Canvas Pack Authoring",
+   "slug": "dude-canvas-pack-authoring",
+   "status": "draft",
+   "kindBefore": "idea",
+   "group": "awaiting-definition",
+   "lane": "definition",
+   "taskCounts": null,
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/072-dude-canvas-bundle-upgrade.md",
+   "specPath": null,
+   "title": "Dude Canvas Bundle Upgrade",
+   "slug": "dude-canvas-bundle-upgrade",
+   "status": "draft",
+   "kindBefore": "idea",
+   "group": "awaiting-definition",
+   "lane": "definition",
+   "taskCounts": null,
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/073-dude-canvas-artifact-import.md",
+   "specPath": ".dude/specs/073-dude-canvas-artifact-import/spec.md",
+   "title": "Dude Canvas Artifact Import",
+   "slug": "dude-canvas-artifact-import",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 10,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 10
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": {
+    "status": "approved"
+   }
+  },
+  {
+   "ideaPath": ".dude/ideas/074-dude-canvas-about.md",
+   "specPath": ".dude/specs/074-dude-canvas-about/spec.md",
+   "title": "Dude Canvas About",
+   "slug": "dude-canvas-about",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": {
+    "status": "approved"
+   }
+  },
+  {
+   "ideaPath": ".dude/ideas/074-work-readable-evidence-handoff.md",
+   "specPath": ".dude/specs/074-work-readable-evidence-handoff/spec.md",
+   "title": "Work Readable Evidence Handoff",
+   "slug": "work-readable-evidence-handoff",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 5,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 5
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/075-dude-development-base-release.md",
+   "specPath": ".dude/specs/075-dude-development-base-release/spec.md",
+   "title": "Dude Development Base Release",
+   "slug": "dude-development-base-release",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 2,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 2
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": {
+    "status": "approved"
+   }
+  },
+  {
+   "ideaPath": ".dude/ideas/075-terminal-work-manual-resolution.md",
+   "specPath": ".dude/specs/075-terminal-work-manual-resolution/spec.md",
+   "title": "Terminal Work Manual Resolution",
+   "slug": "terminal-work-manual-resolution",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 6,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 6
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/076-duplicate-feature-number-prefixes.md",
+   "specPath": ".dude/specs/076-duplicate-feature-number-prefixes/spec.md",
+   "title": "Duplicate Feature Number Prefixes",
+   "slug": "duplicate-feature-number-prefixes",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 1,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 1
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/077-work-model-packet-capacity.md",
+   "specPath": ".dude/specs/077-work-model-packet-capacity/spec.md",
+   "title": "Work Model Packet Capacity",
+   "slug": "work-model-packet-capacity",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 1,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 1
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/078-dude-canvas-pack-sources.md",
+   "specPath": null,
+   "title": "Dude Canvas Pack Sources",
+   "slug": "dude-canvas-pack-sources",
+   "status": "resolved",
+   "kindBefore": "idea",
+   "group": "completed",
+   "lane": "definition",
+   "taskCounts": null,
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/079-dude-canvas-local-artifacts.md",
+   "specPath": null,
+   "title": "Dude Canvas Local Artifacts",
+   "slug": "dude-canvas-local-artifacts",
+   "status": "resolved",
+   "kindBefore": "idea",
+   "group": "completed",
+   "lane": "definition",
+   "taskCounts": null,
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/080-dude-canvas-pack-documentation.md",
+   "specPath": ".dude/specs/080-dude-canvas-pack-documentation/spec.md",
+   "title": "Dude Canvas Pack Documentation",
+   "slug": "dude-canvas-pack-documentation",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 2,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 2
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": {
+    "status": "approved"
+   }
+  },
+  {
+   "ideaPath": ".dude/ideas/081-animation-short-video-pack.md",
+   "specPath": ".dude/specs/081-animation-short-video-pack/spec.md",
+   "title": "Animation and Short-Video Pack",
+   "slug": "animation-short-video-pack",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 9,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 9
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/082-targeted-pack-acquisition.md",
+   "specPath": ".dude/specs/082-targeted-pack-acquisition/spec.md",
+   "title": "Targeted Pack Acquisition",
+   "slug": "targeted-pack-acquisition",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 4,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 4
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/083-one-step-pack-actions.md",
+   "specPath": ".dude/specs/083-one-step-pack-actions/spec.md",
+   "title": "Dude Canvas One-Step Pack Actions",
+   "slug": "one-step-pack-actions",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 3,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 3
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": {
+    "status": "approved"
+   }
+  },
+  {
+   "ideaPath": ".dude/ideas/084-upstream-packs-in-checkout.md",
+   "specPath": ".dude/specs/084-upstream-packs-in-checkout/spec.md",
+   "title": "Upstream Packs In A Checkout",
+   "slug": "upstream-packs-in-checkout",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 2,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 2
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": {
+    "status": "approved"
+   }
+  },
+  {
+   "ideaPath": ".dude/ideas/085-dude-canvas-app-theme.md",
+   "specPath": ".dude/specs/085-dude-canvas-app-theme/spec.md",
+   "title": "Dude Canvas App Theme",
+   "slug": "dude-canvas-app-theme",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 2,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 2
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": {
+    "status": "approved"
+   }
+  },
+  {
+   "ideaPath": ".dude/ideas/085-retire-backlog-report.md",
+   "specPath": ".dude/specs/085-retire-backlog-report/spec.md",
+   "title": "Retire Backlog Report",
+   "slug": "retire-backlog-report",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 1,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 1
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/086-work-driver.md",
+   "specPath": ".dude/specs/086-work-driver/spec.md",
+   "title": "Work Driver In Core",
+   "slug": "work-driver",
+   "status": "defined",
+   "kindBefore": "feature",
+   "group": "completed",
+   "lane": "lightweight",
+   "taskCounts": {
+    "total": 2,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 2
+   },
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/087-dude-canvas-routing-map.md",
+   "specPath": null,
+   "title": "Dude Canvas Routing Map",
+   "slug": "dude-canvas-routing-map",
+   "status": "draft",
+   "kindBefore": "idea",
+   "group": "awaiting-definition",
+   "lane": "definition",
+   "taskCounts": null,
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  },
+  {
+   "ideaPath": ".dude/ideas/088-multi-feature-ship.md",
+   "specPath": null,
+   "title": "Epic And Multi-Feature Ship",
+   "slug": "multi-feature-ship",
+   "status": "draft",
+   "kindBefore": "idea",
+   "group": "awaiting-definition",
+   "lane": "definition",
+   "taskCounts": null,
+   "availability": {
+    "state": "current",
+    "reason": null
+   },
+   "design": null
+  }
+ ],
+ "curated": [
+  ".dude/ideas/066-canvas-without-beads.md",
+  ".dude/ideas/067-work-type-presentation.md",
+  ".dude/ideas/078-dude-canvas-pack-sources.md",
+  ".dude/ideas/085-dude-canvas-app-theme.md",
+  ".dude/ideas/087-dude-canvas-routing-map.md"
+ ],
+ "details": {
+  ".dude/ideas/066-canvas-without-beads.md": {
+   "readAt": "2026-10-20T03:00:37Z",
+   "authority": "lightweight",
+   "stageBefore": "Verified",
+   "next": null,
+   "nextReasonBefore": "All canonical tasks are complete.",
+   "tasks": {
+    "total": 1,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 1
+   },
+   "phases": [
+    {
+     "name": "Restore optional-Beads reads",
+     "total": 1,
+     "open": 0,
+     "inProgress": 0,
+     "blocked": 0,
+     "done": 1,
+     "state": "done"
+    }
+   ],
+   "blockers": [],
+   "taskDetails": {
+    "coverage": {
+     "state": "available",
+     "reason": null
+    },
+    "items": [
+     {
+      "taskKey": "T001@c066b7a1",
+      "title": "Restore safe optional-Beads handling in `src/extensions/dude/lib/projection.mjs` with focused reader regressions, bounded generated parity, and the Canvas documentation note.",
+      "state": "done",
+      "phase": {
+       "heading": "Phase 1: Restore optional-Beads reads",
+       "order": 0
+      },
+      "deps": null,
+      "blockedBy": null,
+      "readiness": {
+       "state": "not-applicable",
+       "basis": null
+      },
+      "source": {
+       "kind": "file",
+       "path": ".dude/specs/066-canvas-without-beads/tasks.md"
+      },
+      "instruction": {
+       "coverage": "full-unit",
+       "text": "- [x] T001@c066b7a1 [US1] Restore safe optional-Beads handling in `src/extensions/dude/lib/projection.mjs` with focused reader regressions, bounded generated parity, and the Canvas documentation note.\n\n    Scope: Implement the plan's shared acquisition and absence checks without changing public reader signatures, canonical task interpretation, or UI source. Extend `src/extensions/dude/projection.test.mjs` and `src/extensions/dude/work-index.test.mjs`; update only the related Canvas prose in `docs/commands.md`. Use existing generation helpers to project only `.github/extensions/dude/lib/projection.mjs`.\n\n    Acceptance: Satisfy FR-001 through FR-008 and SC-001 through SC-004. Prove normal Lightweight status with a genuinely missing executable through the default process runner, not just an injected empty board. Cover empty/no database, real populated authority, configuration/uncertainty, other acquisition failures, revalidation, selected/inventory agreement, and read-only preservation using the plan's matrix.\n\n    Verification: Execute the focused Node selector and docs contract check in `plan.md`; confirm source/generated equality and unchanged protected/unrelated preimages. Required absent-tool cases must execute on the current host. Distinguish injected controls and platform-limited existing fixtures from real default-runner evidence. Report results for independent verification and review; do not infer completion from this task text.\n\n    Preserve: `.github/instructions/dude.instructions.md`, all Feature 062 implementation/evidence/state, existing backlog and task-state data, pending Canvas harness edits, ideas 067/068, and every unrelated change. Do not run a whole-bundle rebuild, install dependencies, alter execution metadata, or perform Git/delivery actions.\n\n"
+      }
+     }
+    ]
+   },
+   "activity": {
+    "total": 1,
+    "recent": [
+     {
+      "date": "2026-09-21T01:02:01Z",
+      "text": "Work initial claim: task under Ship canvas-without-beads. Restore optional-Beads reads with focused regressions, bounded projection, and related documentation; preserve tracked authority and all unrelated 062 work. No Git or release action."
+     }
+    ]
+   },
+   "unansweredQuestions": 1,
+   "intent": {
+    "text": "The user asked whether Windows might probe for Beads even when it is not installed and whether that could explain a failure. They plan to restart the app soon and said, \"if this is a problem we need to record to be fixed\". Record any confirmed problem for later repair, without defining or implementing a fix now.",
+    "truncated": false,
+    "source": {
+     "path": ".dude/ideas/066-canvas-without-beads.md",
+     "section": "Idea"
+    }
+   },
+   "dispositionCount": 0,
+   "sources": [
+    {
+     "label": "Idea",
+     "path": ".dude/ideas/066-canvas-without-beads.md",
+     "contentIdentity": "sha256:520b7bfd2218c681b97774e40a0cd14b6a0f8e1839810bc4e6a40d4b5856fb8e"
+    },
+    {
+     "label": "Specification",
+     "path": ".dude/specs/066-canvas-without-beads/spec.md",
+     "contentIdentity": "sha256:f4cb2638110a6b949c81cde26a7aa73f3859503d9880e6280fa51bb1e9f048fa"
+    },
+    {
+     "label": "Tasks",
+     "path": ".dude/specs/066-canvas-without-beads/tasks.md",
+     "contentIdentity": "sha256:455db1b9ff16cf65355fbbe96732fb2f6133a9c5363e4db948759ac1979a5342"
+    }
+   ],
+   "liveCoverage": {
+    "state": "unavailable",
+    "reason": "Current requests require a live owner handoff."
+   }
+  },
+  ".dude/ideas/067-work-type-presentation.md": {
+   "readAt": "2026-10-20T03:00:38Z",
+   "authority": "definition",
+   "stageBefore": "Defined",
+   "next": null,
+   "nextReasonBefore": "No canonical task execution evidence exists yet.",
+   "tasks": {
+    "total": 0,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 0
+   },
+   "phases": [],
+   "blockers": [],
+   "taskDetails": {
+    "coverage": {
+     "state": "available",
+     "reason": null
+    },
+    "items": []
+   },
+   "activity": {
+    "total": 8,
+    "recent": [
+     {
+      "date": "2026-10-20T02:43:20Z",
+      "text": "route: Assigned the canonical mock at .dude/specs/067-work-type-presentation/design/work-type-presentation.html to FluentUI within the Architect's capability envelope and the published spec's scenario matrix. Extend the existing Canvas workspace and preserve design variants; no product-source edits or implementation tasks before explicit approval of the exact mock."
+     },
+     {
+      "date": "2026-10-20T01:57:02Z",
+      "text": "define: Staged first definition at .dude/specs/067-work-type-presentation/spec.md under the user's explicit Ship, with spec, plan, and header-only tasks; design is exploring, and the primary mock at .dude/specs/067-work-type-presentation/design/work-type-presentation.html is not yet created. Recorded Ship-authorized definition-owner dispositions for questions 1, 2, 10, and 11 and kept questions 4 to 7 out of scope without editing answer slots; explicit user approval of the exact mock remains required before task derivation or UI source changes. No new guardrails, implementation, task state, or Git action."
+     },
+     {
+      "date": "2026-10-19T22:10:35Z",
+      "text": "brainstorm: Recorded the user's agreement to plan a minimal read-only progress report in this idea, keeping stage, domain phase, checkpoint, and gate apart and reading only existing evidence; noted today's partial phase support, corrected Dude's chat remark that no process is running, and added questions 10 and 11; recorded that Epic and multi-feature Ship are captured separately as `multi-feature-ship`, staged for first-capture publication; still draft, with no definition or implementation."
+     },
+     {
+      "date": "2026-10-19T19:59:04Z",
+      "text": "brainstorm: Recorded the user's agreement that this idea sets up the shared classification its own Canvas screens need, with 087 as a later reader, and answered question 3 from it; refined Dude's earlier analysis in place on domains without a producer, requested action versus intent, provisional intent names, Explore outputs, illustrative evidence, pack stages, and routing-map evidence; added a plain-language design and architecture recap with three Mermaid diagrams; still draft, with no definition or implementation."
+     },
+     {
+      "date": "2026-10-19T18:24:51Z",
+      "text": "brainstorm: Recorded the user's answer that this idea should show both intent and domain, and the user's intent-at-core framing with Dude's feedback; corrected the animation-pack, manifest, and pack-coupling facts; moved question 8 to 087 as its question 3; still draft, with no definition."
+     }
+    ]
+   },
+   "unansweredQuestions": 8,
+   "intent": {
+    "text": "Captured bugs should not be presented as ideas or features just because they share Dude's idea container. Capture the accepted recommendation for later: show work type separately from lifecycle stage across Canvas capture, lists, and details, following GitHub's familiar issue-type versus workflow-state distinction.",
+    "truncated": false,
+    "source": {
+     "path": ".dude/ideas/067-work-type-presentation.md",
+     "section": "Idea"
+    }
+   },
+   "dispositionCount": 1,
+   "sources": [
+    {
+     "label": "Idea",
+     "path": ".dude/ideas/067-work-type-presentation.md",
+     "contentIdentity": "sha256:f65faa9565ffa02ece2df4fe44b6c77264b20c195645ac020bf01206d57ca5d8"
+    },
+    {
+     "label": "Specification",
+     "path": ".dude/specs/067-work-type-presentation/spec.md",
+     "contentIdentity": "sha256:1b4fa79a2e66fb1b163a03f74442158c6e35be495e48646b99231766fb29f21a"
+    },
+    {
+     "label": "Tasks",
+     "path": ".dude/specs/067-work-type-presentation/tasks.md",
+     "contentIdentity": "sha256:c3b84da140b4a976adbe4a4081198ab7a01b68feff1dfa1edd196f2b10d5a394"
+    }
+   ],
+   "liveCoverage": {
+    "state": "unavailable",
+    "reason": "Current requests require a live owner handoff."
+   }
+  },
+  ".dude/ideas/078-dude-canvas-pack-sources.md": {
+   "readAt": "2026-10-20T03:00:38Z",
+   "authority": "definition",
+   "stageBefore": "Completed without a package",
+   "next": null,
+   "nextReasonBefore": "This idea is resolved.",
+   "tasks": null,
+   "phases": [],
+   "blockers": [],
+   "taskDetails": {
+    "coverage": {
+     "state": "not-applicable",
+     "reason": "This idea has no task definitions."
+    },
+    "items": null
+   },
+   "activity": {
+    "total": 2,
+    "recent": [
+     {
+      "date": "2026-09-29T12:10:28Z",
+      "text": "brainstorm: Resolved this package-less ledger as superseded by .dude/ideas/073-dude-canvas-artifact-import.md after the user's 2026-09-29 design review placed pack sources with import under Packs; its intent, open questions, and still-load-bearing verified findings were carried there. Reopening requires an explicit brainstorm."
+     },
+     {
+      "date": "2026-09-29T01:59:22Z",
+      "text": "brainstorm: Staged this derivative for first-capture publication from the user-delegated split of `.dude/ideas/073-dude-canvas-artifact-import.md` with Architect consultation; no package, tasks, mock, import, or pack operation was authorized."
+     }
+    ]
+   },
+   "unansweredQuestions": 0,
+   "intent": {
+    "text": "> Under settings we need a section to add the sources( where  to find the packs)  for the packs. We can have local or remote sources. The remote sources are located in GitHub and that's the case for the original GitHub repo that the current dude is using. However, another user might want to add its own repo. Therefore, Dude can needs to support more than one source of packs. Same thing for a local directory where the user might have packs located. In fact the current dev bundle has only hte local library as source.\n>\n> Dude should be able or capable of inspect the remote source and list the packs. If we need to change the metadata for the packs, that might be also a possibility.\n>\n> Now I wonder if when we list the packs available and the  installed ones  we might need a filter by source for example if I am the user  and I would like to import someone else pack I can add maybe its source (url) and If I look under my available packs, I'm looking for some specific topic and I don't see one i need , I might filter by maybe the other user so I can pull the other user packs.\n\nThis text was split from `.dude/ideas/073-dude-canvas-artifact-import.md` at the user's direction: \"go ahead spl",
+    "truncated": true,
+    "source": {
+     "path": ".dude/ideas/078-dude-canvas-pack-sources.md",
+     "section": "Idea"
+    }
+   },
+   "dispositionCount": 0,
+   "sources": [
+    {
+     "label": "Idea",
+     "path": ".dude/ideas/078-dude-canvas-pack-sources.md",
+     "contentIdentity": "sha256:805820fbd317e4d81d9a43853042bb2e4b5cf5d5d6def4e00c6f811c98c1bd9e"
+    }
+   ],
+   "liveCoverage": {
+    "state": "unavailable",
+    "reason": "Current requests require a live owner handoff."
+   }
+  },
+  ".dude/ideas/085-dude-canvas-app-theme.md": {
+   "readAt": "2026-10-20T03:00:38Z",
+   "authority": "lightweight",
+   "stageBefore": "Verified",
+   "next": null,
+   "nextReasonBefore": "All canonical tasks are complete.",
+   "tasks": {
+    "total": 2,
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 2
+   },
+   "phases": [
+    {
+     "name": "Foundational - Shared user preference",
+     "total": 1,
+     "open": 0,
+     "inProgress": 0,
+     "blocked": 0,
+     "done": 1,
+     "state": "done"
+    },
+    {
+     "name": "User Stories 1-4 - Apply the approved appearance",
+     "total": 1,
+     "open": 0,
+     "inProgress": 0,
+     "blocked": 0,
+     "done": 1,
+     "state": "done"
+    }
+   ],
+   "blockers": [],
+   "taskDetails": {
+    "coverage": {
+     "state": "available",
+     "reason": null
+    },
+    "items": [
+     {
+      "taskKey": "T001@4c8f2a91",
+      "title": "Add the fixed per-user appearance preference store and closed GET/POST routes, with isolated server tests and the two generated runtime projections.",
+      "state": "done",
+      "phase": {
+       "heading": "Phase 1: Foundational - Shared user preference",
+       "order": 0
+      },
+      "deps": null,
+      "blockedBy": null,
+      "readiness": {
+       "state": "not-applicable",
+       "basis": null
+      },
+      "source": {
+       "kind": "file",
+       "path": ".dude/specs/085-dude-canvas-app-theme/tasks.md"
+      },
+      "instruction": {
+       "coverage": "full-unit",
+       "text": "- [x] T001@4c8f2a91 [Shared] Add the fixed per-user appearance preference store and closed GET/POST routes, with isolated server tests and the two generated runtime projections.\n\n    Traces US2's shared-store outcome and US4's storage failures: FR-003 and FR-013, plus the server portions of FR-004, FR-005, FR-014, FR-016, and FR-020; the server portions of SC-002 and SC-004. Implements the plan's Chosen Structure \"1. Preference store and routes\", its server cases in Verification, and the corresponding Build and generated mirror outputs. Bootstrap, first paint, and every rendered behavior remain in T002.\n\n    Exact writer paths:\n    - `src\\extensions\\dude\\lib\\canvas-preferences.mjs`\n    - `src\\extensions\\dude\\lib\\canvas-server.mjs` (preference routes and their existing request boundary only)\n    - `src\\extensions\\dude\\canvas-server.test.mjs`\n    - `.github\\extensions\\dude\\lib\\canvas-preferences.mjs` (generated projection)\n    - `.github\\extensions\\dude\\lib\\canvas-server.mjs` (generated projection)\n\n    Acceptance commands, from the plan's Verification: `node --test --test-name-pattern=\"085 App theme\" src\\extensions\\dude\\canvas-server.test.mjs`, then `node --test src\\extensions\\dude\\canvas-server.test.mjs`, then `node --test --test-name-pattern=\"checked-in dev core is a byte-identical non-mutating projection of authoritative source\" scripts\\build-dev.test.mjs`. Run `node --test src\\extensions\\dude\\needs-you.test.mjs` if the shared request boundary is affected. Record executed, failed, and skipped counts; a skip or zero selected tests is not coverage.\n\n    Scope: use one server-resolved boolean file under `$COPILOT_HOME\\extensions\\dude\\artifacts\\canvas-preferences.json`, never a repository setting or origin-keyed browser store. Cover absent reads without creation, true/false persistence across distinct project servers and fresh ports, restart reads, malformed/unreadable storage, failed writes, and ordinary simultaneous setters leaving one complete document. Cover the existing Host/Origin rules, same-origin POST, exact boolean body, unknown fields and caller paths/roots, non-JSON and oversized input, and no-store responses. Add no schema version, general settings service, lock database, extension entrypoint, agent exchange, or pack operation.\n\n    Every affected test server must use an owned project-relative `COPILOT_HOME`; the unset-variable fallback test must control the home location too. No test may read or write the real user's preference. Preserve unrelated preimages. Generate only the two listed mirror outputs with `listCoreOutputs` and `writeCoreOutput` from `scripts\\build-release.mjs`, refusing missing or duplicate matches, unless the normal development projection is freshly proved to preserve unrelated work and stay inside this writer set. Do not hand-edit mirrors. Change no UI, mock, screenshot, browser runner, or documentation in this unit. The coordinator retains lint and task-state authority.\n\n"
+      }
+     },
+     {
+      "taskKey": "T002@7b3d90e6",
+      "title": "Apply the approved app-theme appearance across Canvas: bootstrap the confirmed choice, add Settings Appearance, adapt Fluent colors and typography with live updates, preserve Review contracts, and deliver the rebuilt mirrors, documentation, pins, and full acceptance.",
+      "state": "done",
+      "phase": {
+       "heading": "Phase 2: User Stories 1-4 - Apply the approved appearance",
+       "order": 1
+      },
+      "deps": [
+       "T001@4c8f2a91"
+      ],
+      "blockedBy": null,
+      "readiness": {
+       "state": "not-applicable",
+       "basis": null
+      },
+      "source": {
+       "kind": "file",
+       "path": ".dude/specs/085-dude-canvas-app-theme/tasks.md"
+      },
+      "instruction": {
+       "coverage": "full-unit",
+       "text": "- [x] T002@7b3d90e6 [Shared] Apply the approved app-theme appearance across Canvas: bootstrap the confirmed choice, add Settings Appearance, adapt Fluent colors and typography with live updates, preserve Review contracts, and deliver the rebuilt mirrors, documentation, pins, and full acceptance.\n    deps: T001@4c8f2a91\n\n    Traces US1 through US4; FR-001 through FR-021, including the remaining client/bootstrap portions of T001's shared-store requirements; SC-001 through SC-007; VSC-001 through VSC-004. Implements the plan's Chosen Structure \"2. Bootstrap and first paint\" through \"8. Settings Appearance\", the client use of \"1. Preference store and routes\", Documentation, Build and generated mirror, Verification, and Phases And Handoff. The eight approved choices in the spec are acceptance requirements, not unresolved options.\n\n    Exact writer paths:\n    - `src\\extensions\\dude\\lib\\canvas-server.mjs` (choice/error bootstrap when serving `/`)\n    - `src\\extensions\\dude\\frontend\\theme.js`\n    - `src\\extensions\\dude\\frontend\\app.jsx`\n    - `src\\extensions\\dude\\frontend\\settings.jsx`\n    - `src\\extensions\\dude\\frontend\\styles.js`\n    - `src\\extensions\\dude\\frontend\\review.jsx` (only if the separate truthful-tone update needs this existing path)\n    - `src\\extensions\\dude\\ui\\index.html`\n    - `src\\extensions\\dude\\ui\\review\\engine.mjs`\n    - `src\\extensions\\dude\\ui\\assets\\app.js` (rebuilt)\n    - `src\\extensions\\dude\\ui\\assets\\app.js.LEGAL.txt` (rebuilt; Switch may change the inventory)\n    - `src\\extensions\\dude\\canvas-server.test.mjs`\n    - `src\\extensions\\dude\\review.test.mjs`\n    - `src\\extensions\\dude\\needs-you.test.mjs` (only affected shared-server fixtures or assertions)\n    - `scripts\\dude-canvas-ui\\browser.test.mjs`\n    - `scripts\\dude-canvas-ui\\t011-browser.test.mjs`\n    - `scripts\\dude-canvas-ui\\t012-installed-host.mjs`\n    - `scripts\\dude-canvas-ui\\build.test.mjs`\n    - `scripts\\build-dev.test.mjs`\n    - `docs\\commands.md`\n    - `.github\\extensions\\dude\\lib\\canvas-server.mjs` (generated projection)\n    - `.github\\extensions\\dude\\ui\\index.html` (generated projection)\n    - `.github\\extensions\\dude\\ui\\review\\engine.mjs` (generated projection)\n    - `.github\\extensions\\dude\\ui\\assets\\app.js` (generated projection)\n    - `.github\\extensions\\dude\\ui\\assets\\app.js.LEGAL.txt` (generated projection)\n\n    Build and focused verification, from the plan: rebuild with `node scripts\\dude-canvas-ui\\build.mjs`, project only the listed changed runtime outputs, and update actual hashes/sizes before checking pins. Run `node --test --test-name-pattern=\"085 App theme\" src\\extensions\\dude\\canvas-server.test.mjs`, `node --test --test-name-pattern=\"085 App theme\" src\\extensions\\dude\\review.test.mjs`, and `node --test --test-concurrency=1 --test-name-pattern=\"085 App theme\" scripts\\dude-canvas-ui\\browser.test.mjs scripts\\dude-canvas-ui\\t011-browser.test.mjs`. Name the new cases `085 App theme:` so each selected runner executes its intended coverage.\n\n    Then run the plan's affected acceptance serially:\n    1. `node --test src\\extensions\\dude\\canvas-server.test.mjs src\\extensions\\dude\\review.test.mjs`; run `node --test src\\extensions\\dude\\needs-you.test.mjs` when the shared server/provider boundary is affected.\n    2. `node --test scripts\\dude-canvas-ui\\build.test.mjs`.\n    3. `node --test --test-concurrency=1 scripts\\dude-canvas-ui\\browser.test.mjs`, then `node --test --test-concurrency=1 scripts\\dude-canvas-ui\\t011-browser.test.mjs`.\n    4. `node --test --test-name-pattern=\"checked-in dev core is a byte-identical non-mutating projection of authoritative source\" scripts\\build-dev.test.mjs`.\n    5. `node scripts\\dude-canvas-ui\\t012-installed-host.mjs`, with the installed-host configuration from `docs\\commands.md#canvas-maintainer-acceptance` and an isolated preference home.\n\n    Use Node 22+, `DUDE_CANVAS_BROWSER` set to an installed browser, `DUDE_CANVAS_BROWSER_REQUIRED=1`, and an owned project-relative `DUDE_CANVAS_ARTIFACTS_DIR`. Isolate `COPILOT_HOME` in every affected existing and new fixture, including spawned server processes and installed-host acceptance: serving `/` now reads preferences even when the test does not exercise Appearance. Control the home for the unset-variable fallback. No real user preference may be read or written, and no unrelated repository data may change. Record executed, failed, and skipped counts for every runner; a skip or zero selected tests is not coverage.\n\n    Implementation bounds: keep the saved boolean outside the workspace-keyed Settings lifetime and initialize it synchronously from the server bootstrap. Preserve exact off-mode page colors and provider appearance outside the approved header. Follow only documented host values and truthful tone; normalize line heights and Review's saved/captured colors without widening `lib\\review\\data.mjs`'s closed schema. Do not remount App or Review. Live host mutations make no preference request; focus and Appearance entry reread the saved choice without polling or instant cross-project broadcast.\n\n    Apply all approved visual choices: muted-text control borders with measured contrast, hidden tab icons at 479px content width or less, the 6.5em full-label grid and label-above Switch at 300px or less, contrast-safe dark labels on the dark fixture's light-lavender fills, Fluent warning/error hues with replacements where needed, display-font page titles at Dude's existing size, the shared rail/table-header/pager background with faint rules, \"Retry\" for the read, and no visible \"Saved\" text. Do not hardcode the observed palette's replacement colors. Retain genuine Fluent controls, focus during pending work, honest failures, and the approved scope hint. Add no mock-only controls, undisclosed host API, font download, theme picker, dependency, or extension action.\n\n    Delivery bounds: update all five `app.js` pins in `scripts\\build-dev.test.mjs`, `scripts\\dude-canvas-ui\\build.test.mjs`, `scripts\\dude-canvas-ui\\browser.test.mjs`, `scripts\\dude-canvas-ui\\t011-browser.test.mjs`, and `scripts\\dude-canvas-ui\\t012-installed-host.mjs`, with actual rebuilt sizes and legal inventory where checked. Update t012's Review-engine pin and add the preference helper to its explicit runtime inventory. Replace static HTML-byte assumptions with expected-bootstrap assertions while retaining static asset checks. Update the existing two-section Settings assertions rather than hiding Appearance from the accessibility tree. Document the scope/default/storage, live following, focus/entry adoption, fallback, contrast overrides, and read/write feedback in `docs\\commands.md`.\n\n    Preserve unrelated work and inspect preimages before using `node scripts\\build-dev.mjs`; it is permitted only when its writes stay within this unit's exact writer paths. Otherwise use `listCoreOutputs` and `writeCoreOutput` from `scripts\\build-release.mjs` for the listed outputs, refusing missing or duplicate matches. There is no frontend source mirror. Preserve the approved mock, all 45 screenshots, historical evidence, and design/reference pins unchanged. The coordinator retains lint and task-state authority.\n\n    Design Close Protocol:\n    1. Build and render the real Canvas from its normal source, never from the mock. Exercise off/on in both tones, first paint, live same-tone and tone changes, saved-choice adoption, missing host values, larger text, deficient contrast, read/write errors, lost responses, and Review save/seal/restore/capture with realistic owned fixtures.\n    2. Complete the automated user-observable journey before any human host smoke: click count, retained selected-versus-query state and unsent input, full-list discovery, keyboard/focus, state announcements, screenshots, geometry, accessibility tree, contrast, and failure transitions. Inspect 180x450, 360x900, 768x900, and 1440x900, 200% zoom, and the actual 479px/300px content transitions. Confirm applicable text at 4.5:1 or 3:1 for large text, essential boundaries/focus at 3:1 in their exposed states, native forced colors, actual rendered fonts, and at least 24px essential hit areas. Every displayed field must trace to real data or configuration, and every action must work within the declared capability envelope.\n    3. Compare the rendered product with the exact approved `.dude/specs/085-dude-canvas-app-theme/design/app-theme.html` at SHA-256 `2a693bbd4130651381c9e37d0db0c5e6e386dddde2a2718ef68f5341bde70ad8`, using its retained screenshots and the 052 workspace continuity baseline. A mock-author result or a computed font-family name does not prove product behavior. After the harness, the coordinator observes the first dogfood open and live theme switch; request human observation only for remaining host-only injection timing, same-tone palette/type delivery, or font-face gaps.\n    4. Return exactly one classification for the coordinator: \"Matches approved spec\" permits normal close only after fresh Tester evidence and independent Reviewer acceptance; \"Implementation mismatch\" keeps approval and returns the in-progress unit to implementation; \"Design refinement needed\" reopens the proposal and blocks this unit with `design-gap` until explicit approval of the refined revision; \"New scope / new idea\" preserves the current work and routes the new intent through brainstorm and define. The coordinator alone applies those status, glyph, or routing changes.\n    5. The coordinator appends the close classification and routing decision to `.dude/ideas/085-dude-canvas-app-theme.md#coordinator-log` and closes only a matching, working result through the active lane after its normal verification and lint gates. Failed or missing visual evidence leaves the unit open or blocked; report it through the normal flag route. No staged task is complete by this definition.\n\n"
+      }
+     }
+    ]
+   },
+   "activity": {
+    "total": 10,
+    "recent": [
+     {
+      "date": "2026-10-16T04:59:43Z",
+      "text": "work: Closed Dude Canvas App Theme: both live canonical tasks (task, task) are done through autonomous Work in the Ship invocation, each settled with fresh independent Tester verification and independent Code Reviewer acceptance. T001 settled on its second attempt after one review rejection (owned project-relative test fixture homes). T002 settled on its third attempt after a failed verification with four review findings and one further review finding (per-token fallbacks, host-tone first paint, approved following-mode separators, a full-suite browser race, and unusable-background first paint); design close: Matches approved spec. The one Rubber Duck retrospective dispatch completed and is recorded in retrospective.md. The coordinator verified the real loaded extension's preference routes and bootstrap but could not observe real-host pixels because computer use is blocked for the app window; that host-only observation and a live app-theme switch remain for the user. Nothing is committed; Git delivery awaits the user's decision."
+     },
+     {
+      "date": "2026-10-15T15:48:38Z",
+      "text": "work: Claimed task for the user-authorized autonomous Ship invocation; implementation has not started."
+     },
+     {
+      "date": "2026-10-15T13:24:59Z",
+      "text": "work: Claimed task for the user-authorized autonomous Ship invocation; implementation has not started."
+     },
+     {
+      "date": "2026-10-15T12:56:42Z",
+      "text": "execution-reconciliation: Applied the checked approval stage and two new serial open task units, task and task (deps: task), with no inherited state; kept 0, changed 0, dropped 0, new 2. Preserved user sections and append-only history, retained the approved mock bytes at SHA256 2a693bbd4130651381c9e37d0db0c5e6e386dddde2a2718ef68f5341bde70ad8, and observed zero lint failures inside the rollback boundary. Definition is ready for the existing Ship execution path; no implementation has started."
+     },
+     {
+      "date": "2026-10-15T12:39:24Z",
+      "text": "define: Staged approval of the round-1 app theme design from the user's explicit chat reply \"approved\" at 2026-10-15T12:38:17Z, bound to .dude/specs/085-dude-canvas-app-theme/design/app-theme.html at SHA256 `2a693bbd4130651381c9e37d0db0c5e6e386dddde2a2718ef68f5341bde70ad8`, which the coordinator re-hashed after the reply and found unchanged. The approval confirms all eight choices as rendered: muted-text control borders; narrow tabs and the above-switch label; light-lavender primary buttons with dark labels in the dark app look; Fluent warning/error hues with contrast replacements; display-font page titles at Dude's 20px ordinary size; the shared rail/table-header/pager background with faint lines; \"Retry\"; and no visible \"Saved\" text. It also confirms the four reported Ship dispositions: other open projects adopt on refocus/Appearance entry, accessibility overrides exact copying, Canvas keeps ordinary Fluent outside the app, and the provisional label is now confirmed as \"Follow GitHub app theme\". Derived two new serial open units, task (no deps) and task (deps: task), with no inherited completion evidence. Approval is limited to this exact round-1 revision. No execution or task completion is claimed."
+     }
+    ]
+   },
+   "unansweredQuestions": 0,
+   "intent": {
+    "text": "> is it possible for dude canvas to optionally follow the github app theme besides its own default theme?\n\nThe user sent this message, addressed to @dude, at 2026-10-15T09:32:21Z; Dude corrected only \"it's\" to \"its\". After Dude asked whether to capture \"follow the GitHub app theme\" as a Dude idea for definition, the user chose \"Capture it as a Dude idea (Recommended)\". No timestamp is available for that choice.\n\nIn a user follow-up at 2026-10-15T10:03:35Z, item 3 added intent rather than answering an open question. Literal reply:\n\n> 3. This goes under settings",
+    "truncated": false,
+    "source": {
+     "path": ".dude/ideas/085-dude-canvas-app-theme.md",
+     "section": "Idea"
+    }
+   },
+   "dispositionCount": 0,
+   "sources": [
+    {
+     "label": "Idea",
+     "path": ".dude/ideas/085-dude-canvas-app-theme.md",
+     "contentIdentity": "sha256:f5be74d554819083c4318aba2425f01d29205f4126cf92771b76d8a4e0197e3c"
+    },
+    {
+     "label": "Specification",
+     "path": ".dude/specs/085-dude-canvas-app-theme/spec.md",
+     "contentIdentity": "sha256:344926895c36904f12fb294a0ecccf4a9905d9da1783a31245da3cdb154eef0a"
+    },
+    {
+     "label": "Tasks",
+     "path": ".dude/specs/085-dude-canvas-app-theme/tasks.md",
+     "contentIdentity": "sha256:4d7ab921aa4704d458376e8162307e7dbf8e729a47032c827799a4d0faeba10a"
+    }
+   ],
+   "liveCoverage": {
+    "state": "unavailable",
+    "reason": "Current requests require a live owner handoff."
+   }
+  },
+  ".dude/ideas/087-dude-canvas-routing-map.md": {
+   "readAt": "2026-10-20T03:00:38Z",
+   "authority": "definition",
+   "stageBefore": "Idea",
+   "next": null,
+   "nextReasonBefore": "This feature is still an idea.",
+   "tasks": null,
+   "phases": [],
+   "blockers": [],
+   "taskDetails": {
+    "coverage": {
+     "state": "not-applicable",
+     "reason": "This idea has no task definitions."
+    },
+    "items": null
+   },
+   "activity": {
+    "total": 2,
+    "recent": [
+     {
+      "date": "2026-10-19T18:24:51Z",
+      "text": "brainstorm: Took over question 8 from 067 as question 3, corrected what pack manifests declare, and added which views current records can support and a domain-coverage proposal; still draft, with no definition."
+     },
+     {
+      "date": "2026-10-19T14:59:35Z",
+      "text": "brainstorm: Staged the routing-map UI that the user explicitly asked to capture during the 067 pack-owned workflow discussion, as a separate draft for coordinator first-capture publication and a future brainstorm. No definition package, tasks, mock, or implementation was created."
+     }
+    ]
+   },
+   "unansweredQuestions": 3,
+   "intent": {
+    "text": "At 2026-10-19T14:45:41Z, while brainstorming pack-owned workflows in `.dude/ideas/067-work-type-presentation.md`, the user asked for this diagram to be captured for a future brainstorm:\n\n> i delly woulkd be nice if we coul dhave a diagram of the internal routing ( tiunk of Reack Flow or equivalent) representing dude's internal with options to packs creation on this ui ( you can capture this as an idea for future brainstom) \n\nReact Flow, or an equivalent, is the user's example of the kind of diagram, not a selected dependency.",
+    "truncated": false,
+    "source": {
+     "path": ".dude/ideas/087-dude-canvas-routing-map.md",
+     "section": "Idea"
+    }
+   },
+   "dispositionCount": 0,
+   "sources": [
+    {
+     "label": "Idea",
+     "path": ".dude/ideas/087-dude-canvas-routing-map.md",
+     "contentIdentity": "sha256:bd0d817f924eb6b92feaf6b891be4e657cbde297b1b5bf1e24167e3d18c10375"
+    }
+   ],
+   "liveCoverage": {
+    "state": "unavailable",
+    "reason": "Current requests require a live owner handoff."
+   }
+  }
+ }
+}

@@ -1,0 +1,921 @@
+{
+ "schema": "dude-067-round-3-independent-verification/1",
+ "verdict": "FAIL",
+ "verdictRule": "FAIL when any check fails or the runner errors. Observations are not used in this run; every check is pass or fail.",
+ "generatedAt": "2026-10-23T18:12:49.138Z",
+ "startedAt": "2026-10-23T18:10:20.840Z",
+ "durationSeconds": 148,
+ "role": "Tester: independent, test-only verification of the revised 067 mock (round 3). Not UI approval, not implementation verification, not release approval. Authored no production, mock, spec, plan, or task change.",
+ "command": "node \"C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka\\.dude\\specs\\067-work-type-presentation\\design\\verification\\round-3\\runner\\run.mjs\" --repo C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka --handoff C:\\Users\\EG\\AppData\\Local\\Temp\\dude-067-text-first-EQT31w\\stage\\mock-handoff.json",
+ "runner": {
+  "dir": "C:\\Work\\GitHubAppRepos\\copilot-worktrees\\dude\\e-g-c-symmetrical-eureka\\.dude\\specs\\067-work-type-presentation\\design\\verification\\round-3\\runner",
+  "digest": "32794c95fd3b661da69516d9cf05f8af8755055c442c312234680b8598bbb9eb",
+  "files": [
+   {
+    "name": "checks-capture.mjs",
+    "sha256": "6905ce599c0019ef7e85f973deb9f112c218aedf95785dcc0c5e85d60a5047de"
+   },
+   {
+    "name": "checks-list.mjs",
+    "sha256": "f0cab83cfedd721574942e6f2c245e41f34fce7b5532472bf5c58c16a2da9cc6"
+   },
+   {
+    "name": "checks-render.mjs",
+    "sha256": "1c8fddc568bc44cecf68d7639656000d0c0443766c045c37e62de3cbd9d25a08"
+   },
+   {
+    "name": "lib.mjs",
+    "sha256": "5409090ef7c8a6d0bfcb6a51428c588451d72a871a7b965060f11461e709f75b"
+   },
+   {
+    "name": "run.mjs",
+    "sha256": "c3ba0a24d2e6efb3ca12d381d20c5f15f22b330dff647b28f324702ba04ef3ae"
+   }
+  ],
+  "reused": "design/verification/round-2-independent/runner/{cdp,harness,probes,oracle}.mjs imported unchanged; the round 2 check modules were not run because they pin the removed controls"
+ },
+ "environment": {
+  "node": "v24.21.0",
+  "platform": "win32 10.0.26220",
+  "browser": "Edg/156.0.4314.15",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+  "method": "Headless Edge over CDP; trusted Input.* events; file URL plus a test-only loopback replica of http://browser-preview-local.localhost:<port>/<id>/"
+ },
+ "subject": {
+  "html": {
+   "path": ".dude/specs/067-work-type-presentation/design/work-type-presentation.html",
+   "sha256": "abad36e29cdc30453d020a484f1a671cdec1d7d87fee9316815e56917c77a11b",
+   "bytes": 885073
+  },
+  "runtime": {
+   "path": ".dude/specs/067-work-type-presentation/design/work-type-presentation.js",
+   "sha256": "66084dc6887b9aa2c7d1942ef8e0af7cbe54cfa64c7af6b53b8ab2c2b20c6bba",
+   "bytes": 869085
+  },
+  "legal": {
+   "path": ".dude/specs/067-work-type-presentation/design/work-type-presentation.js.LEGAL.txt",
+   "sha256": "20c1596d99736bf8f9c18e6e056c97495c9362c406a9984c889361706f002758",
+   "bytes": 65638
+  },
+  "sources": {
+   "fixtures.json": {
+    "path": ".dude/specs/067-work-type-presentation/design/source/fixtures.json",
+    "sha256": "aa454217fb9614062915547fc5f3958fc47c78e6f0a968a2c0751d32b3a749a6",
+    "bytes": 35431
+   },
+   "repository-snapshot.json": {
+    "path": ".dude/specs/067-work-type-presentation/design/source/repository-snapshot.json",
+    "sha256": "f53d4beb27823d584f94adc5852457d7f2b179d4feedacece59b4a33f41fc1ab",
+    "bytes": 82314
+   },
+   "work-type-presentation.jsx": {
+    "path": ".dude/specs/067-work-type-presentation/design/source/work-type-presentation.jsx",
+    "sha256": "f509832a7afbada1d03d23bf0c667a915e4e7477fadabbd799741e3334bf1319",
+    "bytes": 97846
+   },
+   "styles.js": {
+    "path": ".dude/specs/067-work-type-presentation/design/source/styles.js",
+    "sha256": "f13a5970b1bfa31b215720b5a3d7fb726739c1c5a3e38d8a715374748a756c1b",
+    "bytes": 67149
+   },
+   "theme.js": {
+    "path": ".dude/specs/067-work-type-presentation/design/source/theme.js",
+    "sha256": "5c1a341cce6e8643b6503ecb56d61c15d843171ead58becd0c4b0ed462c3f25f",
+    "bytes": 30756
+   }
+  },
+  "expected": {
+   "html": "abad36e29cdc30453d020a484f1a671cdec1d7d87fee9316815e56917c77a11b",
+   "runtime": "66084dc6887b9aa2c7d1942ef8e0af7cbe54cfa64c7af6b53b8ab2c2b20c6bba",
+   "round2Html": "c5c35834d4394a34d25ad99c6c853e97d4b75e5ef11bb6a7597ce194e0406529"
+  },
+  "preservedRound2Html": "c5c35834d4394a34d25ad99c6c853e97d4b75e5ef11bb6a7597ce194e0406529"
+ },
+ "inputs": {
+  "handoff": {
+   "source": "C:\\Users\\EG\\AppData\\Local\\Temp\\dude-067-text-first-EQT31w\\stage\\mock-handoff.json",
+   "sha256": "dfcb7c8dc071a94e9960b6d2defee173acd1b532bc5800e5d67eabf73c3573f2",
+   "copy": ".dude/specs/067-work-type-presentation/design/verification/round-3/handoff-input.json"
+  },
+  "packageInlineCheck": {
+   "exit": 0,
+   "report": {
+    "mode": "check",
+    "html": "work-type-presentation.html",
+    "runtime": "work-type-presentation.js",
+    "runtimeBytes": 869085,
+    "runtimeSha256": "66084dc6887b9aa2c7d1942ef8e0af7cbe54cfa64c7af6b53b8ab2c2b20c6bba",
+    "inlineSha256": "66084dc6887b9aa2c7d1942ef8e0af7cbe54cfa64c7af6b53b8ab2c2b20c6bba",
+    "inlineMatchesRuntime": true,
+    "htmlBytes": 885073,
+    "htmlSha256": "abad36e29cdc30453d020a484f1a671cdec1d7d87fee9316815e56917c77a11b",
+    "htmlSha256LfNormalized": "abad36e29cdc30453d020a484f1a671cdec1d7d87fee9316815e56917c77a11b",
+    "scriptSrc": "'unsafe-inline'"
+   },
+   "stderr": ""
+  },
+  "designerCaptureLog": "design/screenshots/round-3/capture-log.json was not used as evidence"
+ },
+ "counts": {
+  "checks": 29,
+  "passed": 28,
+  "failed": 1,
+  "assertions": 1502,
+  "screenshots": 17,
+  "frames": 17,
+  "byGroup": {
+   "bind": {
+    "checks": 5,
+    "passed": 5,
+    "failed": 0
+   },
+   "package": {
+    "checks": 3,
+    "passed": 3,
+    "failed": 0
+   },
+   "capture": {
+    "checks": 9,
+    "passed": 9,
+    "failed": 0
+   },
+   "list": {
+    "checks": 6,
+    "passed": 5,
+    "failed": 1
+   },
+   "progress": {
+    "checks": 2,
+    "passed": 2,
+    "failed": 0
+   },
+   "appearance": {
+    "checks": 4,
+    "passed": 4,
+    "failed": 0
+   }
+  }
+ },
+ "measurements": {
+  "frames": [
+   {
+    "id": "capture-text-only-filled 1440x900 light",
+    "scenario": "M12-default",
+    "vp": "1440x900",
+    "theme": "light",
+    "problems": 0,
+    "page": {
+     "sw": 1440,
+     "cw": 1440
+    },
+    "offscreen": 0,
+    "clipped": 0,
+    "hscroll": 0,
+    "textSamples": 26,
+    "textMin": 4.95,
+    "textFails": 0,
+    "fieldMin": 6.19,
+    "disabledMin": null,
+    "passes": 1,
+    "textMinAt": "\"input placeholder: Number, title, slug, or path\" 14px fg[112,112,112] on bg[255,255,255]"
+   },
+   {
+    "id": "capture-pending-question 768x900 app-dark",
+    "scenario": "M12-pending-question",
+    "vp": "768x900",
+    "theme": "app-dark",
+    "problems": 0,
+    "page": {
+     "sw": 768,
+     "cw": 768
+    },
+    "offscreen": 0,
+    "clipped": 0,
+    "hscroll": 0,
+    "textSamples": 26,
+    "textMin": 6.89,
+    "textFails": 0,
+    "fieldMin": 6.89,
+    "disabledMin": 2.8,
+    "passes": 1,
+    "textMinAt": "\"Refresh\" 16px fg[189,184,210] on bg[45,43,85]"
+   },
+   {
+    "id": "capture-saved-submit 1440x900 light",
+    "scenario": "M12-saved-submit",
+    "vp": "1440x900",
+    "theme": "light",
+    "problems": 0,
+    "page": {
+     "sw": 1440,
+     "cw": 1440
+    },
+    "offscreen": 0,
+    "clipped": 0,
+    "hscroll": 0,
+    "textSamples": 27,
+    "textMin": 4.95,
+    "textFails": 0,
+    "fieldMin": 6.19,
+    "disabledMin": 1.65,
+    "passes": 1,
+    "textMinAt": "\"input placeholder: Number, title, slug, or path\" 14px fg[112,112,112] on bg[255,255,255]"
+   },
+   {
+    "id": "capture-saved-save 600x900 dark",
+    "scenario": "M12-saved-save",
+    "vp": "600x900",
+    "theme": "dark",
+    "problems": 0,
+    "page": {
+     "sw": 600,
+     "cw": 600
+    },
+    "offscreen": 0,
+    "clipped": 0,
+    "hscroll": 0,
+    "textSamples": 25,
+    "textMin": 5.11,
+    "textFails": 0,
+    "fieldMin": 6.48,
+    "disabledMin": 2.76,
+    "passes": 1,
+    "textMinAt": "\"input placeholder: Number, title, slug, or path\" 14px fg[153,153,153] on bg[41,41,41]"
+   },
+   {
+    "id": "capture-uncertain 1440x900 dark",
+    "scenario": "M12-uncertain",
+    "vp": "1440x900",
+    "theme": "dark",
+    "problems": 0,
+    "page": {
+     "sw": 1440,
+     "cw": 1440
+    },
+    "offscreen": 0,
+    "clipped": 0,
+    "hscroll": 0,
+    "textSamples": 27,
+    "textMin": 5.11,
+    "textFails": 0,
+    "fieldMin": 6.48,
+    "disabledMin": 2.76,
+    "passes": 1,
+    "textMinAt": "\"input placeholder: Number, title, slug, or path\" 14px fg[153,153,153] on bg[41,41,41]"
+   },
+   {
+    "id": "details-901-words-docked 1440x900 light",
+    "scenario": "M5",
+    "vp": "1440x900",
+    "theme": "light",
+    "problems": 0,
+    "page": {
+     "sw": 1440,
+     "cw": 1440
+    },
+    "offscreen": 0,
+    "clipped": 0,
+    "hscroll": 0,
+    "textSamples": 274,
+    "textMin": 5.38,
+    "textFails": 0,
+    "fieldMin": null,
+    "disabledMin": null,
+    "passes": 3,
+    "textMinAt": "\"901\" 14px fg[15,108,189] on bg[255,255,255]"
+   },
+   {
+    "id": "details-904-design-in-flow 768x900 app-dark",
+    "scenario": "M4",
+    "vp": "768x900",
+    "theme": "app-dark",
+    "problems": 0,
+    "page": {
+     "sw": 768,
+     "cw": 768
+    },
+    "offscreen": 0,
+    "clipped": 0,
+    "hscroll": 0,
+    "textSamples": 149,
+    "textMin": 5.12,
+    "textFails": 0,
+    "fieldMin": null,
+    "disabledMin": null,
+    "passes": 3,
+    "textMinAt": "\"Review design\" 16px fg[45,43,85] on bg[163,151,230]"
+   },
+   {
+    "id": "details-909-known-word-only 1440x900 dark",
+    "scenario": "M1",
+    "vp": "1440x900",
+    "theme": "dark",
+    "problems": 0,
+    "page": {
+     "sw": 1440,
+     "cw": 1440
+    },
+    "offscreen": 0,
+    "clipped": 0,
+    "hscroll": 0,
+    "textSamples": 149,
+    "textMin": 5.18,
+    "textFails": 0,
+    "fieldMin": null,
+    "disabledMin": null,
+    "passes": 2,
+    "textMinAt": "\"909\" 14px fg[71,158,245] on bg[41,41,41]"
+   },
+   {
+    "id": "details-912-unreadable 600x900 dark",
+    "scenario": "M1",
+    "vp": "600x900",
+    "theme": "dark",
+    "problems": 0,
+    "page": {
+     "sw": 600,
+     "cw": 600
+    },
+    "offscreen": 0,
+    "clipped": 0,
+    "hscroll": 0,
+    "textSamples": 79,
+    "textMin": 5.18,
+    "textFails": 0,
+    "fieldMin": null,
+    "disabledMin": null,
+    "passes": 2,
+    "textMinAt": "\"912\" 14px fg[71,158,245] on bg[41,41,41]"
+   },
+   {
+    "id": "list-wide 1440x900 light",
+    "scenario": "M1",
+    "vp": "1440x900",
+    "theme": "light",
+    "problems": 0,
+    "page": {
+     "sw": 1440,
+     "cw": 1440
+    },
+    "offscreen": 0,
+    "clipped": 0,
+    "hscroll": 0,
+    "textSamples": 156,
+    "textMin": 4.95,
+    "textFails": 0,
+    "fieldMin": 6.19,
+    "disabledMin": null,
+    "passes": 2,
+    "textMinAt": "\"input placeholder: Number, title, slug, or path\" 14px fg[112,112,112] on bg[255,255,255]"
+   },
+   {
+    "id": "list-compact 600x900 dark",
+    "scenario": "M2",
+    "vp": "600x900",
+    "theme": "dark",
+    "problems": 0,
+    "page": {
+     "sw": 600,
+     "cw": 600
+    },
+    "offscreen": 0,
+    "clipped": 0,
+    "hscroll": 0,
+    "textSamples": 206,
+    "textMin": 5.11,
+    "textFails": 0,
+    "fieldMin": 6.48,
+    "disabledMin": null,
+    "passes": 3,
+    "textMinAt": "\"input placeholder: Number, title, slug, or path\" 14px fg[153,153,153] on bg[41,41,41]"
+   },
+   {
+    "id": "z200-capture 720x450@2 (200% emulated) app-light",
+    "scenario": "M12-default",
+    "vp": "720x450@2 (200% emulated)",
+    "theme": "app-light",
+    "problems": 0,
+    "page": {
+     "sw": 720,
+     "cw": 720
+    },
+    "offscreen": 0,
+    "clipped": 0,
+    "hscroll": 0,
+    "textSamples": 38,
+    "textMin": 5.85,
+    "textFails": 0,
+    "fieldMin": 5.85,
+    "disabledMin": null,
+    "passes": 2,
+    "textMinAt": "\"Refresh\" 16px fg[102,90,148] on bg[251,250,255]"
+   },
+   {
+    "id": "z200-list 720x450@2 (200% emulated) light",
+    "scenario": "M1",
+    "vp": "720x450@2 (200% emulated)",
+    "theme": "light",
+    "problems": 0,
+    "page": {
+     "sw": 720,
+     "cw": 720
+    },
+    "offscreen": 0,
+    "clipped": 0,
+    "hscroll": 0,
+    "textSamples": 303,
+    "textMin": 4.95,
+    "textFails": 0,
+    "fieldMin": 6.19,
+    "disabledMin": null,
+    "passes": 8,
+    "textMinAt": "\"input placeholder: Number, title, slug, or path\" 14px fg[112,112,112] on bg[255,255,255]"
+   },
+   {
+    "id": "appearance light",
+    "scenario": "M12-saved-submit",
+    "vp": "1440x900",
+    "theme": "light",
+    "problems": 0,
+    "page": {
+     "sw": 1440,
+     "cw": 1440
+    },
+    "textMin": 4.95,
+    "textFails": 0,
+    "fieldMin": 6.19
+   },
+   {
+    "id": "appearance dark",
+    "scenario": "M12-saved-submit",
+    "vp": "1440x900",
+    "theme": "dark",
+    "problems": 0,
+    "page": {
+     "sw": 1440,
+     "cw": 1440
+    },
+    "textMin": 5.11,
+    "textFails": 0,
+    "fieldMin": 6.48
+   },
+   {
+    "id": "appearance app-light",
+    "scenario": "M12-saved-submit",
+    "vp": "1440x900",
+    "theme": "app-light",
+    "problems": 0,
+    "page": {
+     "sw": 1440,
+     "cw": 1440
+    },
+    "textMin": 5.85,
+    "textFails": 0,
+    "fieldMin": 5.85
+   },
+   {
+    "id": "appearance app-dark",
+    "scenario": "M12-saved-submit",
+    "vp": "1440x900",
+    "theme": "app-dark",
+    "problems": 0,
+    "page": {
+     "sw": 1440,
+     "cw": 1440
+    },
+    "textMin": 6.89,
+    "textFails": 0,
+    "fieldMin": 6.89
+   }
+  ],
+  "lowestEnabledTextContrast": 4.95,
+  "focusStops": 10,
+  "replica": {
+   "origin": "http://browser-preview-local.localhost:55175",
+   "id": "3bc0f6fa-6034-44fd-87f1-6270bbdf1510"
+  }
+ },
+ "checks": [
+  {
+   "id": "B1.subject-binding",
+   "group": "bind",
+   "status": "pass",
+   "assertions": 10,
+   "title": "Subject binding: the HTML and runtime bytes on disk equal the supplied hashes, the preserved round 2 files are intact, the copied styles and theme equal the product files, and the package is still exploring",
+   "notes": [
+    "designer capture-log.json (sha256 19bb6b7e6ec78145efb1c440506c20c91e6bd4743e85be7b0c074c201cc1d316) was read as an input only; it is not evidence in this run"
+   ]
+  },
+  {
+   "id": "X.detectors-flag-known-bad-copy",
+   "group": "bind",
+   "status": "pass",
+   "assertions": 88,
+   "title": "Control for the wording detectors: each pattern flags known-bad copy (round 2 wording, joined agent, idea or feature kind, Verified, None, promises) and accepts the handoff copy and the genuine unavailable wording"
+  },
+  {
+   "id": "S1.self-contained-inline-runtime-executed",
+   "group": "package",
+   "status": "pass",
+   "assertions": 19,
+   "title": "One self-contained HTML file: package-inline --check passes; no external script, link, import, or URL; CSP allows only inline script with connect none (and blocks a connection attempt); the inline script the browser executed hashes to the actual runtime file",
+   "notes": [
+    "executed runtime sha256 66084dc6887b9aa2c7d1942ef8e0af7cbe54cfa64c7af6b53b8ab2c2b20c6bba; 869022 characters, 869085 bytes; 3 script elements in the document"
+   ]
+  },
+  {
+   "id": "S2.file-url-and-app-origin-replica-render",
+   "group": "package",
+   "status": "pass",
+   "assertions": 15,
+   "title": "The file URL and a replica of the app preview origin (http://browser-preview-local.localhost/<id>/) both render 13 rows and the capture form with zero CSP violations, console problems, or extra requests",
+   "notes": [
+    "replica = test-only loopback server answering as browser-preview-local.localhost; it is not the app, its WebView2, or its host policy"
+   ]
+  },
+  {
+   "id": "S3.detector-catches-round2-classification-fields",
+   "group": "package",
+   "status": "pass",
+   "assertions": 10,
+   "title": "Control: the same detectors flag the preserved round 2 mock (two classification dropdowns, Intent and Domain labels, Not set, a labeled facts list, a correction instruction, Unrecognized and Classification unavailable rows) and pass the round 3 mock"
+  },
+  {
+   "id": "C1.text-only-form",
+   "group": "capture",
+   "status": "pass",
+   "assertions": 184,
+   "title": "Capture form is text-only in every state: exactly one description textarea, Submit, Save, Cancel; no Intent, Domain, category, Not set, Other, or classification confirmation in visible copy, attributes, or the accessibility tree (mock fixture strip excluded)",
+   "notes": [
+    "13 preset and feed states plus a typed state read; strip excluded by aria-hidden during AX reads and by region in copy scans"
+   ]
+  },
+  {
+   "id": "C2.status-and-reason-copy",
+   "group": "capture",
+   "status": "pass",
+   "assertions": 102,
+   "title": "Every status and every cannot-send reason shows the coordinator handoff copy exactly: a plain reason plus next step, no internal terms, no promise of what the owner did or will do after uncertain delivery"
+  },
+  {
+   "id": "C3.disabled-reasons-accessible-and-ordered",
+   "group": "capture",
+   "status": "pass",
+   "assertions": 72,
+   "title": "While Submit and Save are disabled, both name the reason through aria-describedby and the accessibility tree, the reason is announced when it appears, and the first applicable condition wins in the planned order",
+   "notes": [
+    "announcement channels per reason: {\"notConnected\":[\"ariaNotify\"],\"importInProgress\":[\"ariaNotify\"],\"pendingQuestion\":[\"ariaNotify\"],\"earlierCaptureUnconfirmed\":[\"ariaNotify\"],\"busy\":[\"ariaNotify\"]} (headless Edge Edg/156.0.4314.15; no screen reader run)",
+    "static order evidence is the executed runtime text; only two pairwise orders (pending over busy, not connected over busy) are reachable with the fixture feeds"
+   ]
+  },
+  {
+   "id": "C4.submit-and-save-keep-literal-text",
+   "group": "capture",
+   "status": "pass",
+   "assertions": 28,
+   "title": "Real Submit and Save: statuses run Sending, Waiting for Dude to save it, Saved; Submit continues in chat and Save starts nothing else; the typed text is kept byte for byte and shown as the saved description; no classification in the saved message; nothing leaves the page",
+   "notes": [
+    "second capture in one tab: \"Saved as work item 914 for later. Nothing else was started.\"; Overview then holds 1 row numbered 914 (the mock has one fixture number for new captures, so the first saved item is replaced in the list; not a Canvas behavior claim)"
+   ]
+  },
+  {
+   "id": "C5.outcomes-are-fixtures-no-question",
+   "group": "capture",
+   "status": "pass",
+   "assertions": 19,
+   "title": "Classified, unclassified, and matched-existing outcomes follow the selected owner fixture, not the typed words; an item with no recorded classification is captured with no question; a match leaves work item 901 unchanged",
+   "notes": [
+    "Submit versus Save changes only the saved message; no extra step or question appears for an item with no recorded classification"
+   ]
+  },
+  {
+   "id": "C6.cancel-reload-validation",
+   "group": "capture",
+   "status": "pass",
+   "assertions": 43,
+   "title": "Cancel keeps the draft and sends nothing; reload clears it as the footnote says; empty and too-long input is refused with the exact message, the draft kept untruncated, no status started; Save as work item refuses the same input",
+   "notes": [
+    "textarea aria-invalid while the message shows: true"
+   ]
+  },
+  {
+   "id": "C7.uncertain-delivery-never-resent",
+   "group": "capture",
+   "status": "pass",
+   "assertions": 9,
+   "title": "After a real Submit ends uncertain, Submit and Save stay disabled even after editing and after leaving and returning; nothing is sent again, no status restarts, the draft stays"
+  },
+  {
+   "id": "C8.retry-and-no-autosend",
+   "group": "capture",
+   "status": "pass",
+   "assertions": 25,
+   "title": "A known-unsent refusal stays retryable (edit allowed) only on the user's click and is never retried alone; when each blocking reason clears, nothing is sent until the user acts"
+  },
+  {
+   "id": "C9.save-as-work-item",
+   "group": "capture",
+   "status": "pass",
+   "assertions": 13,
+   "title": "Needs you \"Save as work item\": plain notice that it saves only the text, labels Text to save and Save this text, no unfiled or classification wording, statuses reuse the capture statuses and end Saved for later"
+  },
+  {
+   "id": "L1.rows-words-columns",
+   "group": "list",
+   "status": "pass",
+   "assertions": 203,
+   "title": "Wide and compact lists: 13 fixture rows in 3 columns; recorded words sit under the title as quiet text and nowhere else; rows with no recorded or an unrecognized word show nothing; accessible names carry the words; unavailable title, stage, and progress stay visible"
+  },
+  {
+   "id": "L2.details-words-and-gaps",
+   "group": "list",
+   "status": "pass",
+   "assertions": 56,
+   "title": "Details: recorded words sit in the header with title and stage; no labeled Intent/Domain/Stage list or correction instruction; 908, 909 (unknown intent), 912 (unreadable), and the actual 087 draft show nothing for classification, no Not set, no warning; genuine unavailable stage and next step stay visible"
+  },
+  {
+   "id": "L6.unreadable-record-claims-no-absence",
+   "group": "list",
+   "status": "fail",
+   "assertions": 5,
+   "title": "The unreadable record (912) keeps every progress-bearing section honest: Tasks and Activity say they are unavailable instead of claiming that no tasks or activity are recorded, and they agree with the notice that task progress and detail are withheld",
+   "failureCount": 4,
+   "failures": [
+    "912: the Tasks section claims no tasks are recorded for a record that could not be read (observed \"Tasks Read only No tasks are recorded for this work item.\"): found \"No tasks are recorded\" in \"Tasks Read only No tasks are recorded for this work item.\"",
+    "912: the Tasks section says its content is unavailable: pattern /unavailable|couldn.t be read|could not be read|withheld|not exposed|exposed by this read/i not found in \"Tasks Read only No tasks are recorded for this work item.\"",
+    "912: the Activity section claims no activity is recorded for a record that could not be read (observed \"Activity No dated activity is recorded for this work item. Activity is separate from task verification and review results.\"): found \"No dated activity is recorded\" in \"Activity No dated activity is recorded for this work item. Activity is separate from task\"",
+    "912: the Activity section says its content is unavailable: pattern /unavailable|couldn.t be read|could not be read|withheld|not exposed|exposed by this read/i not found in \"Activity No dated activity is recorded for this work item. Activity is separate from task verification and review results.\""
+   ],
+   "notes": [
+    "comparison: today's Canvas shows \"Task detail unavailable until the selected sources agree.\" and \"No dated feature activity is exposed by this read.\" for the same state (src/extensions/dude/frontend/app.jsx, read only); the round 2 mock carried the same two absence claims (variants/round-2-embedded/source/work-type-presentation.jsx lines 871 and 878)"
+   ]
+  },
+  {
+   "id": "L3.search-enter-now-clear",
+   "group": "list",
+   "status": "pass",
+   "assertions": 28,
+   "title": "Search matches only number, title, slug, and path (classification words are not searchable); a row opens its record in Now by click and by Enter; Working on, Back to Overview, and Clear behave as before"
+  },
+  {
+   "id": "L4.repository-not-backfilled",
+   "group": "list",
+   "status": "pass",
+   "assertions": 7,
+   "title": "This repository: 91 rows show no classification words and match the independent stage rule; the snapshot is identical to the preserved round 2 snapshot apart from its purpose text; no ledger carries work_intent or work_domain"
+  },
+  {
+   "id": "L5.every-record-details-neutral-and-consistent",
+   "group": "list",
+   "status": "pass",
+   "assertions": 4,
+   "title": "Every fixture and repository record opens: details show the same stage as the list and the independent stage rule, no idea or feature kind wording, no Verified, no classification placeholder, words only for fixtures that have them, and mock or Review guidance only for design or preview-request records",
+   "notes": [
+    "fixtures: 13 records opened; 1 show Review guidance (1 have a design status)",
+    "repository: 91 records opened; 15 show Review guidance (15 have a design status)"
+   ]
+  },
+  {
+   "id": "G1.progress-states-regression",
+   "group": "progress",
+   "status": "pass",
+   "assertions": 169,
+   "title": "Progress report, representative M4 to M11 and M14 states: one or several current phases, tracked phase not exposed, partial or unavailable request coverage never reads None or no request waiting, a current request is never a gate, design approval is the only gate, Completed is not Verified, Closed is not delivered"
+  },
+  {
+   "id": "N1.no-internal-terms-anywhere",
+   "group": "progress",
+   "status": "pass",
+   "assertions": 178,
+   "title": "Sweep of product copy, attributes, and (for fixtures) the accessibility tree over every in-scope surface: no classification field, placeholder, warning, instruction, or question; no idea or feature kind; no internal capture terms",
+   "notes": [
+    "18 surfaces swept"
+   ]
+  },
+  {
+   "id": "A1.representative-frames-overflow-names-contrast",
+   "group": "appearance",
+   "status": "pass",
+   "assertions": 112,
+   "title": "Representative frames (1440 light, 768 app dark, 600 dark, emulated 200% app light): no overflow or clipped text, every control and row has an accessible name, the capture field and actions are reachable, and text and field-boundary contrast are measured from rendered pixels",
+   "notes": [
+    "13 frames; lowest enabled text contrast 4.95:1 (threshold 4.5:1; 3:1 large); disabled text is reported separately and is exempt"
+   ]
+  },
+  {
+   "id": "A2.capture-keyboard-focus",
+   "group": "appearance",
+   "status": "pass",
+   "assertions": 24,
+   "title": "Keyboard: Tab order on the capture form is the field, Submit, Save, Cancel with a visible, unobscured focus indicator of at least 3:1; while Submit and Save are disabled the order skips to Cancel",
+   "notes": [
+    "enabled, 1440 light: [[\"Describe the work\",15.5],[\"Submit\",5.4],[\"Save\",21],[\"Cancel\",21]]",
+    "enabled, 200% app light: [[\"Describe the work\",11.2],[\"Submit\",9.5],[\"Save\",9.1],[\"Cancel\",9.1]]",
+    "pending question, 768 app dark: [[\"Describe the work\",13.2],[\"Cancel\",5.1]]"
+   ]
+  },
+  {
+   "id": "A3.selected-states-contrast",
+   "group": "appearance",
+   "status": "pass",
+   "assertions": 46,
+   "title": "Selected states keep readable text: the inspected task and selected filter (Now), the selected row (Overview, Working on), and the selected destination in the expanded rail, in light and dark",
+   "notes": [
+    "lowest measured ratios: {\"inspected task and selected filter (light)\":5.38,\"selected Overview row (light)\":5.38,\"expanded rail labels (light)\":9.63,\"inspected task and selected filter (dark)\":6.66,\"selected Overview row (dark)\":4.84,\"expanded rail labels (dark)\":11.34}; text contrast from rendered pixels, not icons or selection backgrounds"
+   ]
+  },
+  {
+   "id": "A4.four-appearances-fast",
+   "group": "appearance",
+   "status": "pass",
+   "assertions": 19,
+   "title": "Light, dark, app-following light, and app-following dark: the saved capture form renders in each with distinct backgrounds, no overflow, no console problems, and text and field contrast above threshold"
+  },
+  {
+   "id": "X.nothing-left-the-page",
+   "group": "bind",
+   "status": "pass",
+   "assertions": 5,
+   "title": "Across the whole run nothing left the page: no request beyond the document at file or the replica origin, no socket, no XHR (except the one deliberate CSP control), beacon, or EventSource, and no capture or response sent",
+   "notes": [
+    "150 browser requests observed in total; fetch attempts 0 (all rejected by the mock's own stub before a request existed)"
+   ]
+  },
+  {
+   "id": "Z1.old-inputs-untouched",
+   "group": "bind",
+   "status": "pass",
+   "assertions": 6,
+   "title": "Every pre-existing file in the repository (earlier variants, reports, screenshots, spec, plan, tasks, idea, product source, scripts, .github) is byte-identical before and after the run; only this run's own output roots changed",
+   "notes": [
+    "files hashed: product 89, ideas 91, package 323, whole repository 4141"
+   ]
+  },
+  {
+   "id": "Z2.own-processes-cleaned",
+   "group": "bind",
+   "status": "pass",
+   "assertions": 3,
+   "title": "The headless Edge process tree, its temporary profile, and the temporary runner folder are gone"
+  }
+ ],
+ "findings": [
+  {
+   "id": "L6.unreadable-record-claims-no-absence",
+   "title": "The unreadable record (912) keeps every progress-bearing section honest: Tasks and Activity say they are unavailable instead of claiming that no tasks or activity are recorded, and they agree with the notice that task progress and detail are withheld",
+   "failureCount": 4,
+   "failures": [
+    "912: the Tasks section claims no tasks are recorded for a record that could not be read (observed \"Tasks Read only No tasks are recorded for this work item.\"): found \"No tasks are recorded\" in \"Tasks Read only No tasks are recorded for this work item.\"",
+    "912: the Tasks section says its content is unavailable: pattern /unavailable|couldn.t be read|could not be read|withheld|not exposed|exposed by this read/i not found in \"Tasks Read only No tasks are recorded for this work item.\"",
+    "912: the Activity section claims no activity is recorded for a record that could not be read (observed \"Activity No dated activity is recorded for this work item. Activity is separate from task verification and review results.\"): found \"No dated activity is recorded\" in \"Activity No dated activity is recorded for this work item. Activity is separate from task\"",
+    "912: the Activity section says its content is unavailable: pattern /unavailable|couldn.t be read|could not be read|withheld|not exposed|exposed by this read/i not found in \"Activity No dated activity is recorded for this work item. Activity is separate from task verification and review results.\""
+   ]
+  }
+ ],
+ "screenshots": [
+  {
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent/01-capture-text-only-1440-light.png",
+   "bytes": 39043,
+   "sha256": "c7d18fd963af0e135e7835fbb8d09c1cd0cf812b56e6cdad875a95f1862a2881"
+  },
+  {
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent/02-capture-pending-question-768-app-dark.png",
+   "bytes": 52382,
+   "sha256": "16c97c0e05e1c41e3efe519d4defd4a57ee2fc1323229d515101027f0d0bb09d"
+  },
+  {
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent/03-capture-saved-submit-1440-light.png",
+   "bytes": 45553,
+   "sha256": "1883efcdcbadb787679715ce3f1a0cd2c901afa1a9f22461913ea5fe299b9ff4"
+  },
+  {
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent/04-capture-saved-save-600-dark.png",
+   "bytes": 39531,
+   "sha256": "d78fafcc01ef0d4eeff20ec199d151c51b5130e6ec9b1c55e2a06409d7bf8e9a"
+  },
+  {
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent/05-capture-uncertain-1440-dark.png",
+   "bytes": 47062,
+   "sha256": "446897c6b7a365cdf1b69a4000aca73d277f3ebfdcd5bf6133a57f94bbc0a1ae"
+  },
+  {
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent/06-details-901-words-1440-light.png",
+   "bytes": 92260,
+   "sha256": "61554d8e7a11c8abd787fab5c9f4fd7576fb3673bccd76d36699526b1e85300a"
+  },
+  {
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent/07-details-904-design-768-app-dark.png",
+   "bytes": 72263,
+   "sha256": "3b689298da317e79ba10e87561187acb545026dc6c419fc085e5c46e386f7602"
+  },
+  {
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent/08-details-909-design-only-1440-dark.png",
+   "bytes": 73452,
+   "sha256": "495d09bae078e506ca621b7a9da85f3499e048cfcee9815550412af173653d90"
+  },
+  {
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent/09-details-912-unreadable-600-dark.png",
+   "bytes": 48224,
+   "sha256": "6af6e2efd7b171302ff5d4ccc8971647504e498c51d425da3c848f179d7b9dcb"
+  },
+  {
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent/10-list-wide-1440-light.png",
+   "bytes": 71474,
+   "sha256": "c2c5f1d1408d3c60db6b4ffaf816b88c17207ccc9ffd02caa624c2d7625e350b"
+  },
+  {
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent/11-list-compact-600-dark.png",
+   "bytes": 54253,
+   "sha256": "da038fcd903f67a434f55a718cbd9e7ca0105c35ac6f23e5eb0667acc35adae5"
+  },
+  {
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent/12-capture-200pct-top-app-light.png",
+   "bytes": 101786,
+   "sha256": "3d65d39d9ca5473c322914efea2ceccbbbcc8086b971b0539c1e586f0a41dbd8"
+  },
+  {
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent/13-capture-200pct-actions-app-light.png",
+   "bytes": 101064,
+   "sha256": "04e99de40658c189400a2c84867957997e876c72f993aa0c43fa8be981aca38c"
+  },
+  {
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent/14-capture-saved-appearance-light-1440.png",
+   "bytes": 45553,
+   "sha256": "1883efcdcbadb787679715ce3f1a0cd2c901afa1a9f22461913ea5fe299b9ff4"
+  },
+  {
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent/15-capture-saved-appearance-dark-1440.png",
+   "bytes": 45675,
+   "sha256": "0d316c862555e35102098c7c1eea7a4490f04c313c9e17a01de7cc1ee7af3154"
+  },
+  {
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent/16-capture-saved-appearance-app-light-1440.png",
+   "bytes": 57334,
+   "sha256": "e78dd662399ec14e8a4bf4222eaf39c16e9644bc5bfd455a2c91789872dc4c13"
+  },
+  {
+   "path": ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent/17-capture-saved-appearance-app-dark-1440.png",
+   "bytes": 57109,
+   "sha256": "61cbb409981094d58c78b0b8f8f5b250bf457e5fc3fbe1c1ca79dcc727c0429a"
+  }
+ ],
+ "preservation": {
+  "digestBefore": {
+   "product": "89a445fe5702922e036cc2818aee5d31e3db2671d344348de9251e543b3b8870",
+   "ideas": "fe96433f9d4a9385badbe943ad0c47578db1c5d2a5b8839e79f86a4e94bf9d54",
+   "pkg": "d9be1c5d3d78589f5293d2a9b998049b91d970bf568e8b6e7745939331710fa3",
+   "wide": "0e4f6a2093c3e6ed02e3655eefb9a14ffe8ff768ffb0128bba492597f0b8a849"
+  },
+  "digestAfter": {
+   "product": "89a445fe5702922e036cc2818aee5d31e3db2671d344348de9251e543b3b8870",
+   "ideas": "fe96433f9d4a9385badbe943ad0c47578db1c5d2a5b8839e79f86a4e94bf9d54",
+   "pkg": "d9be1c5d3d78589f5293d2a9b998049b91d970bf568e8b6e7745939331710fa3",
+   "wide": "0e4f6a2093c3e6ed02e3655eefb9a14ffe8ff768ffb0128bba492597f0b8a849"
+  },
+  "changed": {
+   "product": {
+    "changed": [],
+    "removed": [],
+    "added": []
+   },
+   "ideas": {
+    "changed": [],
+    "removed": [],
+    "added": []
+   },
+   "pkg": {
+    "changed": [],
+    "removed": [],
+    "added": []
+   },
+   "wide": {
+    "changed": [],
+    "removed": [],
+    "added": []
+   }
+  },
+  "ownOutputRoots": [
+   ".dude/specs/067-work-type-presentation/design/verification/round-3",
+   ".dude/specs/067-work-type-presentation/design/screenshots/round-3-independent"
+  ]
+ },
+ "cleanup": {
+  "ownedProcessesObserved": 10,
+  "closedGracefully": true,
+  "killedPids": [],
+  "survivors": [],
+  "profileRemoved": true,
+  "tempFolderRemoved": true,
+  "replicaServerClosed": true
+ },
+ "fatal": null,
+ "limits": [
+  "Headless Microsoft Edge (Chromium) only, driven over CDP on Windows. No other engine, no screen reader, and no actual GitHub Copilot app host or its WebView2 was used or observed; the app was not touched, restarted, or reconfigured. The replica is a test-only loopback server that mimics the preview hostname, not the app's in-process host or its response headers.",
+  "Not a WCAG 2.2 AA conformance claim. Measured: text contrast from rendered pixels, field-boundary contrast, focus-indicator pixel difference, overflow and clipping geometry, accessible names and descriptions from the Chromium accessibility tree. Not measured: icons, hover, forced colors, text spacing, reduced motion, announcement wording as spoken.",
+  "The 200% frames are emulated (720x450 CSS px at device scale 2), not browser zoom.",
+  "Owner outcomes (clear classified, vague unclassified, matched existing 901 as row 914 or 901) are fixture outputs selected in the mock strip. They show how the mock displays an outcome; they do not test any classifier. Nothing in this run shows what the real Dude records, asks, or sends.",
+  "The reason order beyond two observable pairs (pending over busy, not connected over busy) is evidenced by the executed runtime text, because the fixture feeds cannot combine every pair.",
+  "Announcements were observed as document.ariaNotify calls and DOM live-region changes in headless Edge; whether any assistive technology speaks them once, twice, or not at all was not tested.",
+  "Captured text, statuses, and rows are local mock state; nothing was sent, saved, or recorded outside the page."
+ ]
+}

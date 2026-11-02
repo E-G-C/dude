@@ -1,0 +1,323 @@
+{
+  "author": "Coder, bounded mock revision; original round 3 authored by Fluent UI.",
+  "scope": "Engineering self-check of L6 and readable-empty 087; not independent verification or UI approval.",
+  "generatedAt": "2026-10-23T18:19:16.394Z",
+  "phase": "before",
+  "subject": {
+    "html": "abad36e29cdc30453d020a484f1a671cdec1d7d87fee9316815e56917c77a11b",
+    "runtime": "66084dc6887b9aa2c7d1942ef8e0af7cbe54cfa64c7af6b53b8ab2c2b20c6bba"
+  },
+  "assertions": [
+    {
+      "pass": true,
+      "message": "Inline bytes match the raw runtime"
+    },
+    {
+      "pass": true,
+      "message": "No external JavaScript"
+    },
+    {
+      "pass": true,
+      "message": "Connections remain forbidden by CSP"
+    },
+    {
+      "pass": true,
+      "message": "Runtime remains a classic IIFE"
+    },
+    {
+      "pass": true,
+      "message": "file 912: executed the bound inline runtime"
+    },
+    {
+      "pass": true,
+      "message": "file 912: no invented task rows or count bar"
+    },
+    {
+      "pass": true,
+      "message": "file 912: no classification placeholders"
+    },
+    {
+      "pass": true,
+      "message": "file 912: zero CSP violations"
+    },
+    {
+      "pass": true,
+      "message": "file 912: zero browser errors or warnings"
+    },
+    {
+      "pass": true,
+      "message": "file 912: only the HTML document was requested"
+    },
+    {
+      "pass": true,
+      "message": "file 912: existing withheld notice retained"
+    },
+    {
+      "pass": false,
+      "message": "file 912: Tasks makes no false absence claim"
+    },
+    {
+      "pass": false,
+      "message": "file 912: Tasks says unavailable"
+    },
+    {
+      "pass": false,
+      "message": "file 912: Activity makes no false absence claim"
+    },
+    {
+      "pass": false,
+      "message": "file 912: Activity says unavailable"
+    },
+    {
+      "pass": true,
+      "message": "file 912: genuine stage unavailability retained"
+    },
+    {
+      "pass": true,
+      "message": "file 912: genuine progress unavailability retained"
+    },
+    {
+      "pass": true,
+      "message": "file 087: executed the bound inline runtime"
+    },
+    {
+      "pass": true,
+      "message": "file 087: no invented task rows or count bar"
+    },
+    {
+      "pass": true,
+      "message": "file 087: no classification placeholders"
+    },
+    {
+      "pass": true,
+      "message": "file 087: zero CSP violations"
+    },
+    {
+      "pass": true,
+      "message": "file 087: zero browser errors or warnings"
+    },
+    {
+      "pass": true,
+      "message": "file 087: only the HTML document was requested"
+    },
+    {
+      "pass": true,
+      "message": "file 087: readable draft remains Captured"
+    },
+    {
+      "pass": true,
+      "message": "file 087: legitimate empty Tasks copy unchanged"
+    },
+    {
+      "pass": true,
+      "message": "file 087: empty Tasks is not called unavailable"
+    },
+    {
+      "pass": false,
+      "message": "file 087: legitimate empty Activity copy unchanged"
+    },
+    {
+      "pass": true,
+      "message": "Only the two mock artifacts and affected mock source changed; every other pre-existing design file is unchanged"
+    },
+    {
+      "pass": true,
+      "message": "src: unchanged (excluding installed node_modules)"
+    },
+    {
+      "pass": true,
+      "message": "library: unchanged (excluding installed node_modules)"
+    },
+    {
+      "pass": true,
+      "message": "scripts: unchanged (excluding installed node_modules)"
+    },
+    {
+      "pass": true,
+      "message": ".github: unchanged (excluding installed node_modules)"
+    },
+    {
+      "pass": true,
+      "message": "docs: unchanged (excluding installed node_modules)"
+    },
+    {
+      "pass": true,
+      "message": "README.md: unchanged (excluding installed node_modules)"
+    },
+    {
+      "pass": true,
+      "message": "Preserved initial byte copy: work-type-presentation.html"
+    },
+    {
+      "pass": true,
+      "message": "Preserved initial byte copy: work-type-presentation.js"
+    },
+    {
+      "pass": true,
+      "message": "Preserved initial byte copy: source/work-type-presentation.jsx"
+    },
+    {
+      "pass": true,
+      "message": "Owned browser processes and profile cleaned up"
+    },
+    {
+      "pass": true,
+      "message": "Owned temporary directory removed"
+    }
+  ],
+  "observations": [
+    {
+      "host": "file",
+      "number": "912",
+      "url": "file:///C:/Work/GitHubAppRepos/copilot-worktrees/dude/e-g-c-symmetrical-eureka/.dude/specs/067-work-type-presentation/design/work-type-presentation.html?scenario=M1&tone=dark&controls=hide",
+      "path": ".dude/ideas/912-export-history.md",
+      "stage": "Stage unavailable",
+      "progress": "Progress Stage Unavailable The record couldn’t be read, so its stage is unknown.",
+      "next": "Next step unavailable Current instruction unavailableThis record couldn’t be read. Task progress and detail are withheld. Refresh to read it again.",
+      "tasks": "Tasks Read only No tasks are recorded for this work item.",
+      "activity": "Activity No dated activity is recorded for this work item. Activity is separate from task verification and review results.",
+      "properties": "Selected record 912 · Title unavailable Stage unavailable · Progress not established .dude/ideas/912-export-history.md Open questions: Not exposed. These are not current requests.",
+      "counts": 0,
+      "words": 0,
+      "csp": [],
+      "executedHash": "66084dc6887b9aa2c7d1942ef8e0af7cbe54cfa64c7af6b53b8ab2c2b20c6bba",
+      "screenshot": "screenshots/round-3-revision/before-912-file.png",
+      "screenshotSha256": "4d72b32ed52e6895a2f2c6518dc9a30dee9f9f586628b3a963cc5278d22f979f"
+    },
+    {
+      "host": "file",
+      "number": "087",
+      "url": "file:///C:/Work/GitHubAppRepos/copilot-worktrees/dude/e-g-c-symmetrical-eureka/.dude/specs/067-work-type-presentation/design/work-type-presentation.html?scenario=M3&tone=light&controls=hide",
+      "path": ".dude/ideas/087-dude-canvas-routing-map.md",
+      "stage": "Captured",
+      "progress": "Progress Stage Captured From the idea ledger No definition, phase, or required gate is recorded yet. Recorded lifecycle state only. It doesn’t show live agent activity, verification, review, or release.",
+      "next": "No next step This work item is captured but not defined yet.",
+      "tasks": "Tasks Read only No tasks are recorded for this work item.",
+      "activity": "Activity 2026-10-19T18:24:51Z brainstorm: Took over question 8 from 067 as question 3, corrected what pack manifests declare, and added which views current records can support and a domain-coverage proposal; still draft, with no definition. 2026-10-19T14:59:35Z brainstorm: Staged the routing-map UI that the user explicitly asked to capture during the 067 pack-owned workflow discussion, as a separate draft for coordinator first-capture publication and a future brainstorm. No definition package, tasks, mock, or implementation was created. Activity is separate from task verification and review results.",
+      "properties": "Selected record 087 · Dude Canvas Routing Map Captured · Progress not established .dude/ideas/087-dude-canvas-routing-map.md Open questions: 3. These are not current requests.",
+      "counts": 0,
+      "words": 0,
+      "csp": [],
+      "executedHash": "66084dc6887b9aa2c7d1942ef8e0af7cbe54cfa64c7af6b53b8ab2c2b20c6bba",
+      "screenshot": "screenshots/round-3-revision/before-087-file.png",
+      "screenshotSha256": "55ccf207ebaa7b9726f21b6345e613d071b266e95b25f1129c0ebd651d9359b6"
+    }
+  ],
+  "cleanup": {
+    "browser": {
+      "ownedBefore": [
+        {
+          "pid": 24044,
+          "ppid": 34584,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 35076,
+          "ppid": 24044,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 11212,
+          "ppid": 24044,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 38756,
+          "ppid": 24044,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 11536,
+          "ppid": 24044,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 12028,
+          "ppid": 24044,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 23904,
+          "ppid": 24044,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 13092,
+          "ppid": 24044,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 37984,
+          "ppid": 24044,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 23316,
+          "ppid": 24044,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 34700,
+          "ppid": 24044,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 26948,
+          "ppid": 24044,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 31324,
+          "ppid": 24044,
+          "name": "msedge.exe"
+        },
+        {
+          "pid": 7592,
+          "ppid": 24044,
+          "name": "msedge.exe"
+        }
+      ],
+      "closedGracefully": true,
+      "killed": [],
+      "survivorsAfter": [],
+      "profileRemoved": true
+    },
+    "tempRemoved": true
+  },
+  "fatal": null,
+  "browser": "Edg/156.0.4314.15",
+  "preservation": {
+    "changed": [],
+    "protected": {
+      "src": {
+        "files": 156,
+        "digest": "628f15b4de6b3ba7209daedd12265f067b99a82a330323ee56b255b1d4ef0c21"
+      },
+      "library": {
+        "files": 230,
+        "digest": "da6bb2c1e9fd8e0ca2e7978e36904cde1cc7ab5f26a2ed9c5e0e755c20e6d016"
+      },
+      "scripts": {
+        "files": 27,
+        "digest": "b7efd9eeafbf3d62f7ab5c33925952f4d865e85ef3c2317b84060f3f0121a269"
+      },
+      ".github": {
+        "files": 199,
+        "digest": "4e420c42bab3889ce639b626514232920cd3f609285b0aaf6a2c967c8659cf3d"
+      },
+      "docs": {
+        "files": 9,
+        "digest": "6fe2b1d52b84697752d0eb6152c070aab7549c16f84f2ceeb92951aceba6573a"
+      },
+      "README.md": {
+        "files": 1,
+        "digest": "168d65c055df42f8505782ca2cf92ec66cd1c61fead2bd7e8c87f63ae259cb6a"
+      }
+    }
+  },
+  "counts": {
+    "assertions": 39,
+    "failed": 5
+  },
+  "result": "FAIL"
+}

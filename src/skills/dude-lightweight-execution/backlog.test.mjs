@@ -166,11 +166,16 @@ function runCli(root, args) {
   return spawnSync(process.execPath, [BACKLOG_PATH, ...args, "--root", root], { encoding: "utf8" });
 }
 
+/** Remove only the new record suffix when asserting the pre-existing text. */
+function withoutStages(text) {
+  return text.replace(/ · (?:Captured|Defined|In progress|Blocked|Completed|Closed|stage unavailable)$/gm, "");
+}
+
 /** Read the printed group lists as title -> entries. */
 function printedGroups(text) {
   const groups = new Map();
   let rows = null;
-  for (const line of text.split("\n")) {
+  for (const line of withoutStages(text).split("\n")) {
     const heading = /^(.+) \(\d+\):$/.exec(line);
     if (heading) {
       rows = [];
@@ -194,6 +199,249 @@ function printedNotes(text) {
   }
   return notes;
 }
+
+test("067 Work type: classified ledgers leave backlog collection and all views unchanged", () => {
+  const root = makeRoot();
+  try {
+    writeIdea(root, "draft", { number: "001" });
+    writeIdea(root, "defined", { feature: "002-defined", dependsOn: "resolved" });
+    writePackage(root, "002-defined", { tasks: "- [~] T001@aaaaaaaa Keep recorded work.\n" });
+    writeIdea(root, "resolved", { number: "003", status: "resolved" });
+    writeIdea(root, "unclassified", { number: "004" });
+    const originals = new Map(["001-draft", "002-defined", "003-resolved"].map((stem) => {
+      const relative = `.dude/ideas/${stem}.md`;
+      return [relative, fs.readFileSync(path.join(root, relative), "utf8")];
+    }));
+    const unclassified = fs.readFileSync(path.join(root, ".dude/ideas/004-unclassified.md"));
+    const items = collectLifecycleItems({ root });
+    const model = collectLifecycleModel({ root });
+    const views = [[], ["kanban"], ["flowchart", "defined"]].map((args) => runCli(root, args));
+    for (const lines of [
+      "work_intent: fix\nwork_domain: code\n",
+      "work_intent:\nwork_domain: unknown\n",
+    ]) {
+      for (const [relative, original] of originals) {
+        writeFile(root, relative, original.replace("---\n\n# Idea", `${lines}---\n\n# Idea`));
+      }
+      const before = snapshotTree(root);
+
+      assert.deepEqual(collectLifecycleItems({ root }), items);
+      assert.deepEqual(collectLifecycleModel({ root }), model);
+      for (const [index, args] of [[], ["kanban"], ["flowchart", "defined"]].entries()) {
+        const result = runCli(root, args);
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stdout, views[index].stdout);
+        assert.equal(result.stderr, views[index].stderr);
+      }
+      assert.deepEqual(snapshotTree(root), before);
+      assert.deepEqual(fs.readFileSync(path.join(root, ".dude/ideas/004-unclassified.md")), unclassified);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("067 Work type: progress prints the recorded report and every form writes nothing", () => {
+  const root = makeRoot();
+  try {
+    writeIdea(root, "login-timeout-fix", { feature: "901-login-timeout-fix" });
+    const ideaPath = ".dude/ideas/901-login-timeout-fix.md";
+    writeFile(root, ideaPath, fs.readFileSync(path.join(root, ideaPath), "utf8")
+      .replace("status: defined\n", "status: defined\nwork_domain: code\nwork_intent: fix\n"));
+    writePackage(root, "901-login-timeout-fix", { tasks: [
+      "# Tasks", "", "## Phase 2: User Story 1 - Keep the session", "",
+      "- [~] T001@aaaaaaaa Keep the session", "",
+    ].join("\n") });
+    const before = snapshotTree(root);
+    const report = runCli(root, ["progress", "login-timeout-fix"]);
+    assert.equal(report.status, 0, report.stderr);
+    assert.equal(report.stderr, "");
+    assert.equal(report.stdout, [
+      "901 login-timeout-fix · Fix · Code",
+      "Stage: In progress (.dude/specs/901-login-timeout-fix/tasks.md)",
+      "Current phase: Phase 2: User Story 1 - Keep the session (.dude/specs/901-login-timeout-fix/tasks.md)",
+      "Requests for you: unavailable. This view cannot read current requests.",
+      "No design status or required gate is recorded.",
+      "",
+    ].join("\n"));
+    for (const args of [[], ["kanban"], ["flowchart", "login-timeout-fix"], ["--tracked"],
+      ["progress", "login-timeout-fix", "--tracked"], ["--help"]]) {
+      const result = runCli(root, args);
+      assert.equal(result.status, 0, `${args.join(" ")}: ${result.stderr}`);
+    }
+    assert.deepEqual(snapshotTree(root), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("067 Work type: progress refuses unknown, duplicate, and unreadable selectors without fallback", () => {
+  const root = makeRoot();
+  try {
+    writeIdea(root, "draft", { number: "001", title: "Not A Selector" });
+    writeIdea(root, "duplicate", { number: "002" });
+    writeIdea(root, "duplicate", { number: "003" });
+    writeFile(root, ".dude/ideas/004-unreadable.md",
+      "---\ntitle: Unreadable\nslug: unreadable\nslug: unreadable\nstatus: draft\nspec_path:\n---\n");
+    writeFile(root, ".dude/ideas/005-filename-only.md",
+      "---\ntitle: Missing slug\nstatus: draft\nspec_path:\n---\n");
+    const before = snapshotTree(root);
+    for (const slug of ["missing", "duplicate", "unreadable", "001", "001-draft", "Not A Selector", "filename-only"]) {
+      const result = runCli(root, ["progress", slug]);
+      assert.equal(result.status, 1, slug);
+      assert.equal(result.stdout, "", slug);
+      assert.equal(result.stderr, `[FAIL] no single work item has slug ${slug}\n`, slug);
+    }
+    assert.deepEqual(snapshotTree(root), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("067 Work type: diagrams refuse --tracked as an unknown option without writing", () => {
+  const root = makeRoot();
+  try {
+    writeIdea(root, "defined", { feature: "001-defined" });
+    writePackage(root, "001-defined");
+    const before = snapshotTree(root);
+    for (const args of [["kanban", "--tracked"], ["flowchart", "defined", "--tracked"]]) {
+      const result = runCli(root, args);
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, "[FAIL] unknown option: --tracked\n");
+    }
+    assert.deepEqual(snapshotTree(root), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("067 Work type: every overview stage equals its report, preserving groups, order, summary, notes, and diagrams", () => {
+  const root = makeRoot();
+  try {
+    writeIdea(root, "captured", { number: "001" });
+    writeIdea(root, "defined", { feature: "002-defined" });
+    writePackage(root, "002-defined", { tasks: "- [ ] T001@aaaaaaaa Ready work\n" });
+    writeIdea(root, "active", { feature: "003-active", body: "Records `depends-on: captured` provisionally." });
+    writePackage(root, "003-active", { tasks: [
+      "## Build", "- [~] T001@aaaaaaaa Work", "### Review", "- [~] T002@bbbbbbbb Review",
+      "   deps: T001@aaaaaaaa", "",
+    ].join("\n") });
+    writeIdea(root, "blocked", { feature: "004-blocked" });
+    writePackage(root, "004-blocked", { tasks: "- [!] T001@aaaaaaaa Wait\n" });
+    writeIdea(root, "completed", { feature: "005-completed" });
+    writePackage(root, "005-completed", { tasks: "- [x] T001@aaaaaaaa Done\n" });
+    writeIdea(root, "closed", { number: "006", status: "resolved" });
+    writeIdea(root, "unavailable", { feature: "007-unavailable" });
+    writePackage(root, "007-unavailable");
+    fs.rmSync(path.join(root, ".dude/specs/007-unavailable/tasks.md"));
+    writeIdea(root, "dependency", { feature: "008-dependency", dependsOn: "captured" });
+    writePackage(root, "008-dependency", { tasks: "- [ ] T001@aaaaaaaa Not started\n" });
+    writeFile(root, ORDER_SOURCE, "- defined\n- captured\n");
+    const before = snapshotTree(root);
+    const overview = runCli(root, []);
+    assert.equal(overview.status, 0, overview.stderr);
+    const oldText = [
+      "Where are we: current 3; ready/next 1; awaiting definition 1; defined awaiting work 1; completed 2",
+      "",
+      "Blocked (2):", "  004 blocked", "  008 dependency", "",
+      "Active (1):", "  003 active", "",
+      "Next (1):", "  002 defined", "",
+      "Ideas awaiting definition (0):", "  (none)", "",
+      "Defined awaiting work (1):", "  007 unavailable", "",
+      "Prioritized for later (1):", "  001 captured", "",
+      "Completed (2):", "  005 completed", "  006 closed", "",
+      "Dependency and order notes:",
+      "  Explicit feature order is declared in .dude/state/backlog-order.md.",
+      "  Declared: dependency depends on captured.",
+      "  Provisional, non-authoritative: active states a relationship to captured. This does not affect lifecycle classification.",
+      "",
+    ].join("\n");
+    assert.equal(withoutStages(overview.stdout), oldText);
+    const expected = new Map([
+      ["captured", "Captured"], ["defined", "Defined"], ["active", "In progress"], ["blocked", "Blocked"],
+      ["completed", "Completed"], ["closed", "Closed"], ["unavailable", null], ["dependency", "Defined"],
+    ]);
+    for (const tracked of [false, true]) {
+      const result = runCli(root, tracked ? ["--tracked"] : []);
+      assert.equal(result.status, 0, result.stderr);
+      const trackedLine = "Defined work shows stage unavailable because tracked work is authoritative and this view does not read it.";
+      if (tracked) {
+        assert.equal(result.stdout.split("\n")[1], trackedLine);
+        assert.equal(withoutStages(result.stdout).replace(`\n${trackedLine}`, ""), oldText);
+      }
+      for (const [slug, stage] of expected) {
+        const value = tracked && !["captured", "closed"].includes(slug) ? null : stage;
+        const report = runCli(root, ["progress", slug, ...(tracked ? ["--tracked"] : [])]);
+        assert.equal(report.status, 0, `${slug}: ${report.stderr}`);
+        const line = result.stdout.split("\n").find((row) => row.includes(` ${slug} · `));
+        assert.ok(line?.endsWith(` · ${value ?? "stage unavailable"}`), line);
+        const stageLine = report.stdout.split("\n").find((row) => row.startsWith("Stage: "));
+        assert.ok(stageLine?.startsWith(value === null ? "Stage: unavailable. " : `Stage: ${value} (`), report.stdout);
+        assert.match(report.stdout, /Requests for you: unavailable\. This view cannot read current requests\./);
+        assert.doesNotMatch(report.stdout, /Requests for you: (?:None|\[\])/);
+        if (slug === "closed") assert.match(report.stdout, /Closing does not mean the work was implemented\./);
+        if (slug === "active" && !tracked) {
+          assert.match(report.stdout, /Current phase: Build \(/);
+          assert.match(report.stdout, /Current phase: Review \(/);
+        }
+      }
+    }
+    const kanban = runCli(root, ["kanban"]);
+    assert.equal(kanban.status, 0, kanban.stderr);
+    assert.equal(kanban.stdout, [
+      "```mermaid", "kanban", "  blocked[Blocked]", "    work_1[004 blocked]", "    work_2[008 dependency]",
+      "  active[Active]", "    work_3[003 active]", "  next[Next]", "    work_4[002 defined]", "```", "",
+    ].join("\n"));
+    const flowchart = runCli(root, ["flowchart", "active"]);
+    assert.equal(flowchart.status, 0, flowchart.stderr);
+    assert.equal(flowchart.stdout, [
+      "```mermaid", "flowchart TD", "  %% active",
+      '  T001_aaaaaaaa["T001@aaaaaaaa Work"]', '  T002_bbbbbbbb["T002@bbbbbbbb Review"]',
+      "  T001_aaaaaaaa --> T002_bbbbbbbb", "```", "",
+    ].join("\n"));
+    assert.deepEqual(snapshotTree(root), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("067 Work type: reports keep proposed design through unreadable or ambiguous tasks and disclose unreadable specifications", () => {
+  const root = makeRoot();
+  try {
+    for (const [number, slug] of [["001", "unreadable-tasks"], ["002", "ambiguous-tasks"], ["003", "unreadable-spec"]]) {
+      const feature = `${number}-${slug}`;
+      writeIdea(root, slug, { feature });
+      writePackage(root, feature);
+      writeFile(root, `.dude/specs/${feature}/spec.md`, "---\nwork_type: design\ndesign_status: proposed\n---\n");
+    }
+    fs.rmSync(path.join(root, ".dude/specs/001-unreadable-tasks/tasks.md"));
+    writeFile(root, ".dude/specs/002-ambiguous-tasks/tasks.md",
+      "- [x] T001@aaaaaaaa First\n- [x] T001@aaaaaaaa Duplicate\n");
+    fs.rmSync(path.join(root, ".dude/specs/003-unreadable-spec/spec.md"));
+    const before = snapshotTree(root);
+    for (const slug of ["unreadable-tasks", "ambiguous-tasks", "unreadable-spec"]) {
+      const result = runCli(root, ["progress", slug]);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /Stage: unavailable\./);
+      assert.match(result.stdout, /Current phases: unavailable\./);
+      if (slug === "unreadable-spec") {
+        assert.match(result.stdout, /Design status and required gates: unavailable\. The linked feature definition is unavailable or ambiguous\./);
+        assert.doesNotMatch(result.stdout, /No .*recorded|Checkpoint:|Required gate:/);
+      } else {
+        const source = `.dude/specs/${slug === "unreadable-tasks" ? "001" : "002"}-${slug}/spec.md`;
+        assert.ok(result.stdout.includes(`Design status: Proposed (${source})`));
+        assert.ok(result.stdout.includes(`Checkpoint: Design proposed (${source})`));
+        assert.ok(result.stdout.includes(`Required gate: Design approval (${source})`));
+        assert.doesNotMatch(result.stdout, /No .*recorded/);
+      }
+      assert.match(result.stdout, /Requests for you: unavailable\. This view cannot read current requests\./);
+    }
+    assert.deepEqual(snapshotTree(root), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("T001 lifecycle model partitions zero, one, and arbitrary inventories exactly once", () => {
   const empty = deriveLifecycleModel({ items: [], order: [] });
@@ -270,7 +518,7 @@ test("T001 printed view keeps its summary and lifecycle groups, then prints depe
   const emptyText = renderText(emptyCurrent);
 
   // Assert
-  assert.equal(text, [
+  assert.equal(withoutStages(text), [
     "Where are we: current 2; ready/next 1; awaiting definition 1; defined awaiting work 2; completed 1",
     "",
     "Blocked (1):", "  blocked", "",
@@ -286,7 +534,7 @@ test("T001 printed view keeps its summary and lifecycle groups, then prints depe
     "  No provisional body-stated dependency evidence was recognized.",
     "",
   ].join("\n"));
-  assert.equal(emptyText, [
+  assert.equal(withoutStages(emptyText), [
     "Where are we: current 0; ready/next 0; awaiting definition 1; defined awaiting work 0; completed 0",
     "",
     "Blocked (0):", "  (none)", "",
@@ -1165,16 +1413,17 @@ test("retired report: check, generate, and --write exit 1 without writing", () =
   }
 });
 
-test("retired report: help lists only the three read-only forms", () => {
+test("067 Work type: help lists only the four read-only forms", () => {
   // Act
   const result = spawnSync(process.execPath, [BACKLOG_PATH, "--help"], { encoding: "utf8" });
 
   // Assert
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.stdout.split("\n").filter((line) => line.startsWith("  node backlog.mjs")), [
-    "  node backlog.mjs [--root <dir>]",
+    "  node backlog.mjs [--tracked] [--root <dir>]",
     "  node backlog.mjs kanban [--root <dir>]",
     "  node backlog.mjs flowchart <idea-slug> [--root <dir>]",
+    "  node backlog.mjs progress <idea-slug> [--tracked] [--root <dir>]",
   ]);
   assert.match(result.stdout, /dependency and order notes/);
   assert.doesNotMatch(result.stdout, /\bcheck\b|\bgenerate\b|--write|\.dude\/backlog\./);
