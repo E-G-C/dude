@@ -737,5 +737,12 @@
       "T002@ae927870": "x"
     },
     "updated_at": "2026-10-18T04:03:55.000Z"
+  },
+  ".dude/specs/088-multi-feature-ship/tasks.md": {
+    "glyphs": {
+      "T001@c4e81f2a": "x",
+      "T002@7b39d0e6": "x"
+    },
+    "updated_at": "2026-11-03T06:50:26.000Z"
   }
 }

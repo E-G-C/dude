@@ -154,6 +154,8 @@ Treat `why did you stop?` as a retrospective diagnostic only. It may expose an u
 
 After every required pre-Work stage succeeds, pass the exact resolved target and intake-normalized Ship policy to `dude-work`. At Work start, pre-Work answerability ends. Earlier pre-Work dispositions may remain in the same invocation's response, while Work-owned dispositions remain in Work's existing audit and reporting. Return every Work outcome unchanged, without reclassification, minimization, extra retry, or override. Work remains the execution owner; do not reproduce or reinterpret its lane detection, recovery, verification, review, close, audit, reporting, or learning internals, and never invoke tracked import for Ship.
 
+For declared prerequisites, follow `dude-work-intake` `### Declared Prerequisites`. The approval question is a pre-mutation stop: only the user's explicit approval of the exact plan answers it, never a pre-Work disposition. Keep the approved features and order only for this invocation, and never save approval. Rebuild before each feature and end at the first stop as that subsection requires. Pass each feature as its own target to `dude-work` with fresh admission; pre-Work answerability applies to that feature and ends when its Work begins. Report every planned feature's result, including those not started, and the unchanged stop, with no combined outcome.
+
 Once Work begins, preserve the active lane's execution response conventions, including `Lane: <lane> · Live: <authority>`, `Action:`, `Updated:`, `Next:`, and `Blockers:` when blocked.
 
 ## Work

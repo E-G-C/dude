@@ -157,6 +157,25 @@ Imported tracked work takes precedence over local candidates, and an explicit
 target that conflicts with it stops before mutation. Ship never invokes `track`,
 imports work, or falls back from tracked work to Lightweight Execution.
 
+When no imported tracked work exists, Ship passes the exact resolved idea path to
+`backlog.mjs ship-plan` after target resolution and before definition or Work.
+A refused plan ends Ship with its cause and next action.
+If the plan adds a feature you did not name, the
+reply shows every feature in order with its stage and requested status, lists
+complete prerequisites as skipped, and asks exactly one question before anything
+starts. Only your explicit approval of that exact plan and order authorizes this
+request; no pre-Work disposition supplies it, and approval is never saved.
+Declining, changing the plan, or any other reply ends the request without
+definition, Work, a write, or a second question. Approved features run one at a
+time through the existing single-target stages and fresh Work admission, with a
+plan recheck before each feature and advancement only when the previous feature
+is complete and the remaining order exactly matches the approved features not yet
+completed in this run, in their approved order. The first definition
+stop or Work end other than `no ready task` ends the run; the final reply reports
+every feature, including any not started, names the unchanged stop, and claims no
+combined outcome. Plans holding only the target add no question, reply text, or
+write, and imported tracked work keeps its existing behavior with no plan.
+
 Before Work begins on an explicit Ship invocation, the existing pre-Work stage
 owner runs its eligibility, prerequisite, authority, and safety gates before
 answerability. A failed gate returns its existing refusal. A checkpoint label
@@ -249,6 +268,18 @@ Illustrative result — pre-mutation disambiguation:
 ```text
 Action: ship
 Next: Several live targets match. Reply with exactly one of expense-entry, expense-report, or expense-approval. Nothing has changed; resolution restarts from your answer.
+```
+
+Illustrative prerequisite approval:
+
+```text
+Action: ship
+Plan for order-checkout, in run order:
+1. payment-api: draft, not requested by you. Define it, then Work.
+2. order-checkout: draft, requested by you. Define it, then Work.
+Already complete, skipped: user-accounts.
+Nothing has changed.
+Next: Do you approve running exactly this plan in this order? Reply yes to approve, or no to stop.
 ```
 
 ### `@dude brainstorm`
@@ -2195,7 +2226,7 @@ The coordinator invokes them; they are not a background service.
 | `dude-compose/compose.mjs` | `list` / `status` / `add` / `remove` / `refresh` / `verify` optional packs and their installed-map records |
 | `dude-bundle-upgrade/upgrade.mjs` | refresh core files from the upstream source |
 | `dude-lightweight-execution/board.mjs` | `parse` / `ready` / `next` / `render` / `set` / `apply-states` / `diff` on `tasks.md` |
-| `dude-lightweight-execution/backlog.mjs` | read-only lifecycle views: default groups with stages and dependency and order notes, `kanban`, `flowchart <slug>`, and `progress <slug>`; `--tracked` on default and `progress` only |
+| `dude-lightweight-execution/backlog.mjs` | read-only lifecycle views: default groups with stages and dependency and order notes, `kanban`, `flowchart <slug>`, `progress <slug>`, and `ship-plan <slug>`; `--tracked` on default and `progress` only |
 | `dude-work/driver.mjs` | autonomous Lightweight Work host integration: `claim` / `run` / `assess` / `respond` / `snapshot` / `diff` / `ownership`; its steps, flags, examples, and own exit codes are in `dude-work/COOKBOOK.md` |
 | `dude-team-expansion/scaffold-agent.mjs` | emit a lint-clean `.agent.md` skeleton (`--pack` updates `pack.md`) |
 | `dude-skill-authoring/scaffold-skill.mjs` | emit a lint-clean `SKILL.md` skeleton (`--pack` updates `pack.md`) |
@@ -2230,6 +2261,9 @@ stage. `progress <slug>` prints one item's report, selected by its exact
 frontmatter slug. `--tracked` is valid only on the default and `progress`
 forms; it leaves defined stages unavailable and phases not exposed rather
 than reading them from the Markdown mirror.
+The `ship-plan` form takes a slug or an exact idea path and prints the target's
+declared prerequisite plan, including run order, complete prerequisites to skip,
+and refusal diagnostics.
 
 ### Repo layout: source vs built bundle
 
