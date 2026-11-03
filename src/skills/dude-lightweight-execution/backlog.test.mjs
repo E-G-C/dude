@@ -8,6 +8,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import * as backlog from "./backlog.mjs";
 import {
   collectLifecycleItems,
   collectLifecycleModel,
@@ -1424,6 +1425,7 @@ test("067 Work type: help lists only the four read-only forms", () => {
     "  node backlog.mjs kanban [--root <dir>]",
     "  node backlog.mjs flowchart <idea-slug> [--root <dir>]",
     "  node backlog.mjs progress <idea-slug> [--tracked] [--root <dir>]",
+    "  node backlog.mjs ship-plan <idea-slug | .dude/ideas/<NNN>-<slug>.md> [--root <dir>]",
   ]);
   assert.match(result.stdout, /dependency and order notes/);
   assert.doesNotMatch(result.stdout, /\bcheck\b|\bgenerate\b|--write|\.dude\/backlog\./);
@@ -1494,4 +1496,584 @@ test("T005 Feature 025 historical artifacts retain exact bytes except its active
     "498a957464be36793df326697f5ba6e913e7a9642f92b578866b2f0f473c9173",
     "reversing the sole authorized breadcrumb change restores the exact historical tasks bytes",
   );
+});
+
+function shipEntry(feature, { stage = "Captured", requested = false, prerequisites = [] } = {}) {
+  return {
+    ideaPath: `.dude/ideas/${feature}.md`,
+    specPath: stage === "Captured" ? null : `.dude/specs/${feature}/spec.md`,
+    slug: feature.slice(4),
+    stage,
+    requested,
+    prerequisites: prerequisites.map((prerequisite) => `.dude/ideas/${prerequisite}.md`),
+  };
+}
+
+function shipSkipped(feature) {
+  return {
+    ideaPath: `.dude/ideas/${feature}.md`,
+    specPath: `.dude/specs/${feature}/spec.md`,
+    slug: feature.slice(4),
+  };
+}
+
+function shipPlan(feature, order, skipped = []) {
+  return { target: `.dude/ideas/${feature}.md`, runnable: true, order, skipped, diagnostics: [] };
+}
+
+function shipRefused(target, diagnostics) {
+  return { target, runnable: false, order: [], skipped: [], diagnostics };
+}
+
+/** Exercise the public function and the CLI twice, snapshotting all fixture bytes. */
+function assertShipPlan(root, target, expected) {
+  const before = snapshotTree(root);
+  try {
+    const first = runCli(root, ["ship-plan", target]);
+    const repeat = runCli(root, ["ship-plan", target]);
+    for (const result of [first, repeat]) {
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, expected.runnable ? 0 : 1, result.stderr);
+      assert.equal(result.stderr, "");
+      assert.equal(result.stdout, `${JSON.stringify(expected, null, 2)}\n`);
+    }
+    assert.equal(repeat.stdout, first.stdout, "repeated reads print identical plans");
+    assert.deepEqual(backlog.planShipRun({ root, target }), expected, "the export and CLI share the contract");
+    return JSON.parse(first.stdout);
+  } finally {
+    assert.deepEqual(snapshotTree(root), before, "planning changes zero fixture files or directories");
+  }
+}
+
+/** Short, differently named Windows-safe roots; never place fixtures in the checkout. */
+function withShipRoots(setup, check) {
+  const roots = [];
+  try {
+    for (const prefix of ["s88-a-", "s88-other-"]) {
+      const root = makeRoot(prefix);
+      roots.push(root);
+      writeEarlierReportCopies(root);
+      setup(root);
+      check(root);
+    }
+  } finally {
+    for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("088 Ship plan: the export surface adds only planShipRun", () => {
+  assert.deepEqual(Object.keys(backlog).sort(), [
+    "collectLifecycleItems", "collectLifecycleModel", "deriveLifecycleModel", "parseArgs",
+    "parseBacklogOrder", "parseProvisionalRelationships", "planShipRun", "renderCurrentMermaid",
+    "renderFlowchart", "renderText", "run", "safeMermaidId",
+  ].sort());
+});
+
+test("088 Ship plan: a chain follows declared prerequisites, not chronology, titles, body markers, or backlog order", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", title: "First by title", dependsOn: "middle",
+      body: "Related work: `depends-on: unrelated`." });
+    writeIdea(root, "middle", { number: "900", dependsOn: "foundation" });
+    writeIdea(root, "foundation", { number: "050" });
+    writeIdea(root, "unrelated", { number: "002", dependsOn: "absent" });
+    writeFile(root, ORDER_SOURCE, "- target\n- unrelated\n- middle\n- foundation\n");
+  }, (root) => assertShipPlan(root, "target", shipPlan("001-target", [
+    shipEntry("050-foundation"),
+    shipEntry("900-middle", { prerequisites: ["050-foundation"] }),
+    shipEntry("001-target", { requested: true, prerequisites: ["900-middle"] }),
+  ])));
+});
+
+test("088 Ship plan: a diamond lists its shared prerequisite once and breaks ties by declaration order", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "gamma", { number: "002", dependsOn: "shared" });
+    writeIdea(root, "beta", { number: "900", dependsOn: "shared" });
+    writeIdea(root, "shared", { number: "800" });
+    writeIdea(root, "target", { number: "001", dependsOn: "beta, gamma beta" });
+  }, (root) => assertShipPlan(root, "target", shipPlan("001-target", [
+    shipEntry("800-shared"),
+    shipEntry("900-beta", { prerequisites: ["800-shared"] }),
+    shipEntry("002-gamma", { prerequisites: ["800-shared"] }),
+    shipEntry("001-target", { requested: true, prerequisites: ["900-beta", "002-gamma"] }),
+  ])));
+});
+
+test("088 Ship plan: a complete prerequisite is skipped without traversing its unfinished, missing, resolved, or self prerequisites", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", dependsOn: "completed" });
+    writeIdea(root, "completed", { feature: "900-completed", dependsOn: "unfinished absent closed completed" });
+    writePackage(root, "900-completed", { tasks: "- [x] T001@aaaaaaaa Done\n" });
+    writeIdea(root, "unfinished", { number: "002" });
+    writeIdea(root, "closed", { number: "003", status: "resolved" });
+  }, (root) => assertShipPlan(root, "target", shipPlan("001-target", [
+    shipEntry("001-target", { requested: true, prerequisites: ["900-completed"] }),
+  ], [shipSkipped("900-completed")])));
+});
+
+test("088 Ship plan: a shared complete prerequisite is listed as skipped once in first-reached order", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", dependsOn: "beta gamma shared" });
+    writeIdea(root, "beta", { number: "900", dependsOn: "shared" });
+    writeIdea(root, "gamma", { number: "002", dependsOn: "shared" });
+    writeIdea(root, "shared", { feature: "800-shared" });
+    writePackage(root, "800-shared", { tasks: "- [x] T001@aaaaaaaa Done\n" });
+  }, (root) => assertShipPlan(root, "target", shipPlan("001-target", [
+    shipEntry("900-beta", { prerequisites: ["800-shared"] }),
+    shipEntry("002-gamma", { prerequisites: ["800-shared"] }),
+    shipEntry("001-target", { requested: true, prerequisites: ["900-beta", "002-gamma", "800-shared"] }),
+  ], [shipSkipped("800-shared")])));
+});
+
+for (const scenario of [
+  { name: "draft prerequisite", stage: "Captured", tasks: null },
+  { name: "defined prerequisite", stage: "Defined", tasks: "- [ ] T001@aaaaaaaa Ready\n" },
+  { name: "empty task package is not complete", stage: "Defined", tasks: "# No tasks yet\n" },
+  { name: "in-progress prerequisite", stage: "In progress", tasks: "- [~] T001@aaaaaaaa Working\n" },
+  { name: "partly completed prerequisite", stage: "In progress",
+    tasks: "- [x] T001@aaaaaaaa Done\n- [ ] T002@bbbbbbbb Still open\n" },
+  { name: "blocked prerequisite", stage: "Blocked",
+    tasks: "- [x] T001@aaaaaaaa Done\n- [!] T002@bbbbbbbb Blocked\n" },
+]) {
+  test(`088 Ship plan: ${scenario.name} runs before its dependent with the shared work stage`, () => {
+    withShipRoots((root) => {
+      writeIdea(root, "target", { number: "001", dependsOn: "foundation" });
+      if (scenario.tasks === null) writeIdea(root, "foundation", { number: "900" });
+      else {
+        writeIdea(root, "foundation", { feature: "900-foundation" });
+        writePackage(root, "900-foundation", { tasks: scenario.tasks });
+      }
+    }, (root) => assertShipPlan(root, "target", shipPlan("001-target", [
+      shipEntry("900-foundation", { stage: scenario.stage }),
+      shipEntry("001-target", { requested: true, prerequisites: ["900-foundation"] }),
+    ])));
+  });
+}
+
+test("088 Ship plan: no prerequisites leaves only the target despite unrelated resolved or unreadable work", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", title: "A target title",
+      body: "This mentions `depends-on: unrelated` without declaring it." });
+    writeIdea(root, "closed", { number: "002", status: "resolved" });
+    writeIdea(root, "unrelated", { feature: "003-unrelated", dependsOn: "absent" });
+    writePackage(root, "003-unrelated");
+    fs.rmSync(path.join(root, ".dude/specs/003-unrelated/tasks.md"));
+    writeFile(root, ORDER_SOURCE, "- unrelated\n- target\n");
+  }, (root) => assertShipPlan(root, "target", shipPlan("001-target", [
+    shipEntry("001-target", { requested: true }),
+  ])));
+});
+
+test("088 Ship plan: only complete prerequisites leaves the target and preserves exact same-prefix package paths", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { feature: "001-target", dependsOn: "zeta alpha" });
+    writePackage(root, "001-target");
+    for (const slug of ["alpha", "zeta"]) {
+      writeIdea(root, slug, { feature: `074-${slug}` });
+      writePackage(root, `074-${slug}`, { tasks: "- [x] T001@aaaaaaaa Done\n   blocked-by: historical only\n" });
+    }
+  }, (root) => assertShipPlan(root, "target", shipPlan("001-target", [
+    shipEntry("001-target", { stage: "Defined", requested: true, prerequisites: ["074-zeta", "074-alpha"] }),
+  ], [shipSkipped("074-zeta"), shipSkipped("074-alpha")])));
+});
+
+test("088 Ship plan: a drafts-only project without a specs folder plans by slug and exact numbered idea path", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", dependsOn: "foundation" });
+    writeIdea(root, "foundation", { number: "900" });
+  }, (root) => {
+    assert.equal(fs.existsSync(path.join(root, ".dude/specs")), false);
+    const expected = shipPlan("001-target", [
+      shipEntry("900-foundation"),
+      shipEntry("001-target", { requested: true, prerequisites: ["900-foundation"] }),
+    ]);
+    assertShipPlan(root, "target", expected);
+    assertShipPlan(root, ".dude/ideas/001-target.md", expected);
+    assert.equal(fs.existsSync(path.join(root, ".dude/specs")), false);
+  });
+});
+
+for (const [stage, tasks] of [
+  ["Defined", "- [ ] T001@aaaaaaaa Ready\n"],
+  ["In progress", "- [~] T001@aaaaaaaa Working\n"],
+  ["Blocked", "- [!] T001@aaaaaaaa Blocked\n"],
+  ["Completed", "- [x] T001@aaaaaaaa Done\n"],
+]) {
+  test(`088 Ship plan: the target's own ${stage} stage neither refuses nor skips it`, () => {
+    withShipRoots((root) => {
+      writeIdea(root, "target", { feature: "001-target" });
+      writePackage(root, "001-target", { tasks });
+    }, (root) => assertShipPlan(root, "target", shipPlan("001-target", [
+      shipEntry("001-target", { stage, requested: true }),
+    ])));
+  });
+}
+
+for (const unreadable of ["missing", "a directory"]) {
+  test(`088 Ship plan: the target's own task file being ${unreadable} still plans with a null stage`, () => {
+    withShipRoots((root) => {
+      writeIdea(root, "target", { feature: "001-target", dependsOn: "foundation" });
+      writePackage(root, "001-target");
+      writeIdea(root, "foundation", { number: "900" });
+      const tasksPath = path.join(root, ".dude/specs/001-target/tasks.md");
+      fs.rmSync(tasksPath);
+      if (unreadable === "a directory") fs.mkdirSync(tasksPath);
+    }, (root) => assertShipPlan(root, "target", shipPlan("001-target", [
+      shipEntry("900-foundation"),
+      shipEntry("001-target", { stage: null, requested: true, prerequisites: ["900-foundation"] }),
+    ])));
+  });
+}
+
+test("088 Ship plan: a missing prerequisite refuses with the declaring idea and next action", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", dependsOn: "absent" });
+  }, (root) => assertShipPlan(root, "target", shipRefused(".dude/ideas/001-target.md", [{
+    code: "SHIP_PLAN_PREREQUISITE_MISSING",
+    path: ".dude/ideas/001-target.md",
+    message: "Declared prerequisite 'absent' has no unique authoritative idea; capture it through brainstorm or change the declared prerequisites.",
+  }])));
+});
+
+test("088 Ship plan: a two-feature cycle names the repeated idea and the whole cycle in walk order", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", dependsOn: "foundation" });
+    writeIdea(root, "foundation", { number: "900", dependsOn: "target" });
+  }, (root) => assertShipPlan(root, "target", shipRefused(".dude/ideas/001-target.md", [{
+    code: "SHIP_PLAN_DEPENDENCY_CYCLE",
+    path: ".dude/ideas/001-target.md",
+    message: "Declared prerequisite cycle: target -> foundation -> target. Change the declared prerequisites before shipping.",
+  }])));
+});
+
+test("088 Ship plan: a self-declared prerequisite refuses even when the target is Completed", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { feature: "001-target", dependsOn: "target" });
+    writePackage(root, "001-target", { tasks: "- [x] T001@aaaaaaaa Done\n" });
+  }, (root) => assertShipPlan(root, "target", shipRefused(".dude/ideas/001-target.md", [{
+    code: "SHIP_PLAN_DEPENDENCY_CYCLE",
+    path: ".dude/ideas/001-target.md",
+    message: "Declared prerequisite cycle: target -> target. Change the declared prerequisites before shipping.",
+  }])));
+});
+
+test("088 Ship plan: a nested cycle's path is its first repeated prerequisite, not the target", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", dependsOn: "beta" });
+    writeIdea(root, "beta", { number: "900", dependsOn: "gamma" });
+    writeIdea(root, "gamma", { number: "002", dependsOn: "beta" });
+  }, (root) => assertShipPlan(root, "target", shipRefused(".dude/ideas/001-target.md", [{
+    code: "SHIP_PLAN_DEPENDENCY_CYCLE",
+    path: ".dude/ideas/900-beta.md",
+    message: "Declared prerequisite cycle: beta -> gamma -> beta. Change the declared prerequisites before shipping.",
+  }])));
+});
+
+test("088 Ship plan: a resolved prerequisite is not complete and requires explicit brainstorm or changed declarations", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", dependsOn: "closed" });
+    writeIdea(root, "closed", { number: "900", status: "resolved", dependsOn: "invalid!" });
+  }, (root) => assertShipPlan(root, "target", shipRefused(".dude/ideas/001-target.md", [{
+    code: "SHIP_PLAN_MEMBER_RESOLVED",
+    path: ".dude/ideas/900-closed.md",
+    message: "Prerequisite 'closed' is resolved, not complete; reopen it through an explicit brainstorm or change the declared prerequisites.",
+  }])));
+});
+
+test("088 Ship plan: a resolved target refuses before traversing any of its prerequisites", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", status: "resolved", dependsOn: "absent" });
+  }, (root) => assertShipPlan(root, "target", shipRefused(".dude/ideas/001-target.md", [{
+    code: "SHIP_PLAN_MEMBER_RESOLVED",
+    path: ".dude/ideas/001-target.md",
+    message: "Target 'target' is resolved; reopen it through an explicit brainstorm before shipping.",
+  }])));
+});
+
+for (const scenario of [
+  { name: "missing prerequisite task file", tasks: null, directory: false, reason: "The task file is unavailable." },
+  { name: "unreadable prerequisite task file", tasks: null, directory: true, reason: "The task file is unavailable." },
+  { name: "duplicate prerequisite tasks", tasks: "- [x] T001@aaaaaaaa Done\n- [x] T001@aaaaaaaa Duplicate\n",
+    reason: "Task state is unavailable because the tasks file is incomplete or ambiguous." },
+  { name: "malformed prerequisite tasks", tasks: "- [x] T001@aaaaaaaa Done\n- [x] invalid-id Malformed\n",
+    reason: "Task state is unavailable because the tasks file is incomplete or ambiguous." },
+]) {
+  test(`088 Ship plan: ${scenario.name} refuses with unavailable member evidence`, () => {
+    withShipRoots((root) => {
+      writeIdea(root, "target", { number: "001", dependsOn: "foundation" });
+      writeIdea(root, "foundation", { feature: "900-foundation" });
+      writePackage(root, "900-foundation", { tasks: scenario.tasks ?? "" });
+      if (scenario.tasks === null) {
+        const tasksPath = path.join(root, ".dude/specs/900-foundation/tasks.md");
+        fs.rmSync(tasksPath);
+        if (scenario.directory) fs.mkdirSync(tasksPath);
+      }
+    }, (root) => assertShipPlan(root, "target", shipRefused(".dude/ideas/001-target.md", [{
+      code: "SHIP_PLAN_MEMBER_UNAVAILABLE",
+      path: ".dude/ideas/900-foundation.md",
+      message: `Cannot plan prerequisite 'foundation': ${scenario.reason} Repair its records before shipping.`,
+    }])));
+  });
+}
+
+test("088 Ship plan: malformed declared prerequisites on the target refuse without a stage-based refusal", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", dependsOn: "invalid!" });
+  }, (root) => assertShipPlan(root, "target", shipRefused(".dude/ideas/001-target.md", [{
+    code: "SHIP_PLAN_MEMBER_UNAVAILABLE",
+    path: ".dude/ideas/001-target.md",
+    message: "Cannot read declared prerequisites for 'target'; repair its depends-on metadata before shipping.",
+  }])));
+});
+
+for (const complete of [false, true]) {
+  test(`088 Ship plan: malformed declared prerequisites on a ${complete ? "complete" : "draft"} prerequisite refuse before skipping`, () => {
+    withShipRoots((root) => {
+      writeIdea(root, "target", { number: "001", dependsOn: "foundation" });
+      writeIdea(root, "foundation", complete
+        ? { feature: "900-foundation", dependsOn: "invalid!" }
+        : { number: "900", dependsOn: "invalid!" });
+      if (complete) writePackage(root, "900-foundation", { tasks: "- [x] T001@aaaaaaaa Done\n" });
+    }, (root) => assertShipPlan(root, "target", shipRefused(".dude/ideas/001-target.md", [{
+      code: "SHIP_PLAN_MEMBER_UNAVAILABLE",
+      path: ".dude/ideas/900-foundation.md",
+      message: "Cannot plan prerequisite 'foundation': Declared prerequisite data is unavailable. Repair its records before shipping.",
+    }])));
+  });
+}
+
+for (const member of ["target", "foundation"]) {
+  test(`088 Ship plan: structured declared prerequisites on ${member} pass through the frontmatter error unchanged`, () => {
+    withShipRoots((root) => {
+      writeIdea(root, "target", { number: "001", dependsOn: member === "target" ? "[foundation]" : "foundation" });
+      writeIdea(root, "foundation", { number: "900", dependsOn: member === "foundation" ? "[target]" : undefined });
+    }, (root) => assertShipPlan(root, "target", shipRefused(null, [{
+      code: "FEATURE_FRONTMATTER_MALFORMED",
+      path: `.dude/ideas/${member === "target" ? "001-target" : "900-foundation"}.md`,
+      message: "malformed frontmatter (frontmatter key 'depends-on' has a structured flow value)",
+    }])));
+  });
+}
+
+test("088 Ship plan: a duplicate idea slug passes through the lifecycle identity diagnostic unchanged", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", dependsOn: "foundation" });
+    writeIdea(root, "foundation", { number: "002" });
+    writeIdea(root, "foundation", { number: "003" });
+  }, (root) => assertShipPlan(root, "target", shipRefused(null, [{
+    code: "FEATURE_IDEA_SLUG_DUPLICATE",
+    path: ".dude/ideas/002-foundation.md",
+    message: "duplicate idea slug 'foundation': .dude/ideas/002-foundation.md, .dude/ideas/003-foundation.md",
+  }])));
+});
+
+test("088 Ship plan: conflicting ownership passes through every inventory error unchanged", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "003", dependsOn: "foundation" });
+    writeIdea(root, "foundation", { feature: "001-foundation" });
+    writePackage(root, "001-foundation");
+    writeIdea(root, "peer", { number: "002", feature: "001-foundation" });
+  }, (root) => assertShipPlan(root, "target", shipRefused(null, [
+    {
+      code: "FEATURE_OWNER_IDENTITY_MISMATCH",
+      path: ".dude/ideas/002-peer.md",
+      message: "defined owner .dude/ideas/002-peer.md identity 002-peer does not match package .dude/specs/001-foundation/spec.md",
+    },
+    {
+      code: "FEATURE_OWNER_DUPLICATE",
+      path: ".dude/specs/001-foundation/spec.md",
+      message: "duplicate defined idea owners: .dude/ideas/001-foundation.md, .dude/ideas/002-peer.md",
+    },
+  ])));
+});
+
+test("088 Ship plan: unreadable prerequisite specification evidence keeps the existing unsafe-path diagnostic", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", dependsOn: "foundation" });
+    writeIdea(root, "foundation", { feature: "900-foundation" });
+    writePackage(root, "900-foundation");
+    const specPath = path.join(root, ".dude/specs/900-foundation/spec.md");
+    fs.rmSync(specPath);
+    fs.mkdirSync(specPath);
+  }, (root) => assertShipPlan(root, "target", shipRefused(null, [{
+    code: "FEATURE_SPEC_PATH_UNSAFE",
+    path: ".dude/ideas/900-foundation.md",
+    message: "spec_path '.dude/specs/900-foundation/spec.md' is unsafe or unresolved (spec identity target is not a regular file: '.dude/specs/900-foundation/spec.md')",
+  }])));
+});
+
+test("088 Ship plan: unreadable prerequisite lifecycle evidence keeps the existing inventory diagnostic", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", dependsOn: "foundation" });
+    fs.mkdirSync(path.join(root, ".dude/ideas/900-foundation.md"));
+  }, (root) => assertShipPlan(root, "target", shipRefused(null, [{
+    code: "FEATURE_IDEA_ENTRY_UNSUPPORTED",
+    path: ".dude/ideas/900-foundation.md",
+    message: "unsupported nested directory in canonical ideas; only direct regular .md files are allowed",
+  }])));
+});
+
+test("088 Ship plan: invalid or inexact selectors refuse with JSON and never fall back to a title, filename, or package", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", title: "Target title" });
+  }, (root) => {
+    for (const target of ["Target title", ".dude/ideas/target.md", ".dude/specs/001-target/spec.md",
+      "./.dude/ideas/001-target.md", ".dude/ideas/001-target.md/", "target.md"]) {
+      assertShipPlan(root, target, shipRefused(null, [{
+        code: "FEATURE_IDEA_QUERY_INVALID",
+        path: target,
+        message: "idea query must supply exactly one canonical frontmatter slug or exact numbered direct idea path",
+      }]));
+    }
+    for (const target of ["missing", "tar", "001-target", ".dude/ideas/002-target.md"]) {
+      assertShipPlan(root, target, shipRefused(null, [{
+        code: "FEATURE_IDEA_NOT_FOUND", path: target, message: `no exact idea found for '${target}'`,
+      }]));
+    }
+  });
+});
+
+test("088 Ship plan: refusals clear partial order and skipped entries and deduplicate diagnostics by code and path", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", dependsOn: "completed beta gamma absent-one absent-two" });
+    writeIdea(root, "completed", { feature: "800-completed" });
+    writePackage(root, "800-completed", { tasks: "- [x] T001@aaaaaaaa Done\n" });
+    writeIdea(root, "beta", { number: "900", dependsOn: "absent-one closed unavailable" });
+    writeIdea(root, "gamma", { number: "002", dependsOn: "absent-one closed unavailable" });
+    writeIdea(root, "closed", { number: "003", status: "resolved" });
+    writeIdea(root, "unavailable", { feature: "004-unavailable" });
+    writePackage(root, "004-unavailable");
+    fs.rmSync(path.join(root, ".dude/specs/004-unavailable/tasks.md"));
+  }, (root) => assertShipPlan(root, "target", shipRefused(".dude/ideas/001-target.md", [
+    {
+      code: "SHIP_PLAN_PREREQUISITE_MISSING", path: ".dude/ideas/900-beta.md",
+      message: "Declared prerequisite 'absent-one' has no unique authoritative idea; capture it through brainstorm or change the declared prerequisites.",
+    },
+    {
+      code: "SHIP_PLAN_MEMBER_RESOLVED", path: ".dude/ideas/003-closed.md",
+      message: "Prerequisite 'closed' is resolved, not complete; reopen it through an explicit brainstorm or change the declared prerequisites.",
+    },
+    {
+      code: "SHIP_PLAN_MEMBER_UNAVAILABLE", path: ".dude/ideas/004-unavailable.md",
+      message: "Cannot plan prerequisite 'unavailable': The task file is unavailable. Repair its records before shipping.",
+    },
+    {
+      code: "SHIP_PLAN_PREREQUISITE_MISSING", path: ".dude/ideas/002-gamma.md",
+      message: "Declared prerequisite 'absent-one' has no unique authoritative idea; capture it through brainstorm or change the declared prerequisites.",
+    },
+    {
+      code: "SHIP_PLAN_PREREQUISITE_MISSING", path: ".dude/ideas/001-target.md",
+      message: "Declared prerequisite 'absent-one' has no unique authoritative idea; capture it through brainstorm or change the declared prerequisites.",
+    },
+  ])));
+});
+
+test("088 Ship plan: a recheck moves a fully completed first feature to skipped and retains the remaining approved order", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", dependsOn: "foundation" });
+    writeIdea(root, "foundation", { feature: "900-foundation" });
+    writePackage(root, "900-foundation", { tasks: "- [~] T001@aaaaaaaa Working\n- [ ] T002@bbbbbbbb Next\n" });
+  }, (root) => {
+    const approved = assertShipPlan(root, "target", shipPlan("001-target", [
+      shipEntry("900-foundation", { stage: "In progress" }),
+      shipEntry("001-target", { requested: true, prerequisites: ["900-foundation"] }),
+    ]));
+    writeFile(root, ".dude/specs/900-foundation/tasks.md", "- [x] T001@aaaaaaaa Done\n- [x] T002@bbbbbbbb Done\n");
+    const rebuilt = assertShipPlan(root, "target", shipPlan("001-target", [
+      shipEntry("001-target", { requested: true, prerequisites: ["900-foundation"] }),
+    ], [shipSkipped("900-foundation")]));
+    assert.deepEqual(rebuilt.order.map((entry) => entry.ideaPath), approved.order.slice(1).map((entry) => entry.ideaPath));
+    assert.equal(rebuilt.skipped[0].ideaPath, approved.order[0].ideaPath);
+  });
+});
+
+test("088 Ship plan: a recheck with one blocked task keeps the first feature in the plan", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", dependsOn: "foundation" });
+    writeIdea(root, "foundation", { feature: "900-foundation" });
+    writePackage(root, "900-foundation", { tasks: "- [~] T001@aaaaaaaa Working\n- [ ] T002@bbbbbbbb Next\n" });
+  }, (root) => {
+    const approved = assertShipPlan(root, "target", shipPlan("001-target", [
+      shipEntry("900-foundation", { stage: "In progress" }),
+      shipEntry("001-target", { requested: true, prerequisites: ["900-foundation"] }),
+    ]));
+    writeFile(root, ".dude/specs/900-foundation/tasks.md", "- [x] T001@aaaaaaaa Done\n- [!] T002@bbbbbbbb Blocked\n");
+    const rebuilt = assertShipPlan(root, "target", shipPlan("001-target", [
+      shipEntry("900-foundation", { stage: "Blocked" }),
+      shipEntry("001-target", { requested: true, prerequisites: ["900-foundation"] }),
+    ]));
+    assert.deepEqual(rebuilt.order.map((entry) => entry.ideaPath), approved.order.map((entry) => entry.ideaPath));
+  });
+});
+
+test("088 Ship plan: a recheck exposes a newly declared prerequisite outside the earlier plan", () => {
+  withShipRoots((root) => {
+    writeIdea(root, "target", { number: "001", dependsOn: "foundation" });
+    writeIdea(root, "foundation", { number: "900" });
+  }, (root) => {
+    const approved = assertShipPlan(root, "target", shipPlan("001-target", [
+      shipEntry("900-foundation"),
+      shipEntry("001-target", { requested: true, prerequisites: ["900-foundation"] }),
+    ]));
+    writeIdea(root, "upstream", { number: "002" });
+    writeIdea(root, "foundation", { number: "900", dependsOn: "upstream" });
+    const rebuilt = assertShipPlan(root, "target", shipPlan("001-target", [
+      shipEntry("002-upstream"),
+      shipEntry("900-foundation", { prerequisites: ["002-upstream"] }),
+      shipEntry("001-target", { requested: true, prerequisites: ["900-foundation"] }),
+    ]));
+    assert.equal(approved.order.some((entry) => entry.ideaPath === rebuilt.order[0].ideaPath), false);
+    assert.notDeepEqual(rebuilt.order.map((entry) => entry.ideaPath), approved.order.map((entry) => entry.ideaPath));
+  });
+});
+
+test("088 Ship plan: usage errors and --tracked print only FAIL to stderr and exit 1 without writes", () => {
+  withShipRoots((root) => writeIdea(root, "target", { number: "001" }), (root) => {
+    const before = snapshotTree(root);
+    try {
+      for (const [args, reason] of [
+        [["ship-plan"], "ship-plan requires a target"],
+        [["ship-plan", "target", "extra"], "too many positional arguments"],
+        [["ship-plan", "target", "--unknown"], "unknown option: --unknown"],
+        [["ship-plan", "target", "-x"], "unknown option: -x"],
+        [["ship-plan", "--root"], "--root requires a directory"],
+        [["ship-plan", "target", "--tracked"], "unknown option: --tracked"],
+        [["--tracked", "ship-plan", "target"], "unknown option: --tracked"],
+        [["ship-plan", "--tracked"], "unknown option: --tracked"],
+      ]) {
+        const result = spawnSync(process.execPath, [BACKLOG_PATH, "--root", root, ...args], { encoding: "utf8" });
+        assert.equal(result.status, 1, args.join(" "));
+        assert.equal(result.stdout, "", args.join(" "));
+        assert.equal(result.stderr, `[FAIL] ${reason}\n`, args.join(" "));
+      }
+    } finally {
+      assert.deepEqual(snapshotTree(root), before, "usage errors change zero fixture files or directories");
+    }
+  });
+});
+
+test("088 Ship plan: help lists all five read-only forms without requiring a target or writing files", () => {
+  withShipRoots((root) => writeIdea(root, "target", { number: "001" }), (root) => {
+    const before = snapshotTree(root);
+    try {
+      let help = null;
+      for (const args of [["--help"], ["-h"], ["ship-plan", "--help"], ["ship-plan", "-h"]]) {
+        const result = runCli(root, args);
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stderr, "");
+        assert.deepEqual(result.stdout.split("\n").filter((line) => line.startsWith("  node backlog.mjs")), [
+          "  node backlog.mjs [--tracked] [--root <dir>]",
+          "  node backlog.mjs kanban [--root <dir>]",
+          "  node backlog.mjs flowchart <idea-slug> [--root <dir>]",
+          "  node backlog.mjs progress <idea-slug> [--tracked] [--root <dir>]",
+          "  node backlog.mjs ship-plan <idea-slug | .dude/ideas/<NNN>-<slug>.md> [--root <dir>]",
+        ]);
+        assert.match(result.stdout, /ship-plan.*declared prerequisite plan/);
+        assert.match(result.stdout, /Every form is read-only\./);
+        if (help !== null) assert.equal(result.stdout, help);
+        help = result.stdout;
+      }
+    } finally {
+      assert.deepEqual(snapshotTree(root), before, "help changes zero fixture files or directories");
+    }
+  });
 });

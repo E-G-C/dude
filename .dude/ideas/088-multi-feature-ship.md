@@ -1,8 +1,8 @@
 ---
 title: Epic And Multi-Feature Ship
 slug: multi-feature-ship
-status: draft
-spec_path:
+status: defined
+spec_path: .dude/specs/088-multi-feature-ship/spec.md
 ---
 
 # Idea: Epic And Multi-Feature Ship
@@ -39,6 +39,22 @@ For definition; no answer is needed to capture this idea.
 No additional user assumptions supplied.
 
 <!-- dude:managed:start -->
+## Definition And Split
+
+During the user's explicit Ship of this idea, requested at 2026-11-03T01:14:38Z, the Spec Lead staged this first definition at `.dude/specs/088-multi-feature-ship/spec.md`, with `plan.md` and two serial open units. `T001@c4e81f2a` adds a read-only plan form that lists a target's unfinished declared prerequisites in dependency order. `T002@7b39d0e6`, which depends on T001, wires Ship to show that plan, ask before adding any feature the user did not name, run the approved features one at a time, and end at the first stop.
+
+The definition covers proposed increment 1 only. The Epic part, proposed increment 2, was split into its own draft idea, `.dude/ideas/094-epic-continuity.md`, which now owns it. The capture-time sections below remain as history. Where they differ from this section, this section wins, including Diagram 1's open combined-outcome step, the statement that both slices stay in this idea, and the pointers to open questions 4 and 5.
+
+The answer slots above remain the user's and stay blank. Before the Ship, Dude recommended a first version that only runs features in dependency order and asked the user to choose; the user's Ship command did not answer that question. The dispositions below are Ship-authorized definition-owner decisions drawn from accepted intent and recorded evidence, not user answers:
+
+- Question 1: the first release only runs features in dependency order, and the named Epic, with its own goal and outcome check, moved to `.dude/ideas/094-epic-continuity.md`. The user's 2026-10-19 reply asked Dude to break the direction down as needed, Agreed So Far already sets a first scope that runs features one at a time, and the Keep it simple guardrail rules out an Epic record whose goal and acceptance test are not yet settled. Either answer needs dependency order, so this choice forecloses nothing: the Epic idea can be defined next and build on it.
+- Question 2: this package creates no Epic record. Each feature keeps its own idea, package, and log as its record, and an approved plan lasts only for the Ship request that showed it. The question moved with the Epic part.
+- Question 3: a prerequisite is satisfied only when it is defined, its own package reads cleanly, it has at least one task, and every task is done, which is the Completed stage that `@dude status` already shows. A resolved prerequisite never satisfies a dependency, so its plan is refused before anything starts. Adding any feature the user did not name needs the user's explicit approval of the exact plan shown, and no Ship disposition supplies that approval.
+- Question 4: the run ends at the first existing stop, including a human-only gate such as mockup approval, and does not continue with independent features. A new explicit Ship request builds a fresh plan from current records, skips satisfied prerequisites, and asks again before adding any. It revives no stopped Work, bypasses no retained claim, and reopens no resolved idea.
+- Question 5: only Lightweight features. When imported tracked work exists, Ship keeps its existing tracked precedence and builds no plan, and it never imports work or falls back between lanes.
+
+Existing project and bundle guardrails cover this feature. No guardrail candidate arose, so nothing was adopted, narrowed, rejected, or skipped. The feature changes no user interface, so the design gate does not apply to it. Each disposition is reversible before implementation. The material residual risk is that the user wanted the Epic in the first release; the Epic idea can still deliver it next without undoing this package. Publication, the authoritative ownership recheck, and lint remain with the coordinator, and this staged package is not a readiness claim.
+
 ## Agreed So Far
 
 The user's reply above accepted Dude's suggestion to capture this direction separately. Agreed at brainstorm level:
@@ -86,6 +102,8 @@ Order comes only from declared dependencies, never from lifecycle numbers, title
 
 ## Proposed Increment 2: Epic Continuity
 
+History: on 2026-11-03 this analysis moved to `.dude/ideas/094-epic-continuity.md`, which now owns it. The text below stays as proposed at capture.
+
 Prerequisites alone may not capture the shared outcome the user wants from an Epic. A later slice could add an Epic with agreed members, a goal and acceptance condition, shared decisions, outputs handed from one feature to the next, progress derived from its features, and a final check that the combined outcome works.
 
 Both slices stay in this one idea for now, and definition may split them if each proves independently deliverable. An Epic's storage, identity, command, and schema are open under questions 1 and 2, so this capture creates no `.dude/epics/` folder, registry, or shadow task board.
@@ -116,3 +134,7 @@ A first version leaves out arbitrary composition or enforcement of pack workflow
 ## Coordinator Log
 
 - 2026-10-19T22:10:35Z - brainstorm: Staged the first capture of the user's Epic and multi-feature Ship direction from the 067 progress-reporting discussion, with current groundwork, two proposed increments, permission boundaries, a 067 and 087 worked example, and five open questions, for coordinator first-capture publication; no definition package, tasks, or implementation.
+- 2026-11-03T01:30:30Z - define: Staged first definition at .dude/specs/088-multi-feature-ship/spec.md under the user's explicit Ship, covering dependency-ordered multi-feature Ship only with the Epic part split to .dude/ideas/094-epic-continuity.md, with spec, plan, and two serial open units T001@c4e81f2a and T002@7b39d0e6 (T002 depends on T001), Ship-authorized definition-owner dispositions for questions 1 to 5 that leave every answer slot blank, no new guardrails, and no implementation, task state, or Git action.
+- 2026-11-03T02:05:22Z - work: Claimed T001@c4e81f2a for the user-authorized autonomous Work invocation; implementation has not started.
+- 2026-11-03T04:12:08Z - work: Claimed T002@7b39d0e6 for the user-authorized autonomous Work invocation; implementation has not started.
+- 2026-11-03T06:53:50Z - work: Closed Epic And Multi-Feature Ship: both live canonical tasks (T001@c4e81f2a, T002@7b39d0e6) are done through autonomous Work in the Ship invocation. T001 passed on its first attempt. T002 passed on its second attempt, after its installed-host chat check failed because the host model passed a backslash idea path to ship-plan; the retry requires the forward-slash form. Independent Tester and Reviewer acceptance covered every attempt, with no Canvas change. The one Rubber Duck retrospective dispatch completed and is recorded in retrospective.md. Nothing is committed; Git delivery awaits the user's decision.

@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { CANONICAL_IDEA_KEYS, inventoryLifecycleIdentities } from "../dude-engine/lib/feature.mjs";
+import { CANONICAL_IDEA_KEYS, inventoryLifecycleIdentities, resolveIdeaSelector } from "../dude-engine/lib/feature.mjs";
 import { parseFrontmatterScalars, parseIdeaIdentity, parseSpecIdentity } from "../dude-engine/lib/feature-identity.mjs";
 import { parseTasks } from "../dude-engine/lib/tasks.mjs";
 import { workProgress, workStage } from "../dude-engine/lib/work-progress.mjs";
@@ -515,6 +515,118 @@ function uniqueItemsBySlug(items) {
   return unique;
 }
 
+/**
+ * Plan only the target's declared prerequisites, using existing lifecycle authority.
+ * @param {{ root: string, target: string }} options
+ */
+export function planShipRun({ root, target }) {
+  const selection = resolveIdeaSelector({
+    root,
+    ...(typeof target === "string" && target.startsWith(".dude/")
+      ? { ideaPath: target }
+      : { slug: target }),
+  });
+  const plan = {
+    target: selection.idea?.ideaPath ?? null,
+    runnable: false,
+    order: [],
+    skipped: [],
+    diagnostics: [],
+  };
+  const diagnosed = new Set();
+  const diagnose = (code, diagnosticPath, message) => {
+    const key = `${code}\0${diagnosticPath}`;
+    if (diagnosed.has(key)) return;
+    diagnosed.add(key);
+    plan.diagnostics.push({ code, path: diagnosticPath, message });
+  };
+  for (const diagnostic of selection.diagnostics) {
+    if (diagnostic.severity === "error") diagnose(diagnostic.code, diagnostic.path, diagnostic.message);
+  }
+  if (!selection.idea || plan.diagnostics.length > 0) return plan;
+
+  const items = collectLifecycleItems({ root });
+  const unique = uniqueItemsBySlug(items);
+  const targetItem = items.find((item) => item.ideaPath === selection.idea.ideaPath);
+  if (targetItem?.status === "resolved") {
+    diagnose("SHIP_PLAN_MEMBER_RESOLVED", targetItem.ideaPath,
+      `Target '${targetItem.slug}' is resolved; reopen it through an explicit brainstorm before shipping.`);
+    return plan;
+  }
+  if (!targetItem || !targetItem.dependencyAvailable) {
+    diagnose("SHIP_PLAN_MEMBER_UNAVAILABLE", selection.idea.ideaPath,
+      `Cannot read declared prerequisites for '${selection.idea.slug}'; repair its depends-on metadata before shipping.`);
+    return plan;
+  }
+
+  const ordered = [];
+  const skipped = [];
+  const visited = new Set();
+  const stack = [];
+  const stackIndex = new Map();
+  const walk = (item) => {
+    stackIndex.set(item.ideaPath, stack.length);
+    stack.push(item);
+    for (const slug of item.dependsOn) {
+      const member = unique.get(slug);
+      if (!member) {
+        diagnose("SHIP_PLAN_PREREQUISITE_MISSING", item.ideaPath,
+          `Declared prerequisite '${slug}' has no unique authoritative idea; capture it through brainstorm or change the declared prerequisites.`);
+        continue;
+      }
+      if (member.status === "resolved") {
+        diagnose("SHIP_PLAN_MEMBER_RESOLVED", member.ideaPath,
+          `Prerequisite '${member.slug}' is resolved, not complete; reopen it through an explicit brainstorm or change the declared prerequisites.`);
+        continue;
+      }
+      if (stackIndex.has(member.ideaPath)) {
+        const cycle = [...stack.slice(stackIndex.get(member.ideaPath)).map((entry) => entry.slug), member.slug];
+        diagnose("SHIP_PLAN_DEPENDENCY_CYCLE", member.ideaPath,
+          `Declared prerequisite cycle: ${cycle.join(" -> ")}. Change the declared prerequisites before shipping.`);
+        continue;
+      }
+      if (visited.has(member.ideaPath)) continue;
+      const stage = workStage(member);
+      if (stage === null || !member.dependencyAvailable) {
+        const reason = !member.dependencyAvailable
+          ? "Declared prerequisite data is unavailable."
+          : member.unavailableDetail ?? "Lifecycle or task data is unavailable.";
+        diagnose("SHIP_PLAN_MEMBER_UNAVAILABLE", member.ideaPath,
+          `Cannot plan prerequisite '${member.slug}': ${reason} Repair its records before shipping.`);
+        continue;
+      }
+      visited.add(member.ideaPath);
+      if (stage === "Completed") {
+        skipped.push(member);
+        continue;
+      }
+      walk(member);
+      ordered.push(member);
+    }
+    stack.pop();
+    stackIndex.delete(item.ideaPath);
+  };
+  walk(targetItem);
+  if (plan.diagnostics.length > 0) return plan;
+
+  ordered.push(targetItem);
+  plan.runnable = true;
+  plan.order = ordered.map((item) => ({
+    ideaPath: item.ideaPath,
+    specPath: item.specPath,
+    slug: item.slug,
+    stage: workStage(item),
+    requested: item.ideaPath === plan.target,
+    prerequisites: item.dependsOn.map((slug) => unique.get(slug).ideaPath),
+  }));
+  plan.skipped = skipped.map((item) => ({
+    ideaPath: item.ideaPath,
+    specPath: item.specPath,
+    slug: item.slug,
+  }));
+  return plan;
+}
+
 /** An item without a valid canonical slug carries no dependency authority in either direction. */
 function authoritativeDependsOn(item) {
   return item.authoritySlug ? item.dependsOn : [];
@@ -773,7 +885,7 @@ function readProgress(root, slug, tracked) {
   return workProgress({ item, ideaBytes, specBytes, tasksBytes, tracked });
 }
 
-const HELP = `backlog — deterministic lifecycle orientation\n\nUsage:\n  node backlog.mjs [--tracked] [--root <dir>]\n  node backlog.mjs kanban [--root <dir>]\n  node backlog.mjs flowchart <idea-slug> [--root <dir>]\n  node backlog.mjs progress <idea-slug> [--tracked] [--root <dir>]\n\nThe default form prints Current, Planned, and Completed lifecycle groups with\neach record's stage, then dependency and order notes. kanban prints current work\nonly. flowchart prints one defined package task graph. progress prints one item's\nreport. --tracked leaves defined stages unavailable and phases not exposed because\nthis view does not read tracked work. Every form is read-only.\n`;
+const HELP = `backlog — deterministic lifecycle orientation\n\nUsage:\n  node backlog.mjs [--tracked] [--root <dir>]\n  node backlog.mjs kanban [--root <dir>]\n  node backlog.mjs flowchart <idea-slug> [--root <dir>]\n  node backlog.mjs progress <idea-slug> [--tracked] [--root <dir>]\n  node backlog.mjs ship-plan <idea-slug | .dude/ideas/<NNN>-<slug>.md> [--root <dir>]\n\nThe default form prints Current, Planned, and Completed lifecycle groups with\neach record's stage, then dependency and order notes. kanban prints current work\nonly. flowchart prints one defined package task graph. progress prints one item's\nreport. ship-plan prints a target's declared prerequisite plan as JSON.\n--tracked leaves defined stages unavailable and phases not exposed because\nthis view does not read tracked work. Every form is read-only.\n`;
 
 export function parseArgs(argv) {
   const output = { root: process.cwd(), command: undefined, slug: undefined, tracked: false, help: false, invalid: null };
@@ -789,8 +901,9 @@ export function parseArgs(argv) {
         output.root = root;
         index += 1;
       }
-    } else if (token.startsWith("--")) output.invalid = `unknown option: ${token}`;
-    else positionals.push(token);
+    } else if (token.startsWith("--") || (positionals[0] === "ship-plan" && token.startsWith("-"))) {
+      output.invalid = `unknown option: ${token}`;
+    } else positionals.push(token);
   }
   output.command = positionals[0];
   output.slug = positionals[1];
@@ -833,6 +946,15 @@ export function run(args) {
       }
       process.stdout.write(renderFlowchart(matches[0].tasks, { slug: args.slug }));
       return 0;
+    }
+    if (args.command === "ship-plan") {
+      if (!args.slug) {
+        process.stderr.write("[FAIL] ship-plan requires a target\n");
+        return 1;
+      }
+      const plan = planShipRun({ root: args.root, target: args.slug });
+      process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
+      return plan.runnable ? 0 : 1;
     }
     if (args.command === "progress") {
       if (!args.slug) {

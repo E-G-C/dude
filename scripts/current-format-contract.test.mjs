@@ -2042,7 +2042,7 @@ test('T030 retired backlog report leaves only read-only views, source-generated 
     /Dude no longer updates `\.dude\/backlog\.md` or `\.dude\/backlog\.html`; if your project has copies from an earlier version, you can delete them\./,
   ]);
   assertGuidanceMatchesAll('docs/commands.md', [
-    /\| `dude-lightweight-execution\/backlog\.mjs` \| read-only lifecycle views: default groups with stages and dependency and order notes, `kanban`, `flowchart <slug>`, and `progress <slug>`; `--tracked` on default and `progress` only \|/,
+    /\| `dude-lightweight-execution\/backlog\.mjs` \| read-only lifecycle views: default groups with stages and dependency and order notes, `kanban`, `flowchart <slug>`, `progress <slug>`, and `ship-plan <slug>`; `--tracked` on default and `progress` only \|/,
     /`backlog\.mjs` never writes\. Its default form prints the Current, Planned, and Completed groups, then dependency and order notes/,
     /provisional relationship stated in an idea body, which never changes grouping/,
   ]);
@@ -5650,6 +5650,255 @@ test('Ship lane guidance keeps tracked precedence and delegates execution to the
     ]]],
     'docs/reference.md ## Execution Workflow',
   );
+});
+
+test('088 Ship: declared-prerequisite rules are section-bound and fail isolated deletion', async (t) => {
+  /** @type {Array<{relative: string, heading: string, subsection?: string, requirements: Array<[string, string, RegExp[]]>}>} */
+  const contracts = [
+    {
+      relative: SHIP_RESOLVER_OWNER,
+      heading: '## Ship',
+      subsection: '### Declared Prerequisites',
+      requirements: [
+        ['FR-001 plan after resolution and before stages', 'After the existing target resolution', [
+          /settles an exact `ideaPath`/,
+          /tracked-precedence check finds no imported tracked work/,
+          /run `node \.github\/skills\/dude-lightweight-execution\/backlog\.mjs ship-plan <exact ideaPath> --root \.`/,
+          /before any definition or Work/,
+          /raw ideas, the existing brainstorm capture comes first/,
+        ]],
+        ['FR-001 forward-slash argument on every platform', 'Write the `ideaPath` argument', [
+          /exactly as `\.dude\/ideas\/<NNN>-<slug>\.md`/,
+          /with forward slashes on every platform/,
+          /the form refuses a backslash path/,
+        ]],
+        ['FR-013 refusal names cause and next action without starting', 'If the form exits non-zero', [
+          /end Ship before any definition or Work or new write/,
+          /diagnostics or `\[FAIL\]` reason/,
+          /cause and next action/,
+          /reply's `Next:` line/,
+        ]],
+        ['FR-014 whole visible plan and one approval question', 'When `order` includes any feature', [
+          /user did not name/,
+          /before any definition or Work/,
+          /show the whole plan in the reply/,
+          /each `order` entry's slug, stage, and whether the user named it, in sequence/,
+          /`skipped` prerequisites/,
+          /usual definition and Work stages/,
+          /ask exactly one approval question in `Next:`/,
+          /exact plan and order/,
+        ]],
+        ['FR-015 only explicit user approval answers the question', "Only the user's", [
+          /explicit approval of the exact plan, given in reply to that question, authorizes the run/,
+          /no Ship pre-Work disposition supplies approval/,
+        ]],
+        ['FR-016 any other reply ends without writes or another question', 'A decline, partial approval', [
+          /change request, or anything else ends the run/,
+          /no definition, Work, or write/,
+          /no second approval question in this request/,
+        ]],
+        ['FR-017 exact transient approval is never saved', 'Keep the approved `order`', [
+          /as exact idea paths/,
+          /only for the features and order shown/,
+          /only for this Ship request/,
+          /never save the plan or approval/,
+        ]],
+        ['FR-018 target-only plans preserve the existing path', 'When `order` holds only the target', [
+          /ask no question/,
+          /add nothing to the reply/,
+          /make no new write/,
+          /run exactly the existing single-target lifecycle stages and Work/,
+        ]],
+        ['FR-019 tracked work keeps existing behavior without a plan', 'With imported tracked work', [
+          /keep Ship's existing tracked behavior/,
+          /build no plan/,
+        ]],
+        ['FR-020 approved order runs sequentially', 'Run the approved features', [
+          /one at a time in plan order/,
+        ]],
+        ['FR-021 rebuild before each feature and require exact remainder', 'Before each feature', [
+          /rebuild the plan for the original target with the same form/,
+          /continue only on exit 0/,
+          /`order` idea paths exactly equal the approved features not yet completed in this run, in their approved order/,
+          /otherwise end the run and report what changed/,
+        ]],
+        ['FR-022 completion recheck gates the next feature', 'After the first feature', [
+          /start the next only when the rebuilt plan lists the feature just run in `skipped` as complete/,
+          /otherwise end the run and report Work's outcome unchanged/,
+        ]],
+        ['FR-023 each feature uses its existing single-target stages', 'At its turn', [
+          /each feature through the existing single-target Ship stages as its own target/,
+          /draft uses explicit `define <slug>` with its exact `ideaPath`, then Work/,
+          /defined package goes to Work as-is/,
+        ]],
+        ['FR-024 definition receives exact complete prerequisite packages read-only', 'For definition', [
+          /exact `specPath` from `skipped`/,
+          /for each of that feature's complete `prerequisites`/,
+          /read-only context/,
+        ]],
+        ['FR-025 pre-Work answerability is per feature', '`### Pre-Work Answerability` applies', [
+          /each feature's own pre-Work stages/,
+          /ends when that feature's Work begins/,
+        ]],
+        ['FR-026 fresh Work admission carries no cross-feature authority', "Start each feature's", [
+          /Work with fresh admission under the normalized Ship policy above/,
+          /carry no accepted Work state, counters, claims, or task authority from another feature/,
+          /including through the driver's `claim --state`/,
+        ]],
+        ['FR-027 the first definition or non-ready Work stop ends the run unchanged', 'At the first definition stop', [
+          /Work end other than `no ready task`/,
+          /end the run and report that stop unchanged/,
+        ]],
+        ['FR-028 no next feature retry resume or cleanup after the end', 'Once the run ends', [
+          /start no other feature/,
+          /add no retry, resume, or cleanup/,
+        ]],
+        ['FR-029 a new request needs a fresh plan and approval', 'A new explicit Ship request', [
+          /builds a fresh plan from current records/,
+          /needs fresh approval for any feature the user did not name/,
+        ]],
+        ['FR-030 final results include unstarted features and the stop', 'In the final response', [
+          /give every planned feature's result, including features that did not start/,
+          /name the feature and stop where the run ended/,
+          /existing pre-Work dispositions and closeout/,
+        ]],
+        ['FR-031 no combined outcome or new Git authority', 'Claim no', [
+          /combined outcome/,
+          /existing no-Git rule across the whole run/,
+        ]],
+      ],
+    },
+    {
+      relative: SHIP_COORDINATOR,
+      heading: '## Ship',
+      requirements: [
+        ['coordinator follows the intake owner', 'For declared prerequisites', [
+          /follow `dude-work-intake` `### Declared Prerequisites`/,
+        ]],
+        ['coordinator leaves approval with the user', 'The approval question', [
+          /pre-mutation stop/,
+          /only the user's explicit approval of the exact plan answers it/,
+          /never a pre-Work disposition/,
+        ]],
+        ['coordinator retains only invocation-local approval', 'Keep the approved features', [
+          /order only for this invocation/,
+          /never save approval/,
+        ]],
+        ['coordinator rechecks and stops through intake', 'Rebuild before each feature', [
+          /end at the first stop as that subsection requires/,
+        ]],
+        ['coordinator hands off independent targets and per-feature answerability', 'Pass each feature', [
+          /as its own target to `dude-work` with fresh admission/,
+          /pre-Work answerability applies to that feature/,
+          /ends when its Work begins/,
+        ]],
+        ['coordinator reports separate results and the unchanged stop', 'Report every', [
+          /planned feature's result, including those not started/,
+          /unchanged stop/,
+          /no combined outcome/,
+        ]],
+      ],
+    },
+    {
+      relative: SHIP_COMMAND_DOC,
+      heading: SHIP_COMMAND_DOC_SECTION,
+      requirements: [
+        ['docs name the read-only form before stages', 'When no imported tracked work exists', [
+          /Ship passes the exact resolved idea path to `backlog\.mjs ship-plan` after target resolution/,
+          /before definition or Work/,
+        ]],
+        ['docs give an actionable refusal', 'A refused plan ends Ship', [
+          /cause and next action/,
+        ]],
+        ['docs show the whole plan and one question', 'If the plan adds a feature', [
+          /you did not name/,
+          /reply shows every feature in order with its stage and requested status/,
+          /lists complete prerequisites as skipped/,
+          /asks exactly one question before anything starts/,
+        ]],
+        ['docs require exact explicit unsaved approval', 'Only your', [
+          /explicit approval of that exact plan and order authorizes this request/,
+          /no pre-Work disposition supplies it/,
+          /approval is never saved/,
+        ]],
+        ['docs end an unapproved request without another question', 'Declining, changing the plan', [
+          /any other reply ends the request without definition, Work, a write, or a second question/,
+        ]],
+        ['docs explain sequential fresh Work and the recheck', 'Approved features run', [
+          /one at a time through the existing single-target stages and fresh Work admission/,
+          /plan recheck before each feature/,
+          /only when the previous feature is complete and the remaining order exactly matches the approved features not yet completed in this run, in their approved order/,
+        ]],
+        ['docs preserve the first stop and separate feature results', 'The first definition stop', [
+          /Work end other than `no ready task` ends the run/,
+          /final reply reports every feature, including any not started/,
+          /names the unchanged stop/,
+          /claims no combined outcome/,
+        ]],
+        ['docs preserve target-only and tracked paths', 'Plans holding only the target', [
+          /add no question, reply text, or write/,
+          /imported tracked work keeps its existing behavior with no plan/,
+        ]],
+      ],
+    },
+  ];
+
+  for (const { relative, heading, subsection, requirements } of contracts) {
+    const owner = markdownSection(read(relative), heading);
+    const section = subsection ? markdownSection(owner, subsection) : unwrappedParagraphs(owner);
+    const context = `${relative} ${heading}${subsection ? ` ${subsection}` : ''}`;
+    assertShipParagraphRequirements(section, requirements, context);
+
+    for (const requirement of requirements) {
+      const [label, anchor] = requirement;
+      await t.test(`088 Ship: ${label}`, () => {
+        const [block] = anchoredRuleBlocks(section, anchor);
+        const rules = sentences(block.raw).filter((sentence) => sentence.includes(anchor));
+        assert.equal(rules.length, 1, `${context}: one sentence owns ${label}`);
+        const [rule] = rules;
+        assert.equal(section.split(rule).length - 1, 1, `${context}: unique deletion for ${label}`);
+        const deleted = section.replace(rule, '');
+        assert.deepEqual(
+          missingParagraphRequirements(deleted, requirements),
+          [label],
+          `${context}: deleting only ${label} fails that rule and preserves every other rule`,
+        );
+        assert.throws(
+          () => assertShipParagraphRequirements(deleted, [requirement], context),
+          `${context}: isolated deletion fails the contract assertion`,
+        );
+        if (label === 'FR-001 forward-slash argument on every platform') {
+          assert.match(block.raw, /^1\. /, `${context}: path spelling belongs to step 1`);
+          const qualifier = 'with forward slashes on every platform; ';
+          assert.equal(rule.split(qualifier).length - 1, 1, `${context}: one forward-slash requirement`);
+          const unqualified = section.replace(rule, rule.replace(qualifier, ''));
+          assert.deepEqual(
+            missingParagraphRequirements(unqualified, requirements),
+            [label],
+            `${context}: deleting only the forward-slash requirement fails that rule alone`,
+          );
+          assert.throws(
+            () => assertShipParagraphRequirements(unqualified, [requirement], context),
+            `${context}: missing forward-slash requirement fails the contract assertion`,
+          );
+        }
+        if (label.startsWith('FR-021 ') || label === 'docs explain sequential fresh Work and the recheck') {
+          const qualifier = ' in this run';
+          assert.equal(rule.split(qualifier).length - 1, 1, `${context}: one run-scoped qualifier`);
+          const unscoped = section.replace(rule, rule.replace(qualifier, ''));
+          assert.deepEqual(
+            missingParagraphRequirements(unscoped, requirements),
+            [label],
+            `${context}: deleting only the run-scoped qualifier fails that rule alone`,
+          );
+          assert.throws(
+            () => assertShipParagraphRequirements(unscoped, [requirement], context),
+            `${context}: missing run scope fails the contract assertion`,
+          );
+        }
+      });
+    }
+  }
 });
 
 test('T002 Work guidance leads with simple sequential forms', () => {
