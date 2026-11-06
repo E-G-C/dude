@@ -1,15 +1,19 @@
 // @ts-check
 /**
- * Bounded, anonymous GitHub reads and the Git object checks applied to what they
- * return. Two readers share them: the directory importer
+ * Bounded GitHub reads and the Git object checks applied to what they return.
+ * Two readers share them: the directory importer
  * (`dude-bundle-import/lib/directory-source.mjs`) and pack acquisition
  * (`dude-compose/lib/pack-acquisition.mjs`). Each passes its own fixed budget and
  * path rules; nothing here chooses a limit, repository, ref or path policy.
  *
  * Every request is a GET to `api.github.com` or `raw.githubusercontent.com` with
- * only the headers its caller names, omitted credentials and refused redirects. No
- * token, credential helper, proxy or Git configuration is read. A body is read as a
- * stream and stopped at its budget even when Content-Length is absent or false.
+ * only the headers its caller names, omitted credentials and refused redirects.
+ * A read is anonymous unless its caller passes explicit `GitHubAccess`, and then
+ * only an `https://api.github.com/` request carries that access, as a bearer
+ * Authorization header; a raw download never does. No token is read from the
+ * environment, a credential helper, a proxy or Git configuration. A body is read
+ * as a stream and stopped at its budget even when Content-Length is absent or
+ * false.
  *
  * Dependency-free ESM (node:* only). Targets Node >= 20.
  */
@@ -23,8 +27,43 @@ export const GITHUB_API_HEADERS = Object.freeze({
 });
 
 const GIT_OBJECT_ID = /^[0-9a-f]{40}$/;
-const GITHUB_ORIGINS = Object.freeze(['https://api.github.com/', 'https://raw.githubusercontent.com/']);
+/** The one origin explicit access is ever sent to. */
+const API_ORIGIN = 'https://api.github.com/';
+const GITHUB_ORIGINS = Object.freeze([API_ORIGIN, 'https://raw.githubusercontent.com/']);
 const BUDGET_LIMITS = Object.freeze(['maxRequests', 'maxResponseBytes', 'maxTotalBytes', 'requestTimeoutMs']);
+// RFC 6750's b64token, the form a bearer credential takes. A value with a space,
+// a line break or another character outside it never reaches a header, where
+// fetch would refuse it in an error that repeats the value.
+const BEARER_TOKEN = /^[A-Za-z0-9\-._~+/]+=*$/;
+
+/**
+ * Explicit GitHub API access for one operation: a bearer token held in memory,
+ * which only an `https://api.github.com/` request sends. `release()` ends it, and
+ * no request can use it afterwards. The token is a private field, so serializing,
+ * spreading or printing the access shows none of it.
+ */
+export class GitHubAccess {
+  /** @type {string | null} */
+  #token;
+
+  /** @param {string} token */
+  constructor(token) {
+    if (typeof token !== 'string' || !BEARER_TOKEN.test(token)) {
+      throw new TypeError('GitHub access must be one bearer token.');
+    }
+    this.#token = token;
+  }
+
+  /** The bearer token, or null once released. */
+  get token() {
+    return this.#token;
+  }
+
+  /** Forget the token, so that no later request sends it. */
+  release() {
+    this.#token = null;
+  }
+}
 
 /**
  * @typedef {{
@@ -191,17 +230,36 @@ async function readBoundedResponse(response, budget, controller) {
 
 /**
  * GET one GitHub URL within `budget`. The caller builds the URL from validated
- * parts and names every header. A `signal` ends the request with its operation,
- * and an operation that already ended starts no request.
+ * parts and names every header but Authorization, which only explicit `access`
+ * adds, and only to an `https://api.github.com/` request. A released access starts
+ * no such request, rather than make it anonymously. A `signal` ends the request
+ * with its operation, and an operation that already ended starts no request.
+ *
+ * A refused response is an error with its `status`, `rateLimited` for a rate
+ * limit (HTTP 429, or 403 with no remaining allowance or a Retry-After), and
+ * `credentialRejected` for HTTP 401 to a request that carried access. Neither is
+ * retried, and the response body is never read.
  * @param {string} url
  * @param {ReadBudget} budget
- * @param {{ headers?: Readonly<Record<string, string>>, signal?: AbortSignal }} [options]
+ * @param {{ headers?: Readonly<Record<string, string>>, signal?: AbortSignal, access?: GitHubAccess | null }} [options]
  * @returns {Promise<Buffer>}
  */
-export async function fetchGitHubBytes(url, budget, { headers, signal } = {}) {
+export async function fetchGitHubBytes(url, budget, { headers, signal, access = null } = {}) {
   const { kind } = budget;
   if (typeof url !== 'string' || !GITHUB_ORIGINS.some((origin) => url.startsWith(origin))) {
     throw new Error(`GitHub ${kind} request URL must be an api.github.com or raw.githubusercontent.com HTTPS URL`);
+  }
+  if (access !== null && !(access instanceof GitHubAccess)) {
+    throw new TypeError(`GitHub ${kind} request access must be explicit GitHub access`);
+  }
+  if (headers && Object.keys(headers).some((name) => name.toLowerCase() === 'authorization')) {
+    throw new TypeError(`GitHub ${kind} request headers must not name Authorization; only explicit access adds it`);
+  }
+  // A raw download stays anonymous, whatever access its operation has.
+  const authenticated = access !== null && url.startsWith(API_ORIGIN);
+  const token = authenticated ? access.token : null;
+  if (authenticated && token === null) {
+    throw new Error(`GitHub ${kind} request was not started because its access was released`);
   }
   if (signal?.aborted) {
     throw new Error(`GitHub ${kind} request was not started because its operation ended`, { cause: signal.reason });
@@ -225,7 +283,7 @@ export async function fetchGitHubBytes(url, budget, { headers, signal } = {}) {
       redirect: /** @type {RequestRedirect} */ ('error'),
       credentials: /** @type {RequestCredentials} */ ('omit'),
       signal: controller.signal,
-      ...(headers ? { headers } : {}),
+      ...(token !== null ? { headers: { ...headers, authorization: `Bearer ${token}` } } : headers ? { headers } : {}),
     };
     const response = await globalThis.fetch(url, init);
     if (response.status !== 200) {
@@ -234,12 +292,13 @@ export async function fetchGitHubBytes(url, budget, { headers, signal } = {}) {
           response.headers.get('x-ratelimit-remaining') === '0'
           || response.headers.has('retry-after')
         ));
+      const credentialRejected = response.status === 401 && token !== null;
       abortAndCancelResponse(
         response.body,
         controller,
         Object.assign(
           new Error(`GitHub ${kind} request failed with HTTP ${response.status}${rateLimited ? ' (rate limit)' : ''}`),
-          { status: response.status, rateLimited },
+          { status: response.status, rateLimited, credentialRejected },
         ),
       );
     }
@@ -259,7 +318,7 @@ export async function fetchGitHubBytes(url, budget, { headers, signal } = {}) {
 /**
  * @param {string} url
  * @param {ReadBudget} budget
- * @param {{ headers?: Readonly<Record<string, string>>, signal?: AbortSignal }} [options]
+ * @param {{ headers?: Readonly<Record<string, string>>, signal?: AbortSignal, access?: GitHubAccess | null }} [options]
  * @returns {Promise<unknown>}
  */
 export async function fetchGitHubJson(url, budget, options) {

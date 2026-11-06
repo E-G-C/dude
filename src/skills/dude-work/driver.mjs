@@ -47,6 +47,7 @@ import {
   contentDescriptor,
   inspectRetainedOccurrencesV2,
   parseInvocation,
+  prepareLearningReviewV2,
   requiredChecksForAction,
   runCommand,
   sha256,
@@ -60,7 +61,7 @@ const USAGE = `usage:
   node driver.mjs claim --root <workspace> --spec <specPath> --task <taskKey> [--out <dir>] [--state <accepted-state.json>] -- <work arguments>
   node driver.mjs run --request <runner-request.json> [--dir <dir>] [--retained-evidence <file>]
   node driver.mjs assess --root <workspace> --challenge <challenge-n.json> --input <file>
-  node driver.mjs respond --root <workspace> --challenge <challenge-n.json> (--tester <file> --reviewer <file> --changed <file> | --cancel)
+  node driver.mjs respond --root <workspace> --challenge <challenge-n.json> (--tester <file> --reviewer <file> --changed <file> | --learning-review <file> | --cancel)
   node driver.mjs snapshot --root <workspace> --out <file>
   node driver.mjs diff --root <workspace> --baseline <file> --challenge <challenge-n.json> --out <file>
   node driver.mjs ownership --root <workspace> --spec <specPath> --task <taskKey>
@@ -267,6 +268,11 @@ function renameRetrying(source, destination) {
   }
 }
 
+/** The exact bytes publishJson writes for one value. @param {unknown} value */
+function jsonText(value) {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
 /**
  * Publish one complete JSON file through a sibling temporary file and one
  * rename, so a poller never observes a partial message. Unless replacement is
@@ -276,7 +282,7 @@ function renameRetrying(source, destination) {
 function publishJson(file, value, replace = false) {
   if (!replace && fs.existsSync(file)) throw new Refusal(`refusing to replace existing ${file}`);
   const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${randomBytes(6).toString('hex')}.tmp`);
-  fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { flag: 'wx' });
+  fs.writeFileSync(temporary, jsonText(value), { flag: 'wx' });
   try {
     renameRetrying(temporary, file);
   } catch (error) {
@@ -541,22 +547,34 @@ function readChallenge(file, kinds) {
   return challenge;
 }
 
-/** The response destination beside its exact challenge. @param {string} root @param {string} challengeFile */
-function responseFileFor(root, challengeFile) {
+/** The `n` of a file named challenge-<n>.json. @param {string} challengeFile */
+function challengeNumber(challengeFile) {
   const match = /^challenge-([1-9][0-9]*)\.json$/.exec(path.basename(challengeFile));
   if (!match) throw new Refusal(`a challenge file is named challenge-<n>.json: ${challengeFile}`);
-  const response = outsideWorkspace(root, path.join(path.dirname(challengeFile), `response-${match[1]}.json`), 'response');
+  return Number(match[1]);
+}
+
+/** The response destination beside its exact challenge. @param {string} root @param {string} challengeFile */
+function responseFileFor(root, challengeFile) {
+  const n = challengeNumber(challengeFile);
+  const response = outsideWorkspace(root, path.join(path.dirname(challengeFile), `response-${n}.json`), 'response');
   if (fs.existsSync(response)) {
     throw new Refusal(`${response} already exists; each challenge takes exactly one response`);
   }
   return response;
 }
 
-/** Decode and validate the accepted RunState and its single pending authorization. @param {Record<string, any>} challenge */
-function pendingAuthorization(challenge) {
+/** Decode and validate the challenge's accepted RunState and its exact bytes. @param {Record<string, any>} challenge */
+function challengeState(challenge) {
   const text = Buffer.from(String(challenge.stateBase64), 'base64').toString('utf8');
   if (sha256(text) !== challenge.stateHash) throw new Refusal('challenge stateBase64 does not match its stateHash');
   const state = /** @type {Record<string, any>} */ (checked(() => validateRunState(JSON.parse(text))));
+  return { state, text };
+}
+
+/** Decode and validate the accepted RunState and its single pending authorization. @param {Record<string, any>} challenge */
+function pendingAuthorization(challenge) {
+  const { state } = challengeState(challenge);
   if (state.pending.length !== 1) throw new Refusal('the challenge state holds no single pending authorization');
   return { state, pending: state.pending[0] };
 }
@@ -1183,20 +1201,84 @@ async function assess(argv) {
   return 0;
 }
 
+/**
+ * Publish one actual learning review for its exchange's waiting `learning-review`
+ * challenge. Local preflight binds the challenge body, its accepted state, the
+ * required governance, and the Inspection, then runs the receiver's own pure
+ * preparation. Waiting status and matching hashes show local consistency only;
+ * the runner repeats every check against fresh evidence when it reads the file.
+ * @param {string} challengeFile @param {string} responseFile @param {string} reviewFile
+ */
+function respondLearningReview(challengeFile, responseFile, reviewFile) {
+  const challenge = readChallenge(challengeFile, ['learning-review']);
+  const { challengeIdentity, bindingIdentity, ...body } = challenge;
+  if (bindingIdentity !== checked(() => sha256(canonicalJson(body)))) {
+    throw new Refusal('the challenge body does not match its bindingIdentity');
+  }
+  const status = readJson(path.join(path.dirname(challengeFile), 'status.json'), 'the exchange status.json');
+  if (!isRecord(status) || status.state !== 'waiting' || status.n !== challengeNumber(challengeFile)
+    || status.kind !== challenge.kind || status.challengeIdentity !== challengeIdentity) {
+    throw new Refusal('the challenge is not the waiting challenge of its exchange', {
+      hint: 'answer only the newest challenge, while status.json shows it waiting',
+    });
+  }
+  const { state, text } = challengeState(challenge);
+  if (canonicalJson(state) !== text) throw new Refusal('the challenge state is not canonical RunState bytes');
+  const governance = state.learningGovernance;
+  if (!isRecord(governance) || governance.governanceIdentity !== challenge.governanceIdentity
+    || canonicalJson(governance.target) !== canonicalJson(challenge.target)) {
+    throw new Refusal('the challenge does not bind the learning requirement of its accepted state');
+  }
+
+  // The actual result reaches the shared preparation untouched: nothing is cloned, repaired, or normalized.
+  const review = readJson(reviewFile, 'learning review');
+  const hint = 'have the learning-governance owner correct its result, or answer with respond --cancel';
+  const prepared = checked(() => prepareLearningReviewV2(state, challenge.inspection, review), hint);
+  if (!prepared.prepared) {
+    throw new Refusal(`the learning review cannot answer this challenge: ${prepared.reason}`, {
+      reason: prepared.reason, hint,
+    });
+  }
+  const response = {
+    version: 1, type: 'challenge-response', challengeIdentity, kind: 'learning-review', review,
+  };
+  const responseBytes = Buffer.byteLength(jsonText(response));
+  if (responseBytes > MAX_RESPONSE_BYTES) {
+    throw new Refusal(`the response holds ${responseBytes} bytes; the runner reads at most ${MAX_RESPONSE_BYTES}`, { hint });
+  }
+  publishJson(responseFile, response);
+  print({
+    ok: true,
+    command: 'respond',
+    response: responseFile,
+    kind: 'learning-review',
+    outcome: review.outcome,
+    governanceIdentity: challenge.governanceIdentity,
+    reviewIdentity: /** @type {Record<string, unknown>} */ (prepared.reviewEvent).reviewIdentity,
+    findings: review.findings.length,
+    alternatives: review.alternatives.length,
+    responseBytes,
+  });
+  return 0;
+}
+
 /** @param {string[]} argv */
 async function respond(argv) {
   const { values } = parseArgs(argv, {
-    options: ['root', 'challenge', 'tester', 'reviewer', 'changed'],
+    options: ['root', 'challenge', 'tester', 'reviewer', 'changed', 'learning-review'],
     flags: ['cancel'],
     required: ['root', 'challenge'],
   });
   const pair = ['tester', 'reviewer', 'changed'].filter((name) => Object.hasOwn(values, name));
-  if (values.cancel ? pair.length !== 0 : pair.length !== 3) {
-    throw new UsageError('respond takes --tester, --reviewer, and --changed, or --cancel alone');
+  const learning = Object.hasOwn(values, 'learning-review');
+  const forms = [pair.length !== 0, learning, Object.hasOwn(values, 'cancel')].filter(Boolean).length;
+  if (forms !== 1 || (pair.length !== 0 && pair.length !== 3)) {
+    throw new UsageError('respond takes --tester, --reviewer, and --changed; --learning-review alone; or --cancel alone');
   }
   const root = workspaceRoot(values.root);
   const challengeFile = path.resolve(values.challenge);
   const responseFile = responseFileFor(root, challengeFile);
+  if (learning) return respondLearningReview(challengeFile, responseFile, values['learning-review']);
   if (values.cancel) {
     // Only the bound envelope: the runner performs its permitted cancellation.
     const challenge = readChallenge(challengeFile, CHALLENGE_KINDS);

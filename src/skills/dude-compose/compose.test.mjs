@@ -20,7 +20,9 @@ import {
   cmdStatus,
   cmdVerify,
   readProfile,
+  resolveCatalogDir,
 } from './compose.mjs';
+import { GitHubAccess } from '../dude-engine/lib/github-content.mjs';
 import {
   MAX_ADDED_SOURCES,
   PACK_SOURCES_PATH,
@@ -3834,6 +3836,8 @@ function relativeFiles(directory) {
 function githubStandIn(repo) {
   /** @type {string[]} */
   const requests = [];
+  /** Every request with the Authorization header it carried, or null, in order. @type {Array<{ url: string, authorization: string | null }>} */
+  const calls = [];
   /** @type {((url: string, signal: AbortSignal | undefined) => Promise<Response | undefined>) | null} */
   let intercept = null;
   /** @param {...string} args @returns {Buffer | null} */
@@ -3883,6 +3887,7 @@ function githubStandIn(repo) {
   };
   return {
     requests,
+    calls,
     /** @param {typeof intercept} handler */
     intercept(handler) {
       intercept = handler;
@@ -3893,6 +3898,7 @@ function githubStandIn(repo) {
     async fetch(input, init = {}) {
       const url = String(input);
       requests.push(url);
+      calls.push({ url, authorization: new Headers(init.headers).get('authorization') });
       await new Promise((resolve) => setImmediate(resolve));
       init.signal?.throwIfAborted();
       return (intercept ? await intercept(url, init.signal ?? undefined) : undefined) ?? route(url);
@@ -4014,7 +4020,10 @@ test('T002 GitHub list, add, preview, and refresh read only manifests or the sel
         server.of(GITHUB_RAW).sort(),
         ['alpha', 'beta'].map((name) => `${GITHUB_RAW}/${catalog.first}/library/packs/${name}/pack.md`),
       );
-      assert.deepEqual(server.requests.filter((url) => url.endsWith('?recursive=1')), [], 'no pack is read whole to list it');
+      const packsTree = fixtureGit(catalog.repo, 'rev-parse', `${catalog.first}:library/packs`);
+      assert.deepEqual(server.requests.filter((url) => url.endsWith('?recursive=1')), [`${GITHUB_API}/git/trees/${packsTree}?recursive=1`],
+        'one recursive listing of the packs folder finds the manifests, and no pack is read whole');
+      assert.equal(server.of(`${GITHUB_API}/`).length, 6, 'six API requests: the branch twice, the commit, and three trees');
       assert.equal(server.of(`${GITHUB_API}/commits/`).length, 2, 'the branch is resolved, then rechecked');
       assert.deepEqual(fs.readdirSync(temporary), [], 'list removed its acquired catalog');
 
@@ -4419,6 +4428,156 @@ test('T002 --no-fetch, local folders, and a local catalog never contact a GitHub
   } finally {
     cleanup(released);
     cleanup(vendored);
+    cleanup(catalog.parent);
+  }
+});
+
+/* ------------------------------------------- explicit GitHub access (089) */
+
+// A sentinel token is made in this process's memory only, and every check of it
+// reports a boolean or a count, so no assertion can print it.
+/** A bearer-shaped sentinel that no real account holds. */
+const sentinelToken = () => `gho_${crypto.randomUUID().replaceAll('-', '')}`;
+/** @param {unknown} text @param {string} needle */
+const occurrences = (text, needle) => String(text).split(needle).length - 1;
+/** How often `needle` occurs in the files under `directory`. @param {string} directory @param {string} needle */
+const occurrencesUnder = (directory, needle) => relativeFiles(directory)
+  .reduce((count, file) => count + occurrences(fs.readFileSync(path.join(directory, ...file.split('/'))).toString('latin1'), needle), 0);
+
+test('T001 explicit access reaches only GitHub API requests through a catalog read, add, preview and refresh, and none after the write gate', async () => {
+  const catalog = createGitHubCatalog();
+  const root = createRoot();
+  const server = githubStandIn(catalog.repo);
+  const sentinel = sentinelToken();
+  const ambient = sentinelToken();
+  const github = { root, library: path.join(root, 'library', 'packs'), source: GITHUB_SOURCE, ref: 'main' };
+  /** The requests since the last look: API and raw counts, and how many carried which credential. */
+  const take = () => {
+    const taken = server.calls.splice(0);
+    const api = taken.filter(({ url }) => url.startsWith(`${GITHUB_API}/`));
+    const raw = taken.filter(({ url }) => url.startsWith(`${GITHUB_RAW}/`));
+    return {
+      api: api.length,
+      raw: raw.length,
+      apiWithAccess: api.filter(({ authorization }) => authorization === `Bearer ${sentinel}`).length,
+      withAnyCredential: taken.filter(({ authorization }) => authorization !== null).length,
+    };
+  };
+  const access = new GitHubAccess(sentinel);
+  /** @type {unknown[]} */
+  const results = [];
+  try {
+    await withAcquisition(server, async ({ calls, temporary }) => {
+      const listed = await resolveCatalogDir({ ...github, fetch: true, access });
+      assert.ok('dir' in listed, 'the catalog was read');
+      await listed.dispose?.();
+      // The six-request Reload baseline holds with access: the branch twice, the commit and three trees.
+      assert.deepEqual(take(), { api: 6, raw: 2, apiWithAccess: 6, withAnyCredential: 6 });
+
+      const preview = await cmdPreviewAdd({ ...github, name: 'alpha', access });
+      assert.equal(preview.ok, true, preview.error);
+      const previewed = take();
+      assert.deepEqual([previewed.apiWithAccess, previewed.withAnyCredential], [previewed.api, previewed.api]);
+      assert.ok(previewed.raw > 0, 'raw downloads were made, and none carried the access');
+
+      /** @type {number | null} */
+      let atGate = null;
+      const gate = async () => { atGate = server.calls.length; return true; };
+      const added = await cmdAdd({ ...github, name: 'alpha', force: false, access, beforeWrite: gate });
+      assert.equal(added.ok, true, added.error);
+      assert.equal(server.calls.length, atGate, 'the source was read before the write gate, and nothing after it');
+      const installing = take();
+      assert.deepEqual([installing.apiWithAccess, installing.withAnyCredential], [installing.api, installing.api]);
+
+      publishCatalog(catalog.repo, catalogFiles('two'), 'revision two');
+      const refreshPreview = await cmdPreviewRefresh({ ...github, name: 'alpha', access });
+      assert.equal(refreshPreview.ok, true, refreshPreview.error);
+      const refreshed = await cmdRefresh({ ...github, name: 'alpha', access, beforeWrite: gate });
+      assert.equal(refreshed.ok, true, refreshed.error);
+      assert.equal(server.calls.length, atGate, 'the refresh read nothing after its write gate');
+      const refreshing = take();
+      assert.deepEqual([refreshing.apiWithAccess, refreshing.withAnyCredential], [refreshing.api, refreshing.api]);
+      results.push(listed, preview, added, refreshPreview, refreshed);
+
+      // A caller that passes no access, as the command line, chat Compose and bundle updates never do, reads
+      // anonymously, and a token in the user's environment is never adopted.
+      const saved = { GH_TOKEN: process.env.GH_TOKEN, GITHUB_TOKEN: process.env.GITHUB_TOKEN };
+      Object.assign(process.env, { GH_TOKEN: ambient, GITHUB_TOKEN: ambient });
+      try {
+        const anonymous = await cmdPreviewRefresh({ ...github, name: 'alpha' });
+        assert.equal(anonymous.ok, true, anonymous.error);
+        results.push(anonymous);
+      } finally {
+        for (const [name, value] of Object.entries(saved)) {
+          if (value === undefined) delete process.env[name];
+          else process.env[name] = value;
+        }
+      }
+      const unauthenticated = take();
+      assert.ok(unauthenticated.api > 0);
+      assert.equal(unauthenticated.withAnyCredential, 0, 'no request carried a credential');
+      assert.deepEqual(fs.readdirSync(temporary), [], 'every acquired copy, stage and transaction was removed');
+      assert.deepEqual(calls, [], 'GitHub was never cloned');
+    });
+    assert.equal(occurrences(JSON.stringify(results), sentinel), 0, 'no result holds the access');
+    assert.equal(occurrencesUnder(root, sentinel) + occurrencesUnder(root, ambient), 0, 'no file in the workspace holds a credential');
+  } finally {
+    cleanup(root);
+    cleanup(catalog.parent);
+  }
+});
+
+test('T001 Compose keeps the closed reason GitHub refused a read for, with no retry, no provider text and nothing written', async (t) => {
+  const catalog = createGitHubCatalog();
+  const root = createRoot();
+  const sentinel = sentinelToken();
+  const github = { root, library: path.join(root, 'library', 'packs'), source: GITHUB_SOURCE, ref: 'main' };
+  try {
+    // An installed beta gives a refresh something to read.
+    await withAcquisition(githubStandIn(catalog.repo), async () => {
+      const installed = await cmdAdd({ ...github, name: 'beta', force: false });
+      assert.equal(installed.ok, true, installed.error);
+    });
+    for (const { name, status, headers, access, reason } of [
+      { name: 'a 429 to a read with access', status: 429, headers: { 'retry-after': '60' }, access: true, reason: 'rate_limited' },
+      { name: 'an exhausted anonymous allowance', status: 403, headers: { 'x-ratelimit-remaining': '0' }, access: false, reason: 'rate_limited' },
+      { name: 'a 401 to a read with access', status: 401, headers: {}, access: true, reason: 'credential_rejected' },
+      { name: 'an ordinary 403 to a read with access', status: 403, headers: {}, access: true, reason: undefined },
+      { name: 'a 404 to a read with access', status: 404, headers: {}, access: true, reason: undefined },
+    ]) {
+      await t.test(name, async () => {
+        const server = githubStandIn(catalog.repo);
+        server.intercept(async (url) => (url.startsWith(`${GITHUB_API}/`)
+          ? new Response('{"message":"planted provider text"}', { status, headers }) : undefined));
+        await withAcquisition(server, async ({ calls, temporary }) => {
+          const before = mutationSnapshot(root);
+          const given = access ? { access: new GitHubAccess(sentinel) } : {};
+          const unreached = async () => assert.fail('a refused read never reaches the write gate');
+          /** @type {Array<[string, any]>} */
+          const results = [
+            ['catalog', await resolveCatalogDir({ ...github, fetch: true, ...given })],
+            ['add preview', await cmdPreviewAdd({ ...github, name: 'alpha', ...given })],
+            ['add', await cmdAdd({ ...github, name: 'alpha', force: false, ...given, beforeWrite: unreached })],
+            ['refresh preview', await cmdPreviewRefresh({ ...github, name: 'beta', ...given })],
+            ['refresh', await cmdRefresh({ ...github, name: 'beta', ...given, beforeWrite: unreached })],
+          ];
+          for (const [label, result] of results) {
+            assert.equal(result.reason, reason, label);
+            assert.equal(Object.hasOwn(result, 'reason'), reason !== undefined, `${label}: a reason only for a rate limit or a rejected access`);
+            assert.match(result.error, new RegExp(`HTTP ${status}`), label);
+            assert.equal(occurrences(result.error, 'planted provider text'), 0, `${label}: no provider text`);
+            assert.equal(occurrences(JSON.stringify(result), sentinel), 0, `${label}: no credential`);
+            if (label !== 'catalog') assert.deepEqual([result.ok, result.code, result.mutation], [false, 2, 'none'], label);
+          }
+          assert.equal(server.requests.length, results.length, 'each read stopped at its first, refused, request: nothing was retried');
+          assertMutationUnchanged(root, before);
+          assert.deepEqual(fs.readdirSync(temporary), []);
+          assert.deepEqual(calls, []);
+        });
+      });
+    }
+  } finally {
+    cleanup(root);
     cleanup(catalog.parent);
   }
 });

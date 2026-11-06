@@ -26,14 +26,16 @@ import {
 import { readNowProjection } from './lib/projection.mjs';
 import { readInstallationRecord } from './lib/about.mjs';
 import { createBundleUpgrade } from './lib/bundle-upgrade.mjs';
+import { createGitHubSession } from './lib/github-session.mjs';
 import { createNeedsYou, NEEDS_YOU_LIMITS } from './lib/needs-you.mjs';
-import { nodeChildLaunch, readPacks, unresolvedSourceKey } from './lib/packs.mjs';
+import { nodeChildLaunch, readPacks, runPackAction, STOP_CONFIRM_MS, unresolvedSourceKey } from './lib/packs.mjs';
 import { readProjectArtifacts } from './lib/project-artifacts.mjs';
 import { cmdAdd, cmdStatus } from '../../skills/dude-compose/compose.mjs';
 import { releaseCheckCommand } from '../../skills/dude-bundle-upgrade/lib/release-source.mjs';
 import { buildRelease } from '../../../scripts/build-release.mjs';
 import { renderDevelopmentBaseRelease } from '../../skills/dude-engine/lib/development-base-release.mjs';
 import { PACK_SOURCES_PATH, describePackSources, readPackSources, serializePackSourcesDocument } from '../../skills/dude-engine/lib/pack-sources.mjs';
+import { GitHubAccess } from '../../skills/dude-engine/lib/github-content.mjs';
 import { serializeProfileDocument } from '../../skills/dude-engine/lib/profile.mjs';
 import { CANDIDATE_DOCUMENT, CATALOG_GIT_HOME_ENV, CATALOG_REQUEST_ENV, CATALOG_STOP_MARKER } from './lib/catalog-reader.mjs';
 import { addPackSource } from './lib/packs.mjs';
@@ -345,8 +347,13 @@ function packEngineFixture() {
   return { ...fixture, write };
 }
 
-/** Real provider + HTTP; only the SDK session is a deterministic foreground stand-in. */
-async function packHttpFixture(fixture) {
+/**
+ * Real provider + HTTP; only the SDK session is a deterministic foreground stand-in.
+ * `githubSession` is the GitHub sign-in the Canvas shares (089), and `log` its log.
+ * @param {ReturnType<typeof packFixture>} fixture
+ * @param {{ githubSession?: ReturnType<typeof createGitHubSession> | null, log?: (message: string) => void }} [options]
+ */
+async function packHttpFixture(fixture, { githubSession = null, log = () => {} } = {}) {
   const provider = createNeedsYou({ root: fixture.root });
   const sends = [];
   const sessionId = `pack-session-${randomUUID()}`;
@@ -362,7 +369,7 @@ async function packHttpFixture(fixture) {
   provider.bindSession(/** @type {any} */ (session));
   provider.onEvent(/** @type {any} */ ({ id: randomUUID(), type: 'session.idle', data: {} }));
   const instanceId = `pack-http-${randomUUID()}`;
-  const instance = await openInstance(instanceId, () => {}, { complete: true }, { root: fixture.root }, provider);
+  const instance = await openInstance(instanceId, log, { complete: true }, { root: fixture.root }, provider, null, githubSession);
   const tool = async input => provider.tool.handler(input, {
     sessionId, toolName: 'dude_needs_you', toolCallId: randomUUID(), signal: new AbortController().signal,
   });
@@ -826,20 +833,37 @@ function recoverLocally(fixture, names) {
  * Record production's launches without replacing them. Production spawns
  * through the child_process default export, so this method mock sees every
  * reader. execFile (taskkill) and fork use Node's internal spawn and are not seen.
+ *
+ * Each call also records the token of every start message production sends the
+ * child (`started`, in test memory only). `onStart` may stand in for delivering
+ * one: it gets the call and the real delivery. `onSpawn` runs as each child is
+ * returned to production, before production does anything else with it.
  * @param {import('node:test').TestContext} t
+ * @param {{ onStart?: (call: any, deliver: () => void) => void, onSpawn?: (call: any) => void }} [hooks]
  */
-function spawnSpy(t) {
+function spawnSpy(t, { onStart, onSpawn } = {}) {
   const spawn = childProcess.spawn;
-  /** @typedef {{command: string, args: readonly string[], options: any, child: import('node:child_process').ChildProcess, spawnedAt: number, exitedAt: number | null}} SpawnCall */
+  /** @typedef {{command: string, args: readonly string[], options: any, child: import('node:child_process').ChildProcess, spawnedAt: number, exitedAt: number | null, started: Array<string | null>}} SpawnCall */
   /** @type {SpawnCall[]} */
   const calls = [];
   t.mock.method(childProcess, 'spawn', /** @this {any} */ function (command, args, options) {
     const spawnedAt = performance.now();
     const child = spawn.call(this, command, args, options);
     /** @type {SpawnCall} */
-    const call = { command, args, options, child, spawnedAt, exitedAt: null };
+    const call = { command, args, options, child, spawnedAt, exitedAt: null, started: [] };
     calls.push(call);
     child.once('exit', () => { call.exitedAt = performance.now(); });
+    if (typeof child.send === 'function') {
+      const send = child.send;
+      child.send = /** @type {any} */ (function (/** @type {any} */ message, /** @type {any[]} */ ...rest) {
+        if (message?.type !== 'start') return send.call(this, message, ...rest);
+        call.started.push(message.token);
+        if (!onStart) return send.call(this, message, ...rest);
+        onStart(call, () => { send.call(this, message, ...rest); });
+        return true;
+      });
+    }
+    onSpawn?.(call);
     return child;
   });
   return { calls, readers: () => calls.filter(call => Array.isArray(call.args) && call.args.includes(READER)) };
@@ -1377,6 +1401,7 @@ function copiedExtensionHarness() {
     'export function registeredCanvas() { return canvas; }',
     'export function registeredSessionSummary() {',
     '  return {',
+    '    optionKeys: Object.keys(sessionOptions).sort(),',
     '    toolNames: sessionOptions.tools.map((tool) => tool.name),',
     '    operationNames: sessionOptions.tools[0].parameters.properties.op.enum,',
     '    acknowledgmentKinds: sessionOptions.tools[0].parameters.properties.acknowledgment.oneOf.flatMap(branch =>',
@@ -1394,6 +1419,15 @@ function copiedExtensionHarness() {
     'const originalPath = process.env.PATH;',
     'let stdoutWrites = 0;',
     'process.stdout.write = () => { stdoutWrites += 1; return true; };',
+    // 089: every request that would leave this machine is recorded, as its origin and path, and refused.
+    'const loopbackFetch = globalThis.fetch;',
+    'const outside = [];',
+    'globalThis.fetch = (input, init) => {',
+    '  const url = new URL(input instanceof Request ? input.url : String(input));',
+    "  if (url.hostname === '127.0.0.1') return loopbackFetch(input, init);",
+    '  outside.push(`${url.origin}${url.pathname}`);',
+    "  return Promise.reject(new TypeError('offline extension harness'));",
+    '};',
     'try {',
     "  fs.mkdirSync('.dude/ideas', { recursive: true });",
     // A bare missing bd can be verified optional absence. Initialization
@@ -1413,12 +1447,25 @@ function copiedExtensionHarness() {
     '  const page = await fetch(first.url);',
     "  const projection = await (await fetch(new URL('/api/projection', first.url))).json();",
     "  const updates = await (await fetch(new URL('/api/updates', first.url))).json();",
+    "  const githubSession = await (await fetch(new URL('/api/github-session', first.url))).json();",
+    // 089: what opening, reopening and reading Canvas asked outside, apart from the explicit Sign in below.
+    '  const startup = outside.splice(0);',
+    "  const githubStart = await (await fetch(new URL('/api/github-session', first.url), { method: 'POST',",
+    "    headers: { origin: new URL(first.url).origin, 'content-type': 'application/json' }, body: JSON.stringify({ op: 'start' }) })).json();",
+    // Read the safe status, at most 50 times, until the attempt has ended.
+    '  let githubEnded = githubStart;',
+    "  for (let reads = 0; reads < 50 && githubEnded.state === 'requesting'; reads += 1) {",
+    '    await new Promise((resolve) => setTimeout(resolve, 20));',
+    "    githubEnded = await (await fetch(new URL('/api/github-session', first.url))).json();",
+    '  }',
+    '  const signIn = outside.splice(0);',
     '  await canvas.onClose({ instanceId: context.instanceId });',
     '  let portRefused = false;',
     '  try { await fetch(first.url); } catch { portRefused = true; }',
     '  await canvas.onClose({ instanceId: context.instanceId });',
     '  process.send?.({',
-    '    first, second, pageStatus: page.status, projection, updates, portRefused,',
+    '    first, second, pageStatus: page.status, projection, updates, githubSession, githubStart, githubEnded,',
+    '    outside: { startup, signIn, close: outside }, portRefused,',
     '    sessionLogCalls: sdk.sessionLogCalls(), stdoutWrites,',
     '    sessionRegistration: sdk.registeredSessionSummary(),',
     '  });',
@@ -3530,19 +3577,60 @@ test('extension lifecycle contains rejected session logs without touching stdout
       installation: { channel: 'unavailable', installedRef: null, sourceRef: null }, runningRef: null,
       checking: false, check: null, notice: null, update: null, gate: 'open', kept: [],
     });
+    // 089: the extension's one GitHub sign-in serves its Canvas and starts signed out. Opening and reopening
+    // Canvas, its page, projection and updates, and reading the sign-in asked nothing outside this machine.
+    // Sign in with Dude's configured Client ID asked GitHub's device-code endpoint once; this offline harness
+    // refused it, so the attempt ended unreachable. Each answer is exactly the safe state, with no code, account
+    // or token, and nothing more was asked, then or at close.
+    const signedOut = { state: 'signed_out', login: null, userCode: null, verificationUri: null, expiresAt: null, outcome: null };
+    assert.deepEqual(result.githubSession, signedOut);
+    assert.deepEqual(result.githubStart, { ...signedOut, state: 'requesting' });
+    assert.deepEqual(result.githubEnded, { ...signedOut, outcome: 'unreachable' });
+    assert.deepEqual(result.outside, { startup: [], signIn: ['https://github.com/login/device/code'], close: [] });
     assert.equal(result.portRefused, true, 'close must remove the server despite close logging rejection');
     assert.equal(result.sessionLogCalls, 3, 'both opens and the successful close attempt session logging');
     assert.equal(result.stdoutWrites, 0, 'neither lifecycle nor logging containment may use stdout');
     assert.deepEqual(result.sessionRegistration, {
+      optionKeys: ['canvases', 'onEvent', 'tools'],
       toolNames: ['dude_needs_you', 'dude_a2a_propose', 'dude_a2a_ask', 'dude_a2a_receive', 'dude_a2a_reply', 'dude_a2a_verify'],
       operationNames: ['request', 'acknowledge'],
       acknowledgmentKinds: ['canvas_response', 'outside_answer', 'capture', 'import_result'],
       hasOnEvent: true,
       canvasCount: 1,
-    }, 'the existing Canvas, one closed two-operation handoff, and the opt-in A2A ask, receive, reply, and verify tools share the joined session');
+    }, 'the existing Canvas, one closed two-operation handoff, and the opt-in A2A ask, receive, reply, and verify tools share the joined session, which requests no environment variable such as the app\'s GitHub token');
   } finally {
     fs.rmSync(harness.root, { recursive: true, force: true });
   }
+});
+
+// 089 T004: the copied extension above starts its sign-in with Dude's configured
+// Client ID, so the unconfigured case uses a test-only controller instead.
+test('089 T004 without a Client ID, null or empty, a Canvas answers Sign in with unavailable and asks nothing outside this machine', async t => {
+  const loopbackFetch = globalThis.fetch;
+  /** @type {string[]} */
+  const outside = [];
+  t.mock.method(globalThis, 'fetch', (/** @type {any} */ input, /** @type {any} */ init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (url.hostname === '127.0.0.1') return loopbackFetch(input, init);
+    outside.push(`${url.origin}${url.pathname}`);
+    return Promise.reject(new TypeError('offline test'));
+  });
+  const signedOut = { state: 'signed_out', login: null, userCode: null, verificationUri: null, expiresAt: null, outcome: null };
+  for (const clientId of [null, '']) {
+    const instanceId = `github-unconfigured-${randomUUID()}`;
+    const instance = await openInstance(instanceId, () => {}, null, null, null, null, createGitHubSession({ clientId }));
+    try {
+      const status = async () => (await call(instance.url, { path: '/api/github-session' })).json();
+      assert.deepEqual(await status(), signedOut);
+      const start = await call(instance.url, { path: '/api/github-session', method: 'POST',
+        headers: { origin: new URL(instance.url).origin, 'content-type': 'application/json' }, body: JSON.stringify({ op: 'start' }) });
+      assert.deepEqual(await start.json(), { ...signedOut, outcome: 'unavailable' }, `Client ID ${JSON.stringify(clientId)}`);
+      assert.deepEqual(await status(), { ...signedOut, outcome: 'unavailable' }, 'and it stays unavailable');
+    } finally {
+      await closeInstance(instanceId);
+    }
+  }
+  assert.deepEqual(outside, [], 'nothing outside this machine was asked');
 });
 
 // A regression that leaves an event client open would stall `server.close()`
@@ -6267,14 +6355,20 @@ const GITHUB_PRELOAD = [
 ].join('\n');
 
 /**
- * @typedef {{ mode: 'serve', directory: string, delayMs?: number } | { mode: 'hold' | 'hang' }} StandInRepository
+ * @typedef {{ mode: 'serve', directory: string, delayMs?: number } | { mode: 'hold' | 'hang' }
+ *   | { mode: 'refuse', status: number, headers: Record<string, string> }
+ *   | { mode: 'gate', released: Promise<void>, release: () => void, then: StandInRepository | undefined }} StandInRepository
  * @typedef {{ origin: string, repository: string, path: string, accept: string | null, authorization: string | null }} StandInRequest
  * @typedef {{ repositories: Map<string, StandInRepository>, requests: StandInRequest[],
- *   held: Set<import('node:http').ServerResponse>, records: Array<{ repository: string, acceptedAt: number, closedAt: number | null }>,
- *   arrivals: Map<string, () => void> }} StandInWorld
+ *   held: Set<import('node:http').ServerResponse>,
+ *   records: Array<{ repository: string, acceptedAt: number, closedAt: number | null, answeredAt?: number | null }>,
+ *   arrivals: Map<string, () => void>, onRequest: ((request: StandInRequest) => void) | null,
+ *   remembered: Map<string, Promise<Buffer | null>> | null }} StandInWorld
  */
 /** Each offline GitHub fixture's world, by the token its preload names. @type {Map<string, StandInWorld>} */
 const gitHubWorlds = new Map();
+/** What a refusing repository's body says, as GitHub's error descriptions do; no Canvas answer may repeat it. */
+const GITHUB_PROVIDER_TEXT = 'Bad credentials or API rate limit exceeded: planted provider text';
 // Taken before any test mocks execFile, so the stand-in's own Git calls are never a test's to see.
 const standInExecFile = childProcess.execFile;
 /** @param {string} directory @param {string[]} args @returns {Promise<Buffer | null>} */
@@ -6307,8 +6401,29 @@ async function answerGitHub(request, response) {
   const repository = `${segments[0]}/${segments[1]}`.toLowerCase();
   world.requests.push({ origin, repository, path: `${url.pathname.slice(token.length + 1)}${url.search}`,
     accept: request.headers.accept ?? null, authorization: request.headers.authorization ?? null });
-  const published = world.repositories.get(repository);
+  // A test's look at what the reader holds while it waits for this answer.
+  world.onRequest?.(/** @type {StandInRequest} */ (world.requests.at(-1)));
+  let published = world.repositories.get(repository);
+  if (published?.mode === 'gate') {
+    // Connected and unanswered until the test releases the repository, then answered as it is by then. A reader
+    // that went away meanwhile is answered nothing. `answeredAt` is when the whole answer was handed to the reader.
+    const record = { repository, acceptedAt: performance.now(), closedAt: /** @type {number | null} */ (null),
+      answeredAt: /** @type {number | null} */ (null) };
+    world.records.push(record);
+    world.held.add(response);
+    response.once('close', () => { record.closedAt = performance.now(); world.held.delete(response); });
+    response.once('finish', () => { record.answeredAt = performance.now(); });
+    world.arrivals.get(repository)?.();
+    await published.released;
+    if (!world.held.delete(response) || response.destroyed) return undefined;
+    published = world.repositories.get(repository);
+  }
   if (!published) return notFound();
+  if (published.mode === 'refuse') {
+    response.writeHead(published.status, { 'content-type': 'application/json; charset=utf-8', ...published.headers });
+    response.end(JSON.stringify({ message: GITHUB_PROVIDER_TEXT, documentation_url: 'https://docs.github.com/rest' }));
+    return undefined;
+  }
   if (published.mode !== 'serve') {
     const record = { repository, acceptedAt: performance.now(), closedAt: /** @type {number | null} */ (null) };
     world.records.push(record);
@@ -6323,7 +6438,14 @@ async function answerGitHub(request, response) {
   }
   const tail = segments.slice(2);
   if (published.delayMs) await new Promise(resolve => setTimeout(resolve, published.delayMs));
-  const git = (/** @type {string[]} */ ...args) => standInGit(published.directory, args);
+  const { directory } = published;
+  // Asked again, a remembered answer comes from memory, in about a millisecond (see `remember`).
+  const git = (/** @type {string[]} */ ...args) => {
+    const key = JSON.stringify([directory, args]);
+    const answer = world.remembered?.get(key) ?? standInGit(directory, args);
+    world.remembered?.set(key, answer);
+    return answer;
+  };
   const objectId = (/** @type {string | undefined} */ value) => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
   if (origin === 'raw') {
     const [commit, ...file] = tail;
@@ -6389,7 +6511,8 @@ function offlineGitHub(t, fixture) {
   write();
   const token = randomUUID();
   /** @type {StandInWorld} */
-  const world = { repositories: new Map(), requests: [], held: new Set(), records: [], arrivals: new Map() };
+  const world = { repositories: new Map(), requests: [], held: new Set(), records: [], arrivals: new Map(), onRequest: null,
+    remembered: null };
   gitHubWorlds.set(token, world);
   const preload = path.join(base, 'github-stand-in.mjs');
   fs.writeFileSync(preload, GITHUB_PRELOAD);
@@ -6450,6 +6573,27 @@ function offlineGitHub(t, fixture) {
     hold: (/** @type {string} */ repository) => stall(repository, 'hold'),
     /** Answer a repository's first request in a way that stops the reader's thread. @param {string} repository */
     hang: (/** @type {string} */ repository) => stall(repository, 'hang'),
+    /**
+     * Keep every request for a repository connected and unanswered until `release`, which answers each one, and
+     * every later one, as the repository was published or refused before its gate. @param {string} repository
+     */
+    gate(repository) {
+      const key = repository.toLowerCase();
+      /** @type {() => void} */
+      let release = () => {};
+      const released = new Promise(resolve => { release = () => resolve(undefined); });
+      world.repositories.set(key, { mode: 'gate', released, release, then: world.repositories.get(key) });
+    },
+    /** Open a gated repository: its waiting requests are answered now. @param {string} repository */
+    release(repository) {
+      const key = repository.toLowerCase();
+      const gated = world.repositories.get(key);
+      assert.equal(gated?.mode, 'gate', 'only a gated repository is released');
+      const { then, release } = /** @type {{ then: StandInRepository | undefined, release: () => void }} */ (gated);
+      if (then) world.repositories.set(key, then);
+      else world.repositories.delete(key);
+      release();
+    },
     /** Answer every request for a published repository only after `delayMs`. @param {string} repository @param {number} delayMs */
     slow(repository, delayMs) {
       const published = world.repositories.get(repository.toLowerCase());
@@ -6458,6 +6602,21 @@ function offlineGitHub(t, fixture) {
     },
     /** Answer a repository as GitHub answers one that is private or missing. @param {string} repository */
     unpublish: (/** @type {string} */ repository) => { world.repositories.delete(repository.toLowerCase()); },
+    /**
+     * Answer every request for a repository with `status` and `headers`, and a body
+     * holding GitHub-style provider text, as GitHub refuses a rate-limited or
+     * rejected read. @param {string} repository @param {number} status @param {Record<string, string>} [headers]
+     */
+    refuse: (/** @type {string} */ repository, /** @type {number} */ status, /** @type {Record<string, string>} */ headers = {}) => {
+      world.repositories.set(repository.toLowerCase(), { mode: 'refuse', status, headers });
+    },
+    /** Run `handler` as each request arrives, before it is answered. @param {((request: StandInRequest) => void) | null} handler */
+    onRequest: (/** @type {((request: StandInRequest) => void) | null} */ handler) => { world.onRequest = handler; },
+    /**
+     * From now on, keep every answer the stand-in reads from Git, and answer the same request again from memory, in
+     * about a millisecond, as a fast GitHub would. Published repositories never change, so a kept answer stays true.
+     */
+    remember() { world.remembered ??= new Map(); },
     /** Resolves when a request for a stalled repository first arrives. @param {string} repository */
     connected(repository) {
       const name = repository.toLowerCase();
@@ -6746,6 +6905,7 @@ test('T008 add refuses every unacceptable location, ref and folder before any re
   /** @type {Array<[string, string, string | undefined, number, string, boolean]>} [label, location, ref, status, code, needs a helper] */
   const cases = [
     ['credentials', 'https://user:secret@github.com/acme/dude-packs', undefined, 422, 'credentials', false],
+    ['a user name alone', 'https://someone@github.com/acme/dude-packs', undefined, 422, 'credentials', false],
     ['explicit default port', 'https://github.com:443/acme/dude-packs', undefined, 422, 'invalid_location', false],
     ['scp-style SSH', 'git@github.com:acme/dude-packs.git', undefined, 422, 'invalid_location', true],
     ['ssh transport', 'ssh://git@github.com/acme/dude-packs', undefined, 422, 'invalid_location', false],
@@ -6780,6 +6940,11 @@ test('T008 add refuses every unacceptable location, ref and folder before any re
       const refused = await addSource(f, fixture, location, ref);
       assert.equal(refused.status, status, `${label}: ${JSON.stringify(refused.body)}`);
       assert.equal(/** @type {any} */ (refused.body).error, code, label);
+      // 089: the refusal keeps only the narrower guarantee, now that Canvas can sign in to GitHub.
+      if (code === 'credentials') {
+        assert.equal(/** @type {any} */ (refused.body).message,
+          'Remove the user name or password from the URL. Dude never sends a user name or password taken from a source address.', label);
+      }
       // A rejected credential never comes back in a message.
       assert.doesNotMatch(JSON.stringify(refused.body), /secret/, label);
       if (helper) helpers += spy.readers().length - launched;
@@ -7390,6 +7555,8 @@ async function runReaderAlone(fixture, given) {
   Object.assign(environment, given);
   const answer = await new Promise((resolve, reject) => {
     const child = fork(READER, [fixture.root], { cwd: fixture.root, env: environment, execArgv: [], silent: true });
+    // As `packs.mjs` does once a reader is launched: it reads nothing before its start message.
+    child.send({ type: 'start', token: null }, () => {});
     /** @type {any} */
     let message;
     let stderr = '';
@@ -7529,6 +7696,8 @@ test('T008 a prewritten stop marker holds direct and bootstrap reader process st
         delete env[CATALOG_REQUEST_ENV];
         const child = childProcess.spawn(process.execPath, bootstrap ? [importer, READER, fixture.root] : [READER, fixture.root],
           { cwd: fixture.root, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+        // As `packs.mjs` does once a reader is launched: it reads nothing before its start message.
+        child.send({ type: 'start', token: null }, () => {});
         /** @type {any[]} */
         const messages = [];
         let stderr = '';
@@ -8730,10 +8899,11 @@ test('T008 discovery acquires each remote source exactly once: another host is c
     const clones = fs.readFileSync(trace, 'utf8').split(/\r?\n/).filter(line => /trace: built-in: git clone /.test(line));
     assert.equal(clones.length, 1, `one clone for the one other-host source, none for GitHub or a folder: ${clones.join(' | ')}`);
     assert.equal(clones[0].includes(upstream.source), true);
-    // The GitHub source was read once, over HTTP, from its manifests alone: its commit twice, to refuse a moved ref.
+    // The GitHub source was read once, over HTTP, from its manifests alone: its commit twice, to refuse a moved ref,
+    // and its packs folder in one recursive listing.
     assert.deepEqual(github.requests.map(request => request.path.replace(/[0-9a-f]{40}/g, '<id>')), [
       '/api/repos/acme/good/commits/main', '/api/repos/acme/good/git/commits/<id>', '/api/repos/acme/good/git/trees/<id>',
-      '/api/repos/acme/good/git/trees/<id>', '/api/repos/acme/good/git/trees/<id>', '/api/repos/acme/good/git/trees/<id>',
+      '/api/repos/acme/good/git/trees/<id>', '/api/repos/acme/good/git/trees/<id>?recursive=1',
       '/raw/acme/good/<id>/library/packs/rust/pack.md', '/api/repos/acme/good/commits/main']);
   } finally { await f.close(); fixture.cleanup(); }
 });
@@ -8866,7 +9036,7 @@ test('T003 a GitHub catalog read runs within its own 30-second budget, past the 
   fixture.catalog(['alpha']);
   const github = offlineGitHub(t, fixture);
   github.publish('acme/slow-packs', ['rust', 'zeta']);
-  // Eight rounds of requests at 800 ms each: well past a folder's 5 seconds, and each one well within its own 15.
+  // Seven rounds of requests at 800 ms each: well past a folder's 5 seconds, and each one well within its own 15.
   github.slow('acme/slow-packs', 800);
   saveSources(fixture, [remoteEntry('acme/slow-packs')]);
   const f = await packHttpFixture(fixture);
@@ -11926,4 +12096,1942 @@ test('072 Canvas update: saves of the two choices in one process run one at a ti
     t.mock.restoreAll();
     await closeInstance('update-preference-queue');
   }
+});
+
+/* ----------------------------------------------------------------------------
+ * 089 T001: explicit GitHub access through both real child paths. The caller
+ * passes one operation's access to `readPacks`, `addPackSource` or
+ * `runPackAction`; only a child classified as reading GitHub is sent its token,
+ * in its start message, and only GitHub's API requests carry it. The token is a
+ * sentinel made in this process's memory, and every check of it reports a
+ * destination, a boolean or a count, never the token.
+ * ------------------------------------------------------------------------- */
+
+/** A bearer-shaped sentinel that no real account holds. */
+const sentinelToken = () => `gho_${randomUUID().replaceAll('-', '')}`;
+/** @param {unknown} text @param {string} needle */
+const occurrences = (text, needle) => String(text).split(needle).length - 1;
+/**
+ * The regular files under `folder`, walked without following any link, and how
+ * often `needle` occurs in them. A folder or file removed meanwhile is skipped,
+ * so a walk beside a running reader never fails.
+ * @param {string} folder @param {string} needle
+ */
+function scanFiles(folder, needle) {
+  let files = 0, found = 0;
+  const pending = [folder];
+  while (pending.length) {
+    const current = /** @type {string} */ (pending.pop());
+    /** @type {import('node:fs').Dirent[]} */
+    let entries;
+    try { entries = fs.readdirSync(current, { withFileTypes: true }); }
+    catch { continue; }
+    for (const entry of entries) {
+      const file = path.join(current, entry.name);
+      if (entry.isDirectory()) pending.push(file);
+      else if (entry.isFile()) {
+        try {
+          found += occurrences(fs.readFileSync(file).toString('latin1'), needle);
+          files += 1;
+        } catch { /* removed while it was listed */ }
+      }
+    }
+  }
+  return { files, found };
+}
+/** What each start message a child was sent carried. @param {{ started: Array<string | null> }} call @param {string} sentinel */
+const startedWith = (call, sentinel) => call.started.map(token => token === null ? 'none' : token === sentinel ? 'access' : 'other');
+/**
+ * Each request a published repository got, in order: its origin, and whether it
+ * carried no credential, this access, or anything else.
+ * @param {ReturnType<typeof offlineGitHub>} github @param {string} repository @param {string} sentinel
+ */
+const credentialed = (github, repository, sentinel) => github.requests.filter(request => request.repository === repository)
+  .map(request => `${request.origin} ${request.authorization === null ? 'anonymous'
+    : request.authorization === `Bearer ${sentinel}` ? 'access' : 'other'}`);
+/** Every launch's command, arguments and environment, as one text to search. @param {ReturnType<typeof spawnSpy>} spy */
+const launchText = spy => JSON.stringify(spy.calls.map(({ command, args, options }) => ({ command, args, env: options?.env ?? null })));
+
+/**
+ * Record, in each pack action child, whether the GitHub access its reads used
+ * still held a token when the child asked its write gate. Node preloads this
+ * module into every child, which imports the same transport module the child
+ * resolves, notes the access whose token a request read, and wraps the gate
+ * question. The record holds booleans only.
+ * @param {import('node:test').TestContext} t
+ * @param {ReturnType<typeof packFixture>} fixture
+ */
+function accessAtGate(t, fixture) {
+  const folder = path.join(fixture.temporary, 'access-at-gate');
+  fs.mkdirSync(folder);
+  const record = path.join(folder, 'gates.jsonl');
+  const preload = path.join(folder, 'access-at-gate.mjs');
+  const transport = new URL('../../skills/dude-engine/lib/github-content.mjs', import.meta.url).href;
+  fs.writeFileSync(preload, [
+    "import fs from 'node:fs';",
+    `const { GitHubAccess } = await import(${JSON.stringify(transport)});`,
+    "const token = Object.getOwnPropertyDescriptor(GitHubAccess.prototype, 'token');",
+    'let used = null;',
+    "Object.defineProperty(GitHubAccess.prototype, 'token', { configurable: true, get() {",
+    '  const value = token.get.call(this);',
+    '  if (value !== null) used = this;',
+    '  return value;',
+    '} });',
+    'const send = process.send?.bind(process);',
+    'if (send) process.send = (message, ...rest) => {',
+    `  if (message?.type === 'gate') fs.appendFileSync(${JSON.stringify(record)},`,
+    "    JSON.stringify({ used: used !== null, held: used !== null && token.get.call(used) !== null }) + '\\n');",
+    '  return send(message, ...rest);',
+    '};',
+    '',
+  ].join('\n'));
+  t.after(preloadIntoChildren(preload));
+  return () => (fs.existsSync(record) ? fs.readFileSync(record, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)) : []);
+}
+
+test('089 T001 Reload gives explicit access only to the GitHub reader, which sends it on API requests alone, within the six-request baseline and with no leak', { timeout: 60_000 }, async t => {
+  const fixture = packFixture();
+  fixture.profile({});
+  const github = offlineGitHub(t, fixture);
+  github.publish('acme/good', ['rust', 'zeta']);
+  const team = localSource(fixture, 'team-packs', ['ui']);
+  // Another Git host is the default catalog, so this read also runs a reader whose Compose runs Git.
+  remotePackCatalog(fixture, ['alpha']);
+  saveSources(fixture, [remoteEntry('acme/good'), localEntry(team)]);
+  const trace = path.join(fixture.temporary, 'git-trace.log');
+  const previous = process.env.GIT_TRACE;
+  process.env.GIT_TRACE = trace;
+  t.after(() => { if (previous === undefined) delete process.env.GIT_TRACE; else process.env.GIT_TRACE = previous; });
+  const sentinel = sentinelToken();
+  const spy = spawnSpy(t);
+  // When the GitHub reader asks to recheck its branch, the manifests it acquired are on disk in its own root.
+  /** @type {{ files: number, found: number } | null} */
+  let transient = null;
+  let branchLookups = 0;
+  github.onRequest(request => {
+    if (request.path === '/api/repos/acme/good/commits/main' && ++branchLookups === 2) transient = scanFiles(fixture.scratch, sentinel);
+  });
+  try {
+    const snapshot = await readPacks(fixture.root, new AbortController().signal, { discover: true, github: new GitHubAccess(sentinel) });
+    assert.deepEqual([...sourceRows(snapshot).values()].map(/** @param {any} row */ row => [row.name, row.status, row.count]),
+      [['Bundle upstream', 'read', 1], ['acme/good', 'read', 2], ['team-packs', 'read', 1]]);
+    // Only the GitHub reader was sent the access; the clone of another host and the folder were sent none.
+    const started = Object.fromEntries(spy.readers().map(reader => {
+      const request = readerRequest(reader);
+      return [request.op === 'source' ? `source ${request.index}` : request.op, startedWith(reader, sentinel)];
+    }));
+    assert.deepEqual(started, { default: ['none'], 'source 0': ['access'], 'source 1': ['none'] });
+    // Every API request, and no raw download, carried it, and the read made the six API requests it makes anonymously.
+    assert.deepEqual(credentialed(github, 'acme/good', sentinel),
+      [...Array(5).fill('api access'), 'raw anonymous', 'raw anonymous', 'api access']);
+    assert.deepEqual(github.requests.filter(request => request.origin === 'api').map(request => request.path.replace(/[0-9a-f]{40}/g, '<id>')), [
+      '/api/repos/acme/good/commits/main', '/api/repos/acme/good/git/commits/<id>', '/api/repos/acme/good/git/trees/<id>',
+      '/api/repos/acme/good/git/trees/<id>', '/api/repos/acme/good/git/trees/<id>?recursive=1', '/api/repos/acme/good/commits/main']);
+    // No copy of the access anywhere it could leak.
+    assert.ok(transient && transient.files >= 2, 'the acquired manifests were seen on disk while the reader still held them');
+    assert.equal(transient?.found, 0, 'no file the reader wrote held the access');
+    assert.equal(occurrences(JSON.stringify(snapshot), sentinel), 0, 'the Canvas payload holds no access');
+    assert.equal(occurrences(launchText(spy), sentinel), 0, 'no launch argument or environment holds it');
+    const traced = fs.readFileSync(trace, 'latin1');
+    assert.ok(/trace: built-in: git clone /.test(traced), 'Git ran for the other host');
+    assert.equal(occurrences(traced, sentinel), 0, 'no Git descendant was given it');
+    assert.equal(scanFiles(fixture.temporary, sentinel).found, 0, 'no file in the workspace, a reader root or the stand-in holds it');
+    assert.deepEqual(fs.readdirSync(fixture.scratch), [], 'every reader root was removed');
+  } finally { fixture.cleanup(); }
+});
+
+test('089 T001 Add source gives explicit access only to a GitHub candidate read, never to a folder\'s checks or read', { timeout: 60_000 }, async t => {
+  const fixture = packFixture();
+  fixture.profile({});
+  fixture.catalog(['alpha']);
+  const github = offlineGitHub(t, fixture);
+  github.publish('acme/good', ['rust']);
+  const team = localSource(fixture, 'team-packs', ['ui']);
+  const sentinel = sentinelToken();
+  const access = new GitHubAccess(sentinel);
+  const spy = spawnSpy(t);
+  try {
+    const repository = await addPackSource(fixture.root, new AbortController().signal,
+      { location: 'https://github.com/acme/good', sourcesRevision: savedRevision(fixture) }, { github: access });
+    assert.deepEqual([repository.ok, /** @type {any} */ (repository).count], [true, 1]);
+    const folder = await addPackSource(fixture.root, new AbortController().signal,
+      { location: team, sourcesRevision: savedRevision(fixture) }, { github: access });
+    assert.deepEqual([folder.ok, /** @type {any} */ (folder).count], [true, 1]);
+    assert.deepEqual(spy.readers().map(reader => [readerRequest(reader).op, startedWith(reader, sentinel)]),
+      [['source', ['access']], ['validate', ['none']], ['source', ['none']]]);
+    assert.deepEqual([...new Set(credentialed(github, 'acme/good', sentinel))].sort(), ['api access', 'raw anonymous']);
+    const saved = readPackSources(fixture.root);
+    assert.deepEqual(saved.ok && saved.sources, [remoteEntry('acme/good'), localEntry(team)], 'only the sources were saved');
+    assert.equal(occurrences(fs.readFileSync(sourcesFile(fixture), 'latin1'), sentinel), 0, 'the saved sources hold no access');
+    assert.equal(occurrences(JSON.stringify([repository, folder]), sentinel), 0);
+    assert.equal(occurrences(launchText(spy), sentinel), 0);
+    assert.equal(scanFiles(fixture.temporary, sentinel).found, 0);
+  } finally { fixture.cleanup(); }
+});
+
+test('089 T001 a GitHub install preview and apply carry explicit access on API requests alone, the child releases it before its write gate, and a removal or folder child gets none', { timeout: 120_000 }, async t => {
+  const fixture = packEngineFixture();
+  const github = offlineGitHub(t, fixture);
+  publishAlpha(github, fixture, 'acme/team-packs');
+  saveSources(fixture, [remoteEntry('acme/team-packs')]);
+  const gates = accessAtGate(t, fixture);
+  const sentinel = sentinelToken();
+  const access = new GitHubAccess(sentinel);
+  const spy = spawnSpy(t);
+  const signal = new AbortController().signal;
+  try {
+    const preview = await runPackAction(fixture.root, signal,
+      { op: 'preview', operation: 'install', name: 'alpha', source: sharedKey(fixture, remoteEntry('acme/team-packs')) }, { github: access });
+    assert.equal(preview.outcome.ok, true, preview.outcome.ok ? '' : preview.outcome.error);
+    assert.equal(preview.binding?.purpose, 'github');
+    /** @type {{ requests: number, roots: { files: number, found: number }, workspace: { files: number, found: number } } | null} */
+    let atGate = null;
+    const applied = await runPackAction(fixture.root, signal,
+      { op: 'apply', operation: 'install', name: 'alpha', binding: /** @type {any} */ (preview.binding) }, {
+        github: access,
+        gate: () => {
+          // What every child root, with the staged pack, and the workspace hold when the write is allowed.
+          atGate = { requests: github.requests.length, roots: scanFiles(fixture.scratch, sentinel), workspace: scanFiles(fixture.root, sentinel) };
+          return true;
+        },
+      });
+    assert.equal(applied.outcome.ok, true, applied.outcome.ok ? '' : applied.outcome.error);
+    const status = cmdStatus({ root: fixture.root });
+    assert.equal(status.ok && Object.hasOwn(status.result.installed, 'alpha'), true, 'the allowed write finished');
+    const gate = /** @type {any} */ (atGate);
+    assert.ok(gate, 'the apply asked its write gate');
+    assert.equal(github.requests.length, gate.requests, 'no GitHub request after the write gate');
+    assert.ok(gate.roots.files > 0, 'the staged pack was on disk in the child\'s root then');
+    assert.deepEqual([gate.roots.found, gate.workspace.found], [0, 0], 'nothing on disk held the access when the write was allowed');
+    assert.deepEqual(gates(), [{ used: true, held: false }],
+      'the apply child had used its access, and released it before it asked the gate');
+    assert.deepEqual(actionChildren(spy).map(call => startedWith(call, sentinel)), [['access'], ['access']]);
+    assert.deepEqual([...new Set(credentialed(github, 'acme/team-packs', sentinel))].sort(), ['api access', 'raw anonymous']);
+
+    // A removal reads no source, and a saved folder is not GitHub: neither child is given the access.
+    const remove = await runPackAction(fixture.root, signal, { op: 'preview', operation: 'remove', name: 'alpha', source: null }, { github: access });
+    assert.equal(remove.outcome.ok, true);
+    const removed = await runPackAction(fixture.root, signal,
+      { op: 'apply', operation: 'remove', name: 'alpha', binding: /** @type {any} */ (remove.binding) }, { github: access });
+    assert.equal(removed.outcome.ok, true);
+    const team = artifactSource(fixture);
+    saveSources(fixture, [remoteEntry('acme/team-packs'), localEntry(team)]);
+    const folder = await runPackAction(fixture.root, signal,
+      { op: 'preview', operation: 'install', name: 'alpha', source: sharedKey(fixture, localEntry(team)) }, { github: access });
+    assert.equal(folder.outcome.ok, true, folder.outcome.ok ? '' : folder.outcome.error);
+    assert.deepEqual(actionChildren(spy).slice(2).map(call => startedWith(call, sentinel)), [['none'], ['none'], ['none']]);
+    assert.equal(gates().length, 1, 'only the install asked a gate');
+
+    assert.equal(occurrences(JSON.stringify([preview, applied, remove, removed, folder]), sentinel), 0, 'no outcome or binding holds the access');
+    assert.equal(occurrences(launchText(spy), sentinel), 0);
+    assert.equal(scanFiles(fixture.temporary, sentinel).found, 0);
+    assert.deepEqual(fs.readdirSync(fixture.scratch), [], 'every child root was removed');
+  } finally { fixture.cleanup(); }
+});
+
+test('089 T001 in a checkout, an install and a refresh that Compose reads from a GitHub Bundle upstream give each preview and apply child the access, while a pack Local library holds and an upstream on another host are read with none', { timeout: 120_000 }, async t => {
+  // Local library lists alpha and shared, and only Bundle upstream, on GitHub, has fresh: the checkout 084 installs and refreshes in.
+  const { fixture, github, publish } = upstreamCheckout(t);
+  const repository = publish();
+  const gates = accessAtGate(t, fixture);
+  const sentinel = sentinelToken();
+  const access = new GitHubAccess(sentinel);
+  const spy = spawnSpy(t);
+  const signal = new AbortController().signal;
+  /**
+   * One preview that names no source, as the dialog sends it for a built-in row, then the apply of its binding.
+   * @param {'install' | 'refresh'} operation @param {string} name
+   */
+  const previewAndApply = async (operation, name) => {
+    const preview = await runPackAction(fixture.root, signal, { op: 'preview', operation, name, source: null }, { github: access });
+    assert.equal(preview.outcome.ok, true, preview.outcome.ok ? '' : preview.outcome.error);
+    const applied = await runPackAction(fixture.root, signal,
+      { op: 'apply', operation, name, binding: /** @type {any} */ (preview.binding) }, { github: access, gate: () => true });
+    assert.equal(applied.outcome.ok, true, applied.outcome.ok ? '' : applied.outcome.error);
+    return { source: /** @type {any} */ (preview.outcome).result.source, results: [preview, applied] };
+  };
+  /** What the upstream's requests since `mark` carried, as origins with no credential or the access. @param {number} mark */
+  const carriedSince = mark => [...new Set(credentialed(github, UPSTREAM_REPOSITORY, sentinel).slice(mark))].sort();
+  try {
+    const fromUpstream = { type: 'remote', repository: UPSTREAM_URL, requested_ref: 'main', resolved_commit: repository.commit() };
+    // Local library lacks fresh, so Compose's default resolution reads it from Bundle upstream.
+    const install = await previewAndApply('install', 'fresh');
+    assert.deepEqual(install.source, fromUpstream);
+    assert.deepEqual(carriedSince(0), ['api access', 'raw anonymous'], 'the install read the API with the access, and raw files without it');
+    // Its record names Bundle upstream, which no saved source matches, so Refresh reads it there too.
+    const installed = github.requests.length;
+    const refresh = await previewAndApply('refresh', 'fresh');
+    assert.deepEqual(refresh.source, fromUpstream);
+    assert.deepEqual(carriedSince(installed), ['api access', 'raw anonymous'], 'and so did the refresh');
+    assert.deepEqual(actionChildren(spy).map(call => startedWith(call, sentinel)), [['access'], ['access'], ['access'], ['access']],
+      'each preview and apply child was given the access');
+
+    // Local library holds alpha, so Compose reads that copy in place, and GitHub is not asked.
+    const asked = github.requests.length;
+    const local = await previewAndApply('install', 'alpha');
+    assert.deepEqual(local.source, { type: 'local', location: fs.realpathSync(fixture.library) });
+    // The same upstream on another host is cloned by Git.
+    const cloneUrl = pathToFileURL(repository.directory).href;
+    fs.writeFileSync(path.join(fixture.root, '.dude/metadata/bundle-manifest.md'),
+      `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify({ source_repo: cloneUrl, source_ref: 'main' })}\n\`\`\`\n`);
+    const cloned = await previewAndApply('refresh', 'fresh');
+    assert.deepEqual([cloned.source.type, cloned.source.repository], ['remote', cloneUrl]);
+    assert.equal(github.requests.length, asked, 'neither read asked GitHub');
+    assert.deepEqual(actionChildren(spy).slice(4).map(call => startedWith(call, sentinel)), [['none'], ['none'], ['none'], ['none']],
+      'neither the library\'s nor the other host\'s children were given the access');
+    assert.deepEqual(gates(), [{ used: true, held: false }, { used: true, held: false }, { used: false, held: false }, { used: false, held: false }],
+      'only the GitHub apply children used the access, and each had released it before it asked its write gate');
+
+    const results = [install, refresh, local, cloned].flatMap(run => run.results);
+    assert.equal(occurrences(JSON.stringify(results), sentinel), 0, 'no outcome or binding holds the access');
+    assert.equal(occurrences(launchText(spy), sentinel), 0);
+    assert.equal(scanFiles(fixture.temporary, sentinel).found, 0);
+    assert.deepEqual(fs.readdirSync(fixture.scratch), [], 'every child root was removed');
+  } finally { fixture.cleanup(); }
+});
+
+test('089 T001 a GitHub refusal through either child keeps a rate limit apart from a rejected access and an ordinary refusal, with no retry, provider text or leak', { timeout: 120_000 }, async t => {
+  const fixture = packEngineFixture();
+  const github = offlineGitHub(t, fixture);
+  github.refuse('acme/limited', 403, { 'x-ratelimit-remaining': '0' });
+  github.refuse('acme/throttled', 429, { 'retry-after': '60' });
+  github.refuse('acme/revoked', 401);
+  github.refuse('acme/forbidden', 403);
+  // acme/missing is never published, which GitHub answers with a 404.
+  const saved = ['acme/limited', 'acme/throttled', 'acme/revoked', 'acme/forbidden', 'acme/missing'];
+  saveSources(fixture, saved.map(name => remoteEntry(name)));
+  const sentinel = sentinelToken();
+  const access = new GitHubAccess(sentinel);
+  const signal = new AbortController().signal;
+  /** @param {unknown} value @param {string} label */
+  const assertClean = (value, label) => {
+    assert.equal(occurrences(JSON.stringify(value), sentinel), 0, `${label}: no access`);
+    assert.equal(occurrences(JSON.stringify(value), 'planted provider text'), 0, `${label}: no provider text`);
+  };
+  try {
+    const signedIn = await readPacks(fixture.root, signal, { discover: true, github: access });
+    const rows = sourceRows(signedIn);
+    assert.deepEqual(Object.fromEntries(saved.map(name => [name, [rows.get(name)?.status, rows.get(name)?.reason]])), {
+      'acme/limited': ['unavailable', 'rate_limited'],
+      'acme/throttled': ['unavailable', 'rate_limited'],
+      'acme/revoked': ['unavailable', 'credential_rejected'],
+      'acme/forbidden': ['unavailable', 'catalog_unreachable'],
+      'acme/missing': ['unavailable', 'catalog_unreachable'],
+    });
+    assert.deepEqual(saved.map(name => github.connections(name)), [1, 1, 1, 1, 1], 'each refused read made one request and no retry');
+    assert.deepEqual([...new Set(github.requests.map(request => request.authorization === `Bearer ${sentinel}`))], [true],
+      'each was a request with the access');
+    assertClean(signedIn, 'signed-in Reload');
+
+    // Without access a 401 is no rejected access, and nothing carries a credential: not even a token planted in the
+    // environment that every reader inherits is adopted.
+    const before = github.requests.length;
+    const ambient = sentinelToken();
+    const planted = { GH_TOKEN: process.env.GH_TOKEN, GITHUB_TOKEN: process.env.GITHUB_TOKEN };
+    Object.assign(process.env, { GH_TOKEN: ambient, GITHUB_TOKEN: ambient });
+    /** @type {any} */
+    let signedOut;
+    try { signedOut = await readPacks(fixture.root, signal, { discover: true }); }
+    finally {
+      for (const [name, value] of Object.entries(planted)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+    const anonymous = sourceRows(signedOut);
+    assert.deepEqual(saved.map(name => anonymous.get(name)?.reason),
+      ['rate_limited', 'rate_limited', 'catalog_unreachable', 'catalog_unreachable', 'catalog_unreachable']);
+    assert.deepEqual(github.requests.slice(before).map(request => request.authorization), Array(saved.length).fill(null));
+    assert.equal(occurrences(JSON.stringify(signedOut), ambient), 0, 'the signed-out payload holds no planted token');
+
+    // Add source names the same closed refusals, and saves nothing.
+    github.refuse('acme/new-throttled', 429);
+    github.refuse('acme/new-revoked', 401);
+    github.refuse('acme/new-forbidden', 403);
+    const sources = fs.readFileSync(sourcesFile(fixture));
+    for (const [name, code] of [['acme/new-throttled', 'rate_limited'], ['acme/new-revoked', 'credential_rejected'], ['acme/new-forbidden', 'unreachable']]) {
+      const refused = await addPackSource(fixture.root, signal, { location: `https://github.com/${name}`, sourcesRevision: savedRevision(fixture) },
+        { github: access });
+      assert.deepEqual([refused.ok, /** @type {any} */ (refused).code], [false, code], name);
+      assert.equal(github.connections(name), 1, `${name}: no retry`);
+      assertClean(refused, name);
+    }
+    assert.deepEqual(fs.readFileSync(sourcesFile(fixture)), sources, 'no refused source was saved');
+
+    // A pack action preview keeps the reason on its outcome.
+    for (const [name, reason] of [['acme/throttled', 'rate_limited'], ['acme/revoked', 'credential_rejected'], ['acme/forbidden', undefined]]) {
+      const asked = github.connections(/** @type {string} */ (name));
+      const { outcome, binding } = await runPackAction(fixture.root, signal,
+        { op: 'preview', operation: 'install', name: 'alpha', source: sharedKey(fixture, remoteEntry(/** @type {string} */ (name))) }, { github: access });
+      assert.deepEqual([outcome.ok, /** @type {any} */ (outcome).mutation, /** @type {any} */ (outcome).reason, binding], [false, 'none', reason, null], String(name));
+      assert.equal(github.connections(/** @type {string} */ (name)), asked + 1, `${name}: no retry`);
+      assertClean(outcome, String(name));
+    }
+    assert.equal(scanFiles(fixture.temporary, sentinel).found, 0);
+  } finally { fixture.cleanup(); }
+});
+
+test('089 T001 a child whose start message is missing or cannot arrive reads nothing, and a cancelled operation sends its access to no child', { timeout: 120_000 }, async t => {
+  await t.test('a reader whose start message never arrives fails at its deadline', async t => {
+    const fixture = packFixture();
+    fixture.profile({});
+    fixture.catalog(['alpha']);
+    const spy = spawnSpy(t, { onStart: () => {} });
+    try {
+      const started = performance.now();
+      const snapshot = await readPacks(fixture.root, new AbortController().signal);
+      const elapsed = performance.now() - started;
+      assert.equal(snapshot.coverage.catalog.reason, 'catalog_timeout', JSON.stringify(snapshot.coverage.catalog));
+      assert.ok(elapsed >= 4_500 && elapsed < 15_000, `stopped by a folder's five-second deadline: ${elapsed.toFixed(0)} ms`);
+      assert.deepEqual(spy.readers().map(reader => reader.started.length), [1], 'the one start message was withheld');
+      assert.notEqual(spy.readers()[0].exitedAt, null, 'the waiting reader was stopped');
+    } finally { fixture.cleanup(); }
+  });
+
+  await t.test('a reader or an action child whose parent is gone before its start message reads nothing and ends at once', async t => {
+    const fixture = packEngineFixture();
+    const github = offlineGitHub(t, fixture);
+    publishAlpha(github, fixture, 'acme/team-packs');
+    const revision = saveSources(fixture, [remoteEntry('acme/team-packs')]);
+    // As `packs.mjs` launches each: a Git home directly in the child's own temporary root, and its closed request.
+    const home = path.join(fixture.scratch, 'home');
+    fs.mkdirSync(home);
+    const launches = [
+      [READER, { [CATALOG_REQUEST_ENV]: JSON.stringify({ op: 'source', index: 0, key: sharedKey(fixture, remoteEntry('acme/team-packs')),
+        revision, document: 'configured', list: true }) }],
+      [PACK_ACTION, { DUDE_CANVAS_PACK_ACTION: JSON.stringify({ op: 'preview', operation: 'install', name: 'alpha',
+        source: 'https://github.com/acme/team-packs', ref: 'main', fetch: true }) }],
+    ];
+    try {
+      for (const [script, request] of /** @type {Array<[string, Record<string, string>]>} */ (launches)) {
+        const child = fork(script, [fixture.root], { cwd: fixture.root, execArgv: [], silent: true,
+          env: { ...process.env, [CATALOG_GIT_HOME_ENV]: home, ...request } });
+        /** @type {unknown[]} */
+        const answers = [];
+        child.on('message', message => { answers.push(message); });
+        child.stdout?.resume();
+        child.stderr?.resume();
+        const exited = new Promise(resolve => child.once('exit', code => resolve(code)));
+        const started = performance.now();
+        // The parent is gone before any start message can arrive.
+        child.disconnect();
+        const code = await Promise.race([exited, new Promise(resolve => setTimeout(() => resolve('running'), 15_000))]);
+        if (code === 'running') child.kill('SIGKILL');
+        assert.notEqual(code, 'running', `${path.basename(script)} waited on after its parent was gone`);
+        assert.ok(performance.now() - started < 15_000);
+        assert.deepEqual(answers, [], `${path.basename(script)} had no one to answer`);
+      }
+      assert.equal(github.requests.length, 0, 'neither child read GitHub');
+      const status = cmdStatus({ root: fixture.root });
+      assert.deepEqual(status.ok && Object.keys(status.result.installed), [], 'nothing was installed');
+    } finally { fixture.cleanup(); }
+  });
+
+  await t.test('an operation cancelled as its child is launched sends that child no start message', async t => {
+    const fixture = packEngineFixture();
+    const github = offlineGitHub(t, fixture);
+    publishAlpha(github, fixture, 'acme/team-packs');
+    saveSources(fixture, [remoteEntry('acme/team-packs')]);
+    const access = new GitHubAccess(sentinelToken());
+    /** @type {AbortController} */
+    let operation = new AbortController();
+    const spy = spawnSpy(t, { onSpawn: () => operation.abort() });
+    try {
+      await assert.rejects(readPacks(fixture.root, operation.signal, { discover: true, github: access }));
+      operation = new AbortController();
+      const { outcome } = await runPackAction(fixture.root, operation.signal,
+        { op: 'preview', operation: 'install', name: 'alpha', source: sharedKey(fixture, remoteEntry('acme/team-packs')) }, { github: access });
+      assert.deepEqual(outcome, { ok: false, error: 'The pack action was cancelled before it wrote anything. Nothing changed.', mutation: 'none' });
+      assert.ok(spy.calls.length > 0);
+      assert.deepEqual(spy.calls.map(call => call.started.length), spy.calls.map(() => 0), 'no child was sent a start message');
+      assert.equal(github.requests.length, 0, 'nothing read GitHub');
+      await eventually(() => spy.calls.every(call => call.exitedAt !== null), 'every cancelled child to stop');
+    } finally { fixture.cleanup(); }
+  });
+});
+
+/* ----------------------------------------------------------------------------
+ * 089 T002: one GitHub sign-in serves every Canvas of a session. Its one route
+ * reads and changes the shared controller, and each Canvas pack read that may
+ * read GitHub (Reload, Add source, and an install's or a refresh's preview and
+ * apply) is given its access and stops once that access is forgotten. GitHub's
+ * three sign-in endpoints are answered in this process by `signInWorld`, with a
+ * fixture Client ID and no real registration, while the pack readers run in
+ * their real children against the offline stand-in. Every token and device code
+ * is a sentinel made in test memory, and each check of one reports a
+ * destination, a boolean or a count.
+ * ------------------------------------------------------------------------- */
+
+const GITHUB_SESSION_ROUTE = '/api/github-session';
+const SIGN_IN_ENDPOINTS = Object.freeze({
+  code: 'https://github.com/login/device/code',
+  token: 'https://github.com/login/oauth/access_token',
+  account: 'https://api.github.com/user',
+});
+/** The whole signed-out state, with the outcome that ended the last sign-in. @param {string | null} outcome */
+const sessionSignedOut = outcome => ({ state: 'signed_out', login: null, userCode: null, verificationUri: null, expiresAt: null, outcome });
+const SESSION_REQUESTING = Object.freeze({ ...sessionSignedOut(null), state: 'requesting' });
+const SESSION_SIGNED_IN = Object.freeze({ state: 'signed_in', login: 'octocat', userCode: null, verificationUri: null, expiresAt: null, outcome: null });
+
+/**
+ * GitHub's sign-in endpoints for one test, answered in this process. GitHub
+ * approves each sign-in at its first poll with the next of `tokens`, the last
+ * repeating, for the account octocat; after `hold`, each poll waits until
+ * `approve`. Each sign-in request is recorded with its endpoint and whether it
+ * carried an Authorization header. Loopback requests pass on, because the Canvas
+ * helpers here use fetch, and no other address is reachable.
+ * @param {import('node:test').TestContext} t
+ * @param {{ tokens?: string[], clientId?: string | null }} [options]
+ */
+function signInWorld(t, { tokens = [sentinelToken()], clientId = 'Iv1.fixture0client0id' } = {}) {
+  const fetch = globalThis.fetch;
+  const deviceCode = `dc_${randomUUID().replaceAll('-', '')}`;
+  const remaining = [...tokens];
+  /** @type {Array<{ endpoint: string, authorized: boolean }>} */
+  const requests = [];
+  /** @type {Array<() => void>} */
+  const waiting = [];
+  let holding = false;
+  /** @param {unknown} body */
+  const answer = body => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json; charset=utf-8' } });
+  t.mock.method(globalThis, 'fetch', async (/** @type {any} */ input, /** @type {any} */ init = {}) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (url.protocol === 'http:' && url.hostname === '127.0.0.1') return fetch(input, init);
+    const endpoint = Object.entries(SIGN_IN_ENDPOINTS).find(([, address]) => address === url.href)?.[0];
+    if (!endpoint) throw new TypeError(`offline fixture: ${url.origin} is not reachable`);
+    requests.push({ endpoint, authorized: new Headers(init.headers).has('authorization') });
+    if (endpoint === 'code') {
+      return answer({ device_code: deviceCode, user_code: 'WDJB-MJHT', verification_uri: 'https://github.com/login/device',
+        expires_in: 900, interval: 5 });
+    }
+    if (endpoint === 'token') return answer({ access_token: remaining.length > 1 ? remaining.shift() : remaining[0], token_type: 'bearer', scope: '' });
+    return answer({ login: 'octocat', id: 1 });
+  });
+  const session = createGitHubSession({ clientId, sleep: (_ms, signal) => (holding
+    ? new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      waiting.push(() => resolve(undefined));
+    })
+    : Promise.resolve()) });
+  return {
+    session, deviceCode, requests,
+    hold() { holding = true; },
+    approve() {
+      holding = false;
+      while (waiting.length) /** @type {() => void} */ (waiting.shift())();
+    },
+  };
+}
+
+/**
+ * One request to the GitHub sign-in route of `instance`: a read, or one closed operation.
+ * @param {{ server: import('node:http').Server, url: string }} instance @param {unknown} [body]
+ * @returns {Promise<{ status: number | undefined, body: any }>}
+ */
+function sessionRoute(instance, body) {
+  const { host, origin } = new URL(instance.url);
+  return rawJson(instance.server, body === undefined ? { path: GITHUB_SESSION_ROUTE, headers: { host } } : {
+    path: GITHUB_SESSION_ROUTE, method: 'POST', body: JSON.stringify(body),
+    headers: { host, origin, 'content-type': 'application/json' },
+  });
+}
+
+/**
+ * Sign in through the route of `instance`, as Sign in does, and wait until the shared controller is signed in.
+ * @param {{ server: import('node:http').Server, url: string }} instance @param {ReturnType<typeof signInWorld>} world
+ */
+async function signInThrough(instance, world) {
+  assert.deepEqual(await sessionRoute(instance, { op: 'start' }), { status: 200, body: SESSION_REQUESTING });
+  await eventually(() => world.session.read().state === 'signed_in', 'the sign-in');
+}
+
+/**
+ * Collect the `github-session` events of one event stream, and its whole text.
+ * @param {{ url: string }} instance
+ */
+async function sessionEvents(instance) {
+  const hangUp = new AbortController();
+  const response = await call(instance.url, { path: '/events', signal: hangUp.signal });
+  const reader = /** @type {ReadableStream<Uint8Array>} */ (response.body).getReader();
+  const decoder = new TextDecoder();
+  const seen = { text: '', count: 0 };
+  void (async () => {
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        seen.text += decoder.decode(value, { stream: true });
+        seen.count = seen.text.split('event: github-session\ndata: {"refresh":true}\n\n').length - 1;
+      }
+    } catch { /* The stream ended with the test. */ }
+  })();
+  return { seen, close: () => hangUp.abort() };
+}
+
+/** A discovery's status and body, for a read that may be refused. @param {Awaited<ReturnType<typeof packHttpFixture>>} f */
+const discoverAnswer = async f => {
+  const response = await call(f.instance.url, { path: DISCOVER });
+  return { status: response.status, body: await response.json() };
+};
+
+test('089 T002 the GitHub sign-in route admits only an exact same-origin GET or closed JSON POST, and a read or refused request asks GitHub nothing', async t => {
+  const world = signInWorld(t);
+  const instance = await openInstance('github-session-guards', () => {}, null, null, null, null, world.session);
+  const without = await openInstance('github-session-without', () => {});
+  const { host, origin, port } = new URL(instance.url);
+  const spawns = t.mock.method(childProcess.ChildProcess.prototype, 'spawn');
+  const json = { host, origin, 'content-type': 'application/json' };
+  /** @param {string | Buffer} body @param {Record<string, string>} [headers] */
+  const act = (body, headers = json) => ({ path: GITHUB_SESSION_ROUTE, method: 'POST', headers, body });
+  /** @param {Parameters<typeof rawJson>[1]} request @param {number} status @param {unknown} body @param {import('node:http').Server} [server] */
+  const expectAnswer = async (request, status, body, server = instance.server) => {
+    const label = `${request?.method ?? 'GET'} ${request?.path} ${JSON.stringify(request?.headers)} ${String(request?.body ?? '').slice(0, 60)}`;
+    assert.deepEqual(await rawJson(server, request), { status, body }, label);
+  };
+  const notFound = { error: 'Not found.' };
+  const invalid = { error: 'invalid_input' };
+  try {
+    // A read answers the whole safe state, never cached.
+    const read = await call(instance.url, { path: GITHUB_SESSION_ROUTE });
+    assert.deepEqual([read.status, read.headers.get('cache-control'), read.headers.get('content-type')],
+      [200, 'no-store', 'application/json; charset=utf-8']);
+    assert.deepEqual(await read.json(), sessionSignedOut(null));
+    const valid = JSON.stringify({ op: 'start' });
+    for (const headers of [
+      { host, origin: 'null' }, { host, origin: 'https://evil.example' },
+      { host, origin: `http://127.0.0.1:${Number(port) + 1}` }, { host, origin: `http://localhost:${port}` },
+      { host, 'sec-fetch-site': 'cross-site' }, { host, 'sec-fetch-site': 'same-site' },
+      { host: 'evil.example.com' }, { host: `localhost:${port}` }, { host: `[::1]:${port}` },
+    ]) {
+      const refused = { error: 'Cross-origin requests are not allowed.' };
+      await expectAnswer({ path: GITHUB_SESSION_ROUTE, headers }, 403, refused);
+      await expectAnswer(act(valid, { ...headers, 'content-type': 'application/json' }), 403, refused);
+    }
+    // An operation names this instance's own origin; fetch metadata alone is not enough.
+    for (const headers of [{ host }, { host, 'sec-fetch-site': 'same-origin' }]) {
+      await expectAnswer(act(valid, { ...headers, 'content-type': 'application/json' }), 403, { error: 'Same-origin action required.' });
+    }
+    for (const suffix of ['?', '?op=start', '?clientId=Iv1.other', '/', '/start', '.json', '#fragment']) {
+      await expectAnswer({ path: `${GITHUB_SESSION_ROUTE}${suffix}`, headers: { host } }, 404, notFound);
+      await expectAnswer({ ...act(valid), path: `${GITHUB_SESSION_ROUTE}${suffix}` }, 404, notFound);
+    }
+    for (const alias of ['/api/GitHub-session', '/API/github-session', '/api//github-session', '/api/%67ithub-session',
+      '/api/x/../github-session', '/api/github', '/api/github/login', '/api/github-sessions', '/github-session']) {
+      await expectAnswer({ ...act(valid), path: alias }, 404, notFound);
+    }
+    for (const method of ['PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
+      await expectAnswer({ path: GITHUB_SESSION_ROUTE, method, headers: json }, 404, notFound);
+    }
+    // A read takes no body.
+    await expectAnswer({ path: GITHUB_SESSION_ROUTE, headers: { host, 'content-length': '2' }, body: '{}' }, 400, invalid);
+    await expectAnswer({ path: GITHUB_SESSION_ROUTE, headers: { host, 'transfer-encoding': 'chunked' }, body: '{}' }, 400, invalid);
+    await expectAnswer(act(valid, { ...json, 'content-type': 'text/plain' }), 415, { error: 'JSON action required.' });
+    await expectAnswer(act(valid, { host, origin }), 415, { error: 'JSON action required.' });
+    // Only the operation crosses: never a token, scope, Client ID, host or endpoint.
+    for (const body of ['', '{invalid', Buffer.from([0xc3, 0x28]), 'null', '[]', '"start"', 'true', '{}',
+      ...[{ op: 'Start' }, { op: 'sign_out' }, { op: 'signout' }, { op: 'login' }, { op: 'revoke' }, { op: 'read' }, { op: ['start'] },
+        { op: 'start', clientId: 'Iv1.other' }, { op: 'start', client_id: 'Iv1.other' }, { op: 'start', scope: 'repo' },
+        { op: 'start', token: 'gho_planted' }, { op: 'start', access_token: 'gho_planted' }, { op: 'start', host: 'github.example.com' },
+        { op: 'start', endpoint: 'https://github.example.com/login/device/code' }, { op: 'cancel', userCode: 'WDJB-MJHT' },
+        { op: 'sign-out', login: 'octocat' }].map(value => JSON.stringify(value))]) {
+      await expectAnswer(act(body), 400, invalid);
+    }
+    // The server's own body limit, refused before or while the body is read.
+    await expectAnswer(act('x'.repeat(4 * 1024 + 1)), 413, invalid);
+    const padded = JSON.stringify({ op: 'start', pad: 'x'.repeat(4 * 1024) });
+    await expectAnswer(act(padded, { ...json, 'content-length': String(Buffer.byteLength(padded)) }), 413, invalid);
+    // A Canvas without the controller has no sign-in.
+    const bare = new URL(without.url);
+    const unavailable = { error: 'github_session_unavailable' };
+    await expectAnswer({ path: GITHUB_SESSION_ROUTE, headers: { host: bare.host } }, 503, unavailable, without.server);
+    await expectAnswer({ path: GITHUB_SESSION_ROUTE, method: 'POST', body: valid,
+      headers: { host: bare.host, origin: bare.origin, 'content-type': 'application/json' } }, 503, unavailable, without.server);
+
+    assert.deepEqual(world.session.read(), sessionSignedOut(null), 'no refused request changed the session');
+    assert.deepEqual(world.requests, [], 'nothing asked GitHub anything');
+    assert.equal(spawns.mock.callCount(), 0, 'nothing started a process');
+  } finally {
+    t.mock.restoreAll();
+    await closeInstance('github-session-guards');
+    await closeInstance('github-session-without');
+  }
+});
+
+test('089 T002 without a Client ID, Sign in answers unavailable in every panel and asks GitHub nothing, while GitHub and folder sources are still read anonymously', { timeout: 60_000 }, async t => {
+  const fixture = packFixture();
+  fixture.profile({});
+  const github = offlineGitHub(t, fixture);
+  github.publish('acme/good', ['rust']);
+  const team = localSource(fixture, 'team-packs', ['ui']);
+  saveSources(fixture, [remoteEntry('acme/good'), localEntry(team)]);
+  const world = signInWorld(t, { clientId: null });
+  const f = await packHttpFixture(fixture, { githubSession: world.session });
+  const secondId = `github-second-${randomUUID()}`;
+  const second = await openInstance(secondId, () => {}, null, null, null, null, world.session);
+  const spy = spawnSpy(t);
+  try {
+    assert.deepEqual(await sessionRoute(f.instance, { op: 'start' }), { status: 200, body: sessionSignedOut('unavailable') });
+    assert.deepEqual(await sessionRoute(second), { status: 200, body: sessionSignedOut('unavailable') }, 'every panel shows it');
+    assert.deepEqual(await sessionRoute(second, { op: 'start' }), { status: 200, body: sessionSignedOut('unavailable') });
+    assert.deepEqual([world.requests, spy.calls.length], [[], 0], 'no GitHub request and no reader');
+    const rows = sourceRows(await discover(f));
+    assert.deepEqual(['acme/good', 'team-packs'].map(name => [rows.get(name)?.status, rows.get(name)?.count]), [['read', 1], ['read', 1]]);
+    assert.ok(github.requests.length > 0);
+    assert.deepEqual([...new Set(github.requests.map(request => request.authorization))], [null], 'every GitHub read was anonymous');
+    assert.deepEqual([...new Set(spy.readers().flatMap(reader => reader.started))], [null], 'no reader was given access');
+  } finally {
+    await closeInstance(secondId);
+    await f.close();
+    fixture.cleanup();
+  }
+});
+
+test('089 T002 one sign-in through the route serves both panels, and Reload, Add source and install and refresh previews and applies use it until sign-out, with no read, request or leak caused by signing in or out', { timeout: 180_000 }, async t => {
+  const fixture = packEngineFixture();
+  const github = offlineGitHub(t, fixture);
+  publishAlpha(github, fixture, 'acme/team-packs');
+  github.publish('acme/more', ['beta']);
+  const folder = artifactSource(fixture, 'folder-packs');
+  saveSources(fixture, [remoteEntry('acme/team-packs'), localEntry(folder)]);
+  const token = sentinelToken();
+  const world = signInWorld(t, { tokens: [token] });
+  /** @type {string[]} */
+  const lines = [];
+  const log = (/** @type {string} */ line) => { lines.push(line); };
+  const f = await packHttpFixture(fixture, { githubSession: world.session, log });
+  const secondId = `github-second-${randomUUID()}`;
+  const second = await openInstance(secondId, log, null, null, null, null, world.session);
+  const spy = spawnSpy(t);
+  const first = await sessionEvents(f.instance);
+  const other = await sessionEvents(second);
+  /** Every answer a page got, for the leak check. @type {unknown[]} */
+  const answers = [];
+  /** @template T @param {T} answer @returns {T} */
+  const kept = answer => { answers.push(answer); return answer; };
+  try {
+    assert.deepEqual(kept(await sessionRoute(second)), { status: 200, body: sessionSignedOut(null) });
+
+    // Sign in from the first panel. A Sign in in the second, and a reload of the first, share the one pending code.
+    world.hold();
+    assert.deepEqual(kept(await sessionRoute(f.instance, { op: 'start' })), { status: 200, body: SESSION_REQUESTING });
+    await eventually(() => world.session.read().state === 'waiting', 'the code');
+    const waiting = kept(await sessionRoute(second, { op: 'start' }));
+    assert.deepEqual({ ...waiting, body: { ...waiting.body, expiresAt: null } }, { status: 200, body: { state: 'waiting', login: null,
+      userCode: 'WDJB-MJHT', verificationUri: 'https://github.com/login/device', expiresAt: null, outcome: null } });
+    assert.ok(Date.parse(waiting.body.expiresAt) > Date.now(), 'the expiry is a time ahead');
+    assert.deepEqual(kept(await sessionRoute(f.instance)).body, waiting.body, 'a reload shows the same code and expiry');
+    world.approve();
+    await eventually(() => world.session.read().state === 'signed_in', 'the sign-in');
+    for (const panel of [f.instance, second]) assert.deepEqual(kept(await sessionRoute(panel)), { status: 200, body: SESSION_SIGNED_IN });
+    assert.deepEqual(world.requests, [{ endpoint: 'code', authorized: false }, { endpoint: 'token', authorized: false },
+      { endpoint: 'account', authorized: true }], 'one attempt and one account lookup');
+    await eventually(() => first.seen.count >= 3 && other.seen.count >= 3, 'both panels told of the request, the code and the sign-in');
+    assert.deepEqual([github.requests.length, spy.calls.length], [0, 0], 'signing in read no pack and started no reader');
+
+    // Closing one panel signs no other out.
+    other.close();
+    await closeInstance(secondId);
+    assert.deepEqual(kept(await sessionRoute(f.instance)).body, SESSION_SIGNED_IN);
+
+    // Reload: the repository's reader is given the access, the library's and the folder's none, and only API requests carry it.
+    const rows = sourceRows(kept(await discover(f)));
+    assert.deepEqual(['acme/team-packs', 'folder-packs'].map(name => rows.get(name)?.status), ['read', 'read']);
+    assert.deepEqual(Object.fromEntries(spy.readers().map(reader => {
+      const request = readerRequest(reader);
+      return [request.op === 'source' ? `source ${request.index}` : request.op, startedWith(reader, token)];
+    })), { default: ['none'], 'source 0': ['access'], 'source 1': ['none'] });
+    assert.deepEqual([...new Set(credentialed(github, 'acme/team-packs', token))].sort(), ['api access', 'raw anonymous']);
+
+    // Add source: the repository's candidate read carries it too.
+    const added = kept(await addSource(f, fixture, 'https://github.com/acme/more'));
+    assert.equal(added.status, 200, JSON.stringify(added.body));
+    assert.deepEqual([...new Set(credentialed(github, 'acme/more', token))].sort(), ['api access', 'raw anonymous']);
+
+    // An install's preview and apply from the saved repository, then a refresh's: each child is given the access.
+    const install = kept(await postAction(f, { op: 'preview', operation: 'install', name: 'alpha',
+      source: sharedKey(fixture, remoteEntry('acme/team-packs')) }));
+    assert.equal(typeof install.body.token, 'string', JSON.stringify(install.body));
+    const installed = kept(await postAction(f, { op: 'apply', token: install.body.token }));
+    assert.deepEqual([installed.status, installed.body.ok], [200, true], JSON.stringify(installed.body));
+    const refresh = kept(await postAction(f, { op: 'preview', operation: 'refresh', name: 'alpha' }));
+    assert.equal(typeof refresh.body.token, 'string', JSON.stringify(refresh.body));
+    const refreshed = kept(await postAction(f, { op: 'apply', token: refresh.body.token }));
+    assert.deepEqual([refreshed.status, refreshed.body.ok], [200, true], JSON.stringify(refreshed.body));
+    assert.deepEqual(actionChildren(spy).map(call => startedWith(call, token)), [['access'], ['access'], ['access'], ['access']]);
+
+    // The page a panel loads while signed in joins the leak check below.
+    const page = await call(f.instance.url, { path: '/' });
+    assert.equal(page.status, 200);
+    kept(await page.text());
+
+    // Sign out: nothing is sent, revoked or read, the panel is told, and the next Reload is anonymous.
+    const asked = { signIn: world.requests.length, packs: github.requests.length, children: spy.calls.length };
+    const told = first.seen.count;
+    assert.deepEqual(kept(await sessionRoute(f.instance, { op: 'sign-out' })), { status: 200, body: sessionSignedOut('signed_out') });
+    assert.deepEqual([world.requests.length, github.requests.length, spy.calls.length], [asked.signIn, asked.packs, asked.children],
+      'sign-out asked GitHub nothing and read no pack');
+    await eventually(() => first.seen.count > told, 'the panel told of the sign-out');
+    kept(await discover(f));
+    assert.ok(github.requests.length > asked.packs);
+    assert.deepEqual([...new Set(github.requests.slice(asked.packs).map(request => request.authorization))], [null], 'later reads are anonymous');
+    assert.deepEqual([...new Set(spy.calls.slice(asked.children).flatMap(call => call.started))], [null]);
+
+    // No copy of the token or the device code anywhere a page, an event, a log, a launch or a file could hold it.
+    const shown = [JSON.stringify(answers), first.seen.text, other.seen.text, lines.join('\n')].join('\n');
+    assert.deepEqual([occurrences(shown, token), occurrences(shown, world.deviceCode)], [0, 0]);
+    assert.equal(occurrences(launchText(spy), token), 0);
+    assert.equal(scanFiles(fixture.temporary, token).found, 0);
+    assert.doesNotMatch(first.seen.text + other.seen.text, /data: (?!\{"refresh":true\}\n)/, 'every event is payload-free');
+  } finally {
+    first.close();
+    other.close();
+    await closeInstance(secondId);
+    await f.close();
+    fixture.cleanup();
+  }
+});
+
+test('089 T002 sign-out stops each GitHub read that still uses the access with an honest outcome, and lets an apply its write gate already allowed finish', { timeout: 180_000 }, async t => {
+  const fixture = packEngineFixture();
+  const github = offlineGitHub(t, fixture);
+  const world = signInWorld(t);
+  const f = await packHttpFixture(fixture, { githubSession: world.session });
+  const signOut = async () => assert.deepEqual(await sessionRoute(f.instance, { op: 'sign-out' }),
+    { status: 200, body: sessionSignedOut('signed_out') });
+  try {
+    await t.test('a Reload', async () => {
+      saveSources(fixture, [remoteEntry('acme/reload')]);
+      github.hold('acme/reload');
+      await signInThrough(f.instance, world);
+      const reading = discoverAnswer(f);
+      await github.connected('acme/reload');
+      await signOut();
+      assert.deepEqual(await reading, { status: 503, body: { error: 'packs_unavailable', message: 'The pack read was cancelled or became unavailable.' } });
+      await eventually(() => github.open === 0, 'the stopped reader to drop its held request');
+      assert.equal(github.connections('acme/reload'), 1, 'nothing was read again');
+    });
+
+    await t.test('Add source', async () => {
+      saveSources(fixture, []);
+      const sources = fs.readFileSync(sourcesFile(fixture));
+      github.hold('acme/add');
+      await signInThrough(f.instance, world);
+      const adding = addSource(f, fixture, 'https://github.com/acme/add');
+      await github.connected('acme/add');
+      await signOut();
+      assert.deepEqual(await adding, { status: 409, body: { error: 'cancelled',
+        message: 'The read stopped because the GitHub sign-in ended while it ran. Nothing was saved.' } });
+      assert.deepEqual(fs.readFileSync(sourcesFile(fixture)), sources, 'nothing was saved');
+      await eventually(() => github.open === 0, 'the stopped reader to drop its held request');
+    });
+
+    await t.test('an install apply before its write gate', async () => {
+      publishAlpha(github, fixture, 'acme/apply');
+      saveSources(fixture, [remoteEntry('acme/apply')]);
+      await signInThrough(f.instance, world);
+      const preview = await previewAlpha(f, 'install', sharedKey(fixture, remoteEntry('acme/apply')));
+      // GitHub now accepts the apply's requests and never answers them.
+      github.hold('acme/apply');
+      const before = snapshotFiles(fixture.root);
+      const applying = postAction(f, { op: 'apply', token: preview.token });
+      await github.connected('acme/apply');
+      await signOut();
+      assert.deepEqual(await applying, { status: 409, body: { error: 'cancelled' } });
+      assert.deepEqual(snapshotFiles(fixture.root), before, 'nothing was written');
+      await eventually(() => github.open === 0, 'the stopped child to drop its held request');
+    });
+
+    await t.test('an install apply after its write gate', async t => {
+      publishAlpha(github, fixture, 'acme/written');
+      saveSources(fixture, [remoteEntry('acme/written')]);
+      await signInThrough(f.instance, world);
+      const preview = await previewAlpha(f, 'install', sharedKey(fixture, remoteEntry('acme/written')));
+      let atGate = -1;
+      spawnSpy(t, { onSpawn: call => {
+        const send = call.child.send;
+        call.child.send = /** @type {any} */ (function (/** @type {any} */ message, /** @type {any[]} */ ...rest) {
+          // Sign out at the moment the write gate says go, as the route's Sign out would.
+          if (message?.type === 'gate' && message.go === true) {
+            atGate = github.requests.length;
+            world.session.signOut();
+          }
+          return send.call(this, message, ...rest);
+        });
+      } });
+      const applied = await postAction(f, { op: 'apply', token: preview.token });
+      assert.ok(atGate >= 0, 'the write gate said go');
+      assert.deepEqual([applied.status, /** @type {any} */ (applied.body).ok], [200, true], JSON.stringify(applied.body));
+      const status = cmdStatus({ root: fixture.root });
+      assert.equal(status.ok && status.result.installed.alpha?.source.repository, 'https://github.com/acme/written', 'the allowed write finished');
+      assert.equal(github.requests.length, atGate, 'nothing was read after the gate');
+      assert.deepEqual(world.session.read(), sessionSignedOut('signed_out'));
+    });
+  } finally {
+    await f.close();
+    fixture.cleanup();
+  }
+});
+
+test('089 T002 GitHub rejecting the access for another read stops an Add source, a preview and an apply before its write gate that still read with it, each answering credential_rejected rather than cancelled, and lets an apply its gate already allowed finish', { timeout: 180_000 }, async t => {
+  const fixture = packEngineFixture();
+  const github = offlineGitHub(t, fixture);
+  const world = signInWorld(t);
+  const f = await packHttpFixture(fixture, { githubSession: world.session });
+  /** GitHub rejects the current access for another read, which reports it as a reader does. */
+  const rejectedElsewhere = () => world.session.rejected(world.session.current().github);
+  const ACTION_REJECTED = 'GitHub rejected the sign-in this pack action was given, so it stopped before writing anything. Nothing changed.';
+  try {
+    await t.test('Add source', async () => {
+      saveSources(fixture, []);
+      const sources = fs.readFileSync(sourcesFile(fixture));
+      github.hold('acme/add');
+      await signInThrough(f.instance, world);
+      const adding = addSource(f, fixture, 'https://github.com/acme/add');
+      await github.connected('acme/add');
+      rejectedElsewhere();
+      assert.deepEqual(await adding, { status: 503, body: { error: 'credential_rejected',
+        message: 'GitHub rejected the sign-in this read used, so nothing was saved.' } });
+      assert.deepEqual(fs.readFileSync(sourcesFile(fixture)), sources, 'nothing was saved');
+      await eventually(() => github.open === 0, 'the stopped reader to drop its held request');
+      assert.equal(github.connections('acme/add'), 1, 'nothing was read again');
+      assert.deepEqual(world.session.read(), sessionSignedOut('rejected'));
+    });
+
+    await t.test('an install preview', async () => {
+      saveSources(fixture, [remoteEntry('acme/preview')]);
+      github.hold('acme/preview');
+      await signInThrough(f.instance, world);
+      const previewing = postAction(f, { op: 'preview', operation: 'install', name: 'alpha', source: sharedKey(fixture, remoteEntry('acme/preview')) });
+      await github.connected('acme/preview');
+      rejectedElsewhere();
+      const answer = await previewing;
+      assert.deepEqual([answer.status, answer.body.token, answer.body.preview, answer.body.message, answer.body.reason],
+        [200, null, null, ACTION_REJECTED, 'credential_rejected']);
+      await eventually(() => github.open === 0, 'the stopped child to drop its held request');
+    });
+
+    await t.test('an install apply before its write gate', async () => {
+      publishAlpha(github, fixture, 'acme/apply');
+      saveSources(fixture, [remoteEntry('acme/apply')]);
+      await signInThrough(f.instance, world);
+      const preview = await previewAlpha(f, 'install', sharedKey(fixture, remoteEntry('acme/apply')));
+      // GitHub now accepts the apply's requests and never answers them.
+      github.hold('acme/apply');
+      const before = snapshotFiles(fixture.root);
+      const applying = postAction(f, { op: 'apply', token: preview.token });
+      await github.connected('acme/apply');
+      rejectedElsewhere();
+      assert.deepEqual(await applying, { status: 200, body: { ok: false, error: ACTION_REJECTED, mutation: 'none', reason: 'credential_rejected' } });
+      assert.deepEqual(snapshotFiles(fixture.root), before, 'nothing was written');
+      await eventually(() => github.open === 0, 'the stopped child to drop its held request');
+    });
+
+    await t.test('an install apply after its write gate', async t => {
+      publishAlpha(github, fixture, 'acme/written');
+      saveSources(fixture, [remoteEntry('acme/written')]);
+      await signInThrough(f.instance, world);
+      const preview = await previewAlpha(f, 'install', sharedKey(fixture, remoteEntry('acme/written')));
+      let atGate = -1;
+      spawnSpy(t, { onSpawn: call => {
+        const send = call.child.send;
+        call.child.send = /** @type {any} */ (function (/** @type {any} */ message, /** @type {any[]} */ ...rest) {
+          // GitHub rejects the access elsewhere at the moment the write gate says go.
+          if (message?.type === 'gate' && message.go === true) {
+            atGate = github.requests.length;
+            rejectedElsewhere();
+          }
+          return send.call(this, message, ...rest);
+        });
+      } });
+      const applied = await postAction(f, { op: 'apply', token: preview.token });
+      assert.ok(atGate >= 0, 'the write gate said go');
+      assert.deepEqual([applied.status, /** @type {any} */ (applied.body).ok], [200, true], JSON.stringify(applied.body));
+      const status = cmdStatus({ root: fixture.root });
+      assert.equal(status.ok && status.result.installed.alpha?.source.repository, 'https://github.com/acme/written', 'the allowed write finished');
+      assert.equal(github.requests.length, atGate, 'nothing was read after the gate');
+      assert.deepEqual(world.session.read(), sessionSignedOut('rejected'));
+    });
+  } finally {
+    await f.close();
+    fixture.cleanup();
+  }
+});
+
+test('089 T002 an install apply told to release its access after its write gate said go finishes its write and reads nothing more', { timeout: 120_000 }, async t => {
+  const fixture = packEngineFixture();
+  const github = offlineGitHub(t, fixture);
+  const world = signInWorld(t);
+  const f = await packHttpFixture(fixture, { githubSession: world.session });
+  try {
+    publishAlpha(github, fixture, 'acme/past-gate');
+    saveSources(fixture, [remoteEntry('acme/past-gate')]);
+    await signInThrough(f.instance, world);
+    const preview = await previewAlpha(f, 'install', sharedKey(fixture, remoteEntry('acme/past-gate')));
+    let atGate = -1;
+    /** What production sent the apply's child, in order. @type {string[]} */
+    const told = [];
+    spawnSpy(t, { onSpawn: call => {
+      const send = call.child.send;
+      call.child.send = /** @type {any} */ (function (/** @type {any} */ message, /** @type {any[]} */ ...rest) {
+        told.push(message?.type);
+        const sent = send.call(this, message, ...rest);
+        // Once the go is on its way, GitHub rejects the access for another read, so production's release message
+        // follows the go; two more follow that one.
+        if (message?.type === 'gate' && message.go === true) {
+          atGate = github.requests.length;
+          world.session.rejected(world.session.current().github);
+          for (let more = 0; more < 2; more += 1) send.call(this, { type: 'release' }, () => {});
+        }
+        return sent;
+      });
+    } });
+    const applied = await postAction(f, { op: 'apply', token: preview.token });
+    assert.ok(atGate >= 0, 'the write gate said go');
+    assert.deepEqual(told, ['start', 'gate', 'release'], 'production told the child to release its access after the go');
+    assert.deepEqual([applied.status, /** @type {any} */ (applied.body).ok], [200, true], JSON.stringify(applied.body));
+    const status = cmdStatus({ root: fixture.root });
+    assert.equal(status.ok && status.result.installed.alpha?.source.repository, 'https://github.com/acme/past-gate',
+      'the allowed write finished');
+    assert.equal(github.requests.length, atGate, 'nothing was read after the gate');
+    assert.deepEqual(world.session.read(), sessionSignedOut('rejected'));
+  } finally {
+    await f.close();
+    fixture.cleanup();
+  }
+});
+
+test('089 T002 GitHub rejecting the access of a Reload, Add source, preview or apply signs every panel out before the answer, a rate limit keeps the sign-in, and nothing is retried or leaked', { timeout: 180_000 }, async t => {
+  const fixture = packEngineFixture();
+  const github = offlineGitHub(t, fixture);
+  github.refuse('acme/limited', 403, { 'x-ratelimit-remaining': '0' });
+  github.refuse('acme/revoked', 401);
+  publishAlpha(github, fixture, 'acme/team-packs');
+  const tokens = [sentinelToken(), sentinelToken(), sentinelToken(), sentinelToken()];
+  const world = signInWorld(t, { tokens });
+  const f = await packHttpFixture(fixture, { githubSession: world.session });
+  const secondId = `github-second-${randomUUID()}`;
+  const second = await openInstance(secondId, () => {}, null, null, null, null, world.session);
+  const events = await sessionEvents(second);
+  /** Every answer a page got, for the leak check. @type {unknown[]} */
+  const answers = [];
+  /** @template T @param {T} answer @returns {T} */
+  const kept = answer => { answers.push(answer); return answer; };
+  /** Both panels read the session as signed out because GitHub rejected its access. @param {string} label */
+  const rejectedEverywhere = async label => {
+    for (const panel of [f.instance, second]) {
+      assert.deepEqual(await sessionRoute(panel), { status: 200, body: sessionSignedOut('rejected') }, label);
+    }
+  };
+  /** @param {string} name */
+  const rowOf = async name => {
+    const row = sourceRows(kept(await discover(f))).get(name);
+    return [row?.status, row?.reason];
+  };
+  try {
+    // Reload: a rate limit is named on its row, read once, and keeps the sign-in.
+    saveSources(fixture, [remoteEntry('acme/limited')]);
+    await signInThrough(f.instance, world);
+    assert.deepEqual(await rowOf('acme/limited'), ['unavailable', 'rate_limited']);
+    assert.deepEqual(await sessionRoute(second), { status: 200, body: SESSION_SIGNED_IN }, 'a rate limit keeps the sign-in');
+    assert.equal(github.connections('acme/limited'), 1, 'no retry with either allowance');
+
+    // Reload: the rejected access is forgotten before the answer, and the other panel is told.
+    saveSources(fixture, [remoteEntry('acme/revoked')]);
+    const told = events.seen.count;
+    assert.deepEqual(await rowOf('acme/revoked'), ['unavailable', 'credential_rejected']);
+    await rejectedEverywhere('a rejected Reload');
+    await eventually(() => events.seen.count > told, 'the other panel told');
+    assert.equal(github.connections('acme/revoked'), 1, 'no retry');
+    // The next Reload is anonymous.
+    const before = github.requests.length;
+    assert.deepEqual(await rowOf('acme/revoked'), ['unavailable', 'catalog_unreachable']);
+    assert.deepEqual(github.requests.slice(before).map(request => request.authorization), [null]);
+
+    // Add source: the same, and nothing is saved; a rate-limited one keeps the sign-in.
+    github.refuse('acme/new-revoked', 401);
+    github.refuse('acme/new-limited', 429);
+    const sources = fs.readFileSync(sourcesFile(fixture));
+    await signInThrough(f.instance, world);
+    const limitedAdd = kept(await addSource(f, fixture, 'https://github.com/acme/new-limited'));
+    assert.deepEqual([limitedAdd.status, limitedAdd.body.error], [503, 'rate_limited']);
+    assert.equal(world.session.read().state, 'signed_in');
+    const rejectedAdd = kept(await addSource(f, fixture, 'https://github.com/acme/new-revoked'));
+    assert.deepEqual([rejectedAdd.status, rejectedAdd.body.error], [503, 'credential_rejected']);
+    await rejectedEverywhere('a rejected Add source');
+    assert.deepEqual(fs.readFileSync(sourcesFile(fixture)), sources, 'nothing was saved');
+
+    // An install preview names the reason; a rate limit keeps the sign-in, a rejection ends it.
+    saveSources(fixture, [remoteEntry('acme/limited'), remoteEntry('acme/revoked'), remoteEntry('acme/team-packs')]);
+    await signInThrough(f.instance, world);
+    for (const [name, reason] of [['acme/limited', 'rate_limited'], ['acme/revoked', 'credential_rejected']]) {
+      const preview = kept(await postAction(f, { op: 'preview', operation: 'install', name: 'alpha', source: sharedKey(fixture, remoteEntry(name)) }));
+      assert.deepEqual([preview.status, preview.body.token, preview.body.preview, preview.body.reason], [200, null, null, reason], name);
+    }
+    await rejectedEverywhere('a rejected preview');
+
+    // An install apply answers Compose's own outcome with the reason, and nothing is installed.
+    await signInThrough(f.instance, world);
+    const preview = kept(await previewAlpha(f, 'install', sharedKey(fixture, remoteEntry('acme/team-packs'))));
+    github.refuse('acme/team-packs', 401);
+    const applied = kept(await postAction(f, { op: 'apply', token: preview.token }));
+    assert.deepEqual([applied.status, applied.body.ok, applied.body.mutation, applied.body.reason], [200, false, 'none', 'credential_rejected']);
+    await rejectedEverywhere('a rejected apply');
+    const status = cmdStatus({ root: fixture.root });
+    assert.deepEqual(status.ok && Object.keys(status.result.installed), [], 'nothing was installed');
+
+    // Four sign-ins, each forgotten at most once, and no token, device code or provider text in any answer or event.
+    assert.equal(world.requests.filter(request => request.endpoint === 'code').length, 4);
+    const shown = [JSON.stringify(answers), events.seen.text].join('\n');
+    assert.deepEqual([...tokens, world.deviceCode, GITHUB_PROVIDER_TEXT].map(needle => occurrences(shown, needle)), [0, 0, 0, 0, 0, 0]);
+  } finally {
+    events.close();
+    await closeInstance(secondId);
+    await f.close();
+    fixture.cleanup();
+  }
+});
+
+test('089 T006 a rate limit names the allowance the server\'s read used: a discovery joined after a sign-in is anonymous for both requests, and Add source, a preview, and an apply after a sign-out say whose allowance they read with', { timeout: 180_000 }, async t => {
+  const fixture = packEngineFixture();
+  const github = offlineGitHub(t, fixture);
+  const limited = { 'x-ratelimit-remaining': '0' };
+  github.refuse('acme/limited', 403, limited);
+  publishAlpha(github, fixture, 'acme/team-packs');
+  const token = sentinelToken();
+  const world = signInWorld(t, { tokens: [token] });
+  const f = await packHttpFixture(fixture, { githubSession: world.session });
+  /** Every answer a page got, for the leak check. @type {unknown[]} */
+  const answers = [];
+  /** @template T @param {T} answer @returns {T} */
+  const kept = answer => { answers.push(answer); return answer; };
+  /** A discovery's status, allowance and the limited source's row. @param {{ status: number | undefined, body: any }} answer */
+  const read = answer => [answer.status, answer.body.githubLogin, sourceRows(answer.body).get('acme/limited')?.reason];
+  const limitedRequests = () => github.requests.filter(request => request.repository === 'acme/limited')
+    .map(request => request.authorization !== null);
+  try {
+    // A discovery that started signed out is joined by a request made after the sign-in: one anonymous read answers both,
+    // and both are told so. The next discovery reads with the account's allowance and names it.
+    saveSources(fixture, [remoteEntry('acme/limited')]);
+    github.gate('acme/limited');
+    const first = discoverAnswer(f);
+    await github.connected('acme/limited');
+    await signInThrough(f.instance, world);
+    const joined = discoverAnswer(f);
+    await eventually(() => f.instance.catalogRead?.readers === 2, 'the second request joins the running discovery');
+    github.release('acme/limited');
+    assert.deepEqual([read(kept(await first)), read(kept(await joined))], [[200, null, 'rate_limited'], [200, null, 'rate_limited']]);
+    assert.deepEqual(limitedRequests(), [false], 'one anonymous read answered both requests');
+    assert.deepEqual(read(kept(await discoverAnswer(f))), [200, 'octocat', 'rate_limited']);
+    assert.deepEqual(limitedRequests(), [false, true]);
+
+    // Add source and an install preview refused for the rate limit name the account; other answers name no allowance.
+    github.refuse('acme/new-limited', 429);
+    const added = kept(await addSource(f, fixture, 'https://github.com/acme/new-limited'));
+    assert.deepEqual([added.status, added.body.error, added.body.githubLogin], [503, 'rate_limited', 'octocat']);
+    saveSources(fixture, [remoteEntry('acme/limited'), remoteEntry('acme/team-packs')]);
+    const refused = kept(await previewAlpha(f, 'install', sharedKey(fixture, remoteEntry('acme/limited'))));
+    assert.deepEqual([refused.token, refused.reason, refused.githubLogin], [null, 'rate_limited', 'octocat']);
+    const preview = kept(await previewAlpha(f, 'install', sharedKey(fixture, remoteEntry('acme/team-packs'))));
+    assert.deepEqual([typeof preview.token, 'githubLogin' in preview], ['string', false], JSON.stringify(preview));
+
+    // That preview read with the access is applied after the sign-out: the apply reads anonymously, and says so.
+    assert.deepEqual(await sessionRoute(f.instance, { op: 'sign-out' }), { status: 200, body: sessionSignedOut('signed_out') });
+    github.refuse('acme/team-packs', 403, limited);
+    const applied = kept(await postAction(f, { op: 'apply', token: preview.token }));
+    assert.deepEqual([applied.status, applied.body.ok, applied.body.mutation, applied.body.reason, applied.body.githubLogin],
+      [200, false, 'none', 'rate_limited', null]);
+    assert.equal(occurrences(JSON.stringify(answers), token), 0, 'no answer holds the access');
+  } finally {
+    await f.close();
+    fixture.cleanup();
+  }
+});
+
+// It needs all four reader slots, so it runs alone (see `isolatedTest`).
+isolatedTest('089 T002 GitHub rejecting a Reload\'s access for one source stops every sibling still reading with it, so no sibling or queued source asks GitHub anything more, even when GitHub answers the siblings as the rejection is reported, and the Reload answers 200 with its folder read and every GitHub source rejected', { timeout: 300_000 }, async t => {
+  const fixture = packFixture();
+  fixture.profile({});
+  const github = offlineGitHub(t, fixture);
+  const siblings = ['held-1', 'held-2', 'held-3'];
+  const queued = ['queued-1', 'queued-2', 'queued-3'];
+  for (const name of [...siblings, ...queued]) github.publish(`acme/${name}`, [name]);
+  github.refuse('acme/revoked', 401);
+  const folder = localSource(fixture, 'folder-packs', ['folder-pack']);
+  // Seven GitHub sources, then a folder. The default read, the rejected source and two siblings take the four reader
+  // slots, the third sibling takes the default's, and the queued sources and the folder wait for one.
+  const names = ['revoked', ...siblings, ...queued];
+  saveSources(fixture, [...names.map(name => remoteEntry(`acme/${name}`)), localEntry(folder)]);
+  // Ten rounds with GitHub's answers at the stand-in's own speed, then ten with every answer from memory.
+  const ROUNDS = 10;
+  // Each round signs in afresh, with an access of its own.
+  const tokens = Array.from({ length: 2 * ROUNDS }, () => sentinelToken());
+  let signIns = 0;
+  const world = signInWorld(t, { tokens });
+  const f = await packHttpFixture(fixture, { githubSession: world.session });
+  const secondId = `github-second-${randomUUID()}`;
+  const second = await openInstance(secondId, () => {}, null, null, null, null, world.session);
+  const events = await sessionEvents(second);
+  const spy = spawnSpy(t);
+  /** The source a reader reads, by the index its request names: a saved source's name, else `default`. @param {any} reader */
+  const sourceOf = reader => {
+    const request = readerRequest(reader);
+    return request.op === 'source' ? names[request.index] ?? 'folder-packs' : request.op;
+  };
+  /**
+   * The round that runs: when it started, how many requests GitHub had then and when the controller reported the
+   * rejection, and how many siblings still read at that report.
+   * @type {{ started: number, requests: number, reported: number, reading: number } | null}
+   */
+  let round = null;
+  /** The readers of `sources` that the running round started. @param {string[]} sources */
+  const readersOf = sources => spy.readers().filter(reader => round !== null && reader.spawnedAt >= round.started
+    && sources.includes(sourceOf(reader)));
+  world.session.subscribe(() => {
+    if (!round || round.reported >= 0 || world.session.read().outcome !== 'rejected') return;
+    round.reported = github.requests.length;
+    round.reading = readersOf(siblings).filter(reader => reader.exitedAt === null).length;
+    // GitHub answers every sibling's held request successfully, at once, inside the controller's own report.
+    for (const name of siblings) github.release(`acme/${name}`);
+  });
+  /** One rejection: sign in, Reload, and GitHub rejects the access for one source. @param {string} label */
+  const rejectOnce = async label => {
+    const token = tokens[signIns];
+    signIns += 1;
+    // The rejected source's request and each sibling's first API request wait, connected, until released.
+    for (const name of ['revoked', ...siblings]) github.gate(`acme/${name}`);
+    await signInThrough(f.instance, world);
+    const current = { started: performance.now(), requests: github.requests.length, reported: -1, reading: -1 };
+    round = current;
+    const told = events.seen.count;
+    const reading = discoverAnswer(f);
+    await eventually(() => ['revoked', ...siblings].every(name => github.records.some(record =>
+      record.repository === `acme/${name}` && record.acceptedAt >= current.started)), `${label}: the four GitHub readers to read`);
+    // The rejected source and the three siblings read with the access, and the queued sources wait for a slot.
+    assert.deepEqual(readersOf(['revoked', ...siblings]).map(reader => [sourceOf(reader), startedWith(reader, token)]).sort(),
+      [['held-1', ['access']], ['held-2', ['access']], ['held-3', ['access']], ['revoked', ['access']]], label);
+    assert.deepEqual(readersOf([...queued, 'folder-packs']), [], `${label}: the queued sources and the folder wait`);
+
+    // GitHub rejects the access for one source.
+    github.release('acme/revoked');
+    const answer = await reading;
+    assert.ok(current.reported >= 0, `${label}: the controller reported the rejection`);
+    assert.equal(current.reading, 3, `${label}: all three siblings were still reading with the access when it was rejected`);
+    assert.equal(answer.status, 200, `${label}: ${JSON.stringify(answer.body)}`);
+    // Not one request reached GitHub after the report: no sibling's next request, with the access or without it, and
+    // no queued source's. Only the requests already on their way when the report came were answered.
+    assert.deepEqual(github.requests.slice(current.reported).map(request =>
+      `${request.origin} ${request.repository} ${request.authorization === null ? 'anonymous' : 'credentialed'}`), [], label);
+    assert.deepEqual(queued.map(name => github.requests.slice(current.requests).filter(request => request.repository === `acme/${name}`).length),
+      [0, 0, 0], `${label}: no queued source asked GitHub anything`);
+    // The siblings were answered while they still ran, so each that got its answer could have asked on. At the
+    // stand-in's own speed a sibling's stop can come first; the caller reports how often.
+    const answered = readersOf(siblings).filter(reader => github.records.some(record => record.acceptedAt >= current.started
+      && record.repository === `acme/${sourceOf(reader)}` && record.answeredAt != null && reader.exitedAt !== null
+      && record.answeredAt < reader.exitedAt));
+    t.diagnostic(`${label}: ${answered.length} of 3 siblings got their answer before they ended; exit codes ${
+      readersOf(siblings).map(reader => reader.child.exitCode).join('/')}`);
+    // Every GitHub source answers the rejection as its own row; the folder was read; coverage is partial, not lost.
+    const rows = sourceRows(answer.body);
+    assert.deepEqual(names.map(name => [name, rows.get(`acme/${name}`)?.status, rows.get(`acme/${name}`)?.reason]),
+      names.map(name => [name, 'unavailable', 'credential_rejected']), label);
+    assert.deepEqual([rows.get('folder-packs')?.status, rows.get('folder-packs')?.count], ['read', 1], label);
+    assert.equal(answer.body.coverage.catalog.state, 'partial', label);
+    // No queued source's reader started, and the folder's, started after the rejection, was given nothing.
+    assert.deepEqual(readersOf([...queued, 'folder-packs']).map(reader => [sourceOf(reader), startedWith(reader, token)]),
+      [['folder-packs', ['none']]], label);
+    // Every stopped reader's root is gone, so no stop was left unconfirmed.
+    assert.deepEqual(fs.readdirSync(fixture.scratch).filter(name => name.startsWith('dude-canvas-packs-')), [], `${label}: no reader root left`);
+    // Every panel was told and reads the session as signed out by the rejection, and a read that asks now is given nothing.
+    for (const panel of [f.instance, second]) {
+      assert.deepEqual(await sessionRoute(panel), { status: 200, body: sessionSignedOut('rejected') }, `${label}: every panel reads it`);
+    }
+    await eventually(() => events.seen.count > told, `${label}: the other panel told`);
+    assert.deepEqual(world.session.current(), { github: null, forgotten: null }, label);
+    assert.equal(github.requests.slice(current.requests).filter(request => request.repository === 'acme/revoked').length, 1,
+      `${label}: nothing was retried`);
+    assert.equal(occurrences([JSON.stringify(answer.body), events.seen.text].join('\n'), token), 0, label);
+    return answered.length;
+  };
+  try {
+    let answered = 0;
+    for (let index = 1; index <= ROUNDS; index += 1) answered += await rejectOnce(`natural speed, round ${index}`);
+    // At the stand-in's own speed, production's tree kill often ends a sibling before Git has produced its answer, so
+    // this count varies from run to run; the rounds from memory below always answer every sibling first.
+    t.diagnostic(`natural speed: ${answered} of ${3 * ROUNDS} siblings got their answer before they ended`);
+    // A GitHub that answers in about a millisecond: once a Reload, now anonymous, has read every repository whole,
+    // every answer the siblings are given comes from memory.
+    github.remember();
+    round = null;
+    const primed = await discoverAnswer(f);
+    assert.equal(primed.status, 200, JSON.stringify(primed.body));
+    assert.deepEqual([...siblings, ...queued].map(name => sourceRows(primed.body).get(`acme/${name}`)?.status),
+      Array(6).fill('read'), 'every published repository was read whole once');
+    for (let index = 1; index <= ROUNDS; index += 1) {
+      const label = `answers from memory, round ${index}`;
+      assert.ok(await rejectOnce(label) > 0, `${label}: GitHub's answer reached a sibling before it ended`);
+    }
+  } finally {
+    events.close();
+    await closeInstance(secondId);
+    await f.close();
+    fixture.cleanup();
+  }
+});
+
+// It needs all four reader slots, so it runs alone (see `isolatedTest`).
+isolatedTest('089 T002 a Reload asked for while another still stops the GitHub reads whose access was rejected waits for that read without ending it, and then reads every source afresh, anonymously', { timeout: 120_000 }, async t => {
+  const fixture = packFixture();
+  fixture.profile({});
+  const github = offlineGitHub(t, fixture);
+  github.publish('acme/held', ['held']);
+  github.refuse('acme/revoked', 401);
+  for (const name of ['revoked', 'held']) github.gate(`acme/${name}`);
+  const folder = localSource(fixture, 'folder-packs', ['folder-pack']);
+  saveSources(fixture, [remoteEntry('acme/revoked'), remoteEntry('acme/held'), localEntry(folder)]);
+  const world = signInWorld(t);
+  const f = await packHttpFixture(fixture, { githubSession: world.session });
+  /** A Reload asked for as the rejection is reported, while the first read is still stopping the held sibling. @type {Promise<{ status: number | undefined, body: any }> | null} */
+  let later = null;
+  let reported = -1;
+  world.session.subscribe(() => {
+    if (later || world.session.read().outcome !== 'rejected') return;
+    reported = github.requests.length;
+    later = discoverAnswer(f);
+  });
+  const rowsOf = (/** @type {any} */ body) => {
+    const rows = sourceRows(body);
+    return ['acme/revoked', 'acme/held', 'folder-packs'].map(name => [name, rows.get(name)?.status, rows.get(name)?.reason]);
+  };
+  try {
+    await signInThrough(f.instance, world);
+    const first = discoverAnswer(f);
+    for (const name of ['revoked', 'held']) await github.connected(`acme/${name}`);
+    github.release('acme/revoked');
+    // The later Reload did not end the first: it answers every source with its own outcome.
+    const answer = await first;
+    assert.equal(answer.status, 200, JSON.stringify(answer.body));
+    assert.deepEqual(rowsOf(answer.body), [['acme/revoked', 'unavailable', 'credential_rejected'],
+      ['acme/held', 'unavailable', 'credential_rejected'], ['folder-packs', 'read', null]]);
+    assert.ok(later, 'a later Reload was asked for as the rejection was reported');
+    // It read every source again once the first had answered, anonymously, rather than share that answer.
+    github.release('acme/held');
+    const again = await later;
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.deepEqual(rowsOf(again.body), [['acme/revoked', 'unavailable', 'catalog_unreachable'],
+      ['acme/held', 'read', null], ['folder-packs', 'read', null]]);
+    const reread = github.requests.slice(reported);
+    assert.deepEqual([...new Set(reread.map(request => request.repository))].sort(), ['acme/held', 'acme/revoked']);
+    assert.deepEqual([...new Set(reread.map(request => request.authorization))], [null], 'every later request was anonymous');
+  } finally {
+    await f.close();
+    fixture.cleanup();
+  }
+});
+
+test('089 T002 a GitHub reader or pack action child given access that was released while its operation goes on reads nothing, rather than read anonymously, and answers credential_rejected', { timeout: 90_000 }, async t => {
+  const fixture = packEngineFixture();
+  const github = offlineGitHub(t, fixture);
+  publishAlpha(github, fixture, 'acme/team-packs');
+  publishAlpha(github, fixture, 'acme/more');
+  const folder = artifactSource(fixture, 'folder-packs');
+  saveSources(fixture, [remoteEntry('acme/team-packs'), localEntry(folder)]);
+  const spy = spawnSpy(t);
+  // As the session leaves an access GitHub rejected for another read: released, while this operation's signal goes on.
+  const access = new GitHubAccess(sentinelToken());
+  access.release();
+  const signal = new AbortController().signal;
+  try {
+    // A discovery still reads the library and the folder, but not the repository.
+    const rows = sourceRows(await readPacks(fixture.root, signal, { discover: true, github: access }));
+    assert.deepEqual([rows.get('acme/team-packs')?.status, rows.get('acme/team-packs')?.reason], ['unavailable', 'credential_rejected']);
+    assert.equal(rows.get('folder-packs')?.status, 'read');
+    // Add source refuses the repository without reading it, and saves nothing.
+    const sources = fs.readFileSync(sourcesFile(fixture));
+    const added = await addPackSource(fixture.root, signal, { location: 'https://github.com/acme/more', sourcesRevision: savedRevision(fixture) },
+      { github: access });
+    assert.deepEqual([added.ok, /** @type {any} */ (added).code], [false, 'credential_rejected']);
+    assert.deepEqual(fs.readFileSync(sourcesFile(fixture)), sources, 'nothing was saved');
+    // An install preview from the saved repository starts no child.
+    const { outcome } = await runPackAction(fixture.root, signal, { op: 'preview', operation: 'install', name: 'alpha',
+      source: sharedKey(fixture, remoteEntry('acme/team-packs')) }, { github: access });
+    assert.deepEqual([outcome.ok, /** @type {any} */ (outcome).mutation, /** @type {any} */ (outcome).reason], [false, 'none', 'credential_rejected']);
+    assert.equal(actionChildren(spy).length, 0, 'no pack action child started');
+    assert.deepEqual(spy.readers().map(reader => readerRequest(reader)).map(request => request.op === 'source' ? `source ${request.index}` : request.op).sort(),
+      ['default', 'source 1'], 'only the library\'s and the folder\'s readers started');
+    assert.deepEqual(['acme/team-packs', 'acme/more'].map(name => github.connections(name)), [0, 0],
+      'GitHub was asked nothing, with the access or anonymously');
+  } finally { fixture.cleanup(); }
+});
+
+/**
+ * Hold each of `repositories` at its last request, the recheck of its ref, which a GitHub catalog read asks only once
+ * it has read everything else. A reader released there finishes its whole read without asking anything more.
+ * @param {ReturnType<typeof offlineGitHub>} github @param {string[]} repositories `owner/repo`, in lower case
+ */
+function holdAtRecheck(github, repositories) {
+  /** @type {Map<string, number>} */
+  const lookups = new Map();
+  github.onRequest(request => {
+    if (!repositories.includes(request.repository) || !request.path.endsWith('/commits/main')) return;
+    const seen = (lookups.get(request.repository) ?? 0) + 1;
+    lookups.set(request.repository, seen);
+    if (seen === 2) github.gate(request.repository);
+  });
+}
+
+/**
+ * Change how one catalog reader delivers its answer, as the negative cases of a clean finish need: `drop` sends none
+ * and exits as if it had, `kept` marks it as Compose's kept material, and `descendant` first starts a process of its
+ * own that outlives the reader, then holds its answer until its parent's stop marker appears, and says so with the file
+ * `answer-held` in its own root. Node preloads this module into every child; only the reader whose request names
+ * `target` (a saved source's index, or `default`) acts. The descendant ends once `quit` runs, or after a minute.
+ * @param {import('node:test').TestContext} t
+ * @param {ReturnType<typeof packFixture>} fixture
+ * @param {'drop' | 'kept' | 'descendant'} mode
+ * @param {number | 'default'} target
+ */
+function readerAnswer(t, fixture, mode, target) {
+  const folder = path.join(fixture.temporary, `reader-answer-${mode}`);
+  fs.mkdirSync(folder);
+  const record = path.join(folder, 'descendant.json');
+  const stopFile = path.join(folder, 'quit');
+  const preload = path.join(folder, 'reader-answer.mjs');
+  const descendant = "const fs = require('node:fs'); setInterval(() => { if (fs.existsSync(process.argv[1])) process.exit(0); }, 50); "
+    + 'setTimeout(() => process.exit(0), 60000);';
+  fs.writeFileSync(preload, [
+    "import childProcess from 'node:child_process';",
+    "import fs from 'node:fs';",
+    "import os from 'node:os';",
+    "import path from 'node:path';",
+    `const request = process.env.${CATALOG_REQUEST_ENV};`,
+    `const target = ${JSON.stringify(target)};`,
+    "const reader = typeof process.send === 'function' && process.argv.some(arg => path.basename(arg) === 'catalog-reader.mjs');",
+    "if (reader && (request === undefined ? target === 'default' : JSON.parse(request).index === target)) {",
+    '  const send = process.send.bind(process);',
+    '  process.send = (message, ...rest) => {',
+    "    if (typeof message?.ok !== 'boolean') return send(message, ...rest);",
+    `    const mode = ${JSON.stringify(mode)};`,
+    "    if (mode === 'drop') {",
+    "      rest.find(item => typeof item === 'function')?.(null);",
+    '      return true;',
+    '    }',
+    "    if (mode === 'kept') return send({ ...message, kept: true }, ...rest);",
+    `    const child = childProcess.spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}, ${JSON.stringify(stopFile)}],`,
+    "      { detached: true, stdio: 'ignore', windowsHide: true, cwd: path.dirname(process.execPath), env: { ...process.env, NODE_OPTIONS: '' } });",
+    '    child.unref();',
+    `    fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ pid: child.pid }));`,
+    "    fs.writeFileSync(path.join(os.tmpdir(), 'answer-held'), '');",
+    `    const marker = path.join(os.tmpdir(), ${JSON.stringify(CATALOG_STOP_MARKER)});`,
+    '    const wait = () => (fs.existsSync(marker) ? send(message, ...rest) : setTimeout(wait, 20));',
+    '    wait();',
+    '    return true;',
+    '  };',
+    '}',
+    '',
+  ].join('\n'));
+  t.after(preloadIntoChildren(preload));
+  // The fixture's own cleanup may run first and remove the folder; a case with a descendant tells it to quit before that.
+  const quit = () => { if (fs.existsSync(folder)) fs.writeFileSync(stopFile, ''); };
+  t.after(quit);
+  return {
+    /** The process ID of the descendant the reader started, once it did. */
+    descendant: () => (fs.existsSync(record) ? /** @type {number} */ (JSON.parse(fs.readFileSync(record, 'utf8')).pid) : null),
+    quit,
+  };
+}
+
+/** Whether a process with this ID runs. @param {number} pid */
+function running(pid) {
+  try { return process.kill(pid, 0); }
+  catch (error) { return /** @type {NodeJS.ErrnoException} */ (error).code !== 'ESRCH'; }
+}
+
+/** @type {Array<[string, (reader: import('node:child_process').ChildProcess, fail: () => void) => void]>} */
+const CLEAN_FINISH_ORDERS = [
+  // As taskkill answers 128 when the reader ended before it looked: the failure comes after production saw the close.
+  ['its close comes before its failed tree kill', (reader, fail) => { reader.once('close', () => setImmediate(fail)); }],
+  // The failure comes as the reader exits, before production sees it close.
+  ['its failed tree kill comes as it exits, before its close', (reader, fail) => { reader.once('exit', () => fail()); }],
+];
+// Each order needs all four reader slots, so each runs alone (see `isolatedTest`).
+for (const [order, kill] of CLEAN_FINISH_ORDERS) {
+  isolatedTest(`089 T002 a GitHub sibling that the rejection stopped but that finishes its whole read before its tree kill finds it is still a confirmed stop when ${order}: it answers credential_rejected, its root is removed and four readers can still read at once`, {
+    timeout: 90_000, skip: process.platform !== 'win32' && 'taskkill stops reader trees only on Windows',
+  }, async t => {
+    const fixture = packFixture();
+    fixture.profile({});
+    const github = offlineGitHub(t, fixture);
+    const siblings = ['held-1', 'held-2', 'held-3'];
+    for (const sibling of siblings) github.publish(`acme/${sibling}`, [sibling]);
+    github.refuse('acme/revoked', 401);
+    github.gate('acme/revoked');
+    // Each sibling waits, connected, at its last request, so released it finishes its whole read without another.
+    holdAtRecheck(github, siblings.map(sibling => `acme/${sibling}`));
+    const folder = localSource(fixture, 'folder-packs', ['folder-pack']);
+    const names = ['revoked', ...siblings];
+    saveSources(fixture, [...names.map(source => remoteEntry(`acme/${source}`)), localEntry(folder)]);
+    const world = signInWorld(t);
+    const f = await packHttpFixture(fixture, { githubSession: world.session });
+    const spy = spawnSpy(t);
+    /** The saved source a reader reads. @param {any} reader */
+    const sourceOf = reader => names[readerRequest(reader).index] ?? 'other';
+    // Production's tree kill finds nothing until the sibling ended by itself, then fails, in this order.
+    const kills = taskkillSpy(t, (args, fail, run) => {
+      const reader = spy.readers().find(({ child }) => String(child.pid) === args[1]);
+      if (reader && siblings.includes(sourceOf(reader))) kill(reader.child, fail);
+      else run();
+    });
+    let reported = -1;
+    world.session.subscribe(() => {
+      if (reported >= 0 || world.session.read().outcome !== 'rejected') return;
+      reported = github.requests.length;
+      // GitHub answers every sibling's last request at once, inside the controller's report.
+      for (const sibling of siblings) github.release(`acme/${sibling}`);
+    });
+    try {
+      await signInThrough(f.instance, world);
+      const reading = discoverAnswer(f);
+      for (const source of names) await github.connected(`acme/${source}`);
+      github.release('acme/revoked');
+      const answer = await reading;
+      assert.equal(answer.status, 200, JSON.stringify(answer.body));
+      // Each sibling was stopped, got its last answer, finished its whole read and exited by itself with code 0 and
+      // no signal, and its tree kill then failed.
+      const stopped = spy.readers().filter(reader => kills.calls.some(call => call.args[1] === String(reader.child.pid)));
+      assert.deepEqual(stopped.map(sourceOf).sort(), siblings, 'one tree kill for each sibling');
+      assert.deepEqual(stopped.map(reader => [reader.child.exitCode, reader.child.signalCode]), siblings.map(() => [0, null]));
+      assert.deepEqual(kills.calls.map(call => call.error !== null), [true, true, true], 'every tree kill failed');
+      assert.equal(github.records.filter(record => siblings.some(sibling => record.repository === `acme/${sibling}`)
+        && record.answeredAt != null).length, 3, 'GitHub answered each sibling\'s last request');
+      assert.deepEqual(github.requests.slice(reported), [], 'nothing more was asked after the rejection was reported');
+      // Every GitHub source answers the rejection as its own row; the folder was read; coverage is partial.
+      const rows = sourceRows(answer.body);
+      assert.deepEqual(names.map(source => [source, rows.get(`acme/${source}`)?.status, rows.get(`acme/${source}`)?.reason]),
+        names.map(source => [source, 'unavailable', 'credential_rejected']));
+      assert.deepEqual([rows.get('folder-packs')?.status, rows.get('folder-packs')?.count], ['read', 1]);
+      assert.equal(answer.body.coverage.catalog.state, 'partial');
+      // No root was kept, and no slot: four GitHub readers, now anonymous, each hold a request at once.
+      assert.deepEqual(fs.readdirSync(fixture.scratch).filter(entry => entry.startsWith('dude-canvas-packs-')), [], 'no reader root left');
+      for (const source of names) github.gate(`acme/${source}`);
+      const again = discoverAnswer(f);
+      try { await eventually(() => github.open === 4, 'four readers holding a request at once'); }
+      finally { for (const source of names) github.release(`acme/${source}`); }
+      const reread = await again;
+      assert.equal(reread.status, 200, JSON.stringify(reread.body));
+      assert.deepEqual(siblings.map(sibling => sourceRows(reread.body).get(`acme/${sibling}`)?.status), ['read', 'read', 'read']);
+    } finally {
+      await f.close();
+      fixture.cleanup();
+    }
+  });
+}
+
+// Each unconfirmed stop keeps its reader's slot on purpose, so this runs alone (see `isolatedTest`); its cases keep at
+// most three of the four, and each needs only one.
+isolatedTest('089 T002 only a GitHub reader\'s whole clean finish confirms its stop without its tree kill: without its answer, with a failed stop marker, or with material Compose kept, the stop stays unconfirmed and keeps its root', {
+  timeout: 120_000, skip: process.platform !== 'win32' && 'taskkill stops reader trees only on Windows',
+}, async t => {
+  /**
+   * Stop a GitHub reader held at its last request by the end of its access, let it finish by itself, and let its tree
+   * kill fail once it closed. `change` changes one part of that clean finish.
+   * @param {import('node:test').TestContext} t
+   * @param {(fixture: ReturnType<typeof packFixture>, spy: ReturnType<typeof spawnSpy>) => void} change
+   */
+  const stopGitHubReader = async (t, change) => {
+    const fixture = packFixture();
+    fixture.profile({});
+    const github = offlineGitHub(t, fixture);
+    github.publish('acme/target', ['target']);
+    holdAtRecheck(github, ['acme/target']);
+    saveSources(fixture, [remoteEntry('acme/target')]);
+    t.after(() => fixture.cleanup());
+    const spy = spawnSpy(t);
+    const kills = taskkillSpy(t, (_args, fail) => {
+      const [reader] = spy.readers().filter(call => readerRequest(call).op === 'source');
+      reader.child.once('close', () => setImmediate(fail));
+    });
+    change(fixture, spy);
+    const forgotten = new AbortController();
+    const reading = readPacks(fixture.root, new AbortController().signal,
+      { discover: true, github: new GitHubAccess(sentinelToken()), forgotten: forgotten.signal });
+    await github.connected('acme/target');
+    forgotten.abort();
+    github.release('acme/target');
+    const snapshot = await reading;
+    const [reader] = spy.readers().filter(call => readerRequest(call).op === 'source');
+    const row = sourceRows(snapshot).get('acme/target');
+    return { row: [row?.status, row?.reason], exit: [reader.child.exitCode, reader.child.signalCode],
+      killed: kills.calls.map(call => call.error !== null), kept: fs.readdirSync(fixture.scratch).includes(path.basename(reader.options.env.TMP)) };
+  };
+
+  await t.test('the whole clean finish: confirmed, and the root removed', async t => {
+    assert.deepEqual(await stopGitHubReader(t, () => {}),
+      { row: ['unavailable', 'credential_rejected'], exit: [0, null], killed: [true], kept: false });
+  });
+  await t.test('a GitHub reader that exits cleanly without its answer: unconfirmed', async t => {
+    assert.deepEqual(await stopGitHubReader(t, fixture => readerAnswer(t, fixture, 'drop', 0)),
+      { row: ['unavailable', 'catalog_cleanup_failed'], exit: [0, null], killed: [true], kept: true });
+  });
+  await t.test('a GitHub reader whose stop marker could not be written: unconfirmed', async t => {
+    assert.deepEqual(await stopGitHubReader(t, () => {
+      const spawn = childProcess.spawn;
+      // A folder where the marker goes makes production's marker write fail for this reader alone.
+      t.mock.method(childProcess, 'spawn', /** @this {any} */ function (command, args, options) {
+        if (args.includes(READER) && options.env[CATALOG_REQUEST_ENV]) fs.mkdirSync(path.join(options.env.TMP, CATALOG_STOP_MARKER));
+        return spawn.apply(this, arguments);
+      });
+    }), { row: ['unavailable', 'catalog_cleanup_failed'], exit: [0, null], killed: [true], kept: true });
+  });
+  await t.test('a GitHub reader whose answer says Compose kept material: unconfirmed', async t => {
+    assert.deepEqual(await stopGitHubReader(t, fixture => readerAnswer(t, fixture, 'kept', 0)),
+      { row: ['unavailable', 'catalog_cleanup_failed'], exit: [0, null], killed: [true], kept: true });
+  });
+});
+
+// The unconfirmed stop keeps its reader's slot on purpose, so this runs alone (see `isolatedTest`).
+isolatedTest('089 T002 a folder reader whose descendant outlives it stays an unconfirmed stop that keeps its root, even though it answered and exited by itself after its tree kill missed it, because only a GitHub reader starts no process of its own', {
+  timeout: 60_000, skip: process.platform !== 'win32' && 'taskkill stops reader trees only on Windows',
+}, async t => {
+  const fixture = packFixture();
+  fixture.profile({});
+  fixture.catalog(['alpha']);
+  const changed = readerAnswer(t, fixture, 'descendant', 'default');
+  t.after(() => fixture.cleanup());
+  const spy = spawnSpy(t);
+  const kills = taskkillSpy(t, (_args, fail) => { spy.readers()[0].child.once('close', () => setImmediate(fail)); });
+  const reading = readPacks(fixture.root, new AbortController().signal);
+  await eventually(() => spy.readers().length === 1
+    && fs.existsSync(path.join(spy.readers()[0].options.env.TMP, 'answer-held')), 'the reader to hold its answer');
+  const [reader] = spy.readers();
+  // The reader's root reaches its observed bound, which stops it; then it answers and exits by itself.
+  outgrowRoot(reader.options.env.TMP);
+  const snapshot = await reading;
+  const pid = changed.descendant();
+  try {
+    assert.deepEqual(snapshot.coverage.catalog, { state: 'unavailable', reason: 'catalog_cleanup_failed',
+      message: 'The catalog reader could not confirm process cleanup.' });
+    assert.deepEqual([reader.child.exitCode, reader.child.signalCode], [0, null], 'the reader answered and exited by itself');
+    assert.deepEqual(kills.calls.map(call => call.error !== null), [true]);
+    assert.ok(fs.readdirSync(fixture.scratch).includes(path.basename(reader.options.env.TMP)), 'the root was kept');
+    assert.ok(pid !== null && running(pid), 'the reader\'s descendant outlived it');
+  } finally {
+    changed.quit();
+    if (pid !== null) await eventually(() => !running(pid), 'the descendant to end');
+  }
+});
+
+test('089 T002 a child told to release its access before its start message reads nothing, never anonymously, and answers credential_rejected, and repeated releases or starts change nothing', { timeout: 120_000 }, async t => {
+  const fixture = packEngineFixture();
+  const github = offlineGitHub(t, fixture);
+  publishAlpha(github, fixture, 'acme/team-packs');
+  const revision = saveSources(fixture, [remoteEntry('acme/team-packs')]);
+  // As `packs.mjs` launches each: a Git home directly in the child's own temporary root, and its closed request.
+  const home = path.join(fixture.scratch, 'home');
+  fs.mkdirSync(home);
+  const reader = { [CATALOG_REQUEST_ENV]: JSON.stringify({ op: 'source', index: 0, key: sharedKey(fixture, remoteEntry('acme/team-packs')),
+    revision, document: 'configured', list: true }) };
+  const action = { DUDE_CANVAS_PACK_ACTION: JSON.stringify({ op: 'preview', operation: 'install', name: 'alpha',
+    source: 'https://github.com/acme/team-packs', ref: 'main', fetch: true }) };
+  const token = sentinelToken();
+  /**
+   * Run `script` as `packs.mjs` launches it, send it `messages` in order, and wait for it to end. `between` runs after
+   * the first `split` messages, before the rest.
+   * @param {string} script @param {Record<string, string>} request @param {any[]} messages
+   * @param {{ split?: number, between?: () => Promise<void> }} [pause]
+   */
+  const run = async (script, request, messages, { split = messages.length, between } = {}) => {
+    const child = fork(script, [fixture.root], { cwd: fixture.root, execArgv: [], silent: true,
+      env: { ...process.env, [CATALOG_GIT_HOME_ENV]: home, ...request } });
+    /** @type {any[]} */
+    const answers = [];
+    child.on('message', message => { answers.push(message); });
+    child.stdout?.resume();
+    child.stderr?.resume();
+    const exited = new Promise(resolve => child.once('exit', code => resolve(code)));
+    for (const message of messages.slice(0, split)) child.send(message);
+    await between?.();
+    for (const message of messages.slice(split)) child.send(message);
+    const code = await Promise.race([exited, new Promise(resolve => setTimeout(() => resolve('running'), 30_000))]);
+    if (code === 'running') child.kill('SIGKILL');
+    return { code, answers };
+  };
+  const RELEASE = { type: 'release' };
+  try {
+    const refused = { ok: false, reason: 'credential_rejected',
+      error: 'The GitHub access was released before this child was started, so it read nothing.' };
+    for (const [label, messages] of /** @type {Array<[string, any[]]>} */ ([
+      ['release, then an anonymous start', [RELEASE, { type: 'start', token: null }]],
+      ['release, then a start with access', [RELEASE, { type: 'start', token }]],
+      ['two releases, then both starts', [RELEASE, RELEASE, { type: 'start', token: null }, { type: 'start', token }]],
+    ])) {
+      assert.deepEqual(await run(READER, reader, messages), { code: 0, answers: [refused] }, `a reader: ${label}`);
+      assert.deepEqual(await run(PACK_ACTION, action, messages),
+        { code: 0, answers: [{ type: 'result', result: { ...refused, code: 2, reason: 'credential_rejected' } }] }, `an action child: ${label}`);
+    }
+    assert.equal(github.requests.length, 0, 'GitHub was asked nothing, with the access or anonymously');
+    const status = cmdStatus({ root: fixture.root });
+    assert.deepEqual(status.ok && Object.keys(status.result.installed), [], 'nothing was installed');
+
+    // Started with the access, a reader that is told to release it, twice, and is sent its start again asks nothing more.
+    github.gate('acme/team-packs');
+    const started = await run(READER, reader, [{ type: 'start', token }, RELEASE, RELEASE, { type: 'start', token }], {
+      split: 1,
+      between: async () => {
+        await github.connected('acme/team-packs');
+        // The reader's first request waits for its answer while the release arrives; then GitHub answers it.
+        setTimeout(() => github.release('acme/team-packs'), 200);
+      },
+    });
+    assert.equal(started.code, 0);
+    assert.deepEqual(started.answers.map(answer => [answer.ok, answer.source?.key]),
+      [[false, sharedKey(fixture, remoteEntry('acme/team-packs'))]], 'the reader answered that it could not read the source');
+    assert.deepEqual(github.requests.map(request => `${request.origin} ${request.authorization === `Bearer ${token}` ? 'access' : request.authorization}`),
+      ['api access'], 'only the request on its way when the release came was made');
+  } finally { fixture.cleanup(); }
+});
+
+/* ----------------------------------------------------------------------------
+ * 089 T005: sign-out and the session's end end the access too. Canvas then
+ * stops the whole read, and each child still reading with the access is told to
+ * release its own copy before its tree kill, as one is when GitHub rejects the
+ * access while the read goes on (see above).
+ * ------------------------------------------------------------------------- */
+
+// Each case lets the stopped child run to its own end instead of killing it, so this runs alone (see `isolatedTest`).
+isolatedTest('089 T005 sign-out or the session\'s end tells a Reload\'s GitHub reader and an install preview\'s child, each still reading with the access, to release it before their tree kill, so nothing either asks GitHub afterwards carries it', {
+  timeout: 120_000, skip: process.platform !== 'win32' && 'taskkill stops reader trees only on Windows',
+}, async t => {
+  /** @typedef {Awaited<ReturnType<typeof packHttpFixture>>} PackHttp */
+  /** @type {Array<[string, (world: ReturnType<typeof signInWorld>, f: PackHttp) => Promise<void>, ReturnType<typeof sessionSignedOut>]>} */
+  const ends = [
+    ['sign-out', async (_world, f) => {
+      assert.deepEqual(await sessionRoute(f.instance, { op: 'sign-out' }), { status: 200, body: sessionSignedOut('signed_out') });
+    }, sessionSignedOut('signed_out')],
+    ['the session\'s end', async world => { world.session.end(); }, sessionSignedOut(null)],
+  ];
+  /** @type {Array<[string, (f: PackHttp, fixture: ReturnType<typeof packEngineFixture>) => Promise<unknown>, unknown]>} */
+  const reads = [
+    ['a Reload\'s GitHub reader', f => discoverAnswer(f),
+      { status: 503, body: { error: 'packs_unavailable', message: 'The pack read was cancelled or became unavailable.' } }],
+    ['an install preview\'s child', (f, fixture) => postAction(f, { op: 'preview', operation: 'install', name: 'alpha',
+      source: sharedKey(fixture, remoteEntry('acme/team-packs')) }),
+    { status: 200, body: { token: null, thirdParty: false, preview: null,
+      message: 'The pack action was cancelled before it wrote anything. Nothing changed.' } }],
+  ];
+  for (const [ending, end, afterwards] of ends) {
+    for (const [label, read, answer] of reads) {
+      await t.test(`${ending}: ${label}`, async t => {
+        const fixture = packEngineFixture();
+        const github = offlineGitHub(t, fixture);
+        publishAlpha(github, fixture, 'acme/team-packs');
+        saveSources(fixture, [remoteEntry('acme/team-packs')]);
+        const token = sentinelToken();
+        const world = signInWorld(t, { tokens: [token] });
+        const f = await packHttpFixture(fixture, { githubSession: world.session });
+        /** What production did to each child, in order: every message it sent, and its tree kill. @type {Map<object, string[]>} */
+        const told = new Map();
+        const spy = spawnSpy(t, { onSpawn: call => {
+          /** @type {string[]} */
+          const events = [];
+          told.set(call, events);
+          const send = call.child.send;
+          call.child.send = /** @type {any} */ (function (/** @type {any} */ message, /** @type {any[]} */ ...rest) {
+            events.push(String(message?.type));
+            return send.call(this, message, ...rest);
+          });
+        } });
+        /** The children production gave the access. */
+        const given = () => spy.calls.filter(call => call.started.includes(token));
+        // The tree kill of a child given the access finds nothing until that child ended by itself, so the child reads
+        // on with whatever GitHub answers it; every other tree kill is real.
+        const kills = taskkillSpy(t, (args, fail, run) => {
+          const stopped = given().find(({ child }) => String(child.pid) === args[1]);
+          if (!stopped) return run();
+          told.get(stopped)?.push('kill');
+          stopped.child.once('close', () => setImmediate(fail));
+        });
+        try {
+          // Every request for the repository waits, connected, until GitHub answers them all inside the controller's
+          // own report that the access ended.
+          github.gate('acme/team-packs');
+          await signInThrough(f.instance, world);
+          let ended = -1;
+          world.session.subscribe(() => {
+            if (ended >= 0 || world.session.read().state !== 'signed_out') return;
+            ended = github.requests.length;
+            github.release('acme/team-packs');
+          });
+          const reading = read(f, fixture);
+          await github.connected('acme/team-packs');
+          await end(world, f);
+          assert.deepEqual(await reading, answer);
+          assert.ok(ended > 0, 'the access ended while the child held a request');
+          assert.equal(given().length, 1, 'one child was given the access');
+          const [child] = given();
+          // GitHub's answer reached the child, which read on and ended by itself, and nothing it asked after the end
+          // carried the access, because it was told to release it before its tree kill.
+          assert.deepEqual(github.requests.slice(ended).filter(request => request.authorization !== null).map(request => request.origin),
+            [], 'no request after the end carried the access');
+          assert.deepEqual(told.get(child), ['start', 'release', 'kill'], 'told to release the access before its tree kill');
+          assert.ok(github.records.some(record => record.answeredAt != null), 'GitHub answered the request on its way');
+          assert.deepEqual([child.child.exitCode, child.child.signalCode], [0, null], 'the child ended by itself');
+          // Its tree kill failed, yet its root was removed: the child's own clean finish ended its stop.
+          assert.deepEqual(kills.calls.filter(call => call.args[1] === String(child.child.pid)).map(call => call.error !== null), [true]);
+          assert.equal(fs.readdirSync(fixture.scratch).includes(path.basename(child.options.env.TMP)), false, 'its root was removed');
+          assert.deepEqual(await sessionRoute(f.instance), { status: 200, body: afterwards });
+          assert.deepEqual(world.session.current(), { github: null, forgotten: null });
+        } finally {
+          await f.close();
+          fixture.cleanup();
+        }
+      });
+    }
+  }
+});
+
+// The stopped reader runs to its own end instead of being killed, so this runs alone (see `isolatedTest`).
+isolatedTest('089 T005 a Reload\'s GitHub reader whose deadline stop is still under way when sign-out ends its access is told to release it then, so the answer GitHub still owed it leads to no request that carries the access', {
+  timeout: 120_000, skip: process.platform !== 'win32' && 'taskkill stops reader trees only on Windows',
+}, async t => {
+  const fixture = packEngineFixture();
+  const github = offlineGitHub(t, fixture);
+  publishAlpha(github, fixture, 'acme/team-packs');
+  saveSources(fixture, [remoteEntry('acme/team-packs')]);
+  const token = sentinelToken();
+  const world = signInWorld(t, { tokens: [token] });
+  const f = await packHttpFixture(fixture, { githubSession: world.session });
+  /** What production did to each child, in order: every message it sent, and its tree kill. @type {Map<object, string[]>} */
+  const told = new Map();
+  /** @type {NodeJS.Timeout | undefined} */
+  let late;
+  const spy = spawnSpy(t, {
+    // The reader given the access gets its start message 20 seconds after its launch, as a slow launch would. Its own
+    // 30-second acquisition and 15-second request bound run from that start, so GitHub still owes it an answer when
+    // production's 30-second deadline, which runs from the reader's admission, stops it.
+    onStart: (call, deliver) => {
+      if (call.started.at(-1) === token) late = setTimeout(deliver, 20_000);
+      else deliver();
+    },
+    onSpawn: call => {
+      /** @type {string[]} */
+      const events = [];
+      told.set(call, events);
+      const send = call.child.send;
+      call.child.send = /** @type {any} */ (function (/** @type {any} */ message, /** @type {any[]} */ ...rest) {
+        events.push(String(message?.type));
+        return send.call(this, message, ...rest);
+      });
+    },
+  });
+  /** The children production gave the access. */
+  const given = () => spy.calls.filter(call => call.started.includes(token));
+  /** @type {Promise<{ status: number | undefined, body: any }> | null} */
+  let signingOut = null;
+  // The deadline's tree kill of the reader given the access takes its time: it finds nothing until that reader ended
+  // by itself, and the user signs out while it runs. Every other tree kill is real.
+  const kills = taskkillSpy(t, (args, fail, run) => {
+    const stopped = given().find(({ child }) => String(child.pid) === args[1]);
+    if (!stopped) return run();
+    told.get(stopped)?.push('kill');
+    stopped.child.once('close', () => setImmediate(fail));
+    signingOut = sessionRoute(f.instance, { op: 'sign-out' });
+  });
+  try {
+    // Every request for the repository waits, connected, until GitHub answers them all inside the controller's own
+    // report that the access ended.
+    github.gate('acme/team-packs');
+    await signInThrough(f.instance, world);
+    let ended = -1;
+    world.session.subscribe(() => {
+      if (ended >= 0 || world.session.read().state !== 'signed_out') return;
+      ended = github.requests.length;
+      github.release('acme/team-packs');
+    });
+    const answer = await discoverAnswer(f);
+    assert.equal(given().length, 1, 'one reader was given the access');
+    const [reader] = given();
+    assert.ok(signingOut, 'the user signed out while the reader\'s tree kill ran');
+    assert.deepEqual(await signingOut, { status: 200, body: sessionSignedOut('signed_out') });
+    const kill = kills.calls.find(call => call.args[1] === String(reader.child.pid));
+    assert.ok(kill && kill.calledAt - reader.spawnedAt >= 25_000, 'its 30-second deadline stopped it');
+    assert.ok(ended > 0, 'the access ended while the reader held a request');
+    assert.ok(github.requests.slice(0, ended).some(request => request.authorization?.includes(token) === true),
+      'the request on its way carried the access');
+    // GitHub's answer reached the reader, which read on and ended by itself, and nothing it asked after the end
+    // carried the access: its stop was already under way when its access ended, and it was still told to release it.
+    assert.ok(github.records.some(record => record.answeredAt != null), 'GitHub answered the request on its way');
+    assert.deepEqual(github.requests.slice(ended).filter(request => request.authorization !== null)
+      .map(request => `${request.origin} ${request.path}`), [], 'no request after the end carried the access');
+    assert.deepEqual(told.get(reader), ['start', 'kill', 'release'], 'told to release the access while its deadline stop ran');
+    assert.deepEqual(answer, { status: 503, body: { error: 'packs_unavailable', message: 'The pack read was cancelled or became unavailable.' } });
+    assert.deepEqual([reader.child.exitCode, reader.child.signalCode], [0, null], 'the reader ended by itself');
+    // Its tree kill failed, yet its root was removed: its own clean finish confirmed its stop, so its slot was
+    // released too.
+    assert.deepEqual(kills.calls.filter(call => call.args[1] === String(reader.child.pid)).map(call => call.error !== null), [true]);
+    assert.equal(fs.readdirSync(fixture.scratch).includes(path.basename(reader.options.env.TMP)), false, 'its root was removed');
+    assert.deepEqual(world.session.current(), { github: null, forgotten: null });
+  } finally {
+    clearTimeout(late);
+    await f.close();
+    fixture.cleanup();
+  }
+});
+
+// The reader's tree kill reports only after its stop window, and a read that ignored the reader's clean finish then
+// would keep its slot for the life of its process, so this runs alone (see `isolatedTest`).
+isolatedTest('089 T005 a GitHub reader whose access ended and that finished cleanly within its stop window is a confirmed stop even while its tree kill has yet to report as that window ends: it answers credential_rejected, its root is removed and four readers can still read at once', {
+  timeout: 90_000, skip: process.platform !== 'win32' && 'taskkill stops reader trees only on Windows',
+}, async t => {
+  const fixture = packFixture();
+  fixture.profile({});
+  const github = offlineGitHub(t, fixture);
+  const names = ['target', 'more-1', 'more-2', 'more-3'];
+  for (const name of names) github.publish(`acme/${name}`, [name]);
+  // The reader waits, connected, at its last request, so released it finishes its whole read without another.
+  holdAtRecheck(github, ['acme/target']);
+  saveSources(fixture, [remoteEntry('acme/target')]);
+  t.after(() => fixture.cleanup());
+  const spy = spawnSpy(t);
+  let closedAt = Infinity;
+  /** @type {() => void} */
+  let report = () => {};
+  // As a taskkill still running when the stop window ends: it kills nothing, and reports its failure only when the
+  // test lets it.
+  const kills = taskkillSpy(t, (args, fail) => {
+    spy.readers().find(({ child }) => String(child.pid) === args[1])?.child.once('close', () => { closedAt = performance.now(); });
+    report = fail;
+  });
+  const forgotten = new AbortController();
+  const reading = readPacks(fixture.root, new AbortController().signal,
+    { discover: true, github: new GitHubAccess(sentinelToken()), forgotten: forgotten.signal });
+  await github.connected('acme/target');
+  forgotten.abort();
+  github.release('acme/target');
+  const snapshot = await reading;
+  const [reader] = spy.readers().filter(call => readerRequest(call).op === 'source');
+  assert.deepEqual(kills.calls.map(call => call.args[1]), [String(reader.child.pid)], 'one tree kill, of the reader');
+  const [kill] = kills.calls;
+  // Only once the stop window has ended does the tree kill report its failure, as one its own timeout ended does.
+  await new Promise(resolve => setTimeout(resolve, Math.max(0, kill.calledAt + STOP_CONFIRM_MS + 250 - performance.now())));
+  report();
+  // The reader got its last answer, finished its whole read and exited by itself, with code 0 and no signal, within
+  // its stop window; its tree kill reported only after that window.
+  assert.deepEqual([reader.child.exitCode, reader.child.signalCode], [0, null], 'the reader ended by itself');
+  assert.ok(closedAt - kill.calledAt < STOP_CONFIRM_MS, 'the reader closed within its stop window');
+  assert.ok(Number(kill.durationMs) > STOP_CONFIRM_MS, 'its tree kill reported after that window');
+  t.diagnostic(`the reader closed ${(closedAt - kill.calledAt).toFixed(0)} ms after its tree kill began; the kill reported after ${Number(kill.durationMs).toFixed(0)} ms`);
+  const row = sourceRows(snapshot).get('acme/target');
+  const kept = fs.readdirSync(fixture.scratch).includes(path.basename(reader.options.env.TMP));
+  // Four GitHub readers, now anonymous, can each hold a request at once only if the stopped reader's slot was released.
+  saveSources(fixture, names.map(name => remoteEntry(`acme/${name}`)));
+  for (const name of names) github.gate(`acme/${name}`);
+  const again = readPacks(fixture.root, new AbortController().signal, { discover: true });
+  let four = true;
+  try { await eventually(() => github.open === 4, 'four readers holding a request at once'); }
+  catch { four = false; }
+  finally { for (const name of names) github.release(`acme/${name}`); }
+  const reread = sourceRows(await again);
+  assert.deepEqual({ row: [row?.status, row?.reason], kept, four, reread: names.map(name => reread.get(`acme/${name}`)?.status) },
+    { row: ['unavailable', 'credential_rejected'], kept: false, four: true, reread: ['read', 'read', 'read', 'read'] });
+  assert.equal(kills.calls.length, 1, 'nothing else was stopped');
 });

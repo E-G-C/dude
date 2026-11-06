@@ -62,7 +62,7 @@ export function importSourceProblem(raw) {
   const rest = value.slice(scheme[0].length);
   if (!rest.startsWith('//')) return 'Enter the complete https:// GitHub URL.';
   const authority = rest.slice(2).split(/[/?#\\]/)[0];
-  if (authority.includes('@')) return 'Remove the user name or password from the URL. Canvas never sends credentials.';
+  if (authority.includes('@')) return 'Remove the user name or password from the URL. Dude never sends a user name or password taken from a source address.';
   if (authority.includes(':')) return 'Remove the port number from the URL.';
   if (!['github.com', 'raw.githubusercontent.com'].includes(authority)) return 'Use a github.com or raw.githubusercontent.com URL.';
   if (value.includes('?')) return 'Remove the query, the part that starts with ?.';
@@ -143,7 +143,7 @@ export function ArtifactImport({ id, labelledBy, shown, data, show, onShow, onPe
       <form className={s.importForm} onSubmit={submit} noValidate>
         <Field label={{ children: 'Source', weight: 'semibold' }} validationState={problem ? 'error' : 'none'}
           validationMessage={problem || undefined}
-          hint="One local file or directory path, or a public GitHub file, directory, or raw file URL. Canvas never asks for credentials.">
+          hint="One local file or directory path, or a public GitHub file, directory, or raw file URL. Imports read GitHub anonymously, even while you are signed in.">
           <Input ref={input} className={s.control} value={source} placeholder="Local path or GitHub URL" autoComplete="off" autoCapitalize="off"
             spellCheck={false} data-import-source onChange={(_, next) => { setSource(next.value); setProblem(''); }} />
         </Field>

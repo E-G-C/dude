@@ -832,10 +832,10 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   assert.ok(application.length > 100_000, 'the application bundle must contain the browser runtime');
   const gzip = gzipSync(applicationBytes, { level: 9 });
   const repeatedGzip = gzipSync(applicationBytes, { level: 9 });
-  assert.equal(applicationBytes.length, 1_183_488, 'committed app.js raw byte size');
+  assert.equal(applicationBytes.length, 1_201_187, 'committed app.js raw byte size');
   assert.equal(
     sha256(applicationBytes),
-    '7c245184a0239dbcc100169f466c6b8c84d31e906f203187e35ca3ca1697e10e',
+    '31ea3e3fe766c70536e296e04532095726ab507a35fc3e83d2bd1000284cc923',
     'committed app.js raw SHA-256',
   );
   assertPortableGzip(gzip, repeatedGzip, applicationBytes, 'Node zlib level-9 app.js');
@@ -909,7 +909,7 @@ test('metafile-derived legal inventory contains every contributing package and c
       name: '@fluentui/react-menu',
       version: '9.25.4',
       inputCount: 36,
-      bytesInOutput: 31_660,
+      bytesInOutput: 31_664,
     },
     {
       name: '@fluentui/react-motion-components-preview',
@@ -921,7 +921,7 @@ test('metafile-derived legal inventory contains every contributing package and c
       name: '@fluentui/react-tooltip',
       version: '9.10.5',
       inputCount: 6,
-      bytesInOutput: 8_323,
+      bytesInOutput: 8_325,
     },
   ], 'the shipped menu, motion implementation, and tooltip contribute real app.js bytes');
   for (const { name, version } of menuGraphPackages) {
@@ -1169,6 +1169,9 @@ function assertT011WorkspaceContract() {
       // 072: this session's update state and its one closed action route.
       '/api/updates',
       '/api/updates/action',
+      // 089: this session's GitHub sign-in: its safe state, and one closed operation on the same route.
+      '/api/github-session',
+      '/api/github-session',
       '/api/work-index',
     ].sort(),
   );

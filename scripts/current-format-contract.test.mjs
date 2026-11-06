@@ -7754,12 +7754,13 @@ const DRIVER_COOKBOOK = 'src/skills/dude-work/COOKBOOK.md';
 const DRIVER_COOKBOOK_GENERATED = '.github/skills/dude-work/COOKBOOK.md';
 const DRIVER_COMMAND = 'node .github/skills/dude-work/driver.mjs';
 
-// One documented form per subcommand, plus the cancel form, each with every flag it requires.
+// One documented form per subcommand, plus the learning-review and cancel forms, each with every flag it requires.
 const DRIVER_COMMAND_FORMS = [
   ['claim', ['--root', '--spec', '--task']],
   ['run', ['--request']],
   ['assess', ['--root', '--challenge', '--input']],
   ['respond', ['--root', '--challenge', '--tester', '--reviewer', '--changed']],
+  ['respond', ['--root', '--challenge', '--learning-review']],
   ['respond', ['--root', '--challenge', '--cancel']],
   ['snapshot', ['--root', '--out']],
   ['diff', ['--root', '--baseline', '--challenge', '--out']],
@@ -7778,8 +7779,8 @@ const RETIRED_DRIVER_GUIDANCE = [
     'node backlog.mjs generate --root $WS --write'],
   ['cut driver options', /--(?:fix-paths|dry-run|outcome|no-changes|claim-note|no-owner-log|modules|no-record-runtime)\b/,
     'make-assessment --fix-paths --dry-run'],
-  ['a learning-review response maker', /selectedAlternativeIdentity|validateAlternativeV2/,
-    '"selectedAlternativeIdentity":"<only for selected-alternative>"'],
+  ['the retired cancel-only learning answer', /no learning-review response maker|\| `learning-review` challenge \| Cancel/,
+    'A `learning-review` challenge appears only after a proven repeat, and the driver has no learning-review response maker.'],
   ['an optional-pack dependency', /dude-pack-/, 'dude-pack-rubber-duck-retrospective'],
 ];
 
@@ -7813,6 +7814,20 @@ function declaredDriverFlags() {
     assert.ok(match, `usage line: ${line}`);
     return [match[1], new Set(match[2].match(/--[a-z][a-z-]*/g) ?? [])];
   }));
+}
+
+// `respond` takes exactly one complete form: the specialist trio, a learning review, or a cancel.
+const RESPOND_FORMS = [['--tester', '--reviewer', '--changed'], ['--learning-review'], ['--cancel']];
+
+/** Documented respond lines that mix, truncate, or omit the response forms. @param {string} source */
+function mixedRespondForms(source) {
+  return documentedDriverCommands(source)
+    .filter(({ subcommand }) => subcommand === 'respond')
+    .filter(({ flags }) => {
+      const used = RESPOND_FORMS.filter((form) => form.some((flag) => flags.includes(flag)));
+      return used.length !== 1 || !used[0].every((flag) => flags.includes(flag));
+    })
+    .map(({ line }) => line);
 }
 
 test('Feature 086 T002: the Work skill points to the bundled driver and its separate cookbook', () => {
@@ -7857,6 +7872,14 @@ test('Feature 086 T002: the cookbook documents every driver command form with on
       `the cookbook documents ${subcommand} ${required.join(' ')}`,
     );
   }
+  assert.deepEqual(mixedRespondForms(read(DRIVER_COOKBOOK)), [], 'each documented respond line uses one complete form');
+  for (const mixed of [
+    `${DRIVER_COMMAND} respond --root . --challenge <c> --learning-review <r> --cancel`,
+    `${DRIVER_COMMAND} respond --root . --challenge <c> --tester <t> --reviewer <r>`,
+    `${DRIVER_COMMAND} respond --root . --challenge <c> --tester <t> --reviewer <r> --changed <c> --learning-review <l>`,
+  ]) {
+    assert.deepEqual(mixedRespondForms(`\`\`\`text\n${mixed}\n\`\`\`\n`), [mixed], `contradiction falsifier: ${mixed}`);
+  }
 });
 
 test('Feature 086 T002: the cookbook is an exact core projection with current-only instructions', () => {
@@ -7876,6 +7899,109 @@ test('Feature 086 T002: the cookbook is an exact core projection with current-on
       assert.doesNotMatch(content, pattern, `${relative} carries ${label}`);
     }
   }
+});
+
+// The learning-review step routes judgment to its owner, refuses without
+// publishing, and never turns publication or saved files into authority.
+const DRIVER_LEARNING_GUIDANCE = [
+  ['## Subcommands and exit codes', [
+    ['respond publishes a learning review', '| `respond` |', [
+      /Preflight and publish the specialist pair or a learning review, or only the cancel envelope with `--cancel`/,
+      /1 refused; nothing published/,
+    ]],
+  ], [
+    ['respond publishes a learning review', 'or a learning review'],
+  ]],
+  ['## 7. Answer a `learning-review` challenge', [
+    ['owner judgment over complete evidence', 'The learning-governance owner judges the evidence', [
+      /under the Work skill's `## Autonomous Learning Governance`/,
+      /Route the challenge to that owner; the driver makes no learning judgment and supplies no review/,
+      /original checks and findings of every governed attempt, including failed rows and rejected findings/,
+      /keep the comparison unresolved and cancel; never rebuild it from summaries, hashes, or saved state/,
+    ]],
+    ['the actual complete raw result', "Save the owner's actual result unchanged", [
+      /raw learning-review v2 object, never a response envelope/,
+      /`version` 2, `target` equal to the challenge `target`, `assumptionIdentities`, `findings`, `alternatives`, and `outcome`/,
+      /compares its approach with every basis in that set, not only the latest failure/,
+      /Add `selectedAlternativeIdentity` only for `selected-alternative`/,
+    ]],
+    ['the selected-alternative branch', '| `selected-alternative` |', [
+      /Exactly one credible, materially different alternative with its discriminating check/,
+      /A disguised repetition is never credible\./,
+      /Retains and verifies the result on both surfaces, takes a fresh Inspection, binds the alternative/,
+    ]],
+    ['the no-progress branch', '| `no-progress` |', [
+      /No credible alternative, no new distinguishing evidence, and no `selectedAlternativeIdentity`/,
+      /verifies the conclusion, and ends with `ended`\/`controlled-unresolved-end`; the task stays `\[~\]`/,
+    ]],
+    ['preflight refusal publishes nothing', 'Before publishing, `respond` confirms', [
+      /the waiting `learning-review` challenge in its exchange's `status\.json`/,
+      /`prepareLearningReviewV2\(acceptedState, inspection, review\)`/,
+      /copies the challenge's `challengeIdentity` into the response envelope/,
+      /the runner's 1,048,576-byte limit/,
+      /A refusal publishes nothing and leaves the challenge waiting/,
+      /never reorders, trims, or merges rows or fills in an identity/,
+      /exceeds an existing limit, [^.]*refuses whole/,
+    ]],
+    ['publication is not acceptance', 'Publication is not acceptance.', [
+      /reacquires fresh evidence and repeats every check/,
+      /A selected alternative leads only to its next Assessment/,
+      /its own baseline, implementation, Tester, independent Reviewer, and settlement/,
+    ]],
+    ['the live-run boundary', 'Only the live `run` process that published the challenge', [
+      /If that process has stopped, a published response does nothing/,
+      /a saved challenge, state, or response grants no revival, takeover, or continuation/,
+      /never resumes a stopped run or recovers an earlier stopped task/,
+    ]],
+  ], [
+    ['owner judgment over complete evidence', 'the driver makes no learning judgment and supplies no review'],
+    ['owner judgment over complete evidence', 'including failed rows and rejected findings'],
+    ['the actual complete raw result', 'never a response envelope'],
+    ['the actual complete raw result', 'not only the latest failure'],
+    ['the selected-alternative branch', 'A disguised repetition is never credible.'],
+    ['the no-progress branch', 'the task stays `[~]`'],
+    ['preflight refusal publishes nothing', 'A refusal publishes nothing and leaves the challenge waiting'],
+    ['preflight refusal publishes nothing', 'refuses whole'],
+    ['publication is not acceptance', 'repeats every check'],
+    ['publication is not acceptance', 'independent Reviewer'],
+    ['the live-run boundary', 'grants no revival, takeover, or continuation'],
+    ['the live-run boundary', 'recovers an earlier stopped task'],
+  ]],
+  ['## 8. Read the terminal result', [
+    ['a controlled end is not completion', '| `ended` / `controlled-unresolved-end` |', [
+      /the task stays `\[~\]` and is not complete/,
+      /select no next task in this invocation/,
+    ]],
+  ], [
+    ['a controlled end is not completion', 'and is not complete'],
+  ]],
+  ['## 10. Stops and the manual cleanup boundary', [
+    ['an unanswered learning review routes its owner', 'A learning review the owner cannot complete', [
+      /Cancel, then report that learning review is required and name the learning-governance owner/,
+    ]],
+  ], [
+    ['an unanswered learning review routes its owner', 'name the learning-governance owner'],
+  ]],
+];
+
+test('Feature 090 T001: the cookbook documents the learning-review response, its owner, and its live-run boundary', () => {
+  const cookbook = read(DRIVER_COOKBOOK);
+  for (const [heading, requirements, falsifiers] of DRIVER_LEARNING_GUIDANCE) {
+    assertSectionBoundGuidance(
+      markdownSection(cookbook, /** @type {string} */ (heading)),
+      /** @type {Array<[string, string, RegExp[]]>} */ (requirements),
+      /** @type {Array<[string, string]>} */ (falsifiers),
+      `${DRIVER_COOKBOOK} ${heading}`,
+    );
+  }
+  // The command is documented inside its own step, and only one learning step exists.
+  const learning = rawMarkdownSectionBody(cookbook, '## 7. Answer a `learning-review` challenge');
+  assert.deepEqual(
+    documentedDriverCommands(learning).map(({ line }) => line),
+    [`${DRIVER_COMMAND} respond --root . --challenge <exchange>/challenge-<n>.json --learning-review <scratch>/learning-review-<n>.json`],
+    'the learning step carries its exact command form',
+  );
+  assert.equal(cookbook.split('--learning-review').length - 1, 1, 'one documented learning-review command');
 });
 
 // --- T004: one detailed unattended-continuity owner ---------------------------
@@ -8792,6 +8918,11 @@ const GITHUB_CONTENT_TRANSPORT_PATHS = new Set([
   '.github/skills/dude-engine/lib/github-content.mjs',
   'src/skills/dude-engine/lib/github-content.test.mjs',
 ]);
+const GITHUB_SESSION_SIGN_IN_PATHS = new Set([
+  'src/extensions/dude/lib/github-session.mjs',
+  'src/extensions/dude/lib/github-session.test.mjs',
+  '.github/extensions/dude/lib/github-session.mjs',
+]);
 const GITHUB_ISSUE_DOCUMENTATION_ROOT = 'docs/';
 const GITHUB_ISSUE_DENIAL = /\b(?:no|not|never|without|do not|does not|cannot|can't|refuse|stop|separate from)\b/i;
 // The required default denials above are the dominating invariant: their presence is
@@ -8831,6 +8962,7 @@ function prohibitedGitHubIssueArtifact(relative) {
   if (GITHUB_ISSUE_AUTHORITY_PATHS.has(normalized)) return null;
   if (GITHUB_ISSUE_BEADS_NORMALIZATION_PATHS.has(normalized)) return null;
   if (GITHUB_CONTENT_TRANSPORT_PATHS.has(normalized)) return null;
+  if (GITHUB_SESSION_SIGN_IN_PATHS.has(normalized)) return null;
   if (!GITHUB_ISSUE_INVENTORY_ROOTS.some((root) => normalized === root || normalized.startsWith(`${root}/`))) {
     return null;
   }
@@ -9025,6 +9157,7 @@ test('GitHub issue intake rejects unsupported infrastructure and contradictory p
     ...GITHUB_ISSUE_AUTHORITY_PATHS,
     ...GITHUB_ISSUE_BEADS_NORMALIZATION_PATHS,
     ...GITHUB_CONTENT_TRANSPORT_PATHS,
+    ...GITHUB_SESSION_SIGN_IN_PATHS,
     '.dude/specs/034-github-issue-work-intake/spec.md',
   ]) {
     assert.equal(prohibitedGitHubIssueArtifact(relative), null, `allow ${relative}`);

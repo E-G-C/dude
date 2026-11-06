@@ -5,11 +5,12 @@ import {
   Switch, Tab, TabList, Text,
 } from '@fluentui/react-components';
 import { ArrowClockwiseRegular, ChevronLeftRegular, ChevronRightRegular, DismissRegular, bundleIcon, Info20Filled, Info20Regular,
-  PaintBrush20Filled, PaintBrush20Regular, PuzzlePiece20Filled, PuzzlePiece20Regular } from '@fluentui/react-icons';
+  PaintBrush20Filled, PaintBrush20Regular, Person20Filled, Person20Regular, PuzzlePiece20Filled, PuzzlePiece20Regular } from '@fluentui/react-icons';
 import { AboutPanel } from './about.jsx';
+import { AccountsPanel } from './accounts.jsx';
 import { ArtifactImport, NEW_SESSION } from './artifact-import.jsx';
-import { besideLibrary, catalogCoverageText, RemoveSourceDialog, removalRefusal, blockersOf, SourceBody, sourceLabel, sourcePlace,
-  SourcesPanel, sourceStatus, sourceWriteReason } from './pack-sources.jsx';
+import { besideLibrary, catalogCoverageText, GITHUB_RATE_TITLE, rateLimitReason, rateLimitText, refusalNotes, RemoveSourceDialog,
+  removalRefusal, blockersOf, SourceBody, sourceLabel, sourcePlace, SourcesPanel, sourceStatus, sourceWriteReason, withRefusals } from './pack-sources.jsx';
 import { Markdown } from './markdown.jsx';
 import { mergeClasses, useCanvasStyles } from './styles.js';
 import { rereadPreference, retryPreferenceRead, toggleFollowAppTheme, useAppearanceSettings } from './theme.js';
@@ -18,8 +19,10 @@ import { importRequestStatus, packActionReason } from './use-canvas-data.js';
 // Installed and Available list 25 rows per page. Filtering always runs first.
 const PAGE_SIZE = 25;
 const INITIAL_VIEW = { context: 'installed', tag: '', source: '', page: 1, selected: null };
-// Packs stays first, as the entry section; Appearance follows GitHub's and macOS Settings; About stays last.
+// Packs stays first, as the entry section; Accounts (089) follows VS Code's Accounts and GitHub Desktop's
+// Settings > Accounts; Appearance follows GitHub's and macOS Settings; About stays last.
 const SECTIONS = [['packs', 'Packs', bundleIcon(PuzzlePiece20Filled, PuzzlePiece20Regular)],
+  ['accounts', 'Accounts', bundleIcon(Person20Filled, Person20Regular)],
   ['appearance', 'Appearance', bundleIcon(PaintBrush20Filled, PaintBrush20Regular)],
   ['about', 'About', bundleIcon(Info20Filled, Info20Regular)]];
 const CONTEXTS = [['installed', 'Installed'], ['available', 'Available']];
@@ -350,9 +353,9 @@ function routeProblem(code, applying) {
 }
 
 // The mock's bar: the title, then its lines 4px apart, with no gap between title and lines.
-function ActionBar({ intent, title, lines = [] }) {
+function ActionBar({ intent, title, lines = [], ...rest }) {
   const s = useCanvasStyles();
-  return <MessageBar intent={intent} layout="multiline" className={mergeClasses(s.notice, s.packActionBar)}>
+  return <MessageBar intent={intent} layout="multiline" className={mergeClasses(s.notice, s.packActionBar)} {...rest}>
     <MessageBarBody>
       <MessageBarTitle>{title}</MessageBarTitle>
       {lines.length > 0 && <div className={s.tight}>{lines.map((line, index) => <span key={index}>{line}</span>)}</div>}
@@ -407,6 +410,9 @@ function PreviewBody({ action, step }) {
   const s = useCanvasStyles();
   const { preview } = step;
   const third = step.thirdParty && preview ? <ThirdPartyBar source={preview.source} /> : null;
+  // 089: GitHub refused this preview's read under its rate limit, for the allowance the read used.
+  const rate = step.rate ? <ActionBar intent="warning" title={GITHUB_RATE_TITLE}
+    lines={[rateLimitText(step.rate.login, "this preview's read")]} data-pack-action-rate /> : null;
   if (action.operation === 'remove') {
     return preview ? <FileGroup heading={`Deletes ${plural(preview.files.length, 'recorded file')}`} files={preview.files} />
       : <p className={s.prose}>No recorded files to delete.</p>;
@@ -422,6 +428,7 @@ function PreviewBody({ action, step }) {
   if (action.operation === 'install') {
     const tools = preview?.tools ?? [];
     return <>
+      {rate}
       {third}
       {preview && <div className={s.tight}>
         <h3 className={s.packMetadataHeading}>{`Adds ${plural(preview.items.length, 'item')}`}</h3>
@@ -443,6 +450,7 @@ function PreviewBody({ action, step }) {
     </>;
   }
   return <>
+    {rate}
     {third}
     <dl className={s.packMetadata}>
       <dt>Source</dt><dd>{label}</dd>
@@ -468,6 +476,8 @@ function ResultBody({ action, step }) {
   if (step.phase === 'failed') {
     return <>
       <ActionBar intent="error" title={`${VERBS[operation]} failed`} lines={[FAILURES[step.failure]]} />
+      {step.rate && <ActionBar intent="warning" title={GITHUB_RATE_TITLE} lines={[rateLimitText(step.rate.login, 'the read')]}
+        data-pack-action-rate />}
       {step.message && <details className={s.packFiles}>
         <summary>Compose&apos;s message</summary>
         <p className={mergeClasses(s.code, s.packActionMessage)}>{step.message}</p>
@@ -531,14 +541,17 @@ function PackActionDialog({ action, shown, data, showKey, showReason, onClose, o
     const live = { controller: new AbortController(), token: null };
     run.current = live;
     const { id, operation, name, source } = action;
-    go({ id, phase: 'loading', preview: null, thirdParty: false, reason: null, result: null, failure: null, message: null }, 'cancel');
+    go({ id, phase: 'loading', preview: null, thirdParty: false, reason: null, rate: null, result: null, failure: null, message: null }, 'cancel');
     void data.packAction({ op: 'preview', operation, name, ...(source ? { source } : {}) }, live.controller.signal).then(answer => {
       if (run.current !== live || live.controller.signal.aborted) return;
       if (!answer.ok) { go({ id, phase: 'blocked', reason: routeProblem(answer.code, false) }); return; }
       const value = answer.value;
       live.token = value.token;
+      // 089: a rate limit is worded for the allowance the server's read used.
+      const rate = value.reason === 'rate_limited' ? { login: value.githubLogin ?? null } : null;
       go(value.token ? { id, phase: 'ready', preview: value.preview, thirdParty: value.thirdParty }
-        : { id, phase: 'blocked', preview: value.preview, thirdParty: value.thirdParty, reason: blockedReason(name, value) });
+        : { id, phase: 'blocked', preview: value.preview, thirdParty: value.thirdParty, rate,
+          reason: rate ? rateLimitReason(rate.login) : blockedReason(name, value) });
     });
   };
   // One click on the verb is the only confirmation (FR-011), and it applies this preview once (FR-012).
@@ -553,7 +566,7 @@ function PackActionDialog({ action, shown, data, showKey, showReason, onClose, o
       if (outcome?.ok) go({ id, phase: 'success', result: outcome.result }, 'primary');
       else if (outcome) {
         go({ id, phase: 'failed', failure: FAILURES[outcome.mutation] ? outcome.mutation : 'uncertain',
-          message: outcome.error }, 'cancel');
+          message: outcome.error, rate: outcome.reason === 'rate_limited' ? { login: outcome.githubLogin ?? null } : null }, 'cancel');
       } else if (answer.code === 'changed') go({ id, phase: 'changed' }, 'primary');
       else if (answer.code === 'cancelled') go({ id, phase: 'cancelled' }, 'cancel');
       // A lost answer may follow a write; every other refusal came before one.
@@ -732,14 +745,16 @@ function AppearancePanel({ id, labelledBy, shown }) {
 }
 
 /**
- * Settings holds three local sections. Packs stays mounted while Appearance
- * or About is shown, so its view, selection, and pack action survive a section
- * switch; only its dialogs close, and they reopen on return under the existing
- * focus rules. The saved appearance choice lives outside this workspace-keyed
- * component. The Packs view (sub: Installed, Available, or Add/import) belongs
- * to the shell, which names it in the footer and header, and clears it with the section.
- * Add/import keeps its typed Source here; the list view is kept beside it, so a
- * trip to Add/import and back keeps the filters, page, and selection.
+ * Settings holds four local sections. Packs stays mounted while Accounts,
+ * Appearance, or About is shown, so its view, selection, and pack action
+ * survive a section switch; only its dialogs close, and they reopen on return
+ * under the existing focus rules. The saved appearance choice lives outside
+ * this workspace-keyed component, and Accounts shows the session's GitHub
+ * sign-in from the hook (089). The Packs view (sub: Installed, Available, or
+ * Add/import) belongs to the shell, which names it in the footer and header,
+ * and clears it with the section. Add/import keeps its typed Source here; the
+ * list view is kept beside it, so a trip to Add/import and back keeps the
+ * filters, page, and selection.
  */
 export function Settings({ data, active, section, onSection, sub, onSub, onPermission, onAboutRead, updates }) {
   const { packs, packsLoading: loading, issues: { packs: issue } } = data;
@@ -767,7 +782,7 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
   const actionSequence = useRef(0), actionReturn = useRef(null);
   const reader = useRef(null), readerBody = useRef(null), readerTrigger = useRef(null), readerReturn = useRef(false);
   const sourcesScroll = useRef(null), sourcesHeading = useRef(null), addSource = useRef(null), noteRef = useRef(null);
-  const removeRef = useRef(null), reasonRef = useRef(null), focusAvailable = useRef(false);
+  const removeRef = useRef(null), reasonRef = useRef(null), focusAvailable = useRef(false), focusAccounts = useRef(false);
   const noteFocus = useRef(false), removeReturn = useRef(false), latest = useRef(null);
   useEffect(() => {
     const media = window.matchMedia('(max-width: 1099px)');
@@ -782,7 +797,9 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
   // list may be listed as the current authority.
   const lists = useMemo(() => ({ installed: listRows(packs, 'installed'), available: listRows(packs, 'available') }), [packs]);
   const { rows, shown } = lists[view.context];
-  const sourceItems = packs?.sources?.items;
+  // 089: GitHub's refusals in the last Reload read in the approved words, with the allowance that read used.
+  const githubLogin = packs?.discovery?.githubLogin ?? null;
+  const sourceItems = useMemo(() => withRefusals(packs?.sources?.items, githubLogin), [packs, githubLogin]);
   const sourcesByKey = useMemo(() => new Map((sourceItems ?? []).map(item => [item.key, item])), [sourceItems]);
   const options = useMemo(() => sourceOptions(packs, rows, view.context), [packs, rows, view.context]);
   // A source that is no longer an option (removed, or a group no row carries) filters nothing.
@@ -858,6 +875,8 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
   const upstream = sourceRows.find(item => besideLibrary(item)) ?? null;
   const filteredSource = filters.source ? sourcesByKey.get(filters.source) : null;
   const localWins = current.context === 'available' && besideLibrary(filteredSource) && filteredSource.status === 'read';
+  // 089: the guidance for what GitHub refused in that read, once each, in the coverage notice.
+  const refusals = refusalNotes(sourceRows, githubLogin);
   const count = !shown ? 'Count unavailable' : !matches.length ? `0${known ? ' known' : ''} matches`
     : `${offset + 1}–${offset + visible.length} of ${matches.length}${known ? (filtered ? ' known matches' : ' known')
       : staleInstalled ? ' last read' : filtered ? ' matches' : ''}`;
@@ -1095,6 +1114,18 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
     (tab?.getClientRects().length ? tab : strip.current?.querySelector('[data-pack-view] [role="combobox"]'))
       ?.focus({ preventScroll: true });
   }, [sub]);
+  // Sources' Settings > Accounts (089): the same local change as choosing the
+  // Accounts tab, which then takes focus, as Show packs focuses Available's tab.
+  // It starts no sign-in and reads nothing; Packs stays as it was.
+  const openAccounts = () => {
+    focusAccounts.current = true;
+    onSection('accounts');
+  };
+  useLayoutEffect(() => {
+    if (!focusAccounts.current || section !== 'accounts') return;
+    focusAccounts.current = false;
+    document.getElementById(`${id}-section-accounts`)?.focus({ preventScroll: true });
+  }, [section, id]);
   const cellClass = columnId => columnId === 'name' ? mergeClasses(s.packNameCell, current.context === 'installed' && s.packNameCellTyped)
     : columnId === 'type' ? s.packTypeCell : columnId === 'source' ? s.packSourceCell : s.packTagsCell;
   // The project read is its own coverage: while it is pending or failed the
@@ -1247,10 +1278,12 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
                 : catalogState === 'partial' && packs.sources?.state === 'unavailable'
                   ? 'The saved source list could not be read, so added sources are unavailable. Built-in sources are still listed. This is not a confirmed empty list.'
                   : catalogState === 'partial' ? 'Some sources could not be read. Packs from them are not listed.'
-                    : packs?.coverage.installed.message || packs?.coverage.catalog.message
-                      || 'Pack information is unavailable. Reload packs to try again.')}</Text>
+                    : catalogState === 'unavailable' && refusals.length ? refusals.join(' ')
+                      : packs?.coverage.installed.message || packs?.coverage.catalog.message
+                        || 'Pack information is unavailable. Reload packs to try again.')}</Text>
             {catalogState === 'partial' && !loading && sourceRows.filter(item => item.status === 'unavailable').map(item =>
               <Text key={item.key} data-pack-source-failure>{sourceLabel(item)}: {sourceStatus(item).text}</Text>)}
+            {catalogState === 'partial' && !loading && refusals.map(text => <Text key={text} data-pack-refusal>{text}</Text>)}
             {catalogState === 'partial' && !loading && <Text>Packs from unavailable sources are not listed. Counts are known counts,
               not totals, and an empty result is not a confirmed empty list.</Text>}
             {!catalogReadable && catalogState !== 'not_read' && <Text>Use-case filtering and Available need a current catalog.
@@ -1327,7 +1360,7 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
       <SourcesPanel id={`${id}-sources-panel`} labelledBy={`${id}-sources`} shown={packsShown && onSources} data={data}
         packs={packs} loading={loading} rows={sourceRows} selectedKey={sourceKey} onSelect={selectSource}
         note={sourceNote} onNote={setSourceNote} onAdded={sourceAdded} noteRef={noteRef} scrollRef={sourcesScroll}
-        headingRef={sourcesHeading} addRef={addSource} />
+        headingRef={sourcesHeading} addRef={addSource} onAccounts={openAccounts} />
     </section>
     <dialog ref={detail} className={s.packDetail} aria-labelledby={`${id}-detail-heading`}
       aria-modal={detailKey && narrow ? true : undefined} data-pack-detail={detailKey}
@@ -1422,6 +1455,7 @@ export function Settings({ data, active, section, onSection, sub, onSub, onPermi
     <RemoveSourceDialog source={removing} busy={Boolean(removal?.busy)} refusal={removal?.refusal ?? null}
       onConfirm={confirmRemove} onClose={closeRemoval} onReload={() => { data.reloadPacks(); closeRemoval(); }} />
     </div>
+    <AccountsPanel id={`${id}-accounts`} labelledBy={`${id}-section-accounts`} shown={active && section === 'accounts'} data={data} />
     <AppearancePanel id={`${id}-appearance`} labelledBy={`${id}-section-appearance`} shown={active && section === 'appearance'} />
     <AboutPanel id={`${id}-about`} labelledBy={`${id}-section-about`} shown={active && section === 'about'}
       readAbout={data.readAbout} onRead={onAboutRead} updates={updates} />

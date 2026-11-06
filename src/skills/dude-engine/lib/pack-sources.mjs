@@ -138,7 +138,7 @@ function readGitHubRepository(location) {
   if (!match) return refuse('invalid_location', 'Enter the complete https:// URL.');
   const [, authority, rest] = match;
   if (authority.includes('@')) {
-    return refuse('credentials', 'Remove the user name or password from the URL. Canvas never sends credentials.');
+    return refuse('credentials', 'Remove the user name or password from the URL. Dude never sends a user name or password taken from a source address.');
   }
   if (authority.includes(':')) return refuse('invalid_location', 'Remove the port number from the URL.');
   if (authority !== 'github.com') {

@@ -2,9 +2,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import util from 'node:util';
 
 import {
   GITHUB_API_HEADERS,
+  GitHubAccess,
   createReadBudget,
   fetchGitHubBytes,
   fetchGitHubJson,
@@ -350,6 +352,135 @@ test('fetchGitHubJson names the budget kind for invalid UTF-8 and invalid JSON',
   await withMockFetch(() => response(Buffer.from('{"sha":"x"}')), async () => {
     assert.deepEqual(await fetchGitHubJson(API_URL, budget()), { sha: 'x' });
   });
+});
+
+/*
+ * Explicit access. A sentinel token is made in this process's memory only, and
+ * every check of it reports a boolean or a count, so no assertion can print it.
+ */
+
+/** A bearer-shaped sentinel that no real account holds. */
+const sentinelToken = () => `gho_${crypto.randomUUID().replaceAll('-', '')}`;
+/** @param {unknown} text @param {string} sentinel */
+const occurrences = (text, sentinel) => String(text).split(sentinel).length - 1;
+
+test('GitHubAccess holds one bearer token where no serialization or print shows it, until it is released', () => {
+  const sentinel = sentinelToken();
+  const access = new GitHubAccess(sentinel);
+  assert.equal(access.token === sentinel, true, 'the transport reads the token it was given');
+  const shown = [JSON.stringify(access), JSON.stringify({ ...access }), JSON.stringify(structuredClone(access)),
+    util.inspect(access, { showHidden: true, depth: 5 }), String(access), Object.keys(access).join()];
+  assert.equal(occurrences(shown.join('\n'), sentinel), 0, 'no serialization, copy or print of the access holds its token');
+  access.release();
+  assert.equal(access.token, null, 'a released access holds no token');
+  access.release();
+  assert.equal(access.token, null, 'releasing twice changes nothing');
+  for (const value of [undefined, null, 5, '', ' ', `${sentinel} `, `${sentinel}\r\nx-injected: 1`, `${sentinel}\t`, `${sentinel}é`, `Bearer ${sentinel}`]) {
+    assert.throws(() => new GitHubAccess(/** @type {any} */ (value)), (error) => error instanceof TypeError
+      && /^GitHub access must be one bearer token\.$/.test(error.message) && occurrences(error.message, sentinel) === 0);
+  }
+});
+
+test('fetchGitHubBytes sends explicit access only to the API origin, and a raw download stays anonymous', async () => {
+  const sentinel = sentinelToken();
+  await withMockFetch(() => response(Buffer.from('{}')), async (calls) => {
+    const access = new GitHubAccess(sentinel);
+    const metadata = budget();
+    await fetchGitHubBytes(API_URL, metadata, { headers: GITHUB_API_HEADERS, access });
+    const raw = budget('raw');
+    await fetchGitHubBytes(RAW_URL, raw, { access });
+
+    assert.deepEqual(calls.map(({ url }) => url), [API_URL, RAW_URL]);
+    for (const { init } of calls) {
+      assert.deepEqual([init.method, init.redirect, init.credentials], ['GET', 'error', 'omit']);
+    }
+    const apiHeaders = /** @type {Record<string, string>} */ (calls[0].init.headers);
+    assert.deepEqual(Object.keys(apiHeaders).sort(), ['accept', 'authorization', 'x-github-api-version'],
+      'the caller headers and one Authorization header, nothing else');
+    assert.equal(apiHeaders.authorization === `Bearer ${sentinel}`, true, 'the API request carries the access as a bearer token');
+    assert.deepEqual([apiHeaders.accept, apiHeaders['x-github-api-version']], [GITHUB_API_HEADERS.accept, GITHUB_API_HEADERS['x-github-api-version']]);
+    assert.equal(Object.hasOwn(calls[1].init, 'headers'), false, 'a raw download sends no header at all, so no credential');
+    assert.equal(Object.hasOwn(GITHUB_API_HEADERS, 'authorization'), false, 'the shared caller headers are never changed');
+    assert.deepEqual([metadata.requests, raw.requests], [1, 1], 'access changes no request count');
+  });
+});
+
+test('fetchGitHubBytes refuses another origin, a caller-named Authorization header and a value that is not explicit access, before any request', async () => {
+  const sentinel = sentinelToken();
+  await withMockFetch(() => assert.fail('must not fetch'), async (calls) => {
+    const access = new GitHubAccess(sentinel);
+    for (const url of [FOREIGN_URL, 'https://api.github.com.attacker.invalid/x', 'http://api.github.com/repos/acme/widgets',
+      'https://api.github.com:443/repos/acme/widgets', 'https://github.com/acme/widgets']) {
+      const metadata = budget();
+      await assert.rejects(() => fetchGitHubBytes(url, metadata, { access }), /api\.github\.com or raw\.githubusercontent\.com HTTPS URL/);
+      assert.equal(metadata.requests, 0);
+    }
+    for (const headers of [{ authorization: `Bearer ${sentinel}` }, { Authorization: 'token planted' }, { ...GITHUB_API_HEADERS, AUTHORIZATION: 'x' }]) {
+      for (const [url, options] of [[API_URL, { headers }], [API_URL, { headers, access }], [RAW_URL, { headers }]]) {
+        const counted = budget();
+        const error = await fetchGitHubBytes(/** @type {string} */ (url), counted, /** @type {any} */ (options))
+          .then(() => assert.fail('must reject'), (caught) => caught);
+        assert.equal(error instanceof TypeError && /must not name Authorization; only explicit access adds it$/.test(error.message), true);
+        assert.equal(occurrences(error.message, sentinel), 0);
+        assert.equal(counted.requests, 0);
+      }
+    }
+    for (const value of [sentinel, { token: sentinel }, 5]) {
+      const metadata = budget();
+      const error = await fetchGitHubBytes(API_URL, metadata, { access: /** @type {any} */ (value) })
+        .then(() => assert.fail('must reject'), (caught) => caught);
+      assert.equal(error instanceof TypeError && /request access must be explicit GitHub access$/.test(error.message), true);
+      assert.equal(occurrences(error.message, sentinel), 0, 'the refusal never repeats the value');
+      assert.equal(metadata.requests, 0);
+    }
+    assert.equal(calls.length, 0);
+  });
+});
+
+test('fetchGitHubBytes starts no API request with a released access, rather than make it anonymously', async () => {
+  const access = new GitHubAccess(sentinelToken());
+  access.release();
+  await withMockFetch(() => response(Buffer.from('ok')), async (calls) => {
+    const metadata = budget();
+    await assert.rejects(() => fetchGitHubBytes(API_URL, metadata, { headers: GITHUB_API_HEADERS, access }),
+      /^Error: GitHub metadata request was not started because its access was released$/);
+    assert.equal(metadata.requests, 0, 'a request that was not started is not counted');
+    assert.equal(calls.length, 0);
+    // A raw download never carries access, so a released one changes nothing for it.
+    await fetchGitHubBytes(RAW_URL, budget('raw'), { access });
+    assert.deepEqual(calls.map(({ url }) => url), [RAW_URL]);
+    assert.equal(Object.hasOwn(calls[0].init, 'headers'), false);
+  });
+});
+
+test('fetchGitHubBytes names a rejected credential apart from a rate limit and an ordinary refusal, without provider text or a retry', async (t) => {
+  const sentinel = sentinelToken();
+  const provider = '{"message":"Bad credentials: planted provider text","documentation_url":"https://docs.github.com/rest"}';
+  const cases = [
+    { name: '401 with access', status: 401, headers: {}, withAccess: true, rateLimited: false, credentialRejected: true },
+    { name: '401 without access', status: 401, headers: {}, withAccess: false, rateLimited: false, credentialRejected: false },
+    { name: 'ordinary 403 with access', status: 403, headers: {}, withAccess: true, rateLimited: false, credentialRejected: false },
+    { name: '404 with access', status: 404, headers: {}, withAccess: true, rateLimited: false, credentialRejected: false },
+    { name: 'rate-limit 403 with access', status: 403, headers: { 'x-ratelimit-remaining': '0' }, withAccess: true, rateLimited: true, credentialRejected: false },
+    { name: 'rate-limit 403 by Retry-After with access', status: 403, headers: { 'retry-after': '60' }, withAccess: true, rateLimited: true, credentialRejected: false },
+    { name: '429 with access', status: 429, headers: { 'retry-after': '1' }, withAccess: true, rateLimited: true, credentialRejected: false },
+    { name: '429 without access', status: 429, headers: {}, withAccess: false, rateLimited: true, credentialRejected: false },
+  ];
+  for (const { name, status, headers, withAccess, rateLimited, credentialRejected } of cases) {
+    await t.test(name, async () => {
+      let cancelled = 0;
+      await withMockFetch(() => streamResponse([provider], { status, headers, onCancel: () => { cancelled += 1; } }), async (calls) => {
+        const options = { headers: GITHUB_API_HEADERS, ...(withAccess ? { access: new GitHubAccess(sentinel) } : {}) };
+        const error = await fetchGitHubBytes(API_URL, budget(), options).then(() => assert.fail('must reject'), (caught) => caught);
+        assert.deepEqual([error.cause.status, error.cause.rateLimited, error.cause.credentialRejected], [status, rateLimited, credentialRejected]);
+        assert.equal(calls.length, 1, 'no retry, with either allowance');
+        assert.equal(cancelled, 1, 'the refused body is cancelled, never read');
+        const text = `${error.message}\n${error.cause.message}`;
+        assert.equal(occurrences(text, sentinel), 0, 'the error holds no credential');
+        assert.equal(occurrences(text, 'planted provider text'), 0, 'the error holds no provider text');
+      });
+    });
+  }
 });
 
 test('validateGitTree checks identity, completeness, records and duplicates, and applies the caller path policy', async (t) => {

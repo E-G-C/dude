@@ -208,6 +208,9 @@ const initial = {
   // 072: this session's update state as the server last answered it, and the
   // closed code of the last read that failed. Null is unknown, not "no update".
   updates: null, updatesError: null,
+  // 089: this session's GitHub sign-in as the server last answered it (null is
+  // unknown), and how many of this tab's own sign-in actions have answered.
+  githubSession: null, githubActed: 0,
 };
 
 // Last readable pack and project facts may remain inspectable, but never
@@ -387,6 +390,55 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
     }
   }, [adoptUpdates, readUpdates]);
 
+  // 089: this session's GitHub sign-in, beside the update state and read the
+  // same way: when Canvas starts, on each payload-free `github-session` event, on
+  // reconnect and on visible focus, never on a timer. One read runs at a time,
+  // and answers are adopted in the order their requests started. A read asks
+  // GitHub nothing, and no sign-in change reads packs or repeats an action.
+  const githubWork = useRef({ started: 0, adopted: 0, reading: false, again: false });
+  /** Adopt `value` unless something newer was; an action's answer is counted even then. */
+  const adoptGitHub = useCallback((owner, turn, value, acted = false) => {
+    const work = githubWork.current;
+    if (lifetime.current !== owner || owner.signal.aborted) return;
+    const fresh = turn >= work.adopted;
+    if (fresh) work.adopted = turn;
+    if (fresh || acted) {
+      update(previous => ({ ...previous, ...(fresh ? { githubSession: value } : {}),
+        ...(acted ? { githubActed: previous.githubActed + 1 } : {}) }));
+    }
+  }, [update]);
+  const readGitHub = useCallback(() => {
+    const owner = lifetime.current, work = githubWork.current;
+    if (!owner || owner.signal.aborted) return;
+    if (work.reading) { work.again = true; return; }
+    work.reading = true;
+    const turn = ++work.started;
+    // A failed read keeps the last answer; without one the sign-in stays unknown.
+    void json('/api/github-session', { signal: owner.signal }).then(value => adoptGitHub(owner, turn, value), () => {})
+      .finally(() => {
+        work.reading = false;
+        if (work.again && lifetime.current === owner) { work.again = false; readGitHub(); }
+      });
+  }, [adoptGitHub]);
+  /**
+   * One closed sign-in operation (089): `start`, `cancel` or `sign-out`. It never
+   * throws and never retries: the answer is `{ ok: true, value }` with the state
+   * after it, or `{ ok: false, code }`, after which the state is read again.
+   */
+  const githubAction = useCallback(async op => {
+    const owner = lifetime.current;
+    if (!owner || owner.signal.aborted) return { ok: false, code: 'connection_lost' };
+    const turn = ++githubWork.current.started;
+    try {
+      const value = await json('/api/github-session', { body: { op }, signal: owner.signal });
+      adoptGitHub(owner, turn, value, true);
+      return { ok: true, value };
+    } catch (error) {
+      readGitHub();
+      return { ok: false, code: error.code || 'connection_lost' };
+    }
+  }, [adoptGitHub, readGitHub]);
+
   const queue = useCallback((workspace = false, packs = packsWanted.current) => {
     const owner = lifetime.current;
     if (!owner || owner.signal.aborted) return;
@@ -498,8 +550,9 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
     work.current = { epoch: 0, running: false, workspace: false, needs: false,
       packs: false, packController: null, timer: null, discoverController: null, discoverWaiters: [] };
     updatesWork.current = { started: 0, adopted: 0, reading: false, again: false };
+    githubWork.current = { started: 0, adopted: 0, reading: false, again: false };
     const events = new EventSource('/events');
-    const complete = () => { update({ connected: true }); queue(true); readUpdates(); };
+    const complete = () => { update({ connected: true }); queue(true); readUpdates(); readGitHub(); };
     events.addEventListener('open', complete);
     events.addEventListener('workspace', () => queue(true));
     // Permission/delivery phases do not change pack facts. Workspace/result
@@ -507,10 +560,13 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
     events.addEventListener('needs-you', () => queue(false, false));
     // 072: the update state changed; the event carries nothing, so read it again.
     events.addEventListener('updates', readUpdates);
+    // 089: the session's GitHub sign-in changed; read it again, and nothing else.
+    events.addEventListener('github-session', readGitHub);
     events.addEventListener('error', () => update({ connected: false }));
     const focus = async () => {
       if (document.visibilityState === 'hidden') return;
       readUpdates();
+      readGitHub();
       const epoch = work.current.epoch;
       try {
         const value = await json('/api/freshness', { signal: owner.signal });
@@ -527,6 +583,7 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
     window.addEventListener('pagehide', close);
     queue(true);
     readUpdates();
+    readGitHub();
     return () => {
       owner.abort();
       work.current.packController?.abort();
@@ -538,7 +595,7 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
       document.removeEventListener('visibilitychange', focus);
       window.removeEventListener('pagehide', close);
     };
-  }, [queue, update, readUpdates]);
+  }, [queue, update, readUpdates, readGitHub]);
 
   // One explicit discovery, the only read that acquires catalogs: the default
   // plus each saved source, once. It is not part of the automatic loop, so an
@@ -556,6 +613,8 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
     const stop = () => controller.abort();
     owner.signal.addEventListener('abort', stop, { once: true });
     const authority = authorityKey(current.current.needs);
+    // 089: the answer names the GitHub allowance the server's read used (`githubLogin`), which words any rate
+    // limit it met. It stays with the discovery, so a later sign-in or sign-out never rewords that refusal.
     const settled = new Promise(resolve => pending.discoverWaiters.push(resolve));
     update(previous => ({ ...previous, discovering: true, packs: invalidatePacks(previous.packs, 'loading') }));
     void (async () => {
@@ -794,7 +853,9 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
     } catch (error) {
       return { ok: false, code: error.code, message: error.message,
         ...(typeof error.details?.key === 'string' ? { key: error.details.key } : {}),
-        ...(Array.isArray(error.details?.blockers) ? { blockers: error.details.blockers } : {}) };
+        ...(Array.isArray(error.details?.blockers) ? { blockers: error.details.blockers } : {}),
+        // 089: a rate limit names the allowance the server's read used.
+        ...(error.details?.githubLogin !== undefined ? { githubLogin: error.details.githubLogin } : {}) };
     } finally {
       locks.current.delete('sources');
     }
@@ -832,5 +893,5 @@ export function useCanvasData(selection, { packsActive = false } = {}) {
     refresh: () => queue(true), reconcile: () => queue(),
     // Reload packs is the existing full workspace refresh plus the one explicit catalog discovery.
     reloadPacks: () => { if (!packsWanted.current) return Promise.resolve(null); queue(true, false); return discover(); }, addSource, removeSource,
-    rereadUpdates, updateAction, respond, capture, packAction, requestImport, openReview, readHistory, readAbout };
+    rereadUpdates, updateAction, githubAction, respond, capture, packAction, requestImport, openReview, readHistory, readAbout };
 }

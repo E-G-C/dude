@@ -20,12 +20,19 @@
  * of this process. Making it starts nothing; once the session has joined, its
  * session-start release check runs in the background, never holding the join,
  * and it creates no folder, preference, request, waiter or chat message.
+ *
+ * One GitHub sign-in controller (./lib/github-session.mjs) serves every Canvas
+ * instance too, holding this session's optional public GitHub access in memory.
+ * Making it asks GitHub nothing; only an explicit Sign in in Canvas starts one,
+ * and the session's end forgets it. The join requests no environment variable,
+ * so the app's own GitHub token is never read.
  */
 
 import { createCanvas, joinSession } from '@github/copilot-sdk/extension';
 import { createA2a } from './lib/a2a.mjs';
 import { createBundleUpgrade } from './lib/bundle-upgrade.mjs';
 import { closeInstance, openInstance } from './lib/canvas-server.mjs';
+import { createGitHubSession } from './lib/github-session.mjs';
 import { createNeedsYou } from './lib/needs-you.mjs';
 import { createReview } from './lib/review.mjs';
 
@@ -35,6 +42,7 @@ const a2a = createA2a({ root });
 // Made before the join, like the other providers, so a Canvas opened at any
 // moment gets it; it does nothing until `startSessionCheck` below.
 const updates = createBundleUpgrade({ root });
+const githubSession = createGitHubSession();
 
 /** @param {unknown} context */
 function exactTarget(context) {
@@ -60,7 +68,8 @@ async function logToSession(message) {
 /**
  * Needs You handles every event first, exactly as before, and its errors still
  * propagate. A2A then observes the same event; its handler never throws, so it
- * can neither suppress nor replace a Needs You result or error.
+ * can neither suppress nor replace a Needs You result or error. The session's
+ * end then ends the GitHub sign-in, which never throws either.
  * @param {import('@github/copilot-sdk').SessionEvent} event
  */
 function onEvent(event) {
@@ -68,6 +77,7 @@ function onEvent(event) {
     needsYou.onEvent(event);
   } finally {
     a2a.onEvent(event);
+    if (event.type === 'session.shutdown' && !event.agentId) githubSession.end();
   }
 }
 
@@ -89,6 +99,7 @@ const session = await joinSession({
           readInput,
           needsYou,
           updates,
+          githubSession,
         );
         await logToSession(`Dude canvas ${ctx.instanceId}: open at ${instance.url}`);
         return { title: 'Dude', status: 'Work and Needs you', url: instance.url };

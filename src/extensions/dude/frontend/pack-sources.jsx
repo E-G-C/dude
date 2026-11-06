@@ -1,7 +1,7 @@
 import React, { useId, useLayoutEffect, useRef, useState } from 'react';
 import {
   Button, createTableColumn, DataGrid, DataGridBody, DataGridCell, DataGridHeader, DataGridHeaderCell, DataGridRow,
-  Field, Input, MessageBar, MessageBarActions, MessageBarBody, MessageBarTitle, Spinner, Text,
+  Field, Input, Link, MessageBar, MessageBarActions, MessageBarBody, MessageBarTitle, Spinner, Text,
 } from '@fluentui/react-components';
 import { AddRegular, CheckmarkCircleFilled, DismissRegular, InfoRegular, WarningFilled } from '@fluentui/react-icons';
 import { mergeClasses, useCanvasStyles } from './styles.js';
@@ -17,7 +17,7 @@ const ADD_REASONS = {
   loading: 'Canvas is reading the saved source list. Add source becomes available when it has been read.',
 };
 const ADD_FIELD_NOTES = [
-  'Public GitHub repositories only. Canvas never asks for credentials.',
+  'Public GitHub repositories only. Dude never asks for your GitHub password.',
   'The source must be a folder that contains library/packs, the layout Dude reads.',
   'Adding a source installs nothing. Installed packs can add agents and instructions, so add only sources you trust; every install asks for your permission first.',
   'Sources are saved with the project in .dude/metadata/pack-sources.md, so they can be committed and shared.',
@@ -78,6 +78,51 @@ export function catalogCoverageText(packs) {
   const failed = items.filter(item => item.status === 'unavailable').length;
   return packs.sources?.state === 'unavailable' ? 'partial (added sources unavailable)'
     : `partial (${failed} of ${attempted} sources unavailable)`;
+}
+
+/* ------------------------------------------------- 089: GitHub's refusals of pack reads */
+
+export const GITHUB_RATE_TITLE = 'GitHub rate limit reached';
+// Sources' warning while source rows show a rejected sign-in, and Add source's title for the same event.
+const SIGN_IN_REJECTED_TITLE = 'GitHub rejected the sign-in';
+const SIGN_IN_REJECTED_REASON = "GitHub rejected Dude's sign-in.";
+const SIGN_IN_REJECTED_NOTE = 'GitHub rejected the sign-in Dude was using, so Dude signed out. Choose Reload packs to read these sources anonymously.';
+// The local-folder route every rate-limit refusal names in full, in both sign-in states.
+const LOCAL_ROUTE = "To read packs without GitHub's limit, add a local folder whose root contains library/packs under Settings > Packs > Sources > Add source.";
+const REFUSED = new Set(['rate_limited', 'credential_rejected']);
+const refusedAs = (item, reason) => item.status === 'unavailable' && item.reason === reason;
+
+/**
+ * The one rate-limit guidance every refused GitHub pack read shows, in the
+ * approved words, as text only: the limit, the next step for the allowance the
+ * read used (`login` while signed in, null for the anonymous one), and the
+ * local-folder route. `what` names the refused read. Nothing is ever retried.
+ * @param {string | null} login @param {string} [what]
+ */
+export function rateLimitText(login, what = 'these reads') {
+  return login
+    ? `The GitHub allowance for @${login} is used up, so GitHub refused ${what}. Your other GitHub tools share this allowance. Nothing was retried. To continue, try again later. ${LOCAL_ROUTE}`
+    : `GitHub's anonymous limit for your network address, 60 requests an hour, is used up, so it refused ${what}. Nothing was retried. To continue, sign in under Settings > Accounts, or try again later. ${LOCAL_ROUTE}`;
+}
+/** A refused source's or preview's short reason. @param {string | null} login */
+export const rateLimitReason = login => (login ? `GitHub's rate limit for @${login} was reached.` : "GitHub's anonymous rate limit was reached.");
+
+/**
+ * Source rows with GitHub's refusals in the approved words instead of the
+ * reader's own message: a rate limit names the allowance its read used, and a
+ * rejected sign-in says so. Every other row, and a list without one, is unchanged.
+ * @param {any[] | null | undefined} items @param {string | null} login
+ */
+export function withRefusals(items, login) {
+  if (!items?.some(item => item.status === 'unavailable' && REFUSED.has(item.reason))) return items;
+  return items.map(item => refusedAs(item, 'rate_limited') ? { ...item, message: rateLimitReason(login) }
+    : refusedAs(item, 'credential_rejected') ? { ...item, message: SIGN_IN_REJECTED_REASON } : item);
+}
+
+/** The guidance, once each, for GitHub's refusals among these source rows. @param {any[]} items @param {string | null} login */
+export function refusalNotes(items, login) {
+  return [...(items.some(item => refusedAs(item, 'rate_limited')) ? [rateLimitText(login)] : []),
+    ...(items.some(item => refusedAs(item, 'credential_rejected')) ? [SIGN_IN_REJECTED_NOTE] : [])];
 }
 
 /** Why Add source and Remove are unavailable under the normal guards, or null. */
@@ -144,7 +189,7 @@ function locationProblem(raw) {
   const rest = value.slice(scheme[0].length);
   if (!rest.startsWith('//')) return 'Enter the complete https:// GitHub URL.';
   const authority = rest.slice(2).split(/[/?#\\]/)[0];
-  if (authority.includes('@')) return 'Remove the user name or password from the URL. Canvas never sends credentials.';
+  if (authority.includes('@')) return 'Remove the user name or password from the URL. Dude never sends a user name or password taken from a source address.';
   if (authority.includes(':')) return 'Remove the port number from the URL.';
   if (authority.toLowerCase() !== 'github.com') return 'Use a github.com repository URL. Other hosts are not supported.';
   if (/\\|%2f|%5c/i.test(value)) return 'Remove backslashes and encoded slashes (%2F or %5C) from the URL.';
@@ -166,9 +211,10 @@ function refProblem(ref, location) {
 /**
  * How the route's refusal of an Add is shown. Every one leaves the saved list
  * unchanged and stays inside the dialog with what was typed. The two that need a
- * fresh read offer it as an action, never a replay of the write.
+ * fresh read offer it as an action, never a replay of the write. `login` is the
+ * allowance the server's read used (089), which words a rate limit.
  */
-function refusalOf({ code, message }, sources, key, location) {
+function refusalOf({ code, message }, sources, key, location, login = null) {
   const nothing = 'Nothing was saved.';
   switch (code) {
     case 'invalid_location': case 'credentials': return { field: 'location', message };
@@ -181,7 +227,12 @@ function refusalOf({ code, message }, sources, key, location) {
       text: `This source has no library/packs folder. Choose a repository or folder whose root contains library/packs. ${nothing}` };
     case 'bad_metadata': return { intent: 'error', title: 'A pack\'s metadata could not be read', text: `${message} ${nothing}` };
     case 'unreachable': return { intent: 'error', title: 'Could not read the repository',
-      text: `It may be private, may not exist, or could not be reached. Canvas reads public GitHub repositories only and never asks for credentials. ${nothing}` };
+      text: `It may be private, may not exist, or could not be reached. Dude reads public GitHub repositories only, even while you are signed in. ${nothing}` };
+    // 089: GitHub refused the read: its rate limit, the sign-in it used, or a sign-out that stopped it.
+    case 'rate_limited': return { intent: 'warning', title: GITHUB_RATE_TITLE, text: `${rateLimitText(login, 'the read')} ${nothing}` };
+    case 'credential_rejected': return { intent: 'warning', title: SIGN_IN_REJECTED_TITLE,
+      text: `GitHub rejected the sign-in Dude was using, so Dude signed out. ${nothing} Add the source again to read it anonymously.` };
+    case 'cancelled': return { intent: 'warning', title: 'The source was not added', text: message || `The read stopped. ${nothing}` };
     case 'own_library': return { intent: 'warning', title: 'Already listed',
       text: 'This is this workspace\'s own library, already listed as Local library. Built-in sources are not added twice.' };
     case 'duplicate': {
@@ -341,7 +392,8 @@ function AddSourceForm({ data, packs, reason, onReading, onSaved, onReload, loca
     const result = await data.addSource({ location: where, ref: tracked });
     onReading(false);
     if (result.ok) { onSaved({ ...result, location: where, name: typedName(where) }); return; }
-    const refused = refusalOf(result, sources, result.key, where);
+    // 089: a rate limit is worded for the allowance the server's read used.
+    const refused = refusalOf(result, sources, result.key, where, result.githubLogin ?? null);
     if (refused.field) { setStatus(null); setErrors({ location: '', ref: '', [refused.field]: refused.message });
       (refused.field === 'ref' ? refInput : locationRef).current?.focus(); return; }
     setStatus({ phase: 'refused', ...refused });
@@ -439,15 +491,34 @@ function AddSourceDialog({ open, reading, reason, onClose, ...form }) {
 /* ---------------------------------------------------------------------- the panel */
 
 /**
+ * A warning above the Sources table for what GitHub refused in the last Reload
+ * (089), in the mock's note position, title and words only.
+ */
+function RefusalNote({ title, text, ...rest }) {
+  const s = useCanvasStyles();
+  return <div className={s.githubRateNote} {...rest}>
+    <MessageBar intent="warning" layout="multiline" className={mergeClasses(s.notice, s.narrowBar)}>
+      <MessageBarBody>
+        <MessageBarTitle>{title}</MessageBarTitle>
+        <div>{text}</div>
+      </MessageBarBody>
+    </MessageBar>
+  </div>;
+}
+
+/**
  * The Sources view: built-ins, then the sources this project added, in the
  * Installed/Available table pattern, with no filters and no pager. The
  * server's opaque keys are the row identity, selection and focus-return keys,
  * so two folders with one name stay two rows. Add source opens a native
  * modal; selection, details and removal belong to Settings, which owns the one
- * shared details pane.
+ * shared details pane. Above the table, after any refusal GitHub gave the last
+ * Reload, one line says where the session's GitHub sign-in is managed (089);
+ * its Settings > Accounts calls `onAccounts`, which opens that section and
+ * starts nothing.
  */
 export function SourcesPanel({ id, labelledBy, shown, data, packs, loading, rows, selectedKey, onSelect, note, onNote,
-  onAdded, noteRef, scrollRef, headingRef, addRef }) {
+  onAdded, noteRef, scrollRef, headingRef, addRef, onAccounts }) {
   const s = useCanvasStyles(), ids = useId();
   const [adding, setAdding] = useState(false), [reading, setReading] = useState(false);
   const returnFocus = useRef(false);
@@ -457,6 +528,11 @@ export function SourcesPanel({ id, labelledBy, shown, data, packs, loading, rows
   const unreadable = sources?.state === 'unavailable';
   const unread = packs?.coverage?.catalog?.state === 'not_read';
   const limit = sources?.limit ?? DEFAULT_LIMIT;
+  // 089: what GitHub refused in the last Reload, with the allowance that read used,
+  // stays until the next one. A sign-in change rereads nothing and clears nothing.
+  const login = packs?.discovery?.githubLogin ?? null;
+  const rateLimited = rows.some(item => refusedAs(item, 'rate_limited'));
+  const rejected = rows.some(item => refusedAs(item, 'credential_rejected'));
 
   // Closing returns focus to the trigger once the modal has gone and Add source is enabled again.
   useLayoutEffect(() => {
@@ -497,6 +573,11 @@ export function SourcesPanel({ id, labelledBy, shown, data, packs, loading, rows
           <Text weight="semibold">Catalog: not read</Text>
           <Text>Nothing is read until you choose Reload packs, so no source shows a pack count yet.</Text>
         </div>}
+        {rateLimited && <RefusalNote title={GITHUB_RATE_TITLE} text={rateLimitText(login)} data-sources-rate-limit />}
+        {rejected && <RefusalNote title={SIGN_IN_REJECTED_TITLE} text={SIGN_IN_REJECTED_NOTE} data-sources-rejected />}
+        <p className={s.sourcesAccounts} data-sources-accounts-note>GitHub sign-in is managed in <Link as="span" inline
+          className={mergeClasses(s.aboutLink, s.paddedLink)} onClick={onAccounts} data-sources-accounts>
+          <span className={s.paddedLinkTarget}>Settings &gt; Accounts</span></Link>.</p>
         {shown && (rows.length ? <DataGrid items={rows} columns={SOURCE_COLUMNS} getRowId={item => item.key} focusMode="composite"
           aria-label="Pack sources">
           <DataGridHeader className={s.packTableHeader}><DataGridRow>

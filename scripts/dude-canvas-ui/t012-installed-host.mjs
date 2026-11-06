@@ -278,7 +278,7 @@ const DEVELOPMENT_ABOUT = Object.freeze({
   rows: installedAboutRows('Development (main), based on v1.3.0', 'Development (main)'),
   footer: 'About · Development (main), based on v1.3.0',
 });
-const SOURCE_APP_SHA256 = '7c245184a0239dbcc100169f466c6b8c84d31e906f203187e35ca3ca1697e10e';
+const SOURCE_APP_SHA256 = '31ea3e3fe766c70536e296e04532095726ab507a35fc3e83d2bd1000284cc923';
 const TASKS_PATH = path.posix.join(path.posix.dirname(SPEC_PATH), 'tasks.md');
 const DONE_IDEA_PATH = '.dude/ideas/052-dude-canvas-ui.md';
 const DONE_SPEC_PATH = '.dude/specs/052-dude-canvas-ui/spec.md';
@@ -5430,6 +5430,8 @@ function installedParity(root) {
     // 072: the update controller and its action child, which the installed extension runs and replaces.
     'lib/bundle-upgrade.mjs',
     'lib/upgrade-action.mjs',
+    // 089: the session's GitHub sign-in controller, which the installed extension creates at load.
+    'lib/github-session.mjs',
     'lib/catalog-reader.mjs',
     'lib/needs-you.mjs',
     'lib/project-artifacts.mjs',
@@ -6020,9 +6022,9 @@ async function driveInstalledImportRoundTrip(page, canvasUrl, fixture, ownerMode
   await settled('installed count of the seeded project rows',
     async () => (await packListView(page)).totals.installed === String(fixture.fillNames.length));
 
-  // The complete Phase B surface in a workspace that has not asked for a catalog: Packs and About, then the
-  // four views with Sources last. Installed is already useful (the project rows), Available is unknown,
-  // and nothing has acquired a catalog.
+  // The complete Phase B surface in a workspace that has not asked for a catalog: Packs, Accounts, Appearance, and
+  // About, then the four views with Sources last. Installed is already useful (the project rows), Available is
+  // unknown, and nothing has acquired a catalog.
   const surface = await evaluate(page, `(() => {
     const settings = document.querySelector('[data-settings]');
     const text = node => node.innerText.replace(/\\s+/g, ' ').trim();
@@ -6034,9 +6036,9 @@ async function driveInstalledImportRoundTrip(page, canvasUrl, fixture, ownerMode
       controls: [...settings.querySelectorAll('button, [role="tab"]')].map(text),
     };
   })()`);
-  assert.deepEqual(surface.sections, ['packs', 'appearance', 'about']);
+  assert.deepEqual(surface.sections, ['packs', 'accounts', 'appearance', 'about']);
   assert.deepEqual(surface.contexts, ['installed', 'available', 'import', 'sources']);
-  assert.deepEqual(surface.tabs, ['Packs', 'Appearance', 'About', `Installed ${fixture.fillNames.length}`, 'Available ?', 'Add/import', 'Sources']);
+  assert.deepEqual(surface.tabs, ['Packs', 'Accounts', 'Appearance', 'About', `Installed ${fixture.fillNames.length}`, 'Available ?', 'Add/import', 'Sources']);
   assert.equal(discoveries(), 0, 'entering Settings reads installed packs and project rows, never a catalog');
   let list = await packListView(page);
   assert.deepEqual(
@@ -6580,9 +6582,9 @@ async function driveInstalledSourceRoundTrip(page, canvasUrl, fixture, sources) 
       contexts: [...settings.querySelectorAll('[data-pack-context]')].map(node => node.getAttribute('data-pack-context')),
     };
   })()`);
-  assert.deepEqual(surface.sections, ['packs', 'appearance', 'about']);
+  assert.deepEqual(surface.sections, ['packs', 'accounts', 'appearance', 'about']);
   assert.deepEqual(surface.contexts, ['installed', 'available', 'import', 'sources'], 'Sources is the last of the four Packs views');
-  assert.deepEqual(surface.tabs, ['Packs', 'Appearance', 'About', 'Installed 0', 'Available ?', 'Add/import', 'Sources'],
+  assert.deepEqual(surface.tabs, ['Packs', 'Accounts', 'Appearance', 'About', 'Installed 0', 'Available ?', 'Add/import', 'Sources'],
     'before the first Reload Available is unknown');
   await click(page, `document.querySelector('[data-pack-context="sources"]')`);
   await settled('Sources lists the built-in sources', async () => (await sourcesView(page)).rows.length === 2);

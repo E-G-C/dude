@@ -1379,6 +1379,30 @@ test('analyzeGitHubDirectory follows the lean metadata/raw protocol and matches 
   });
 });
 
+test('analyzeGitHubDirectory stays anonymous: a token in the environment never reaches a request', { concurrency: false }, async () => {
+  const fixture = githubProtocolFixture();
+  // Made in memory only; the checks below report counts, never the value.
+  const planted = `gho_${crypto.randomUUID().replaceAll('-', '')}`;
+  const saved = { GH_TOKEN: process.env.GH_TOKEN, GITHUB_TOKEN: process.env.GITHUB_TOKEN };
+  Object.assign(process.env, { GH_TOKEN: planted, GITHUB_TOKEN: planted });
+  try {
+    // Each scripted request also passes assertGitHubRequestPolicy: exactly the caller's headers, with no Authorization.
+    await withFetchScript(fixture.steps, async ({ calls }) => {
+      const analysis = await analyzeGitHubDirectory(fixture.source);
+      assert.equal(analysis.source.provider, 'github-tree');
+      assert.equal(calls.length, fixture.steps.length);
+      assert.equal(calls.filter(({ headers }) => Object.hasOwn(headers, 'authorization')).length, 0, 'no request carried a credential');
+      assert.equal(JSON.stringify(calls.map(({ url, headers }) => ({ url, headers }))).split(planted).length - 1, 0,
+        'the planted token reached no request');
+    });
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+
 test('analyzeGitHubDirectory maps fixed Git modes without fetching links or submodules', { concurrency: false }, async () => {
   const regularBytes = Buffer.from('regular\n');
   const executableBytes = Buffer.from('#!/bin/sh\n');

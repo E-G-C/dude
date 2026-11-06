@@ -1198,16 +1198,18 @@ That Windows path was not exercised in the documented Darwin acceptance.
 
 #### Settings: optional packs
 
-Settings is the cog at the bottom of the left navigation rail. It has three
-sections, Packs, Appearance, and About, chosen with the tabs beside the
-Settings heading. Packs manages the current workspace's optional packs and the
-sources they come from, Appearance chooses whether Canvas follows the GitHub
-app theme (see [Settings: Appearance](#settings-appearance)), and About
-identifies the installation and checks for Dude updates (see
+Settings is the cog at the bottom of the left navigation rail. It has four
+sections, Packs, Accounts, Appearance, and About, chosen with the tabs beside
+the Settings heading. Packs manages the current workspace's optional packs and
+the sources they come from, Accounts manages this session's optional GitHub
+sign-in for pack reads (see [Settings: pack sources](#settings-pack-sources)),
+Appearance chooses whether Canvas follows the GitHub app theme (see
+[Settings: Appearance](#settings-appearance)), and About identifies the
+installation and checks for Dude updates (see
 [Settings: About](#settings-about)). Settings
 has no other sections. It opens on Packs each time you enter it. Switching to
-Appearance or About and back keeps the Packs view, use case, source, page,
-selection, and open details. Entering or leaving
+Accounts, Appearance, or About and back keeps the Packs view, use case, source,
+page, selection, and open details. Entering or leaving
 Settings keeps the selected work, task inspection, unsent answers and idea text,
 and retained Review work. Canvas still opens in Overview. When the Canvas area
 is 479 px wide or less, the section tabs show their labels without icons. At
@@ -1596,16 +1598,62 @@ refuses:
   location, so a second ref is not a second source;
 - a ninth added source.
 
-Canvas never asks for credentials. It reads a GitHub repository over anonymous
-HTTPS, runs no Git for it, and sends no token, credential helper login,
-`.netrc` login, SSH key, or Git proxy setting with it, so a private repository,
-or one you can reach only through Git's sign-in or proxy configuration, fails as
-unreachable. Git runs only for a bundle upstream on another host, such as GitHub
-Enterprise, and then without prompts, credential helpers, or a `.netrc` login.
-A credential you wrote into your own Git configuration, such as an
-`http.extraHeader` value, still applies there. GitHub limits anonymous reads per
-hour for each address, so in a development checkout, frequent Reloads can leave
-Bundle upstream `Unavailable` for a while; the local library is unaffected. A
+Canvas reads a GitHub repository over HTTPS and runs no Git for it. It sends no
+credential helper login, `.netrc` login, SSH key, or Git proxy setting with it.
+The only credential it can send is the access from the optional GitHub sign-in
+described below. Git runs only for a bundle upstream on another host, such as
+GitHub Enterprise, and then without prompts, credential helpers, or a `.netrc`
+login. A credential you wrote into your own Git configuration, such as an
+`http.extraHeader` value, still applies there.
+
+GitHub sign-in is optional, and Sources says where to find it:
+`GitHub sign-in is managed in Settings > Accounts.` Choosing Settings > Accounts
+in that line opens the Accounts section and starts nothing. While Accounts is
+open, the command bar has no Reload packs or Refresh control, and the status bar
+shows `Accounts · This session`.
+
+Accounts explains the sign-in before you start it. Choose Sign in, and Accounts
+shows a short code from GitHub and the time it expires. Enter the code at
+`https://github.com/login/device` and approve it there. Dude never sees your
+password. A few seconds after you approve, Accounts updates on its own and names
+the signed-in account: `Signed in as @<login>`. Cancel ends a sign-in that has
+not finished.
+
+Dude requests no scopes, so the sign-in gives it read-only access to public
+information. A private repository, or a source you can reach only through Git's
+sign-in or proxy configuration, still fails as unreachable. Canvas sends the
+access only with its requests to GitHub's API, `api.github.com`, for Reload
+packs, Add source, and install and refresh previews and applies. File downloads
+from `raw.githubusercontent.com` stay anonymous. Compose commands in chat or on
+the command line never use the Canvas sign-in, and neither do bundle updates or
+imports from Add/import.
+
+The access lasts for the current session only: Dude keeps its token in memory,
+never saves it, and a new session starts signed out. While you are signed in,
+pack reads from GitHub use your own GitHub allowance instead of the anonymous
+limit. Your allowance is normally 5,000 requests an hour, shared with your other
+GitHub tools; the anonymous limit is 60 requests an hour for each network
+address. Signing in or out starts no read by itself.
+
+Sign out makes Dude forget the access but does not revoke it. GitHub keeps the
+authorization until you revoke it in GitHub's Applications settings at
+`https://github.com/settings/applications`, under Authorized OAuth Apps, and a
+token Dude has discarded can stay valid at GitHub until then. If GitHub rejects
+the access during a read, for example because you revoked it, Dude signs out
+and says so, and the next Reload packs reads anonymously.
+
+Dude signs in through an OAuth App that E-G-C owns, with Device Flow on and no
+client secret. Dude does not opt into expiring tokens and never requests
+`offline_access`. Without a configured Client ID, Sign in asks GitHub nothing,
+and Accounts shows `Sign-in unavailable`, as it does when GitHub refuses that
+registration for device sign-in. Anonymous reads and local folders keep working
+either way.
+
+In a development checkout, frequent Reloads while signed out can use up the
+anonymous limit and leave Bundle upstream `Unavailable` for a while; the local
+library is unaffected. When GitHub refuses a read for its rate limit, Canvas
+says whose allowance is used up and retries nothing. Signing in, or adding a
+local folder whose root contains `library/packs`, avoids the anonymous limit. A
 source is third-party content: its packs can add agents and instructions, so add
 only sources you trust. Every install or refresh preview from it shows a
 `Third-party source` warning first.
@@ -2879,7 +2927,7 @@ manifest's `defaultSourceCase` and the summary line record the tag, commit,
 packs, and elapsed time, and the manifest also records the GitHub API
 allowance and cleanup.
 
-This is the driver's only network case. It spends one discovery, about 25 of
+This is the driver's only network case. It spends one discovery, about 6 of
 the 60 anonymous GitHub API requests that each address gets per hour, so check
 `https://api.github.com/rate_limit`, which spends none, before another run from
 the same address. A missing installed artifact, an unreachable network or

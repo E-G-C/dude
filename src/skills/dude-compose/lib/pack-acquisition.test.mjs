@@ -10,6 +10,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { acquireRemoteCatalog, acquireRemotePack } from './pack-acquisition.mjs';
+import { GitHubAccess } from '../../dude-engine/lib/github-content.mjs';
 
 // Captured before any test patches the module, for fixture Git only.
 const realSpawnSync = childProcess.spawnSync;
@@ -212,11 +213,15 @@ function requestKind(url) {
 
 /**
  * A request-recording GitHub stand-in serving `repo` the way the API and raw
- * hosts do. Every request is checked against the anonymous request policy.
+ * hosts do. Every request is checked against the request policy: an anonymous
+ * GET, except that with `authorization` every API request, and no raw one, also
+ * carries exactly that Authorization header. A violation names header names and
+ * whether the credential matched, never a header value.
  * @param {FixtureRepository} repo
  * @param {Intercept} [intercept]
+ * @param {{ authorization?: string | null }} [options]
  */
-function githubServer(repo, intercept) {
+function githubServer(repo, intercept, { authorization = null } = {}) {
   /** @type {RecordedRequest[]} */
   const requests = [];
   /** @type {string[]} */
@@ -227,14 +232,18 @@ function githubServer(repo, intercept) {
   /** @param {RecordedRequest} request */
   const checkPolicy = (request) => {
     const { init, kind } = request;
-    const expectedHeaders = kind === 'raw' ? {} : kind === 'commit-sha' ? SHA_HEADERS : JSON_HEADERS;
+    const expectedHeaders = {
+      ...(kind === 'raw' ? {} : kind === 'commit-sha' ? SHA_HEADERS : JSON_HEADERS),
+      ...(authorization !== null && kind !== 'raw' ? { authorization } : {}),
+    };
     if (init.method !== 'GET' || init.redirect !== 'error' || init.credentials !== 'omit' || !(init.signal instanceof AbortSignal)) {
       violations.push(`${request.url}: not an anonymous non-redirecting GET`);
     }
     try {
       assert.deepEqual(request.headers, expectedHeaders);
     } catch {
-      violations.push(`${request.url}: headers ${JSON.stringify(request.headers)}`);
+      violations.push(`${request.url}: header names ${JSON.stringify(Object.keys(request.headers).sort())}, `
+        + `expected credential ${request.headers.authorization === expectedHeaders.authorization}`);
     }
   };
 
@@ -366,13 +375,14 @@ async function withProcessRecorder(run, replace = {}) {
 /**
  * Run `run` against a recording GitHub stand-in, a recorded process table and an
  * isolated temporary directory. No test may start a process or leave a policy
- * violation behind.
+ * violation behind. `authorization` is the credential every API request must carry.
  * @param {FixtureRepository} repo
  * @param {(state: { server: ReturnType<typeof githubServer>, base: string }) => Promise<void>} run
  * @param {Intercept} [intercept]
+ * @param {{ authorization?: string | null }} [options]
  */
-async function withGitHub(repo, run, intercept) {
-  const server = githubServer(repo, intercept);
+async function withGitHub(repo, run, intercept, options) {
+  const server = githubServer(repo, intercept, options);
   await withTemp((base) => withFetch(server.fetch, () => withProcessRecorder(async (calls) => {
     await run({ server, base });
     assert.deepEqual(calls, [], 'GitHub acquisition starts no process, Git included');
@@ -542,20 +552,22 @@ test('GitHub discovery reads only direct manifests and the metadata that finds t
         assert.notEqual(fs.statSync(path.join(acquired.catalogDir, 'beta', 'pack.md')).mode & 0o111, 0, 'an executable manifest keeps its mode');
       }
 
-      // One commit lookup each side of the content, then nonrecursive trees and manifests only.
+      // One commit lookup each side of the content, the root and library trees, one
+      // recursive packs listing, and the manifests only.
       assert.equal(server.requests[0].url, `${API}/commits/main`);
       assert.equal(server.requests.at(-1)?.url, `${API}/commits/main`);
       assert.equal(server.of('commit-sha').length, 2);
       assert.deepEqual(server.of('git-commit').map(({ url }) => url), [`${API}/git/commits/${commit}`]);
-      const treeShas = ['', 'library', 'library/packs', ...['alpha', 'beta', 'delta', 'epsilon', 'gamma', 'zeta'].map((name) => `library/packs/${name}`)]
-        .map((dir) => (dir ? /** @type {FixtureEntry} */ (entryAt(repo, rootTree, dir)).sha : rootTree));
-      assert.deepEqual(server.of('tree').map(({ url }) => url).sort(), treeShas.map((sha) => `${API}/git/trees/${sha}`).sort());
+      const libraryTree = /** @type {FixtureEntry} */ (entryAt(repo, rootTree, 'library')).sha;
+      const packsTree = /** @type {FixtureEntry} */ (entryAt(repo, rootTree, 'library/packs')).sha;
+      assert.deepEqual(server.of('tree').map(({ url }) => url), [`${API}/git/trees/${rootTree}`, `${API}/git/trees/${libraryTree}`]);
+      assert.deepEqual(server.of('tree-recursive').map(({ url }) => url), [`${API}/git/trees/${packsTree}?recursive=1`]);
       assert.deepEqual(
         server.of('raw').map(({ url }) => url).sort(),
         CATALOG_MANIFESTS.map((name) => `${RAW}/${commit}/library/packs/${name}/pack.md`).sort(),
       );
-      assert.equal(server.of('tree-recursive').length + server.of('tags').length + server.of('other').length, 0);
-      assert.equal(server.requests.length, 2 + 1 + treeShas.length + CATALOG_MANIFESTS.length, 'no companion, unrelated blob or archive is read');
+      assert.equal(server.of('tags').length + server.of('other').length, 0);
+      assert.equal(server.requests.length, 2 + 1 + 3 + CATALOG_MANIFESTS.length, 'no companion, unrelated blob or archive is read');
       assert.ok(server.peak() > 1 && server.peak() <= 4, `requests overlap within the four-request bound (peak ${server.peak()})`);
     } finally {
       await acquired.dispose();
@@ -1165,6 +1177,154 @@ test('GitHub transport failures are explicit and never fall back to another read
   });
 });
 
+/*
+ * Explicit access. A sentinel token is made in this process's memory only; the
+ * stand-in's policy checks that every API request, and no raw one, carries it,
+ * and every other check reports a boolean or a count, never the token.
+ */
+
+const ANONYMOUS_HINT = ' (GitHub sources are read anonymously, so the repository and ref must be public)';
+const PUBLIC_ONLY_HINT = ' (GitHub sources are read with public-only access, so the repository and ref must be public)';
+/** A bearer-shaped sentinel that no real account holds. */
+const sentinelToken = () => `gho_${crypto.randomUUID().replaceAll('-', '')}`;
+/** @param {unknown} text @param {string} needle */
+const occurrences = (text, needle) => String(text).split(needle).length - 1;
+/** How often `needle` occurs in the files under `directory`. @param {string} directory @param {string} needle */
+const occurrencesUnder = (directory, needle) => listFiles(directory)
+  .reduce((count, file) => count + occurrences(fs.readFileSync(path.join(directory, file)).toString('latin1'), needle), 0);
+
+/**
+ * Run `run` with variables a user's machine may carry planted in the
+ * environment, then restore them.
+ * @param {Record<string, string>} planted
+ * @param {() => Promise<void>} run
+ */
+async function withPlantedEnvironment(planted, run) {
+  const saved = Object.fromEntries(Object.keys(planted).map((name) => [name, process.env[name]]));
+  Object.assign(process.env, planted);
+  try {
+    await run();
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
+
+test('explicit access reaches every GitHub API request and no raw download, and reads exactly what an anonymous read does', async (t) => {
+  const { repo } = repositoryWith(CATALOG_FILES);
+  const sentinel = sentinelToken();
+  const ambient = sentinelToken();
+  for (const [operation, acquire] of /** @type {const} */ ([
+    ['catalog', (/** @type {GitHubAccess | null} */ access) => acquireRemoteCatalog({ repository: SOURCE, ref: 'main', access })],
+    ['pack', (/** @type {GitHubAccess | null} */ access) => acquireRemotePack({ repository: SOURCE, ref: 'main', name: 'alpha', access })],
+  ])) {
+    await t.test(operation, async () => {
+      /** @type {Array<{ urls: string[], files: string[], identity: unknown }>} */
+      const reads = [];
+      for (const access of [null, new GitHubAccess(sentinel)]) {
+        // A token the user's environment holds is never adopted: the anonymous read still sends no credential.
+        await withPlantedEnvironment({ GH_TOKEN: ambient, GITHUB_TOKEN: ambient }, () => withGitHub(repo, async ({ server, base }) => {
+          const acquired = /** @type {any} */ (await acquire(access));
+          try {
+            reads.push({
+              urls: server.requests.map(({ url }) => url).sort(),
+              files: listFiles(acquired.catalogDir ?? acquired.packDir),
+              identity: acquired.sourceIdentity,
+            });
+            assert.equal(occurrencesUnder(base, sentinel) + occurrencesUnder(base, ambient), 0, 'no acquired file holds a credential');
+            assert.equal(occurrences(JSON.stringify(acquired), sentinel), 0, 'the result holds no credential');
+          } finally {
+            await acquired.dispose();
+          }
+          assert.ok(server.of('raw').length > 0, 'raw downloads were made, and the policy saw none carry a credential');
+        }, undefined, { authorization: access ? `Bearer ${sentinel}` : null }));
+      }
+      assert.deepEqual(reads[1], reads[0], 'the same requests, files and identity as the anonymous read');
+    });
+  }
+});
+
+test('GitHub refusals keep a rejected access apart from a rate limit and a repository that is not public, with no retry or leak', async (t) => {
+  const { repo } = repositoryWith(CATALOG_FILES);
+  const sentinel = sentinelToken();
+  const provider = '{"message":"Bad credentials: planted provider text","documentation_url":"https://docs.github.com/rest"}';
+  const cases = [
+    { name: 'a 401 to a read with access is a rejected access', status: 401, headers: {}, access: true, reason: 'credential_rejected',
+      hint: ' (GitHub rejected the access this read was given)' },
+    { name: 'a 401 to an anonymous read is not a rejected access', status: 401, headers: {}, access: false, reason: undefined, hint: ANONYMOUS_HINT },
+    { name: 'an ordinary 403 to a read with access', status: 403, headers: {}, access: true, reason: undefined, hint: PUBLIC_ONLY_HINT },
+    { name: 'a 404 to a read with access', status: 404, headers: {}, access: true, reason: undefined, hint: PUBLIC_ONLY_HINT },
+    { name: 'a rate-limit 403 to a read with access', status: 403, headers: { 'x-ratelimit-remaining': '0' }, access: true, reason: 'rate_limited', hint: '' },
+    { name: 'a 429 to a read with access', status: 429, headers: { 'retry-after': '60' }, access: true, reason: 'rate_limited', hint: '' },
+    { name: 'a 429 to an anonymous read', status: 429, headers: {}, access: false, reason: 'rate_limited', hint: '' },
+  ];
+  for (const { name, status, headers, access, reason, hint } of cases) {
+    for (const [operation, acquire] of /** @type {const} */ ([
+      ['catalog', (/** @type {GitHubAccess | null} */ given) => acquireRemoteCatalog({ repository: SOURCE, ref: 'main', access: given })],
+      ['pack', (/** @type {GitHubAccess | null} */ given) => acquireRemotePack({ repository: SOURCE, ref: 'main', name: 'alpha', access: given })],
+    ])) {
+      await t.test(`${name} (${operation})`, async () => {
+        await withGitHub(repo, async ({ server, base }) => {
+          const error = await rejection(acquire(access ? new GitHubAccess(sentinel) : null));
+          assert.equal(/** @type {any} */ (error).reason, reason);
+          assert.equal(error.message, `failed to fetch source ${SOURCE} @ main: GitHub metadata fetch failed: `
+            + `GitHub metadata request failed with HTTP ${status}${reason === 'rate_limited' ? ' (rate limit)' : ''}${hint}`);
+          assert.equal(server.requests.length, 1, 'the refused first request is not retried, with either allowance');
+          assert.equal(occurrences(`${error.message}\n${error.stack}`, sentinel), 0, 'the failure holds no credential');
+          assert.equal(occurrences(error.message, 'planted provider text'), 0, 'the failure holds no provider text');
+          assert.deepEqual(acquisitionRoots(base), []);
+        }, () => response(provider, status, { 'content-type': 'application/json', ...headers }),
+        { authorization: access ? `Bearer ${sentinel}` : null });
+      });
+    }
+  }
+
+  await t.test('a rate-limited raw download of a read with access is a rate limit too', async () => {
+    await withGitHub(repo, async ({ server, base }) => {
+      const error = await rejection(acquireRemoteCatalog({ repository: SOURCE, ref: 'main', access: new GitHubAccess(sentinel) }));
+      assert.equal(/** @type {any} */ (error).reason, 'rate_limited');
+      assert.match(error.message, /: GitHub raw fetch failed: GitHub raw request failed with HTTP 429 \(rate limit\)$/);
+      const raws = server.of('raw').map(({ url }) => url);
+      assert.equal(new Set(raws).size, raws.length, 'no download is retried');
+      assert.deepEqual(acquisitionRoots(base), []);
+    }, (request) => (request.kind === 'raw' ? response('rate limited', 429) : undefined), { authorization: `Bearer ${sentinel}` });
+  });
+});
+
+test('explicit access must be GitHubAccess, and another host\'s clone never receives it', async (t) => {
+  const sentinel = sentinelToken();
+  await t.test('any other value is refused before a request, a process or a root, and is not repeated', async () => {
+    await withTemp((base) => withFetch(/** @type {any} */ (() => assert.fail('nothing is requested')), () => withProcessRecorder(async (calls) => {
+      for (const value of [sentinel, { token: sentinel }, 5]) {
+        for (const acquire of [
+          () => acquireRemoteCatalog({ repository: SOURCE, ref: 'main', access: /** @type {any} */ (value) }),
+          () => acquireRemotePack({ repository: SOURCE, ref: 'main', name: 'alpha', access: /** @type {any} */ (value) }),
+        ]) {
+          const error = await rejection(acquire());
+          assert.equal(error instanceof TypeError && error.message === 'access must be explicit GitHub access', true);
+          assert.equal(occurrences(error.message, sentinel), 0);
+        }
+      }
+      assert.deepEqual(calls, []);
+      assert.deepEqual(acquisitionRoots(base), []);
+    })));
+  });
+
+  await t.test('another host is cloned with no credential in Git\'s arguments, options or environment', async () => {
+    await withGitAcquisition(async ({ calls }) => {
+      const source = 'https://gitlab.example.invalid/acme/catalog.git';
+      const error = await rejection(acquireRemoteCatalog({ repository: source, ref: 'main', access: new GitHubAccess(sentinel) }));
+      assert.equal(error.message, `failed to fetch source ${source} @ main`);
+      assert.equal(/** @type {any} */ (error).reason, undefined);
+      assert.ok(calls.length > 0 && calls.every(({ command }) => command === 'git'), 'only Git ran');
+      assert.equal(occurrences(JSON.stringify(calls.map(({ args, options }) => ({ args, options }))), sentinel), 0);
+      assert.equal(occurrences(JSON.stringify(process.env), sentinel), 0, 'nor is it in the environment Git inherits');
+    }, () => ({ pid: 0, status: 128, signal: null, stdout: null, stderr: null, output: [] }));
+  });
+});
+
 test('selected-pack entries that cannot be materialized faithfully are refused before any file is read', async (t) => {
   const unsafe = [
     ['a symbolic link', { 'library/packs/alpha/skills/link': { symlink: '../../../../README.md' } }, /symbolic link at "skills\/link", which is not followed/],
@@ -1292,21 +1452,21 @@ function packAtEntryBounds({ deeperFirstChain = false } = {}) {
 }
 
 test('catalog bounds accept their limits and refuse one more before the extra reads', async (t) => {
-  await t.test('128 pack directories are read; 129 are refused before any pack tree', async () => {
+  await t.test('128 pack directories are read; 129 are refused before any manifest is downloaded', async () => {
     const exact = repositoryWith(catalogWithDirectories(128));
     await withGitHub(exact.repo, async ({ server }) => {
       const acquired = await catalog();
       try {
         assert.equal(fs.readdirSync(acquired.catalogDir).length, 128);
         assert.equal(server.of('raw').length, 128);
-        assert.equal(server.of('tree').length, 3 + 128);
+        assert.deepEqual([server.of('tree').length, server.of('tree-recursive').length], [2, 1]);
       } finally {
         await acquired.dispose();
       }
     });
     const over = repositoryWith(catalogWithDirectories(129));
     await assertRefusedGitHub(over.repo, catalog, /more than 128 direct pack directories/, undefined,
-      (server) => assert.deepEqual([server.of('tree').length, server.of('raw').length], [3, 0]));
+      (server) => assert.deepEqual([server.of('tree').length, server.of('tree-recursive').length, server.of('raw').length], [2, 1, 0]));
   });
 
   await t.test('a 64 KiB manifest is read; one byte more is refused before any download', async () => {
@@ -1349,13 +1509,177 @@ test('catalog bounds accept their limits and refuse one more before the extra re
       const acquired = await acquireRemoteCatalog({ repository: SOURCE, ref: 'latest' });
       try {
         const metadata = server.requests.filter(({ kind }) => kind !== 'raw').length;
-        assert.equal(metadata, 20 + 1 + 3 + 128 + 20);
+        assert.equal(metadata, 20 + 1 + 3 + 20);
         assert.ok(metadata <= 176);
       } finally {
         await acquired.dispose();
       }
     });
   });
+});
+
+/**
+ * The API requests of one acquisition, in order. Raw downloads are left out:
+ * GitHub's API request allowance does not count them.
+ * @param {ReturnType<typeof githubServer>} server
+ */
+function metadataRequests(server) {
+  return server.requests.filter(({ kind }) => kind !== 'raw').map(({ url }) => url);
+}
+
+/**
+ * `count` direct packs, each with nested companions, so the packs listing holds
+ * more than the manifests.
+ * @param {number} count
+ */
+function catalogWithCompanions(count) {
+  /** @type {Record<string, FixtureFile>} */
+  const files = { 'README.md': 'unrelated repository readme\n' };
+  for (const [filePath, value] of Object.entries(catalogWithDirectories(count))) {
+    const pack = path.posix.dirname(filePath);
+    files[filePath] = value;
+    files[`${pack}/agents/worker.agent.md`] = `${pack} worker\n`;
+    files[`${pack}/skills/helper/SKILL.md`] = `${pack} helper\n`;
+  }
+  return files;
+}
+
+test('Catalog listing: a branch read makes six metadata requests whatever the pack count', async (t) => {
+  for (const count of [1, 19, 128]) {
+    await t.test(`${count} packs`, async () => {
+      const { repo, commit, rootTree } = repositoryWith(catalogWithCompanions(count));
+      const tree = (/** @type {string} */ dir) => /** @type {FixtureEntry} */ (entryAt(repo, rootTree, dir)).sha;
+      await withGitHub(repo, async ({ server }) => {
+        const acquired = await catalog();
+        try {
+          assert.equal(fs.readdirSync(acquired.catalogDir).length, count);
+          assert.deepEqual(metadataRequests(server), [
+            `${API}/commits/main`,
+            `${API}/git/commits/${commit}`,
+            `${API}/git/trees/${rootTree}`,
+            `${API}/git/trees/${tree('library')}`,
+            `${API}/git/trees/${tree('library/packs')}?recursive=1`,
+            `${API}/commits/main`,
+          ]);
+          assert.equal(server.of('raw').length, count, 'one download per manifest');
+        } finally {
+          await acquired.dispose();
+        }
+      });
+    });
+  }
+});
+
+test('Catalog listing: a full-commit read makes five metadata requests, with no recheck', async () => {
+  const { repo, commit, rootTree } = repositoryWith(catalogWithCompanions(19));
+  const tree = (/** @type {string} */ dir) => /** @type {FixtureEntry} */ (entryAt(repo, rootTree, dir)).sha;
+  await withGitHub(repo, async ({ server }) => {
+    const acquired = await acquireRemoteCatalog({ repository: SOURCE, ref: commit });
+    try {
+      assert.equal(acquired.sourceIdentity.resolved_commit, commit);
+      assert.equal(fs.readdirSync(acquired.catalogDir).length, 19);
+      assert.deepEqual(metadataRequests(server), [
+        `${API}/commits/${commit}`,
+        `${API}/git/commits/${commit}`,
+        `${API}/git/trees/${rootTree}`,
+        `${API}/git/trees/${tree('library')}`,
+        `${API}/git/trees/${tree('library/packs')}?recursive=1`,
+      ]);
+    } finally {
+      await acquired.dispose();
+    }
+  });
+});
+
+test('Catalog listing: only direct manifests are read; nested files and folders without a manifest are skipped', async () => {
+  const { repo, commit } = repositoryWith({
+    'library/packs/alpha/pack.md': manifest('alpha'),
+    // A manifest inside a pack, and nested companions of every kind, are not catalog entries.
+    'library/packs/alpha/skills/inner/pack.md': manifest('inner'),
+    'library/packs/alpha/skills/inner/link': { symlink: '../../pack.md' },
+    'library/packs/alpha/references/deep/er/notes.md': 'nested notes\n',
+    'library/packs/alpha/vendor': { gitlink: '5'.repeat(40) },
+    // A folder without its own manifest is skipped, even with one deeper inside.
+    'library/packs/gamma/README.md': 'no manifest\n',
+    'library/packs/gamma/nested/pack.md': manifest('nested'),
+    'library/packs/notes.txt': 'not a pack\n',
+    'library/packs/zeta/pack.md': manifest('zeta'),
+  });
+  await withGitHub(repo, async ({ server }) => {
+    const acquired = await catalog();
+    try {
+      assert.deepEqual(listFiles(acquired.catalogDir), ['alpha/pack.md', 'zeta/pack.md']);
+      assert.deepEqual(
+        server.of('raw').map(({ url }) => url).sort(),
+        ['alpha', 'zeta'].map((name) => `${RAW}/${commit}/library/packs/${name}/pack.md`),
+      );
+    } finally {
+      await acquired.dispose();
+    }
+  });
+});
+
+test('Catalog listing: a direct pack.md that is not a regular file is refused before any download', async (t) => {
+  for (const [name, extra] of [
+    ['a symbolic link', { 'library/packs/beta/pack.md': { symlink: '../alpha/pack.md' } }],
+    ['a submodule', { 'library/packs/beta/pack.md': { gitlink: '6'.repeat(40) } }],
+    ['a folder', { 'library/packs/beta/pack.md/inner.md': 'not a manifest\n' }],
+  ]) {
+    await t.test(String(name), async () => {
+      const { repo } = repositoryWith({ 'library/packs/alpha/pack.md': manifest('alpha'), .../** @type {object} */ (extra) });
+      await assertRefusedGitHub(repo, catalog,
+        /^failed to fetch source https:\/\/github\.com\/acme\/catalog @ main: pack "beta" has a pack\.md that is not a regular file$/,
+        undefined, (server) => assert.equal(server.of('raw').length, 0));
+    });
+  }
+});
+
+test('Catalog listing: a truncated or oversized packs listing is refused, with no other read in its place', async (t) => {
+  /** @param {ReturnType<typeof githubServer>} server */
+  const noFallback = (server) => {
+    assert.deepEqual([server.of('tree').length, server.of('tree-recursive').length, server.of('raw').length], [2, 1, 0]);
+    assert.equal(server.requests.length, 5, 'nothing is read after the listing');
+  };
+
+  await t.test('a truncated listing', async () => {
+    const { repo } = repositoryWith(CATALOG_FILES);
+    await assertRefusedGitHub(repo, catalog,
+      /^failed to fetch source https:\/\/github\.com\/acme\/catalog @ main: Git tree response is truncated or lacks an exact truncation marker$/,
+      (request) => {
+        if (request.kind !== 'tree-recursive') return undefined;
+        const sha = request.url.slice(`${API}/git/trees/`.length).replace('?recursive=1', '');
+        return jsonResponse({ ...treeJson(repo, sha, true), truncated: true });
+      },
+      noFallback);
+  });
+
+  await t.test('a listing over the 2 MiB metadata response limit', async () => {
+    /** @type {Record<string, FixtureFile>} */
+    const files = { 'library/packs/alpha/pack.md': manifest('alpha') };
+    for (let index = 0; index < 14_000; index += 1) files[`library/packs/alpha/files/f${String(index).padStart(5, '0')}.txt`] = `${index}\n`;
+    const { repo, rootTree } = repositoryWith(files);
+    const packsTree = /** @type {FixtureEntry} */ (entryAt(repo, rootTree, 'library/packs')).sha;
+    assert.ok(Buffer.byteLength(JSON.stringify(treeJson(repo, packsTree, true))) > 2 * MIB, 'the listing really is over the limit');
+    await assertRefusedGitHub(repo, catalog,
+      /^failed to fetch source https:\/\/github\.com\/acme\/catalog @ main: GitHub metadata fetch failed: GitHub metadata response body exceeds the 2097152-byte \(2 MiB\) limit$/,
+      undefined, noFallback);
+  });
+});
+
+test('Catalog listing: a manifest is still bound to its listed size and Git blob ID', async (t) => {
+  const original = bytesOf(CATALOG_FILES['library/packs/beta/pack.md']);
+  for (const [name, change, expected] of [
+    ['same-length different bytes', (/** @type {Buffer} */ bytes) => Buffer.from(bytes.toString('utf8').toUpperCase()),
+      /: raw file Git blob SHA-1 integrity mismatch for "library\/packs\/beta\/pack\.md"$/],
+    ['one extra byte', (/** @type {Buffer} */ bytes) => Buffer.concat([bytes, Buffer.from('x')]),
+      /: raw file size does not match Git tree metadata for "library\/packs\/beta\/pack\.md"$/],
+  ]) {
+    await t.test(String(name), async () => {
+      const { repo } = repositoryWith(CATALOG_FILES);
+      await assertRefusedGitHub(repo, catalog, /** @type {RegExp} */ (expected),
+        (request) => (request.url.endsWith('/library/packs/beta/pack.md') ? response(/** @type {Function} */ (change)(original)) : undefined));
+    });
+  }
 });
 
 test('selected-pack bounds accept their limits and refuse one more before any download', async (t) => {
