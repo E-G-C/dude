@@ -18156,11 +18156,14 @@ test('073 Sources: both themes at four sizes and the 200% reflow variants keep S
         stripShown ? '[data-pack-context="sources"]' : '[data-pack-view] [role="combobox"]'])) {
         assert.ok(target.visible && target.hit && target.width >= 24 && target.height >= 24, JSON.stringify({ label, target }));
       }
-      // A row is reached by scrolling, then hit-tested where it lands.
+      // A row is reached by scrolling, then hit-tested where it lands. A stacked row taller than the room its scroller
+      // has (089's approved trade-off) cannot land whole; then its first line, the source's name, must land and be hit.
       await p.q(`document.querySelector('[data-source-row]').scrollIntoView({ block: 'nearest' })`);
-      for (const target of await t073Targets(p, ['[data-source-row]'])) {
-        assert.ok(target.visible && target.hit && target.width >= 24 && target.height >= 24, JSON.stringify({ label, target }));
-      }
+      const [row, firstLine] = await t073Targets(p, ['[data-source-row]', '[data-source-row] [role="gridcell"]']);
+      const room = await p.q(`(() => { const rows = document.querySelector('[data-sources-scroll]');
+        return (getComputedStyle(rows).overflowY === 'visible' ? rows.closest('[role="tabpanel"]') : rows).clientHeight; })()`);
+      assert.ok((row.height <= room ? row.visible && row.hit : firstLine.visible && firstLine.hit) && row.width >= 24 && row.height >= 24,
+        JSON.stringify({ label, room, target: row, firstLine }));
       await p.q(`window.scrollTo(0, 0); document.querySelector('[data-sources-scroll]').closest('[role="tabpanel"]').scrollTop = 0; document.querySelector('[data-sources-scroll]').scrollTop = 0`);
       for (const sample of await sourceColors()) assert.ok(contrast(sample.color, sample.background) >= 4.5, JSON.stringify({ label, sample }));
       const tree = await aboutAccessibility(page);
