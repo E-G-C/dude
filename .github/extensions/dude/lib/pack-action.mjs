@@ -9,11 +9,17 @@
  * `packs.mjs` builds from a validated route body or from a preview's own
  * binding: the operation, the pack, and the source Compose reads (a saved
  * source, a repository at the previewed commit, or the workspace library alone).
+ * Before it does anything, it waits for the one start message `packs.mjs` sends
+ * over IPC, as a catalog reader does (see `awaitStart` in catalog-reader.mjs). An
+ * install or a refresh that `packs.mjs` classified as reading GitHub gets its
+ * GitHub access there, and nowhere else; Compose sends it only to GitHub's API.
  *
  * Compose makes every check and every write. An install or a refresh asks the
  * parent once, at Compose's `beforeWrite`, after staging and before any write;
  * Compose writes only on the parent's literal go, and a parent that is gone is a
- * no.
+ * no. The source is acquired, and its copy removed, before that question, and
+ * the child releases its access just before asking it, so a write the parent
+ * allows runs without any GitHub access.
  *
  * Git's home moves here as it does in the catalog reader's main block: to the
  * empty folder `packs.mjs` made in this child's own temporary root, once any host
@@ -31,7 +37,7 @@ import {
   cmdRefresh,
   cmdRemove,
 } from '../../../skills/dude-compose/compose.mjs';
-import { CATALOG_GIT_HOME_ENV } from './catalog-reader.mjs';
+import { CATALOG_GIT_HOME_ENV, awaitStart } from './catalog-reader.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 
@@ -77,6 +83,7 @@ function askParent() {
       process.off('disconnect', lost);
       resolve(go);
     };
+    // Only the gate's answer; a release message is `awaitStart`'s, which hears every message too.
     /** @param {any} message */
     const hear = message => { if (message?.type === 'gate') finish(message.go === true); };
     const lost = () => finish(false);
@@ -88,12 +95,16 @@ function askParent() {
 }
 
 /**
- * The one operation's Compose result. It never rejects.
+ * The one operation's Compose result, once its start message has arrived. It
+ * never rejects. A removal reads no source, so it is never given access. A child
+ * whose access the parent released before its start reads nothing and answers
+ * `credential_rejected` (see `awaitStart`).
  * @param {string} root
  */
 async function handle(root) {
   try {
     const request = parseRequest(process.env[PACK_ACTION_REQUEST_ENV]);
+    const access = await awaitStart();
     const { name } = request;
     if (request.operation === 'remove') {
       return request.op === 'preview' ? cmdPreviewRemove({ root, name }) : cmdRemove({ root, name });
@@ -102,16 +113,25 @@ async function handle(root) {
       root, library: path.join(root, 'library', 'packs'), name, fetch: request.fetch,
       ...(request.source === null ? {} : { source: request.source }),
       ...(request.ref === null ? {} : { ref: request.ref }),
+      ...(access ? { access } : {}),
     };
     if (request.op === 'preview') {
       return request.operation === 'install' ? await cmdPreviewAdd(args) : await cmdPreviewRefresh(args);
     }
+    // Compose acquired the source and removed its copy before it asks, so the
+    // access ends here, before a write can be allowed. A release message the
+    // parent sends from now on finds it already released, and changes nothing.
+    const beforeWrite = () => {
+      access?.release();
+      return askParent();
+    };
     return request.operation === 'install'
-      ? await cmdAdd({ ...args, force: false, beforeWrite: askParent })
-      : await cmdRefresh({ ...args, beforeWrite: askParent });
+      ? await cmdAdd({ ...args, force: false, beforeWrite })
+      : await cmdRefresh({ ...args, beforeWrite });
   } catch (error) {
     // No mutation is claimed: the parent judges that by whether it let this child write.
-    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error),
+      ...(/** @type {any} */ (error)?.reason === 'credential_rejected' ? { reason: 'credential_rejected' } : {}) };
   }
 }
 

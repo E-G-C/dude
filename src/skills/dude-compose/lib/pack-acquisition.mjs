@@ -6,15 +6,21 @@
  *
  * GitHub. One commit is resolved before any content is read; every tree is then
  * addressed by its object ID and every file by that commit. Discovery reads the
- * nonrecursive root, `library`, `packs` and direct pack trees and downloads only
- * each direct `pack.md`. A selected pack reads one recursive tree for
+ * nonrecursive root and `library` trees and one recursive `packs` tree, then
+ * downloads only each direct `pack.md`; its API request count, which GitHub
+ * limits to 60 an hour for an anonymous address, does not grow with the number
+ * of packs. A selected pack reads one recursive tree for
  * `library/packs/<name>` and downloads that subtree's regular files. Each file is
  * checked against its tree size and Git blob ID before it is written. A mutable
  * selector (a branch, tag or `latest`) is resolved again before the material is
  * returned, and a different answer is refused as ref drift. This path never runs
  * Git: a GitHub source is not cloned, not even after a failure, and its SSH
- * spellings are read over HTTPS too. Requests carry no credentials, so a private
- * repository fails rather than being reached through Git's sign-in.
+ * spellings are read over HTTPS too. A read is anonymous unless its caller passes
+ * explicit `GitHubAccess`, which only the API requests carry; the raw downloads
+ * never do. Git's sign-in is never reached, so a repository that the access does
+ * not reach, such as a private one read anonymously, fails rather than being read.
+ * A rate limit, or a rejection of the access, is named on the failure as its
+ * `reason` and is never retried.
  *
  * Other hosts. The repository is cloned whole, as before: a shallow clone of the
  * ref, else a full clone and checkout, and `latest` selects the highest stable
@@ -41,6 +47,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   GITHUB_API_HEADERS,
+  GitHubAccess,
   createReadBudget,
   fetchGitHubBytes,
   fetchGitHubJson,
@@ -309,6 +316,7 @@ function validatePackPath(relativePath) {
  *   metadata: ReadBudget,
  *   raw: ReadBudget,
  *   operation: AbortController,
+ *   access: GitHubAccess | null,
  * }} GitHubContext
  */
 
@@ -373,6 +381,7 @@ function readCommitSha(context, ref) {
     const bytes = await fetchGitHubBytes(`${context.apiBase}/commits/${encodeRef(ref)}`, context.metadata, {
       headers: GITHUB_COMMIT_SHA_HEADERS,
       signal: context.operation.signal,
+      access: context.access,
     });
     const text = bytes.toString('latin1');
     if (!/^[0-9a-f]{40}\n?$/.test(text)) throw new Error('GitHub commit lookup did not return one full commit ID');
@@ -386,6 +395,7 @@ function readRootTree(context, commit) {
     const value = /** @type {any} */ (await fetchGitHubJson(`${context.apiBase}/git/commits/${commit}`, context.metadata, {
       headers: GITHUB_API_HEADERS,
       signal: context.operation.signal,
+      access: context.access,
     }));
     if (!value || typeof value !== 'object' || Array.isArray(value) || !value.tree || typeof value.tree !== 'object') {
       throw new Error('GitHub commit object is malformed');
@@ -409,6 +419,7 @@ function readTree(context, treeSha, recursive, validatePath) {
     await fetchGitHubJson(`${context.apiBase}/git/trees/${treeSha}${recursive ? '?recursive=1' : ''}`, context.metadata, {
       headers: GITHUB_API_HEADERS,
       signal: context.operation.signal,
+      access: context.access,
     }),
     treeSha,
     recursive,
@@ -433,7 +444,7 @@ async function selectLatestRelease(context) {
       const value = await fetchGitHubJson(
         `${context.apiBase}/tags?per_page=${TAGS_PER_PAGE}&page=${page}`,
         context.metadata,
-        { headers: GITHUB_API_HEADERS, signal: context.operation.signal },
+        { headers: GITHUB_API_HEADERS, signal: context.operation.signal, access: context.access },
       );
       if (!Array.isArray(value) || value.length > TAGS_PER_PAGE) throw new Error('GitHub tag list page is malformed');
       return value.map((item) => {
@@ -485,11 +496,13 @@ async function recheckRevision(context, ref, opening) {
 }
 
 /**
- * The `packs` tree records of the catalog at `rootTree`.
+ * The `packs` tree records of the catalog at `rootTree`: its direct entries, or
+ * with `recursive` every entry below it.
  * @param {GitHubContext} context
  * @param {string} rootTree
+ * @param {boolean} recursive
  */
-async function readPacksTree(context, rootTree) {
+async function readPacksTree(context, rootTree, recursive) {
   let treeSha = rootTree;
   for (const name of ['library', 'packs']) {
     const records = await readTree(context, treeSha, false, validateTreePath);
@@ -498,11 +511,12 @@ async function readPacksTree(context, rootTree) {
     if (child.entryType !== 'directory') throw new Error(`the catalog's ${name} entry is not a directory`);
     treeSha = child.sha;
   }
-  return readTree(context, treeSha, false, validateTreePath);
+  return readTree(context, treeSha, recursive, validateTreePath);
 }
 
 /**
  * Download one blob at the resolved commit and verify it against its tree record.
+ * A raw download is anonymous whatever access the operation has.
  * @param {GitHubContext} context
  * @param {string} commit
  * @param {string[]} segments path from the repository root
@@ -537,21 +551,22 @@ function fileMode(record) {
 async function readGitHubCatalog(context, ref, root) {
   const opening = await resolveRevision(context, ref);
   const rootTree = await readRootTree(context, opening.commit);
-  const packs = await readPacksTree(context, rootTree);
+  // One listing finds every direct manifest, so the API request count does not grow with the packs.
+  const records = await readPacksTree(context, rootTree, true);
   const catalogDir = path.join(root, 'library', 'packs');
   await fs.promises.mkdir(catalogDir, { recursive: true });
 
-  const directories = packs.filter((record) => record.entryType === 'directory');
+  const byPath = new Map(records.map((record) => [record.path, record]));
+  const directories = records.filter((record) => record.entryType === 'directory' && !record.path.includes('/'));
   if (directories.length > CATALOG_LIMITS.directories) {
     throw new Error(`the catalog has more than ${CATALOG_LIMITS.directories} direct pack directories`);
   }
-  const trees = await mapBounded(context, directories, (directory) => readTree(context, directory.sha, false, validateTreePath));
 
   /** @type {{ name: string, record: GitTreeRecord }[]} */
   const manifests = [];
   let declaredBytes = 0;
-  for (const [index, directory] of directories.entries()) {
-    const manifest = trees[index].find((record) => record.path === 'pack.md');
+  for (const directory of directories) {
+    const manifest = byPath.get(`${directory.path}/pack.md`);
     if (!manifest) continue;
     checkPortableSegment(directory.path, directory.path);
     if (manifest.entryType !== 'regular-file') {
@@ -630,7 +645,7 @@ function checkPackInventory(records, name) {
 async function readGitHubPack(context, ref, name, root) {
   const opening = await resolveRevision(context, ref);
   const rootTree = await readRootTree(context, opening.commit);
-  const packs = await readPacksTree(context, rootTree);
+  const packs = await readPacksTree(context, rootTree, false);
   const entry = packs.find((record) => record.path === name);
   if (!entry) throw new ReportedError(`pack "${name}" not found in source ${context.display}`);
   if (entry.entryType !== 'directory') throw new Error(`pack ${JSON.stringify(name)} is not a directory in the catalog`);
@@ -665,10 +680,11 @@ async function readGitHubPack(context, ref, name, root) {
  * @param {string} display
  * @param {typeof CATALOG_LIMITS | typeof PACK_LIMITS} limits
  * @param {AbortSignal | undefined} signal
+ * @param {GitHubAccess | null} access what the API requests carry, if anything
  * @param {(context: GitHubContext) => Promise<T>} work
  * @returns {Promise<T>}
  */
-async function withGitHubOperation(github, repository, display, limits, signal, work) {
+async function withGitHubOperation(github, repository, display, limits, signal, access, work) {
   const operation = new AbortController();
   const deadline = globalThis.setTimeout(() => {
     operation.abort(new Error(`the GitHub ${limits.label} acquisition did not finish within its ${limits.totalMs / 1_000}-second deadline`));
@@ -696,6 +712,7 @@ async function withGitHubOperation(github, repository, display, limits, signal, 
       requestTimeoutMs: limits.requestTimeoutMs,
     }),
     operation,
+    access,
   };
   try {
     return await work(context);
@@ -801,43 +818,70 @@ function removeRoot(root) {
 }
 
 /**
- * Point an anonymous-access refusal at its usual cause.
+ * Point a refusal at its usual cause: a rejected access, or a repository or ref
+ * that is not public, which neither an anonymous read nor public-only access
+ * reaches. A rate limit names itself.
  * @param {unknown} error
+ * @param {boolean} authenticated whether the read was given access
  */
-function anonymousHint(error) {
+function accessHint(error, authenticated) {
   for (let cause = error; cause instanceof Error; cause = /** @type {any} */ (cause).cause) {
-    const { status, rateLimited } = /** @type {any} */ (cause);
+    const { status, rateLimited, credentialRejected } = /** @type {any} */ (cause);
+    if (credentialRejected) return ' (GitHub rejected the access this read was given)';
     if ([401, 403, 404].includes(status) && !rateLimited) {
-      return ' (GitHub sources are read anonymously, so the repository and ref must be public)';
+      return authenticated
+        ? ' (GitHub sources are read with public-only access, so the repository and ref must be public)'
+        : ' (GitHub sources are read anonymously, so the repository and ref must be public)';
     }
   }
   return '';
 }
 
 /**
+ * The closed reason a caller acts on when GitHub refused a read: its rate limit,
+ * or the access the read was given. Any other failure has none.
+ * @param {unknown} error
+ * @returns {'rate_limited' | 'credential_rejected' | null}
+ */
+function refusalReason(error) {
+  for (let cause = error; cause instanceof Error; cause = /** @type {any} */ (cause).cause) {
+    if (/** @type {any} */ (cause).rateLimited === true) return 'rate_limited';
+    if (/** @type {any} */ (cause).credentialRejected === true) return 'credential_rejected';
+  }
+  return null;
+}
+
+/**
  * Own one new temporary root for `work`. Success hands the root to the caller's
- * `dispose`; failure removes it first, unless a process may still be using it.
+ * `dispose`; failure removes it first, unless a process may still be using it. A
+ * failure GitHub refused for a rate limit or a rejected access carries that as its
+ * `reason`.
  * @template {object} T
  * @param {string} display
+ * @param {boolean} authenticated whether the read was given access
  * @param {(root: string) => Promise<T>} work
  * @returns {Promise<T & { dispose: () => Promise<void> }>}
  */
-async function acquireInOwnedRoot(display, work) {
+async function acquireInOwnedRoot(display, authenticated, work) {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), ROOT_PREFIX));
   /** @type {T} */
   let result;
   try {
     result = await work(root);
   } catch (error) {
+    const reason = refusalReason(error);
+    /** @param {Error} failure */
+    const withReason = (failure) => (reason ? Object.assign(failure, { reason }) : failure);
     const reported = error instanceof ReportedError
       ? error
-      : new Error(`failed to fetch source ${display}: ${error instanceof Error ? error.message : String(error)}${anonymousHint(error)}`, { cause: error });
+      : withReason(new Error(`failed to fetch source ${display}: ${error instanceof Error ? error.message : String(error)}${
+        accessHint(error, authenticated)}`, { cause: error }));
     if (keptFailures.has(error)) throw reported;
     try {
       await removeRoot(root);
     } catch (removalError) {
-      throw new Error(`${reported.message}; its temporary material at ${root} could not be removed: ${
-        removalError instanceof Error ? removalError.message : String(removalError)}`, { cause: error });
+      throw withReason(new Error(`${reported.message}; its temporary material at ${root} could not be removed: ${
+        removalError instanceof Error ? removalError.message : String(removalError)}`, { cause: error }));
     }
     throw reported;
   }
@@ -857,16 +901,27 @@ function checkSignal(signal) {
 }
 
 /**
+ * @param {unknown} access
+ * @returns {GitHubAccess | null}
+ */
+function checkAccess(access) {
+  if (access === undefined || access === null) return null;
+  if (!(access instanceof GitHubAccess)) throw new TypeError('access must be explicit GitHub access');
+  return access;
+}
+
+/**
  * Classify the source and check its ref before anything is created or requested.
  * @param {unknown} repository
  * @param {unknown} ref
  * @param {unknown} signal
+ * @param {unknown} access
  */
-function prepare(repository, ref, signal) {
+function prepare(repository, ref, signal, access) {
   const kind = classifyRemote(repository);
   if (kind.kind === 'github') checkGitHubRef(ref);
   else checkGitRef(ref);
-  return { kind, signal: checkSignal(signal), display: `${repository} @ ${ref}` };
+  return { kind, signal: checkSignal(signal), access: checkAccess(access), display: `${repository} @ ${ref}` };
 }
 
 /* ------------------------------------------------------------------- API */
@@ -875,14 +930,16 @@ function prepare(repository, ref, signal) {
  * Acquire a remote source's catalog. `catalogDir` is a `library/packs` folder: at
  * one commit, the source's direct manifests (GitHub) or the catalog of a whole
  * clone (other hosts). The caller must await `dispose()` after reading it.
- * @param {{ repository: string, ref: string, signal?: AbortSignal }} input
+ * Explicit `access` reaches only GitHub's API requests; another host's clone
+ * never receives it.
+ * @param {{ repository: string, ref: string, signal?: AbortSignal, access?: GitHubAccess | null }} input
  * @returns {Promise<{ catalogDir: string, sourceIdentity: RemoteSourceIdentity, dispose: () => Promise<void> }>}
  */
-export async function acquireRemoteCatalog({ repository, ref, signal }) {
-  const { kind, signal: callerSignal, display } = prepare(repository, ref, signal);
-  const acquired = await acquireInOwnedRoot(display, async (root) => {
+export async function acquireRemoteCatalog({ repository, ref, signal, access }) {
+  const { kind, signal: callerSignal, access: github, display } = prepare(repository, ref, signal, access);
+  const acquired = await acquireInOwnedRoot(display, github !== null, async (root) => {
     if (kind.kind === 'github') {
-      return withGitHubOperation(kind, repository, display, CATALOG_LIMITS, callerSignal,
+      return withGitHubOperation(kind, repository, display, CATALOG_LIMITS, callerSignal, github,
         (context) => readGitHubCatalog(context, ref, root));
     }
     const { checkout, resolvedCommit } = cloneWithGit(repository, ref, root, callerSignal);
@@ -900,18 +957,19 @@ export async function acquireRemoteCatalog({ repository, ref, signal }) {
 /**
  * Acquire one pack from a remote source. `packDir` holds the selected pack's
  * complete subtree at one commit (GitHub) or lies in a whole clone (other hosts).
- * The caller must await `dispose()` after reading it.
- * @param {{ repository: string, ref: string, name: string, signal?: AbortSignal }} input
+ * The caller must await `dispose()` after reading it. Explicit `access` reaches
+ * only GitHub's API requests; another host's clone never receives it.
+ * @param {{ repository: string, ref: string, name: string, signal?: AbortSignal, access?: GitHubAccess | null }} input
  * @returns {Promise<{ packDir: string, sourceIdentity: RemoteSourceIdentity, dispose: () => Promise<void> }>}
  */
-export async function acquireRemotePack({ repository, ref, name, signal }) {
+export async function acquireRemotePack({ repository, ref, name, signal, access }) {
   if (typeof name !== 'string' || !PACK_NAME_RE.test(name)) throw new Error('A pack name must be a valid pack identifier.');
-  const { kind, signal: callerSignal, display } = prepare(repository, ref, signal);
+  const { kind, signal: callerSignal, access: github, display } = prepare(repository, ref, signal, access);
   // A GitHub pack is written under its own name, which discovery also requires to be portable.
   if (kind.kind === 'github') checkPortableSegment(name, name);
-  const acquired = await acquireInOwnedRoot(display, async (root) => {
+  const acquired = await acquireInOwnedRoot(display, github !== null, async (root) => {
     if (kind.kind === 'github') {
-      return withGitHubOperation(kind, repository, display, PACK_LIMITS, callerSignal,
+      return withGitHubOperation(kind, repository, display, PACK_LIMITS, callerSignal, github,
         (context) => readGitHubPack(context, ref, name, root));
     }
     const { checkout, resolvedCommit } = cloneWithGit(repository, ref, root, callerSignal);

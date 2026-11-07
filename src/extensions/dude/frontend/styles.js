@@ -147,9 +147,10 @@ export const useCanvasStyles = makeStyles({
   settings: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0 },
   // One compact header row: the page title and the Settings section tabs share
   // the former Packs heading's 36px rhythm above one rule. At 479px or less the
-  // tabs drop their icons and take Fluent's small-tab sides, so the three keep
-  // that row where they fit. At 300px or less the full labels take as many
-  // equal 6.5em columns as hold "Appearance" whole, in as many rows as needed.
+  // tabs drop their icons and take Fluent's small-tab sides, keeping that row
+  // where they fit; the four of 089 take a second 36px row below the title where
+  // they do not. At 300px or less the full labels take as many equal 6.5em columns
+  // as hold "Appearance" whole, in as many rows as needed.
   settingsHeader: {
     display: 'flex', flexWrap: 'wrap', alignItems: 'stretch', flexShrink: 0, minWidth: 0,
     columnGap: tokens.spacingHorizontalL, paddingInline: tokens.spacingHorizontalL,
@@ -375,6 +376,74 @@ export const useCanvasStyles = makeStyles({
     padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalL}`,
     borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground2,
     '@container (max-width: 479px)': { paddingInline: tokens.spacingHorizontalS },
+  },
+  // 089: Settings > Accounts holds the GitHub sign-in on the approved mock's
+  // surface: Background2, the decorative Stroke2 edge, a medium radius and 12px
+  // padding. A 14px semibold heading, at most one outcome bar, the phase's body,
+  // then its one button; text keeps the 76ch measure. Its narrow rule follows the
+  // Settings width, as About's body does.
+  githubSignIn: {
+    display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: tokens.spacingVerticalS, minWidth: 0,
+    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2, overflowWrap: 'anywhere',
+    '& > *': { maxWidth: '76ch' },
+    '@container (max-width: 479px)': { paddingInline: tokens.spacingHorizontalS },
+  },
+  // About's 76ch body widened by the sign-in box's padding and border, so the words inside keep 76ch.
+  accountsBody: { maxWidth: `calc(76ch + 2 * (${tokens.spacingHorizontalL} + ${tokens.spacingHorizontalM} + ${tokens.strokeWidthThin}))` },
+  githubSignInTitle: { margin: 0, fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300, fontWeight: tokens.fontWeightSemibold },
+  githubSignInBody: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS, minWidth: 0, '& > p': { margin: 0 } },
+  // Each outcome bar, with narrowBar: at 300px or less its words end 8px from
+  // its edge, as in the mock and packActionBar, not at the body's own 12px. That
+  // 12px is a one-class reset style, which this two-class selector outranks.
+  githubOutcome: {
+    alignSelf: 'stretch',
+    '@container (max-width: 300px)': { [`& .${messageBarBodyClassNames.root}`]: { paddingRight: tokens.spacingHorizontalS } },
+  },
+  // The one new text style: the code in Fluent's monospace at Base600, selected as
+  // one unit by a drag or double-click, hyphen included. There is no Copy button.
+  githubCode: {
+    fontFamily: tokens.fontFamilyMonospace, fontSize: tokens.fontSizeBase600, lineHeight: tokens.lineHeightBase600,
+    fontWeight: tokens.fontWeightSemibold, letterSpacing: '0.06em', color: tokens.colorNeutralForeground1,
+    userSelect: 'all', overflowWrap: 'anywhere',
+  },
+  githubProgress: { display: 'flex', alignItems: 'flex-start', gap: tokens.spacingHorizontalSNudge, minWidth: 0, color: tokens.colorNeutralForeground2 },
+  githubSpinner: { flexShrink: 0, marginTop: '2px' },
+  githubAccount: {
+    display: 'inline-flex', alignItems: 'flex-start', gap: tokens.spacingHorizontalSNudge, maxWidth: '100%',
+    fontWeight: tokens.fontWeightSemibold, borderRadius: tokens.borderRadiusSmall, outlineStyle: 'none',
+    ':focus-visible': { outlineWidth: tokens.strokeWidthThick, outlineStyle: 'solid', outlineColor: tokens.colorStrokeFocus2, outlineOffset: tokens.strokeWidthThick },
+  },
+  githubAccountGlyph: { flexShrink: 0, width: '16px', height: '16px', marginTop: '2px', color: tokens.colorNeutralForeground3 },
+  githubSignInActions: {
+    display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: tokens.spacingHorizontalS, minWidth: 0,
+    '@container (max-width: 300px)': { '& button': { flex: '1 1 100%', minWidth: 0, whiteSpace: 'normal' } },
+  },
+  // A GitHub address keeps its last segment with the new-tab icon, as About's link
+  // does, except at 300px or less, where that segment may wrap rather than overflow.
+  githubLinkTail: { whiteSpace: 'nowrap', '@container (max-width: 300px)': { whiteSpace: 'normal' } },
+  // The GitHub links and the Sources pointer (089): each line of the words is a
+  // target the font's text height plus 12px tall, without larger text or a new
+  // line height. The padding is on the inner span, not the link, so the link's
+  // focus ring still outlines its text. The span takes no position, isolation,
+  // opacity, or inline-block, any of which gives it a paint layer that Chromium
+  // then rings instead. `position: relative` on the link keeps the whole box on
+  // top of the neighbouring lines, so all of it stays clickable. Pressed keeps the
+  // hover color: Fluent dark's pressed link color is below 4.5:1 on Background1 and 2.
+  paddedLink: { position: 'relative', ':active': { color: tokens.colorBrandForegroundLinkHover } },
+  paddedLinkTarget: { paddingTop: tokens.spacingVerticalSNudge, paddingBottom: tokens.spacingVerticalSNudge },
+  // Sources names GitHub's refusal of the last Reload in the mock's note position.
+  githubRateNote: {
+    margin: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL} 0`,
+    '@container (max-width: 479px)': { marginInline: tokens.spacingHorizontalS },
+  },
+  // Sources' one line where the sign-in used to be: "GitHub sign-in is managed in
+  // Settings > Accounts.", in the Sources intro's color, with the notices' sides.
+  sourcesAccounts: {
+    maxWidth: '76ch', margin: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL}`,
+    color: tokens.colorNeutralForeground2, overflowWrap: 'anywhere',
+    '@container (max-width: 479px)': { marginInline: tokens.spacingHorizontalS },
   },
   // The Add and Remove dialogs use the shared pack dialog's geometry.
   sourceDialog: { '&[open]': { maxHeight: 'calc(100dvh - 16px)' } },

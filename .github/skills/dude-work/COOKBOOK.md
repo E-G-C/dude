@@ -1,6 +1,6 @@
 # Work Driver Cookbook
 
-`driver.mjs` in this directory runs autonomous Lightweight Work, including the Work portion of Ship, through the official setup adapter and runner. It claims one pending task, bridges the runner's challenges through files outside the workspace, builds and preflights each response with the official validators, captures attempt baselines, and reads one ownership pair. The coordinator keeps every semantic decision and dispatches the implementation, the Tester, and the independent Reviewer; the driver makes no model call and adds no command, grammar, lane, board, or project state. The Work skill in `SKILL.md` beside this file stays authoritative for policy, stops, and cleanup.
+`driver.mjs` in this directory runs autonomous Lightweight Work, including the Work portion of Ship, through the official setup adapter and runner. It claims one pending task, bridges the runner's challenges through files outside the workspace, builds and preflights each response with the official validators, captures attempt baselines, and reads one ownership pair. The coordinator keeps every semantic decision and dispatches the implementation, the Tester, the independent Reviewer, and any required learning review to its owner; the driver makes no model call and adds no command, grammar, lane, board, or project state. The Work skill in `SKILL.md` beside this file stays authoritative for policy, stops, and cleanup.
 
 Run every command from the workspace root, where `--root .` names the workspace. `node .github/skills/dude-work/driver.mjs --help` prints the usage. The examples use these placeholders:
 
@@ -29,7 +29,7 @@ Run every command from the workspace root, where `--root .` names the workspace.
 | `claim` | Recheck admission and claim one pending task | 2, 3, or 4 refused; 5 stopped (section 2) |
 | `run` | Run the official runner and bridge its challenges through files | 1 runner hard stop; 2 refused before the runner started |
 | `assess` | Build, validate, and publish one Assessment response | 1 refused; nothing published |
-| `respond` | Preflight and publish the specialist pair, or only the cancel envelope with `--cancel` | 1 refused; nothing published |
+| `respond` | Preflight and publish the specialist pair or a learning review, or only the cancel envelope with `--cancel` | 1 refused; nothing published |
 | `snapshot` | Capture the attempt baseline | 1 refused; nothing written |
 | `diff` | Report the attempt's changed paths and check them against the authorization | 1 refused; nothing written |
 | `ownership` | Read the official store's status for one workspace-target pair | 1 pair present; 2 refused or probe failed |
@@ -42,7 +42,7 @@ Every subcommand exits 64 on a usage error and 70 on an unexpected failure, with
 |---|---|---|
 | Selection | None | None |
 | `claim` | Only through the official lane effect: `[ ]` to `[~]` in `tasks.md`, the task-state snapshot glyph and time, and one owner log line, `- <UTC> - work: Claimed <taskKey> for the user-authorized autonomous Work invocation; implementation has not started.` | `<claim>/setup-report.json`, `supervisor.json`, and on success `runner-request.json`; a setup ownership pair that setup removes again |
-| `run` | Only through the runner's lane effects: one `dude-run-event` approach line per recorded attempt, plus finding or governance lines, under `## Lightweight Execution History` in `tasks.md`; at settlement `[~]` to `[x]` and the snapshot glyph. The runner writes no owner log line. | The `<exchange>` files; the ownership pair, held during the run, cleared at an `ended` outcome, and possibly left by a hard stop |
+| `run` | Only through the runner's lane effects: one `dude-run-event` approach line per recorded attempt, plus finding, governance, or learning-review lines, under `## Lightweight Execution History` in `tasks.md`; at settlement `[~]` to `[x]` and the snapshot glyph. The runner writes no owner log line. | The `<exchange>` files; the ownership pair, held during the run, cleared at an `ended` outcome, and possibly left by a hard stop |
 | `assess`, `respond` | None | `response-<n>.json` beside its challenge |
 | `snapshot`, `diff` | None | The `--out` file |
 | `ownership` | None | None |
@@ -81,7 +81,7 @@ For the first task of the invocation:
 node .github/skills/dude-work/driver.mjs claim --root . --spec <specPath> --task <taskKey> -- <work arguments>
 ```
 
-Everything after `--` goes unchanged to the Work invocation parser. The driver refuses any policy other than `autonomous`, and a feature selector in those arguments must resolve to the same owner. `--out <dir>` names a new claim directory outside the workspace; without it, `claim` creates a fresh `dw-XXXXXX` directory under the operating system temporary directory. `--state` is only for continuation (section 8).
+Everything after `--` goes unchanged to the Work invocation parser. The driver refuses any policy other than `autonomous`, and a feature selector in those arguments must resolve to the same owner. `--out <dir>` names a new claim directory outside the workspace; without it, `claim` creates a fresh `dw-XXXXXX` directory under the operating system temporary directory. `--state` is only for continuation (section 9).
 
 The claim runs in a fixed order. It mints a one-shot setup supervisor identity and keeps it in `supervisor.json`, outside the checkpoint. Through the setup adapter it runs `fresh-inspection`, `authorize-lane-effect` with the `initial-claim` mutation, `apply-lane-effect`, and `commit-lane-receipt`. The committed receipt settles setup, so `settle-effect` is never called. Setup then ends with `controlled-end`, the official store must report the pair absent, and the driver rereads the exact owner, task mapping, and unblocked `[~]` before it publishes `runner-request.json` with the unchanged accepted state. A refused step gets the adapter's one correction, then a fresh Inspection and one retry.
 
@@ -90,9 +90,9 @@ On success `claim` prints `"exitCode": 0` with `out`, `report`, and `runnerReque
 | Exit | Meaning | Next |
 |---|---|---|
 | 2 | Refused before any claim. The `stage` is one of `invocation`, `policy`, `target`, `lane`, `owner`, `selector`, `state`, `tasks`, `task`, `owner-log`, or `inspection`. A refused `--root` or `--out` also exits 2 and writes no report. | Report the stop; nothing was written to the workspace |
-| 3 | Adapter admission refused, for example because an ownership pair already exists for this task | Report it; a present pair follows section 9 |
+| 3 | Adapter admission refused, for example because an ownership pair already exists for this task | Report it; a present pair follows section 10 |
 | 4 | Refused before any lane write; setup cancelled its own pair and proved it absent | Report the stop |
-| 5 | Stopped after a lane write was entered, or the setup pair could not be released | Hard stop: read `pair` and `ownership` in the report, then section 9 |
+| 5 | Stopped after a lane write was entered, or the setup pair could not be released | Hard stop: read `pair` and `ownership` in the report, then section 10 |
 
 ## 3. Run the exchange
 
@@ -102,14 +102,14 @@ Start `run` as an attached asynchronous shell command, never detached, and leave
 node .github/skills/dude-work/driver.mjs run --request <claim>/runner-request.json
 ```
 
-`--dir <dir>` names a new exchange directory outside the workspace; without it, `run` creates a fresh `dw-XXXXXX` directory under the operating system temporary directory. `--retained-evidence <file>` is described in section 7. The process runs the official runner in place and prints one JSON line per event: `started` with `pid`, `dir`, and `status`; `input-required` for each challenge with `n`, `kind`, `challenge`, `packet`, and `response`; and `finished` with the terminal fields. It waits for each response without a timeout. Do not stop the process while it waits; answer the challenge or cancel it (section 6).
+`--dir <dir>` names a new exchange directory outside the workspace; without it, `run` creates a fresh `dw-XXXXXX` directory under the operating system temporary directory. `--retained-evidence <file>` is described in section 8. The process runs the official runner in place and prints one JSON line per event: `started` with `pid`, `dir`, and `status`; `input-required` for each challenge with `n`, `kind`, `challenge`, `packet`, and `response`; and `finished` with the terminal fields. It waits for each response without a timeout. Do not stop the process while it waits; answer the challenge or cancel it (sections 6 and 7).
 
 `<exchange>/status.json` holds the current `state`: `running`, `waiting` with the current challenge, or `finished` with the terminal fields. Answer only the newest `n`, exactly once.
 
 | File in `<exchange>` | Written | Content |
 |---|---|---|
 | `status.json` | At every state change, replacing the previous file | `state`, `pid`, `updatedAt`, and the current challenge or the terminal fields |
-| `challenge-<n>.json` | Once per challenge | The runner's bound challenge: `kind`, `target`, `stateBase64`, `stateHash`, `inspection`, `challengeIdentity`, and, for a `specialist-pair`, `assessmentIdentity` |
+| `challenge-<n>.json` | Once per challenge | The runner's bound challenge: `kind`, `target`, `stateBase64`, `stateHash`, `inspection`, `challengeIdentity`, and, for a `specialist-pair`, `assessmentIdentity` or, for a `learning-review`, `governanceIdentity` |
 | `packet-<n>.json` | For `assessment` and `learning-review` challenges | The `dude-work-model-view-v1` model packet |
 | `response-<n>.json` | By `assess` or `respond` | The matching response or cancel envelope |
 | `result.json` | At the end | The complete runner result, including `steps`, `haltReport`, and any blocker, capacity, cleanup, and ownership fields |
@@ -249,7 +249,7 @@ A rejected review has 1 to 16 findings. `subjects` holds 1 to 16 unique strings 
 
 `operations` come from the pending authorization, and the records reach the runner exactly as read, with nothing cloned, repaired, or normalized first. Before publishing, `respond` runs the official preflight, `prepareSpecialistResult(acceptedState, result)` and `validateHostAdapterRequest` for the `record-attempt-result` request, against the challenge's accepted state. A refusal publishes nothing; have the owning specialist correct its record, then run `respond` again. The runner repeats every check at use, and the changed set must fit the 16,384-byte result material.
 
-A failed or blocked result is progress, not a stop. The runner records the attempt in lane history and issues a new `assessment` challenge whose packet carries the failed checks and findings. With recovery enabled (`--recover-on-block` in the Work arguments) and budget left, answer it with a recovery action and `distinct` (section 4). Otherwise cancel and report `verification failed on <taskKey>` or `reviewer rejected <taskKey>`.
+A failed or blocked result is progress, not a stop. The runner records the attempt in lane history and issues a new `assessment` challenge whose packet carries the failed checks and findings, or a `learning-review` challenge after a proven repeat (section 7). With recovery enabled (`--recover-on-block` in the Work arguments) and budget left, answer an `assessment` challenge with a recovery action and `distinct` (section 4). Otherwise cancel and report `verification failed on <taskKey>` or `reviewer rejected <taskKey>`.
 
 To cancel any challenge, publish its bound cancel envelope:
 
@@ -259,18 +259,40 @@ node .github/skills/dude-work/driver.mjs respond --root . --challenge <exchange>
 
 The runner performs its permitted cancellation and returns `ended`/`cancelled`. It clears the pair, the task stays `[~]`, and no `accepted-state.json` is written. The driver deletes nothing itself. Cancellation ends Work for this invocation.
 
-A `learning-review` challenge appears only after a proven repeat, and the driver has no learning-review response maker. Answer it with `respond --cancel`, then report that learning review is required and name the learning-governance owner as the next action.
+## 7. Answer a `learning-review` challenge
 
-## 7. Read the terminal result
+A `learning-review` challenge appears only after the runner retains a proven repeat and projects the required learning governance. No attempt, close, or next task proceeds until the run receives a learning result or ends.
+
+The learning-governance owner judges the evidence under the Work skill's `## Autonomous Learning Governance`. Route the challenge to that owner; the driver makes no learning judgment and supplies no review. The owner reads the complete bound evidence: `packet-<n>.json` holds the original checks and findings of every governed attempt, including failed rows and rejected findings, and the `learningGovernance` record in the decoded `stateBase64` names the trigger and the complete failed-approach set. If required original evidence is unavailable, keep the comparison unresolved and cancel; never rebuild it from summaries, hashes, or saved state.
+
+Save the owner's actual result unchanged in `<scratch>`. It is the raw learning-review v2 object, never a response envelope, with `version` 2, `target` equal to the challenge `target`, `assumptionIdentities`, `findings`, `alternatives`, and `outcome`. Each finding carries its recomputed `findingIdentity` and 1 to 16 evidence identities. Each alternative binds the failed-approach set's `setIdentity` and compares its approach with every basis in that set, not only the latest failure. Add `selectedAlternativeIdentity` only for `selected-alternative`, and `sequenceIdentity` only for an already valid, uniquely matching objective.
+
+| `outcome` | The result must show | Then the runner |
+|---|---|---|
+| `selected-alternative` | Exactly one credible, materially different alternative with its discriminating check, named by `selectedAlternativeIdentity`. A disguised repetition is never credible. | Retains and verifies the result on both surfaces, takes a fresh Inspection, binds the alternative, and issues a new `assessment` challenge for it; answer with a recovery action, `distinct`, and the alternative's writer set (section 4) |
+| `no-progress` | No credible alternative, no new distinguishing evidence, and no `selectedAlternativeIdentity` | Retains and verifies the result on both surfaces, takes a fresh Inspection, verifies the conclusion, and ends with `ended`/`controlled-unresolved-end`; the task stays `[~]` (section 8) |
+
+```text
+node .github/skills/dude-work/driver.mjs respond --root . --challenge <exchange>/challenge-<n>.json --learning-review <scratch>/learning-review-<n>.json
+```
+
+Before publishing, `respond` confirms that the named challenge is the waiting `learning-review` challenge in its exchange's `status.json` and that its body, accepted state, governance, and target agree. It then runs the receiver's own preparation, `prepareLearningReviewV2(acceptedState, inspection, review)`, against the challenge Inspection, copies the challenge's `challengeIdentity` into the response envelope, and checks the exact response against the runner's 1,048,576-byte limit. On success it prints the `outcome` and the prepared `reviewIdentity`. A refusal publishes nothing and leaves the challenge waiting: have the owner correct its result, or cancel. `respond` repairs nothing. It never reorders, trims, or merges rows or fills in an identity, and a complete result that exceeds an existing limit, such as 16 findings, 8 alternatives, or the 16,384-byte review event, refuses whole.
+
+Publication is not acceptance. When the runner reads the response, it reacquires fresh evidence and repeats every check; drift, a foreign or replayed response, and any other refusal keep their existing stop. A selected alternative leads only to its next Assessment, and that attempt still needs its own baseline, implementation, Tester, independent Reviewer, and settlement (sections 5 and 6).
+
+Only the live `run` process that published the challenge can receive the response. If that process has stopped, a published response does nothing, and a saved challenge, state, or response grants no revival, takeover, or continuation (section 10). This procedure never resumes a stopped run or recovers an earlier stopped task.
+
+## 8. Read the terminal result
 
 When `run` finishes, read `<exchange>/status.json` or the `finished` event. Both carry `outcome`, `reason`, and `haltReport`; `detail`, `blocker`, `capacity`, `cleanup`, `cleanupReason`, `orphan`, and `ownership` when the runner returned them; and the paths of `result.json`, `accepted-state.json`, and `retained-evidence.json`, with `null` for a file that was not written.
 
 | `outcome` / `reason` | `run` exit | Meaning | Next |
 |---|---|---|---|
-| `ended` / `task-settled` | 0 | `[x]` applied, completion receipt committed, final audit done, pair cleared, `accepted-state.json` written | Continue in the same invocation (section 8) |
+| `ended` / `task-settled` | 0 | `[x]` applied, completion receipt committed, final audit done, pair cleared, `accepted-state.json` written | Continue in the same invocation (section 9) |
 | `ended` / `cancelled` | 0 | The runner accepted the cancel and cleared the pair; the task stays `[~]` | Stop and report; select no next task in this invocation |
+| `ended` / `controlled-unresolved-end` | 0 | A verified no-progress learning result ended the run and cleared the pair; the task stays `[~]` and is not complete | Stop and report that learning found no credible alternative; select no next task in this invocation |
 | `ended` / another reason | 0 | The runner ended without settling the task | Stop and report the reason and the next owner action |
-| `hard-stop` / any reason | 1 | A named or unresolved halt | Stop and report `reason`, `detail`, `haltReport`, `blocker`, `capacity`, and the cleanup fields. Never retry silently. Check the pair (section 9). |
+| `hard-stop` / any reason | 1 | A named or unresolved halt | Stop and report `reason`, `detail`, `haltReport`, `blocker`, `capacity`, and the cleanup fields. Never retry silently. Check the pair (section 10). |
 | Refused before the runner started | 2 | An unreadable request, a missing workspace, a reused or in-workspace `--dir`, or a second retained-evidence source | Nothing ran and nothing was written; correct the input |
 
 A resolved `haltReport` names `reason`, `stopClass`, `target`, `subject`, `nextAction`, and `evidenceHash`; an unresolved one lists its `unresolved` fields. The stop class fixes the next action:
@@ -287,7 +309,7 @@ A resolved `haltReport` names `reason`, `stopClass`, `target`, `subject`, `nextA
 
 `retained-evidence.json` holds the original capture inputs the runtime actually received, in received order and with duplicates, copied without change. A stop during a later capture keeps every earlier attempt's captures. Never edit, merge, rebuild, or normalize the file, and never fill a gap from packets, stdout, lane history, or a checkpoint. It is the existing handoff for a separately authorized fresh request whose task already has attempts in its lane history: pass it with `run --retained-evidence <file>`. The driver refuses a request that already carries `retainedEvidence`, and the runner validates provenance and every limit again before it takes ownership. Without the required captures the runner refuses admission, for example as `hard-stop`/`evidence-incomplete` with the detail `retainedEvidence: missing current-run`. This procedure starts no such request, because `claim` only claims a pending task. If the captures are unavailable, report that source as unavailable and keep the stop.
 
-## 8. Continue in the same invocation
+## 9. Continue in the same invocation
 
 Only `ended`/`task-settled` continues, and only inside the same invocation while it remains authorized.
 
@@ -307,7 +329,7 @@ Only `ended`/`task-settled` continues, and only inside the same invocation while
 
 `claim` accepts `--state` only when the sibling `result.json` reports `ended`/`task-settled`, the state equals the state that result returned, its policy equals the parsed Work arguments, and it holds no pending work, completion, or learning. These files are transport evidence and cannot show that the invocation is still authorized. The next task takes a fresh claim and a fresh ownership pair, and its accounting carries forward unchanged. After a cancel, any other end, or a hard stop, do not continue.
 
-## 9. Stops and the manual cleanup boundary
+## 10. Stops and the manual cleanup boundary
 
 | Situation | Report |
 |---|---|
@@ -318,7 +340,7 @@ Only `ended`/`task-settled` continues, and only inside the same invocation while
 | `claim` exit 2, 3, or 4 | The refusal's `stage` and `detail` |
 | Changed or ambiguous intent | Cancel, then `clarification required: <detail>` |
 | Failed verification or rejected review without recovery | Cancel, then `verification failed on <taskKey>` or `reviewer rejected <taskKey>` |
-| `learning-review` challenge | Cancel, then report that learning review is required |
+| A learning review the owner cannot complete, or a refused result it does not correct | Cancel, then report that learning review is required and name the learning-governance owner |
 | `claim` exit 5 or a `run` hard stop | The reason, `haltReport`, and resource fields, then the cleanup boundary below |
 
 The driver has no cleanup command and never removes an ownership pair. After a hard stop or a `claim` exit 5:
@@ -329,7 +351,7 @@ The driver has no cleanup command and never removes an ownership pair. After a h
 
 A PID, a process age, a timestamp, a saved state file, or an `ownership` result grants no cleanup, takeover, or continuation authority. Cleanup never resumes the stopped run, revives its state, or starts another task. A later run needs a separate explicit request and fresh admission.
 
-## 10. Close out
+## 11. Close out
 
 The runner writes no task-close log line, and the driver has no close command. Append the close outcome only while no claim is held, after `run` has finished and `ownership` reports the last task's pair absent. The coordinator closes through its ordinary close protocol: it appends the close outcome as one UTC event line to the owner's `## Coordinator Log`, one feature close line for a finished feature, and runs lint. When the invocation closed at least one task, its final response carries the `## Completion Closeout` block once, even if later work stopped. Nothing in this procedure commits, pushes, or runs any other Git operation.
 

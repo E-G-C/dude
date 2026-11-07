@@ -17,9 +17,13 @@
  *
  * A local folder is read in place. A remote source is acquired by
  * `lib/pack-acquisition.mjs` into a new temporary folder for each call: a public
- * GitHub repository over anonymous HTTPS (only the manifests to list, only the
- * selected pack to stage), any other host by a whole Git clone. Each caller
- * removes that folder once it has read it, before it answers or writes.
+ * GitHub repository over HTTPS (only the manifests to list, only the selected pack
+ * to stage), any other host by a whole Git clone. Each caller removes that folder
+ * once it has read it, before it answers or writes. A GitHub read is anonymous
+ * unless its caller passes explicit `access`, which only GitHub's API requests
+ * carry; the command line passes none, and no token is read from the environment.
+ * A read GitHub refused for a rate limit or a rejected access says so in its
+ * failure's `reason`.
  *
  * Dependency-free ESM. Targets Node >= 20. Run `node compose.mjs --help`.
  *
@@ -101,6 +105,8 @@ const PREVIEW_KINDS = Object.freeze({
 /** @typedef {{ type: 'local', location: string } | { type: 'remote', repository: string, requested_ref: string, resolved_commit: string | null }} SourceIdentity */
 /** @typedef {{ files: string[], source: SourceIdentity }} ProfileEntry */
 /** @typedef {{ installed: Record<string, ProfileEntry> }} Profile */
+/** Explicit GitHub API access a caller may pass; the command line never does. @typedef {import('../dude-engine/lib/github-content.mjs').GitHubAccess} GitHubAccess */
+/** Why GitHub refused a remote read, when a caller acts on it. @typedef {'rate_limited' | 'credential_rejected'} RefusalReason */
 
 /* ------------------------------------------------------------------ utils */
 
@@ -376,7 +382,7 @@ function readManifestSource(root) {
 /**
  * The remote acquisition module. It is loaded only when a remote source is read,
  * so local and offline commands, and the Canvas process that imports this module
- * for installed state, never load the network transport.
+ * for installed state, never load it.
  */
 function loadRemoteAcquisition() {
   return import('./lib/pack-acquisition.mjs');
@@ -399,6 +405,28 @@ async function releaseResolved(resolved) {
 }
 
 /**
+ * A failed acquisition as a resolver answers it: its message, and the reason
+ * GitHub refused it when that was a rate limit or a rejected access.
+ * @param {unknown} error
+ * @returns {{ error: string, reason?: RefusalReason }}
+ */
+function failedAcquisition(error) {
+  const reason = /** @type {any} */ (error)?.reason;
+  return {
+    error: error instanceof Error ? error.message : String(error),
+    ...(reason === 'rate_limited' || reason === 'credential_rejected' ? { reason } : {}),
+  };
+}
+
+/**
+ * A failure's refusal reason, if it has one, as the field a result carries.
+ * @param {{ reason?: RefusalReason }} failure
+ */
+function reasonOf(failure) {
+  return failure.reason ? { reason: failure.reason } : {};
+}
+
+/**
  * Resolve a pack's source directory. An explicit `source` is exclusive: only
  * that root and ref are consulted, so the local catalog never preempts it, and
  * nothing else is tried when it lacks the pack or cannot be fetched. Without
@@ -410,11 +438,12 @@ async function releaseResolved(resolved) {
  * call, at one resolved commit, into a temporary folder that the caller must
  * release with `dispose()` once it has read the pack. A failed acquisition owns
  * nothing to release: its error is returned as it was reported, including one
- * that names material it had to keep.
- * @param {{ root: string, library: string, name: string, fetch: boolean, source?: string, ref?: string }} a
- * @returns {Promise<{ packDir: string, origin: string, sourceIdentity: SourceIdentity, dispose?: () => Promise<void> } | { error: string }>}
+ * that names material it had to keep, with the reason GitHub refused it, if any.
+ * Explicit `access` reaches only a GitHub source's API requests.
+ * @param {{ root: string, library: string, name: string, fetch: boolean, source?: string, ref?: string, access?: GitHubAccess | null }} a
+ * @returns {Promise<{ packDir: string, origin: string, sourceIdentity: SourceIdentity, dispose?: () => Promise<void> } | { error: string, reason?: RefusalReason }>}
  */
-async function resolvePackDir({ root, library, name, fetch, source, ref }) {
+async function resolvePackDir({ root, library, name, fetch, source, ref, access }) {
   if (!source) {
     const localDir = path.join(library, name);
     if (isDir(localDir) && exists(path.join(localDir, 'pack.md'))) {
@@ -455,7 +484,7 @@ async function resolvePackDir({ root, library, name, fetch, source, ref }) {
   }
   try {
     const { acquireRemotePack } = await loadRemoteAcquisition();
-    const acquired = await acquireRemotePack({ repository: src, ref: sref, name });
+    const acquired = await acquireRemotePack({ repository: src, ref: sref, name, access });
     return {
       packDir: acquired.packDir,
       origin: `${src} @ ${sref}`,
@@ -463,7 +492,7 @@ async function resolvePackDir({ root, library, name, fetch, source, ref }) {
       dispose: acquired.dispose,
     };
   } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) };
+    return failedAcquisition(error);
   }
 }
 
@@ -476,11 +505,13 @@ async function resolvePackDir({ root, library, name, fetch, source, ref }) {
  * configured upstream source so `list` can still show installable packs.
  *
  * A remote catalog is acquired anew for this call into a temporary folder that
- * the caller must release with `dispose()` once it has read the catalog.
- * @param {{ root: string, library: string, fetch: boolean, source?: string, ref?: string }} a
- * @returns {Promise<{ dir: string, origin: string, dispose?: () => Promise<void> } | { error: string }>}
+ * the caller must release with `dispose()` once it has read the catalog. A failed
+ * acquisition answers its error and the reason GitHub refused it, if any.
+ * Explicit `access` reaches only a GitHub source's API requests.
+ * @param {{ root: string, library: string, fetch: boolean, source?: string, ref?: string, access?: GitHubAccess | null }} a
+ * @returns {Promise<{ dir: string, origin: string, dispose?: () => Promise<void> } | { error: string, reason?: RefusalReason }>}
  */
-async function resolveCatalogDir({ root, library, fetch, source, ref }) {
+async function resolveCatalogDir({ root, library, fetch, source, ref, access }) {
   if (!source) {
     if (isDir(library)) return { dir: library, origin: 'local' };
     if (fetch === false) return { dir: library, origin: 'local' };
@@ -506,10 +537,10 @@ async function resolveCatalogDir({ root, library, fetch, source, ref }) {
   }
   try {
     const { acquireRemoteCatalog } = await loadRemoteAcquisition();
-    const acquired = await acquireRemoteCatalog({ repository: src, ref: sref });
+    const acquired = await acquireRemoteCatalog({ repository: src, ref: sref, access });
     return { dir: acquired.catalogDir, origin: `${src} @ ${sref}`, dispose: acquired.dispose };
   } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) };
+    return failedAcquisition(error);
   }
 }
 
@@ -601,9 +632,10 @@ function artifactInNamespace(artifact, packName) {
  * A remote source's acquired copy is removed before this returns, whether the
  * pack staged or not, so it never outlives the call or reaches a transaction.
  * The returned `manifest` is the pack's `pack.md` text, for a caller that reads
- * more of it after that copy is gone.
- * @param {{ root: string, library: string, name: string, projection: any, stagePrefix: string, fetch?: boolean, source?: string, ref?: string, validateDiscoveryMetadata?: boolean }} args
- * @returns {Promise<{ origin: string, sourceIdentity: SourceIdentity, staged: StagedArtifact[], stageRoot: string, manifest: string } | { error: string }>}
+ * more of it after that copy is gone. Explicit `access` reaches only a GitHub
+ * source's API requests, and a failed acquisition keeps its refusal reason.
+ * @param {{ root: string, library: string, name: string, projection: any, stagePrefix: string, fetch?: boolean, source?: string, ref?: string, access?: GitHubAccess | null, validateDiscoveryMetadata?: boolean }} args
+ * @returns {Promise<{ origin: string, sourceIdentity: SourceIdentity, staged: StagedArtifact[], stageRoot: string, manifest: string } | { error: string, reason?: RefusalReason }>}
  */
 async function stagePackFromSource({
   root,
@@ -614,11 +646,12 @@ async function stagePackFromSource({
   fetch = true,
   source,
   ref,
+  access,
   validateDiscoveryMetadata = true,
 }) {
-  const resolved = await resolvePackDir({ root, library, name, fetch, source, ref });
+  const resolved = await resolvePackDir({ root, library, name, fetch, source, ref, access });
   if ('error' in resolved) {
-    return { error: resolved.error };
+    return { error: resolved.error, ...reasonOf(resolved) };
   }
   /** @type {Awaited<ReturnType<typeof stagePackFromSource>>} */
   let staged;
@@ -730,8 +763,8 @@ function stageResolvedPack({ packDir, origin, sourceIdentity }, { name, projecti
  * the profile that authorizes it, the hyphen-prefix guard, and the staged pack.
  * `cmdAdd` and `cmdPreviewAdd` share it, so a preview resolves, stages, and
  * checks what its add would. The caller owns a returned `stageRoot`.
- * @param {{ root: string, library: string, name: string, fetch?: boolean, source?: string, ref?: string, validateDiscoveryMetadata?: boolean }} args
- * @returns {Promise<{ ok: boolean, code: number, mutation?: 'none', result?: any, error?: string }>}
+ * @param {{ root: string, library: string, name: string, fetch?: boolean, source?: string, ref?: string, access?: GitHubAccess | null, validateDiscoveryMetadata?: boolean }} args
+ * @returns {Promise<{ ok: boolean, code: number, mutation?: 'none', result?: any, error?: string, reason?: RefusalReason }>}
  */
 async function prepareAdd({
   root,
@@ -740,6 +773,7 @@ async function prepareAdd({
   fetch = true,
   source,
   ref,
+  access,
   validateDiscoveryMetadata = true,
 }) {
   if (!PACK_NAME_RE.test(name)) {
@@ -782,10 +816,11 @@ async function prepareAdd({
     fetch,
     source,
     ref,
+    access,
     validateDiscoveryMetadata,
   });
   if ('error' in stagedResult) {
-    return { ok: false, code: 2, mutation: 'none', error: stagedResult.error };
+    return { ok: false, code: 2, mutation: 'none', error: stagedResult.error, ...reasonOf(stagedResult) };
   }
   return {
     ok: true,
@@ -837,9 +872,10 @@ function addTargets({ root, name, profile, staged, force }) {
 /**
  * Install one pack as one transaction. An optional async `beforeWrite` is
  * awaited after staging and before the final recheck and writes; any answer
- * other than `true` writes nothing.
- * @param {{ root: string, library: string, name: string, force: boolean, fetch?: boolean, source?: string, ref?: string, validateDiscoveryMetadata?: boolean, beforeWrite?: () => Promise<boolean> }} args
- * @returns {Promise<{ ok: boolean, code: number, mutation?: 'none' | 'restored' | 'uncertain', result?: any, error?: string }>}
+ * other than `true` writes nothing. Explicit `access` is used only while the pack
+ * is acquired, which ends before `beforeWrite` is asked.
+ * @param {{ root: string, library: string, name: string, force: boolean, fetch?: boolean, source?: string, ref?: string, access?: GitHubAccess | null, validateDiscoveryMetadata?: boolean, beforeWrite?: () => Promise<boolean> }} args
+ * @returns {Promise<{ ok: boolean, code: number, mutation?: 'none' | 'restored' | 'uncertain', result?: any, error?: string, reason?: RefusalReason }>}
  */
 async function cmdAdd({
   root,
@@ -849,13 +885,14 @@ async function cmdAdd({
   fetch = true,
   source,
   ref,
+  access,
   validateDiscoveryMetadata = true,
   beforeWrite,
 }) {
   /** @type {string | null} */
   let stageRoot = null;
   try {
-    const prepared = await prepareAdd({ root, library, name, fetch, source, ref, validateDiscoveryMetadata });
+    const prepared = await prepareAdd({ root, library, name, fetch, source, ref, access, validateDiscoveryMetadata });
     if (!prepared.ok || prepared.result.alreadyInstalled) return prepared;
     stageRoot = prepared.result.stageRoot;
     const { origin, sourceIdentity, staged, profile, authorizedProfileBytes, files } = prepared.result;
@@ -952,14 +989,14 @@ async function cmdAdd({
  * Preview an add without writing: `cmdAdd`'s own preparation, profile recheck,
  * and destination checks, reported instead of applied. Conflicts and required
  * tools are reported rather than refused, and the stage is always removed.
- * @param {{ root: string, library: string, name: string, force?: boolean, fetch?: boolean, source?: string, ref?: string }} args
- * @returns {Promise<{ ok: boolean, code: number, mutation?: 'none', result?: any, error?: string }>}
+ * @param {{ root: string, library: string, name: string, force?: boolean, fetch?: boolean, source?: string, ref?: string, access?: GitHubAccess | null }} args
+ * @returns {Promise<{ ok: boolean, code: number, mutation?: 'none', result?: any, error?: string, reason?: RefusalReason }>}
  */
-async function cmdPreviewAdd({ root, library, name, force = false, fetch = true, source, ref }) {
+async function cmdPreviewAdd({ root, library, name, force = false, fetch = true, source, ref, access }) {
   /** @type {string | null} */
   let stageRoot = null;
   try {
-    const prepared = await prepareAdd({ root, library, name, fetch, source, ref });
+    const prepared = await prepareAdd({ root, library, name, fetch, source, ref, access });
     if (!prepared.ok) return prepared;
     if (prepared.result.alreadyInstalled) {
       return { ok: false, code: 2, mutation: 'none', error: `pack "${name}" is already installed` };
@@ -1183,10 +1220,10 @@ function cmdRemove({ root, name }) {
 /**
  * Prepare an installed pack's ordinary refresh projection. The caller owns the
  * successful stage directory and either previews it or runs the transaction.
- * @param {{ root: string, library: string, name: string, fetch?: boolean, source?: string, ref?: string }} args
- * @returns {Promise<{ ok: boolean, code: number, result?: any, error?: string }>}
+ * @param {{ root: string, library: string, name: string, fetch?: boolean, source?: string, ref?: string, access?: GitHubAccess | null }} args
+ * @returns {Promise<{ ok: boolean, code: number, result?: any, error?: string, reason?: RefusalReason }>}
  */
-async function prepareRefresh({ root, library, name, fetch = true, source, ref }) {
+async function prepareRefresh({ root, library, name, fetch = true, source, ref, access }) {
   const currentProfilePath = profilePath(root);
   try {
     resolveMutationPath(root, WORKSPACE_PATHS.PROFILE);
@@ -1253,9 +1290,10 @@ async function prepareRefresh({ root, library, name, fetch = true, source, ref }
       fetch,
       source,
       ref,
+      access,
     });
     if ('error' in stagedResult) {
-      return { ok: false, code: 2, mutation: 'none', error: stagedResult.error };
+      return { ok: false, code: 2, mutation: 'none', error: stagedResult.error, ...reasonOf(stagedResult) };
     }
     stageRoot = stagedResult.stageRoot;
     const { sourceIdentity, staged } = stagedResult;
@@ -1397,7 +1435,7 @@ function reauthorizeRefresh(prepared) {
 /**
  * Return the ordinary refresh projection without writing pack artifacts or the
  * profile. The caller receives only the public preview shape.
- * @param {{ root: string, library: string, name: string, fetch?: boolean, source?: string, ref?: string }} args
+ * @param {{ root: string, library: string, name: string, fetch?: boolean, source?: string, ref?: string, access?: GitHubAccess | null }} args
  */
 async function cmdPreviewRefresh(args) {
   const prepared = await prepareRefresh(args);
@@ -1426,8 +1464,9 @@ async function cmdPreviewRefresh(args) {
 /**
  * Refresh an installed pack as one transaction. An optional async `beforeWrite`
  * is awaited after staging and before the final recheck and writes; any answer
- * other than `true` writes nothing.
- * @param {{ root: string, library: string, name: string, fetch?: boolean, source?: string, ref?: string, beforeWrite?: () => Promise<boolean> }} args
+ * other than `true` writes nothing. Explicit `access` is used only while the pack
+ * is acquired, which ends before `beforeWrite` is asked.
+ * @param {{ root: string, library: string, name: string, fetch?: boolean, source?: string, ref?: string, access?: GitHubAccess | null, beforeWrite?: () => Promise<boolean> }} args
  */
 async function cmdRefresh(args) {
   const prepared = await prepareRefresh(args);

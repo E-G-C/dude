@@ -744,5 +744,21 @@
       "T002@7b39d0e6": "x"
     },
     "updated_at": "2026-11-03T06:50:26.000Z"
+  },
+  ".dude/specs/089-github-login-pack-reads/tasks.md": {
+    "glyphs": {
+      "T001@9e4b7c26": "x",
+      "T005@0675cd73": "x",
+      "T006@1b61929e": "x",
+      "T007@251708dd": "x",
+      "T004@f17a4d83": "x"
+    },
+    "updated_at": "2026-11-06T17:48:54.000Z"
+  },
+  ".dude/specs/090-work-driver-learning-review/tasks.md": {
+    "glyphs": {
+      "T001@5b7c2d90": "x"
+    },
+    "updated_at": "2026-11-02T02:13:21.000Z"
   }
 }

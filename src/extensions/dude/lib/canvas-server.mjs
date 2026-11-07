@@ -7,7 +7,9 @@
  * report, private projection paths, and optional bounded Needs You operations.
  * Human handoffs belong to the joined provider, not a Canvas instance. The
  * update routes read and act on the extension's one update controller, whose
- * write gate this server enforces (see `UPDATES_ROUTE`).
+ * write gate this server enforces (see `UPDATES_ROUTE`). The GitHub sign-in
+ * route reads and acts on the extension's one session controller, whose access
+ * every pack read that may read GitHub is given (see `GITHUB_SESSION_ROUTE`).
  *
  * Dependency-free ESM, Node >= 20. `stdout` belongs to JSON-RPC, so nothing
  * here writes to it — every user-visible line goes through the injected `log`.
@@ -35,6 +37,7 @@ import {
 import { NEEDS_YOU_LIMITS, NeedsYouError } from './needs-you.mjs';
 import { REVIEW_LIMITS, ReviewError } from './review.mjs';
 import { addPackSource, packActionRevision, readPacks, removePackSource, runPackAction } from './packs.mjs';
+import { CREDENTIAL_REJECTED } from './github-session.mjs';
 import { readProjectArtifacts } from './project-artifacts.mjs';
 import { readInstallationRecord } from './about.mjs';
 import { parseCanvasPreferencePatch, readCanvasPreferences, saveCanvasPreference } from './canvas-preferences.mjs';
@@ -144,7 +147,9 @@ function bootstrapPage(page, read) {
  * source rows and the separate project rows. Only the second acquires catalogs:
  * the default, the bundle upstream too while a local library is the default,
  * and each saved source, once. Browsing, filtering, events and every other
- * automatic read use the first, so nothing is fetched by accident.
+ * automatic read use the first, so nothing is fetched by accident. The second
+ * also names `githubLogin`: the public login of the GitHub allowance it read
+ * with, or null for the anonymous allowance (089).
  */
 const PACKS_ROUTE = '/api/packs';
 const PACKS_DISCOVERY_URL = '/api/packs?discover=1';
@@ -155,8 +160,11 @@ const SOURCE_REVISION_RE = /^(?:absent|sha256:[0-9a-f]{64})$/;
 /**
  * How each refusal of a source write is reported. The input itself is refused
  * (422), the saved configuration is not what the request assumed or cannot be
- * trusted (409), or the read could not finish (5xx). Nothing is saved on any of
- * them, and none is a generic failure.
+ * trusted (409), or the read could not finish (5xx), which includes GitHub
+ * refusing it for its rate limit or rejecting the sign-in it used. A rate limit
+ * also names `githubLogin`, the login of the allowance the read used, or null
+ * for the anonymous allowance. Nothing is saved on any of them, and none is a
+ * generic failure.
  */
 const SOURCE_REFUSAL_STATUS = Object.freeze({
   invalid_location: 422, credentials: 422, invalid_ref: 422, ref_not_applicable: 422, local_missing: 422,
@@ -164,8 +172,10 @@ const SOURCE_REFUSAL_STATUS = Object.freeze({
   unreachable: 422, unknown_source: 422, builtin_source: 422,
   duplicate: 409, limit: 409, sources_changed: 409, sources_unavailable: 409, source_in_use: 409,
   authority_unavailable: 409, workspace_changed: 409,
-  timeout: 504, cleanup_unconfirmed: 503, unavailable: 503, write_failed: 500,
+  timeout: 504, cleanup_unconfirmed: 503, unavailable: 503, rate_limited: 503, credential_rejected: 503, write_failed: 500,
 });
+/** Why a source read stopped when the GitHub sign-in it was given ended (see `untilSignedOut`). */
+const SOURCE_READ_SIGNED_OUT = 'The read stopped because the GitHub sign-in ended while it ran. Nothing was saved.';
 
 /**
  * The closed bodies of the sources route. Every other field, including a root,
@@ -207,13 +217,17 @@ function parseSourceBody(value) {
  * - preview 200 {token, thirdParty, preview, message}. `preview` is Compose's dry
  *   run (install: items, files, source, conflicts, tools; remove: files; refresh:
  *   previewed, replaced, added, removed, files, source), or null with `message`
- *   saying why none could be made. `token` is null for a blocked preview: none,
- *   a missing tool or a conflict. `thirdParty` marks a saved source the project
+ *   saying why none could be made, and `reason` when GitHub refused its read:
+ *   `rate_limited` or `credential_rejected`. A rate limit also names
+ *   `githubLogin`, the public login of the allowance that read used, or null for
+ *   the anonymous allowance. `token` is null for a blocked preview: none, a
+ *   missing tool or a conflict. `thirdParty` marks a saved source the project
  *   added. A new preview replaces the instance's one token. A loading preview
  *   has no token: closing its request cancels it, and its answer is discarded.
  * - apply 200 {ok:true, result} or {ok:false, error, mutation}: Compose's own
- *   result. `mutation` is none, restored or uncertain, and a child that ended
- *   after it was allowed to write is uncertain.
+ *   result, with the same `reason`, and for a rate limit `githubLogin`, when
+ *   GitHub refused its read. `mutation` is none, restored or uncertain, and a
+ *   child that ended after it was allowed to write is uncertain.
  * - apply 409 {error}: `changed` (an unknown or spent token, or installed packs,
  *   saved sources or the workspace changed since the preview; nothing was
  *   written), `busy` (another apply runs; the token is kept), `cancelled`
@@ -226,6 +240,15 @@ function parseSourceBody(value) {
  * - Any op: the guards refuse with 403, 404 or 415, a malformed or oversized body
  *   is 400 or 413 {error:'invalid_input'}, and an ended Canvas lifetime or a
  *   replaced workspace is 409 {error:'identity_mismatch'}.
+ *
+ * An install's or a refresh's preview and apply are given this session's GitHub
+ * access when it has one, which only a child that reads GitHub receives (see
+ * `githubAccess`). Signing out stops one that has not reached its write gate, as
+ * Cancel does; once the gate said go, it finishes. GitHub rejecting that access,
+ * for this action or another read, also stops a child given it that has not
+ * reached its gate, and the action answers that refusal rather than `cancelled`:
+ * the reason `credential_rejected`, with mutation `none` for an apply. So does
+ * one whose child had not started yet, without reading.
  */
 const ACTION_ROUTE = '/api/packs/action';
 const TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -303,6 +326,51 @@ function parseUpdateBody(value) {
     return { op: 'apply', id: body.id };
   }
   throw invalid();
+}
+
+/**
+ * The GitHub sign-in route (089), over the extension's one session controller
+ * (`github-session.mjs`), which every Canvas of this process shares. It involves
+ * no workspace, Needs You request or session message, and the browser names no
+ * token, scope, Client ID, host or endpoint:
+ *
+ *   GET  /api/github-session -> 200 the session's state; it asks GitHub nothing
+ *   POST /api/github-session -> 200 the state after one closed operation:
+ *     {"op":"start"}     start a sign-in, or answer the one already pending, or
+ *                        the signed-in state; without a Client ID, `unavailable`
+ *     {"op":"cancel"}    end the pending sign-in
+ *     {"op":"sign-out"}  forget this session's access and account
+ *
+ * The state is always {state, login, userCode, verificationUri, expiresAt,
+ * outcome}: `state` is signed_out, requesting, waiting or signed_in; `login` is
+ * the account's public login while signed in; `userCode`, the fixed
+ * `verificationUri` and `expiresAt` (ISO time) are shown while waiting; and
+ * `outcome` is the closed end of the last attempt or sign-out while signed out:
+ * cancelled, denied, expired, unreachable, unavailable, failed, signed_out or
+ * rejected. Every other field is null. No answer carries the access token or
+ * the device code.
+ *
+ * Refusals change nothing: 403 for another origin, 415 for another content type,
+ * 404 for another method, query or suffix, 400 or 413 {"error":"invalid_input"},
+ * and 503 {"error":"github_session_unavailable"} for a Canvas without the
+ * controller. Changes arrive as `github-session` events on /events, which carry
+ * no payload: the browser reads the state again. Nothing here reads, saves,
+ * installs, refreshes or removes a pack, or repeats a read.
+ */
+const GITHUB_SESSION_ROUTE = '/api/github-session';
+const GITHUB_SESSION_OPS = Object.freeze(['start', 'cancel', 'sign-out']);
+
+/**
+ * The closed bodies of the GitHub sign-in route: the operation alone.
+ * @param {unknown} value
+ * @returns {'start' | 'cancel' | 'sign-out'}
+ */
+function parseGitHubSessionBody(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== 1
+    || !GITHUB_SESSION_OPS.includes(/** @type {any} */ (value).op)) {
+    throw new NeedsYouError('invalid_input', 400);
+  }
+  return /** @type {any} */ (value).op;
 }
 
 /**
@@ -468,8 +536,24 @@ function inertPage(state, followAppTheme) {
  * @property {PackApply|null} packApply The one pack action apply that runs, if any.
  * @property {ReturnType<import('./bundle-upgrade.mjs').createBundleUpgrade>|null} updates The extension's one update controller.
  * @property {(()=>void)|null} unsubscribeUpdates
+ * @property {ReturnType<import('./github-session.mjs').createGitHubSession>|null} githubSession The extension's one GitHub sign-in.
+ * @property {(()=>void)|null} unsubscribeGitHub
  */
-/** @typedef {{root:string,controller:AbortController,readers:number,promise:Promise<Awaited<ReturnType<typeof readPacks>> & {project: Awaited<ReturnType<typeof readProjectArtifacts>>}>}} PackReadSlot */
+/**
+ * One coalesced pack read. `forgotten` is the signal of the GitHub access a
+ * discovery was given, or null for a read given none. A discovery's answer
+ * also names `githubLogin`, the allowance that access belongs to (089).
+ * @typedef {{root:string,controller:AbortController,readers:number,forgotten:AbortSignal|null,
+ *   promise:Promise<Awaited<ReturnType<typeof readPacks>> & {project: Awaited<ReturnType<typeof readProjectArtifacts>>,
+ *   githubLogin?: string | null}>}} PackReadSlot
+ */
+/** @typedef {import('../../../skills/dude-engine/lib/github-content.mjs').GitHubAccess} GitHubAccess */
+/**
+ * A Canvas pack read's GitHub access, its `forgotten` signal, and `login`: the
+ * public login of the account whose allowance the read uses, or null for the
+ * anonymous allowance (089). It words a rate limit the read meets.
+ * @typedef {{ github: GitHubAccess | null, forgotten: AbortSignal | null, login: string | null }} SessionAccess
+ */
 /**
  * A preview's single-use token and what it binds: the operation and pack, the
  * workspace revision (root, profile and saved sources), and the source key,
@@ -497,6 +581,75 @@ const instances = new Map();
 function sendJson(res, status, value) {
   res.writeHead(status, { 'Cache-Control': 'no-store', 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(value));
+}
+
+/** A pack read given no GitHub access, which sign-out never stops. @type {SessionAccess} */
+const NO_GITHUB = Object.freeze({ github: null, forgotten: null, login: null });
+
+/**
+ * This session's GitHub access for one Canvas pack read that may read GitHub: a
+ * discovery, a source being added, and an install's or a refresh's preview and
+ * apply. The read passes both to `packs.mjs`, which gives the access only to a
+ * child that reads GitHub and stops that child once `forgotten` aborts. Sign-out
+ * and the session's end also stop the whole read (see `untilSignedOut`).
+ * Signed out, or without the controller, the read is anonymous. The login is
+ * read in the same step as the access, so a rate limit the read meets is worded
+ * for the allowance it was given, not for what a page last saw of the sign-in.
+ * @param {CanvasInstance} instance
+ * @returns {SessionAccess}
+ */
+function githubAccess(instance) {
+  const session = instance.githubSession;
+  if (!session) return NO_GITHUB;
+  const access = session.current();
+  return access.github ? { ...access, login: session.read().login } : NO_GITHUB;
+}
+
+/**
+ * For each access's `forgotten` signal, the one that aborts only when sign-out
+ * or the session's end forgot that access, and not when GitHub rejected it. One
+ * is made per access, so a sign-in that serves many reads adds one listener to
+ * its signal, and the pair goes with that access.
+ * @type {WeakMap<AbortSignal, AbortSignal>}
+ */
+const signedOutSignals = new WeakMap();
+
+/**
+ * `signals` joined with sign-out and the session's end, which stop a Canvas read
+ * given `access` as Cancel would, including any folder it also reads; once a pack
+ * action's write gate said go, nothing stops it. GitHub rejecting the access is
+ * not joined: it stops only the children that still read GitHub with it, each of
+ * which answers `credential_rejected`, while the rest of the read goes on to
+ * answer every other source (see packs.mjs).
+ * @param {SessionAccess} access
+ * @param {...AbortSignal} signals
+ */
+function untilSignedOut(access, ...signals) {
+  const { forgotten } = access;
+  if (!forgotten) return AbortSignal.any(signals);
+  let signedOut = signedOutSignals.get(forgotten);
+  if (!signedOut) {
+    const ended = new AbortController();
+    const end = () => { if (forgotten.reason !== CREDENTIAL_REJECTED) ended.abort(forgotten.reason); };
+    if (forgotten.aborted) end();
+    else forgotten.addEventListener('abort', end, { once: true });
+    signedOut = ended.signal;
+    signedOutSignals.set(forgotten, signedOut);
+  }
+  return AbortSignal.any([...signals, signedOut]);
+}
+
+/**
+ * A read that GitHub refused because it rejected the access the read was given:
+ * the session forgets that access, if it is still the current one, before the
+ * read's answer is sent, and a discovery reports it as each reader answers (see
+ * `readInstalledSurface`). A rate limit, or any other refusal, keeps it.
+ * @param {CanvasInstance} instance
+ * @param {GitHubAccess | null} github
+ * @param {unknown} reason
+ */
+function reportRefusal(instance, github, reason) {
+  if (github && reason === 'credential_rejected') instance.githubSession?.rejected(github);
 }
 
 /**
@@ -602,14 +755,27 @@ async function readProject(instance, root, signal) {
  * A pack read failure of any kind rejects with that same failure. It discards
  * the whole result, so it also aborts the sibling scan: the scan stops at its
  * next cancellation check instead of running on while the failure waits for it.
+ *
+ * A discovery passes `access`, this session's GitHub access, to its readers.
+ * When GitHub rejects that access for one source, the session forgets it as that
+ * reader answers, before another reader can start: every GitHub reader still
+ * reading or waiting with it stops and answers `credential_rejected`, while the
+ * folders, the project scan and the read itself go on, so the read answers every
+ * source. Its answer names `githubLogin`, the login of the allowance its readers
+ * used, or null for the anonymous allowance, so every request that joins the
+ * read is told the allowance the read actually used.
  * @param {CanvasInstance} instance
  * @param {string} root
  * @param {AbortSignal} signal
  * @param {boolean} discover
+ * @param {SessionAccess} [access]
  */
-async function readInstalledSurface(instance, root, signal, discover) {
+async function readInstalledSurface(instance, root, signal, discover, access = NO_GITHUB) {
   const stopScan = new AbortController();
-  const packRead = readPacks(root, signal, discover ? { discover: true } : { catalog: false, sources: true });
+  const packRead = readPacks(root, signal, discover
+    ? { discover: true, github: access.github, forgotten: access.forgotten,
+      rejected: github => reportRefusal(instance, github, 'credential_rejected') }
+    : { catalog: false, sources: true });
   void packRead.catch(() => stopScan.abort());
   const [packs, project] = await Promise.allSettled([
     packRead,
@@ -617,7 +783,7 @@ async function readInstalledSurface(instance, root, signal, discover) {
   ]);
   if (packs.status === 'rejected') throw packs.reason;
   if (project.status === 'rejected') throw project.reason;
-  return { ...packs.value, project: project.value };
+  return { ...packs.value, project: project.value, ...(discover ? { githubLogin: access.login } : {}) };
 }
 
 /**
@@ -661,8 +827,12 @@ async function handlePackAction(instance, res, body) {
   try {
     if (body.op === 'preview') {
       const revision = packActionRevision(root);
-      const { outcome, binding } = await runPackAction(root, AbortSignal.any([instance.signal, disconnected.signal]),
-        { op: 'preview', operation: body.operation, name: body.name, source: body.source });
+      // An install or a refresh reads its source; a removal reads none.
+      const access = body.operation === 'remove' ? NO_GITHUB : githubAccess(instance);
+      const { outcome, binding } = await runPackAction(root, untilSignedOut(access, instance.signal, disconnected.signal),
+        { op: 'preview', operation: body.operation, name: body.name, source: body.source },
+        { github: access.github, forgotten: access.forgotten });
+      if (!outcome.ok) reportRefusal(instance, access.github, outcome.reason);
       // A cancelled preview's result is discarded.
       if (res.destroyed || disconnected.signal.aborted) return;
       current();
@@ -670,7 +840,9 @@ async function handlePackAction(instance, res, body) {
       const blocked = !binding || preview?.tools?.some((/** @type {any} */ tool) => !tool.found) || preview?.conflicts?.length > 0;
       const token = blocked ? null : randomUUID();
       instance.packToken = token && binding ? { token, operation: body.operation, name: body.name, revision, binding } : null;
-      sendJson(res, 200, { token, thirdParty: Boolean(binding?.sourceKey), preview, message: outcome.ok ? null : outcome.error });
+      sendJson(res, 200, { token, thirdParty: Boolean(binding?.sourceKey), preview, message: outcome.ok ? null : outcome.error,
+        ...(!outcome.ok && outcome.reason ? { reason: outcome.reason } : {}),
+        ...(!outcome.ok && outcome.reason === 'rate_limited' ? { githubLogin: access.login } : {}) });
       return;
     }
     if (instance.packApply) {
@@ -692,7 +864,9 @@ async function handlePackAction(instance, res, body) {
       return;
     }
     const stop = new AbortController();
-    const signal = AbortSignal.any([instance.signal, disconnected.signal, stop.signal]);
+    // The apply reads its source again, with this session's access as it is now.
+    const access = bound.operation === 'remove' ? NO_GITHUB : githubAccess(instance);
+    const signal = untilSignedOut(access, instance.signal, disconnected.signal, stop.signal);
     /** @type {PackApply} */
     const apply = { token: bound.token, went: bound.operation === 'remove', changed: false, refused: null,
       cancel: () => stop.abort(), promise: null };
@@ -700,6 +874,8 @@ async function handlePackAction(instance, res, body) {
     let release = apply.went ? holdCommit() : null;
     try {
       const running = runPackAction(root, signal, { op: 'apply', operation: bound.operation, name: bound.name, binding: bound.binding }, {
+        github: access.github,
+        forgotten: access.forgotten,
         gate: () => {
           if (signal.aborted) return false;
           const refusal = gateRefusal(instance);
@@ -714,11 +890,13 @@ async function handlePackAction(instance, res, body) {
       apply.promise = running;
       instance.packApply = apply;
       const { outcome } = await running;
+      const stopped = signal.aborted;
+      if (!outcome.ok) reportRefusal(instance, access.github, outcome.reason);
       if (res.destroyed) return;
       if (!apply.went && apply.refused) sendJson(res, 409, { error: apply.refused });
       else if (!apply.went && apply.changed) sendJson(res, 409, { error: 'changed' });
-      else if (!apply.went && signal.aborted) sendJson(res, 409, { error: 'cancelled' });
-      else sendJson(res, 200, outcome);
+      else if (!apply.went && stopped) sendJson(res, 409, { error: 'cancelled' });
+      else sendJson(res, 200, !outcome.ok && outcome.reason === 'rate_limited' ? { ...outcome, githubLogin: access.login } : outcome);
     } finally {
       release?.();
       if (instance.packApply === apply) instance.packApply = null;
@@ -792,6 +970,52 @@ async function handleUpdates(instance, req, res, pathname) {
 }
 
 /**
+ * The GitHub sign-in route (see `GITHUB_SESSION_ROUTE`). The shared Host/Origin
+ * guard has already run, and its opaque Review exception never reaches it. Any
+ * Canvas with the controller answers, bound to a workspace or not.
+ * @param {CanvasInstance} instance
+ * @param {import('node:http').IncomingMessage} req
+ * @param {import('node:http').ServerResponse} res
+ */
+async function handleGitHubSession(instance, req, res) {
+  const read = req.method === 'GET';
+  if (req.url !== GITHUB_SESSION_ROUTE || (!read && req.method !== 'POST')) {
+    sendJson(res, 404, { error: 'Not found.' });
+    return;
+  }
+  if (read && (Number(req.headers['content-length'] ?? 0) !== 0 || req.headers['transfer-encoding'])) {
+    sendJson(res, 400, { error: 'invalid_input' });
+    return;
+  }
+  if (!read && req.headers.origin !== new URL(instance.url).origin) {
+    sendJson(res, 403, { error: 'Same-origin action required.' });
+    return;
+  }
+  if (!read && req.headers['content-type']?.split(';', 1)[0].trim().toLowerCase() !== 'application/json') {
+    sendJson(res, 415, { error: 'JSON action required.' });
+    return;
+  }
+  const session = instance.githubSession;
+  if (!session) {
+    sendJson(res, 503, { error: 'github_session_unavailable' });
+    return;
+  }
+  let op = null;
+  if (!read) {
+    try { op = parseGitHubSessionBody(await readJsonBody(req)); }
+    catch (error) {
+      if (!res.headersSent && !res.destroyed) {
+        sendJson(res, error instanceof NeedsYouError ? error.status : 400, { error: 'invalid_input' });
+      }
+      return;
+    }
+  }
+  const state = op === 'start' ? session.start() : op === 'cancel' ? session.cancel()
+    : op === 'sign-out' ? session.signOut() : session.read();
+  if (!res.destroyed) sendJson(res, 200, state);
+}
+
+/**
  * @param {CanvasInstance} instance
  * @param {import('node:http').IncomingMessage} req
  * @param {import('node:http').ServerResponse} res
@@ -826,6 +1050,11 @@ async function handleRequest(instance, req, res) {
 
   if (pathname === UPDATES_ROUTE || pathname === UPDATES_ACTION_ROUTE) {
     await handleUpdates(instance, req, res, pathname);
+    return;
+  }
+
+  if (pathname === GITHUB_SESSION_ROUTE) {
+    await handleGitHubSession(instance, req, res);
     return;
   }
 
@@ -1010,25 +1239,35 @@ async function handleRequest(instance, req, res) {
     const disconnected = new AbortController();
     const onClose = () => disconnected.abort();
     res.once('close', onClose);
+    // Only an addition reads a source, so only it is given this session's GitHub access.
+    const access = body.op === 'add' ? githubAccess(instance) : NO_GITHUB;
+    // Sign-out stops the read; GitHub rejecting the access is the read's own refusal.
+    const signal = untilSignedOut(access, instance.signal, disconnected.signal);
     try {
-      const signal = AbortSignal.any([instance.signal, disconnected.signal]);
       const beforeCommit = () => {
         current();
         requireOpenWriteGate(instance);
       };
       const result = body.op === 'add'
-        ? await addPackSource(root, signal, body, { beforeCommit })
+        ? await addPackSource(root, signal, body, { beforeCommit, github: access.github, forgotten: access.forgotten })
         : await removePackSource(root, signal, body, { beforeCommit });
+      if (!result.ok) reportRefusal(instance, access.github, result.code);
       if (res.destroyed) return;
       if (result.ok) {
         const { ok, ...saved } = result;
         sendJson(res, 200, saved);
       } else {
         const { ok, code, message, ...rest } = result;
-        sendJson(res, /** @type {Record<string, number>} */ (SOURCE_REFUSAL_STATUS)[code] ?? 409, { error: code, message, ...rest });
+        sendJson(res, /** @type {Record<string, number>} */ (SOURCE_REFUSAL_STATUS)[code] ?? 409, { error: code, message, ...rest,
+          ...(code === 'rate_limited' ? { githubLogin: access.login } : {}) });
       }
     } catch (error) {
       if (res.destroyed || disconnected.signal.aborted) return;
+      // The sign-in this read was given ended while it ran: an honest stop, with nothing saved.
+      if (signal.aborted && !instance.signal.aborted) {
+        sendJson(res, 409, { error: 'cancelled', message: SOURCE_READ_SIGNED_OUT });
+        return;
+      }
       throw error;
     } finally { res.off('close', onClose); }
     return;
@@ -1063,9 +1302,12 @@ async function handleRequest(instance, req, res) {
     let pending = instance[slot];
     // A cancelled read still owns its reader process tree and temporary root
     // until its bounded stop and removal finish. Do not let rapid abort/reload
-    // cycles overlap them.
-    while (pending && (pending.controller.signal.aborted || pending.root !== root)) {
-      pending.controller.abort();
+    // cycles overlap them. A discovery whose GitHub access sign-out or the
+    // session's end forgot is stopping too, so a read after sign-out never joins
+    // it. One whose access GitHub rejected still answers its own readers, so a
+    // later read waits for it without ending it, and then reads afresh.
+    while (pending && (pending.controller.signal.aborted || pending.forgotten?.aborted || pending.root !== root)) {
+      if (pending.root !== root || pending.forgotten?.reason !== CREDENTIAL_REJECTED) pending.controller.abort();
       await pending.promise.catch(() => null);
       pending = instance[slot];
     }
@@ -1076,9 +1318,12 @@ async function handleRequest(instance, req, res) {
     }
     if (!pending) {
       const controller = new AbortController();
+      // Only a discovery acquires catalogs, so only it is given this session's GitHub access.
+      const access = discover ? githubAccess(instance) : NO_GITHUB;
       // One pack-plus-project read per coalesced operation, not one per subscriber.
-      const promise = readInstalledSurface(instance, root, AbortSignal.any([instance.signal, controller.signal]), discover);
-      pending = { root, controller, readers: 0, promise };
+      const promise = readInstalledSurface(instance, root, untilSignedOut(access, instance.signal, controller.signal), discover,
+        access);
+      pending = { root, controller, readers: 0, forgotten: access.forgotten, promise };
       instance[slot] = pending;
       const owned = pending;
       const forget = () => { if (instance[slot] === owned) instance[slot] = null; };
@@ -1275,9 +1520,10 @@ function safeLogger(log) {
  * @param {AbortSignal} signal
  * @param {CanvasInstance['needsYou']} needsYou
  * @param {CanvasInstance['updates']} updates
+ * @param {CanvasInstance['githubSession']} githubSession
  * @returns {Promise<CanvasInstance>}
  */
-async function startInstance(instanceId, log, projection, readInput, signal, needsYou, updates) {
+async function startInstance(instanceId, log, projection, readInput, signal, needsYou, updates, githubSession) {
   if (needsYou && (!readInput || !needsYou.matchesRoot(readInput.root))) {
     throw new NeedsYouError('identity_mismatch');
   }
@@ -1309,6 +1555,8 @@ async function startInstance(instanceId, log, projection, readInput, signal, nee
     packApply: null,
     updates,
     unsubscribeUpdates: null,
+    githubSession,
+    unsubscribeGitHub: null,
   };
 
   instance.server.on('request', (req, res) => {
@@ -1385,6 +1633,8 @@ async function startInstance(instanceId, log, projection, readInput, signal, nee
   };
   instance.unsubscribeNeedsYou = needsYou?.subscribe((hint) => invalidate(hint === 'workspace' ? 'workspace' : 'needs-you')) ?? null;
   instance.unsubscribeUpdates = updates?.subscribe(() => invalidate('updates')) ?? null;
+  // Every panel of the session rereads the GitHub sign-in when it changes; no pack read follows.
+  instance.unsubscribeGitHub = githubSession?.subscribe(() => invalidate('github-session')) ?? null;
   return instance;
 }
 
@@ -1397,13 +1647,15 @@ async function startInstance(instanceId, log, projection, readInput, signal, nee
  * @param {{root:string,target?:string}|null} [readInput] canonical refresh input
  * @param {CanvasInstance['needsYou']} [needsYou] shared joined-provider handoff
  * @param {CanvasInstance['updates']} [updates] the extension's one update controller
+ * @param {CanvasInstance['githubSession']} [githubSession] the extension's one GitHub sign-in
  * @returns {Promise<CanvasInstance>}
  */
-export function openInstance(instanceId, log, projection = null, readInput = null, needsYou = null, updates = null) {
+export function openInstance(instanceId, log, projection = null, readInput = null, needsYou = null, updates = null,
+  githubSession = null) {
   let entry = instances.get(instanceId);
   if (!entry) {
     const controller = new AbortController();
-    const starting = startInstance(instanceId, log, projection, readInput, controller.signal, needsYou, updates);
+    const starting = startInstance(instanceId, log, projection, readInput, controller.signal, needsYou, updates, githubSession);
     const ownedEntry = {
       controller,
       pending: starting,
@@ -1436,6 +1688,9 @@ async function stopInstance(instance) {
   instance.unsubscribeNeedsYou = null;
   instance.unsubscribeUpdates?.();
   instance.unsubscribeUpdates = null;
+  // Closing one panel ends only its subscription; the session's sign-in goes on.
+  instance.unsubscribeGitHub?.();
+  instance.unsubscribeGitHub = null;
   for (const client of instance.eventClients) client.end();
   instance.eventClients.clear();
   // Also await an acquisition whose last HTTP reader already disconnected.

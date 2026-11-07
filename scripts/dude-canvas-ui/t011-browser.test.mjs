@@ -40,7 +40,7 @@ const BROWSER = process.env.DUDE_CANVAS_BROWSER
   ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
 const REQUIRED = process.env.DUDE_CANVAS_BROWSER_REQUIRED === '1';
 const DEADLINE = 20_000;
-const PUBLISHED_APP_SHA256 = '7c245184a0239dbcc100169f466c6b8c84d31e906f203187e35ca3ca1697e10e';
+const PUBLISHED_APP_SHA256 = '31ea3e3fe766c70536e296e04532095726ab507a35fc3e83d2bd1000284cc923';
 /*
  * 085 App theme: every Canvas server here serves `/` with the one Canvas
  * preference, read from this owned, project-relative home, never the real
@@ -1932,8 +1932,9 @@ function installIncompatibleCaptureBrowser() {
  * @param {string} root
  * @param {string|null} [target]
  * @param {((adapter:ReturnType<typeof createReview>)=>any)|null} [wrapReview]
+ * @param {any} [githubSession] the extension's one GitHub sign-in (089), as production gives every Canvas
  */
-async function createFixture(root, target = null, wrapReview = null) {
+async function createFixture(root, target = null, wrapReview = null, githubSession = null) {
   fs.mkdirSync(root, { recursive: true });
   const baseAdapter = createReview({ root });
   const adapter = wrapReview ? wrapReview(baseAdapter) : baseAdapter;
@@ -1970,6 +1971,8 @@ async function createFixture(root, target = null, wrapReview = null) {
     null,
     { root, ...(target ? { target } : {}) },
     provider,
+    null,
+    githubSession,
   );
   return {
     adapter,
@@ -3720,10 +3723,16 @@ async function readAboutApi(canvasUrl) {
   };
 }
 
-/** @param {Cdp} page */
+/**
+ * The About entry once its read has committed and the Settings footer, which
+ * takes that read one render later, no longer says Reading.
+ * @param {Cdp} page
+ */
 async function aboutSnapshot(page) {
   await until(() => evaluate(page, `document.querySelector('[data-about-facts]')
-    ?.getAttribute('aria-busy') === 'false'`), 'recorded About facts');
+    ?.getAttribute('aria-busy') === 'false'
+    && document.querySelector('footer[aria-label="Workspace status"]')
+      ?.textContent.trim() !== 'About · Reading…'`), 'recorded About facts');
   return evaluate(page, `(() => {
     const link = document.querySelector('[data-about-repository]');
     return {
@@ -3838,7 +3847,7 @@ async function withPackJourney(context, operation, options, run) {
       assert.equal(installed.ok, true, installed.error);
     }
     const work = createIdea(root, 1, 'retained-work', 'defined');
-    fixture = { ...(await createFixture(root)), directory, library, profilePath, args, operation, work };
+    fixture = { ...(await createFixture(root, null, null, options.githubSession ?? null)), directory, library, profilePath, args, operation, work };
     driver = await startBrowser(1, true);
     driver.page.on('Runtime.exceptionThrown', event => errors.push(event.exceptionDetails));
     driver.page.on('Network.requestWillBeSent', event => {
@@ -4242,6 +4251,154 @@ test('075 About: production Packs view and one dialog install survive recorded-b
         aboutRequests: network.filter(item => item.path === '/api/about'),
       });
     });
+});
+
+/*
+ * 089 GitHub sign-in with the production provider: the extension's real session
+ * controller, given to this Canvas as production gives it, with GitHub's three
+ * sign-in endpoints answered in this process from the case's script. The packs
+ * come from the workspace's own library, so no read reaches GitHub. The account
+ * and code are this file's fixtures, and the token is a sentinel made here.
+ */
+const T089_ENDPOINTS = Object.freeze({
+  code: 'https://github.com/login/device/code',
+  token: 'https://github.com/login/oauth/access_token',
+  account: 'https://api.github.com/user',
+});
+const T089_LOGIN = 'production-tester';
+const T089_CODE = 'MNBV-3XCZ';
+
+/**
+ * The session controller and GitHub's sign-in endpoints for one case. Every poll
+ * waits while held and is approved once released. Every other address passes
+ * on. `restore()` ends the session and puts fetch back.
+ */
+async function t089SignIn() {
+  const { createGitHubSession } = await import('../../src/extensions/dude/lib/github-session.mjs');
+  const original = globalThis.fetch;
+  /** @type {Array<() => void>} */
+  const waiting = [];
+  const world = { secret: `gho_${randomUUID().replaceAll('-', '')}`, held: false,
+    /** @type {string[]} */ requests: [] };
+  /** @param {unknown} body */
+  const answer = body => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json; charset=utf-8' } });
+  globalThis.fetch = async (/** @type {any} */ input, /** @type {any} */ init = {}) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    const endpoint = Object.entries(T089_ENDPOINTS).find(([, address]) => address === url.href)?.[0];
+    if (!endpoint) return original(input, init);
+    world.requests.push(endpoint);
+    if (endpoint === 'code') {
+      return answer({ device_code: `dc_${randomUUID().replaceAll('-', '')}`, user_code: T089_CODE,
+        verification_uri: 'https://github.com/login/device', expires_in: 900, interval: 5 });
+    }
+    if (endpoint === 'token') return answer({ access_token: world.secret, token_type: 'bearer', scope: '' });
+    return answer({ login: T089_LOGIN, id: 1 });
+  };
+  const session = createGitHubSession({ clientId: 'Iv1.t089fixtureclient', sleep: (_ms, signal) => (world.held
+    ? new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      waiting.push(() => resolve(undefined));
+    }) : Promise.resolve()) });
+  return Object.assign(world, {
+    session,
+    hold() { world.held = true; },
+    release() { world.held = false; waiting.splice(0).forEach(go => go()); },
+    restore() { session.end(); globalThis.fetch = original; },
+  });
+}
+
+test('089 GitHub sign-in: with the production provider, Sources\' Settings > Accounts opens Accounts, where a sign-in started finishes while Available keeps its filter, page, and selection, a change is announced in New idea without taking focus or the unsent draft, a reload shows the session\'s state, and no pack is read', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!browserReady(context)) return;
+  const signIn = await t089SignIn();
+  try {
+    await withPackJourney(context, 'install', { name: '089-sign-in', about: true, githubSession: signIn.session },
+      async ({ fixture, page, output, network, foreign }) => {
+        const said = (/** @type {string} */ kind) => evaluate(page, `document.querySelector('[data-github-session-${kind}]')?.textContent ?? null`);
+        const section = () => evaluate(page, `(() => { const node = document.querySelector('[data-accounts-panel]:not([hidden]) [data-github-signin]');
+          return node && { state: node.getAttribute('data-github-signin'), code: node.querySelector('[data-github-code]')?.textContent ?? null,
+            account: node.querySelector('[data-github-account]')?.innerText.trim() ?? null,
+            outcome: node.querySelector('[data-github-outcome]')?.getAttribute('data-github-outcome') ?? null }; })()`);
+        const view = () => evaluate(page, `({
+          context: document.querySelector('[data-pack-context][aria-selected="true"]')?.dataset.packContext,
+          filter: ${field('Use case')}?.textContent.trim(),
+          page: document.querySelector('[data-pack-page]')?.textContent,
+          detail: document.querySelector('[data-pack-detail]')?.dataset.packDetail ?? null,
+        })`);
+        const shell = () => evaluate(page, `({
+          section: document.querySelector('[data-settings-section][aria-selected="true"]')?.getAttribute('data-settings-section'),
+          focus: document.activeElement?.getAttribute('data-settings-section') ?? null,
+          footer: document.querySelector('footer[aria-label="Workspace status"]')?.textContent,
+          toolbar: [...document.querySelectorAll('header [role="toolbar"] button')].map(node => node.getAttribute('aria-label')),
+        })`);
+        const packReads = () => network.filter(item => item.method === 'GET' && item.path === '/api/packs').length;
+        const settled = () => until(() => evaluate(page, `document.querySelector('[aria-label="Reload packs"]')
+          ?.getAttribute('aria-busy') === 'false'`), 'quiescent Packs');
+        await click(page, `document.querySelector('#dude-tab-settings')`);
+        await settled();
+        assert.deepEqual(signIn.requests, [], 'opening Canvas and Settings asks GitHub nothing');
+        await reloadPacks(page);
+        await click(page, `document.querySelector('[data-pack-context="available"]')`);
+        await choose(page, 'Use case', 'ui');
+        await click(page, `document.querySelector('[aria-label="Next pack page"]')`);
+        await click(page, `document.querySelector('[data-pack-row^="pack:hotel@"]')`);
+        const retained = await view();
+        assert.deepEqual([retained.context, retained.filter, retained.page], ['available', 'ui', 'Page 2 of 2']);
+        assert.ok(retained.detail?.startsWith('pack:hotel@'), JSON.stringify(retained));
+
+        // Sources keeps one line; its Settings > Accounts opens Accounts with focus on its tab and starts nothing.
+        await click(page, `document.querySelector('[data-pack-context="sources"]')`);
+        assert.equal(await evaluate(page, `document.querySelector('[data-sources-accounts-note]')?.innerText.replace(/\\s+/g, ' ').trim()`),
+          'GitHub sign-in is managed in Settings > Accounts.');
+        const reads = packReads();
+        await click(page, `document.querySelector('[data-sources-accounts] > span')`);
+        await until(async () => (await section())?.state === 'signed_out', 'Accounts');
+        assert.deepEqual(await shell(), { section: 'accounts', focus: 'accounts', footer: 'Accounts · This session', toolbar: [] });
+        assert.deepEqual([signIn.requests, packReads()], [[], reads], 'opening Accounts asks GitHub nothing and reads no pack');
+
+        // Accounts: Sign in, and GitHub's code arrives.
+        signIn.hold();
+        await click(page, `document.querySelector('[data-github-action]')`);
+        await until(async () => (await section())?.state === 'waiting', 'the code');
+        assert.equal((await section())?.code, T089_CODE);
+
+        // Back in Packs, then Available, the approval arrives: the view stays, focus stays, and the shell says so.
+        await click(page, `document.querySelector('[data-settings-section="packs"]')`);
+        await settled();
+        await click(page, `document.querySelector('[data-pack-context="available"]')`);
+        assert.deepEqual(await view(), retained, 'Accounts and back keep the Available view');
+        signIn.release();
+        await until(async () => await said('status') === `Signed in as @${T089_LOGIN}.`, 'the sign-in announcement');
+        assert.deepEqual(await view(), retained, 'signing in keeps the filter, page, and selection');
+        assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-pack-context')`), 'available', 'and leaves focus where it was');
+
+        // New idea holds an unsent draft when the session signs out elsewhere: the shell says so there, and nothing else changes.
+        const draft = '  Unsent idea text survives a sign-out from another panel.  ';
+        await click(page, button('New idea'));
+        await fill(page, field('Your idea'), draft);
+        signIn.session.signOut();
+        await until(async () => await said('status') === 'Signed out. Pack reads are anonymous again.', 'the sign-out announcement');
+        assert.equal(await evaluate(page, `${field('Your idea')}.value`), draft);
+        assert.equal(await evaluate(page, `document.activeElement === ${field('Your idea')}`), true, 'focus stays in the draft');
+        assert.equal(packReads(), reads, 'no sign-in change reads a pack');
+
+        // A reload shows the session's state, not the page's.
+        await navigate(page, fixture);
+        await click(page, `document.querySelector('#dude-tab-settings')`);
+        await settled();
+        await click(page, `document.querySelector('[data-settings-section="accounts"]')`);
+        await until(async () => (await section())?.outcome === 'signed_out', 'the outcome after a reload');
+        assert.deepEqual(signIn.requests, ['code', 'token', 'account'], 'one attempt, one poll, and one account lookup');
+        assert.deepEqual(foreign, [], 'the page contacts no GitHub address itself');
+        const text = await evaluate(page, 'document.documentElement.outerHTML');
+        assert.equal(text.includes(signIn.secret), false, 'the token never reaches the page');
+        output.results.push({ case: '089-sign-in', requests: signIn.requests, reads, retained });
+      });
+  } finally {
+    signIn.restore();
+  }
 });
 
 /** Write disposable `dude-local-*` skills, as a real workspace holds them. @param {string} root @param {string[]} names */
@@ -7267,9 +7424,7 @@ test('T011 browser: complete finder, six owner forms, keyboard context, late rea
       requestCount: fixture.provider.read().requests.length,
     });
   } finally {
-    fixture?.provider.dispose();
-    if (fixture) await closeInstance(fixture.instanceId);
-    if (fixture?.root) fs.rmSync(fixture.root, { recursive: true, force: true });
+    if (fixture) await fixture.close();
     if (browserState) {
       await cleanupBrowserDriver(browserState);
     }
@@ -8474,8 +8629,7 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
     );
   } finally {
     for (const fixture of fixtures.reverse()) {
-      fixture.provider.dispose();
-      await closeInstance(fixture.instanceId);
+      await fixture.close({ removeRoot: false });
     }
     const root = fixtures[0]?.root;
     if (root) fs.rmSync(root, { recursive: true, force: true });
@@ -16195,8 +16349,7 @@ test('T012 browser: published capture warnings are closed, accessible, and retai
     });
   } finally {
     await runCleanupSteps(
-      () => fixture?.provider.dispose(),
-      () => fixture ? closeInstance(fixture.instanceId) : undefined,
+      () => fixture?.close({ removeRoot: false }),
       () => { if (root) fs.rmSync(root, { recursive: true, force: true }); },
       () => browserState ? cleanupBrowserDriver(browserState) : undefined,
       () => failingBrowser.close(),
@@ -16381,9 +16534,7 @@ test('T011 review regression: dynamic status notices reach native live regions',
     assert.deepEqual(findings, [],
       'specific dynamic outcomes and warnings must enter the native API or owner-document/native AX live region');
   } finally {
-    fixture?.provider.dispose();
-    if (fixture) await closeInstance(fixture.instanceId);
-    if (fixture?.root) fs.rmSync(fixture.root, { recursive: true, force: true });
+    if (fixture) await fixture.close();
     if (browserState) {
       await cleanupBrowserDriver(browserState);
     }
@@ -16494,9 +16645,7 @@ test('T011 review regression: Review capture refusal notice has a valid accessib
     assert.equal(properlyNamed, true,
       'this specific Review refusal needs a mounted title reference or another valid explicit accessible label');
   } finally {
-    fixture?.provider.dispose();
-    if (fixture) await closeInstance(fixture.instanceId);
-    if (fixture?.root) fs.rmSync(fixture.root, { recursive: true, force: true });
+    if (fixture) await fixture.close();
     if (browserState) {
       await cleanupBrowserDriver(browserState);
     }

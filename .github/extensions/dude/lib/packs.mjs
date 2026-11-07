@@ -35,6 +35,38 @@
  *
  * A pack action (`runPackAction`) runs one Compose preview or apply in a child of
  * its own (pack-action.mjs), launched as a reader is, outside the reader slots.
+ *
+ * GitHub access. Every read is anonymous unless its caller passes explicit
+ * `github` access for that one operation. Only a child whose read this module
+ * classifies as a GitHub acquisition receives it, in the one start message every
+ * child is sent over its private IPC channel once it is launched (see
+ * catalog-reader.mjs); a folder, another host, a validation or a removal gets a
+ * start message without it. It is never put in a child's environment, arguments,
+ * request, files or answer, nor in a source, a binding or a result. A child that
+ * is already being stopped is sent no start, so a cancelled operation hands its
+ * access to no further child. A read GitHub refused is reported with the closed
+ * reason `rate_limited` or `credential_rejected`, which the caller that owns the
+ * access acts on; nothing here retries it. `readPacks` also tells its caller of
+ * each GitHub reader's `credential_rejected` as that reader answers, before its
+ * slot can admit another reader.
+ *
+ * A caller may also pass `forgotten`, its signal that aborts once it forgets
+ * that access, as Canvas does when GitHub rejects it. Only what is given the
+ * access joins that signal to the operation's, and it stops through the same
+ * ownership as a cancellation: a GitHub reader still waiting for its slot leaves
+ * the queue and never starts, a running one has its whole tree stopped, and a
+ * pack action child is stopped until its write gate said go. A running child
+ * given the access is first sent a release message, so that it releases its own
+ * copy and starts no further request with it while it is stopped; a request
+ * already on its way may finish. It is sent one too when the operation's own
+ * cancellation stops it, as Canvas's sign-out and session end do. While the
+ * operation itself goes on, each of them answers `credential_rejected`, and so
+ * does a GitHub child given access its owner released before it started, which
+ * reads nothing rather than read anonymously. Folder reads and the rest of the
+ * operation go on. A caller that means to end the whole operation, as Canvas
+ * does on sign-out, cancels the operation's own signal, and only that
+ * propagates. A stop whose cleanup cannot be confirmed is reported as such, and
+ * keeps its root and slot (see `runReader`).
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -43,6 +75,7 @@ import childProcess from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { cmdStatus, readManifestSource } from '../../../skills/dude-compose/compose.mjs';
+import { GitHubAccess } from '../../../skills/dude-engine/lib/github-content.mjs';
 import {
   MAX_ADDED_SOURCES,
   PACK_SOURCES_PATH,
@@ -102,6 +135,7 @@ const CATALOG_FAILURES = Object.freeze({
   catalog_cleanup_failed: 'The catalog reader could not confirm process cleanup.',
   catalog_busy: 'Too many catalog reads were waiting, so this one did not start. Reload to try a fresh read.',
   catalog_too_large: 'The source grew past 1 GiB or 65,536 files and folders while it was read, so the read was stopped.',
+  credential_rejected: 'GitHub rejected the sign-in this read was given, so the source was not read. Reload to try a fresh read.',
 });
 // Compose's own test of a URL-shaped location, which the shared checks treat as a
 // public repository and never resolve as a folder. A location that does not match
@@ -205,6 +239,29 @@ function catalogFailure(reason) {
   return { ok: false, reason,
     error: /** @type {Record<string, string>} */ (CATALOG_FAILURES)[reason]
       ?? 'The catalog reader is unavailable. Reload to try a fresh read.' };
+}
+
+/**
+ * An operation's explicit GitHub access as its GitHub readers and children are
+ * given it: `github`; `forgotten`, the caller's signal that aborts once it
+ * forgets that access, if it passed one; and `rejected`, told of a reader's
+ * `credential_rejected` before that reader's slot can admit another one.
+ * @typedef {{ github: GitHubAccess, forgotten: AbortSignal | null,
+ *   rejected: ((github: GitHubAccess) => void) | null }} ReadAccess
+ */
+
+/**
+ * An operation's explicit GitHub access, or null for an anonymous one.
+ * @param {unknown} github
+ * @param {unknown} [forgotten]
+ * @param {((github: GitHubAccess) => void) | null} [rejected]
+ * @returns {ReadAccess | null}
+ */
+function checkAccess(github, forgotten = null, rejected = null) {
+  if (github === undefined || github === null) return null;
+  if (!(github instanceof GitHubAccess)) throw new TypeError('github must be explicit GitHub access.');
+  if (forgotten !== null && !(forgotten instanceof AbortSignal)) throw new TypeError('forgotten must be an abort signal.');
+  return { github, forgotten, rejected };
 }
 
 /**
@@ -372,7 +429,8 @@ async function readerGitEnvironment(environment, temporary) {
  * wrapper; a Canvas update child (upgrade-action.mjs) is stopped the same way.
  * `done(true)` confirms the stop only for a tree kill that reported no
  * failure. A stop that is never confirmed ends at the caller's stop window,
- * which reports it as unconfirmed.
+ * which reports it as unconfirmed. Only `runReader` may confirm a GitHub
+ * reader's stop by that reader's own clean finish instead (see there).
  * @param {import('node:child_process').ChildProcess} child
  * @param {(stopped: boolean) => void} done
  */
@@ -382,7 +440,7 @@ export function stopTree(child, done) {
       { timeout: STOP_CONFIRM_MS, windowsHide: true }, error => {
         // An error means some process of the tree was not stopped, even if it
         // was only already exiting. Windows descendants can outlive the reader,
-        // so the reader's own exit never confirms the stop.
+        // so the reader's exit alone never confirms this tree kill.
         if (error) child.kill('SIGKILL');
         done(!error);
       });
@@ -462,6 +520,28 @@ function defaultPurpose(builtins) {
 }
 
 /**
+ * The source Compose's default resolution reads one pack from: the workspace
+ * library while it holds that pack, else the recorded upstream, else none. A
+ * pack action that names no source gives its child GitHub access only when this
+ * is a GitHub repository; how Cancel stops that child still follows
+ * `defaultPurpose`.
+ * @param {DescribedSource[]} builtins
+ * @param {string} name
+ * @returns {DescribedSource | null}
+ */
+function defaultPackSource(builtins, name) {
+  const library = builtins.find(builtin => builtin.builtin === 'local-library');
+  if (library?.root) {
+    const pack = path.join(library.root, name);
+    let held = false;
+    try { held = fs.statSync(pack).isDirectory() && fs.existsSync(path.join(pack, 'pack.md')); }
+    catch { /* as in Compose's own check, a pack it cannot stat is not there */ }
+    if (held) return library;
+  }
+  return builtins.find(builtin => builtin.builtin === 'bundle-upstream') ?? null;
+}
+
+/**
  * The recorded upstream that a discovery also reads, as its own source: only
  * beside a local library, which stays the default. Elsewhere the upstream is the
  * default read itself, or there is none.
@@ -534,11 +614,24 @@ function acquireReaderSlot(signal, until) {
  * @param {ReaderPurpose} purpose what the reader reads, from its validated source
  * @param {Record<string, unknown> | null} [request] a closed request, or null for the default read
  * @param {((temporary: string) => Promise<void>) | null} [prepare] writes the reader's only input file into its own root
+ * @param {ReadAccess | null} [access] the operation's access, which only a GitHub reader is given: that reader also
+ *   stops, waiting or running, once `forgotten` aborts, and `rejected` is told of its `credential_rejected` before its
+ *   slot can admit another reader
  * @returns {Promise<any>}
  */
-async function acquireCatalog(root, signal, until, purpose, request = null, prepare = null) {
+async function acquireCatalog(root, signal, until, purpose, request = null, prepare = null, access = null) {
   signal.throwIfAborted();
-  const slot = await acquireReaderSlot(signal, until);
+  const given = purpose === 'github' ? access : null;
+  // What stops this reader: the operation, and for a GitHub reader the end of its access too (see the module header).
+  const stopping = given?.forgotten ? AbortSignal.any([signal, given.forgotten]) : signal;
+  /** @type {Awaited<ReturnType<typeof acquireReaderSlot>>} */
+  let slot;
+  try { slot = await acquireReaderSlot(stopping, until); }
+  catch (error) {
+    // Only the operation's cancellation propagates; the end of the access, while it goes on, is this source's refusal.
+    if (signal.aborted || !given?.forgotten?.aborted) throw error;
+    return catalogFailure('credential_rejected');
+  }
   if ('refused' in slot) return catalogFailure(slot.refused);
   let kept = false;
   try {
@@ -547,8 +640,10 @@ async function acquireCatalog(root, signal, until, purpose, request = null, prep
     if (until <= admitted) return catalogFailure('catalog_timeout');
     // The budget runs from this admission, so preparing and launching the reader
     // spend it too, and it never runs past the operation's window.
-    const read = await runReader(root, signal, Math.min(admitted + READER_BUDGET_MS[purpose], until), request, prepare);
+    const read = await runReader(root, signal, stopping, Math.min(admitted + READER_BUDGET_MS[purpose], until), request, prepare,
+      given?.github ?? null, purpose);
     kept = read.kept;
+    if (given && read.answer?.reason === 'credential_rejected') given.rejected?.(given.github);
     return read.answer;
   } finally {
     if (!kept) slot.release();
@@ -565,10 +660,11 @@ async function acquireCatalog(root, signal, until, purpose, request = null, prep
  * @param {ReaderPurpose} purpose
  * @param {Record<string, unknown> | null} [request]
  * @param {((temporary: string) => Promise<void>) | null} [prepare]
+ * @param {ReadAccess | null} [access]
  * @returns {Promise<any>}
  */
-async function acquireContained(root, signal, until, purpose, request = null, prepare = null) {
-  try { return await acquireCatalog(root, signal, until, purpose, request, prepare); }
+async function acquireContained(root, signal, until, purpose, request = null, prepare = null, access = null) {
+  try { return await acquireCatalog(root, signal, until, purpose, request, prepare, access); }
   catch {
     signal.throwIfAborted();
     return { ok: false, reason: 'catalog_unavailable', error: 'The catalog acquisition or its cleanup failed. Reload to try a fresh read.' };
@@ -625,19 +721,47 @@ async function rootReachedLimits(directory) {
 
 /**
  * Run one reader to its answer, or stop its tree at `deadlineAt`, at its root's
- * observed bound or on cancellation. `kept` is true when that stop could not be
- * confirmed, or when the reader answered that Compose kept its material because
- * a Git it stopped could not be confirmed stopped: that Git may run outside the
- * tree this process stops, so even a confirmed tree stop does not cover it. The
- * root is then left in place, and the caller keeps its slot.
+ * observed bound or when `stopping` aborts. `kept` is true when that stop could
+ * not be confirmed, or when the reader answered that Compose kept its material
+ * because a Git it stopped could not be confirmed stopped: that Git may run
+ * outside the tree this process stops, so even a confirmed tree stop does not
+ * cover it. The root is then left in place, the caller keeps its slot, and the
+ * read reports that cleanup, whatever stopped it. Once launched, the reader
+ * is sent its start message, with `github`'s token when it has one, unless it is
+ * already being stopped. A stop that `stopping` asked for is the operation's
+ * cancellation, or, while `signal` goes on, the end of the reader's access, which
+ * answers `credential_rejected` (see the module header). So does a reader given
+ * `github` after its owner released it, which is not launched and reads nothing
+ * rather than read anonymously.
+ *
+ * A reader given `github` is sent the release message (see `awaitStart` in
+ * catalog-reader.mjs) once `stopping` aborts, by the end of its access or by the
+ * operation's cancellation, without waiting for any answer: before the tree kill
+ * that abort starts, or while a stop for another reason, such as its deadline,
+ * is still under way. So no request it starts from then on carries the access
+ * while a kill takes its time.
+ *
+ * A stop is confirmed by a tree kill that reported no failure. A GitHub reader's
+ * stop is also confirmed by its own clean finish, which the tree kill of a
+ * process that already exited reports as a failure: the reader delivered a
+ * settled answer and then exited by itself, with code 0 and no signal, and no
+ * process error. A GitHub reader starts no process of its own, because Compose
+ * reads a GitHub source over HTTPS and never runs Git for it
+ * (`acquireRemoteCatalog` in pack-acquisition.mjs), so nothing of its tree can
+ * outlive it. Any other reader may leave a descendant that does, so only its
+ * tree kill confirms its stop. Either proof still needs the stop marker written
+ * and no material that Compose kept.
  * @param {string} root
- * @param {AbortSignal} signal
+ * @param {AbortSignal} signal the operation's
+ * @param {AbortSignal} stopping what stops the reader: `signal`, joined for a GitHub reader with the end of its access
  * @param {number} deadlineAt when the reader is stopped, on the monotonic clock
  * @param {Record<string, unknown> | null} request
  * @param {((temporary: string) => Promise<void>) | null} prepare
+ * @param {GitHubAccess | null} github the access a GitHub reader is given, else null
+ * @param {ReaderPurpose} purpose what the reader reads, which decides whether its own clean finish confirms its stop
  * @returns {Promise<{ answer: any, kept: boolean }>}
  */
-async function runReader(root, signal, deadlineAt, request, prepare) {
+async function runReader(root, signal, stopping, deadlineAt, request, prepare, github, purpose) {
   signal.throwIfAborted();
   const temporary = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'dude-canvas-packs-'));
   // Compose's temporary checkout belongs to this acquisition only.
@@ -649,7 +773,9 @@ async function runReader(root, signal, deadlineAt, request, prepare) {
     await remove();
     return { answer: catalogFailure(reason), kept: false };
   };
-  if (signal.aborted) return unstarted('catalog_cancelled');
+  // Why `stopping` ended the read, judged once the stop is done.
+  const stoppedFor = () => (signal.aborted ? 'catalog_cancelled' : 'credential_rejected');
+  if (stopping.aborted) return unstarted(stoppedFor());
   if (prepare) {
     try { await prepare(temporary); }
     catch { return unstarted('catalog_unavailable'); }
@@ -659,6 +785,9 @@ async function runReader(root, signal, deadlineAt, request, prepare) {
   let git;
   try { git = await readerGitEnvironment(process.env, temporary); }
   catch { return unstarted('catalog_unavailable'); }
+  // Nothing is awaited from here to the start message. Access released while
+  // the read goes on was rejected by GitHub (see the module header).
+  if (github && github.token === null && !signal.aborted) return unstarted('credential_rejected');
   /** @type {import('node:child_process').ChildProcess} */
   let child;
   try {
@@ -687,6 +816,8 @@ async function runReader(root, signal, deadlineAt, request, prepare) {
     let stopped = null;
     let failed = false, closed = false, settled = false;
     let held = false;
+    /** How the reader exited, once it closed. @type {{ code: number | null, signal: NodeJS.Signals | null } | null} */
+    let exit = null;
     /** @type {NodeJS.Timeout | undefined} */
     let stopWindow;
     // The one observation of the root in flight, if any.
@@ -698,14 +829,19 @@ async function runReader(root, signal, deadlineAt, request, prepare) {
       clearTimeout(deadline);
       clearTimeout(stopWindow);
       clearInterval(observer);
-      signal.removeEventListener('abort', cancel);
+      stopping.removeEventListener('abort', cancel);
       resolve(value);
     };
     // The reader's answer that Compose kept its material (see catalog-reader.mjs).
     const keptByCompose = () => message?.kept === true;
-    // After a trigger, the stop is confirmed only by both the close and the kill result.
+    // A GitHub reader's own clean finish, which confirms its stop as a clean tree kill does (see above).
+    const finishedClean = () => purpose === 'github' && exit?.code === 0 && exit.signal === null && !failed
+      && message !== null && typeof message === 'object' && typeof message.ok === 'boolean';
+    // How a stop ends once the reader closed: with its trigger only when the stop is confirmed (see above).
+    const stopReason = () => ((stopped || finishedClean()) && !held && !keptByCompose() ? trigger : 'catalog_cleanup_failed');
+    // After a trigger, the read ends once the reader closed and its kill reported, or when its stop window ends.
     const confirm = () => {
-      if (closed && stopped !== null) settle({ reason: stopped && !held && !keptByCompose() ? trigger : 'catalog_cleanup_failed' });
+      if (closed && stopped !== null) settle({ reason: stopReason() });
     };
     /** @param {string} reason */
     const stop = reason => {
@@ -718,13 +854,20 @@ async function runReader(root, signal, deadlineAt, request, prepare) {
       try { fs.writeFileSync(path.join(temporary, CATALOG_STOP_MARKER), ''); }
       catch { held = true; }
       stopWindow = setTimeout(() => {
+        // A clean finish confirms the stop whatever the kill, still under way, goes on to report.
+        if (finishedClean()) return settle({ reason: stopReason() });
         // The last resort for a reader that outlived its tree stop.
         child.kill('SIGKILL');
         settle({ reason: 'catalog_cleanup_failed' });
       }, STOP_CONFIRM_MS);
       stopTree(child, result => { stopped = result; confirm(); });
     };
-    const cancel = () => stop('catalog_cancelled');
+    const cancel = () => {
+      // A GitHub reader given access releases its own copy, whether its access or its whole read ended, and even
+      // while a stop for another reason runs: until its tree is gone, it could still start a request.
+      if (github) child.send({ type: 'release' }, () => {});
+      stop('catalog_cancelled');
+    };
     const deadline = setTimeout(() => stop('catalog_timeout'), Math.max(0, deadlineAt - performance.now()));
     // A whole clone is repository-sized. Observe the root it lands in, one walk at
     // a time, off this thread's synchronous path, and stop the tree past the bound.
@@ -734,27 +877,32 @@ async function runReader(root, signal, deadlineAt, request, prepare) {
       rootReachedLimits(temporary).then(reached => { if (reached) stop('catalog_too_large'); }, () => {})
         .finally(() => { observing = false; });
     }, ROOT_LIMITS.intervalMs);
-    signal.addEventListener('abort', cancel, { once: true });
+    stopping.addEventListener('abort', cancel, { once: true });
     child.once('message', value => { message = value; });
     child.on('error', () => {
       failed = true;
       // The reader never started, so no tree exists to stop.
       if (child.pid === undefined) settle({ reason: 'catalog_unavailable' });
     });
-    child.once('close', code => {
+    child.once('close', (code, killedBy) => {
       closed = true;
+      exit = { code, signal: killedBy };
       if (trigger) return confirm();
       if (keptByCompose()) return settle({ reason: 'catalog_cleanup_failed' });
       settle(!failed && code === 0 && message && typeof message.ok === 'boolean'
         ? { reason: null, result: message } : { reason: 'catalog_unavailable' });
     });
-    if (signal.aborted) cancel();
+    if (stopping.aborted) cancel();
+    // The reader reads nothing before this. A send that fails means a reader that
+    // is gone, and its close settles this read.
+    if (!trigger) child.send({ type: 'start', token: github ? github.token : null }, () => {});
   });
   // An unconfirmed stop, or Compose's kept material, may leave a live process
   // writing into the root, so leave the root rather than race it.
   if (outcome.reason === 'catalog_cleanup_failed') return { answer: catalogFailure(outcome.reason), kept: true };
   await remove();
-  return { answer: outcome.reason ? catalogFailure(outcome.reason) : outcome.result, kept: false };
+  const reason = outcome.reason === 'catalog_cancelled' ? stoppedFor() : outcome.reason;
+  return { answer: reason ? catalogFailure(reason) : outcome.result, kept: false };
 }
 
 /** @param {string} state @param {string|null} [reason] @param {string|null} [message] */
@@ -870,15 +1018,16 @@ async function describeFolder(root, signal, until, revision, entry, index, list)
  * described, and read, by a helper that touches only that folder, so one that
  * does not answer costs only its own slot and deadline. Entries whose type is not
  * in `types` are left alone, and a read that needs only some types therefore
- * never waits for the others.
+ * never waits for the others. A listed GitHub repository's reader is given
+ * `access`, and no folder's ever is.
  * @param {string} root
  * @param {AbortSignal} signal
  * @param {number} until the operation's window end
  * @param {Configuration} configuration
- * @param {{ list: boolean, types?: Array<'remote' | 'local'> }} options
+ * @param {{ list: boolean, types?: Array<'remote' | 'local'>, access?: ReadAccess | null }} options
  * @returns {Promise<{ ok: true, items: SavedSource[] } | { ok: false, error: string }>}
  */
-async function readSavedSources(root, signal, until, configuration, { list, types = ['remote', 'local'] }) {
+async function readSavedSources(root, signal, until, configuration, { list, types = ['remote', 'local'], access = null }) {
   const { saved, builtins } = configuration;
   if (!saved.ok) return { ok: false, error: saved.error };
   /** @type {string | null} */
@@ -893,7 +1042,7 @@ async function readSavedSources(root, signal, until, configuration, { list, type
     item.source = described.sources[0];
     if (list) {
       item.read = normalizeRead(await acquireContained(root, signal, until, purposeOf(item.source), {
-        op: 'source', index, key: item.source.key, revision: saved.revision, document: 'configured', list: true }));
+        op: 'source', index, key: item.source.key, revision: saved.revision, document: 'configured', list: true }, null, access));
     }
     return item;
   }));
@@ -1257,12 +1406,23 @@ function projectSources({ root, configuration, items, invalid, reads, defaultKey
  *   local library is the default, and every saved source, each once.
  * `sources` adds the source rows and every item's source key and provenance;
  * discovery implies it. Without a catalog read those rows say "not read".
+ * `github` is this read's explicit access, which only its GitHub readers are
+ * given; without it every read is anonymous. A source or catalog GitHub refused
+ * says so in its reason: `rate_limited` or `credential_rejected`. `rejected` is
+ * told of each `credential_rejected` with that access as soon as its reader
+ * answers, before that reader's slot can admit another one, while the rest of
+ * the read goes on. Once `forgotten` aborts, each GitHub reader still waiting or
+ * reading with that access stops and answers `credential_rejected`, and the rest
+ * of the read goes on (see the module header).
  * @param {string} root
  * @param {AbortSignal} signal
- * @param {{ catalog?: boolean, discover?: boolean, sources?: boolean }} [options]
+ * @param {{ catalog?: boolean, discover?: boolean, sources?: boolean, github?: GitHubAccess | null,
+ *   forgotten?: AbortSignal | null, rejected?: ((github: GitHubAccess) => void) | null }} [options]
  */
-export async function readPacks(root, signal, { catalog: includeCatalog = true, discover = false, sources: includeSources = false } = {}) {
+export async function readPacks(root, signal, { catalog: includeCatalog = true, discover = false, sources: includeSources = false,
+  github = null, forgotten = null, rejected = null } = {}) {
   root = path.resolve(root);
+  const access = checkAccess(github, forgotten, rejected);
   signal.throwIfAborted();
   const until = acquisitionWindow();
   const projected = includeSources || discover;
@@ -1334,9 +1494,9 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
       // slot after the default and before any saved source, so the built-ins are read first.
       const upstream = upstreamBesideLibrary(configuration.builtins);
       const [defaultOutcome, upstreamOutcome, saved] = await settleAll([
-        acquireContained(root, signal, until, defaultPurpose(configuration.builtins)),
-        upstream ? acquireContained(root, signal, until, purposeOf(upstream), { op: 'upstream' }) : null,
-        configuration.saved.ok ? readSavedSources(root, signal, until, configuration, { list: true }) : null,
+        acquireContained(root, signal, until, defaultPurpose(configuration.builtins), null, null, access),
+        upstream ? acquireContained(root, signal, until, purposeOf(upstream), { op: 'upstream' }, null, access) : null,
+        configuration.saved.ok ? readSavedSources(root, signal, until, configuration, { list: true, access }) : null,
       ]);
       catalog = defaultOutcome;
       upstreamRead = upstream ? { key: upstream.key, read: normalizeRead(upstreamOutcome) } : null;
@@ -1344,7 +1504,7 @@ export async function readPacks(root, signal, { catalog: includeCatalog = true, 
       savedInvalid = saved && !saved.ok ? saved.error : null;
     } else {
       inputs = catalogInputsRevision(root);
-      catalog = await acquireCatalog(root, signal, until, defaultPurpose(readBuiltins(root)));
+      catalog = await acquireCatalog(root, signal, until, defaultPurpose(readBuiltins(root)), null, null, access);
     }
   }
   catch {
@@ -1479,6 +1639,8 @@ const ADD_READ_REFUSALS = Object.freeze({
   catalog_busy: ['unavailable', 'Too many catalog reads were waiting, so the source was not read. Try again.'],
   catalog_missing: ['missing_catalog', 'The source has no library/packs catalog.'],
   catalog_unreachable: ['unreachable', 'The source could not be fetched. It may be private or missing, or its ref may not exist.'],
+  rate_limited: ['rate_limited', 'GitHub refused the read because its rate limit was reached, so nothing was saved.'],
+  credential_rejected: ['credential_rejected', 'GitHub rejected the sign-in this read used, so nothing was saved.'],
   source_unavailable: ['local_missing', 'The folder is not available.'],
   sources_changed: ['sources_changed', 'The saved sources changed. Reload packs and try again.'],
   sources_unavailable: ['sources_unavailable', 'The saved sources could not be read, so nothing was saved.'],
@@ -1509,13 +1671,20 @@ function addReadRefusal(reason, purpose) {
  * entry. The prospective document is serialized by the shared writer from the
  * validated entry, written into the reader's own temporary root, and parsed there
  * by the shared parser; the real sources file is never touched until the commit.
+ * Only a GitHub repository's candidate read is given `github`, and it stops once
+ * `forgotten` aborts; a folder's checks and read never are. A read GitHub
+ * refused, or stopped by the end of its access, is the refusal `rate_limited` or
+ * `credential_rejected`.
  * @param {string} root
  * @param {AbortSignal} signal
  * @param {{ location: string, ref?: string | null, sourcesRevision: string }} input already shape-checked strings
- * @param {{ beforeCommit?: () => void }} [hooks] throws to stop the commit, such as a ended Canvas lifetime
+ * @param {{ beforeCommit?: () => void, github?: GitHubAccess | null, forgotten?: AbortSignal | null }} [hooks] `beforeCommit`
+ *   throws to stop the commit, such as a ended Canvas lifetime
  */
-export async function addPackSource(root, signal, { location, ref = null, sourcesRevision }, { beforeCommit } = {}) {
+export async function addPackSource(root, signal, { location, ref = null, sourcesRevision },
+  { beforeCommit, github = null, forgotten = null } = {}) {
   root = path.resolve(root);
+  const access = checkAccess(github, forgotten);
   signal.throwIfAborted();
   const until = acquisitionWindow();
   let rootIdentity;
@@ -1558,7 +1727,7 @@ export async function addPackSource(root, signal, { location, ref = null, source
   const bytes = Buffer.from(serializePackSourcesDocument(prospective), 'utf8');
   const read = await acquireContained(root, signal, until, validated.purpose, {
     op: 'source', index: saved.sources.length, key: validated.key, revision: identity(bytes), document: 'candidate', list: true,
-  }, async temporary => { await fs.promises.writeFile(path.join(temporary, CANDIDATE_DOCUMENT), bytes, { flag: 'wx' }); });
+  }, async temporary => { await fs.promises.writeFile(path.join(temporary, CANDIDATE_DOCUMENT), bytes, { flag: 'wx' }); }, access);
   signal.throwIfAborted();
   if (!read.ok) {
     if (read.reason === 'catalog_metadata') return refusal('bad_metadata', read.error);
@@ -1680,8 +1849,10 @@ export async function removePackSource(root, signal, { key, sourcesRevision }, {
 /** @typedef {'install' | 'remove' | 'refresh'} PackOperation */
 /**
  * Compose's own answer, without its exit code. A failure says whether anything
- * changed: `none`, `restored` or `uncertain`.
- * @typedef {{ ok: true, result: any } | { ok: false, error: string, mutation: 'none' | 'restored' | 'uncertain' }} PackOutcome
+ * changed: `none`, `restored` or `uncertain`; one GitHub refused also names its
+ * closed `reason`.
+ * @typedef {{ ok: true, result: any }
+ *   | { ok: false, error: string, mutation: 'none' | 'restored' | 'uncertain', reason?: 'rate_limited' | 'credential_rejected' }} PackOutcome
  */
 /**
  * What a preview binds for its one apply: the saved source it read (null for the
@@ -1692,6 +1863,7 @@ export async function removePackSource(root, signal, { key, sourcesRevision }, {
 
 const ACTION_UNSTARTED = 'The pack action could not start. Nothing changed.';
 const ACTION_CANCELLED = 'The pack action was cancelled before it wrote anything. Nothing changed.';
+const ACTION_REJECTED = 'GitHub rejected the sign-in this pack action was given, so it stopped before writing anything. Nothing changed.';
 
 /**
  * The workspace a pack action's token binds, as one revision: the root's
@@ -1727,20 +1899,30 @@ export function packActionRevision(root) {
  * has not reached its gate, or answered its preview, within 130 seconds is
  * stopped. Once it may write nothing stops it, and a child that then ends without
  * an answer has an uncertain outcome.
+ *
+ * `github` is this action's explicit access. Only an install or a refresh whose
+ * child reads GitHub is given it, and that child releases it before it asks its
+ * gate, so a write the gate allows runs without it. A preview's child reads what
+ * Compose reads the pack from: its saved source, else the library while it holds
+ * the pack, else the recorded upstream. An apply's reads the source its preview
+ * resolved. Once `forgotten` aborts, a child given the access that may not write
+ * yet is stopped as Cancel stops one, and answers `credential_rejected` with
+ * mutation `none` while the action goes on; one its gate allowed finishes.
  * @param {string} root
  * @param {AbortSignal} signal
  * @param {{ op: 'preview', operation: PackOperation, name: string, source: string | null }
  *   | { op: 'apply', operation: PackOperation, name: string, binding: PackBinding }} request
- * @param {{ gate?: () => boolean }} [hooks]
+ * @param {{ gate?: () => boolean, github?: GitHubAccess | null, forgotten?: AbortSignal | null }} [hooks]
  * @returns {Promise<{ outcome: PackOutcome, binding: PackBinding | null }>}
  */
-export async function runPackAction(root, signal, request, { gate } = {}) {
+export async function runPackAction(root, signal, request, { gate, github = null, forgotten = null } = {}) {
   root = path.resolve(root);
+  const access = checkAccess(github, forgotten);
   const { operation, name } = request;
   if (request.op === 'apply') {
     const { binding } = request;
     const outcome = await runActionChild(root, signal, { op: 'apply', operation, name, ...pinnedTo(root, binding.identity) },
-      binding.purpose, operation === 'remove', gate);
+      binding.purpose, operation === 'remove', gate, readsGitHub(root, binding.identity) ? access : null);
     return { outcome, binding: null };
   }
   /** @type {string | null} */
@@ -1749,6 +1931,8 @@ export async function runPackAction(root, signal, request, { gate } = {}) {
   let purpose = 'local';
   /** @type {{ source: string | null, ref: string | null }} */
   let read = { source: null, ref: null };
+  /** @type {DescribedSource | null} */
+  let from = null;
   if (operation !== 'remove') {
     const configuration = readConfiguration(root);
     purpose = defaultPurpose(configuration.builtins);
@@ -1765,12 +1949,15 @@ export async function runPackAction(root, signal, request, { gate } = {}) {
       if (chosen.selection && chosen.item?.source) {
         const { key, source } = chosen.selection;
         sourceKey = key;
-        purpose = purposeOf(chosen.item.source);
+        from = chosen.item.source;
+        purpose = purposeOf(from);
         read = source.type === 'remote' ? { source: source.repository, ref: source.ref } : { source: source.location, ref: null };
       }
     }
+    from ??= defaultPackSource(configuration.builtins, name);
   }
-  const outcome = await runActionChild(root, signal, { op: 'preview', operation, name, ...read, fetch: true }, purpose, false);
+  const outcome = await runActionChild(root, signal, { op: 'preview', operation, name, ...read, fetch: true }, purpose, false,
+    undefined, from && purposeOf(from) === 'github' ? access : null);
   return { outcome, binding: outcome.ok ? { sourceKey, identity: outcome.result?.source ?? null, purpose } : null };
 }
 
@@ -1791,38 +1978,72 @@ function pinnedTo(root, resolved) {
 }
 
 /**
+ * Whether an apply pinned to what its preview resolved reads GitHub (see
+ * `pinnedTo`): a repository is classified as a saved source at its address is.
+ * @param {string} root
+ * @param {any} resolved Compose's source identity, or null for a removal
+ */
+function readsGitHub(root, resolved) {
+  if (resolved?.type !== 'remote' || typeof resolved.repository !== 'string') return false;
+  const described = describePackSources({ root, builtins: [],
+    sources: [{ type: 'remote', repository: resolved.repository, ref: resolved.requested_ref }] });
+  return described.ok && purposeOf(described.sources[0]) === 'github';
+}
+
+/**
  * Compose's answer without its exit code. A failure that names no mutation is
- * judged by whether the child was allowed to write.
+ * judged by whether the child was allowed to write, and keeps the closed reason
+ * GitHub refused it for, if any.
  * @param {any} answer @param {boolean} went @returns {PackOutcome}
  */
 function packOutcome(answer, went) {
   if (answer.ok === true) return { ok: true, result: answer.result ?? null };
   const mutation = ['none', 'restored', 'uncertain'].includes(answer.mutation) ? answer.mutation : went ? 'uncertain' : 'none';
-  return { ok: false, error: typeof answer.error === 'string' ? answer.error : 'Compose did not say why the pack action failed.', mutation };
+  const reason = answer.reason === 'rate_limited' || answer.reason === 'credential_rejected' ? answer.reason : null;
+  return { ok: false, error: typeof answer.error === 'string' ? answer.error : 'Compose did not say why the pack action failed.', mutation,
+    ...(reason ? { reason } : {}) };
 }
 
 /**
- * One pack action child, run to its answer (see `runPackAction`).
+ * One pack action child, run to its answer (see `runPackAction`). Once launched
+ * it is sent its start message, with the token of its access when it is given
+ * one, unless it is already being stopped. One given access that its owner
+ * released, while the action goes on, is not launched: it answers
+ * `credential_rejected` and reads nothing, rather than read anonymously. Until it
+ * may write, the end of its access stops it as a cancellation does, and it then
+ * answers `credential_rejected` too, while the action goes on. Either stop first
+ * sends a child given access the release message.
  * @param {string} root
  * @param {AbortSignal} signal
  * @param {import('./pack-action.mjs').PackActionRequest} request
  * @param {ReaderPurpose} purpose
  * @param {boolean} writable whether the child may write from its start, as a removal may
- * @param {() => boolean} [gate]
+ * @param {(() => boolean) | undefined} gate
+ * @param {ReadAccess | null} access the access a child that reads GitHub is given, else null
  * @returns {Promise<PackOutcome>}
  */
-async function runActionChild(root, signal, request, purpose, writable, gate) {
+async function runActionChild(root, signal, request, purpose, writable, gate, access) {
+  const github = access?.github ?? null;
+  // What stops a child that may not write yet: the action, and the end of the access it is given.
+  const stopping = access?.forgotten ? AbortSignal.any([signal, access.forgotten]) : signal;
   /** @param {string} error @returns {PackOutcome} */
   const unchanged = error => ({ ok: false, error, mutation: 'none' });
-  if (signal.aborted) return unchanged(ACTION_CANCELLED);
+  /** @returns {PackOutcome} */
+  const rejected = () => ({ ...unchanged(ACTION_REJECTED), reason: 'credential_rejected' });
+  // What a child `stopping` stopped answers, judged once the stop is done.
+  const stoppedFor = () => (signal.aborted ? unchanged(ACTION_CANCELLED) : rejected());
+  if (stopping.aborted) return stoppedFor();
   const temporary = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'dude-canvas-pack-action-'));
   try {
     /** @type {Record<string, string>} */
     let git;
     try { git = await readerGitEnvironment(process.env, temporary); }
     catch { return unchanged(ACTION_UNSTARTED); }
-    // Nothing has started, so a cancellation meanwhile still changes nothing.
-    if (signal.aborted) return unchanged(ACTION_CANCELLED);
+    // Nothing has started, so a stop meanwhile still changes nothing.
+    if (stopping.aborted) return stoppedFor();
+    // Nothing is awaited from here to the start message. Access released while
+    // the action goes on was rejected by GitHub (see the module header).
+    if (github && github.token === null) return rejected();
     const launch = readerLaunch(root, PACK_ACTION);
     /** @type {import('node:child_process').ChildProcess} */
     let child;
@@ -1852,32 +2073,41 @@ async function runActionChild(root, signal, request, purpose, writable, gate) {
         settled = true;
         clearTimeout(deadline);
         clearTimeout(stopWindow);
-        signal.removeEventListener('abort', cancel);
+        stopping.removeEventListener('abort', cancel);
         resolve(value);
       };
+      /** What a child stopped for `error` answers. @param {string} error */
+      const stoppedWith = error => (error === ACTION_CANCELLED ? stoppedFor() : unchanged(error));
       /** Stop a child that may not write yet. @param {string} error */
       const stop = error => {
         if (went || stopped || settled) return;
         stopped = error;
         clearTimeout(deadline);
         // The last resort for a child that outlives its tree stop.
-        stopWindow = setTimeout(() => { child.kill('SIGKILL'); settle(unchanged(error)); }, STOP_CONFIRM_MS);
+        stopWindow = setTimeout(() => { child.kill('SIGKILL'); settle(stoppedWith(error)); }, STOP_CONFIRM_MS);
         stopTree(child, () => {});
       };
       // A child that runs Git is left to finish it, and then hears no at its
-      // gate; the answer of its preview is the caller's to discard.
-      const cancel = () => { if (purpose !== 'git') stop(ACTION_CANCELLED); };
+      // gate; the answer of its preview is the caller's to discard. A child given
+      // access first releases its own copy (see `awaitStart` in
+      // catalog-reader.mjs), whether its access or the whole action ended; one
+      // that its gate already allowed released it before asking, so the message
+      // changes nothing for it, and nothing stops it.
+      const cancel = () => {
+        if (github) child.send({ type: 'release' }, () => {});
+        if (purpose !== 'git') stop(ACTION_CANCELLED);
+      };
       const deadline = went ? undefined : setTimeout(() => stop(
         `The pack action did not finish reading its source within ${PACK_ACTION_DEADLINE_MS / 1_000} seconds. Nothing changed.`),
       PACK_ACTION_DEADLINE_MS);
-      signal.addEventListener('abort', cancel, { once: true });
+      stopping.addEventListener('abort', cancel, { once: true });
       child.on('message', (/** @type {any} */ message) => {
         if (message?.type === 'result') { answer = message.result; return; }
         if (message?.type !== 'gate' || asked || went || stopped) return;
         asked = true;
         clearTimeout(deadline);
         // A gate that fails is a no, as is any answer but its literal go.
-        try { went = !signal.aborted && gate?.() === true; } catch { went = false; }
+        try { went = !stopping.aborted && gate?.() === true; } catch { went = false; }
         // A child that is already gone cannot write, and its close settles this action.
         child.send({ type: 'gate', go: went }, () => {});
       });
@@ -1886,14 +2116,21 @@ async function runActionChild(root, signal, request, purpose, writable, gate) {
         if (child.pid === undefined) settle(unchanged(ACTION_UNSTARTED));
       });
       child.once('close', () => {
-        if (stopped) settle(unchanged(stopped));
+        if (stopped) settle(stoppedWith(stopped));
         else if (answer && typeof answer.ok === 'boolean') settle(packOutcome(answer, went));
         else {
           settle(went ? { ok: false, mutation: 'uncertain', error: 'The pack action ended after it was allowed to write, without saying what it changed.' }
             : unchanged('The pack action ended before it wrote anything. Nothing changed.'));
         }
       });
-      if (signal.aborted) cancel();
+      if (stopping.aborted) cancel();
+      // The child reads nothing before this. A child that runs Git is left to
+      // finish even when cancelled, so it starts, and is given no access; a send
+      // that fails means a child that is gone, and its close settles this action.
+      if (!stopped) {
+        const token = github && !stopping.aborted ? github.token : null;
+        child.send({ type: 'start', token }, () => {});
+      }
     });
   } finally {
     // Compose removes its own staging, so this root holds only the child's Git

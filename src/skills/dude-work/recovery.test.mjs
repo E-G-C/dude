@@ -19053,6 +19053,235 @@ test('T003 public learning and exact projection batches: invented objectives ref
   });
 });
 
+// --- Feature 090: one shared learning preparation for preflight and receiver --
+
+/** A deep-frozen copy, so any attempted mutation throws in strict mode. @template T @param {T} value @returns {T} */
+function f090Frozen(value) {
+  const copy = clone(value);
+  /** @param {unknown} node */
+  const freeze = (node) => {
+    if (node === null || typeof node !== 'object') return;
+    Object.freeze(node);
+    for (const child of Object.values(node)) freeze(child);
+  };
+  freeze(copy);
+  return copy;
+}
+
+/** The exact review the T003 public flow submitted for its branch. @param {ReturnType<typeof t003PublicFlow>} flow @param {'finding'|'approach'} channel @param {'selected-alternative'|'no-progress'} branch */
+function f090FlowReview(flow, channel, branch) {
+  return {
+    version: 2,
+    target: TARGET,
+    assumptionIdentities: [t003Hash('assumption')],
+    findings: [t003LearningFinding(channel)],
+    alternatives: t003SortAlternatives(branch === 'selected-alternative' ? [flow.credible, flow.rejected] : [flow.rejected]),
+    outcome: branch,
+    ...(branch === 'selected-alternative' ? { selectedAlternativeIdentity: flow.credible.alternativeIdentity } : {}),
+  };
+}
+
+/** The error one call throws. @param {() => unknown} run @param {string} label */
+function f090Thrown(run, label) {
+  try {
+    run();
+  } catch (error) {
+    assert.ok(error instanceof TypeError, `${label}: ${error}`);
+    return error;
+  }
+  return assert.fail(`${label}: expected a refusal`);
+}
+
+test('Feature 090: the shared learning preparation equals the fresh receiver on both branches without mutating its inputs', () => {
+  for (const [channel, branch] of /** @type {const} */ ([['finding', 'selected-alternative'], ['approach', 'no-progress']])) {
+    withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+      // Arrange
+      const flow = t003PublicFlow(root, channel, branch);
+      const state = flow.governanceVerified.transition.state;
+      const review = f090FlowReview(flow, channel, branch);
+
+      // Act
+      const received = recoveryRuntime.learnGovernanceV2(
+        state,
+        t002RetentionInput(root, flow.governedEvents, flow.governedEvents, flow.fixtures),
+        review,
+      );
+      const inputs = { state: f090Frozen(state), inspection: f090Frozen(received.inspection), review: f090Frozen(review) };
+      const before = canonicalJson(inputs);
+      const prepared = recoveryRuntime.prepareLearningReviewV2(inputs.state, inputs.inspection, inputs.review);
+
+      // Assert
+      assert.equal(canonicalJson(inputs), before, `${branch}: state, Inspection, and review stay unchanged`);
+      assert.equal(received.learning.reviewed, true, branch);
+      assert.equal(
+        canonicalJson(received.learning.reviewEvent),
+        canonicalJson(flow.learned.learning.reviewEvent),
+        `${branch}: the in-process receiver equals the serialized public route`,
+      );
+      assert.equal(prepared.prepared, true, branch);
+      assert.equal(canonicalJson(prepared.reviewEvent), canonicalJson(received.learning.reviewEvent), `${branch}: one review event`);
+      assert.equal(
+        canonicalJson(received.learning.projectionBatch.events[0]),
+        canonicalJson(prepared.reviewEvent),
+        `${branch}: the receiver projects the prepared event first`,
+      );
+      assert.equal(canonicalJson(prepared.governance), canonicalJson(state.learningGovernance), branch);
+      assert.deepEqual(prepared.target, canonicalTarget(TARGET), branch);
+      // Preparation derives only: no successor state, batch, projection, or permit.
+      assert.deepEqual(Object.keys(prepared).sort(), ['governance', 'prepared', 'reviewEvent', 'target'], branch);
+      assert.equal(received.learning.state.learningGovernance.phase, 'reviewed', branch);
+    });
+  }
+});
+
+test('Feature 090: the shared learning preparation keeps every receiver refusal, its precedence, and the accepted predecessor', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const state = flow.governanceVerified.transition.state;
+    const review = f090FlowReview(flow, 'finding', 'selected-alternative');
+    const input = () => t002RetentionInput(root, flow.governedEvents, flow.governedEvents, flow.fixtures);
+    const inspection = recoveryRuntime.learnGovernanceV2(state, input(), review).inspection;
+    const bases = flow.failedSet.approachBasisIdentities;
+    const setIdentity = flow.failedSet.setIdentity;
+    const partial = t003CredibleAlternative(TARGET, [bases[1]], setIdentity, 'f090-latest-only');
+    const disguised = t003CredibleAlternative(
+      TARGET, bases, setIdentity, 'f090-disguised', flow.secondCapture.completion.projectionBatch.events[0].basis,
+    );
+    const { selectedAlternativeIdentity, ...unselected } = review;
+    const oversized = Array.from({ length: 16 }, (_, index) => {
+      const body = {
+        version: 1,
+        statement: `Oversized finding ${index}: ${'x'.repeat(480)}`,
+        evidenceIdentities: Array.from({ length: 16 }, (__, row) => t003Hash(`f090-oversized-${index}-${row}`)).sort(),
+        assumptionIdentities: [],
+      };
+      return { ...body, findingIdentity: sha256(canonicalJson(body)) };
+    }).sort((left, right) => Buffer.compare(Buffer.from(left.findingIdentity), Buffer.from(right.findingIdentity)));
+    const unretained = [
+      t002ApproachEvent({ attemptOrdinal: 1, basisLabel: 'f090-unretained' }),
+      t002ApproachEvent({ attemptOrdinal: 2, basisLabel: 'f090-unretained' }),
+    ];
+    const forgedTrigger = { ...clone(state), learningGovernance: t002RequiredGovernance(unretained) };
+    validateRunState(forgedTrigger);
+
+    // Act and Assert: context refusals keep the accepted predecessor unchanged.
+    for (const [label, caseState, caseReview, reason] of /** @type {[string, Record<string, unknown>, unknown, string][]} */ ([
+      ['no learning governance', flow.firstFinalize.completion.state, review, 'learning-evidence-incomplete'],
+      ['a projected phase', flow.learningVerified.transition.state, review, 'learning-phase-mismatch'],
+      ['an unverified governance projection', flow.secondFinalize.completion.state, review, 'governance-unresolved'],
+      ['an unretained trigger', forgedTrigger, review, 'repeat-not-established'],
+      // Precedence: a context refusal comes before any review validation.
+      ['a projected phase with a malformed review', flow.learningVerified.transition.state, {}, 'learning-phase-mismatch'],
+      ['a selection that is not credible', state, { ...review, selectedAlternativeIdentity: flow.rejected.alternativeIdentity }, 'alternative-selection-mismatch'],
+      ['no progress beside a credible alternative', state, { ...unselected, outcome: 'no-progress' }, 'alternative-invalid'],
+    ])) {
+      const stateBytes = canonicalJson(caseState);
+      const received = recoveryRuntime.learnGovernanceV2(caseState, input(), caseReview);
+      const prepared = recoveryRuntime.prepareLearningReviewV2(f090Frozen(caseState), f090Frozen(received.inspection), f090Frozen(caseReview));
+      assert.deepEqual(prepared, { prepared: false, reason }, label);
+      assert.equal(received.learning.reviewed, false, label);
+      assert.equal(received.learning.reason, reason, label);
+      assert.equal(canonicalJson(received.learning.state), stateBytes, `${label}: accepted predecessor unchanged`);
+    }
+
+    // Act and Assert: malformed, incomplete, and over-capacity reviews throw the same validator error.
+    for (const [label, caseReview, pattern] of /** @type {[string, unknown, RegExp][]} */ ([
+      ['another target', { ...review, target: SECOND_TARGET }, /learning review v2\.target must be the governed affected target/],
+      ['a caller-authored envelope field', { ...review, challengeIdentity: t003Hash('f090-envelope') }, /contains unknown field 'challengeIdentity'/],
+      ['a comparison with only the latest failure', { ...review, alternatives: [partial], selectedAlternativeIdentity: partial.alternativeIdentity },
+        /must carry exactly one comparison for every current failed-approach basis/],
+      ['a disguised repetition', { ...review, alternatives: [disguised], selectedAlternativeIdentity: disguised.alternativeIdentity },
+        /must differ materially from every current failed approach/],
+      ['a missing selection', unselected, /is required for a selected alternative/],
+      ['a selection on no progress', { ...review, alternatives: [flow.rejected], outcome: 'no-progress' }, /is forbidden for no-progress/],
+      ['nine alternatives', { ...unselected, outcome: 'no-progress', alternatives: t003SortAlternatives(Array.from(
+        { length: 9 }, (_, index) => t003RejectedAlternative(TARGET, bases, setIdentity, `f090-excess-${index}`),
+      )) }, /must contain at most 8 alternatives/],
+      ['an event over its byte bound', { ...review, findings: oversized }, /must serialize to at most 16384 UTF-8 bytes/],
+      ['an invented objective', { ...review, sequenceIdentity: t003Hash('f090-invented-objective') }, /uniquely matched objective/],
+    ])) {
+      const stateBytes = canonicalJson(state);
+      const receiverError = f090Thrown(() => recoveryRuntime.learnGovernanceV2(state, input(), caseReview), `${label} receiver`);
+      const preflightError = f090Thrown(
+        () => recoveryRuntime.prepareLearningReviewV2(f090Frozen(state), f090Frozen(inspection), f090Frozen(caseReview)),
+        `${label} preparation`,
+      );
+      assert.match(receiverError.message, pattern, label);
+      assert.equal(preflightError.message, receiverError.message, label);
+      assert.equal(canonicalJson(state), stateBytes, label);
+    }
+
+    // The preparation validates the Inspection it is given and stays autonomous-only.
+    assert.throws(
+      () => recoveryRuntime.prepareLearningReviewV2(state, { ...clone(inspection), evidenceHash: t003Hash('f090-tampered') }, review),
+      /Inspection\.evidenceHash does not match its projection/,
+    );
+    assert.throws(() => recoveryRuntime.prepareLearningReviewV2(emptyState(), inspection, review), /prepareLearningReviewV2 requires autonomous policy/);
+  });
+});
+
+test('Feature 090: the fresh receiver never inherits an earlier preflight of the same review', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange: a preflight passes against the Inspection bound to the challenge.
+    const flow = t003PublicFlow(root, 'approach', 'no-progress');
+    const state = flow.governanceVerified.transition.state;
+    const review = f090FlowReview(flow, 'approach', 'no-progress');
+    const earlier = recoveryRuntime.learnGovernanceV2(
+      state,
+      t002RetentionInput(root, flow.governedEvents, flow.governedEvents, flow.fixtures),
+      review,
+    ).inspection;
+    const preflight = recoveryRuntime.prepareLearningReviewV2(state, earlier, review);
+    assert.equal(preflight.prepared, true);
+    // A later retained attempt changes the evidence before receipt.
+    const third = t002PendingFixture({
+      attemptOrdinal: 3,
+      priorCompleted: flow.secondFinalize.completion.state.completed,
+      checkOutcome: 'failed',
+      verdict: 'accepted',
+      materialInputs: { targets: ['src/f090-later.mjs'], operations: ['retry-task'], checks: ['verification'] },
+    });
+    const thirdCapture = recoveryRuntime.captureCompletionV2(
+      third.state,
+      autonomousInspectInput(root, t002TrustedStreams([third])),
+      third.completion,
+    );
+    const changedEvents = [...flow.governedEvents, ...thirdCapture.occurrenceEvents];
+
+    // Act
+    const received = recoveryRuntime.learnGovernanceV2(
+      state,
+      t002RetentionInput(root, changedEvents, changedEvents, [...flow.fixtures, third]),
+      review,
+    );
+    const oneSided = recoveryRuntime.learnGovernanceV2(
+      state,
+      t002RetentionInput(root, flow.governedEvents.slice(1), flow.governedEvents, flow.fixtures),
+      review,
+    );
+
+    // Assert: the receiver recomputes from its own fresh evidence.
+    assert.equal(received.learning.reviewed, true);
+    assert.notEqual(received.inspection.evidenceHash, earlier.evidenceHash);
+    assert.equal(received.learning.reviewEvent.preLearningEvidenceHash, received.inspection.evidenceHash);
+    assert.notEqual(received.learning.reviewEvent.reviewIdentity, preflight.reviewEvent.reviewIdentity);
+    assert.notEqual(
+      received.learning.reviewEvent.noProgressProof.completeEvidenceHash,
+      preflight.reviewEvent.noProgressProof.completeEvidenceHash,
+    );
+    assert.equal(
+      canonicalJson(recoveryRuntime.prepareLearningReviewV2(state, received.inspection, review).reviewEvent),
+      canonicalJson(received.learning.reviewEvent),
+      'parity holds for the fresh capture',
+    );
+    // Evidence that no longer supports the requirement refuses although the earlier preflight passed.
+    assert.equal(oneSided.learning.reviewed, false);
+    assert.equal(oneSided.learning.reason, 'occurrence-retention-incomplete');
+    assert.equal(canonicalJson(oneSided.learning.state), canonicalJson(state));
+  });
+});
+
 
 /** @param {string} label */
 function t004Hash(label) {

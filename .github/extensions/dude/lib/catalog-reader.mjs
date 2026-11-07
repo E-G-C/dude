@@ -37,8 +37,25 @@
  * `packs.mjs` carries (such as `http.extraHeader`) is still sent, a Git older
  * than 2.32 ignores `GIT_CONFIG_GLOBAL` so it does not read `~/.gitconfig`, and a
  * `~/` path inside the carried configuration names the empty home. Git serves
- * only other hosts: Compose reads a GitHub source over anonymous HTTPS, with no
- * Git and no credentials at all.
+ * only other hosts: Compose reads a GitHub source over HTTPS, with no Git, and
+ * sends a credential only when its read was given explicit access.
+ *
+ * The start message. Before it reads anything, the helper waits for the one
+ * `{ type: 'start', token }` message `packs.mjs` sends over IPC once it is
+ * launched. `token` is the GitHub access of a read that `packs.mjs` classified as
+ * a GitHub acquisition, and null for every other read. It is never in the
+ * environment, an argument, a file or an answer, so neither Git nor any other
+ * process this helper starts can see it, and Compose sends it only to GitHub's
+ * API. Node holds the message until the helper listens. A parent that is gone
+ * before it arrives means nothing is read; one that never sends it leaves the
+ * helper waiting until the parent's deadline stops it. Before it stops a helper
+ * it gave the access, because that access ended (sign-out, the session's end or
+ * GitHub's rejection) or the read itself was cancelled, `packs.mjs` sends
+ * `{ type: 'release' }`, and the helper releases its own copy (see `awaitStart`).
+ *
+ * A read GitHub refused for a rate limit or a rejected access answers that as its
+ * `reason` (`rate_limited` or `credential_rejected`), so neither is mistaken for
+ * an unreachable source.
  *
  * Compose acquires a remote catalog into a temporary folder inside this helper's
  * own root. Every read awaits Compose and releases that folder before its answer
@@ -55,6 +72,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { availablePacks, cmdList, readManifestSource, resolveCatalogDir } from '../../../skills/dude-compose/compose.mjs';
+import { GitHubAccess } from '../../../skills/dude-engine/lib/github-content.mjs';
 import {
   PackSourceError,
   describeBuiltinSources,
@@ -130,6 +148,58 @@ function parseRequest(text) {
   // The upstream is the bundle manifest's, so its request carries the operation alone.
   if (value?.op === 'upstream' && exact(['op'])) return value;
   throw new Error('The catalog request is not one of the fixed operations.');
+}
+
+/**
+ * Wait for this process's one start message from `packs.mjs` (see this module's
+ * header), which a pack action child waits for too. It resolves to the GitHub
+ * access the message carries, or null for none, and rejects, without repeating
+ * any token, when the parent is gone first or the message is not a start the
+ * parent sends.
+ *
+ * The listener stays for the life of the process, because the parent may also
+ * send `{ type: 'release' }`, with nothing else in it, to a child it gave access,
+ * as it stops that child. The child then releases its own copy, so that no
+ * request it starts afterwards carries it; one already on its way may finish. A
+ * release before the start is final: the start is refused and this rejects with
+ * the reason `credential_rejected`, so the child reads nothing, never
+ * anonymously. A repeated release or start changes nothing.
+ * @returns {Promise<GitHubAccess | null>}
+ */
+export function awaitStart() {
+  return new Promise((resolve, reject) => {
+    /** @type {GitHubAccess | null} */
+    let access = null;
+    let started = false, released = false;
+    /** @param {any} message */
+    const hear = message => {
+      if (message?.type === 'release') {
+        access?.release();
+        if (!started && !released) {
+          process.off('disconnect', lost);
+          reject(Object.assign(new Error('The GitHub access was released before this child was started, so it read nothing.'),
+            { reason: 'credential_rejected' }));
+        }
+        released = true;
+        return;
+      }
+      if (message?.type !== 'start' || started || released) return;
+      started = true;
+      process.off('disconnect', lost);
+      try {
+        access = message.token === null ? null : new GitHubAccess(message.token);
+        resolve(access);
+      } catch { reject(new Error('The start message did not carry valid GitHub access.')); }
+    };
+    const lost = () => {
+      process.off('message', hear);
+      process.off('disconnect', lost);
+      reject(new Error('The parent was gone before it started this read.'));
+    };
+    process.on('message', hear);
+    process.on('disconnect', lost);
+    if (!process.connected) lost();
+  });
 }
 
 /**
@@ -225,16 +295,21 @@ async function listAndRelease(root, catalog, fromGitHub) {
   }
 }
 
-/** @param {string} root */
-async function readCatalog(root) {
+/**
+ * The default read: the local library, else the bundle upstream, which `access`
+ * reaches only when it is a GitHub source.
+ * @param {string} root
+ * @param {GitHubAccess | null} access
+ */
+async function readCatalog(root, access) {
   try {
     resolveMutationPath(root, WORKSPACE_PATHS.PROFILE);
     resolveMutationPath(root, WORKSPACE_PATHS.BUNDLE_MANIFEST);
     const library = resolveMutationPath(root, 'library/packs');
-    const catalog = await resolveCatalogDir({ root, library, fetch: true });
+    const catalog = await resolveCatalogDir({ root, library, fetch: true, access });
     if ('error' in catalog) {
       return keptMaterial(catalog.error) ? { ...failure('catalog_cleanup_failed', catalog.error), kept: true }
-        : { ok: false, error: catalog.error };
+        : { ok: false, ...(catalog.reason ? { reason: catalog.reason } : {}), error: catalog.error };
     }
     // Only the bundle upstream is ever acquired here, and GitHub discovery of it downloads each pack.md alone.
     const fromGitHub = Boolean(catalog.dispose)
@@ -304,8 +379,9 @@ function loadSources(root, request) {
  * catalog once (see `listSource`).
  * @param {string} root
  * @param {SourceRequest} request
+ * @param {GitHubAccess | null} access
  */
-async function readSource(root, request) {
+async function readSource(root, request, access) {
   const loaded = loadSources(root, request);
   if ('failure' in loaded) return loaded.failure;
   const entry = loaded.sources[request.index];
@@ -323,19 +399,21 @@ async function readSource(root, request) {
   if (!request.list) return { ok: true, source: summary };
   // From here a failure still reports who the source is, so a source whose catalog
   // cannot be read keeps its row, its key and its place in the saved list.
-  return { ...(await listSource(root, source)), source: summary };
+  return { ...(await listSource(root, source, access)), source: summary };
 }
 
 /**
  * Resolve one described source once and enumerate its catalog once. An explicit
  * source is exclusive, and the resolved directory is passed on as a local input,
  * so this never acquires twice. A failure carries its reason: material Compose
- * kept, no catalog, a source that could not be fetched, or a catalog that could
- * not be listed.
+ * kept, no catalog, GitHub's rate limit or its rejection of `access`, a source
+ * that could not be fetched, or a catalog that could not be listed. Only a
+ * repository is given `access`, which Compose sends to GitHub's API alone.
  * @param {string} root
  * @param {import('../../../skills/dude-engine/lib/pack-sources.mjs').DescribedSource} source
+ * @param {GitHubAccess | null} access
  */
-async function listSource(root, source) {
+async function listSource(root, source, access) {
   // A folder that did not resolve is no source at all, which Compose would read as the default catalog.
   if (source.type === 'local' && !source.root) {
     return failure('source_unavailable', 'The saved folder is not available.');
@@ -345,11 +423,12 @@ async function listSource(root, source) {
     resolveMutationPath(root, WORKSPACE_PATHS.BUNDLE_MANIFEST);
     const library = resolveMutationPath(root, 'library/packs');
     const catalog = source.type === 'remote'
-      ? await resolveCatalogDir({ root, library, fetch: true, source: source.repository, ref: source.ref })
+      ? await resolveCatalogDir({ root, library, fetch: true, source: source.repository, ref: source.ref, access })
       : await resolveCatalogDir({ root, library, fetch: true, source: /** @type {string} */ (source.root) });
     if ('error' in catalog) {
       if (keptMaterial(catalog.error)) return { ...failure('catalog_cleanup_failed', catalog.error), kept: true };
-      return failure(/^no pack catalog found in /.test(catalog.error) ? 'catalog_missing' : 'catalog_unreachable', catalog.error);
+      return failure(catalog.reason
+        ?? (/^no pack catalog found in /.test(catalog.error) ? 'catalog_missing' : 'catalog_unreachable'), catalog.error);
     }
     const listed = await listAndRelease(root, catalog, source.type === 'remote' && source.identity.startsWith('github:'));
     if (!listed.ok) {
@@ -367,10 +446,11 @@ async function listSource(root, source) {
  * names, derived here as the parent derives it. A manifest that names none
  * leaves nothing to read.
  * @param {string} root
+ * @param {GitHubAccess | null} access
  */
-async function readUpstream(root) {
+async function readUpstream(root, access) {
   const upstream = builtinSources(root).find(source => source.builtin === 'bundle-upstream');
-  return upstream ? listSource(root, upstream) : failure('catalog_unavailable', 'The bundle manifest names no upstream.');
+  return upstream ? listSource(root, upstream, access) : failure('catalog_unavailable', 'The bundle manifest names no upstream.');
 }
 
 /**
@@ -398,16 +478,24 @@ function validateSource(root, request) {
 }
 
 /**
- * The one operation's answer. It settles only after any catalog copy Compose
- * acquired has been removed, and it never rejects.
+ * The one operation's answer, once its start message has arrived. It settles
+ * only after any catalog copy Compose acquired has been removed, and it never
+ * rejects. A validation reads no source, so it is never given access.
  * @param {string} root
  */
 async function handle(root) {
+  /** @type {GitHubAccess | null} */
+  let access;
+  try { access = await awaitStart(); }
+  catch (error) {
+    return failure(/** @type {any} */ (error)?.reason === 'credential_rejected' ? 'credential_rejected' : 'catalog_unavailable',
+      error instanceof Error ? error.message : 'The read was not started.');
+  }
   try {
     const request = parseRequest(process.env[CATALOG_REQUEST_ENV]);
-    if (request === null) return await readCatalog(root);
-    if (request.op === 'upstream') return await readUpstream(root);
-    return request.op === 'validate' ? validateSource(root, request) : await readSource(root, request);
+    if (request === null) return await readCatalog(root, access);
+    if (request.op === 'upstream') return await readUpstream(root, access);
+    return request.op === 'validate' ? validateSource(root, request) : await readSource(root, request, access);
   } catch (error) {
     return failure('catalog_unavailable', error instanceof Error ? error.message : 'The catalog could not be read.');
   }

@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 
 import { buildRelease } from '../../../scripts/build-release.mjs';
 import { prepareSpecialistResult } from './host-adapter.mjs';
-import { canonicalJson, sha256 } from './recovery.mjs';
+import { canonicalJson, prepareLearningReviewV2, sha256 } from './recovery.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..', '..');
@@ -124,12 +124,19 @@ function claimLines(ws) {
   return read(ws, IDEA).split('\n').filter((line) => CLAIM_LINE.test(line));
 }
 
+/** Every v2 event line in the lane history, in order. @param {string} ws */
+function laneEvents(ws) {
+  return historyLines(ws).map((line) => JSON.parse(line.slice('- dude-run-event: '.length)));
+}
+
+/** The exact lane-history event lines, in order. @param {string} ws */
+function historyLines(ws) {
+  return read(ws, TASKS).split('\n').filter((line) => line.startsWith('- dude-run-event: '));
+}
+
 /** @param {string} ws */
 function approachEvents(ws) {
-  return read(ws, TASKS).split('\n')
-    .filter((line) => line.startsWith('- dude-run-event: '))
-    .map((line) => JSON.parse(line.slice('- dude-run-event: '.length)))
-    .filter((event) => event.type === 'approach-occurrence');
+  return laneEvents(ws).filter((event) => event.type === 'approach-occurrence');
 }
 
 /** The decoded substantive records of one original capture. @param {any} capture @returns {any[]} */
@@ -283,13 +290,13 @@ async function startedDirectory(runner) {
   return assert.fail('the run never reported its directory');
 }
 
-/** @param {string} label @param {'passed'|'failed'} outcome */
-function check(label, outcome = 'passed') {
-  return { definition: `fixture check: ${label}`, outcome, evidence: `fixture evidence: ${label} ${outcome}` };
+/** @param {string} label @param {'passed'|'failed'} outcome @param {string} [evidence] */
+function check(label, outcome = 'passed', evidence = `fixture evidence: ${label} ${outcome}`) {
+  return { definition: `fixture check: ${label}`, outcome, evidence };
 }
 
-/** @param {string} label */
-function finding(label) {
+/** @param {string} label @param {string} [observed] the observed evidence; the basis stays stable */
+function finding(label, observed = `fixture observation: ${label}`) {
   return {
     basis: {
       expectation: { kind: 'governing-rule', reference: `fixture rule: ${label}` },
@@ -297,7 +304,7 @@ function finding(label) {
       failureClass: 'review-rejection',
       checkDefinition: `fixture check: ${label}`,
     },
-    observation: { kind: 'observed-evidence', evidence: `fixture observation: ${label}` },
+    observation: { kind: 'observed-evidence', evidence: observed },
   };
 }
 
@@ -905,4 +912,718 @@ test('the ownership probe refuses without an exact current binding', { timeout: 
     assert.equal(refused.ok, false, label);
   }
   assert.deepEqual(tree(fixture.root), before, 'refused probes write nothing');
+});
+
+// --- Learning review through the live released driver ------------------------
+//
+// Each run below reaches a real learning-review challenge only through the
+// released public commands: claim, an attached run, and two assessed attempts
+// whose independent reviews reject with the same finding. The fixture learning
+// results exercise transport and the receiver; they are no learning judgment.
+
+const LEARNING_TARGET = { specPath: SPEC, lane: 'lightweight', taskKey: T1 };
+
+/** @param {any} challenge */
+function challengeState(challenge) {
+  return JSON.parse(Buffer.from(challenge.stateBase64, 'base64').toString('utf8'));
+}
+
+/** @param {string} label */
+function fixtureHash(label) {
+  return sha256(`driver-learning-fixture:${label}`);
+}
+
+/** A duplicate-free set in UTF-8 byte order, as every v2 identity set requires. @param {string[]} values */
+function sortedSet(values) {
+  return [...new Set(values)].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+}
+
+/** @template {{alternativeIdentity: string}} T @param {T[]} rows */
+function byAlternativeIdentity(rows) {
+  return [...rows].sort((left, right) => Buffer.compare(
+    Buffer.from(left.alternativeIdentity),
+    Buffer.from(right.alternativeIdentity),
+  ));
+}
+
+/**
+ * The governed failed-approach set of one real learning challenge and, for each
+ * failed basis, the retained occurrence events that support it in lane history.
+ * @param {any} challenge @param {string} ws
+ */
+function governedEvidence(challenge, ws) {
+  const set = challengeState(challenge).learningGovernance.failedApproachSet;
+  const events = laneEvents(ws);
+  /** @type {Map<string, string[]>} */
+  const support = new Map(set.approachBasisIdentities.map((/** @type {string} */ basis) => [basis, sortedSet(events
+    .filter((event) => (event.type === 'approach-occurrence' && sha256(canonicalJson(event.basis)) === basis)
+      || (event.type === 'finding-occurrence' && event.occurrence.attemptApproachBasisIdentity === basis))
+    .map((event) => event.eventHash))]));
+  return { set, events, support };
+}
+
+/** One fixture approach basis for a proposed alternative. @param {string} label */
+function alternativeBasis(label) {
+  return {
+    version: 1,
+    target: { ...LEARNING_TARGET },
+    action: 'retry-task',
+    materialInputs: { targets: ['src/demo.txt'], operations: ['retry-task'], checks: ['verification'] },
+    mechanismIdentities: [fixtureHash(`mechanism:${label}`)],
+    assumptionIdentities: [],
+    evidenceAcquisitionIdentities: [],
+    validationPlanIdentities: [],
+  };
+}
+
+/**
+ * A credible-material alternative compared with the given failed bases, every
+ * governed basis unless a case narrows them, and bound to one discriminating check.
+ * @param {ReturnType<typeof governedEvidence>} evidence @param {string} label
+ * @param {{bases?: string[], basis?: Record<string, unknown>}} [options]
+ */
+function credibleAlternative(evidence, label, { bases = evidence.set.approachBasisIdentities, basis = alternativeBasis(label) } = {}) {
+  const approachBasisIdentity = sha256(canonicalJson(basis));
+  const materialDifferences = bases.map((failed) => ({
+    failedApproachBasisIdentity: failed,
+    changedDimensions: ['mechanism'],
+    evidenceIdentities: evidence.support.get(failed) ?? [fixtureHash(`difference:${label}`)],
+  }));
+  const checkBody = {
+    definitionIdentity: fixtureHash(`check-definition:${label}`),
+    evidenceIdentities: [fixtureHash(`check-evidence:${label}`)],
+  };
+  const discriminatingCheck = { identity: sha256(canonicalJson(checkBody)), ...checkBody };
+  const semanticAssessmentIdentity = fixtureHash(`assessment:${label}`);
+  const body = {
+    version: 2,
+    disposition: 'credible-material',
+    approachBasisIdentity,
+    failedApproachSetIdentity: evidence.set.setIdentity,
+    materialDifferences,
+    discriminatingCheck,
+    semanticAssessmentIdentity,
+  };
+  return { ...body, alternativeIdentity: sha256(canonicalJson(body)), approachBasis: basis };
+}
+
+/**
+ * A rejected alternative: the same as the first governed failed approach and
+ * different from the rest, so it is a disguised repetition.
+ * @param {ReturnType<typeof governedEvidence>} evidence @param {string} label
+ */
+function rejectedAlternative(evidence, label) {
+  const basis = alternativeBasis(label);
+  const comparisons = evidence.set.approachBasisIdentities.map((/** @type {string} */ failed, /** @type {number} */ index) => ({
+    failedApproachBasisIdentity: failed,
+    outcome: index === 0 ? 'same' : 'different',
+    ...(index === 0 ? {} : { changedDimensions: ['mechanism'] }),
+    evidenceIdentities: evidence.support.get(failed),
+  }));
+  const body = {
+    version: 2,
+    disposition: 'not-materially-different',
+    approachBasisIdentity: sha256(canonicalJson(basis)),
+    failedApproachSetIdentity: evidence.set.setIdentity,
+    comparisons,
+    semanticAssessmentIdentity: fixtureHash(`assessment:${label}`),
+    reason: 'disguised-repetition',
+  };
+  return { ...body, alternativeIdentity: sha256(canonicalJson(body)), approachBasis: basis };
+}
+
+/** @param {string} statement @param {string[]} evidenceIdentities */
+function learningFinding(statement, evidenceIdentities) {
+  const body = { version: 1, statement, evidenceIdentities: sortedSet(evidenceIdentities), assumptionIdentities: [] };
+  return { ...body, findingIdentity: sha256(canonicalJson(body)) };
+}
+
+/**
+ * One complete fixture learning result for a real challenge: a finding over
+ * every retained occurrence and alternatives compared with the whole failed set.
+ * @param {ReturnType<typeof governedEvidence>} evidence @param {'selected-alternative'|'no-progress'} outcome
+ * @param {{findings?: Record<string, unknown>[], alternatives?: Record<string, unknown>[], selected?: string}} [options]
+ */
+function learningReview(evidence, outcome, { findings, alternatives, selected } = {}) {
+  const credible = credibleAlternative(evidence, 'alternative');
+  const rejected = rejectedAlternative(evidence, 'repeated');
+  const rows = alternatives ?? (outcome === 'selected-alternative' ? [credible, rejected] : [rejected]);
+  const review = {
+    version: 2,
+    target: { ...LEARNING_TARGET },
+    assumptionIdentities: [fixtureHash('assumption')],
+    findings: findings ?? [learningFinding(
+      'The same review finding repeated after the action changed, so the action was not its cause.',
+      [...evidence.support.values()].flat(),
+    )],
+    alternatives: byAlternativeIdentity(/** @type {{alternativeIdentity: string}[]} */ (rows)),
+    outcome,
+    ...(outcome === 'selected-alternative' ? { selectedAlternativeIdentity: selected ?? credible.alternativeIdentity } : {}),
+  };
+  return { review, credible, rejected };
+}
+
+/**
+ * Build the actual core release into a fresh fixture, claim T1, start the
+ * attached runner, and answer two real attempts whose independent reviews
+ * reject with the same finding, until that live runner publishes its
+ * learning-review challenge. With `failedCheck`, each attempt also fails a check.
+ * @param {import('node:test').TestContext} t @param {{failedCheck?: boolean, tasks?: string[]}} [options]
+ */
+async function reachLearningChallenge(t, { failedCheck = false, tasks = DEPENDENT_TASKS } = {}) {
+  const fixture = makeFixture(t);
+  const built = buildRelease({ repoRoot: REPO, outDir: fixture.ws });
+  assert.equal(built.files.some((file) => file.endsWith('.test.mjs')), false, 'the release ships no tests');
+  const driver = path.join(fixture.ws, '.github', 'skills', 'dude-work', 'driver.mjs');
+  seed(fixture.ws, { tasks });
+  const ws = fs.realpathSync(fixture.ws);
+  const claimed = expectExit(await call(fixture, ['claim', '--root', ws, '--spec', SPEC, '--task', T1, '--', ...SHIP_ARGS], driver), 0, 'claim');
+  const dir = path.join(fixture.io, 'exchange');
+  const runner = start(fixture, ['run', '--request', claimed.runnerRequest, '--dir', dir], driver);
+  /** @type {{tester: any, reviewer: any}[]} */
+  const records = [];
+  for (const [attempt, action, equivalence] of /** @type {[number, string, string][]} */ ([
+    [1, 'execute-task', 'none'],
+    [2, failedCheck ? 'retry-task' : 'address-review', 'distinct'],
+  ])) {
+    const n = 2 * attempt - 1;
+    const assessment = await waitForStatus(dir, (status) => status.state === 'waiting' && status.n === n, `assessment ${n}`);
+    assert.equal(assessment.kind, 'assessment');
+    const input = writeJson(path.join(fixture.io, `assessment-${n}.json`), {
+      action,
+      targets: ['src/demo.txt'],
+      summary: `Change the demo product file (attempt ${attempt}).`,
+      intent: 'unchanged',
+      equivalence,
+      retention: 'transient',
+    });
+    expectExit(await call(fixture, ['assess', '--root', ws, '--challenge', assessment.challenge, '--input', input], driver), 0, `assess ${n}`);
+    const pair = await waitForStatus(dir, (status) => status.state === 'waiting' && status.n === n + 1, `specialist pair ${n + 1}`);
+    assert.equal(pair.kind, 'specialist-pair');
+    const baseline = path.join(fixture.io, `baseline-${n + 1}.json`);
+    expectExit(await call(fixture, ['snapshot', '--root', ws, '--out', baseline], driver), 0, `snapshot ${n + 1}`);
+    write(ws, 'src/demo.txt', `attempt ${attempt}\n`);
+    const changed = path.join(fixture.io, `changed-${n + 1}.json`);
+    expectExit(await call(fixture, [
+      'diff', '--root', ws, '--baseline', baseline, '--challenge', pair.challenge, '--out', changed,
+    ], driver), 0, `diff ${n + 1}`);
+    // The finding basis stays stable; each attempt's observed evidence is its own.
+    const tester = {
+      checks: [
+        check('repeat', 'passed', `fixture evidence: repeat passed in attempt ${attempt}`),
+        ...(failedCheck ? [check('unit', 'failed', `fixture evidence: unit failed in attempt ${attempt}`)] : []),
+      ],
+    };
+    const reviewer = { verdict: 'rejected', findings: [finding('repeat', `fixture observation: the repeated finding in attempt ${attempt}`)] };
+    const responded = expectExit(await call(fixture, [
+      'respond', '--root', ws, '--challenge', pair.challenge,
+      '--tester', writeJson(path.join(fixture.io, `tester-${n + 1}.json`), tester),
+      '--reviewer', writeJson(path.join(fixture.io, `reviewer-${n + 1}.json`), reviewer),
+      '--changed', changed,
+    ], driver), 0, `respond ${n + 1}`);
+    assert.equal(responded.outcome, failedCheck ? 'failed' : 'blocked');
+    records.push({ tester, reviewer });
+  }
+  const learning = await waitForStatus(dir, (status) => status.state === 'waiting' && status.n === 5, 'learning review');
+  assert.equal(learning.kind, 'learning-review');
+  const challenge = readJson(learning.challenge);
+  return { fixture, driver, ws, dir, runner, claimed, learning, challenge, records };
+}
+
+/**
+ * The learning owner's evidence is complete: the governed set holds every
+ * retained failed approach, and the bound packet carries each attempt's
+ * original check rows and rejected findings.
+ * @param {Awaited<ReturnType<typeof reachLearningChallenge>>} context
+ */
+function assertCompleteLearningEvidence({ ws, learning, challenge, records }) {
+  const state = challengeState(challenge);
+  assert.equal(state.learningGovernance.phase, 'required');
+  assert.equal(state.learningGovernance.governanceIdentity, challenge.governanceIdentity);
+  assert.equal(state.learningGovernance.trigger.channel, 'finding');
+  const evidence = governedEvidence(challenge, ws);
+  const failed = evidence.events.filter((event) => event.type === 'approach-occurrence');
+  assert.equal(failed.length, 2);
+  assert.ok(failed.every((event) => event.occurrence.disposition !== 'accepted'));
+  assert.deepEqual(
+    evidence.set.approachBasisIdentities,
+    sortedSet(failed.map((event) => sha256(canonicalJson(event.basis)))),
+    'the governed set holds every retained failed approach',
+  );
+  const packet = fs.readFileSync(learning.packet, 'utf8');
+  for (const { tester, reviewer } of records) {
+    for (const row of tester.checks) assert.ok(packet.includes(row.evidence), `the packet carries ${row.evidence}`);
+    for (const row of reviewer.findings) {
+      assert.ok(packet.includes(row.observation.evidence), `the packet carries ${row.observation.evidence}`);
+    }
+  }
+  return evidence;
+}
+
+/** The first result step whose name starts with the prefix, and its index. @param {any[]} steps @param {string} prefix */
+function stepOf(steps, prefix) {
+  const index = steps.findIndex((step) => step.step.startsWith(prefix));
+  assert.ok(index >= 0, `the run took a ${prefix} step: ${steps.map((step) => step.step).join(', ')}`);
+  return { index, step: steps[index] };
+}
+
+/** The decoded current-run events of the retained evidence, in capture order. @param {any} retained */
+function currentRunEvents(retained) {
+  return retained.currentRun.flatMap(captureRecords)
+    .filter((/** @type {any} */ entry) => entry.event)
+    .map((/** @type {any} */ entry) => entry.event);
+}
+
+/**
+ * Copy a real challenge into a fresh scratch exchange beside a copy of the live
+ * status, optionally editing and rebinding it, so each refusal below reaches its
+ * own guard while every other prerequisite stays valid.
+ * @param {Awaited<ReturnType<typeof reachLearningChallenge>>} context @param {string} label
+ * @param {{source?: string, name?: string, status?: boolean, edit?: (challenge: any) => void, rebind?: boolean}} [options]
+ */
+function scratchChallenge({ fixture, dir, learning }, label, { source = learning.challenge, name = path.basename(source), status = true, edit, rebind = false } = {}) {
+  const copy = readJson(source);
+  edit?.(copy);
+  if (rebind) {
+    const { challengeIdentity, bindingIdentity, ...body } = copy;
+    copy.bindingIdentity = sha256(canonicalJson(body));
+  }
+  const scratch = path.join(fixture.io, `case-${label.replace(/[^a-z0-9]+/gi, '-')}`);
+  fs.mkdirSync(scratch);
+  if (status) fs.copyFileSync(path.join(dir, 'status.json'), path.join(scratch, 'status.json'));
+  return writeJson(path.join(scratch, name), copy);
+}
+
+/** Run driver calls a few at a time; each refusal is independent. @template T @param {(() => Promise<T>)[]} calls */
+async function inBatches(calls, size = 6) {
+  /** @type {T[]} */
+  const results = [];
+  for (let index = 0; index < calls.length; index += size) {
+    results.push(...await Promise.all(calls.slice(index, index + size).map((run) => run())));
+  }
+  return results;
+}
+
+test('learning review, selected alternative: the live released runner retains, re-inspects, and binds the result before a separately verified attempt settles', {
+  timeout: 300_000,
+}, async (t) => {
+  const context = await reachLearningChallenge(t);
+  const { fixture, driver, ws, dir, runner, learning, challenge } = context;
+  const evidence = assertCompleteLearningEvidence(context);
+  const respond = (/** @type {string[]} */ args) => call(fixture, ['respond', '--root', ws, ...args], driver);
+  const { review, credible, rejected } = learningReview(evidence, 'selected-alternative');
+  const reviewFile = writeJson(path.join(fixture.io, 'learning-review.json'), review);
+  const historyBefore = read(ws, TASKS);
+  const priorEvents = historyLines(ws);
+  const exchangeBefore = tree(dir);
+
+  // Mixed, partial, and missing forms are usage errors.
+  const unused = writeJson(path.join(fixture.io, 'unused.json'), {});
+  const usage = await inBatches(/** @type {[string, string[]][]} */ ([
+    ['learning review with --cancel', ['--learning-review', reviewFile, '--cancel']],
+    ['learning review with the specialist trio', ['--learning-review', reviewFile, '--tester', unused, '--reviewer', unused, '--changed', unused]],
+    ['learning review with part of the trio', ['--learning-review', reviewFile, '--tester', unused]],
+    ['part of the trio alone', ['--tester', unused, '--reviewer', unused]],
+    ['no response form', []],
+    ['learning review without a file', ['--learning-review']],
+  ]).map(([label, args]) => async () => ({ label, result: await respond(['--challenge', learning.challenge, ...args]) })));
+  for (const { label, result } of usage) {
+    expectExit(result, 64, label);
+    assert.match(result.stderr, /--learning-review/, `${label}: the usage names the learning form`);
+  }
+
+  // Local preflight binds the exact waiting challenge, its state, governance, and Inspection.
+  const earlier = readJson(path.join(dir, 'challenge-3.json'));
+  const otherState = Buffer.from(canonicalJson({ ...challengeState(challenge), overallUsed: 9 })).toString('base64');
+  const looseState = JSON.stringify(challengeState(challenge), null, 1);
+  /** @type {[string, string, RegExp][]} */
+  const contexts = [
+    ['an assessment challenge', scratchChallenge(context, 'kind', { source: path.join(dir, 'challenge-1.json') }), /not a runner learning-review challenge/],
+    ['a copy away from its exchange status', scratchChallenge(context, 'away', { status: false }), /status\.json is unreadable/],
+    ['a foreign challenge identity', scratchChallenge(context, 'foreign', {
+      edit: (copy) => { copy.challengeIdentity = fixtureHash('foreign challenge'); },
+    }), /not the waiting challenge/],
+    ['a stale challenge number', scratchChallenge(context, 'stale', { name: 'challenge-4.json' }), /not the waiting challenge/],
+    ['an edited challenge body', scratchChallenge(context, 'body', {
+      edit: (copy) => { copy.acceptedRevision += 1; },
+    }), /does not match its bindingIdentity/],
+    ['another accepted state', scratchChallenge(context, 'state', {
+      edit: (copy) => { copy.stateBase64 = otherState; }, rebind: true,
+    }), /stateBase64 does not match its stateHash/],
+    ['non-canonical state bytes', scratchChallenge(context, 'canonical', {
+      edit: (copy) => {
+        copy.stateBase64 = Buffer.from(looseState).toString('base64');
+        copy.stateHash = sha256(looseState);
+      },
+      rebind: true,
+    }), /not canonical RunState bytes/],
+    ['another governance case', scratchChallenge(context, 'governance', {
+      edit: (copy) => { copy.governanceIdentity = fixtureHash('another governance case'); }, rebind: true,
+    }), /does not bind the learning requirement/],
+    ['an earlier Inspection', scratchChallenge(context, 'inspection', {
+      edit: (copy) => { copy.inspection = earlier.inspection; }, rebind: true,
+    }), /cannot answer this challenge: repeat-not-established/],
+  ];
+  const second = approachEvents(ws)[1];
+  const latest = sha256(canonicalJson(second.basis));
+  // Each defective alternative is otherwise complete and is the one selected.
+  const partial = credibleAlternative(evidence, 'partial', { bases: [latest] });
+  const duplicated = credibleAlternative(evidence, 'duplicate', { bases: [latest, ...evidence.set.approachBasisIdentities].sort() });
+  const disguised = credibleAlternative(evidence, 'disguised', { basis: approachEvents(ws)[0].basis });
+  const tooLarge = (/** @type {number} */ index) => learningFinding(`Oversized finding ${index}: ${'x'.repeat(480)}`, Array.from(
+    { length: 16 }, (_, row) => fixtureHash(`oversized:${index}:${row}`),
+  ));
+  /** @type {[string, unknown, RegExp][]} */
+  const results = [
+    ['a caller-authored envelope', { version: 1, type: 'challenge-response', challengeIdentity: challenge.challengeIdentity, kind: 'learning-review', review },
+      /learning review v2 contains unknown field 'type'/],
+    ['a result for another task', { ...review, target: { ...LEARNING_TARGET, taskKey: T2 } }, /must be the governed affected target/],
+    ['a comparison with only the latest failure', learningReview(evidence, 'selected-alternative', {
+      alternatives: [partial], selected: partial.alternativeIdentity,
+    }).review, /must carry exactly one comparison for every current failed-approach basis/],
+    ['a duplicated comparison', learningReview(evidence, 'selected-alternative', {
+      alternatives: [duplicated], selected: duplicated.alternativeIdentity,
+    }).review, /sorted by failedApproachBasisIdentity and duplicate-free/],
+    ['a finding without evidence', learningReview(evidence, 'selected-alternative', {
+      findings: [learningFinding('A conclusion that cites no evidence.', [])],
+    }).review, /findings\[0\]\.evidenceIdentities must contain 1 through 16 rows/],
+    ['a disguised repetition', learningReview(evidence, 'selected-alternative', {
+      alternatives: [disguised], selected: disguised.alternativeIdentity,
+    }).review, /must differ materially from every current failed approach/],
+    ['a selection that is not credible', learningReview(evidence, 'selected-alternative', { selected: rejected.alternativeIdentity }).review,
+      /cannot answer this challenge: alternative-selection-mismatch/],
+    ['no progress beside a credible alternative', learningReview(evidence, 'no-progress', { alternatives: [credible, rejected] }).review,
+      /cannot answer this challenge: alternative-invalid/],
+    ['a selected alternative without its identity', (({ selectedAlternativeIdentity, ...rest }) => rest)(review),
+      /selectedAlternativeIdentity is required for a selected alternative/],
+    ['findings out of identity order', learningReview(evidence, 'selected-alternative', {
+      findings: [learningFinding('First conclusion.', [fixtureHash('a')]), learningFinding('Second conclusion.', [fixtureHash('b')])]
+        .sort((left, right) => Buffer.compare(Buffer.from(right.findingIdentity), Buffer.from(left.findingIdentity))),
+    }).review, /findings must be sorted by findingIdentity and duplicate-free/],
+    ['nine alternatives', learningReview(evidence, 'no-progress', {
+      alternatives: Array.from({ length: 9 }, (_, index) => rejectedAlternative(evidence, `excess-${index}`)),
+    }).review, /must contain at most 8 alternatives/],
+    ['an event over its byte bound', learningReview(evidence, 'selected-alternative', {
+      findings: Array.from({ length: 16 }, (_, index) => tooLarge(index))
+        .sort((left, right) => Buffer.compare(Buffer.from(left.findingIdentity), Buffer.from(right.findingIdentity))),
+    }).review, /LearningReviewEventV2 must serialize to at most 16384 UTF-8 bytes/],
+    // The response ceiling is dominated: complete validation refuses an
+    // oversized result first, and nothing is truncated to fit.
+    ['a result larger than the response ceiling', learningReview(evidence, 'selected-alternative', {
+      findings: [learningFinding('x'.repeat(1_100_000), [fixtureHash('ceiling')])],
+    }).review, /findings\[0\]\.statement must contain 1 through 512 UTF-8 bytes/],
+  ];
+  const notJson = path.join(fixture.io, 'not-json.json');
+  fs.writeFileSync(notJson, 'not json\n');
+  const refusals = await inBatches([
+    ...contexts.map(([label, file, pattern]) => async () => ({ label, pattern, result: await respond(['--challenge', file, '--learning-review', reviewFile]) })),
+    ...results.map(([label, value, pattern], index) => async () => ({
+      label,
+      pattern,
+      result: await respond(['--challenge', learning.challenge, '--learning-review', writeJson(path.join(fixture.io, `refused-${index}.json`), value)]),
+    })),
+    async () => ({ label: 'a file that is not JSON', pattern: /learning review is not JSON/, result: await respond(['--challenge', learning.challenge, '--learning-review', notJson]) }),
+  ]);
+  assert.ok(fs.statSync(path.join(fixture.io, `refused-${results.length - 1}.json`)).size > 1_048_576, 'the oversized result exceeds the ceiling');
+  for (const { label, pattern, result } of refusals) {
+    const refused = expectExit(result, 1, label);
+    assert.equal(refused.ok, false, label);
+    assert.match(refused.refused, pattern, label);
+  }
+  for (const [label, file] of contexts) {
+    assert.equal(fs.readdirSync(path.dirname(file)).some((name) => name.startsWith('response-')), false, `${label}: nothing published beside the copy`);
+  }
+  assert.deepEqual(tree(dir), exchangeBefore, 'no refusal published a response or touched the exchange');
+  assert.equal(read(ws, TASKS), historyBefore, 'no refusal changed lane history');
+  assert.equal(readJson(path.join(dir, 'status.json')).n, 5, 'the runner still waits on the learning challenge');
+
+  // The actual result is published once, bound to its challenge and unchanged.
+  const published = expectExit(await respond(['--challenge', learning.challenge, '--learning-review', reviewFile]), 0, 'learning review');
+  assert.equal(published.kind, 'learning-review');
+  assert.equal(published.outcome, 'selected-alternative');
+  assert.equal(published.governanceIdentity, challenge.governanceIdentity);
+  const responseBytes = fs.readFileSync(learning.response);
+  assert.deepEqual(JSON.parse(responseBytes.toString('utf8')), {
+    version: 1, type: 'challenge-response', challengeIdentity: challenge.challengeIdentity, kind: 'learning-review', review,
+  }, 'the envelope copies the challenge identity and carries the result unchanged');
+  assert.equal(published.responseBytes, responseBytes.length, 'the measured bytes are the published bytes');
+  for (const [label, args] of /** @type {[string, string[]][]} */ ([
+    ['a duplicate learning review', ['--learning-review', reviewFile]],
+    ['a cancel after the answer', ['--cancel']],
+  ])) {
+    const refused = expectExit(await respond(['--challenge', learning.challenge, ...args]), 1, label);
+    assert.match(refused.refused, /already exists; each challenge takes exactly one response/, label);
+  }
+  assert.deepEqual(fs.readFileSync(learning.response), responseBytes, 'the published response stays untouched');
+
+  // A fresh post-learning Inspection binds the selected alternative before any attempt.
+  const next = await waitForStatus(dir, (status) => status.state === 'waiting' && status.n === 6, 'alternative assessment');
+  assert.equal(next.kind, 'assessment');
+  const nextChallenge = readJson(next.challenge);
+  const inspected = challengeState(nextChallenge).learningGovernance;
+  assert.equal(inspected.phase, 'alternative-inspected');
+  assert.equal(inspected.selectedAlternativeIdentity, credible.alternativeIdentity);
+  assert.equal(inspected.discriminatingCheckIdentity, credible.discriminatingCheck.identity);
+  assert.notEqual(nextChallenge.inspection.evidenceHash, challenge.inspection.evidenceHash, 'a fresh Inspection follows learning');
+  assert.equal(glyphOf(read(ws, TASKS), T1), '~', 'learning alone settles nothing');
+  assert.ok(read(ws, TASKS).startsWith(historyBefore), 'retained learning only appended to the task file');
+  const input = writeJson(path.join(fixture.io, 'assessment-6.json'), {
+    action: 'retry-task',
+    targets: ['src/demo.txt'],
+    summary: 'Run the selected materially different alternative.',
+    intent: 'unchanged',
+    equivalence: 'distinct',
+    retention: 'transient',
+  });
+  expectExit(await call(fixture, ['assess', '--root', ws, '--challenge', next.challenge, '--input', input], driver), 0, 'assess 6');
+
+  // Its attempt is separately authorized, verified, and reviewed before settlement.
+  const pair = await waitForStatus(dir, (status) => status.state === 'waiting' && status.n === 7, 'alternative specialist pair');
+  assert.equal(pair.kind, 'specialist-pair');
+  const authorized = challengeState(readJson(pair.challenge)).learningGovernance;
+  assert.equal(authorized.phase, 'alternative-authorized');
+  assert.equal(authorized.selectedAlternativeIdentity, credible.alternativeIdentity);
+  assert.match(authorized.consumedAttemptPermitHash, /^[0-9a-f]{64}$/);
+  assert.equal(glyphOf(read(ws, TASKS), T1), '~', 'an authorized alternative is not a settled task');
+  const baseline = path.join(fixture.io, 'baseline-7.json');
+  expectExit(await call(fixture, ['snapshot', '--root', ws, '--out', baseline], driver), 0, 'snapshot 7');
+  write(ws, 'src/demo.txt', 'alternative\n');
+  const changed = path.join(fixture.io, 'changed-7.json');
+  expectExit(await call(fixture, ['diff', '--root', ws, '--baseline', baseline, '--challenge', pair.challenge, '--out', changed], driver), 0, 'diff 7');
+  const verified = expectExit(await respond([
+    '--challenge', pair.challenge,
+    '--tester', writeJson(path.join(fixture.io, 'tester-7.json'), { checks: [check('repeat')] }),
+    '--reviewer', writeJson(path.join(fixture.io, 'reviewer-7.json'), { verdict: 'accepted', findings: [] }),
+    '--changed', changed,
+  ]), 0, 'respond 7');
+  assert.equal(verified.outcome, 'succeeded');
+
+  const done = await runner.exit;
+  assert.equal(done.code, 0, done.stderr);
+  const status = readJson(path.join(dir, 'status.json'));
+  assert.equal(status.outcome, 'ended');
+  assert.equal(status.reason, 'task-settled');
+  assert.equal(status.challenges, 7);
+  assert.equal(glyphOf(read(ws, TASKS), T1), 'x');
+  const { steps } = readJson(status.result);
+  assert.equal(steps.filter((/** @type {any} */ step) => step.step === 'advance-governance:review-learning').length, 1, 'one learning response was received');
+  const order = /** @type {[string, string, string][]} */ ([
+    ['advance-governance:review-learning', 'effect-required', 'learning-reviewed'],
+    ['learning-result:settle-effect', 'accepted', 'projection-verified'],
+    ['post-learning:fresh-inspection', 'accepted', 'inspection-refreshed'],
+    ['advance-governance:bind-alternative', 'accepted', 'post-learning-inspection-bound'],
+    ['attempt:3:authorize-attempt', 'accepted', 'authorized'],
+    ['attempt:3:settle-completion', 'accepted', 'completed'],
+    ['commit-lane-receipt', 'accepted', 'lane-receipt-committed'],
+  ]).map(([prefix, outcome, reason]) => {
+    const { index, step } = stepOf(steps, prefix);
+    assert.deepEqual([step.outcome, step.reason], [outcome, reason], prefix);
+    return index;
+  });
+  assert.deepEqual(order, [...order].sort((left, right) => left - right), 'learning is retained and re-inspected before the verified alternative settles');
+
+  // Exact ordered dual projection preserves every submitted row and all prior history.
+  const lane = laneEvents(ws);
+  assert.deepEqual(historyLines(ws).slice(0, priorEvents.length), priorEvents, 'every prior history line stays intact and first');
+  assert.deepEqual(approachEvents(ws).map((event) => event.occurrence.disposition), ['review-rejected', 'review-rejected', 'accepted']);
+  const learned = lane.filter((event) => event.type === 'learning-review' || (event.type === 'learning-governance' && event.phase === 'reviewed'));
+  assert.deepEqual(learned.map((event) => event.type), ['learning-review', 'learning-governance']);
+  const [reviewEvent, reviewedGovernance] = learned;
+  assert.equal(reviewEvent.reviewIdentity, published.reviewIdentity, 'the fresh receiver derived the review the preflight prepared');
+  assert.equal(reviewedGovernance.reviewIdentity, reviewEvent.reviewIdentity);
+  assert.equal(reviewEvent.preLearningEvidenceHash, challenge.inspection.evidenceHash);
+  assert.equal(reviewEvent.outcome, 'selected-alternative');
+  assert.equal(reviewEvent.selectedAlternativeIdentity, credible.alternativeIdentity);
+  assert.deepEqual(reviewEvent.findings, review.findings, 'every finding row is retained');
+  assert.deepEqual(reviewEvent.alternatives, review.alternatives, 'the selected and rejected alternatives are retained in order');
+  const current = currentRunEvents(readJson(status.retainedEvidence));
+  assert.deepEqual(current.map((event) => canonicalJson(event)), lane.map((event) => canonicalJson(event)), 'both surfaces hold the same ordered events');
+});
+
+const MAX_EVENT_BYTES = 16_384; // the runtime's canonical event bound
+
+/** Canonical bytes of the review event the shared preparation derives for a challenge. @param {any} challenge @param {unknown} review */
+function preparedEventBytes(challenge, review) {
+  const prepared = prepareLearningReviewV2(challengeState(challenge), challenge.inspection, review);
+  assert.equal(prepared.prepared, true, String(prepared.reason));
+  return Buffer.byteLength(canonicalJson(prepared.reviewEvent));
+}
+
+/**
+ * A complete no-progress result whose review event serializes to exactly the
+ * given byte count: sixteen findings whose statements grow one byte at a time.
+ * @param {any} challenge @param {ReturnType<typeof governedEvidence>} evidence @param {number} bytes
+ */
+function boundaryReview(challenge, evidence, bytes) {
+  for (let cited = 1; cited <= 16; cited += 1) {
+    const statements = Array.from({ length: 16 }, (_, index) => `Bounded finding ${index + 1}.`);
+    const build = () => learningReview(evidence, 'no-progress', {
+      findings: statements
+        .map((statement, index) => learningFinding(statement, Array.from({ length: cited }, (_, row) => fixtureHash(`bounded:${index}:${row}`))))
+        .sort((left, right) => Buffer.compare(Buffer.from(left.findingIdentity), Buffer.from(right.findingIdentity))),
+    }).review;
+    let remaining = bytes - preparedEventBytes(challenge, build());
+    if (remaining < 0) break;
+    for (let index = 0; index < statements.length && remaining > 0; index += 1) {
+      const grow = Math.min(512 - Buffer.byteLength(statements[index]), remaining);
+      statements[index] += 'x'.repeat(grow);
+      remaining -= grow;
+    }
+    if (remaining === 0) return build();
+  }
+  return assert.fail(`no complete fixture result serializes to ${bytes} event bytes`);
+}
+
+test('learning review, no progress: the live released runner verifies the retained conclusion and ends unresolved with no settlement or continuation', {
+  timeout: 300_000,
+}, async (t) => {
+  const context = await reachLearningChallenge(t, {
+    failedCheck: true,
+    tasks: [`- [ ] ${T1} Change the demo product files.`, `- [ ] ${T2} Independent follow-up.`],
+  });
+  const { fixture, driver, ws, dir, runner, learning, challenge } = context;
+  const evidence = assertCompleteLearningEvidence(context);
+  assert.deepEqual(approachEvents(ws).map((event) => event.occurrence.disposition), ['verification-failed', 'verification-failed']);
+  const respond = (/** @type {string[]} */ args) => call(fixture, ['respond', '--root', ws, ...args], driver);
+  const priorEvents = historyLines(ws);
+
+  // A complete result one byte over the event bound refuses whole; nothing is pruned to fit.
+  const over = boundaryReview(challenge, evidence, MAX_EVENT_BYTES + 1);
+  const refused = expectExit(await respond([
+    '--challenge', learning.challenge, '--learning-review', writeJson(path.join(fixture.io, 'over-bound.json'), over),
+  ]), 1, 'one byte over the event bound');
+  assert.match(refused.refused, /LearningReviewEventV2 must serialize to at most 16384 UTF-8 bytes/);
+  assert.equal(fs.existsSync(learning.response), false, 'the over-bound result published nothing');
+
+  // The same complete result at exactly the bound crosses the live exchange.
+  const review = boundaryReview(challenge, evidence, MAX_EVENT_BYTES);
+  assert.equal(preparedEventBytes(challenge, review), MAX_EVENT_BYTES);
+  assert.equal(review.findings.length, 16);
+  const published = expectExit(await respond([
+    '--challenge', learning.challenge, '--learning-review', writeJson(path.join(fixture.io, 'learning-review.json'), review),
+  ]), 0, 'learning review');
+  assert.equal(published.outcome, 'no-progress');
+  assert.equal(published.responseBytes, fs.statSync(learning.response).size, 'the measured bytes are the published bytes');
+  assert.ok(published.responseBytes < 1_048_576, 'the maximal result fits the response ceiling');
+  t.diagnostic(`a ${MAX_EVENT_BYTES}-byte review event published as a ${published.responseBytes}-byte response`);
+
+  const done = await runner.exit;
+  assert.equal(done.code, 0, done.stderr);
+  const status = readJson(path.join(dir, 'status.json'));
+  assert.equal(status.outcome, 'ended');
+  assert.equal(status.reason, 'controlled-unresolved-end');
+  assert.equal(status.haltReport, null);
+  assert.equal(status.challenges, 5, 'no attempt follows the no-progress conclusion');
+  assert.equal(status.acceptedState, null, 'no reusable settled state');
+  assert.equal(fs.existsSync(path.join(dir, 'accepted-state.json')), false);
+  const result = readJson(status.result);
+  const order = /** @type {[string, string, string][]} */ ([
+    ['advance-governance:review-learning', 'effect-required', 'learning-reviewed'],
+    ['learning-result:settle-effect', 'accepted', 'projection-verified'],
+    ['post-learning:fresh-inspection', 'accepted', 'inspection-refreshed'],
+    ['advance-governance:verify-no-progress', 'accepted', 'no-progress-verified'],
+    ['advance-governance:controlled-end', 'ended', 'controlled-unresolved-end'],
+  ]).map(([prefix, outcome, reason]) => {
+    const { index, step } = stepOf(result.steps, prefix);
+    assert.deepEqual([step.outcome, step.reason], [outcome, reason], prefix);
+    return index;
+  });
+  assert.deepEqual(order, [...order].sort((left, right) => left - right), 'the conclusion is retained and verified before the controlled end');
+  assert.equal(result.steps.some((/** @type {any} */ step) => step.step.startsWith('attempt:3')), false);
+
+  // The task stays in progress; history keeps every prior line and the complete maximal event.
+  assert.equal(glyphOf(read(ws, TASKS), T1), '~');
+  assert.equal(readJson(path.join(ws, SNAPSHOT))[TASKS].glyphs[T1], '~');
+  const lines = historyLines(ws);
+  assert.deepEqual(lines.slice(0, priorEvents.length), priorEvents, 'every prior history line stays intact and first');
+  const lane = laneEvents(ws);
+  const learned = lane.filter((event) => event.type === 'learning-review' || (event.type === 'learning-governance' && event.phase === 'reviewed'));
+  assert.deepEqual(learned.map((event) => event.type), ['learning-review', 'learning-governance']);
+  const [reviewEvent] = learned;
+  assert.equal(reviewEvent.reviewIdentity, published.reviewIdentity, 'the fresh receiver derived the review the preflight prepared');
+  assert.equal(reviewEvent.outcome, 'no-progress');
+  assert.deepEqual(reviewEvent.noProgressProof.credibleMaterialAlternativeIdentities, []);
+  assert.deepEqual(reviewEvent.findings, review.findings, 'all sixteen findings are retained');
+  assert.deepEqual(reviewEvent.alternatives, review.alternatives, 'the rejected alternative is retained');
+  assert.equal(Buffer.byteLength(lines[lane.indexOf(reviewEvent)]), 16_402, 'the maximal event line is retained whole');
+  const current = currentRunEvents(readJson(status.retainedEvidence));
+  assert.deepEqual(current.map((event) => canonicalJson(event)), lane.map((event) => canonicalJson(event)), 'both surfaces hold the same ordered events');
+
+  // The pair is gone, and neither the next task nor the returned state can continue.
+  const probe = expectExit(await call(fixture, ['ownership', '--root', ws, '--spec', SPEC, '--task', T1], driver), 0, 'ownership');
+  assert.equal(probe.status, 'absent');
+  const wsAfter = tree(ws);
+  const nextTask = expectExit(await call(fixture, ['claim', '--root', ws, '--spec', SPEC, '--task', T2, '--', ...SHIP_ARGS], driver), 2, 'next task');
+  assert.equal(nextTask.stage, 'task');
+  assert.match(nextTask.detail, /in-progress task comes first: T001@aaaaaaaa/);
+  writeJson(path.join(dir, 'accepted-state.json'), JSON.parse(Buffer.from(result.stateBase64, 'base64').toString('utf8')));
+  const carriedOn = expectExit(await call(fixture, [
+    'claim', '--root', ws, '--spec', SPEC, '--task', T2, '--state', path.join(dir, 'accepted-state.json'), '--', ...SHIP_ARGS,
+  ], driver), 2, 'continuation after a controlled end');
+  assert.equal(carriedOn.stage, 'state');
+  assert.match(carriedOn.detail, /task-settled/);
+  assert.deepEqual(tree(ws), wsAfter, 'the refused claims wrote nothing');
+});
+
+test('learning review stops: cancellation ends the live run unsettled, and after supervisor loss a published result grants nothing', {
+  timeout: 300_000,
+}, async (t) => {
+  const cancelled = async () => {
+    const { fixture, driver, ws, dir, runner, learning } = await reachLearningChallenge(t);
+    const priorEvents = historyLines(ws);
+    expectExit(await call(fixture, ['respond', '--root', ws, '--challenge', learning.challenge, '--cancel'], driver), 0, 'cancel');
+    const done = await runner.exit;
+    assert.equal(done.code, 0, done.stderr);
+    const status = readJson(path.join(dir, 'status.json'));
+    assert.deepEqual([status.outcome, status.reason, status.acceptedState], ['ended', 'cancelled', null]);
+    const result = readJson(status.result);
+    const returned = JSON.parse(Buffer.from(result.stateBase64, 'base64').toString('utf8'));
+    assert.equal(returned.learningGovernance.phase, 'required', 'the requirement stays unresolved evidence');
+    assert.deepEqual(historyLines(ws), priorEvents, 'cancellation retains no learning result');
+    assert.equal(glyphOf(read(ws, TASKS), T1), '~', 'the task is not reported complete');
+    const probe = expectExit(await call(fixture, ['ownership', '--root', ws, '--spec', SPEC, '--task', T1], driver), 0, 'ownership');
+    assert.equal(probe.status, 'absent');
+    writeJson(path.join(dir, 'accepted-state.json'), returned);
+    const carriedOn = expectExit(await call(fixture, [
+      'claim', '--root', ws, '--spec', SPEC, '--task', T2, '--state', path.join(dir, 'accepted-state.json'), '--', ...SHIP_ARGS,
+    ], driver), 2, 'continuation after cancel');
+    assert.equal(carriedOn.stage, 'state');
+  };
+
+  const supervisorLost = async () => {
+    const { fixture, driver, ws, dir, runner, learning, challenge, claimed } = await reachLearningChallenge(t);
+    const evidence = governedEvidence(challenge, ws);
+    const tasksBefore = read(ws, TASKS);
+    runner.child.kill();
+    const lost = await runner.exit;
+    assert.notEqual(lost.code, 0, 'the live supervisor is gone');
+    assert.equal(readJson(path.join(dir, 'status.json')).state, 'waiting', 'the saved status still names the old challenge');
+
+    // Local consistency still holds, so the file is published, but nothing receives it.
+    const { review } = learningReview(evidence, 'selected-alternative');
+    expectExit(await call(fixture, [
+      'respond', '--root', ws, '--challenge', learning.challenge,
+      '--learning-review', writeJson(path.join(fixture.io, 'learning-review.json'), review),
+    ], driver), 0, 'publication after supervisor loss');
+    assert.equal(read(ws, TASKS), tasksBefore, 'no learning was retained');
+    const present = expectExit(await call(fixture, ['ownership', '--root', ws, '--spec', SPEC, '--task', T1], driver), 1, 'retained pair');
+    assert.equal(present.status, 'loaded');
+
+    // The saved request, challenge, and response revive nothing.
+    const revival = path.join(fixture.io, 'revival');
+    const again = await start(fixture, ['run', '--request', claimed.runnerRequest, '--dir', revival], driver).exit;
+    assert.equal(again.code, 1, again.stderr);
+    const revived = readJson(path.join(revival, 'status.json'));
+    assert.equal(revived.outcome, 'hard-stop');
+    assert.equal(revived.reason, 'evidence-incomplete', JSON.stringify(revived));
+    assert.match(revived.detail, /retainedEvidence/, 'the lost run left no handoff that could admit a fresh request');
+    assert.equal(revived.challenges, 0);
+    const reclaimed = expectExit(await call(fixture, ['claim', '--root', ws, '--spec', SPEC, '--task', T1, '--', ...SHIP_ARGS], driver), 2, 'reclaim');
+    assert.equal(reclaimed.stage, 'task');
+    assert.equal(read(ws, TASKS), tasksBefore, 'nothing advanced the task');
+    const still = expectExit(await call(fixture, ['ownership', '--root', ws, '--spec', SPEC, '--task', T1], driver), 1, 'pair after refusals');
+    assert.equal(still.checkpointKey, present.checkpointKey, 'refusals keep the original pair for manual cleanup');
+  };
+
+  await Promise.all([cancelled(), supervisorLost()]);
 });

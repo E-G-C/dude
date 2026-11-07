@@ -526,8 +526,9 @@ const GITHUB_PRELOAD = [
 ].join('\n');
 /**
  * @typedef {{ mode: 'serve', directory: string } | { mode: 'hold' | 'hang' }} StandInRepository
- * @typedef {{ repositories: Map<string, StandInRepository>, requests: Array<{ repository: string, path: string }>,
- *   held: Set<import('node:http').ServerResponse> }} StandInWorld
+ * @typedef {{ repositories: Map<string, StandInRepository>,
+ *   requests: Array<{ repository: string, path: string, origin: string, authorized: boolean }>,
+ *   held: Set<import('node:http').ServerResponse>, refusals: Map<string, 'rate' | 'reject'>, bearers: string[] }} StandInWorld
  */
 /** Each offline GitHub's world, by the token its preload names. @type {Map<string, StandInWorld>} */
 const gitHubWorlds = new Map();
@@ -560,9 +561,20 @@ async function answerGitHub(request, response) {
   if (!world || !parts || parts.length < 3) return notFound();
   const segments = parts.map(part => decodeURIComponent(part));
   const repository = `${segments[0]}/${segments[1]}`.toLowerCase();
-  world.requests.push({ repository, path: `${url.pathname.slice(token.length + 1)}${url.search}` });
+  // 089: a request's Authorization is kept only so a case can count its own sentinel; nothing reports the value.
+  const authorization = request.headers.authorization;
+  world.requests.push({ repository, path: `${url.pathname.slice(token.length + 1)}${url.search}`, origin, authorized: Boolean(authorization) });
+  if (authorization) world.bearers.push(authorization);
   const published = world.repositories.get(repository);
   if (!published) return notFound();
+  // 089: GitHub's refusal of an API read: past its rate limit (403 with nothing remaining), or of a sign-in it rejects (401).
+  const refusal = origin === 'api' ? world.refusals.get(repository) : undefined;
+  if (refusal === 'rate') {
+    response.writeHead(403, { 'content-type': 'application/json; charset=utf-8', 'x-ratelimit-limit': '60', 'x-ratelimit-remaining': '0' });
+    response.end(JSON.stringify({ message: 'API rate limit exceeded' }));
+    return undefined;
+  }
+  if (refusal === 'reject' && authorization) return send(401, JSON.stringify({ message: 'Bad credentials' }));
   if (published.mode !== 'serve') {
     world.held.add(response);
     response.once('close', () => world.held.delete(response));
@@ -633,7 +645,7 @@ function offlineGitHub(workspace) {
   fs.writeFileSync(config, `[url ${JSON.stringify(`${pathToFileURL(path.join(base, 'unpublished')).href}/`)}]\n\tinsteadOf = https://github.com/\n`);
   const token = randomUUID();
   /** @type {StandInWorld} */
-  const world = { repositories: new Map(), requests: [], held: new Set() };
+  const world = { repositories: new Map(), requests: [], held: new Set(), refusals: new Map(), bearers: [] };
   gitHubWorlds.set(token, world);
   const preload = path.join(base, 'github-stand-in.mjs');
   fs.writeFileSync(preload, GITHUB_PRELOAD);
@@ -666,6 +678,15 @@ function offlineGitHub(workspace) {
     hang: (/** @type {string} */ repository) => stall(repository, 'hang'),
     /** How many requests named a repository. */
     connections: (/** @type {string} */ repository) => world.requests.filter(entry => entry.repository === repository.toLowerCase()).length,
+    /** 089: answer a repository's API reads as GitHub does past its rate limit, or refuse a sign-in they carry; null serves them again. */
+    refuse(/** @type {string} */ repository, /** @type {'rate' | 'reject' | null} */ refusal) {
+      if (refusal) world.refusals.set(repository.toLowerCase(), refusal);
+      else world.refusals.delete(repository.toLowerCase());
+    },
+    /** 089: how many requests to `api` or `raw` carried an Authorization header. */
+    authorized: (/** @type {'api' | 'raw'} */ origin) => world.requests.filter(entry => entry.origin === origin && entry.authorized).length,
+    /** 089: how many requests carried exactly this bearer token, which only the case knows. */
+    bearing: (/** @type {string} */ secret) => world.bearers.filter(value => value === `Bearer ${secret}`).length,
     restore() {
       gitHubWorlds.delete(token);
       for (const response of world.held) response.destroy();
@@ -1069,14 +1090,16 @@ async function focus(page, selector) {
 }
 
 // Native input at a stable, hit-testable point; DOM click() cannot establish
-// reachability in the narrow rail, filter popup, or detail overlay.
-async function clickSettingsControl(page, expression) {
+// reachability in the narrow rail, filter popup, or detail overlay. With
+// `reveal: false` it scrolls nothing, for a target the caller already brought
+// into view the way a person would.
+async function clickSettingsControl(page, expression, { reveal = true } = {}) {
   let previous = null;
   const point = await until(async () => {
     const current = await evaluate(page, `(() => {
       const node = ${expression};
       if (!node || node.matches(':disabled,[aria-disabled="true"]')) return null;
-      node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      ${reveal ? `node.scrollIntoView({ block: 'nearest', inline: 'nearest' });` : ''}
       const rect = node.getBoundingClientRect();
       const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
       const hit = document.elementFromPoint(x, y);
@@ -3355,7 +3378,7 @@ test('T012 anchoring regression: nested-scroll Open comment clips then recovers 
         )));
         assert.equal(
           productAppSha256,
-          '7c245184a0239dbcc100169f466c6b8c84d31e906f203187e35ca3ca1697e10e',
+          '31ea3e3fe766c70536e296e04532095726ab507a35fc3e83d2bd1000284cc923',
           'the exact-source regression executes the current published product UI',
         );
         const exactHarnessOptions = {
@@ -11908,8 +11931,40 @@ test('T002 Settings reads real local and configured-remote pack authorities only
         // as a person would.
         await evaluate(page, `document.querySelector('[data-pack-toolbar] [role="combobox"]').scrollIntoView({ block: 'start' })`);
         await click('[data-pack-toolbar] [role="combobox"]');
-        await clickSettingsControl(page, `[...document.querySelectorAll('[role="option"]')]
-          .find(node => node.textContent.trim() === ${JSON.stringify(tag || 'All use cases')})`);
+        const option = `[...document.querySelectorAll('[role="option"]')].find(node => node.textContent.trim() === ${JSON.stringify(tag || 'All use cases')})`;
+        // 089's taller Settings header leaves the listbox little more than two options at 180x450. A person scrolls it
+        // with the wheel until the option shows, then clicks it. Scrolling the option into view instead also scrolls
+        // the panel, and Fluent then repositions the open listbox, which resets the listbox's own scroll and leaves
+        // another option under the pointer. So only the listbox scrolls, and the click itself scrolls nothing.
+        await wheelIntoListbox(option);
+        await clickSettingsControl(page, option, { reveal: false });
+      };
+      /**
+       * Scroll the open listbox holding `option` with the mouse wheel, at most 40px a step, each until it comes to
+       * rest, until the option is wholly inside it. Nothing but the listbox scrolls.
+       * @param {string} option an expression for the option
+       */
+      const wheelIntoListbox = async option => {
+        for (let step = 0; step < 20; step += 1) {
+          const at = await evaluate(page, `(() => {
+            const node = ${option}, listbox = node.closest('[role="listbox"]');
+            const r = node.getBoundingClientRect(), box = listbox.getBoundingClientRect(), top = box.top + listbox.clientTop;
+            return { above: top - r.top, below: r.bottom - (top + listbox.clientHeight),
+              x: box.left + listbox.clientLeft + listbox.clientWidth / 2, y: top + listbox.clientHeight / 2 };
+          })()`);
+          if (at.above <= 0.5 && at.below <= 0.5) return;
+          const deltaY = at.below > 0.5 ? Math.min(at.below, 40) : -Math.min(at.above, 40);
+          await page.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: at.x, y: at.y, deltaX: 0, deltaY });
+          let last = null;
+          await until(async () => {
+            await settleBrowserWork(page);
+            const now = await evaluate(page, `${option}.closest('[role="listbox"]').scrollTop`);
+            const rest = now === last;
+            last = now;
+            return rest;
+          }, 'the listbox comes to rest after the wheel');
+        }
+        throw new Error(`The wheel did not bring ${option} into its listbox.`);
       };
       // The Packs views are tabs, or the labeled View Dropdown at 300px of width or less.
       const chooseContext = async value => {
@@ -13299,10 +13354,11 @@ function serveRecordedUpstream(workspace) {
  * no upstream at all when it is null.
  * @param {import('node:test').TestContext} context
  * @param {string} slug
- * @param {{ review?: boolean, deviceScale?: number|null, baseRelease?: string|null, packs?: Parameters<typeof addSettingsPackFixture>[2], upstream?: string|null, prepare?: (workspace: ReturnType<typeof createReviewWorkspaceFixture>) => void | (() => void) | Promise<void | (() => void)> }} [options]
+ * @param {{ review?: boolean, deviceScale?: number|null, baseRelease?: string|null, packs?: Parameters<typeof addSettingsPackFixture>[2], upstream?: string|null, prepare?: (workspace: ReturnType<typeof createReviewWorkspaceFixture>) => void | (() => void) | Promise<void | (() => void)>, githubSession?: any }} [options]
+ *   `githubSession` is the extension's one GitHub sign-in (089), which production gives every Canvas; without it the route answers unavailable.
  */
 async function openAboutCanvas(context, slug, { review = false, deviceScale = null, baseRelease = null, packs: packOptions = {},
-  upstream = ABOUT_RECORDED_REPO, prepare = () => {} } = {}) {
+  upstream = ABOUT_RECORDED_REPO, prepare = () => {}, githubSession = null } = {}) {
   const [{ createNeedsYou }, { createReview }, { openInstance, closeInstance }, { createBundleUpgrade }] = await Promise.all([
     import('../../src/extensions/dude/lib/needs-you.mjs'),
     import('../../src/extensions/dude/lib/review.mjs'),
@@ -13320,7 +13376,7 @@ async function openAboutCanvas(context, slug, { review = false, deviceScale = nu
   if (baseRelease !== null) await writeAboutBase(workspace, baseRelease);
   const releaseTracking = emptyTrackedBoardFixture(workspace);
   const output = createT010Evidence(context, slug);
-  const sends = [], runtimeErrors = [], requests = [], windows = [], navigations = [];
+  const sends = [], runtimeErrors = [], requests = [], windows = [], navigations = [], logs = [];
   const cancelled = new Set();
   const provider = createNeedsYou({ root: workspace.root,
     ...(review ? { reviewAdapter: createReview({ root: workspace.root }) } : {}) });
@@ -13360,7 +13416,8 @@ async function openAboutCanvas(context, slug, { review = false, deviceScale = nu
   try {
     // 072: the extension's update controller, as production passes it. These
     // cases never start a session check, so nothing is contacted.
-    instance = await openInstance(id, () => {}, null, { root: workspace.root }, provider, createBundleUpgrade({ root: workspace.root }));
+    instance = await openInstance(id, message => { logs.push(String(message)); }, null, { root: workspace.root }, provider,
+      createBundleUpgrade({ root: workspace.root }), githubSession);
     driver = await startBrowser(deviceScale);
   } catch (error) {
     await close();
@@ -13376,7 +13433,7 @@ async function openAboutCanvas(context, slug, { review = false, deviceScale = nu
   const reads = route => requests.filter(entry => entry.url === `${origin}${route}`);
   return {
     workspace, packs, provider, session, instance, driver, page, output, origin, sends, runtimeErrors, requests,
-    cancelled, windows, navigations, ask, close, releaseTracking,
+    cancelled, windows, navigations, ask, close, releaseTracking, logs,
     aboutReads: () => reads('/api/about'),
     packReads: () => reads('/api/packs'),
     // The only read that acquires catalogs: the default, Bundle upstream beside a local library, and each saved source, once.
@@ -13450,10 +13507,14 @@ const ABOUT_MAIN_ROWS = Object.freeze([
 const ABOUT_LINK = Object.freeze({ text: ABOUT_REPOSITORY, href: ABOUT_REPOSITORY, target: '_blank',
   rel: 'noopener noreferrer', label: `${ABOUT_REPOSITORY} (opens in a new tab)` });
 
-/** @param {Cdp} page */
+/**
+ * An About entry's read has committed, and the Settings footer, which takes
+ * that read one render later, no longer says Reading.
+ * @param {Cdp} page
+ */
 function aboutSettled(page) {
-  return until(() => evaluate(page, `document.querySelector('[data-about-facts]')?.getAttribute('aria-busy') === 'false'`),
-    'settled About entry read');
+  return until(() => evaluate(page, `document.querySelector('[data-about-facts]')?.getAttribute('aria-busy') === 'false'
+    && document.querySelector('footer[aria-label="Workspace status"]')?.textContent.trim() !== 'About · Reading…'`), 'settled About entry read');
 }
 
 /** @param {Cdp} page */
@@ -13521,11 +13582,18 @@ function appearanceSettled(page) {
     && !document.querySelector('[data-appearance-pending]')`), 'settled Appearance section');
 }
 
-/** @param {Cdp} page @param {'packs'|'appearance'|'about'} value */
+/** 089: Accounts shows the session's GitHub sign-in, or that it is being read. @param {Cdp} page */
+function accountsSettled(page) {
+  return until(() => evaluate(page, `document.querySelector('[data-settings-section="accounts"]')?.getAttribute('aria-selected') === 'true'
+    && Boolean(document.querySelector('[data-accounts-panel]:not([hidden]) [data-github-signin]'))`), 'settled Accounts section');
+}
+
+/** @param {Cdp} page @param {'packs'|'accounts'|'appearance'|'about'} value */
 async function chooseSettingsSection(page, value) {
   await clickSettingsControl(page, `document.querySelector('[data-settings-section="${value}"]')`);
   if (value === 'about') await aboutSettled(page);
   else if (value === 'appearance') await appearanceSettled(page);
+  else if (value === 'accounts') await accountsSettled(page);
   else await packsSettled(page);
   await settleAboutAnimations(page);
 }
@@ -13539,7 +13607,7 @@ async function aboutAccessibility(page) {
   const namedRoles = new Set(['button', 'tab', 'tablist', 'tabpanel', 'combobox', 'grid', 'toolbar', 'textbox', 'link']);
   return {
     tablists: named('tablist'),
-    sections: live.filter(node => node.role?.value === 'tab' && ['Packs', 'Appearance', 'About'].includes(node.name?.value))
+    sections: live.filter(node => node.role?.value === 'tab' && ['Packs', 'Accounts', 'Appearance', 'About'].includes(node.name?.value))
       .map(node => [node.name.value, selected(node)]),
     tabpanels: named('tabpanel'),
     links: named('link'),
@@ -13587,7 +13655,7 @@ test('074 About: Settings then About shows the recorded development install in a
       footer: document.querySelector('footer').textContent,
     })`);
     assert.deepEqual(packsEntry, {
-      heading: 'Settings', sections: [['Packs', 'true'], ['Appearance', 'false'], ['About', 'false']],
+      heading: 'Settings', sections: [['Packs', 'true'], ['Accounts', 'false'], ['Appearance', 'false'], ['About', 'false']],
       context: 'installed', filter: 'All use cases', page: 'Page 1 of 1', details: 0,
       toolbar: ['Reload packs'], footer: 'Installed: current · Catalog: not read',
     }, 'Settings opens on Packs with the existing initial view');
@@ -13620,13 +13688,13 @@ test('074 About: Settings then About shows the recorded development install in a
     })()`);
     assert.deepEqual(structure, {
       panels: [{ role: 'tabpanel', labelledBy: true, hidden: true }, { role: 'tabpanel', labelledBy: true, hidden: true },
-        { role: 'tabpanel', labelledBy: true, hidden: false }],
+        { role: 'tabpanel', labelledBy: true, hidden: true }, { role: 'tabpanel', labelledBy: true, hidden: false }],
       renderedPackControls: 0, openDialogs: 0, contextTabs: 1, aboutTabIndex: null,
     }, 'Packs stays mounted but hidden; nothing from it is rendered or open');
     const tree = await aboutAccessibility(page);
     assert.deepEqual(tree.tablists.filter(name => name !== 'Workspace views'), ['Settings sections'],
       'the hidden Pack context tabs leave the accessibility tree');
-    assert.deepEqual(tree.sections, [['Packs', false], ['Appearance', false], ['About', true]]);
+    assert.deepEqual(tree.sections, [['Packs', false], ['Accounts', false], ['Appearance', false], ['About', true]]);
     assert.deepEqual(tree.tabpanels, ['Settings', 'About'], 'only the workspace Settings panel and its About section');
     assert.deepEqual(tree.links, [ABOUT_LINK.label]);
     assert.deepEqual(tree.grids, [], 'no hidden pack results remain exposed');
@@ -13634,29 +13702,34 @@ test('074 About: Settings then About shows the recorded development install in a
       JSON.stringify(tree.buttons));
     assert.deepEqual(tree.unnamed, []);
 
-    // Standard tab keys: arrows, Home, and End move and select through Packs, Appearance, and About; Enter keeps.
+    // Standard tab keys: arrows, Home, and End move and select through Packs, Accounts, Appearance, and About,
+    // wrapping at both ends; Enter keeps.
     const keyed = [];
-    for (const [pressed, expected] of [['ArrowLeft', 'appearance'], ['ArrowRight', 'about'], ['Home', 'packs'],
-      ['End', 'about'], ['ArrowRight', 'packs'], ['ArrowLeft', 'about'], ['Enter', 'about']]) {
+    for (const [pressed, expected] of [['ArrowLeft', 'appearance'], ['ArrowLeft', 'accounts'], ['ArrowRight', 'appearance'],
+      ['ArrowRight', 'about'], ['Home', 'packs'], ['ArrowRight', 'accounts'], ['End', 'about'], ['ArrowRight', 'packs'],
+      ['ArrowLeft', 'about'], ['Enter', 'about']]) {
       await key(page, pressed);
       await until(() => evaluate(page, `document.querySelector('[data-settings-section="${expected}"]')
         ?.getAttribute('aria-selected') === 'true'`), `${pressed} selects ${expected}`);
       if (expected === 'about') await aboutSettled(page);
       else if (expected === 'appearance') await appearanceSettled(page);
+      else if (expected === 'accounts') await accountsSettled(page);
       else await packsSettled(page);
       keyed.push({ pressed, focused: await activeSection(), surface: await aboutSurface(page) });
     }
     for (const entry of keyed) {
-      const about = entry.focused === 'about', appearance = entry.focused === 'appearance';
+      const about = entry.focused === 'about', appearance = entry.focused === 'appearance', accounts = entry.focused === 'accounts';
       assert.equal(entry.surface.shown, about, JSON.stringify(entry));
-      assert.deepEqual(entry.surface.toolbar, about || appearance ? [] : ['Reload packs'], JSON.stringify(entry));
+      assert.deepEqual(entry.surface.toolbar, about || appearance || accounts ? [] : ['Reload packs'], JSON.stringify(entry));
       assert.equal(entry.surface.footer, about ? 'About · Development (main)'
-        : appearance ? 'Appearance · This computer, all projects' : 'Installed: current · Catalog: not read');
+        : appearance ? 'Appearance · This computer, all projects' : accounts ? 'Accounts · This session'
+          : 'Installed: current · Catalog: not read');
       if (about) assert.deepEqual(entry.surface.rows, ABOUT_MAIN_ROWS);
     }
-    assert.deepEqual(keyed.map(entry => entry.focused), ['appearance', 'about', 'packs', 'about', 'packs', 'about', 'about']);
+    assert.deepEqual(keyed.map(entry => entry.focused), ['appearance', 'accounts', 'appearance', 'about', 'packs', 'accounts', 'about',
+      'packs', 'about', 'about']);
     assert.equal(canvas.aboutReads().length, 4, 'each About entry reads once; Enter on the selected tab does not reread');
-    assert.equal(canvas.packReads().length, packReads, 'section changes, Appearance, and About never reload packs');
+    assert.equal(canvas.packReads().length, packReads, 'section changes, Accounts, Appearance, and About never reload packs');
 
     // Tab leaves the section tabs for the About content; Shift+Tab returns.
     await key(page, 'Tab');
@@ -14098,7 +14171,7 @@ test('074 About: local sections keep the Packs view, dialogs, focus, and unsent 
     const scrolled = await packView();
     await focus(page, '[data-settings-section="packs"]');
     await key(page, 'ArrowRight');
-    await appearanceSettled(page);
+    await accountsSettled(page);
     await key(page, 'ArrowLeft');
     await packsSettled(page);
     await settleAboutAnimations(page);
@@ -14388,9 +14461,10 @@ function aboutGeometry(page, selectors) {
 
 /**
  * Product-minus-mock differences in CSS px for the approved composition.
- * 085 approved the three-section Settings header row (Packs, Appearance,
- * About, with its 479px and 300px rules), which the 074 and 075 mocks predate:
- * the `085 App theme:` cases pin that row against the 085 mock. Here the
+ * 085 approved the Settings header row (Packs, Appearance, About, with its
+ * 479px and 300px rules), and 089 round 3 added Accounts to it; the 074 and
+ * 075 mocks predate both: the `085 App theme:` header case pins that row
+ * against the approved 089 mock. Here the
  * section tabs and the header height are not compared, and everything below
  * the header is measured from the header's bottom, so the About sheet still
  * follows these mocks exactly.
@@ -14576,7 +14650,7 @@ test('074 About: rendered geometry, contrast, reflow, and keyboard scrolling fol
           const r = node.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
           return hit === node || node.contains(hit);
         })`);
-        assert.deepEqual(hits, [true, true, true, true], `section tabs and the cog are not clipped at ${size.name}`);
+        assert.deepEqual(hits, [true, true, true, true, true], `section tabs and the cog are not clipped at ${size.name}`);
         assert.equal(geometry.footerText, 'About · Development (main)');
         const colors = await colorSamples();
         for (const sample of colors.text) {
@@ -14586,7 +14660,7 @@ test('074 About: rendered geometry, contrast, reflow, and keyboard scrolling fol
           assert.ok(contrast(sample.color, sample.background) >= 3, JSON.stringify({ size, theme, sample }));
         }
         const tree = await aboutAccessibility(page);
-        assert.deepEqual(tree.sections, [['Packs', false], ['Appearance', false], ['About', true]]);
+        assert.deepEqual(tree.sections, [['Packs', false], ['Accounts', false], ['Appearance', false], ['About', true]]);
         assert.deepEqual(tree.links, [ABOUT_LINK.label]);
         assert.deepEqual(tree.unnamed, []);
         const image = await aboutScreenshot(page, output, `product-about-${size.name}-${theme}`);
@@ -15048,7 +15122,7 @@ test('075 About: the recorded base follows the approved 075 mock across sizes, r
         const r = node.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
         return hit === node || node.contains(hit);
       })`);
-      assert.deepEqual(hits, [true, true, true, true], `section tabs and the cog are not clipped at ${label}`);
+      assert.deepEqual(hits, [true, true, true, true, true], `section tabs and the cog are not clipped at ${label}`);
       const surface = await aboutSurface(page);
       assert.deepEqual({ rows: surface.rows, note: surface.note }, { rows: known, note: ABOUT_NOTE }, label);
       const value = await aboutValueLayout(page, ABOUT_VALUE.product);
@@ -15070,7 +15144,7 @@ test('075 About: the recorded base follows the approved 075 mock across sizes, r
         assert.ok(contrast(sample.color, sample.background) >= 3, JSON.stringify({ label, sample }));
       }
       const tree = await aboutAccessibility(page);
-      assert.deepEqual(tree.sections, [['Packs', false], ['Appearance', false], ['About', true]]);
+      assert.deepEqual(tree.sections, [['Packs', false], ['Accounts', false], ['Appearance', false], ['About', true]]);
       assert.deepEqual(tree.links, [ABOUT_LINK.label], 'the base release is never a link');
       assert.deepEqual(tree.unnamed, []);
       const exposure = await aboutTextAccessibility(page, ABOUT_KNOWN_BASE);
@@ -15413,7 +15487,7 @@ test('073 Packs: Installed lists Name, Type, and Use cases with read-only projec
       assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-pack-toolbar] label')].map(node => node.textContent)`), ['Use case', 'Source'], 'only the Use case and Source filters: no Type, origin, or operation filter');
       const surface = await p.q(`document.querySelector('[data-settings]').innerText`);
       assert.match(surface, /Sources/, 'Phase B appends Sources to the same strip');
-      assert.equal(await p.q(`document.querySelectorAll('[data-settings] [role="tab"]').length`), 7, 'three section tabs and four Packs views');
+      assert.equal(await p.q(`document.querySelectorAll('[data-settings] [role="tab"]').length`), 8, 'four section tabs and four Packs views');
       await aboutScreenshot(page, output, 'installed-typed-rows-1440x900-light');
 
       // A same-name skill and agent have distinct keys and never share selection or focus.
@@ -15835,13 +15909,18 @@ test('073 Packs: both themes at four sizes and the 200% reflow variants keep eve
  * header where one is drawn, and not covered by another element.
  * @param {Awaited<ReturnType<typeof t073Driver>>} p @param {string} key
  */
+// A row that fits the space below the sticky header must be shown whole. At 180x450 the four-section header (089's
+// approved 165px, where three sections took 133px) can leave less room than one stacked row is tall; such a row must
+// then start right below the header, the most of it that the window can show.
 const t073FocusedRow = (p, key) => p.q(`(() => {
   const node = document.activeElement, r = node.getBoundingClientRect(), scroller = ${T073_SCROLLER};
   const s = scroller.getBoundingClientRect(), header = document.querySelector('[data-pack-scroll] [role="row"]').getBoundingClientRect();
   const floor = header.width > 2 ? Math.max(s.top, header.bottom) : s.top;
-  const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  const hit = document.elementFromPoint(r.left + r.width / 2, Math.min(r.top + r.height / 2, (r.top + s.bottom) / 2));
+  const whole = r.top >= floor - 0.5 && r.bottom <= s.bottom + 0.5;
+  const taller = r.height > s.bottom - floor + 0.5 && Math.abs(r.top - floor) <= 0.5;
   return { focused: node.getAttribute('data-pack-row') === ${JSON.stringify(key)}, top: r.top, bottom: r.bottom, floor, ceiling: s.bottom,
-    visible: r.top >= floor - 0.5 && r.bottom <= s.bottom + 0.5, uncovered: hit === node || node.contains(hit),
+    visible: whole || taller, taller, uncovered: hit === node || node.contains(hit),
     outline: getComputedStyle(node).outlineStyle, scrolled: scroller.scrollTop };
 })()`);
 
@@ -15867,7 +15946,7 @@ test('073 Packs: focus returns to a visible row, and views and scrolling follow 
         > document.querySelector('[data-pack-scroll]').getBoundingClientRect().bottom`), true, 'the selected row is scrolled out of view');
       await key(page, 'Escape');
       let focused = await t073FocusedRow(p, deep);
-      assert.deepEqual([focused.focused, focused.visible, focused.uncovered], [true, true, true], JSON.stringify(focused));
+      assert.deepEqual([focused.focused, focused.visible, focused.uncovered, focused.taller], [true, true, true, false], JSON.stringify(focused));
       assert.notEqual(focused.outline, 'none', 'the returned row shows a focus indicator');
       assert.ok(focused.scrolled > 0, 'the rows scrolled to reveal the row');
       await aboutScreenshot(page, output, 'focus-return-below-first-screenful-1440x900-light');
@@ -15878,7 +15957,7 @@ test('073 Packs: focus returns to a visible row, and views and scrolling follow 
       assert.equal(await p.q(`document.querySelector('[data-pack-detail]').matches(':modal')`), true);
       await p.click('[data-pack-detail] footer button');
       focused = await t073FocusedRow(p, deep);
-      assert.deepEqual([focused.focused, focused.visible, focused.uncovered], [true, true, true], JSON.stringify(focused));
+      assert.deepEqual([focused.focused, focused.visible, focused.uncovered, focused.taller], [true, true, true, false], JSON.stringify(focused));
 
       // And where the whole panel scrolls (300px or less, any height).
       await aboutViewport(page, size(180, 450), 'light');
@@ -16000,7 +16079,7 @@ test('073 Packs: focus returns below the sticky header when the closed row is ab
         const focused = await t073FocusedRow(p, early);
         const { header, scroll } = await p.geometry();
         assert.ok(header.width > 2 && header.bottom > scroll.top, `${label}: the sticky header is drawn over the top of the rows`);
-        assert.deepEqual([focused.focused, focused.visible, focused.uncovered], [true, true, true], `${label}: ${JSON.stringify(focused)}`);
+        assert.deepEqual([focused.focused, focused.visible, focused.uncovered, focused.taller], [true, true, true, false], `${label}: ${JSON.stringify(focused)}`);
         assert.ok(focused.top >= header.bottom - 0.5, `${label}: the row starts below the sticky header (${focused.top} vs ${header.bottom})`);
         assert.ok(focused.scrolled < scrolledPast, `${label}: the rows scrolled back up to reveal the row (${focused.scrolled} from ${scrolledPast})`);
       };
@@ -16879,7 +16958,7 @@ test('073 Sources: built-ins then added sources show every status before and aft
         [['installed', 'Installed (8)'], ['available', 'Available (unknown)'], ['import', null], ['sources', null]],
         'the Sources view joins the same strip, after Add/import; Available is unknown, not zero, before Reload');
       assert.deepEqual(await p.q(`[...document.querySelectorAll('[data-settings] [role="tab"]')].map(node => node.innerText.replace(/\\s+/g, ' ').trim())`),
-        ['Packs', 'Appearance', 'About', 'Installed 8', 'Available ?', 'Add/import', 'Sources']);
+        ['Packs', 'Accounts', 'Appearance', 'About', 'Installed 8', 'Available ?', 'Add/import', 'Sources']);
       await p.click('[data-pack-context="sources"]');
       await settleAboutAnimations(page);
       let state = await t073SourcesState(p);
@@ -17056,7 +17135,7 @@ test('073 Sources: Add opens on Location, validates inline, and dismisses only b
       const dialogText = await p.q(`document.querySelector('[data-source-add-dialog]').innerText.replace(/\\s+/g, ' ')`);
       for (const note of ['A public GitHub repository, or a folder on this computer, whose root contains library/packs.',
         'A branch or tag of a GitHub repository. Defaults to main. A local folder has no ref.',
-        'Public GitHub repositories only. Canvas never asks for credentials.',
+        'Public GitHub repositories only. Dude never asks for your GitHub password.',
         'Adding a source installs nothing. Installed packs can add agents and instructions, so add only sources you trust; every install asks for your permission first.',
         'Sources are saved with the project in .dude/metadata/pack-sources.md, so they can be committed and shared.',
         'You can add up to 8 sources. 3 added.',
@@ -17123,7 +17202,7 @@ test('073 Sources: Add opens on Location, validates inline, and dismisses only b
         assert.deepEqual([state.errors, state.focus, state.location, state.ref, state.open], [[message], field, location, ref, true], `${location} ${ref}`);
       };
       await refuse('', '', 'Enter a GitHub repository URL or a local folder.');
-      await refuse('https://user@github.com/acme/dude-packs', '', 'Remove the user name or password from the URL. Canvas never sends credentials.');
+      await refuse('https://user@github.com/acme/dude-packs', '', 'Remove the user name or password from the URL. Dude never sends a user name or password taken from a source address.');
       await refuse('git@github.com:acme/dude-packs.git', '', 'SSH addresses are not supported. Use an https://github.com/<owner>/<repo> URL.');
       await refuse('https://gitlab.com/acme/dude-packs', '', 'Use a github.com repository URL. Other hosts are not supported.');
       await refuse('http://github.com/acme/dude-packs', '', 'Use an https:// URL. http:// is not supported.');
@@ -17186,7 +17265,7 @@ test('073 Sources: every server refusal stays inside Add with the typed text, an
       await p.click('[data-sources-add]');
       /** @type {Array<[string, string, string, string, string[]?]>} location, ref, title, text fragment */
       const cases = [
-        ['https://github.com/nobody/never-published', '', 'Could not read the repository', 'It may be private, may not exist, or could not be reached. Canvas reads public GitHub repositories only and never asks for credentials. Nothing was saved.'],
+        ['https://github.com/nobody/never-published', '', 'Could not read the repository', 'It may be private, may not exist, or could not be reached. Dude reads public GitHub repositories only, even while you are signed in. Nothing was saved.'],
         [path.join(workspace.directory, 'does-not-exist'), '', 'Folder not found', 'No folder was found at this location. Check the path, and choose the folder that contains library/packs. Nothing was saved.'],
         [path.join(workspace.directory, 'no-catalog-folder'), '', 'No pack catalog found', 'This source has no library/packs folder. Choose a repository or folder whose root contains library/packs. Nothing was saved.'],
         [path.join(team, 'library', 'packs'), '', 'No pack catalog found', 'Choose the folder that contains library/packs. This location is the packs folder itself, so choose its parent. Nothing was saved.'],
@@ -18081,11 +18160,14 @@ test('073 Sources: both themes at four sizes and the 200% reflow variants keep S
         stripShown ? '[data-pack-context="sources"]' : '[data-pack-view] [role="combobox"]'])) {
         assert.ok(target.visible && target.hit && target.width >= 24 && target.height >= 24, JSON.stringify({ label, target }));
       }
-      // A row is reached by scrolling, then hit-tested where it lands.
+      // A row is reached by scrolling, then hit-tested where it lands. A stacked row taller than the room its scroller
+      // has (089's approved trade-off) cannot land whole; then its first line, the source's name, must land and be hit.
       await p.q(`document.querySelector('[data-source-row]').scrollIntoView({ block: 'nearest' })`);
-      for (const target of await t073Targets(p, ['[data-source-row]'])) {
-        assert.ok(target.visible && target.hit && target.width >= 24 && target.height >= 24, JSON.stringify({ label, target }));
-      }
+      const [row, firstLine] = await t073Targets(p, ['[data-source-row]', '[data-source-row] [role="gridcell"]']);
+      const room = await p.q(`(() => { const rows = document.querySelector('[data-sources-scroll]');
+        return (getComputedStyle(rows).overflowY === 'visible' ? rows.closest('[role="tabpanel"]') : rows).clientHeight; })()`);
+      assert.ok((row.height <= room ? row.visible && row.hit : firstLine.visible && firstLine.hit) && row.width >= 24 && row.height >= 24,
+        JSON.stringify({ label, room, target: row, firstLine }));
       await p.q(`window.scrollTo(0, 0); document.querySelector('[data-sources-scroll]').closest('[role="tabpanel"]').scrollTop = 0; document.querySelector('[data-sources-scroll]').scrollTop = 0`);
       for (const sample of await sourceColors()) assert.ok(contrast(sample.color, sample.background) >= 4.5, JSON.stringify({ label, sample }));
       const tree = await aboutAccessibility(page);
@@ -18094,9 +18176,11 @@ test('073 Sources: both themes at four sizes and the 200% reflow variants keep S
       assert.equal(await p.q(`document.querySelectorAll('dialog[open]').length`), 0, `no overlay is open over the table (${label})`);
       const tableImage = await aboutScreenshot(page, output, `sources-table-${label}`);
 
-      // Details: one scroller, pinned heading and Back to results, and Remove reachable.
+      // Details: one scroller, pinned heading and Back to results, and Remove reachable. At 180px a stacked row can be
+      // taller than the room left below the four-section header (089's approved trade-off), so the row is chosen by its
+      // first line, the source's name, as a person would.
       const removable = await p.q(`[...document.querySelectorAll('[data-source-row]')].find(row => row.getAttribute('aria-label').startsWith('removable. ')).getAttribute('data-source-row')`);
-      await p.click(`[data-source-row="${removable}"]`);
+      await p.click(`[data-source-row="${removable}"] [role="gridcell"]`);
       const open = await p.q(`(() => {
         const dialog = document.querySelector('[data-pack-detail]'), body = dialog.querySelector('[data-pack-detail-body]');
         const scrollers = [...dialog.querySelectorAll('*')].filter(node => node !== body && /auto|scroll/.test(getComputedStyle(node).overflowY)
@@ -18863,6 +18947,1817 @@ test('084 Upstream packs: a release install reads Bundle upstream as its default
 });
 
 // ---------------------------------------------------------------------------
+// 089 GitHub sign-in: Settings > Accounts, as the approved round-4 mock draws
+// it, over the real Canvas server and the extension's one session controller,
+// with the catalog readers, the pack action child and Compose. Sources keeps
+// one line whose Settings > Accounts opens that section. GitHub's three sign-in
+// endpoints are answered in this process, where the controller runs, from each
+// case's script; pack reads in their real children reach the offline stand-in
+// above, which can refuse an API read under its rate limit or for a sign-in it
+// rejects. The account and code are this file's own fixtures, never the mock's
+// samples, and the token is a sentinel made in test memory: every check of it
+// reports a count or a boolean. Screenshots take the approved mock's names, so
+// each pairs with `.dude/specs/089-github-login-pack-reads/design/screenshots/<name>.png`.
+// ---------------------------------------------------------------------------
+
+const T089_APPROVED = '.dude/specs/089-github-login-pack-reads/design/github-login.html';
+const T089_APPROVED_SHA256 = 'f6bc3d24a14d9415950c0938bd1f05bc2d6db894bdc1ada82b2d8b660e7aa9d6';
+const T089_SCREENSHOTS = path.join(ROOT, '.dude', 'specs', '089-github-login-pack-reads', 'design', 'screenshots');
+const T089_ENDPOINTS = Object.freeze({
+  code: 'https://github.com/login/device/code',
+  token: 'https://github.com/login/oauth/access_token',
+  account: 'https://api.github.com/user',
+});
+const T089_LOGIN = 'canvas-tester';
+const T089_CODE = 'QRTZ-4KPM';
+const T089_DEVICE = 'https://github.com/login/device';
+const T089_APPS = 'https://github.com/settings/applications';
+/** @param {string} url */
+const t089Link = url => ({ text: url, href: url, target: '_blank', rel: 'noopener noreferrer', label: `${url} (opens in a new tab)` });
+const T089_SECTIONS = Object.freeze(['Packs', 'Accounts', 'Appearance', 'About']);
+const T089_FOOTER = 'Accounts · This session';
+const T089_POINTER = 'GitHub sign-in is managed in Settings > Accounts.';
+const T089_WHY = [
+  "Optional. Without sign-in, pack reads count against GitHub's anonymous limit: 60 requests an hour, shared with everything else on your network address. Sign in to use your own GitHub allowance instead.",
+  "Dude asks only for read-only access to public information, so it can't read private repositories. You approve on github.com with a short code; Dude never sees your password. The access lasts for this session only and isn't saved.",
+];
+const T089_STILL_OUT = "You're still signed out, and pack reads stay anonymous.";
+const T089_REVOKE = `GitHub keeps the authorization until you revoke it in GitHub's Applications settings at ${T089_APPS}, under Authorized OAuth Apps.`;
+/** The signed-in body, which depends only on the session: never on source rows or pack refusals. */
+const T089_SIGNED_IN = Object.freeze([`Signed in as @${T089_LOGIN}`, "Pack reads from GitHub use this account's allowance until this session ends.",
+  `Sign out makes Dude forget this access. ${T089_REVOKE}`]);
+/** Each closed outcome's bar: its title and words. */
+const T089_OUTCOMES = Object.freeze({
+  cancelled: ['Sign-in cancelled', `${T089_STILL_OUT} If you approve the code on GitHub now, Dude won't use it.`],
+  denied: ['Sign-in declined on GitHub', `The request was declined on GitHub. ${T089_STILL_OUT}`],
+  expired: ['Code expired', `The code expired before it was approved. ${T089_STILL_OUT} Choose Sign in for a new code.`],
+  unreachable: ["Couldn't reach GitHub", `Sign-in didn't finish because Dude couldn't connect to GitHub. ${T089_STILL_OUT} Check your connection, then choose Sign in to try again.`],
+  unavailable: ['Sign-in unavailable', "Dude's OAuth App registration isn't set up for device sign-in, so sign-in can't start. Dude's maintainers need to set it up. Pack reads stay anonymous, and local folders work as before."],
+  failed: ["Sign-in didn't finish", `GitHub's answer couldn't be used, so Dude kept no access. ${T089_STILL_OUT} Choose Sign in to try again.`],
+  signed_out: ['Signed out', `Dude forgot the access, and pack reads are anonymous again. ${T089_REVOKE}`],
+  rejected: ['Signed out: GitHub rejected the access', 'GitHub no longer accepts the access Dude was using, for example because it was revoked on GitHub. Dude forgot it, so pack reads are anonymous again.'],
+});
+/** What the shell's polite status, or its alert, says as each outcome arrives. */
+const T089_SAID = Object.freeze({
+  cancelled: ["Sign-in cancelled. You're still signed out.", 'status'],
+  denied: ["Sign-in declined on GitHub. You're still signed out.", 'status'],
+  expired: ["Code expired. You're still signed out.", 'alert'],
+  unreachable: ["Couldn't reach GitHub. You're still signed out.", 'alert'],
+  unavailable: ["Sign-in unavailable. You're still signed out.", 'alert'],
+  failed: ["Sign-in didn't finish. You're still signed out.", 'alert'],
+  signed_out: ['Signed out. Pack reads are anonymous again.', 'status'],
+  rejected: ['Signed out: GitHub rejected the access. Pack reads are anonymous again.', 'alert'],
+});
+const T089_RATE_TITLE = 'GitHub rate limit reached';
+const T089_LOCAL_ROUTE = "To read packs without GitHub's limit, add a local folder whose root contains library/packs under Settings > Packs > Sources > Add source.";
+/** The one text-only rate-limit guidance, for the allowance a read used. @param {string | null} login @param {string} [what] */
+const t089Rate = (login, what = 'these reads') => (login
+  ? `The GitHub allowance for @${login} is used up, so GitHub refused ${what}. Your other GitHub tools share this allowance. Nothing was retried. To continue, try again later. ${T089_LOCAL_ROUTE}`
+  : `GitHub's anonymous limit for your network address, 60 requests an hour, is used up, so it refused ${what}. Nothing was retried. To continue, sign in under Settings > Accounts, or try again later. ${T089_LOCAL_ROUTE}`);
+/** @param {string | null} login */
+const t089RateReason = login => (login ? `GitHub's rate limit for @${login} was reached.` : "GitHub's anonymous rate limit was reached.");
+const T089_REJECTED_REASON = "GitHub rejected Dude's sign-in.";
+const T089_REJECTED_TITLE = 'GitHub rejected the sign-in';
+const T089_REJECTED_NOTE = 'GitHub rejected the sign-in Dude was using, so Dude signed out. Choose Reload packs to read these sources anonymously.';
+/** The fonts a GitHub link's or the pointer's target must keep 24px in: the product's own and the ones a followed app may bring. */
+const T089_FONTS = Object.freeze(["'Segoe UI'", "'Segoe UI Variable Text'", 'Arial', "'Times New Roman'", 'system-ui']);
+
+/**
+ * One case's GitHub sign-in (089): the extension's real session controller, with
+ * a fixture Client ID unless `clientId` is null, and GitHub's three endpoints
+ * answered in this process by the case's script. `code` decides the next code
+ * request (`ok`, `unreachable`, or `unavailable` for Device Flow turned off),
+ * `answer` the next poll (`approve`, `denied`, or `scoped` for a token with a
+ * scope), and `expiresIn` the code's lifetime in seconds. `holdCode()` keeps the
+ * code request, and `hold()` every poll, waiting until released. The token and
+ * the device code are sentinels made here, and each request is recorded with
+ * its endpoint and whether it carried Authorization. Every other address passes
+ * on, so the harness's own loopback requests are untouched. `restore()` ends the
+ * session and puts fetch back.
+ * @param {{ clientId?: string | null }} [options]
+ */
+async function t089SignIn({ clientId = 'Iv1.t089fixtureclient' } = {}) {
+  const { createGitHubSession } = await import('../../src/extensions/dude/lib/github-session.mjs');
+  const original = globalThis.fetch;
+  /** @type {Array<() => void>} */
+  const codeWaiting = [];
+  /** @type {Array<() => void>} */
+  const pollWaiting = [];
+  const world = {
+    secret: `gho_${randomUUID().replaceAll('-', '')}`, deviceCode: `dc_${randomUUID().replaceAll('-', '')}`,
+    /** @type {Array<{ endpoint: string, authorized: boolean }>} */
+    requests: [],
+    code: 'ok', answer: 'approve', expiresIn: 900, codeHeld: false, pollHeld: false,
+  };
+  /** @param {unknown} body */
+  const answer = body => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json; charset=utf-8' } });
+  /** @param {{ signal?: AbortSignal }} init @param {Array<() => void>} queue */
+  const wait = (init, queue) => new Promise((resolve, reject) => {
+    if (init.signal?.aborted) { reject(init.signal.reason); return; }
+    init.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+    queue.push(() => resolve(undefined));
+  });
+  globalThis.fetch = async (/** @type {any} */ input, /** @type {any} */ init = {}) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    const endpoint = Object.entries(T089_ENDPOINTS).find(([, address]) => address === url.href)?.[0];
+    if (!endpoint) return original(input, init);
+    world.requests.push({ endpoint, authorized: new Headers(init.headers).has('authorization') });
+    if (endpoint === 'code') {
+      if (world.codeHeld) await wait(init, codeWaiting);
+      if (world.code === 'unreachable') throw new TypeError('offline fixture: github.com is not reachable');
+      if (world.code === 'unavailable') return answer({ error: 'device_flow_disabled', error_description: 'Device Flow must be explicitly enabled for this App' });
+      return answer({ device_code: world.deviceCode, user_code: T089_CODE, verification_uri: T089_DEVICE, expires_in: world.expiresIn, interval: 5 });
+    }
+    if (endpoint === 'token') {
+      if (world.answer === 'denied') return answer({ error: 'access_denied', error_description: 'The authorization request was denied.' });
+      return answer({ access_token: world.secret, token_type: 'bearer', scope: world.answer === 'scoped' ? 'repo' : '' });
+    }
+    return answer({ login: T089_LOGIN, id: 1 });
+  };
+  const session = createGitHubSession({ clientId,
+    sleep: (_ms, signal) => (world.pollHeld ? wait({ signal }, pollWaiting) : Promise.resolve()) });
+  return Object.assign(world, {
+    session,
+    /** @param {'code' | 'token' | 'account'} endpoint */
+    count: endpoint => world.requests.filter(entry => entry.endpoint === endpoint).length,
+    holdCode() { world.codeHeld = true; },
+    releaseCode() { world.codeHeld = false; codeWaiting.splice(0).forEach(go => go()); },
+    hold() { world.pollHeld = true; },
+    release() { world.pollHeld = false; pollWaiting.splice(0).forEach(go => go()); },
+    restore() { session.end(); globalThis.fetch = original; },
+  });
+}
+
+/**
+ * The 089 cases' saved GitHub source on the offline stand-in: acme/dude-packs,
+ * with the installable `rocket` and `saturn`, which no other source has.
+ * @param {ReturnType<typeof createReviewWorkspaceFixture>} workspace
+ */
+async function t089GitHub(workspace) {
+  t083Engine(workspace);
+  const github = offlineGitHub(workspace);
+  const { directory } = github.publish('acme/dude-packs', ['saturn']);
+  t083Pack(directory, 'rocket');
+  t083Commit(directory, 'rocket v1');
+  await saveSources(workspace, [remoteSource('acme/dude-packs')]);
+  return github;
+}
+
+/** Where focus is, by what it is, in the page's own terms. */
+const T089_FOCUS = `(at => !at || at === document.body ? 'body'
+  : at.hasAttribute('data-github-action') ? 'action' : at.hasAttribute('data-github-outcome') ? 'outcome'
+    : at.hasAttribute('data-github-account') ? 'account' : at.hasAttribute('data-github-device') ? 'device'
+      : at.hasAttribute('data-github-revoke') ? 'revoke' : at.closest('[data-github-signin]') ? 'section'
+        : at.hasAttribute('data-settings-section') ? 'tab:' + at.getAttribute('data-settings-section')
+          : at.hasAttribute('data-sources-accounts') ? 'pointer' : at.hasAttribute('data-source-row') ? 'row'
+            : at.getAttribute('aria-label') ?? at.tagName.toLowerCase())(document.activeElement)`;
+
+/**
+ * Settings > Accounts as shown, the shell's two announcements, the selected
+ * section with its footer and toolbar, and where focus is. While Accounts is
+ * hidden it renders nothing, so `state` is null.
+ * @param {{ q: (expression: string) => Promise<any> }} p
+ */
+const t089State = p => p.q(`(() => {
+  const text = node => node ? node.innerText.replace(/\\s+/g, ' ').trim() : null;
+  const shell = { status: document.querySelector('[data-github-session-status]')?.textContent ?? null,
+    alert: document.querySelector('[data-github-session-alert]')?.textContent ?? null,
+    section: document.querySelector('[data-settings-section][aria-selected="true"]')?.getAttribute('data-settings-section') ?? null,
+    footer: document.querySelector('footer[aria-label="Workspace status"]')?.textContent ?? null,
+    toolbar: [...document.querySelectorAll('header [role="toolbar"] button')].map(node => node.getAttribute('aria-label')),
+    focus: ${T089_FOCUS} };
+  const panel = document.querySelector('[data-accounts-panel]');
+  const section = panel && !panel.hidden ? panel.querySelector('[data-github-signin]') : null;
+  if (!section) return { state: null, ...shell };
+  const bar = section.querySelector('[data-github-outcome]'), action = section.querySelector('[data-github-action]');
+  const code = section.querySelector('[data-github-code]'), expiry = section.querySelector('[data-github-expiry]');
+  return { ...shell,
+    state: section.getAttribute('data-github-signin'), heading: text(section.querySelector('h2')),
+    headingLevel: section.querySelector('h2') ? 2 : null,
+    outcome: bar && { kind: bar.getAttribute('data-github-outcome'), title: text(bar.querySelector('.fui-MessageBarTitle')),
+      text: text(bar.querySelector('.fui-MessageBarBody > div')), role: bar.getAttribute('role'),
+      named: document.getElementById(bar.getAttribute('aria-labelledby'))?.textContent ?? null },
+    body: [...(section.querySelector('[data-github-body]')?.children ?? [])].map(text),
+    buttons: [...section.querySelectorAll('button')].map(node => [node.textContent.trim(), node.getAttribute('aria-label')]),
+    links: [...section.querySelectorAll('a')].map(node => ({ text: text(node), href: node.getAttribute('href'), target: node.getAttribute('target'),
+      rel: node.getAttribute('rel'), label: node.getAttribute('aria-label') })),
+    code: text(code), selectable: code ? getComputedStyle(code).userSelect : null,
+    expiry: expiry && { text: text(expiry), at: expiry.getAttribute('datetime'),
+      local: new Date(expiry.getAttribute('datetime')).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) },
+    account: text(section.querySelector('[data-github-account]')),
+    fields: section.querySelectorAll('input, textarea, select, [contenteditable]').length,
+    sourceWords: /\\b(?:Reload|source|Unavailable)\\b/.test(section.innerText),
+  };
+})()`);
+/** @param {{ q: (expression: string) => Promise<any> }} p @param {string} label @param {(state: any) => boolean} predicate */
+const t089Wait = (p, label, predicate) => until(async () => {
+  const state = await t089State(p);
+  return predicate(state) ? state : null;
+}, label);
+/** Wait for the shell to say `words` in its status or its alert. @param {{ q: (expression: string) => Promise<any> }} p @param {string} words @param {string} [kind] */
+const t089Said = (p, words, kind = 'status') => until(() => p.q(`document.querySelector('[data-github-session-${kind}]')?.textContent === ${JSON.stringify(words)}`),
+  `the ${kind} "${words}"`);
+/** Sources' notes on GitHub's refusals, as text, or null for a note it does not show. @param {{ q: (expression: string) => Promise<any> }} p */
+const t089Notes = p => p.q(`(() => {
+  const text = selector => document.querySelector(selector)?.innerText.replace(/\\s+/g, ' ').trim() ?? null;
+  return { rate: text('[data-sources-rate-limit]'), rejected: text('[data-sources-rejected]') };
+})()`);
+/** Sources' one line about sign-in, and its Settings > Accounts. @param {{ q: (expression: string) => Promise<any> }} p */
+const t089Pointer = p => p.q(`(() => {
+  const note = document.querySelector('[data-sources-accounts-note]'), link = note?.querySelector('[data-sources-accounts]');
+  const grid = document.querySelector('[data-sources-panel] [role="grid"]');
+  return note && { text: note.innerText.replace(/\\s+/g, ' ').trim(), tag: link?.tagName.toLowerCase(), role: link?.getAttribute('role'),
+    tabIndex: link?.tabIndex, name: link?.textContent, href: link?.getAttribute('href') ?? null,
+    shown: note.getClientRects().length > 0, beforeTable: Boolean(grid && note.compareDocumentPosition(grid) & Node.DOCUMENT_POSITION_FOLLOWING),
+    signIn: Boolean(document.querySelector('[data-sources-panel] [data-github-signin], [data-sources-panel] [data-github-action]')) };
+})()`);
+/** Bring the sign-in section to the top of its scroller, as the mock shows each state. @param {Awaited<ReturnType<typeof t073Driver>>} p */
+const t089Reveal = p => t084Reveal(p, `document.querySelector('[data-github-signin]')`);
+
+/** Settings > Accounts by its tab. @param {Awaited<ReturnType<typeof openAboutCanvas>>} canvas @param {Awaited<ReturnType<typeof t073Driver>>} p */
+async function t089Accounts(canvas, p) {
+  await p.click('[data-settings-section="accounts"]');
+  await accountsSettled(canvas.page);
+  await settleAboutAnimations(canvas.page);
+}
+/** Back to Packs by its tab, which shows the Packs view it left. @param {Awaited<ReturnType<typeof openAboutCanvas>>} canvas @param {Awaited<ReturnType<typeof t073Driver>>} p */
+async function t089Packs(canvas, p) {
+  await p.click('[data-settings-section="packs"]');
+  await packsSettled(canvas.page);
+  await settleAboutAnimations(canvas.page);
+}
+
+/**
+ * Every visible text run in `selector` against the surface it is painted on,
+ * resolved by the 085 color kit, so a followed app theme's color-mix tokens
+ * measure as painted: large text needs 3:1 and the rest 4.5:1.
+ * @param {Cdp} page @param {string} selector
+ */
+function t089TextContrast(page, selector) {
+  return evaluate(page, `(() => {${T085_KIT}
+    const failures = [];
+    let count = 0;
+    for (const root of document.querySelectorAll(${JSON.stringify(selector)})) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const element = node.parentElement;
+        if (!node.textContent.trim() || !element || element.closest('[hidden], [aria-hidden="true"], svg, :disabled')) continue;
+        const style = getComputedStyle(element);
+        if (style.visibility !== 'visible' || !element.getClientRects().length) continue;
+        const background = kit.surface(element), color = kit.over(kit.rgba(style.color), background);
+        const size = parseFloat(style.fontSize), weight = Number(style.fontWeight);
+        const minimum = size >= 24 || (size >= 18.66 && weight >= 700) ? 3 : 4.5;
+        const measured = kit.ratio(color, background);
+        count += 1;
+        if (measured < minimum) failures.push({ text: node.textContent.trim().slice(0, 40), ratio: Math.round(measured * 100) / 100,
+          color: kit.hex(color), background: kit.hex(background) });
+      }
+    }
+    kit.done();
+    return { count, failures };
+  })()`);
+}
+
+/** Occurrences of the secrets in every file below `roots`, and how many files were read. @param {string[]} roots @param {string[]} secrets */
+function t089DiskLeaks(roots, secrets) {
+  let files = 0, found = 0;
+  /** @param {string} directory */
+  const visit = directory => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const full = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(full);
+      else if (entry.isFile()) {
+        files += 1;
+        const text = fs.readFileSync(full).toString('latin1');
+        found += secrets.filter(secret => text.includes(secret)).length;
+      }
+    }
+  };
+  for (const root of roots) if (fs.existsSync(root)) visit(root);
+  return { files, found };
+}
+
+/**
+ * Occurrences of the secrets in what the page holds and was sent: its markup and
+ * storage, every Canvas API answer it still has, a fresh read of the sign-in
+ * state, its event stream, and the server's log lines.
+ * @param {Awaited<ReturnType<typeof openAboutCanvas>>} canvas @param {string[]} secrets @param {string[]} events
+ */
+async function t089PageLeaks(canvas, secrets, events) {
+  const { page, origin } = canvas;
+  const texts = [await evaluate(page, 'document.documentElement.outerHTML'),
+    await evaluate(page, 'JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } })')];
+  let answers = 0;
+  for (const entry of canvas.requests.filter(item => item.url.startsWith(`${origin}/api/`))) {
+    try {
+      texts.push((await page.send('Network.getResponseBody', { requestId: entry.id })).body);
+      answers += 1;
+    } catch { /* A body the browser no longer keeps cannot be checked; it is not counted. */ }
+  }
+  texts.push(await (await fetch(new URL('/api/github-session', origin))).text(), ...events, ...canvas.logs);
+  return { checked: texts.length, answers, found: texts.reduce((sum, text) => sum + secrets.filter(secret => text.includes(secret)).length, 0) };
+}
+
+/** The accessibility names a sign-in check needs. @param {Cdp} page */
+async function t089Accessibility(page) {
+  const tree = await page.send('Accessibility.getFullAXTree');
+  const live = tree.nodes.filter(node => !node.ignored);
+  /** @param {string} role */
+  const named = role => live.filter(node => node.role?.value === role).map(node => node.name?.value ?? '');
+  return { regions: named('region'), buttons: named('button'), links: named('link'), groups: named('group'), headings: named('heading'),
+    tabs: named('tab') };
+}
+
+/**
+ * A second panel of the same session: another Canvas of this workspace that
+ * shares the one sign-in, as production gives every panel, in a second page of
+ * the same browser, opened on Settings > Accounts. `close()` leaves that page
+ * and closes that Canvas only.
+ * @param {Awaited<ReturnType<typeof openAboutCanvas>>} canvas @param {any} githubSession
+ */
+async function t089SecondPanel(canvas, githubSession) {
+  const { openInstance, closeInstance } = await import('../../src/extensions/dude/lib/canvas-server.mjs');
+  const id = `089-second-${randomUUID()}`;
+  const instance = await openInstance(id, () => {}, null, { root: canvas.workspace.root }, canvas.provider, null, githubSession);
+  const port = Number(fs.readFileSync(path.join(canvas.driver.profile, 'DevToolsActivePort'), 'utf8').split(/\r?\n/)[0]);
+  const target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })).json();
+  const page = new Cdp(target.webSocketDebuggerUrl);
+  await page.open();
+  await Promise.all([page.send('Page.enable'), page.send('Runtime.enable'), page.send('Network.enable'), page.send('Accessibility.enable')]);
+  /** @type {any[]} */
+  const errors = [];
+  page.on('Runtime.exceptionThrown', event => errors.push(event.exceptionDetails));
+  const origin = new URL(instance.url).origin;
+  return { instance, page, origin, errors, q: (/** @type {string} */ expression) => evaluate(page, expression),
+    async open() {
+      await page.send('Page.bringToFront');
+      await navigate(page, null, 1440, 'light', origin);
+      await clickSettingsControl(page, `document.querySelector('#dude-tab-settings')`);
+      await packsSettled(page);
+      await chooseSettingsSection(page, 'accounts');
+    },
+    async close() {
+      await page.send('Page.navigate', { url: 'about:blank' }).catch(() => {});
+      await page.close();
+      await closeInstance(id);
+    } };
+}
+
+/**
+ * Each line of each GitHub link's or the pointer's target that `selectors`
+ * name (the link's inner span; the link is its parent): the height at which a
+ * click lands on the link, by elementFromPoint every 0.25px up and down columns
+ * at a tenth, half, and nine tenths of the line, to 4px past its padded box.
+ * Beside it, the link's own text box and the padded line box. Nothing here
+ * measures the link's bounding box, which is only its text.
+ * @param {{ q: (expression: string) => Promise<any> }} p @param {string[]} selectors
+ */
+const t089Targets = (p, selectors) => p.q(`(() => {
+  const results = [];
+  for (const selector of ${JSON.stringify(selectors)}) {
+    for (const target of document.querySelectorAll(selector)) {
+      if (!target.getClientRects().length) continue;
+      const link = target.parentElement;
+      target.scrollIntoView({ block: 'center', inline: 'nearest' });
+      const lines = [...target.getClientRects()].filter(rect => rect.width > 2);
+      let least = Infinity;
+      for (const rect of lines) for (const share of [0.1, 0.5, 0.9]) {
+        const x = rect.left + rect.width * share, middle = rect.top + rect.height / 2;
+        const hits = y => { const hit = document.elementFromPoint(x, y); return Boolean(hit && link.contains(hit)); };
+        if (!hits(middle)) { least = 0; continue; }
+        let top = middle, bottom = middle;
+        while (top - 0.25 >= rect.top - 4 && hits(top - 0.25)) top -= 0.25;
+        while (bottom + 0.25 <= rect.bottom + 4 && hits(bottom + 0.25)) bottom += 0.25;
+        least = Math.min(least, bottom - top + 0.25);
+      }
+      results.push({ selector, lines: lines.length, clickable: least,
+        text: Math.min(...[...link.getClientRects()].map(rect => Math.round(rect.height * 100) / 100)),
+        padded: Math.min(...lines.map(rect => Math.round(rect.height * 100) / 100)) });
+    }
+  }
+  return results;
+})()`);
+const T089_TARGETS = Object.freeze(['[data-github-device] > span', '[data-github-revoke] > span', '[data-sources-accounts] > span']);
+
+/**
+ * `measure` once with each font of T089_FONTS as the product's base font, with
+ * the font the browser actually used for `selector`'s text, then the product's
+ * own font again.
+ * @param {Cdp} page @param {string} selector @param {() => Promise<any>} measure
+ */
+async function t089WithFonts(page, selector, measure) {
+  const seen = [];
+  const set = value => evaluate(page, `document.querySelectorAll('.fui-FluentProvider').forEach(node => ${value === null
+    ? `node.style.removeProperty('--fontFamilyBase')` : `node.style.setProperty('--fontFamilyBase', ${JSON.stringify(value)})`})`);
+  try {
+    for (const font of T089_FONTS) {
+      await set(font);
+      await settleBrowserWork(page);
+      let rendered = null;
+      try {
+        const { root } = await page.send('DOM.getDocument', { depth: 0 });
+        const { nodeId } = await page.send('DOM.querySelector', { nodeId: root.nodeId, selector });
+        rendered = (await page.send('CSS.getPlatformFontsForNode', { nodeId })).fonts.map(entry => entry.familyName);
+      } catch { /* The used font is evidence only; the measurement stands without it. */ }
+      seen.push({ font, rendered, results: await measure() });
+    }
+  } finally {
+    await set(null);
+    await settleBrowserWork(page);
+  }
+  return seen;
+}
+
+/**
+ * A link's or the pointer's text against the surface it is painted on, at rest,
+ * on hover, and while the mouse button is held on it, by real input, and the
+ * focus ring's color against the same surface. `onPressed` runs while it is
+ * held. The release is kept from following the link or acting, so the page
+ * stays as it was.
+ * @param {Cdp} page @param {string} selector the link's inner target @param {(() => Promise<unknown>) | null} [onPressed]
+ */
+async function t089LinkLooks(page, selector, onPressed = null) {
+  const point = await evaluate(page, `(() => {
+    const node = document.querySelector(${JSON.stringify(selector)});
+    node.scrollIntoView({ block: 'center' });
+    const r = node.getClientRects()[0];
+    return { x: r.left + Math.min(12, r.width / 2), y: r.top + r.height / 2 };
+  })()`);
+  const read = () => evaluate(page, `(() => {${T085_KIT}
+    const link = document.querySelector(${JSON.stringify(selector)}).parentElement;
+    const ground = kit.surface(link), color = kit.over(kit.rgba(getComputedStyle(link).color), ground);
+    const value = { color: kit.hex(color), surface: kit.hex(ground), ratio: Math.round(kit.ratio(color, ground) * 100) / 100,
+      ring: Math.round(kit.ratio(kit.token('colorStrokeFocus2'), ground) * 100) / 100 };
+    kit.done();
+    return value;
+  })()`);
+  const away = { x: 1, y: 1 };
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: away.x, y: away.y, buttons: 0 });
+  await settleBrowserWork(page);
+  const rest = await read();
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y, buttons: 0 });
+  await settleBrowserWork(page);
+  const hover = await read();
+  await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button: 'left', buttons: 1, clickCount: 1 });
+  await settleBrowserWork(page);
+  const pressed = await read();
+  if (onPressed) await onPressed();
+  await evaluate(page, `window.t089Block = event => { event.preventDefault(); event.stopPropagation(); };
+    window.addEventListener('click', window.t089Block, { capture: true })`);
+  try {
+    await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button: 'left', buttons: 0, clickCount: 1 });
+    await settleBrowserWork(page);
+  } finally {
+    await evaluate(page, `window.removeEventListener('click', window.t089Block, { capture: true })`);
+  }
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: away.x, y: away.y, buttons: 0 });
+  await evaluate(page, `document.activeElement?.blur()`);
+  await settleBrowserWork(page);
+  return { rest, hover, pressed };
+}
+
+/**
+ * The keyboard focus ring of the link whose inner target `selector` names, from
+ * two screenshots of one clip, before and after Tab reaches the link from
+ * `from`: the box of the changed pixels, in CSS px, against the link's text box
+ * and its padded target. A ring that outlines the padded target instead of the
+ * text reaches past the target's top and bottom.
+ * @param {Cdp} page @param {string} selector @param {string} from
+ */
+async function t089FocusRing(page, selector, from) {
+  const { decodePng } = await import('../../src/extensions/dude/lib/review/png.mjs');
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1, buttons: 0 });
+  await evaluate(page, `document.activeElement?.blur()`);
+  const box = await evaluate(page, `(() => {
+    const target = document.querySelector(${JSON.stringify(selector)}), link = target.parentElement;
+    target.scrollIntoView({ block: 'center' });
+    const text = link.getClientRects()[0], padded = target.getClientRects()[0];
+    return { text: { top: text.top, bottom: text.bottom, height: text.height },
+      padded: { left: padded.left, top: padded.top, bottom: padded.bottom, width: padded.width, height: padded.height } };
+  })()`);
+  await settleBrowserWork(page);
+  const clip = { x: Math.max(0, Math.floor(box.padded.left - 12)), y: Math.max(0, Math.floor(box.padded.top - 12)),
+    width: Math.ceil(box.padded.width + 24), height: Math.ceil(box.padded.height + 24), scale: 1 };
+  const shot = async () => decodePng(Buffer.from((await page.send('Page.captureScreenshot', { format: 'png', clip, captureBeyondViewport: false })).data, 'base64'));
+  const before = await shot();
+  await focus(page, from);
+  await key(page, 'Tab');
+  await settleBrowserWork(page);
+  const focused = await evaluate(page, `document.activeElement === document.querySelector(${JSON.stringify(selector)}).parentElement`);
+  const after = await shot();
+  let top = Infinity, bottom = -Infinity;
+  for (let y = 0; y < Math.min(before.height, after.height); y += 1) {
+    for (let x = 0; x < Math.min(before.width, after.width); x += 1) {
+      const at = (y * before.width + x) * 4;
+      const change = [0, 1, 2].reduce((sum, channel) => sum + Math.abs(before.pixels[at + channel] - after.pixels[at + channel]), 0);
+      if (change > 48) { top = Math.min(top, y); bottom = Math.max(bottom, y + 1); }
+    }
+  }
+  const ring = { top: clip.y + top, bottom: clip.y + bottom, height: bottom - top };
+  return { focused, ring, text: box.text, padded: box.padded,
+    withinTarget: ring.top >= box.padded.top - 0.5 && ring.bottom <= box.padded.bottom + 0.5 };
+}
+
+/**
+ * What the sign-in section does with its width: whether anything leaves it or
+ * the panel, buttons under 24px, its text size, and how many lines the code takes.
+ * @param {{ q: (expression: string) => Promise<any> }} p
+ */
+const t089Fit = p => p.q(`(() => {
+  const panel = document.querySelector('[data-accounts-panel]');
+  const section = panel.querySelector('[data-github-signin]'), box = section.getBoundingClientRect();
+  const shown = [...section.querySelectorAll('*')].filter(node => node.getClientRects().length);
+  const code = section.querySelector('[data-github-code]'), range = document.createRange();
+  if (code) range.selectNodeContents(code);
+  return {
+    outside: shown.filter(node => { const r = node.getBoundingClientRect(); return r.left < box.left - 0.5 || r.right > box.right + 0.5; })
+      .map(node => node.tagName + ' ' + (node.textContent || '').trim().slice(0, 30)),
+    wide: section.scrollWidth > section.clientWidth + 1 || panel.scrollWidth > panel.clientWidth + 1
+      || box.right > panel.getBoundingClientRect().right + 0.5,
+    small: [...section.querySelectorAll('button')].filter(node => { const r = node.getBoundingClientRect(); return r.width < 24 || r.height < 24; })
+      .map(node => node.textContent.trim()),
+    text: getComputedStyle(section.querySelector('[data-github-body]') ?? section).fontSize,
+    codeLines: code ? new Set([...range.getClientRects()].map(rect => Math.round(rect.top))).size : null,
+    header: Math.round(document.querySelector('[data-settings] > header').getBoundingClientRect().height),
+  };
+})()`);
+
+/**
+ * One Accounts state at every 089 size in both themes (VSC-001, VSC-002):
+ * nothing scrolls sideways or leaves the section, its buttons keep 24px, its
+ * text keeps 14px and 4.5:1, the code stays on one line from 360px, and the
+ * screenshot takes the approved mock's name. It ends back at 1440x900 light.
+ * @param {Awaited<ReturnType<typeof openAboutCanvas>>} canvas @param {Awaited<ReturnType<typeof t073Driver>>} p
+ * @param {string} state the approved mock's screenshot name
+ */
+async function t089Matrix(canvas, p, state) {
+  const seen = [];
+  for (const theme of ['light', 'dark']) for (const size of T083_SIZES) {
+    const label = `${size.name}-${theme}`;
+    await aboutViewport(canvas.page, size, theme);
+    const fit = await t089Fit(p);
+    assert.deepEqual(await t084Wide(p), [], `${state} scrolls nothing sideways at ${label}`);
+    assert.deepEqual([fit.outside, fit.wide, fit.small, fit.text], [[], false, [], '14px'], `${state} fits its section at ${label}`);
+    if (fit.codeLines !== null && size.width >= 360) assert.equal(fit.codeLines, 1, `the code stays on one line at ${label}`);
+    assert.deepEqual(await t084Contrast(p, '[data-github-signin]'), [], `${state} text contrast at ${label}`);
+    assert.equal(await t089Reveal(p), true, `${state} shows its section at ${label}`);
+    await settleBrowserWork(canvas.page);
+    seen.push({ label, fit, image: await aboutScreenshot(canvas.page, canvas.output, `${state}-${label}`) });
+  }
+  await aboutViewport(canvas.page, T083_SIZES[0], 'light');
+  return { state, seen };
+}
+
+/** The same parts of Settings > Accounts in the product and in the approved mock. */
+const T089_PARTS = Object.freeze({
+  product: { panel: '[data-accounts-panel]', section: '[data-github-signin]', title: '[data-github-signin] h2', outcome: '[data-github-outcome]',
+    body: '[data-github-body]', code: '[data-github-code]', action: '[data-github-action]', header: '[data-settings] > header' },
+  mock: { panel: '#section-accounts', section: '#signin', title: '#signin-title', outcome: '#signin-outcome', body: '#signin-body',
+    code: '#signin-code', action: '#signin-actions .button', header: '.settings-header' },
+});
+/** The same parts of Sources around its one sign-in line. */
+const T089_SOURCE_PARTS = Object.freeze({
+  product: { scroller: '[data-sources-scroll]', pointer: '[data-sources-accounts-note]', target: '[data-sources-accounts] > span',
+    note: '[data-sources-rate-limit] .fui-MessageBar, [data-sources-rejected] .fui-MessageBar', table: '[data-sources-panel] [role="grid"]',
+    header: '[data-settings] > header' },
+  mock: { scroller: '#sources-scroll', pointer: '#signin-pointer', target: '#signin-pointer-link > .nav-link-target', note: '#rate-note',
+    table: '#sources-table', header: '.settings-header' },
+});
+/**
+ * Where each part of the sign-in section sits, relative to the section, in CSS
+ * px: its heading, outcome bar, each body line's top and height, the code, and
+ * the one button; the section's own place in its panel; and the header's height.
+ * @param {Cdp} page @param {Record<string, string>} parts
+ */
+function t089Geometry(page, parts) {
+  return evaluate(page, `(() => {
+    const parts = ${JSON.stringify(parts)}, round = value => Math.round(value * 10) / 10;
+    const section = document.querySelector(parts.section)?.getBoundingClientRect();
+    if (!section) return null;
+    const box = selector => {
+      const node = document.querySelector(selector);
+      if (!node || node.closest('[hidden]') || !node.getClientRects().length) return null;
+      const r = node.getBoundingClientRect();
+      return { x: round(r.left - section.left), y: round(r.top - section.top), width: round(r.width), height: round(r.height) };
+    };
+    const panel = document.querySelector(parts.panel).getBoundingClientRect();
+    return { section: { x: round(section.left - panel.left), width: round(section.width), height: round(section.height) },
+      title: box(parts.title), outcome: box(parts.outcome), body: box(parts.body), code: box(parts.code), action: box(parts.action),
+      header: { height: round(document.querySelector(parts.header).getBoundingClientRect().height) },
+      lines: [...document.querySelector(parts.body).children].map(node => {
+        const r = node.getBoundingClientRect();
+        return { y: round(r.top - section.top), height: round(r.height) };
+      }) };
+  })()`);
+}
+/**
+ * Sources around its sign-in line, relative to that line, in CSS px: the line's
+ * place in its scroller and its size, its Settings > Accounts target, the
+ * refusal note above it, the table below it, and the header's height.
+ * @param {Cdp} page @param {Record<string, string>} parts
+ */
+function t089SourceGeometry(page, parts) {
+  return evaluate(page, `(() => {
+    const parts = ${JSON.stringify(parts)}, round = value => Math.round(value * 10) / 10;
+    const pointer = document.querySelector(parts.pointer)?.getBoundingClientRect();
+    if (!pointer) return null;
+    const scroller = document.querySelector(parts.scroller).getBoundingClientRect();
+    const box = selector => {
+      const node = [...document.querySelectorAll(selector)].find(item => !item.closest('[hidden]') && item.getClientRects().length);
+      if (!node) return null;
+      const r = node.getBoundingClientRect();
+      return { x: round(r.left - pointer.left), y: round(r.top - pointer.top), width: round(r.width), height: round(r.height) };
+    };
+    // The table's rows are each surface's own sources (the mock's are samples), so only where it starts is compared.
+    const table = box(parts.table);
+    return { pointer: { x: round(pointer.left - scroller.left), width: round(pointer.width), height: round(pointer.height) },
+      target: box(parts.target), note: box(parts.note), table: table && { x: table.x, y: table.y },
+      header: { height: round(document.querySelector(parts.header).getBoundingClientRect().height) } };
+  })()`);
+}
+/**
+ * The product in `state` at each of `sizes` in light, with its screenshot,
+ * brought into view as the mock shows it. It ends at 1440x900.
+ * @param {Awaited<ReturnType<typeof openAboutCanvas>>} canvas @param {Awaited<ReturnType<typeof t073Driver>>} p
+ * @param {{ state: string, where?: 'accounts' | 'sources' }} name the mock's state, and where it shows
+ * @param {typeof T083_SIZES[number][]} sizes
+ */
+async function t089Measure(canvas, p, { state, where = 'accounts' }, sizes) {
+  const seen = [];
+  for (const size of sizes) {
+    await aboutViewport(canvas.page, size, 'light');
+    if (where === 'accounts') await t089Reveal(p);
+    else await t084Reveal(p, `document.querySelector('[data-sources-rate-limit], [data-sources-rejected]') ?? document.querySelector('[data-sources-accounts-note]')`);
+    await settleAboutAnimations(canvas.page);
+    seen.push({ state, where, size, geometry: where === 'accounts' ? await t089Geometry(canvas.page, T089_PARTS.product)
+      : await t089SourceGeometry(canvas.page, T089_SOURCE_PARTS.product),
+    image: await aboutScreenshot(canvas.page, canvas.output, `product-${where}-${state}-${size.name}-light`) });
+  }
+  await aboutViewport(canvas.page, T083_SIZES[0], 'light');
+  return seen;
+}
+/**
+ * The approved mock's own state (its `#state=` chooser) at the same size, in the
+ * same browser: its geometry and screenshot. The mock stays unchanged.
+ * @param {Awaited<ReturnType<typeof openAboutCanvas>>} canvas @param {{ state: string, where: 'accounts' | 'sources' }} entry
+ * @param {typeof T083_SIZES[number]} size
+ */
+async function t089Mock(canvas, { state, where }, size) {
+  const { page } = canvas;
+  await aboutViewport(page, size, 'light', false);
+  const hash = `state=${state}${where === 'sources' && !state.startsWith('rate-') ? '&where=sources' : ''}`;
+  await page.send('Page.navigate', { url: `${pathToFileURL(path.join(ROOT, T089_APPROVED)).href}?theme=light#${hash}` });
+  await until(() => evaluate(page, `document.querySelector('#proto-signin')?.value === ${JSON.stringify(state)}
+    && Boolean(document.querySelector(${JSON.stringify(where === 'accounts' ? '#signin-title' : '#signin-pointer')})?.getClientRects().length)`),
+  `the approved mock's ${state} state in ${where}`);
+  await settleAboutAnimations(page);
+  return { geometry: where === 'accounts' ? await t089Geometry(page, T089_PARTS.mock) : await t089SourceGeometry(page, T089_SOURCE_PARTS.mock),
+    image: await aboutScreenshot(page, canvas.output, `approved-mock-${where}-${state}-${size.name}-light`) };
+}
+/**
+ * Product minus approved mock for each part's box and each body line, in CSS
+ * px; a part shown on only one side, or a different number of body lines,
+ * reports as `.shown` or `lines.count`.
+ * @param {any} product @param {any} mock
+ */
+function t089Delta(product, mock) {
+  /** @type {Record<string, number>} */
+  const delta = {};
+  /** @param {string} name @param {Record<string, number> | null} a @param {Record<string, number> | null} b */
+  const add = (name, a, b) => {
+    if (!a || !b) { if (Boolean(a) !== Boolean(b)) delta[`${name}.shown`] = a ? 1 : -1; return; }
+    for (const key of Object.keys(b)) delta[`${name}.${key}`] = Math.round((a[key] - b[key]) * 10) / 10;
+  };
+  for (const part of Object.keys(mock).filter(key => key !== 'lines')) add(part, product[part], mock[part]);
+  if (mock.lines) {
+    delta['lines.count'] = product.lines.length - mock.lines.length;
+    product.lines.forEach((/** @type {Record<string, number>} */ line, /** @type {number} */ index) => add(`lines.${index}`, line, mock.lines[index] ?? null));
+  }
+  return delta;
+}
+
+test('089 Accounts: Settings gains Accounts after Packs, Sources\' Settings > Accounts opens it by click, Enter, and Space with focus on its tab and nothing started, Accounts explains sign-in first, shows GitHub\'s code with its address and expiry time, names the account, and Sign out names GitHub\'s revocation page, by keyboard, announced, with Packs kept, no pack read, and no token in the page, logs, evidence, or files', {
+  timeout: 480_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  assert.equal(approvedLfDesignSha256(fs.readFileSync(path.join(ROOT, T089_APPROVED))), T089_APPROVED_SHA256, 'the approved round-4 mock is unchanged');
+  const shipped = fs.readFileSync(path.join(ROOT, 'src/extensions/dude/ui/assets/app.js'), 'utf8');
+  assert.deepEqual(['octocat', 'WDJB-MJHT', 'are samples. Nothing is read', 'Round 3 changes', 'Round 4 changes', 'Authorized GitHub Apps',
+    "Dude's GitHub App registration"].filter(sample => shipped.includes(sample)), [],
+    'the built Canvas carries none of the mock\'s samples or notes, nor the superseded round-3 wording');
+  const signIn = await t089SignIn();
+  /** @type {ReturnType<typeof offlineGitHub>} */
+  let github;
+  try {
+    await runAboutCase(context, '089-accounts', { githubSession: signIn.session, prepare: async workspace => {
+      github = await t089GitHub(workspace);
+      return github.restore;
+    } }, async canvas => {
+      const { page, output } = canvas;
+      // The event stream every panel reads, as the server writes it.
+      const stream = new AbortController(), heard = { text: '' };
+      void (async () => {
+        try {
+          const response = await fetch(new URL('/events', canvas.origin), { signal: stream.signal });
+          const reader = /** @type {ReadableStream<Uint8Array>} */ (response.body).getReader(), decoder = new TextDecoder();
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) return;
+            heard.text += decoder.decode(value, { stream: true });
+          }
+        } catch { /* The stream ends with the case. */ }
+      })();
+      const p = await t073Driver(canvas);
+      await p.enter();
+      assert.equal(signIn.requests.length, 0, 'opening Canvas and Settings asks GitHub nothing');
+      const tabs = await p.q(`[...document.querySelectorAll('[role="tablist"][aria-label="Settings sections"] [role="tab"]')].map(node =>
+        [node.querySelector('.fui-Tab__content').textContent, node.getAttribute('aria-selected'), Boolean(node.querySelector('.fui-Tab__icon svg'))])`);
+      assert.deepEqual(tabs, T089_SECTIONS.map(name => [name, String(name === 'Packs'), true]),
+        'Packs | Accounts | Appearance | About, Packs selected, each with its icon');
+
+      // Sources keeps one line where the sign-in used to be.
+      await p.chooseSub('sources');
+      const pointer = await t089Pointer(p);
+      assert.deepEqual(pointer, { text: T089_POINTER, tag: 'span', role: 'button', tabIndex: 0, name: 'Settings > Accounts', href: null,
+        shown: true, beforeTable: true, signIn: false }, 'one line, whose Settings > Accounts is a link-styled button, and no sign-in in Sources');
+      assert.deepEqual(await t089Notes(p), { rate: null, rejected: null });
+      await aboutScreenshot(page, output, 'sources-pointer-1440x900-light');
+      // A selected source, with its details open, stays through every trip to Accounts and every sign-in change.
+      const acme = t073SourceKey(await t073SourcesState(p), 'acme/dude-packs');
+      await p.click(`[data-source-row="${acme}"]`);
+      const kept = async () => { const now = await t073SourcesState(p); return [now.selected, now.detail, now.open]; };
+      assert.deepEqual(await kept(), [[acme], acme, true]);
+      const reads = () => [canvas.packReads().length, canvas.discoveryReads().length, signIn.requests.length];
+      const quiet = reads();
+      /** Settings > Accounts by `how`: Accounts opens with focus on its tab, and nothing is read, started, or said. @param {'click' | 'Enter' | 'Space'} how */
+      const viaPointer = async how => {
+        await p.q(`document.querySelector('[data-github-session-status]').textContent = '';
+          document.querySelector('[data-github-session-alert]').textContent = ''`);
+        if (how === 'click') await p.click('[data-sources-accounts] > span');
+        else if (how === 'Enter') { await focus(page, '[data-sources-accounts]'); await key(page, 'Enter'); }
+        else await t085Space(page);
+        const state = await t089Wait(p, `Accounts by ${how}`, s => s.state !== null && s.section === 'accounts');
+        await settleAboutAnimations(page);
+        assert.equal((await t089State(p)).focus, 'tab:accounts', `${how} moves focus to the Accounts tab`);
+        assert.deepEqual([state.footer, state.toolbar], [T089_FOOTER, []], `${how}: the Accounts footer, and no Reload packs`);
+        await new Promise(resolve => setTimeout(resolve, 300));
+        assert.deepEqual(reads(), quiet, `${how} starts no sign-in and reads nothing`);
+        assert.deepEqual(await p.q(`[document.querySelector('[data-github-session-status]').textContent,
+          document.querySelector('[data-github-session-alert]').textContent]`), ['', ''], `${how} announces nothing`);
+        return state;
+      };
+      let state = await viaPointer('click');
+      assert.deepEqual({ heading: state.heading, level: state.headingLevel, outcome: state.outcome, body: state.body, buttons: state.buttons,
+        links: state.links, fields: state.fields },
+      { heading: 'GitHub sign-in', level: 2, outcome: null, body: T089_WHY, buttons: [['Sign in', null]], links: [], fields: 0 },
+      'the explanation comes before the one Sign in, with no password or token field');
+      assert.deepEqual(await fetch(new URL('/api/github-session', canvas.origin)).then(response => response.json()),
+        { state: 'signed_out', login: null, userCode: null, verificationUri: null, expiresAt: null, outcome: null });
+      let names = await t089Accessibility(page);
+      assert.ok(names.regions.includes('GitHub sign-in') && names.headings.includes('GitHub sign-in') && names.buttons.includes('Sign in')
+        && names.tabs.includes('Accounts'), JSON.stringify(names));
+      await aboutScreenshot(page, output, 'accounts-signed-out-1440x900-light');
+      await t089Packs(canvas, p);
+      assert.deepEqual(await kept(), [[acme], acme, true], 'Packs returns with Sources, its selection, and its details');
+      state = await viaPointer('Enter');
+      assert.equal(await p.q(`document.activeElement.matches(':focus-visible') || document.activeElement.hasAttribute('data-fui-focus-visible')`), true,
+        'after Enter the Accounts tab shows keyboard focus');
+      await aboutScreenshot(page, output, 'accounts-focus-tab-1440x900-light');
+      // Left from the Accounts tab selects Packs, which returns as it was, with focus on its tab.
+      await key(page, 'ArrowLeft');
+      await packsSettled(page);
+      await settleAboutAnimations(page);
+      assert.deepEqual([await kept(), (await t089State(p)).focus], [[[acme], acme, true], 'tab:packs']);
+      // Tab from Add source reaches the line's Settings > Accounts, which shows keyboard focus; Space opens Accounts.
+      await focus(page, '[data-sources-add]');
+      await key(page, 'Tab');
+      assert.equal((await t089State(p)).focus, 'pointer', 'Tab from Add source reaches Settings > Accounts');
+      assert.equal(await p.q(`document.activeElement.matches(':focus-visible')`), true);
+      await aboutScreenshot(page, output, 'sources-pointer-focus-1440x900-light');
+      await viaPointer('Space');
+      // The section tabs are one Tab stop: Tab goes into Accounts, Shift+Tab comes back.
+      await key(page, 'Tab');
+      assert.equal((await t089State(p)).focus, 'action', 'Tab from the Accounts tab reaches Sign in');
+      await key(page, 'Tab', 'Tab', { shift: true });
+      assert.equal((await t089State(p)).focus, 'tab:accounts');
+
+      // Sign in by keyboard: the same button becomes Cancel and keeps focus while GitHub's code arrives.
+      signIn.holdCode();
+      signIn.hold();
+      await focus(page, '[data-github-action]');
+      await key(page, 'Enter');
+      state = await t089Wait(p, 'the code request', s => s.state === 'requesting');
+      assert.deepEqual([state.body, state.buttons, state.focus], [[...T089_WHY, 'Getting a code from GitHub...'], [['Cancel', 'Cancel sign-in']], 'action']);
+      await t089Said(p, 'Getting a code from GitHub.');
+      signIn.releaseCode();
+      state = await t089Wait(p, 'the code', s => s.state === 'waiting');
+      const view = signIn.session.read();
+      assert.deepEqual({ body: state.body, code: state.code, links: state.links, buttons: state.buttons, focus: state.focus, selectable: state.selectable },
+        { body: [`Go to ${T089_DEVICE} and enter this code:`, T089_CODE,
+          `It expires at ${state.expiry.local}. Approving gives Dude read-only access to public information.`,
+          'Waiting for your approval on GitHub. This updates on its own a few seconds after you approve.'],
+        code: T089_CODE, links: [t089Link(T089_DEVICE)], buttons: [['Cancel', 'Cancel sign-in']], focus: 'action', selectable: 'all' },
+        'the address, the code, its expiry as a time of day, the wait, and Cancel; no Copy button');
+      assert.equal(state.expiry.at, view.expiresAt, 'the expiry is the time GitHub stated, from the page state');
+      assert.match(state.expiry.text, /^\d{1,2}:\d{2}/, 'a time of day, not a countdown');
+      await t089Said(p, `Your code is ${[...T089_CODE].join(' ')}. Go to github.com/login/device and enter it to approve. Waiting for your approval.`);
+      await new Promise(resolve => setTimeout(resolve, 1_200));
+      assert.deepEqual((await t089State(p)).body, state.body, 'nothing counts down');
+      assert.deepEqual(signIn.requests, [{ endpoint: 'code', authorized: false }], 'one code request, and no poll while GitHub waits');
+      assert.deepEqual(await fetch(new URL('/api/github-session', canvas.origin)).then(response => response.json()),
+        { state: 'waiting', login: null, userCode: T089_CODE, verificationUri: T089_DEVICE, expiresAt: view.expiresAt, outcome: null });
+      names = await t089Accessibility(page);
+      assert.ok(names.buttons.includes('Cancel sign-in') && names.links.includes(`${T089_DEVICE} (opens in a new tab)`), JSON.stringify(names));
+      await aboutScreenshot(page, output, 'accounts-waiting-1440x900-light');
+      // The pending code survives a trip to Packs, which is as it was, and nothing asks GitHub again.
+      await t089Packs(canvas, p);
+      assert.deepEqual(await kept(), [[acme], acme, true]);
+      await t089Accounts(canvas, p);
+      state = await t089Wait(p, 'the same code', s => s.state === 'waiting');
+      assert.deepEqual([state.code, state.expiry.at, signIn.count('code')], [T089_CODE, view.expiresAt, 1], 'the same pending code, from one request');
+      // The code is selectable text: one click selects all of it, the hyphen too.
+      const point = await p.q(`(() => { const r = document.querySelector('[data-github-code]').getBoundingClientRect(); return { x: r.left + 12, y: r.top + r.height / 2 }; })()`);
+      await t073Pointer(page, point);
+      assert.equal(await p.q('window.getSelection().toString()'), T089_CODE);
+      await focus(page, '[data-github-action]');
+
+      // GitHub approves: focus, which was in the section, moves to the account, and nothing is read.
+      signIn.release();
+      state = await t089Wait(p, 'the account', s => s.state === 'signed_in');
+      assert.deepEqual({ body: state.body, account: state.account, links: state.links, buttons: state.buttons, focus: state.focus,
+        outcome: state.outcome, sourceWords: state.sourceWords },
+      { body: [...T089_SIGNED_IN], account: `Signed in as @${T089_LOGIN}`, links: [t089Link(T089_APPS)], buttons: [['Sign out', null]],
+        focus: 'account', outcome: null, sourceWords: false });
+      await t089Said(p, `Signed in as @${T089_LOGIN}.`);
+      assert.deepEqual(signIn.requests.map(entry => [entry.endpoint, entry.authorized]), [['code', false], ['token', false], ['account', true]],
+        'one poll and one account lookup, and only the lookup carries the access');
+      assert.deepEqual(reads().slice(0, 2), quiet.slice(0, 2), 'signing in reads no pack');
+      names = await t089Accessibility(page);
+      assert.ok(names.buttons.includes('Sign out') && names.links.includes(`${T089_APPS} (opens in a new tab)`), JSON.stringify(names));
+      await aboutScreenshot(page, output, 'accounts-signed-in-1440x900-light');
+
+      // A signed-in Reload sends the access only to GitHub's API; raw downloads stay anonymous.
+      await t089Packs(canvas, p);
+      assert.deepEqual(await kept(), [[acme], acme, true], 'signing in kept the selection and its details');
+      assert.deepEqual([github.authorized('api'), github.authorized('raw')], [0, 0]);
+      await p.reload();
+      const signedIn = { api: github.authorized('api'), raw: github.authorized('raw'), bearing: github.bearing(signIn.secret) };
+      assert.ok(signedIn.api > 0 && signedIn.bearing === signedIn.api && signedIn.raw === 0, JSON.stringify(signedIn));
+      assert.equal((await t073SourcesState(p)).rows.find(row => row.key === acme)?.cells[2], 'Read - 2 packs');
+
+      // Sign out: focus moves to its outcome, which names GitHub's page for revoking; GitHub is sent nothing.
+      await t089Accounts(canvas, p);
+      const asked = signIn.requests.length;
+      await p.click('[data-github-action]');
+      state = await t089Wait(p, 'signed out', s => s.outcome?.kind === 'signed_out');
+      assert.deepEqual({ outcome: state.outcome, body: state.body, buttons: state.buttons, focus: state.focus, links: state.links },
+        { outcome: { kind: 'signed_out', title: T089_OUTCOMES.signed_out[0], text: T089_OUTCOMES.signed_out[1], role: 'group', named: 'Signed out' },
+          body: T089_WHY, buttons: [['Sign in', null]], focus: 'outcome', links: [t089Link(T089_APPS)] });
+      await t089Said(p, T089_SAID.signed_out[0]);
+      assert.equal(signIn.requests.length, asked, 'Sign out sends GitHub nothing, so it revokes nothing');
+      await aboutScreenshot(page, output, 'accounts-after-sign-out-1440x900-light');
+      await t089Packs(canvas, p);
+      assert.deepEqual(await kept(), [[acme], acme, true]);
+      await p.reload();
+      assert.equal(github.authorized('api'), signedIn.api, 'after Sign out, reads carry no access');
+
+      // The token and the device code reach nothing the page, the logs, the evidence, or the files hold.
+      const secrets = [signIn.secret, signIn.deviceCode];
+      stream.abort();
+      const changes = heard.text.split('event: github-session\ndata: {"refresh":true}\n\n').length - 1;
+      assert.ok(changes >= 3, `every panel hears each sign-in change, without a payload (${changes})`);
+      assert.equal([...heard.text.matchAll(/^data: (.*)$/gm)].every(match => match[1] === '{"refresh":true}'), true, 'no event carries a payload');
+      const pageLeaks = await t089PageLeaks(canvas, secrets, [heard.text]);
+      assert.deepEqual([pageLeaks.found, pageLeaks.answers > 0], [0, true], JSON.stringify(pageLeaks));
+      assert.deepEqual(canvas.foreign(), [], 'the page contacts no GitHub address itself');
+      output.json('089-accounts.json', { browser: canvas.driver.info.Browser, node: process.version, approved: T089_APPROVED,
+        requests: signIn.requests, reads: { before: quiet, after: reads() },
+        standIn: { ...signedIn, bearingEqualsAuthorized: signedIn.bearing === signedIn.api }, pageLeaks,
+        approvedScreenshots: Object.fromEntries(fs.readdirSync(T089_SCREENSHOTS).filter(name => name.endsWith('.png'))
+          .map(name => [name, sha256(fs.readFileSync(path.join(T089_SCREENSHOTS, name)))])) });
+      const disk = t089DiskLeaks([canvas.workspace.directory, output.directory], secrets);
+      assert.deepEqual([disk.found, disk.files > 0], [0, true], JSON.stringify(disk));
+    });
+  } finally {
+    signIn.restore();
+  }
+});
+
+test('089 Accounts: cancel, denial, expiry, an unreachable GitHub, an unusable answer, and Device Flow turned off each end signed out with their reason and Sign in again, a late approval never signs in, a result takes focus only from the section or from a control it removed, never after a click elsewhere or while Accounts is hidden, and without a Client ID GitHub is asked nothing', {
+  timeout: 480_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await context.test('with a Client ID', async () => {
+    const signIn = await t089SignIn();
+    try {
+      await runAboutCase(context, '089-outcomes', { githubSession: signIn.session }, async canvas => {
+        const { page, output } = canvas;
+        const p = await t073Driver(canvas);
+        await p.enter();
+        const packsView = await p.state();
+        await t089Accounts(canvas, p);
+        await t089Wait(p, 'the signed-out section', s => s.state === 'signed_out');
+        const reads = [canvas.packReads().length, canvas.discoveryReads().length];
+        /** One ending: signed out with its reason, Sign in again, and the session signed out. @param {keyof typeof T089_OUTCOMES} kind */
+        const ended = async kind => {
+          const state = await t089Wait(p, `the ${kind} outcome`, s => s.state === 'signed_out' && s.outcome?.kind === kind);
+          assert.deepEqual([state.outcome.title, state.outcome.text, state.outcome.named, state.outcome.role, state.buttons, state.body,
+            state.sourceWords], [...T089_OUTCOMES[kind], T089_OUTCOMES[kind][0], 'group', [['Sign in', null]], T089_WHY, false], kind);
+          assert.equal(signIn.session.read().state, 'signed_out', `${kind} leaves the session signed out`);
+          await t089Said(p, ...T089_SAID[kind]);
+          return state;
+        };
+        const settle = () => new Promise(resolve => setTimeout(resolve, 400));
+        /** Sign in by keyboard from the section's one button. */
+        const start = async () => { await focus(page, '[data-github-action]'); await key(page, 'Enter'); };
+
+        // Cancel while GitHub is asked for a code: focus stays on the button, Sign in again, and the late code never shows.
+        signIn.holdCode();
+        await start();
+        await t089Wait(p, 'the code request', s => s.state === 'requesting');
+        await key(page, 'Enter');
+        let state = await ended('cancelled');
+        assert.equal(state.focus, 'action', 'Cancel returns focus to Sign in, the same button');
+        signIn.releaseCode();
+        await settle();
+        assert.equal((await t089State(p)).outcome?.kind, 'cancelled', 'a code that arrives after Cancel never shows');
+
+        // Cancel while waiting: an approval on GitHub afterwards never signs in.
+        signIn.hold();
+        await key(page, 'Enter');
+        await t089Wait(p, 'the code', s => s.state === 'waiting');
+        await key(page, 'Enter');
+        await ended('cancelled');
+        signIn.release();
+        await settle();
+        assert.deepEqual([signIn.session.read().state, signIn.count('account')], ['signed_out', 0], 'no late approval is used');
+
+        // Declined on GitHub, with focus in the section: focus moves to the outcome.
+        signIn.answer = 'denied';
+        await key(page, 'Enter');
+        state = await ended('denied');
+        assert.equal(state.focus, 'outcome');
+
+        // The code expires at GitHub's stated time while focus is on the Accounts tab: the alert says so, and focus stays.
+        Object.assign(signIn, { answer: 'approve', expiresIn: 2 });
+        signIn.hold();
+        await start();
+        await t089Wait(p, 'the code', s => s.state === 'waiting');
+        await focus(page, '[data-settings-section="accounts"]');
+        state = await ended('expired');
+        assert.equal(state.focus, 'tab:accounts', 'a result that arrives while focus is outside the section never moves it');
+        await t089Reveal(p);
+        await aboutScreenshot(page, output, 'accounts-expired-1440x900-light');
+        signIn.release();
+        signIn.expiresIn = 900;
+
+        // A deliberate click elsewhere, on a place that takes no focus, leaves focus nowhere (no related target).
+        // The approval that follows is announced and never pulls focus back into the section.
+        signIn.hold();
+        await start();
+        await t089Wait(p, 'the code', s => s.state === 'waiting' && s.focus === 'action');
+        const blank = await p.q(`(() => {
+          const panel = document.querySelector('[data-accounts-panel]').getBoundingClientRect();
+          const section = document.querySelector('[data-github-signin]').getBoundingClientRect();
+          const x = Math.round((section.right + panel.right) / 2), y = Math.round(section.top + 20), hit = document.elementFromPoint(x, y);
+          return { x, y, hit: hit?.hasAttribute('data-accounts-panel') ? 'panel' : hit?.tagName ?? null };
+        })()`);
+        assert.equal(blank.hit, 'panel', 'the click lands on the panel beside the section, which takes no focus');
+        await t073Pointer(page, blank);
+        assert.equal((await t089State(p)).focus, 'body', 'the click blurs Cancel and focuses nothing');
+        signIn.release();
+        state = await t089Wait(p, 'signed in', s => s.state === 'signed_in');
+        await t089Said(p, `Signed in as @${T089_LOGIN}.`);
+        await settle();
+        assert.equal((await t089State(p)).focus, 'body', 'a result after a deliberate click elsewhere never takes focus back');
+        // A sign-out from another panel then neither: the section was left on purpose.
+        signIn.session.signOut();
+        state = await t089Wait(p, 'signed out elsewhere', s => s.outcome?.kind === 'signed_out');
+        await settle();
+        assert.equal((await t089State(p)).focus, 'body');
+
+        // The focused control itself goes with the change: the verification link, once GitHub approves. Its result
+        // takes focus rather than leave it on nothing.
+        signIn.hold();
+        await start();
+        await t089Wait(p, 'the code', s => s.state === 'waiting');
+        await key(page, 'Tab', 'Tab', { shift: true });
+        assert.equal((await t089State(p)).focus, 'device', 'Shift+Tab from Cancel reaches the verification link');
+        signIn.release();
+        state = await t089Wait(p, 'signed in', s => s.state === 'signed_in' && s.focus !== 'body');
+        assert.equal(state.focus, 'account', 'the removed link hands focus to the account');
+        // So does the revocation link when a sign-out from another panel removes it.
+        await key(page, 'Tab');
+        assert.equal((await t089State(p)).focus, 'revoke', 'Tab from the account reaches the revocation link');
+        signIn.session.signOut();
+        state = await t089Wait(p, 'signed out elsewhere', s => s.outcome?.kind === 'signed_out' && s.focus !== 'body');
+        assert.equal(state.focus, 'outcome', 'the removed link hands focus to the Signed out bar');
+
+        // A result while Accounts is hidden: the shell says it, focus stays in Packs, and Packs is as it was.
+        signIn.hold();
+        await start();
+        await t089Wait(p, 'the code', s => s.state === 'waiting');
+        await p.click('[data-settings-section="packs"]');
+        await packsSettled(page);
+        signIn.release();
+        await t089Said(p, `Signed in as @${T089_LOGIN}.`);
+        await settle();
+        state = await t089State(p);
+        assert.deepEqual([state.state, state.section, state.focus], [null, 'packs', 'tab:packs'], 'heard while Accounts is hidden, with focus kept');
+        assert.deepEqual(await p.state(), packsView, 'the Packs view is as it was');
+        await t089Accounts(canvas, p);
+        state = await t089Wait(p, 'signed in', s => s.state === 'signed_in');
+        assert.equal(state.focus, 'tab:accounts', 'returning shows the result and leaves focus on the tab');
+        await p.click('[data-github-action]');
+        await t089Wait(p, 'signed out', s => s.outcome?.kind === 'signed_out');
+
+        // GitHub cannot be reached, an answer cannot sign in, and Device Flow is turned off: each says so.
+        for (const [kind, change, shot] of /** @type {const} */ ([['unreachable', { code: 'unreachable' }, null],
+          ['failed', { code: 'ok', answer: 'scoped' }, 'accounts-failed-1440x900-light'],
+          ['unavailable', { code: 'unavailable', answer: 'approve' }, 'accounts-unavailable-1440x900-light']])) {
+          Object.assign(signIn, change);
+          await start();
+          state = await ended(kind);
+          assert.equal(state.focus, 'outcome', `${kind}: focus moves to the outcome`);
+          if (shot) { await t089Reveal(p); await aboutScreenshot(page, output, shot); }
+        }
+        assert.deepEqual([canvas.packReads().length, canvas.discoveryReads().length], reads, 'no ending and no sign-in reads a pack');
+        assert.equal(signIn.count('account'), 3, 'only the three approvals signed in');
+        output.json('089-outcomes.json', { requests: signIn.requests, reads });
+      });
+    } finally {
+      signIn.restore();
+    }
+  });
+  await context.test('without a Client ID', async () => {
+    const signIn = await t089SignIn({ clientId: null });
+    try {
+      await runAboutCase(context, '089-no-client-id', { githubSession: signIn.session }, async canvas => {
+        const { page, output } = canvas;
+        const p = await t073Driver(canvas);
+        await p.enter();
+        await t089Accounts(canvas, p);
+        await t089Wait(p, 'the signed-out section', s => s.state === 'signed_out');
+        await focus(page, '[data-github-action]');
+        await key(page, 'Enter');
+        const state = await t089Wait(p, 'unavailable', s => s.outcome?.kind === 'unavailable');
+        assert.deepEqual([state.outcome.title, state.outcome.text, state.focus, state.buttons], [...T089_OUTCOMES.unavailable, 'outcome', [['Sign in', null]]]);
+        await t089Said(p, ...T089_SAID.unavailable);
+        await aboutScreenshot(page, output, 'accounts-unavailable-no-client-id-1440x900-light');
+        // Sign in again says so again, and still asks GitHub nothing.
+        await p.q(`document.querySelector('[data-github-session-alert]').textContent = ''`);
+        await focus(page, '[data-github-action]');
+        await key(page, 'Enter');
+        await t089Said(p, ...T089_SAID.unavailable);
+        assert.equal((await t089State(p)).focus, 'outcome');
+        assert.deepEqual(signIn.requests, [], 'without a Client ID nothing is asked of GitHub');
+        await t089Packs(canvas, p);
+        await p.chooseSub('sources');
+        assert.equal((await t073SourcesState(p)).rows.length, 2, 'Sources and its reads stay usable');
+        assert.equal((await t089Pointer(p))?.text, T089_POINTER);
+      });
+    } finally {
+      signIn.restore();
+    }
+  });
+});
+
+/**
+ * Add a GitHub repository from Sources and wait for the refusal Add shows.
+ * @param {Awaited<ReturnType<typeof t073Driver>>} p @param {string} location @param {'refused' | 'reading'} [phase]
+ */
+async function t089Add(p, location, phase = 'refused') {
+  await p.click('[data-sources-add]');
+  await p.q(`(() => { const input = document.querySelector('[data-source-location]');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(location)});
+    input.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await p.click('[data-source-add-submit]');
+  return until(async () => { const value = await t073Add(p); return value.status?.phase === phase ? value : null; }, `the ${phase} addition`);
+}
+
+test('089 Accounts: a rate limit is named with the same text-only signed-out or signed-in guidance in Sources, Installed and Available, Add source, and the install and refresh dialog, nothing is retried, signing in neither clears nor repeats the refused read, and Accounts never mentions it', {
+  timeout: 600_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  const signIn = await t089SignIn();
+  /** @type {ReturnType<typeof offlineGitHub>} */
+  let github;
+  try {
+    await runAboutCase(context, '089-rate-limit', { githubSession: signIn.session, prepare: async workspace => {
+      github = await t089GitHub(workspace);
+      return github.restore;
+    } }, async canvas => {
+      const { page, output, workspace } = canvas;
+      const p = await t083Driver(canvas);
+      const rateBar = () => p.q(`document.querySelector('[data-pack-action-rate]')?.innerText.replace(/\\s+/g, ' ').trim() ?? null`);
+      const profileFile = path.join(workspace.root, '.dude', 'metadata', 'profile.md');
+      const sourcesFile = path.join(workspace.root, T073_SOURCES_FILE), saved = fs.readFileSync(sourcesFile);
+      await p.enter();
+      // GitHub answers the first Reload, anonymously, so Available lists the GitHub source's packs.
+      await p.chooseSub('available');
+      await p.reload();
+      assert.ok((await p.rows()).some(row => row[1] === 'rocket'), 'rocket is listed from acme/dude-packs');
+      assert.equal(github.authorized('api'), 0, 'signed out, no read carries access');
+
+      // Signed out, an install whose preview GitHub answered has its apply refused: Install failed, then the guidance.
+      await p.click('[data-pack-row^="pack:rocket@"]');
+      await p.open('install');
+      await p.phase('ready');
+      github.refuse('acme/dude-packs', 'rate');
+      let profile = fs.readFileSync(profileFile);
+      await p.click('[data-pack-action-primary]');
+      await p.phase('failed');
+      let dialog = await p.dialog();
+      assert.ok(dialog.body.startsWith('Install failed Nothing changed'), dialog.body);
+      assert.equal(await rateBar(), `${T089_RATE_TITLE} ${t089Rate(null, 'the read')}`);
+      assert.deepEqual(fs.readFileSync(profileFile), profile, 'the refused apply wrote nothing');
+      await aboutScreenshot(page, output, 'rate-signed-out-apply-1440x900-light');
+      await key(page, 'Escape');
+
+      // Signed out, the install preview's read is refused: the dialog names the limit and what to do instead.
+      await p.open('install');
+      await p.phase('blocked');
+      dialog = await p.dialog();
+      assert.deepEqual([dialog.reason, dialog.buttons, dialog.live], [t089RateReason(null), [['Close', false], ['Install', true]],
+        `Install is not available. ${t089RateReason(null)}`]);
+      assert.equal(await rateBar(), `${T089_RATE_TITLE} ${t089Rate(null, "this preview's read")}`);
+      await aboutScreenshot(page, output, 'rate-install-signed-out-1440x900-light');
+      await key(page, 'Escape');
+
+      // Reload, signed out: the lists and Sources mark the refused source and give the anonymous guidance, once.
+      const before = github.connections('acme/dude-packs');
+      await p.reload();
+      const refusedReads = github.connections('acme/dude-packs') - before;
+      const notice = await t084Coverage(p);
+      assert.deepEqual(notice, ['Installed: current · Catalog: partial (1 of 3 sources unavailable)',
+        'Some sources could not be read. Packs from them are not listed.', `acme/dude-packs - GitHub: Unavailable - ${t089RateReason(null)}`,
+        t089Rate(null), 'Packs from unavailable sources are not listed. Counts are known counts, not totals, and an empty result is not a confirmed empty list.']);
+      await aboutScreenshot(page, output, 'rate-available-signed-out-1440x900-light');
+      await p.chooseSub('installed');
+      assert.deepEqual(await t084Coverage(p), notice, 'Installed carries the same notice');
+      await p.chooseSub('sources');
+      let sources = await t073SourcesState(p);
+      assert.deepEqual(sources.rows.map(row => [row.cells[0], row.cells[2]]), [['Local library Local folder', 'Read - 18 packs'],
+        ['Bundle upstream GitHub', 'Read - 18 packs'], ['acme/dude-packs GitHub', `Unavailable - ${t089RateReason(null)}`]]);
+      assert.deepEqual(await t089Notes(p), { rate: `${T089_RATE_TITLE} ${t089Rate(null)}`, rejected: null });
+      assert.equal(await p.q(`Boolean(document.querySelector('[data-sources-rate-limit]')
+        .compareDocumentPosition(document.querySelector('[data-sources-accounts-note]')) & Node.DOCUMENT_POSITION_FOLLOWING)`), true,
+      'the refusal sits above the line about sign-in, which sits above the table');
+      await t084Reveal(p, `document.querySelector('[data-sources-rate-limit]')`);
+      await aboutScreenshot(page, output, 'rate-signed-out-1440x900-light');
+      await new Promise(resolve => setTimeout(resolve, 1_000));
+      assert.equal(github.connections('acme/dude-packs') - before, refusedReads, 'nothing was retried');
+
+      // Add source: the read of another GitHub repository is refused the same way, and nothing is saved.
+      github.publish('acme/extras', ['comet']);
+      github.refuse('acme/extras', 'rate');
+      let added = await t089Add(p, 'https://github.com/acme/extras');
+      assert.deepEqual([added.status.text, added.open, added.location, added.focus],
+        [`${T089_RATE_TITLE} ${t089Rate(null, 'the read')} Nothing was saved.`, true, 'https://github.com/acme/extras', 'status']);
+      assert.deepEqual(fs.readFileSync(sourcesFile), saved, 'nothing was saved');
+      await aboutScreenshot(page, output, 'rate-add-signed-out-1440x900-light');
+      await p.click('[data-source-add-cancel]');
+
+      // Sign in, reaching Accounts from Sources' line: Accounts says only what the session is, the refusal keeps the
+      // allowance it named, and nothing is read or retried.
+      const quiet = [canvas.packReads().length, canvas.discoveryReads().length, github.connections('acme/dude-packs')];
+      await p.click('[data-sources-accounts] > span');
+      await accountsSettled(page);
+      await p.click('[data-github-action]');
+      let state = await t089Wait(p, 'signed in', s => s.state === 'signed_in');
+      assert.deepEqual([state.body, state.sourceWords], [[...T089_SIGNED_IN], false], 'the signed-in words never mention the refused sources');
+      await t089Packs(canvas, p);
+      assert.deepEqual(await t089Notes(p), { rate: `${T089_RATE_TITLE} ${t089Rate(null)}`, rejected: null }, 'a sign-in rewords no refusal');
+      assert.equal((await t073SourcesState(p)).rows[2].cells[2], `Unavailable - ${t089RateReason(null)}`);
+      assert.deepEqual([canvas.packReads().length, canvas.discoveryReads().length, github.connections('acme/dude-packs')], quiet,
+        'signing in neither clears the refusal nor repeats the refused read');
+
+      // Reload, signed in and still refused: the account's shared allowance, in Sources, the lists, and Add source.
+      await p.reload();
+      sources = await t073SourcesState(p);
+      assert.equal(sources.rows[2].cells[2], `Unavailable - ${t089RateReason(T089_LOGIN)}`);
+      assert.deepEqual(await t089Notes(p), { rate: `${T089_RATE_TITLE} ${t089Rate(T089_LOGIN)}`, rejected: null });
+      assert.deepEqual([github.bearing(signIn.secret) > 0, github.authorized('raw')], [true, 0], 'the refused read carried the access, to the API only');
+      await t084Reveal(p, `document.querySelector('[data-sources-rate-limit]')`);
+      await aboutScreenshot(page, output, 'rate-signed-in-1440x900-light');
+      await t089Accounts(canvas, p);
+      state = await t089State(p);
+      assert.deepEqual([state.state, state.body, state.sourceWords], ['signed_in', [...T089_SIGNED_IN], false],
+        'Accounts says the same while the account\'s own read is refused');
+      await t089Packs(canvas, p);
+      added = await t089Add(p, 'https://github.com/acme/extras');
+      assert.equal(added.status.text, `${T089_RATE_TITLE} ${t089Rate(T089_LOGIN, 'the read')} Nothing was saved.`);
+      await p.click('[data-source-add-cancel]');
+      assert.deepEqual(fs.readFileSync(sourcesFile), saved);
+      await p.chooseSub('available');
+      assert.deepEqual((await t084Coverage(p))?.slice(2, 4), [`acme/dude-packs - GitHub: Unavailable - ${t089RateReason(T089_LOGIN)}`, t089Rate(T089_LOGIN)]);
+
+      // GitHub answers again, so the next Reload lists rocket; then its install preview, and its apply, are refused.
+      github.refuse('acme/dude-packs', null);
+      await p.reload();
+      github.refuse('acme/dude-packs', 'rate');
+      await p.click('[data-pack-row^="pack:rocket@"]');
+      await p.open('install');
+      await p.phase('blocked');
+      dialog = await p.dialog();
+      assert.deepEqual([dialog.reason, await rateBar()], [t089RateReason(T089_LOGIN), `${T089_RATE_TITLE} ${t089Rate(T089_LOGIN, "this preview's read")}`]);
+      await key(page, 'Escape');
+      github.refuse('acme/dude-packs', null);
+      await p.open('install');
+      await p.phase('ready');
+      github.refuse('acme/dude-packs', 'rate');
+      profile = fs.readFileSync(profileFile);
+      await p.click('[data-pack-action-primary]');
+      await p.phase('failed');
+      dialog = await p.dialog();
+      assert.ok(dialog.body.startsWith('Install failed Nothing changed'), dialog.body);
+      assert.equal(await rateBar(), `${T089_RATE_TITLE} ${t089Rate(T089_LOGIN, 'the read')}`);
+      assert.deepEqual(fs.readFileSync(profileFile), profile, 'the refused apply wrote nothing');
+      await aboutScreenshot(page, output, 'rate-install-apply-signed-in-1440x900-light');
+      await key(page, 'Escape');
+
+      // Installed while GitHub answers, rocket's refresh preview is then refused the same way.
+      github.refuse('acme/dude-packs', null);
+      await p.open('install');
+      await p.phase('ready');
+      await p.click('[data-pack-action-primary]');
+      await p.phase('success');
+      await p.click('[data-pack-action-primary]');
+      github.refuse('acme/dude-packs', 'rate');
+      await p.chooseSub('installed');
+      await p.click('[data-pack-row="pack:rocket"]');
+      await p.open('refresh');
+      await p.phase('blocked');
+      dialog = await p.dialog();
+      assert.deepEqual([dialog.reason, await rateBar()], [t089RateReason(T089_LOGIN), `${T089_RATE_TITLE} ${t089Rate(T089_LOGIN, "this preview's read")}`]);
+      await aboutScreenshot(page, output, 'rate-refresh-signed-in-1440x900-light');
+      await key(page, 'Escape');
+      assert.deepEqual([canvas.provider.read().requests.length, canvas.sends.length], [0, 0]);
+      output.json('089-rate-limit.json', { refusedReads, standIn: { api: github.authorized('api'), raw: github.authorized('raw'),
+        bearingEqualsAuthorized: github.bearing(signIn.secret) === github.authorized('api') } });
+    });
+  } finally {
+    signIn.restore();
+  }
+});
+
+test('089 Accounts: a rate limit names the allowance the server\'s read used, even while this panel has not yet heard that another panel signed in or out', {
+  timeout: 300_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  const signIn = await t089SignIn();
+  /** @type {ReturnType<typeof offlineGitHub>} */
+  let github;
+  try {
+    await runAboutCase(context, '089-rate-allowance', { githubSession: signIn.session, prepare: async workspace => {
+      github = await t089GitHub(workspace);
+      return github.restore;
+    } }, async canvas => {
+      const { page, workspace } = canvas;
+      // While `hold` is set, this panel's reads of the sign-in wait before it adopts them: another panel signed in or
+      // out, and this panel has not heard yet.
+      await page.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+        const original = window.fetch;
+        window.t089Behind = { hold: false, held: [] };
+        window.fetch = async (...args) => {
+          const response = await original(...args);
+          if (new URL(args[0], location.href).pathname === '/api/github-session' && !args[1]?.body && window.t089Behind.hold) {
+            await new Promise(resolve => window.t089Behind.held.push(resolve));
+          }
+          return response;
+        };
+      })()` });
+      const p = await t083Driver(canvas);
+      const rateBar = () => p.q(`document.querySelector('[data-pack-action-rate]')?.innerText.replace(/\\s+/g, ' ').trim() ?? null`);
+      const sourcesFile = path.join(workspace.root, T073_SOURCES_FILE), saved = fs.readFileSync(sourcesFile);
+      /** The shared sign-in changes as another panel's would, and this panel's read of it is held. @param {() => unknown} change @param {string} state */
+      const elsewhere = async (change, state) => {
+        await p.q(`window.t089Behind.hold = true`);
+        change();
+        await until(() => signIn.session.read().state === state, `the session ${state}`);
+        await until(() => p.q(`window.t089Behind.held.length > 0`), 'this panel\'s read of the change is held');
+      };
+      /** What this panel's Accounts shows, from Packs and back. */
+      const shown = async () => {
+        await t089Accounts(canvas, p);
+        const { state } = await t089State(p);
+        await t089Packs(canvas, p);
+        return state;
+      };
+      /** The refused source's row and Sources' note, and the same in Available's notice, from the last Reload. */
+      const refusals = async () => {
+        await p.chooseSub('available');
+        const available = (await t084Coverage(p))?.slice(2, 4);
+        await p.chooseSub('sources');
+        return { available, row: (await t073SourcesState(p)).rows[2].cells[2], note: (await t089Notes(p)).rate };
+      };
+      /** @param {string | null} login */
+      const reloadWords = login => ({ available: [`acme/dude-packs - GitHub: Unavailable - ${t089RateReason(login)}`, t089Rate(login)],
+        row: `Unavailable - ${t089RateReason(login)}`, note: `${T089_RATE_TITLE} ${t089Rate(login)}` });
+      await p.enter();
+      await p.chooseSub('available');
+      await p.reload();
+      assert.ok((await p.rows()).some(row => row[1] === 'rocket'), 'rocket is listed from acme/dude-packs');
+
+      // Signed in elsewhere: this panel still shows signed out, but the server reads with the account's allowance, so
+      // the preview, Reload and Add source refusals name it.
+      await elsewhere(() => signIn.session.start(), 'signed_in');
+      github.refuse('acme/dude-packs', 'rate');
+      const bearing = github.bearing(signIn.secret);
+      await p.click('[data-pack-row^="pack:rocket@"]');
+      await p.open('install');
+      await p.phase('blocked');
+      const preview = [(await p.dialog()).reason, await rateBar()];
+      await key(page, 'Escape');
+      await p.reload();
+      const behindSignIn = { preview, ...await refusals() };
+      github.publish('acme/extras', ['comet']);
+      github.refuse('acme/extras', 'rate');
+      behindSignIn.add = (await t089Add(p, 'https://github.com/acme/extras')).status.text;
+      await p.click('[data-source-add-cancel]');
+      behindSignIn.shown = await shown();
+      assert.deepEqual(behindSignIn, { preview: [t089RateReason(T089_LOGIN), `${T089_RATE_TITLE} ${t089Rate(T089_LOGIN, "this preview's read")}`],
+        ...reloadWords(T089_LOGIN), add: `${T089_RATE_TITLE} ${t089Rate(T089_LOGIN, 'the read')} Nothing was saved.`, shown: 'signed_out' },
+      'each refusal names the account the server read with, while this panel still shows signed out');
+      assert.ok(github.bearing(signIn.secret) > bearing, 'the refused reads carried the account\'s access');
+      // Hearing of the sign-in later rewords nothing.
+      await p.q(`window.t089Behind.hold = false; window.t089Behind.held.splice(0).forEach(resolve => resolve())`);
+      await t089Accounts(canvas, p);
+      await t089Wait(p, 'this panel hears of the sign-in', s => s.state === 'signed_in');
+      await t089Packs(canvas, p);
+      assert.equal((await t089Notes(p)).rate, `${T089_RATE_TITLE} ${t089Rate(T089_LOGIN)}`);
+
+      // Signed out elsewhere after a preview read with the access: this panel still shows signed in, but the server reads
+      // anonymously, so the apply and the next Reload name the anonymous allowance.
+      github.refuse('acme/dude-packs', null);
+      await p.reload();
+      await p.chooseSub('available');
+      await p.click('[data-pack-row^="pack:rocket@"]');
+      await p.open('install');
+      await p.phase('ready');
+      await elsewhere(() => signIn.session.signOut(), 'signed_out');
+      github.refuse('acme/dude-packs', 'rate');
+      const authorized = github.authorized('api');
+      await p.click('[data-pack-action-primary]');
+      await p.phase('failed');
+      const apply = await rateBar();
+      await key(page, 'Escape');
+      await p.reload();
+      const behindSignOut = { apply, ...await refusals(), shown: await shown() };
+      assert.deepEqual(behindSignOut, { apply: `${T089_RATE_TITLE} ${t089Rate(null, 'the read')}`, ...reloadWords(null), shown: 'signed_in' },
+        'each refusal names the anonymous allowance the server read with, while this panel still shows signed in');
+      assert.equal(github.authorized('api'), authorized, 'the refused reads after the sign-out carried no access');
+      assert.deepEqual(fs.readFileSync(sourcesFile), saved, 'nothing was saved');
+    });
+  } finally {
+    signIn.restore();
+  }
+});
+
+test('089 Accounts: a reload and a second panel share one pending code and its result, sign-out reaches every panel without taking focus, closing one keeps the other\'s sign-in, GitHub rejecting the access signs every panel out with Sources\' warning on the marked source, and Add source names a rejected or ended sign-in, with the next read anonymous', {
+  timeout: 480_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  const signIn = await t089SignIn();
+  /** @type {ReturnType<typeof offlineGitHub>} */
+  let github;
+  try {
+    await runAboutCase(context, '089-panels', { githubSession: signIn.session, prepare: async workspace => {
+      github = await t089GitHub(workspace);
+      return github.restore;
+    } }, async canvas => {
+      const { page, output, workspace } = canvas;
+      const p = await t073Driver(canvas);
+      const sourcesFile = path.join(workspace.root, T073_SOURCES_FILE), saved = fs.readFileSync(sourcesFile);
+      await p.enter();
+      await t089Accounts(canvas, p);
+      signIn.hold();
+      await p.click('[data-github-action]');
+      const waiting = await t089Wait(p, 'the code', s => s.state === 'waiting');
+      // A reload shows the same pending code, and asks GitHub for no other.
+      await p.enter();
+      await t089Accounts(canvas, p);
+      let state = await t089Wait(p, 'the same code after a reload', s => s.state === 'waiting');
+      assert.deepEqual([state.code, state.expiry.at, signIn.count('code')], [T089_CODE, waiting.expiry.at, 1]);
+      // A second panel of the session shows it too.
+      const second = await t089SecondPanel(canvas, signIn.session);
+      try {
+        await second.open();
+        let other = await t089Wait(second, 'the second panel\'s code', s => s.state === 'waiting');
+        assert.deepEqual([other.code, other.expiry.at, signIn.count('code')], [T089_CODE, waiting.expiry.at, 1], 'one attempt for the whole session');
+        // GitHub approves once: both panels name the account.
+        signIn.release();
+        other = await t089Wait(second, 'the second panel signed in', s => s.state === 'signed_in');
+        assert.equal(other.account, `Signed in as @${T089_LOGIN}`);
+        await page.send('Page.bringToFront');
+        state = await t089Wait(p, 'this panel signed in', s => s.state === 'signed_in');
+        assert.deepEqual([state.account, signIn.count('account')], [`Signed in as @${T089_LOGIN}`, 1]);
+        // Sign out in the second panel signs this one out too, without taking focus from Packs.
+        await t089Packs(canvas, p);
+        await p.chooseSub('sources');
+        await focus(page, '[aria-label="Reload packs"]');
+        await second.page.send('Page.bringToFront');
+        await clickSettingsControl(second.page, `document.querySelector('[data-github-action]')`);
+        await t089Wait(second, 'the second panel signed out', s => s.outcome?.kind === 'signed_out');
+        await page.send('Page.bringToFront');
+        await t089Said(p, T089_SAID.signed_out[0]);
+        state = await t089State(p);
+        assert.deepEqual([state.state, state.focus], [null, 'Reload packs'], 'a result from another panel never moves focus');
+        // Sign in again here; closing the second panel keeps this panel's sign-in.
+        await t089Accounts(canvas, p);
+        state = await t089Wait(p, 'signed out here', s => s.outcome?.kind === 'signed_out');
+        await p.click('[data-github-action]');
+        await t089Wait(p, 'signed in again', s => s.state === 'signed_in');
+        await second.page.send('Page.bringToFront');
+        await t089Wait(second, 'the second panel signed in again', s => s.state === 'signed_in');
+        assert.deepEqual(second.errors, []);
+      } finally {
+        await second.close();
+      }
+      await page.send('Page.bringToFront');
+      await new Promise(resolve => setTimeout(resolve, 300));
+      assert.equal(signIn.session.read().state, 'signed_in', 'closing one panel signs no other out');
+      assert.equal((await t089State(p)).state, 'signed_in');
+
+      // GitHub rejects the access during a Reload: every panel signs out and alerts, focus stays on Reload packs, the
+      // refused source is marked, and Sources warns about it; Accounts says only what happened to the session.
+      await t089Packs(canvas, p);
+      await p.chooseSub('sources');
+      github.refuse('acme/dude-packs', 'reject');
+      await focus(page, '[aria-label="Reload packs"]');
+      await p.reload();
+      await t089Said(p, ...T089_SAID.rejected);
+      state = await t089State(p);
+      assert.deepEqual([state.state, state.focus], [null, 'Reload packs']);
+      let sources = await t073SourcesState(p);
+      assert.equal(sources.rows[2].cells[2], `Unavailable - ${T089_REJECTED_REASON}`);
+      assert.deepEqual(await t089Notes(p), { rate: null, rejected: `${T089_REJECTED_TITLE} ${T089_REJECTED_NOTE}` },
+        'a rejected sign-in is no rate limit: Sources shows its own warning');
+      assert.equal(await p.q(`Boolean(document.querySelector('[data-sources-rejected]')
+        .compareDocumentPosition(document.querySelector('[data-sources-accounts-note]')) & Node.DOCUMENT_POSITION_FOLLOWING)`), true);
+      await t084Reveal(p, `document.querySelector('[data-sources-rejected]')`);
+      await aboutScreenshot(page, output, 'sources-rejected-1440x900-light');
+      await p.chooseSub('available');
+      assert.deepEqual((await t084Coverage(p))?.slice(2, 4), [`acme/dude-packs - GitHub: Unavailable - ${T089_REJECTED_REASON}`, T089_REJECTED_NOTE]);
+      await t089Accounts(canvas, p);
+      state = await t089Wait(p, 'rejected', s => s.outcome?.kind === 'rejected');
+      assert.deepEqual([state.outcome.title, state.outcome.text, state.sourceWords, state.focus],
+        [...T089_OUTCOMES.rejected, false, 'tab:accounts'], 'the rejected bar never mentions the marked sources');
+      await t089Reveal(p);
+      await aboutScreenshot(page, output, 'accounts-rejected-1440x900-light');
+      // The next Reload is anonymous: GitHub answers it, the mark and the warning go, and Accounts is unchanged.
+      const authorized = github.authorized('api');
+      await t089Packs(canvas, p);
+      await p.reload();
+      assert.equal(github.authorized('api'), authorized, 'a forgotten access is never sent again');
+      assert.equal(await t084Coverage(p), null);
+      await p.chooseSub('sources');
+      assert.equal((await t073SourcesState(p)).rows[2].cells[2], 'Read - 2 packs');
+      assert.deepEqual(await t089Notes(p), { rate: null, rejected: null });
+      await t089Accounts(canvas, p);
+      state = await t089State(p);
+      assert.deepEqual([state.state, state.outcome.text], ['signed_out', T089_OUTCOMES.rejected[1]]);
+
+      // Add source while signed in, and GitHub rejects the sign-in it reads with: nothing is saved, and the session signs out.
+      await p.click('[data-github-action]');
+      await t089Wait(p, 'signed in for Add', s => s.state === 'signed_in');
+      await t089Packs(canvas, p);
+      github.publish('acme/extras', ['comet']);
+      github.refuse('acme/extras', 'reject');
+      let added = await t089Add(p, 'https://github.com/acme/extras');
+      assert.equal(added.status.text, `${T089_REJECTED_TITLE} GitHub rejected the sign-in Dude was using, so Dude signed out. Nothing was saved. Add the source again to read it anonymously.`);
+      await t089Said(p, ...T089_SAID.rejected);
+      assert.equal(signIn.session.read().state, 'signed_out');
+      assert.deepEqual(fs.readFileSync(sourcesFile), saved, 'nothing was saved');
+      assert.deepEqual(await t089Notes(p), { rate: null, rejected: null }, 'Add source\'s own read marks no source row');
+      await aboutScreenshot(page, output, 'add-rejected-1440x900-light');
+      await p.click('[data-source-add-cancel]');
+
+      // Add source while signed in, and the sign-in ends in another panel while it reads: the read stops honestly.
+      await t089Accounts(canvas, p);
+      await p.click('[data-github-action]');
+      await t089Wait(p, 'signed in for the slow Add', s => s.state === 'signed_in');
+      await t089Packs(canvas, p);
+      github.hold('acme/slow');
+      await t089Add(p, 'https://github.com/acme/slow', 'reading');
+      await until(() => github.connections('acme/slow') > 0, 'the slow read reaches GitHub');
+      signIn.session.signOut();
+      added = await until(async () => { const value = await t073Add(p); return value.status?.phase === 'refused' ? value : null; }, 'the stopped addition');
+      assert.equal(added.status.text, 'The source was not added The read stopped because the GitHub sign-in ended while it ran. Nothing was saved.');
+      assert.deepEqual(fs.readFileSync(sourcesFile), saved, 'nothing was saved');
+      await aboutScreenshot(page, output, 'add-signed-out-1440x900-light');
+      await p.click('[data-source-add-cancel]');
+      output.json('089-panels.json', { codeRequests: signIn.count('code'), accountRequests: signIn.count('account'), authorized });
+    });
+  } finally {
+    signIn.restore();
+  }
+});
+
+/**
+ * Sources with its sign-in line, and any refusal note above it, at every 089
+ * size in both themes: nothing scrolls sideways or leaves the scroller, the
+ * words keep 14px and 4.5:1, and the period stays on the line with "Accounts".
+ * Screenshots take the approved mock's names. It ends back at 1440x900 light.
+ * @param {Awaited<ReturnType<typeof openAboutCanvas>>} canvas @param {Awaited<ReturnType<typeof t073Driver>>} p @param {string} state
+ */
+async function t089SourcesMatrix(canvas, p, state) {
+  const seen = [];
+  for (const theme of ['light', 'dark']) for (const size of T083_SIZES) {
+    const label = `${size.name}-${theme}`;
+    await aboutViewport(canvas.page, size, theme);
+    assert.deepEqual(await t084Wide(p), [], `${state} scrolls nothing sideways at ${label}`);
+    for (const selector of ['[data-sources-accounts-note]', '[data-sources-rate-limit]', '[data-sources-rejected]']) {
+      if (await p.q(`Boolean(document.querySelector(${JSON.stringify(selector)}))`)) {
+        assert.deepEqual(await t084Contrast(p, selector), [], `${state} ${selector} text contrast at ${label}`);
+      }
+    }
+    const fit = await p.q(`(() => {
+      const note = document.querySelector('[data-sources-accounts-note]'), link = note.querySelector('[data-sources-accounts]');
+      const scroller = document.querySelector('[data-sources-scroll]').getBoundingClientRect(), r = note.getBoundingClientRect();
+      const period = document.createRange();
+      period.setStart(note.lastChild, note.lastChild.textContent.length - 1);
+      period.setEnd(note.lastChild, note.lastChild.textContent.length);
+      const last = [...link.getClientRects()].at(-1), dot = period.getBoundingClientRect();
+      return { inside: r.left >= scroller.left - 0.5 && r.right <= scroller.right + 0.5, text: getComputedStyle(note).fontSize,
+        periodWithAccounts: Math.abs(dot.top - last.top) < 2 && dot.left >= last.right - 1 };
+    })()`);
+    assert.deepEqual(fit, { inside: true, text: '14px', periodWithAccounts: true }, `${state} line fits at ${label}`);
+    assert.equal(await t084Reveal(p, `document.querySelector('[data-sources-rate-limit], [data-sources-rejected]')
+      ?? document.querySelector('[data-sources-accounts-note]')`), true);
+    await settleBrowserWork(canvas.page);
+    seen.push({ label, fit, image: await aboutScreenshot(canvas.page, canvas.output, `${state}-${label}`) });
+  }
+  await aboutViewport(canvas.page, T083_SIZES[0], 'light');
+  return { state, seen };
+}
+
+/**
+ * The GitHub links or the pointer shown now: at every 089 size, their clickable
+ * height in each of five fonts; then in Dude light and dark at 1440x900, their
+ * text at rest, on hover, and pressed against its surface, with the focus ring's
+ * color; and in light the keyboard focus ring's place, reached by Tab from
+ * `from`. `pressedShot` names a screenshot taken in dark while one is pressed.
+ * @param {Awaited<ReturnType<typeof openAboutCanvas>>} canvas @param {Awaited<ReturnType<typeof t073Driver>>} p
+ * @param {string} name @param {string} selector the link's inner target @param {string} from @param {string | null} [pressedShot]
+ */
+async function t089LinkChecks(canvas, p, name, selector, from, pressedShot = null) {
+  const { page, output } = canvas;
+  const targets = [];
+  for (const size of T083_SIZES) {
+    await aboutViewport(page, size, 'light');
+    for (const entry of await t089WithFonts(page, selector, () => t089Targets(p, [selector]))) {
+      for (const result of entry.results) {
+        targets.push({ size: size.name, font: entry.font, rendered: entry.rendered, ...result });
+        assert.ok(result.lines > 0 && result.clickable >= 24, `${name} at ${size.name} in ${entry.font}: ${JSON.stringify(result)}`);
+      }
+    }
+  }
+  assert.ok(targets.length >= T083_SIZES.length * T089_FONTS.length, `${name} was measured everywhere`);
+  const looks = {};
+  for (const theme of /** @type {const} */ (['light', 'dark'])) {
+    await aboutViewport(page, T083_SIZES[0], theme);
+    looks[theme] = await t089LinkLooks(page, selector, theme === 'dark' && pressedShot ? () => aboutScreenshot(page, output, pressedShot) : null);
+    const { rest, hover, pressed } = looks[theme];
+    assert.ok([rest, hover, pressed].every(look => look.ratio >= 4.5 && look.ring >= 3), `${name} in ${theme}: ${JSON.stringify(looks[theme])}`);
+    assert.equal(pressed.color, hover.color, `${name} keeps the hover color while pressed in ${theme}`);
+  }
+  await aboutViewport(page, T083_SIZES[0], 'light');
+  const ring = await t089FocusRing(page, selector, from);
+  assert.ok(ring.focused && ring.withinTarget && ring.ring.height <= ring.text.height + 10,
+    `${name}'s focus ring outlines its text, not its padded target: ${JSON.stringify(ring)}`);
+  return { name, targets, looks, ring };
+}
+
+test('089 Accounts: every state and Sources\' line fit 180x450, 360x900, 768x900, 1440x900, and 200% in both themes and the app\'s appearances, with readable contrast at rest, hover, pressed, and focus, 24px link targets in five fonts, focus rings on the text, the approved header heights, its accessibility names, and the approved mock\'s geometry', {
+  timeout: 1_500_000,
+  concurrency: false,
+}, async context => {
+  if (!t010BrowserReady(context)) return;
+  await context.test('Dude light and dark', async () => {
+    const signIn = await t089SignIn();
+    /** @type {ReturnType<typeof offlineGitHub>} */
+    let github;
+    try {
+      await runAboutCase(context, '089-visual', { githubSession: signIn.session, prepare: async workspace => {
+        github = await t089GitHub(workspace);
+        return github.restore;
+      } }, async canvas => {
+        const { page } = canvas;
+        const p = await t073Driver(canvas);
+        await Promise.all([page.send('DOM.enable'), page.send('CSS.enable')]);
+        await p.enter();
+        await t089Accounts(canvas, p);
+        await t089Wait(p, 'signed out', s => s.state === 'signed_out');
+        // Four section tabs make the header taller only where they no longer fit beside the title (the approved trade-off).
+        const headers = {};
+        for (const size of T083_SIZES) {
+          await aboutViewport(page, size, 'light');
+          headers[size.name] = (await t089Fit(p)).header;
+        }
+        await aboutViewport(page, T083_SIZES[0], 'light');
+        assert.deepEqual(headers, { '1440x900': 37, '768x900': 37, '360x900': 73, '180x450': 165, '200pct-1440x900': 37 },
+          'one row beside Settings from 768x900 and at 200%, a second row at 360x900, and four rows at 180x450');
+        const results = [await t089Matrix(canvas, p, 'accounts-signed-out')];
+        signIn.hold();
+        await p.click('[data-github-action]');
+        await t089Wait(p, 'the code', s => s.state === 'waiting');
+        results.push(await t089Matrix(canvas, p, 'accounts-waiting'));
+        const links = [await t089LinkChecks(canvas, p, 'the verification link', '[data-github-device] > span', '[data-settings-section="accounts"]',
+          'accounts-pressed-waiting-1440x900-dark')];
+        signIn.release();
+        await t089Wait(p, 'signed in', s => s.state === 'signed_in');
+        results.push(await t089Matrix(canvas, p, 'accounts-signed-in'));
+        links.push(await t089LinkChecks(canvas, p, 'the revocation link', '[data-github-revoke] > span', '[data-settings-section="accounts"]'));
+        await p.click('[data-github-action]');
+        await t089Wait(p, 'signed out', s => s.outcome?.kind === 'signed_out');
+        results.push(await t089Matrix(canvas, p, 'accounts-after-sign-out'));
+        links.push(await t089LinkChecks(canvas, p, 'the Signed out bar\'s revocation link', '[data-github-revoke] > span',
+          '[data-settings-section="accounts"]'));
+        // Keyboard: from the Accounts tab, Tab reaches the revocation link and Sign in, each showing keyboard focus.
+        await focus(page, '[data-settings-section="accounts"]');
+        /** @type {Array<{ name: string, visible: boolean } | null>} */
+        const stops = [];
+        for (let step = 0; step < 4 && !stops.some(stop => stop?.name === 'Sign in'); step += 1) {
+          await key(page, 'Tab');
+          stops.push(await p.q(`(() => { const at = document.activeElement;
+            return at.closest('[data-github-signin]') ? { name: at.getAttribute('aria-label') ?? at.textContent.trim(),
+              visible: at.matches(':focus-visible') || at.hasAttribute('data-fui-focus-visible') } : null; })()`));
+        }
+        assert.deepEqual(stops.map(stop => stop?.name), [`${T089_APPS} (opens in a new tab)`, 'Sign in'], JSON.stringify(stops));
+        assert.equal(stops.every(stop => stop?.visible), true, JSON.stringify(stops));
+
+        // Sources' line, alone and under a refusal, at every size, and its Settings > Accounts target.
+        await t089Packs(canvas, p);
+        await p.chooseSub('sources');
+        results.push(await t089SourcesMatrix(canvas, p, 'sources-pointer'));
+        links.push(await t089LinkChecks(canvas, p, 'Sources\' Settings > Accounts', '[data-sources-accounts] > span', '[data-sources-add]'));
+        const names = await t089Accessibility(page);
+        assert.ok(names.buttons.includes('Settings > Accounts'), JSON.stringify(names.buttons));
+        github.refuse('acme/dude-packs', 'rate');
+        await p.reload();
+        results.push(await t089SourcesMatrix(canvas, p, 'rate-signed-out'));
+        github.refuse('acme/dude-packs', null);
+        canvas.output.json('089-visual.json', { browser: canvas.driver.info.Browser, node: process.version, approved: T089_APPROVED,
+          reflow: 'Effective-viewport reflow: 200% is half of 1440x900 at device scale 2. Not native browser zoom.',
+          headers, results, links, stops });
+      });
+    } finally {
+      signIn.restore();
+    }
+  });
+  await context.test('the app\'s appearance', async () => {
+    const signIn = await t089SignIn();
+    storeAppThemeChoice(true);
+    try {
+      await runAboutCase(context, '089-app-theme', { githubSession: signIn.session }, async canvas => {
+        const { page } = canvas;
+        const p = await t073Driver(canvas);
+        await p.enter();
+        await t089Accounts(canvas, p);
+        signIn.hold();
+        await p.click('[data-github-action]');
+        await t089Wait(p, 'the code', s => s.state === 'waiting');
+        const seen = [];
+        /** Text and the shown link at rest, hover, and pressed, with the ring, in both app looks. @param {string} state @param {string} selector */
+        const measure = async (state, selector) => {
+          for (const host of /** @type {const} */ (['app-dark', 'app-light'])) {
+            await setAppThemeHost(page, host);
+            assert.equal(await p.q(`document.documentElement.getAttribute('data-dude-follow-app-theme')`), 'true');
+            const text = await t089TextContrast(page, selector.startsWith('[data-sources') ? '[data-sources-accounts-note]' : '[data-github-signin]');
+            assert.deepEqual([text.count > 1, text.failures], [true, []], `${state} contrast in ${host}`);
+            if (state === 'accounts-waiting' && host === 'app-dark') {
+              await t089Reveal(p);
+              await aboutScreenshot(page, canvas.output, 'accounts-waiting-1440x900-app-dark');
+            }
+            const looks = await t089LinkLooks(page, selector);
+            assert.ok([looks.rest, looks.hover, looks.pressed].every(look => look.ratio >= 4.5 && look.ring >= 3), `${state} link in ${host}: ${JSON.stringify(looks)}`);
+            assert.equal(looks.pressed.color, looks.hover.color, `${state} keeps the hover color while pressed in ${host}`);
+            seen.push({ state, host, text, looks });
+          }
+        };
+        await measure('accounts-waiting', '[data-github-device] > span');
+        signIn.release();
+        await t089Wait(p, 'signed in', s => s.state === 'signed_in');
+        await measure('accounts-signed-in', '[data-github-revoke] > span');
+        await p.click('[data-github-action]');
+        await t089Wait(p, 'signed out', s => s.outcome?.kind === 'signed_out');
+        await measure('accounts-after-sign-out', '[data-github-revoke] > span');
+        await t089Packs(canvas, p);
+        await p.chooseSub('sources');
+        await measure('sources-pointer', '[data-sources-accounts] > span');
+        canvas.output.json('089-app-theme.json', { browser: canvas.driver.info.Browser, seen });
+      });
+    } finally {
+      storeAppThemeChoice(null);
+      signIn.restore();
+    }
+  });
+  // The rendered Accounts section and Sources' line against the exact approved mock, in the same browser at the
+  // same sizes. As in the 074 and 075 comparisons, both surfaces hide their scrollbars, so each part's own geometry is
+  // compared: in Accounts relative to the section (its place in the panel, heading, outcome bar, body lines, code,
+  // and button), in Sources relative to the line (its place, its target, the refusal note above it, and the table
+  // below it), with the header's height. Session data (the login, the code's expiry time) is this run's own, so the
+  // states that show it are compared at 1440x900 only.
+  await context.test('the approved mock', async () => {
+    assert.equal(approvedLfDesignSha256(fs.readFileSync(path.join(ROOT, T089_APPROVED))), T089_APPROVED_SHA256,
+      'the comparison uses the exact approved round-4 mock');
+    const signIn = await t089SignIn();
+    /** @type {ReturnType<typeof offlineGitHub>} */
+    let github;
+    try {
+      await runAboutCase(context, '089-mock', { githubSession: signIn.session, prepare: async workspace => {
+        github = await t089GitHub(workspace);
+        return github.restore;
+      } }, async canvas => {
+        const { page, output } = canvas;
+        const p = await t073Driver(canvas);
+        const size = (/** @type {string} */ name) => /** @type {typeof T083_SIZES[number]} */ (T083_SIZES.find(entry => entry.name === name));
+        const [wide, narrow, narrowest] = [size('1440x900'), size('360x900'), size('180x450')];
+        await page.send('Emulation.setScrollbarsHidden', { hidden: true });
+        await p.enter();
+        /** Reload packs with acme/dude-packs refused, or read again. @param {'rate' | 'reject' | null} refusal */
+        const reloadWith = async refusal => {
+          github.refuse('acme/dude-packs', refusal);
+          await p.reload();
+        };
+        await t089Accounts(canvas, p);
+        await t089Wait(p, 'signed out', s => s.state === 'signed_out' && !s.outcome);
+        const product = [...await t089Measure(canvas, p, { state: 'signed-out' }, [wide, narrow, narrowest])];
+        await t089Packs(canvas, p);
+        await p.chooseSub('sources');
+        product.push(...await t089Measure(canvas, p, { state: 'signed-out', where: 'sources' }, [wide, narrow, narrowest]));
+        await reloadWith('rate');
+        product.push(...await t089Measure(canvas, p, { state: 'rate-signed-out', where: 'sources' }, [wide, narrow]));
+        await reloadWith(null);
+        await t089Accounts(canvas, p);
+        signIn.hold();
+        await p.click('[data-github-action]');
+        await t089Wait(p, 'the code', s => s.state === 'waiting');
+        product.push(...await t089Measure(canvas, p, { state: 'waiting' }, [wide]));
+        signIn.release();
+        await t089Wait(p, 'signed in', s => s.state === 'signed_in');
+        product.push(...await t089Measure(canvas, p, { state: 'signed-in' }, [wide]));
+        await t089Packs(canvas, p);
+        await reloadWith('rate');
+        product.push(...await t089Measure(canvas, p, { state: 'rate-signed-in', where: 'sources' }, [wide]));
+        await reloadWith(null);
+        await t089Accounts(canvas, p);
+        await p.click('[data-github-action]');
+        await t089Wait(p, 'signed out', s => s.outcome?.kind === 'signed_out');
+        product.push(...await t089Measure(canvas, p, { state: 'after-sign-out' }, [wide, narrow, narrowest]));
+        Object.assign(signIn, { expiresIn: 2 });
+        signIn.hold();
+        await p.click('[data-github-action]');
+        await t089Wait(p, 'expired', s => s.outcome?.kind === 'expired');
+        signIn.release();
+        Object.assign(signIn, { expiresIn: 900 });
+        product.push(...await t089Measure(canvas, p, { state: 'expired' }, [wide, narrow]));
+        Object.assign(signIn, { code: 'unavailable' });
+        await p.click('[data-github-action]');
+        await t089Wait(p, 'unavailable', s => s.outcome?.kind === 'unavailable');
+        product.push(...await t089Measure(canvas, p, { state: 'unavailable' }, [wide, narrow, narrowest]));
+        Object.assign(signIn, { code: 'ok', answer: 'scoped' });
+        await p.click('[data-github-action]');
+        await t089Wait(p, 'failed', s => s.outcome?.kind === 'failed');
+        product.push(...await t089Measure(canvas, p, { state: 'failed' }, [wide]));
+        Object.assign(signIn, { answer: 'approve' });
+        await p.click('[data-github-action]');
+        await t089Wait(p, 'signed in again', s => s.state === 'signed_in');
+        await t089Packs(canvas, p);
+        await reloadWith('reject');
+        await until(async () => (await t089Notes(p)).rejected !== null, 'Sources\' rejected warning');
+        product.push(...await t089Measure(canvas, p, { state: 'rejected', where: 'sources' }, [wide]));
+        await t089Accounts(canvas, p);
+        await t089Wait(p, 'rejected', s => s.outcome?.kind === 'rejected');
+        product.push(...await t089Measure(canvas, p, { state: 'rejected' }, [wide, narrow]));
+        const comparisons = [];
+        for (const entry of product) {
+          const mock = await t089Mock(canvas, { state: entry.state, where: entry.where }, entry.size);
+          comparisons.push({ state: entry.state, where: entry.where, size: entry.size.name, delta: t089Delta(entry.geometry, mock.geometry),
+            product: entry.geometry, approved: mock.geometry, productImage: entry.image, mockImage: mock.image });
+        }
+        const tolerance = 1;
+        const offenders = comparisons.flatMap(entry => Object.entries(entry.delta).filter(([, value]) => Math.abs(value) > tolerance)
+          .map(([name, value]) => ({ state: entry.state, where: entry.where, size: entry.size, name, value })));
+        output.json('089-mock-comparison.json', { browser: canvas.driver.info.Browser, node: process.version, approved: T089_APPROVED,
+          scrollbars: 'Emulation.setScrollbarsHidden on both surfaces.', tolerance, comparisons, offenders });
+        assert.deepEqual(offenders, [], 'Accounts and Sources\' line follow the approved mock\'s geometry');
+      });
+    } finally {
+      signIn.restore();
+    }
+  });
+});
+
+// 089 cases end.
+
+// ---------------------------------------------------------------------------
 // 073 Add/import (T005): the closed import request, its Needs you permission, and
 // its result, through the production provider, HTTP route, and bundle. The
 // installed Dude owner is a stand-in: it publishes the literal permission and
@@ -19200,7 +21095,7 @@ const T005_REFUSALS = Object.freeze([
   ['file URL', 'file:///C:/Users/you/agent-kit', 'Enter the local path itself, without file://.'],
   ['http', 'http://github.com/example-org/agent-kit/blob/main/agents/security-reviewer.agent.md', 'Use an https:// URL. Canvas accepts public GitHub URLs only.'],
   ['host', 'https://gitlab.com/example-org/agent-kit/-/blob/main/skills/review-checklist/SKILL.md', 'Use a github.com or raw.githubusercontent.com URL.'],
-  ['credentials', 'https://you@github.com/example-org/agent-kit/tree/main/kit', 'Remove the user name or password from the URL. Canvas never sends credentials.'],
+  ['credentials', 'https://you@github.com/example-org/agent-kit/tree/main/kit', 'Remove the user name or password from the URL. Dude never sends a user name or password taken from a source address.'],
   ['explicit :443', 'https://github.com:443/example-org/agent-kit/tree/main/kit', 'Remove the port number from the URL.'],
   ['query', 'https://github.com/example-org/agent-kit/tree/main/kit?tab=readme-ov-file', 'Remove the query, the part that starts with ?.'],
   ['fragment', 'https://github.com/example-org/agent-kit/blob/main/skills/review-checklist/SKILL.md#L12', 'Remove the fragment, the part that starts with #.'],
@@ -19245,7 +21140,7 @@ test('073 Add/import: the view, one labeled Source field, every refusal with its
     assert.equal(view.heading, 'Import an agent or skill');
     assert.equal(view.intro, 'Imported agents and skills become project files named dude-local-* in .github/agents and .github/skills. They belong to this project, appear in Installed, and are not packs. This tab adds no packs: packs are added from Available.');
     assert.deepEqual([view.label, view.inputs, view.placeholder], ['Source', 1, 'Local path or GitHub URL']);
-    assert.equal(view.described, 'One local file or directory path, or a public GitHub file, directory, or raw file URL. Canvas never asks for credentials.');
+    assert.equal(view.described, 'One local file or directory path, or a public GitHub file, directory, or raw file URL. Imports read GitHub anonymously, even while you are signed in.');
     assert.deepEqual(view.forms, ['Local file or directory', '<path to the file or directory>', 'GitHub file', 'https://github.com/<owner>/<repo>/blob/<ref>/<file>',
       'GitHub directory', 'https://github.com/<owner>/<repo>/tree/<ref>/<directory>', 'Raw GitHub file', 'https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<file>']);
     assert.deepEqual([view.action, view.actionNote], ['Request import', 'Dude previews the import and asks for your permission in Needs you before changing any file.']);
@@ -21758,7 +23653,7 @@ async function t085SwitchTree(page) {
     switch: node ? { name: node.name?.value, description: node.description?.value, checked: property('checked'),
       disabled: property('disabled') ?? false, focusable: property('focusable') ?? false } : null,
     panels: live.filter(entry => entry.role?.value === 'tabpanel').map(entry => entry.name?.value),
-    sections: live.filter(entry => entry.role?.value === 'tab' && ['Packs', 'Appearance', 'About'].includes(entry.name?.value))
+    sections: live.filter(entry => entry.role?.value === 'tab' && ['Packs', 'Accounts', 'Appearance', 'About'].includes(entry.name?.value))
       .map(entry => [entry.name.value, entry.properties?.find(p => p.name === 'selected')?.value.value === true]),
   };
 }
@@ -21958,7 +23853,7 @@ test('085 App theme: off by default, one switch action saves and applies the cho
       assert.equal(await t085Background(page), '#292929', 'off by default: Fluent dark, not the app');
       assert.equal(fs.existsSync(PREFERENCE_FILE), false, 'opening Canvas saves nothing');
 
-      // Settings: Packs | Appearance | About. Entering Appearance reads the choice and nothing about packs.
+      // Settings: Packs | Accounts | Appearance | About. Entering Appearance reads the choice and nothing about packs.
       await clickSettingsControl(page, `document.querySelector('#dude-tab-settings')`);
       await packsSettled(page);
       const before = quiet();
@@ -21967,7 +23862,7 @@ test('085 App theme: off by default, one switch action saves and applies the cho
       await until(() => route.reads().length > readsBefore, 'Appearance entry reads the saved choice');
       const sections = await evaluate(page, `[...document.querySelectorAll('[role="tablist"][aria-label="Settings sections"] [role="tab"]')]
         .map(node => [node.querySelector('.fui-Tab__content').textContent, node.getAttribute('aria-selected')])`);
-      assert.deepEqual(sections, [['Packs', 'false'], ['Appearance', 'true'], ['About', 'false']]);
+      assert.deepEqual(sections, [['Packs', 'false'], ['Accounts', 'false'], ['Appearance', 'true'], ['About', 'false']]);
       assert.deepEqual(await appearanceSurface(page), {
         shown: true, checked: false, ariaDisabled: null, disabled: false, role: 'switch', label: APP_THEME_LABEL, hint: APP_THEME_HINT,
         pending: null, message: null, note: null, status: '', alert: '', saidSaved: false, footer: APP_THEME_FOOTER, toolbar: [],
@@ -21975,7 +23870,7 @@ test('085 App theme: off by default, one switch action saves and applies the cho
       }, 'off, with no Reload packs and the Appearance footer');
       const tree = await t085SwitchTree(page);
       assert.deepEqual(tree.switch, { name: APP_THEME_LABEL, description: APP_THEME_HINT, checked: 'false', disabled: false, focusable: true });
-      assert.deepEqual(tree.sections, [['Packs', false], ['Appearance', true], ['About', false]]);
+      assert.deepEqual(tree.sections, [['Packs', false], ['Accounts', false], ['Appearance', true], ['About', false]]);
       assert.ok(tree.panels.includes('Appearance'), 'the Appearance tabpanel is named by its tab');
       await shot('off-appearance-1440x900-dark');
       // Off keeps today's look, whatever the app supplies: no rule after the rail or the title, as before 085.
@@ -22646,13 +24541,18 @@ function t085GeometryDelta(product, mock) {
   return delta;
 }
 
-test('085 App theme: the three-section header and the switch fit every size and 200% with the 479px and 300px rules, as approved', {
+// 089 round 3 adds Accounts to 085's approved header (Packs | Accounts | Appearance | About), so the header row is
+// compared with the exact approved 089 mock, which is 085's file with that tab added; its Appearance section and
+// switch are 085's, unchanged.
+test('085 App theme: the four-section header and the switch fit every size and 200% with the 479px and 300px rules, as approved', {
   timeout: 600_000,
   concurrency: false,
 }, async context => {
   if (!t010BrowserReady(context)) return;
   assert.equal(approvedLfDesignSha256(fs.readFileSync(path.join(ROOT, APP_THEME_APPROVED))), APP_THEME_APPROVED_SHA256,
-    'the comparison uses the exact approved 085 mock');
+    'the 085 mock the 089 mock is built on is unchanged');
+  assert.equal(approvedLfDesignSha256(fs.readFileSync(path.join(ROOT, T089_APPROVED))), T089_APPROVED_SHA256,
+    'the comparison uses the exact approved round-4 089 mock');
   storeAppThemeChoice(null);
   try {
     await runAboutCase(context, '085-app-theme-geometry', {}, async canvas => {
@@ -22675,7 +24575,7 @@ test('085 App theme: the three-section header and the switch fit every size and 
           assert.equal(geometry.viewport.documentWidth, size.width, `no sideways page scroll at ${label}`);
           assert.ok(geometry.panelScroll.width <= geometry.panelScroll.client,
             `the panel never scrolls sideways at ${label}: ${JSON.stringify({ scroll: geometry.panelScroll, wide: geometry.wide, box: geometry.panelBox })}`);
-          assert.deepEqual(geometry.tabs.map(tab => tab.label), ['Packs', 'Appearance', 'About']);
+          assert.deepEqual(geometry.tabs.map(tab => tab.label), ['Packs', 'Accounts', 'Appearance', 'About']);
           for (const tab of geometry.tabs) {
             assert.ok(tab.hit && tab.whole && tab.box.width >= 24 && tab.box.height >= 24 && tab.box.right <= size.width + 0.5,
               `${label}: ${JSON.stringify(tab)}`);
@@ -22700,19 +24600,19 @@ test('085 App theme: the three-section header and the switch fit every size and 
           above: geometry.label.bottom <= geometry.track.y + 0.5, whole: geometry.tabs.every(tab => tab.whole && tab.hit),
           rows: new Set(geometry.tabs.map(tab => tab.box.y)).size, documentWidth: geometry.viewport.documentWidth };
         transitions.push(entry);
-        assert.deepEqual(entry.icons, [icons, icons, icons], `icons at ${content}px of content`);
+        assert.deepEqual(entry.icons, [icons, icons, icons, icons], `icons at ${content}px of content`);
         assert.equal(entry.above, above, `label position at ${content}px of content`);
         assert.ok(entry.whole && entry.documentWidth === entry.width, JSON.stringify(entry));
       }
-      // The approved mock at the same sizes and states.
-      const approvedUrl = pathToFileURL(path.join(ROOT, APP_THEME_APPROVED)).href;
+      // The approved mock at the same sizes and states: 089 round 4's, with the four-section header.
+      const approvedUrl = pathToFileURL(path.join(ROOT, T089_APPROVED)).href;
       const comparisons = [];
       for (const entry of product) {
         await aboutViewport(page, entry.size, entry.theme, false);
         await page.send('Page.navigate', { url: `${approvedUrl}?theme=${entry.theme}&section=appearance&appearance=${entry.mode}&host=${entry.host}` });
         await until(() => evaluate(page, `Boolean(document.querySelector('#follow-app-theme'))
           && !document.querySelector('#section-appearance').hidden
-          && document.querySelector('#follow-app-theme').checked === ${entry.mode === 'on'}`), 'approved 085 mock on Appearance');
+          && document.querySelector('#follow-app-theme').checked === ${entry.mode === 'on'}`), 'approved 089 mock on Appearance');
         await settleAboutAnimations(page);
         const mock = await t085Geometry(page, T085_GEOMETRY.mock);
         comparisons.push({ mode: entry.mode, theme: entry.theme, size: entry.size.name, delta: t085GeometryDelta(entry.geometry, mock),
@@ -22725,7 +24625,7 @@ test('085 App theme: the three-section header and the switch fit every size and 
       output.json('geometry-result.json', { browser: canvas.driver.info.Browser, node: process.version,
         reflow: 'Effective-viewport reflow: 200% halves the CSS viewport at device scale 2. Not native browser zoom.',
         product, rail, transitions, comparisons, offenders, tolerance });
-      assert.deepEqual(offenders, [], 'the header row and the switch follow the approved 085 mock');
+      assert.deepEqual(offenders, [], 'the four-section header row and the switch follow the approved mock');
       // The faint rules after the rail and after the title: as approved while following, where the rail shares
       // the page's background. Off keeps the product's look from before 085, which never painted them (the
       // mock's off states draw them; that difference is inherited and outside the approved header).

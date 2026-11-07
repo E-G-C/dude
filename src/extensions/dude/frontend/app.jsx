@@ -16,6 +16,7 @@ import { loadReviewEngine, ReviewHistory, ReviewWorkspace } from './review.jsx';
 import { importPermission, requestKey, useCanvasData } from './use-canvas-data.js';
 import { Settings } from './settings.jsx';
 import { catalogCoverageText } from './pack-sources.jsx';
+import { githubSessionSaid } from './accounts.jsx';
 import { aboutFooter } from './about.jsx';
 import { Handoff, NeedsUpdates, UpdateDialog } from './bundle-upgrade.jsx';
 
@@ -679,10 +680,16 @@ function App() {
   // About's installation read for the Settings footer; and Later's announcement in Needs you.
   const [updateRequest, setUpdateRequest] = useState(null), [aboutRead, setAboutRead] = useState(null);
   const [laterSaid, setLaterSaid] = useState('');
+  // 089: what happens to the session's GitHub sign-in, announced here, outside
+  // Settings > Accounts, so it is heard from any view, Accounts hidden or not: a
+  // polite status, or an alert for an outcome that needs attention. It never moves focus.
+  const [githubSaid, setGithubSaid] = useState({ status: '', alert: '' });
+  const githubSeen = useRef({ view: null, acted: 0 }), githubTimer = useRef(null);
   const needsPanel = useRef(null), updateRequests = useRef(0);
   const settingsActive = tab === 'settings' && !reviewActive && !history;
   const aboutActive = settingsActive && settingsSection === 'about';
   const appearanceActive = settingsActive && settingsSection === 'appearance';
+  const accountsActive = settingsActive && settingsSection === 'accounts';
   const importActive = settingsActive && settingsSection === 'packs' && packsSub === 'import';
   const data = useCanvasData(selection, { packsActive: settingsActive || Boolean(settingsReturn) });
   const root = useRef(null), scroll = useRef(0), main = useRef(null), focusNext = useRef(null), opening = useRef(null);
@@ -690,6 +697,17 @@ function App() {
   const search = useRef(null), selector = useRef(null), results = useRef(null), position = useRef(null);
   const finderDismissed = useRef(false), focusResults = useRef(false), resultsId = useId();
   latestData.current = data;
+  useEffect(() => {
+    const seen = githubSeen.current;
+    githubSeen.current = { view: data.githubSession ?? seen.view, acted: data.githubActed };
+    const said = githubSessionSaid(seen.view, data.githubSession, seen.acted !== data.githubActed);
+    if (!said) return;
+    // Only the latest words stay in either region, so a stale one is never read again.
+    clearTimeout(githubTimer.current);
+    setGithubSaid({ status: '', alert: '' });
+    githubTimer.current = setTimeout(() => setGithubSaid(said.alert ? { status: '', alert: said.text } : { status: said.text, alert: '' }), 30);
+  }, [data.githubSession, data.githubActed]);
+  useEffect(() => () => clearTimeout(githubTimer.current), []);
   const rows = rowsFor(data);
   const selectedRow = rows.find(row => sameContext(row.context, selection));
   const displayedRequest = tab === 'needs' && !reviewActive && !history
@@ -1001,8 +1019,10 @@ function App() {
   // The Catalog word is honest about a read that was partial or never made.
   const catalogWord = catalogCoverageText(data.packs);
   // Add/import reads no pack, so its footer makes no installed or catalog claim.
-  // Appearance is one choice for this user on this computer, never a pack or project fact.
+  // Appearance is one choice for this user on this computer, never a pack or project fact;
+  // Accounts is the session's GitHub sign-in (089), never a pack or project fact either.
   const settingsStatus = aboutActive ? aboutFooter(aboutRead) : appearanceActive ? 'Appearance · This computer, all projects'
+    : accountsActive ? 'Accounts · This session'
     : importActive
     ? `Add/import · ${unavailable || !data.needs ? 'Current request coverage unavailable'
       : data.connected ? 'Connected' : 'Reconnecting; no automatic resend'}`
@@ -1033,7 +1053,7 @@ function App() {
               resultsRef={results} resultsId={resultsId} />
           </div>}
         </div>
-        {!aboutActive && !appearanceActive && !importActive && <Toolbar className={s.refresh} aria-label="Workspace actions"><ToolbarButton className={s.refreshButton} icon={<ArrowClockwiseRegular />}
+        {!aboutActive && !appearanceActive && !accountsActive && !importActive && <Toolbar className={s.refresh} aria-label="Workspace actions"><ToolbarButton className={s.refreshButton} icon={<ArrowClockwiseRegular />}
           aria-label={settingsActive ? 'Reload packs' : 'Refresh'} title={settingsActive ? 'Reload pack information' : 'Refresh'}
           aria-busy={settingsActive ? data.packsLoading : data.loading || data.selecting}
           onClick={settingsActive ? data.reloadPacks : data.refresh}>
@@ -1092,6 +1112,8 @@ function App() {
           onRestore={record => openReview(record, true)} />}
         {history && <ReviewHistory record={history.record} scopeTitle={scopeTitle(history.record.scope, rows)}
           browsingLabel={browsingLabel} onReturn={returnHistory} />}
+        <p className={s.visuallyHidden} role="status" aria-live="polite" aria-atomic="true" data-github-session-status>{githubSaid.status}</p>
+        <p className={s.visuallyHidden} role="alert" aria-atomic="true" data-github-session-alert>{githubSaid.alert}</p>
       </main>
       </div>
       <footer className={mergeClasses(s.footer, reviewActive && s.focusedFooter, settingsActive && s.settingsFooter)}

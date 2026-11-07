@@ -11896,33 +11896,33 @@ function governanceSuccessorStateV2(state, governance, updates) {
 }
 
 /**
- * Complete one bounded learning review from fresh evidence and return the exact
- * `learning-result` batch plus its hash-only successor commitment.
- * @param {unknown} stateValue @param {unknown} inputValue @param {unknown} reviewValue
- * @param {unknown} [dependencies] @param {boolean} [transport]
+ * Prepare one raw learning review against an exact accepted state and the
+ * Inspection that binds it, and derive its review event. Driver preflight and
+ * `learnGovernanceV2` share this pure calculation: it acquires no evidence,
+ * advances no state, builds no projection, and issues no permit, so the
+ * receiver repeats it against freshly acquired evidence before any effect.
+ * Returns the prepared review event or the existing refusal reason; malformed
+ * input throws the existing validator error.
+ * @param {unknown} stateValue @param {unknown} inspectionValue @param {unknown} reviewValue
  */
-export function learnGovernanceV2(stateValue, inputValue, reviewValue, dependencies, transport = false) {
+export function prepareLearningReviewV2(stateValue, inspectionValue, reviewValue) {
   const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
   if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
-    invalid('learnGovernanceV2', 'requires autonomous policy');
+    invalid('prepareLearningReviewV2', 'requires autonomous policy');
   }
-  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
-  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
-  if (inspection.overflow) return { inspection };
-  /** @param {Record<string, unknown>} learning */
-  const respond = (learning) => ({ inspection, learning });
+  const inspection = /** @type {Record<string, unknown>} */ (validateInspection(inspectionValue));
+  /** @param {string} reason */
+  const refuse = (reason) => ({ prepared: false, reason });
   const governance = activeGovernanceCaseV2(state);
-  if (!governance) return respond({ reviewed: false, reason: 'learning-evidence-incomplete', state });
+  if (!governance) return refuse('learning-evidence-incomplete');
   if (/** @type {unknown[]} */ (inspection.blockers).length > 0
     || targetKey(inspection.target) !== targetKey(governance.target)) {
-    return respond({ reviewed: false, reason: 'learning-evidence-incomplete', state });
+    return refuse('learning-evidence-incomplete');
   }
-  if (governance.phase !== 'required') return respond({ reviewed: false, reason: 'learning-phase-mismatch', state });
-  if (Object.hasOwn(governance, 'projectionCommitment')) {
-    return respond({ reviewed: false, reason: 'governance-unresolved', state });
-  }
+  if (governance.phase !== 'required') return refuse('learning-phase-mismatch');
+  if (Object.hasOwn(governance, 'projectionCommitment')) return refuse('governance-unresolved');
   const rebound = reboundGovernanceEvidenceV2(inspection, governance);
-  if (rebound.reason) return respond({ reviewed: false, reason: rebound.reason, state });
+  if (rebound.reason) return refuse(/** @type {string} */ (rebound.reason));
   const failedApproachSet = /** @type {Record<string, unknown>} */ (rebound.failedApproachSet);
   const review = assertExactRecord(
     reviewValue,
@@ -11970,16 +11970,16 @@ export function learnGovernanceV2(stateValue, inputValue, reviewValue, dependenc
       invalid('learning review v2.selectedAlternativeIdentity', 'is required for a selected alternative');
     }
     assertHash(review.selectedAlternativeIdentity, 'learning review v2.selectedAlternativeIdentity');
-    if (alternatives.credible.length === 0) return respond({ reviewed: false, reason: 'alternative-invalid', state });
+    if (alternatives.credible.length === 0) return refuse('alternative-invalid');
     if (alternatives.credible.filter((row) => row.alternativeIdentity === review.selectedAlternativeIdentity).length !== 1) {
-      return respond({ reviewed: false, reason: 'alternative-selection-mismatch', state });
+      return refuse('alternative-selection-mismatch');
     }
     branch.selectedAlternativeIdentity = review.selectedAlternativeIdentity;
   } else {
     if (Object.hasOwn(review, 'selectedAlternativeIdentity')) {
       invalid('learning review v2.selectedAlternativeIdentity', 'is forbidden for no-progress');
     }
-    if (alternatives.credible.length !== 0) return respond({ reviewed: false, reason: 'alternative-invalid', state });
+    if (alternatives.credible.length !== 0) return refuse('alternative-invalid');
     const completeEvidenceHash = noProgressCompleteEvidenceHashV2(
       failedApproachSet,
       /** @type {Record<string, unknown>[]} */ (rebound.retained),
@@ -12019,6 +12019,30 @@ export function learnGovernanceV2(stateValue, inputValue, reviewValue, dependenc
     outcome: review.outcome,
     ...branch,
   });
+  return { prepared: true, governance, target, reviewEvent };
+}
+
+/**
+ * Complete one bounded learning review from fresh evidence and return the exact
+ * `learning-result` batch plus its hash-only successor commitment.
+ * @param {unknown} stateValue @param {unknown} inputValue @param {unknown} reviewValue
+ * @param {unknown} [dependencies] @param {boolean} [transport]
+ */
+export function learnGovernanceV2(stateValue, inputValue, reviewValue, dependencies, transport = false) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('learnGovernanceV2', 'requires autonomous policy');
+  }
+  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  if (inspection.overflow) return { inspection };
+  // Fresh evidence first; an earlier preflight of this review grants nothing.
+  const prepared = prepareLearningReviewV2(state, inspection, reviewValue);
+  if (!prepared.prepared) {
+    return { inspection, learning: { reviewed: false, reason: prepared.reason, state } };
+  }
+  const governance = /** @type {Record<string, unknown>} */ (prepared.governance);
+  const reviewEvent = /** @type {Record<string, unknown>} */ (prepared.reviewEvent);
   const reviewedCore = {
     ...JSON.parse(canonicalJson(governance)),
     phase: 'reviewed',
@@ -12027,7 +12051,7 @@ export function learnGovernanceV2(stateValue, inputValue, reviewValue, dependenc
   const governanceEvent = buildGovernanceEventV1(reviewedCore);
   const projectionBatch = buildProjectionBatchV1(
     'learning-result',
-    target,
+    /** @type {Record<string, unknown>} */ (prepared.target),
     [reviewEvent, governanceEvent],
     'learnGovernanceV2 learning result',
   );
