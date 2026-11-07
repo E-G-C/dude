@@ -3723,10 +3723,16 @@ async function readAboutApi(canvasUrl) {
   };
 }
 
-/** @param {Cdp} page */
+/**
+ * The About entry once its read has committed and the Settings footer, which
+ * takes that read one render later, no longer says Reading.
+ * @param {Cdp} page
+ */
 async function aboutSnapshot(page) {
   await until(() => evaluate(page, `document.querySelector('[data-about-facts]')
-    ?.getAttribute('aria-busy') === 'false'`), 'recorded About facts');
+    ?.getAttribute('aria-busy') === 'false'
+    && document.querySelector('footer[aria-label="Workspace status"]')
+      ?.textContent.trim() !== 'About · Reading…'`), 'recorded About facts');
   return evaluate(page, `(() => {
     const link = document.querySelector('[data-about-repository]');
     return {

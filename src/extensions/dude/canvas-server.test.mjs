@@ -11172,9 +11172,10 @@ test('072 Canvas update: the session-start check runs once when the saved choice
     canvas = await session();
     assert.equal(gitLaunches().length, count, 'checks off: the session made no automatic contact');
     assert.deepEqual((await canvas.read()).body.check, null);
-    // Check for updates still runs one explicit check.
+    // Check for updates still runs one explicit check. It runs in the background, so the
+    // answer may already carry its result when it finishes during the answer's own reads.
     state = (await canvas.act({ op: 'check' })).body;
-    assert.equal(state.checking, true);
+    assert.ok(state.checking === true || state.check?.status === 'update_available', JSON.stringify(state));
     state = await canvas.until(value => !value.checking, 'the manual check finished');
     assert.equal(state.check.status, 'update_available');
     assert.deepEqual(state.notice, { installedRef: 'v1.0.0', availableRef: 'v1.1.0', releaseUrl: null }, 'Later belonged to the other session');

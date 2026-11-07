@@ -13507,10 +13507,14 @@ const ABOUT_MAIN_ROWS = Object.freeze([
 const ABOUT_LINK = Object.freeze({ text: ABOUT_REPOSITORY, href: ABOUT_REPOSITORY, target: '_blank',
   rel: 'noopener noreferrer', label: `${ABOUT_REPOSITORY} (opens in a new tab)` });
 
-/** @param {Cdp} page */
+/**
+ * An About entry's read has committed, and the Settings footer, which takes
+ * that read one render later, no longer says Reading.
+ * @param {Cdp} page
+ */
 function aboutSettled(page) {
-  return until(() => evaluate(page, `document.querySelector('[data-about-facts]')?.getAttribute('aria-busy') === 'false'`),
-    'settled About entry read');
+  return until(() => evaluate(page, `document.querySelector('[data-about-facts]')?.getAttribute('aria-busy') === 'false'
+    && document.querySelector('footer[aria-label="Workspace status"]')?.textContent.trim() !== 'About · Reading…'`), 'settled About entry read');
 }
 
 /** @param {Cdp} page */
