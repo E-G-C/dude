@@ -25036,23 +25036,36 @@ async function runT072Case(context, slug, root, options, body) {
 
 /**
  * One case's control of the update state route: reads can be held, answered
- * with a body, or let through. Release lets every held read through.
+ * with a body, or let through. Holding with actions also holds each action's
+ * answer after the server gave it, for `action` to read and `answer` to
+ * replace. Release lets everything held through.
  * @param {{ page: Cdp, origin: string }} canvas
  */
 function t072Reads(canvas) {
   const { page, origin } = canvas;
-  const route = `${origin}/api/updates`;
-  const paused = [];
-  page.on('Fetch.requestPaused', event => { if (event.request.url === route) paused.push(event); });
+  const route = `${origin}/api/updates`, action = `${route}/action`;
+  const paused = [], answered = [];
+  page.on('Fetch.requestPaused', event => {
+    if (event.request.url === route) paused.push(event);
+    else if (event.request.url === action) answered.push(event);
+  });
   return {
-    hold: () => page.send('Fetch.enable', { patterns: [{ urlPattern: route, requestStage: 'Request' }] }),
+    /** @param {{ actions?: boolean }} [options] */
+    hold: ({ actions = false } = {}) => page.send('Fetch.enable', { patterns: [{ urlPattern: route, requestStage: 'Request' },
+      ...(actions ? [{ urlPattern: action, requestStage: 'Response' }] : [])] }),
     next: () => until(() => paused.shift(), 'a held update state read'),
+    /** The next held action answer, with the body the server sent. */
+    action: async () => {
+      const event = await until(() => answered.shift(), 'a held update action answer');
+      const sent = await page.send('Fetch.getResponseBody', { requestId: event.requestId });
+      return { event, body: JSON.parse(sent.base64Encoded ? Buffer.from(sent.body, 'base64').toString('utf8') : sent.body) };
+    },
     /** @param {any} event @param {unknown} body */
     answer: (event, body) => page.send('Fetch.fulfillRequest', { requestId: event.requestId, responseCode: 200,
       responseHeaders: [{ name: 'Content-Type', value: 'application/json; charset=utf-8' }, { name: 'Cache-Control', value: 'no-store' }],
       body: Buffer.from(JSON.stringify(body)).toString('base64') }),
     release: async () => {
-      for (const event of paused.splice(0)) await page.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {});
+      for (const event of [...paused.splice(0), ...answered.splice(0)]) await page.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {});
       await page.send('Fetch.disable');
     },
   };
@@ -25284,11 +25297,15 @@ test('072 Bundle upgrade: About shows this session\'s check, Check for updates w
         footer: 'About · Installed v1.0.0',
       }, 'off: the channel, the explanation, Check for updates, and the installed-version footer');
       await aboutScreenshot(page, output, 'about-off-1440x900-light');
-      // Check for updates works with the switch off. Focus stays on it while it is unavailable.
+      // Check for updates works with the switch off. Focus stays on it while it is unavailable. The check's own answer is
+      // held too and says what it was as the check began, running with nothing found yet: a local check can end first.
       const reads = t072Reads(canvas);
-      await reads.hold();
+      await reads.hold({ actions: true });
       await focus(page, '[data-update-check]');
       await key(page, 'Enter');
+      const begun = await reads.action();
+      assert.ok(begun.body.checking || begun.body.check?.status === 'update_available', 'the server started the check');
+      await reads.answer(begun.event, { ...begun.body, checking: true, check: null, notice: null });
       await until(async () => (await t072About(page)).tone === 'busy', 'checking');
       const checking = await until(async () => { const about = await t072About(page); return about.said === 'Checking for updates.' ? about : null; },
         'the checking announcement');
