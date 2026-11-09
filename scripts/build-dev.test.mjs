@@ -111,18 +111,27 @@ const REVIEW_LIB_FILES = Object.freeze([
   'lib/review/data.mjs',
   'lib/review/png.mjs',
 ]);
-/** The delivered A2A surface: wiring, modules, the lazily imported runtime, and its notice. */
+/** The delivered A2A surface: wiring, modules, the fixed SDK loader, the lazily imported runtime, and its notice. */
 const A2A_RUNTIME_FILES = Object.freeze([
   'extension.mjs',
   'lib/a2a.mjs',
   'lib/a2a-transport.mjs',
   'lib/a2a-verify.mjs',
+  'lib/a2a-peer-worker.mjs',
+  'lib/a2a-sdk-loader.mjs',
+  'lib/a2a-collaboration.mjs',
+  'lib/a2a-transcript.mjs',
   'lib/a2a-runtime.mjs',
   'lib/a2a-runtime.mjs.LEGAL.txt',
 ]);
-const A2A_TEST_FILES = Object.freeze(['a2a.test.mjs', 'a2a-transport.test.mjs', 'a2a-verify.test.mjs']);
-/** Build-only inputs of the runtime; none may reach generated output. */
-const A2A_BUILD_INPUTS = Object.freeze(['.gitignore', 'build.mjs', 'build.test.mjs', 'entry.mjs', 'package-lock.json', 'package.json']);
+const A2A_TEST_FILES = Object.freeze([
+  'a2a.test.mjs', 'a2a-transport.test.mjs', 'a2a-verify.test.mjs', 'a2a-peer-worker.test.mjs', 'a2a-sdk-loader.test.mjs', 'a2a-collaboration.test.mjs',
+  'a2a-transcript.test.mjs', 'a2a-collaboration-tls.test.mjs',
+]);
+/** Repository-only A2A inputs: the runtime build and the maintainer qualification preview, native branch, and observer. None may reach generated output. */
+const A2A_BUILD_INPUTS = Object.freeze(['.gitignore', 'build.mjs', 'build.test.mjs', 'entry.mjs', 'package-lock.json', 'package.json',
+  'qualify-collaboration.mjs', 'qualify-collaboration.test.mjs', 'native-collaboration.mjs', 'native-collaboration.test.mjs', 'native-observer.ps1',
+  'native-observer.test.mjs']);
 const MODEL_CONFIG = Buffer.from([
   '{',
   '  "provenance": "Fixture model mapping observed on 2026-08-10.",',
@@ -471,6 +480,46 @@ test('checked-in dev core is a byte-identical non-mutating projection of authori
       assert.match(fs.readFileSync(path.join(root, '.github', relative), 'utf8'),
         /import \{ buildLightweightWorkPostimages \} from '\.\.\/dude-engine\/lib\/lightweight-work-postimage\.mjs'/);
     }
+    // Feature 094: the delivered terminal-work outputs are named exact projections in both the
+    // fresh build and the checked-in core, and the generated driver loads only generated modules.
+    for (const relative of [
+      'skills/dude-lightweight-execution/SKILL.md',
+      'skills/dude-work-intake/SKILL.md',
+      'skills/dude-work/COOKBOOK.md',
+      'skills/dude-work/SKILL.md',
+      'skills/dude-work/driver.mjs',
+      'skills/dude-work/host-adapter-runner.mjs',
+      'skills/dude-work/host-adapter.mjs',
+    ]) {
+      const deployed = `.github/${relative}`;
+      assert.ok(result.written.includes(deployed), deployed);
+      const source = fs.readFileSync(path.join(repoRoot, 'src', relative));
+      assertExactBytes(fs.readFileSync(path.join(root, deployed)), source, deployed);
+      assertExactBytes(fs.readFileSync(path.join(repoRoot, deployed)), source, `checked-in ${deployed}`);
+    }
+    const generatedDriver = path.join(root, '.github/skills/dude-work/driver.mjs');
+    checkImports(generatedDriver);
+    for (const module of ['host-adapter-runner.mjs', 'host-adapter.mjs', 'recovery.mjs', 'specialist-attestation.mjs']) {
+      assert.ok(visited.has(path.join(root, '.github/skills/dude-work', module)), `the generated driver imports the generated ${module}`);
+    }
+    assert.equal(has(root, '.github/skills/dude-work/driver.test.mjs'), false, 'driver.test.mjs stays build-time only');
+    // T007: the generated advice checks reuse the generated A2A modules across the skill/extension boundary,
+    // and only an advised capture loads them.
+    const adviceModule = path.join(root, '.github/skills/dude-feature-definition/capture-number-advice.mjs');
+    assertExactBytes(fs.readFileSync(adviceModule), fs.readFileSync(path.join(repoRoot, 'src/skills/dude-feature-definition/capture-number-advice.mjs')),
+      'generated capture-number-advice.mjs');
+    checkImports(adviceModule);
+    for (const reused of ['a2a-collaboration.mjs', 'a2a-transcript.mjs', 'a2a-transport.mjs']) {
+      assert.ok(visited.has(path.join(root, '.github/extensions/dude/lib', reused)), `the generated advice checks import ${reused}`);
+    }
+    const loadedAdvice = await import(pathToFileURL(adviceModule).href);
+    for (const name of ['readNumberAdvice', 'chooseAdvisedNumber', 'captureReceipt']) assert.equal(typeof loadedAdvice[name], 'function', name);
+    const generatedPublisher = fs.readFileSync(path.join(root, '.github/skills/dude-feature-definition/publish-first-capture.mjs'), 'utf8');
+    assert.match(generatedPublisher, /await import\('\.\/capture-number-advice\.mjs'\)/);
+    assert.doesNotMatch(generatedPublisher, /from '\.\/capture-number-advice\.mjs'/, 'the ordinary capture never loads the advice module');
+    for (const name of ['capture-number-advice.test.mjs', 'publish-first-capture.test.mjs']) {
+      assert.equal(has(root, `.github/skills/dude-feature-definition/${name}`), false, `${name} stays build-time only`);
+    }
     for (const entry of snapshotTree(path.join(root, '.github')).filter(row => row.type === 'file')) {
       assert.doesNotMatch(entry.path, /(?:^|\/)fixtures(?:\/|$)|\.test\.|model-view-test-helpers|064-work-receipt-overflow-handling|065-work-history-event-compaction/);
       assert.equal(fixtureHashes.has(sha256(/** @type {Buffer} */ (entry.bytes))), false, `${entry.path} ships fixture bytes`);
@@ -637,6 +686,230 @@ test('T028 operator guide documents the frozen byte bound without upgrading nati
   assert.match(prose, /does not prove App visual or accessibility behavior, model-delivery equivalence, human review, or peer\/LAN support, and it did not exercise the new guard/);
   assert.match(prose, /T019 remains incomplete and blocked pending fresh native\/live qualification/);
   assert.doesNotMatch(prose, /T019 remains in progress|current runtime has no new output-size limit|T028 delivery remain pending/);
+});
+
+test('T008 operator guide documents two-Dude collaboration without upgrading its native qualification', async () => {
+  const guide = fs.readFileSync(path.join(repoRoot, 'docs/agent-to-agent-communication.md'), 'utf8');
+  const prose = guide.replace(/\s+/g, ' ');
+  const section = /## Collaboration between two Dudes (.*?) ## Interruptions, cancellation, and uncertain outcomes/.exec(prose)?.[1];
+  assert.ok(section, 'the guide has a collaboration section');
+  assert.match(prose, /Its native qualification has not passed: no actual independent AI exchange, unrelated main-agent progress, causal capture, live or retained inspection, or confirmed cleanup has been observed\./);
+  assert.match(section, /not a shared allocator, lock, or reservation/);
+  assert.match(section, /`accepted` means local admission only, not readiness or delivery/);
+  assert.match(section, /An answered asking journal is exactly eight records: `opened`, `accepted`, `request_prepared`, `request_write_started`, `reply_received`, `reply_validated`, `terminal`, and `closed`\./);
+  assert.match(section, /Reading an answer captures and stages nothing/);
+  assert.match(section, /Without `--number-advice`, capture is unchanged/);
+  assert.match(section, /These are configured settings, not proven enforcement/);
+  assert.match(section, /Delivered; component evidence only\./);
+  assert.match(section, /\| Native independent AI \| Two actual selected Dudes and B's actually served worker on the public host\. \| Attempted natively; not passed\. \|/);
+  assert.equal(section.split('Not run; blocked.').length - 1, 1, 'native progress, capture, and inspection stay unrun and blocked');
+  assert.match(section, /Native qualification of Feature 089 is incomplete\./);
+  assert.match(section, /It never exits 0\./);
+  assert.match(section, /nothing here authorizes any step/);
+  assert.match(section, /For Feature 089, this guide summarizes the outcomes of native attempts but records no native input, run ID, timestamp, or raw result\./);
+  assert.doesNotMatch(prose, /No native [^.]*result for Feature 089 is recorded/i,
+    'no blanket claim that the guide records no native result for Feature 089');
+  assert.doesNotMatch(section, /Feature 089 (?:is|was) (?:natively )?qualified|native qualification (?:passed|is complete)/i);
+
+  // The native branch and observer are implemented, documented with their operator flow and bounds, and stay unverified: native
+  // attempts of the branch have passed nothing, only controlled checks have run the observer, and the strict run never ran natively.
+  assert.match(prose, /The maintainer runner's native branch and its fixed Windows observer are implemented but unverified: no native attempt of the branch has passed, only controlled checks have exercised the observer, and the qualification preview still reports every native stage blocked\./);
+  assert.match(section, /Delivered; controlled only, never native evidence\./);
+  assert.match(section, /is implemented, but it has never run this strict qualification natively, so nothing about that run's native behavior is known\./);
+  assert.doesNotMatch(prose, /native qualification has not run|exercised them, and the qualification preview|has never run natively, so nothing about native behavior/,
+    'no stale claim that the native branch never ran natively');
+  // The collaboration introduction separates delivered component tests from native attempts, which passed nothing, and the
+  // qualifier's and native branch's own descriptions say never run natively only of the strict qualification.
+  assert.match(section, /Only loopback runs on one computer have been exercised, in delivered component tests and in native attempts\. Native attempts of the normal collaboration route \(plan version 3\) reached both mains' saved-sign-in account checks, both proposals and the human activation approvals, both conversation starts, and B's worker readiness\. In the latest attempt, B's worker then ended with `unexpected_native_effect` after its prompt was admitted, before it read any evidence\. No attempt has passed\. The strict qualification \(plan version 2\) has never run natively, and strict isolation remains deferred\. Private-LAN and other-platform use remain unqualified\./);
+  assert.doesNotMatch(prose, /only as component tests|have been exercised, and only as component/,
+    'no claim that loopback collaboration ran only in component tests');
+  const sourceComment = (/** @type {string} */ file) => fs.readFileSync(path.join(repoRoot, file), 'utf8')
+    .replace(/\r?\n[ \t]*\*[ \t]?/g, ' ').replace(/\s+/g, ' ');
+  const qualifierSource = sourceComment('scripts/dude-a2a/qualify-collaboration.mjs');
+  assert.match(qualifierSource, /That branch is implemented\. Native version-3 attempts have reached both mains' saved-sign-in account checks, both proposals and the human activation approvals, both conversation starts, and B's worker readiness; the latest attempt's worker ended with unexpected_native_effect after its prompt was admitted, before it read any evidence\. No attempt has passed, the strict version-2 qualification has never run natively, and strict isolation stays deferred\./);
+  assert.match(qualifierSource, /The native branch implements how each would be observed; none has been observed in a native strict run, so none is available here\./);
+  assert.doesNotMatch(qualifierSource, /That branch is implemented but has never run natively|none has been observed natively, so none is available here/,
+    'no claim in the qualifier that its native branch or proof sources never ran natively');
+  const nativeSource = sourceComment('scripts/dude-a2a/native-collaboration.mjs');
+  assert.match(nativeSource, /The real branch has never run this strict qualification natively; version-3 attempts have run natively, and none has passed\./);
+  assert.doesNotMatch(nativeSource, /The real branch has never run natively\./, 'no claim that the native branch never ran natively');
+  assert.match(section, /Membership in Administrators or Performance Log Users, in a terminal you opened that way/);
+  assert.match(section, /Nothing elevates, installs, or registers a service\./);
+  assert.match(section, /Under ACTION NEEDED it shows the exact consent line, `approve native <first 16 characters of the scope digest>`; type or paste that one line and press Enter\. Redirected, ended, or multi-line input refuses; anything entered before a prompt appears is ignored, and the prompt asks again\./);
+  assert.match(section, /The ACTION NEEDED block shows that approval line; if it cannot pick out exactly one `Approval` line in the result, it explains where to find that line instead\. Only your entered line, without surrounding spaces, is sent, and the unchanged classifier must accept it as an unattributed root message, or the run stops\./);
+  assert.match(section, /no root prompt follows while an operation is pending/);
+  assert.match(section, /Type `approve-once` or `reject` for each\./);
+  // The consented step-scoped Dude tool calls and workspace reads the main relay approves itself, and the qualified claim that nothing else
+  // is computed.
+  assert.match(section, /Each main's model calls `dude_a2a_propose`; under your consent the relay approves that exact call without asking, as described below\./);
+  assert.match(section, /Both whole exchange instructions are sent together, and the relay approves each main's own conversation calls for that exchange, and its reads of its own workspace, under your consent, as described below\./);
+  assert.match(section, /Under your consent the relay approves A's reads of its own workspace in this step; the inventory, hash, and publisher commands, each new staging file, and any read of A's temp folder each need your typed `approve-once`, as described below\./);
+  assert.match(section, /A's model cancels through the conversation tool, a call the relay approves under your consent like the rest of that exchange's conversation calls\./);
+  assert.match(section, /Dude's own tools ask for permission in the runtime's normal mode, and your consent covers the current step's exact calls of them: the relay approves each such call once without asking you, from the moment the step's instruction is admitted until its turn ends\./);
+  assert.match(section, /In each proposal step that is `dude_a2a_propose` with that session's `a2a\.json` and profile\. In the advice exchange it is B's `dude_a2a_conversation` `begin_receive` and `read`, and A's `begin_ask` for the plan's slug with the fixed question and an integer tentative number, and `read`; in the cancellation exchange it is the same for B, and A's `begin_ask` for `<slug>-cancel`, `cancel`, and `read`\./);
+  assert.match(section, /A view can ask for permission to read too, even inside the session's own working directory, so your consent also covers reads of each session's own workspace, `a\/w` for A and `b\/w` for B: in both exchanges and the capture step, the relay approves once, the same way, each read that the session's own model requests of that folder or of anything in it while the step's turn is open\. It never approves a read of the other session's workspace or anywhere else, a subagent's read, or a read after the turn ended\./);
+  assert.match(section, /A call or read that managed policy marks as needing a person is rejected instead\. The approval steps allow neither, and the capture step allows no Dude tool call\. The report counts these approvals for each session in `toolApprovals`, by tool and operation and, for those reads, as `workspace\.read`\./);
+  assert.match(section, /It lists each rejected request in `permissions` with a `target` of at most 256 bytes, the requested path or the tool, command, or extension name, never a command's text, arguments, or contents; it keeps the first 50 requests rejected without asking and counts any more in `permissionsOmitted`; requests presented for typed approval are always kept\. A request that comes while no step or phase is open is rejected as `not_pending`\./);
+  assert.match(section, /Every other request is shown only when it is a pending allowlisted action of a call the session's own model requested for its current instruction:/);
+  // The capture step's typed requests include a read of A's temp folder itself or of anything in it, as the relay asks for them; the
+  // progress file's reads are the workspace's, so only its exact edit is typed.
+  assert.match(section, /the progress file's exact `pending`-to-`complete` edit, and in the capture step the exact inventory command, one fixed `Get-FileHash` of a staged ledger, the publisher command for the plan's slug with staged files under A's temp folder, new staging files there, and a read of that folder itself or of anything in it\. Type `approve-once` or `reject` for each\./);
+  assert.doesNotMatch(section, /progress file's exact read|The approval and capture steps allow no Dude tool call/, 'no stale typed progress read, and no claim that capture allows nothing');
+  assert.match(section, /Apart from the step-scoped Dude tool calls and workspace reads that your consent covers, there is no approve-all mode, saved consent, computed approval, or permission file\. Both `dude a2a approve` lines and `reread reviewed` are still yours to type\./);
+  assert.doesNotMatch(section, /\. There is no approve-all mode/, 'no unqualified claim that nothing is ever approved without a typed line');
+  assert.match(section, /Exit status: 0 only when a native run passed every check; 4 for every refusal or failure; 1 for a plan that cannot run natively\./);
+  assert.match(section, /These native properties are unverified, and each one fails the run rather than passing it/);
+  assert.doesNotMatch(section, /native (?:branch|run|observer) (?:is|was|has been) (?:verified|qualified|proven)/i);
+  // Today's honest native status, the observed-order acceptance condition, and the refused null payload.
+  assert.match(prose, /The native branch now observes the two prerequisites it once could not: one model-driven after-view control, and the session storage B's worker records, whose files it classifies by documented purpose\. Only controlled checks have exercised them; whether a native host passes either is unknown\./);
+  assert.match(section, /Its own model's view must surface and load `k\/w\/AGENTS\.md`/);
+  assert.match(section, /all within one 60-second phase that ends before either main starts\. Anything less, including a host that sends no such notification, stops the run as `ambient_state_unobservable`\./);
+  assert.match(section, /Its recorded session workspace must still be the same directory by path, device, and inode; recorded absence allows no session persistence\. Every file the worker touched since the observer started, before that check as well as after it, is then classified/);
+  assert.match(section, /The after-view control's session has its own fixed relay, asked the same way/);
+  assert.match(section, /a row that would not fit, or a path over 1,024 characters, is a sticky overflow that fails the run, never a dropped row/);
+  assert.match(section, /and nothing stands in for an observation the run needs\. \| Delivered; controlled only, never native evidence\. \|/);
+  assert.doesNotMatch(prose, /does not classify (?:that|it) yet|stand in for the two unobservable prerequisites|so today every native run stops here|a native run cannot pass: it stops/,
+    'no stale claim about the two observations, and no claim that a native run would pass either');
+  assert.match(section, /Sending them does not order them, so the run then requires the order in the runtimes' own event stamps/);
+  assert.match(section, /A plan whose `runtimePayload` is `null` previews, but a native run refuses it before consent as `runtime_identity_unobserved`/);
+  assert.match(section, /A short fixture parent\. B's complete proposal names the fixture paths and must fit the 4,490-byte cap\. A longer path can exceed the cap, which is refused, never raised\./,
+    'a longer fixture parent can push a complete product proposal past the fixed 4,490-byte cap, which refuses it and is never raised');
+  assert.doesNotMatch(section, /Each main gets its whole exchange instruction before its operation begins/, 'sending is not an ordering guarantee');
+  // T008 revision: the control side is no longer called model-less, and each corrected rule is documented without upgrading native status.
+  assert.match(section, /creates only the short folders below the fixture parent: `a`, `b`, and a control side `k`, each with `w`, `h`, `c`, and `t`/);
+  assert.doesNotMatch(section, /model-less control side/, 'the control side also runs the model-driven after-view session');
+  assert.match(section, /its successful model-facing output, at most 4,096 bytes, holding the synthetic file's text exactly once \(a heading or line number around it is fine\)/);
+  assert.doesNotMatch(prose, /output equal to the synthetic file/, 'the output is no longer promised to equal the file');
+  assert.match(section, /`AGENTS\.md` among the session's loaded sources by digest with a documented repository type and location \(type `repo` or `nested-agents`, location `repository`\)/);
+  assert.match(section, /The control runtime is then stopped, and its whole process tree must be seen to end within 10 seconds of that stop before either main starts, or the run stops as `cessation_unconfirmed`; the final summary judges that window again\./);
+  assert.match(section, /in its configuration and home storage every access, a read or open as well as a write, must be the creation, opening, reading, or writing of that workspace's `events\.jsonl`, `workspace\.yaml`, or `plan\.md`/);
+  assert.match(section, /the runtime's own settings or any other configuration or home file, a path in its own folder that the observer could not read as one plain spelling, or any session access after recorded absence, fails as `ambient_storage_unclassified`\./);
+  assert.match(section, /A genuine run may stop here on a read it cannot explain, such as the runtime opening its own settings file\. Nothing is learned from such traffic: any allowance for it needs a planning decision backed by evidence, and the worker-relative paths the observer keeps show what was touched\./);
+  assert.match(section, /A path there that is not one plain spelling \(a `\.` or `\.\.` segment, an empty or forward separator, a trailing dot or space, a stream name, or an 8\.3 short name\) keeps no name, gets no area, and fails the run\./);
+  assert.match(section, /its prompt ends with the control's 60-second phase or the scope's expiry, whichever comes first, when the prompt itself is released\. Its request is also withdrawn, before its turn or after your answer, as soon as that session reports the view's turn ended, aborted, or failed, or any other operation in it\./);
+  // T008 round 4: the scan's documented locations, a covered cessation snapshot, and the worker folder compared as Windows compares
+  // it, without upgrading native status.
+  assert.match(section, /Each instruction canary must come back with its own documented type, as a `repository` or `working-directory` source of the scanned project, the two locations the SDK documents for a project scan, still bound to its exact path and digest\./);
+  assert.match(section, /A snapshot that lost, could not decode, or could not attribute events while the runtime stopped confirms nothing, and the run stops with that observer coverage reason\./);
+  assert.match(section, /it may open its own folder, whose name is compared without case, as Windows compares it\./);
+  assert.match(section, /Any other event that would fail the control, as in step 4, withdraws it the same way\./);
+  // T008 round 6: the control's events judged by phase, each phase permitting only what it lists in its permitted form, the identities
+  // it established, the post-turn rule as implemented, what is judged before the prompt, the retained refusal account, and the first-run
+  // fail-closed caution for the phase lists and source labels, documented without upgrading native status.
+  assert.match(section, /Every public event of that session must be one its phase permits, in the form that phase permits; any other stops the run the same way, including an event of a type the SDK does not declare, a subagent's, one without the documented envelope, and a list of skills, commands, custom agents, MCP servers, or extensions even when it is empty or disabled\./);
+  assert.match(section, /Before the prompt, the session may only start once as itself while it is created, report idle, its system message, and its tool catalog, and, only until the run asks for each check, select its model at startup or through the SDK and report its working directory\./);
+  assert.match(section, /From the prompt to its turn's end it may only admit that one prompt and show the system message, that turn's model messages, the view's one request, its read's permission, start, progress, output, and discovery notification, and the model's own processing: its turns, intent, reasoning, streaming, usage of its own conversation's calls \(never a sub-agent's, sampling, background, or compaction call\), successful model dispatches that requested no file edit, and an assistant idle that was not aborted\./);
+  assert.match(section, /Its permission events must be that one read, for the relay to answer once, with no hook, delegated owner, assisted approval, recovery, or kept grant\./);
+  assert.match(section, /After the turn's end, through the post-turn snapshot and source query, only housekeeping and another normal idle may come; every other event, including any further prompt, tool call, notification, or reply, stops the run, and none of them can supply a fact the turn did not show\./);
+  assert.match(section, /Housekeeping, the session's title and its token or quota accounting, may come at any time\./);
+  // Which stated identities are compared: the tool catalog's model from the model check on, and any change of the model or working
+  // directory after its check; other model names are telemetry labels that are not compared.
+  assert.match(section, /An event that states the session, an admission, or a tool call must state the ones the run established, so another session, a reply or prompt of another admission, or a tool call other than the view stops the run\. Once the run asked for the model check, a tool catalog update must name the checked model\. A change of the model or of the working directory after the run asked for its check stops the run, even the same one restated; a model selection or working directory reported before its check is superseded by that check\. The model named on the turn's own events, such as its turns and usage, is a telemetry label, not proof of which model ran; the run does not compare it, and it may read `unknown`\./);
+  assert.doesNotMatch(section, /another model or working directory stated from its check on/, 'no claim that every stated model or working directory is compared');
+  assert.match(section, /Everything the session sent before the prompt is judged just before the prompt is sent, so after such an event nothing is sent\./);
+  assert.match(section, /The control's event judgment ends with its post-turn source query: what the session delivers during that stop is neither judged nor listed in `refusedEvents`, though the stop is still checked as above and the session's event log still fails the run if it overflows\./);
+  assert.doesNotMatch(section, /their empty or inactive forms do not|or the same model restated after it, does not|walked through its class/,
+    'no stale exemption for empty lists or restated models, and no stale per-type class');
+  assert.match(section, /every session event type the SDK declares walked through each phase of that control and refused unless the phase permits it in its permitted form, each permitted type's other forms and identity statements walked where it is permitted/);
+  assert.match(section, /Whenever the after-view control's session ran, however its phase ended, the report's `control` record keeps `refusedEvents`: one entry per distinct event type and class that it refused, in the order first seen, at most 8, each `\{ "type", "class", "count", "id" \}`\. Types are told apart by their own values, never by how they are shown below, so two types shown alike stay two entries\./);
+  assert.match(section, /otherwise it is `\(unavailable: N bytes\)` with its UTF-8 length, or `\(unavailable: no type\)` for a delivery that was no event\./);
+  assert.match(section, /`class` is `undeclared` \(a type the SDK does not declare\), `malformed` \(an undocumented envelope\), `competing` \(a type its phase does not permit, or a form that phase does not permit\), `subagent`, `contradicting` \(another session, model, admission, or tool call than the control established\), or `after_turn` \(anything after its turn ended other than housekeeping or another normal idle\)\./);
+  assert.match(section, /`id` is the first such event's ID when that is a safe identifier, otherwise `null`\./);
+  assert.match(section, /`refusedEventsOmitted` counts any further distinct entries\. A second view request, view start, or view completion before the turn ends is named by the closed problems `tool_requests`, `start`, and `completion` and need not appear in `refusedEvents`; a second prompt is named `other_prompt` and, as another admission, a `contradicting` entry\. No event data, prompt, model text, or reasoning is kept/);
+  assert.match(section, /The control's phase lists are derived from the SDK 1\.0\.102 declarations its source cites, and any event outside them stops the control\./);
+  assert.match(section, /A genuine host may also stop the control by sending any list of skills, commands, custom agents, MCP servers, or extensions, or a capability or indexed-search update, even an empty or disabled one; by updating its tool catalog during the turn, or its model or working directory after the run asked for that check, even unchanged; by delivering its own start only after its creation returned, or any turn event after the turn's idle;/);
+  assert.match(section, /by reporting a permission or mode change, such as `session\.permissions_changed`, a task-completion notice, or a compaction or truncation of its conversation history;/);
+  assert.match(section, /Newer installed SDKs \(1\.0\.106\) also declare `session\.journal_link` and `instruction\.update`/);
+  assert.match(section, /Use the CLI and SDK pair of the plan's source basis \(1\.0\.102\)\./);
+  assert.match(section, /The notification's `sourcePath` is documented only as a relative path, with no base, so only `k\/w` and `k\/t` are tried\. A first genuine run may stop on any of these\. The refused event's type and class in the report are where a planning decision starts; nothing is learned or allowed from such a refusal by itself\./);
+
+  // T009: the fixed loaders, B's readiness records, the lowered serving capacity, and their native status: a native attempt produced
+  // B's readiness, admission, and loader records, but none of these evidence sources is established.
+  assert.match(section, /two fixed loaders in `lib\/a2a-sdk-loader\.mjs`/);
+  assert.match(section, /There is no other path, default location, or fallback\. If the extension's loader refuses, the extension does not join\./);
+  assert.match(section, /Before its first prompt, within 10 seconds of starting, the worker checks its own session through the public SDK\./);
+  assert.match(section, /B's journal then records `worker_preflight`, an observation of at most 8 KiB/);
+  assert.match(section, /records the admission ID that `send` returns as `worker_request_admitted`/);
+  assert.match(section, /On the token branch, only fake SDKs have run these checks; native attempts have run the existing-sign-in branch's readiness checks, as \[Existing sign-in\]\(#existing-sign-in\) describes\. No native run has shown that a host reports its status, catalog, model, or ambient state truthfully\./);
+  // T010: B's actual-session storage observation and the discovery refusal, documented without upgrading native status.
+  assert.match(section, /Right after the session is created, and again at the end of these checks, it reads the session's own metadata snapshot and its public `workspacePath`\./);
+  assert.match(section, /is recorded only as observed absence: it does not show that the session keeps nothing on disk, and it turns nothing on\./);
+  assert.match(section, /or a notification that an instruction file was discovered, at any time until the worker's result is decided/);
+  assert.match(section, /No native run has shown what a host reports about a token-branch session's storage either, or whether it sends the discovery notification\./);
+  assert.doesNotMatch(section, /Only fake SDKs have run these checks\.|reports about a session's storage either/,
+    'no claim that only fake SDKs ran the worker\'s readiness checks or that no native run showed a session\'s storage');
+  assert.match(section, /and it validates the session storage B's worker records and classifies the worker's file accesses, reads and opens as well as writes, by that workspace's documented purpose; observed absence allows none\. Only controlled checks have exercised these, and no native strict run has\./);
+  assert.doesNotMatch(section, /Only controlled checks have exercised these, and no native run has\./,
+    'the ambient observations no native run has made are the strict qualification\'s');
+  assert.doesNotMatch(prose, /classifies the worker's file writes by/, 'no stale writes-only classification');
+  assert.doesNotMatch(prose, /session persistence location is not recorded|but not its session persistence location/, 'no stale claim that the storage is unrecorded');
+  assert.match(section, /A release is an observation, not permission\./);
+  assert.match(section, /currently above 45,148 bytes when serving or 146,578 bytes when asking\. B's readiness records lowered the serving limit from 46,452 bytes/);
+  assert.match(section, /handed in through a test adapter so its readiness records carry no production SDK provenance/);
+  assert.match(section, /Native qualification of Feature 089 is incomplete\. None of these evidence sources has been established natively:/);
+  assert.match(section, /A native attempt's worker produced both, but no held evidence call\./);
+  assert.match(section, /In a native attempt, B's records matched the plan's SDK files, but that attempt did not pass\./);
+  assert.doesNotMatch(section, /None of these evidence sources has been produced natively|but only fake SDKs have produced those records|but no native run has produced those records/,
+    'no stale claim that only fake SDKs produced the served worker\'s or the loaders\' records');
+  assert.doesNotMatch(section, /readiness (?:is|was|has been) (?:natively )?(?:proven|qualified|confirmed)|native readiness (?:passed|is complete)/i);
+  const reference = fs.readFileSync(path.join(repoRoot, 'docs/reference.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(reference, /The serving peer's evidence worker records its readiness before its first prompt, and native qualification of this collaboration is incomplete\./);
+  assert.doesNotMatch(reference, /only fake SDKs have exercised that|no native run has observed its account/, 'no stale fake-only or unobserved-account claim');
+
+  // T012: the direct existing-sign-in branch is documented as implemented, with controlled and component evidence on fake SDKs and
+  // native attempts that reached B's worker readiness but passed nothing, with strict isolation deferred, no sign-in of Dude's own,
+  // and the Canvas GitHub sign-in kept a separate feature.
+  assert.match(prose, /B's evidence worker can instead reuse the Copilot runtime's own saved sign-in, on Windows only, without a token file\./);
+  assert.match(prose, /Native qualification attempts, with both mains also on their saved sign-in, reached both mains' account checks, both proposals and their human activation approvals, and the readiness of B's worker, including its own account checks\. In the latest attempt, the worker then ended with `unexpected_native_effect` after its prompt was admitted, before it read any evidence\. No attempt has passed\. Strict isolated-worker qualification is deferred and not passed for this branch\./);
+  assert.doesNotMatch(prose, /no native run has observed an actual account|native sign-in behavior is unproven|both with fake SDKs, have exercised it/,
+    'no stale fake-only status for the branch');
+  assert.match(prose, /The Canvas GitHub sign-in in Settings > Accounts, which reads pack sources, is a separate feature that collaboration never uses\./);
+  assert.match(section, /Dude implements no sign-in for it: it never requests, reads, copies, or shows a credential, and it never logs in, switches accounts, or falls back to the token branch\./);
+  assert.match(section, /These effects are not isolated, and the proposal says so\./);
+  assert.match(section, /These checks hold at points in time; they are not an account lock, an entitlement check, or a revocation check\./);
+  assert.match(section, /B's receiver records only the approved branch's version and refuses the other as `readiness_mismatch`\./);
+  // The live run's correction: a normal runtime's MCP server notices end no existing-sign-in worker, every action still does, and an
+  // unexpected native effect names only its closed trigger, in both branches.
+  assert.match(section, /A notification that an instruction file was discovered is not an error on this branch, and neither are the runtime's MCP server notices, `session\.mcp_servers_loaded` and `session\.mcp_server_status_changed`, whatever they list: a normal runtime may start the owner's configured MCP servers and plugins even though the session itself names none, while the session's tool filters still offer the worker model only the two evidence tools\./);
+  assert.match(section, /A hook, skill, or subagent event, an evidence call outside the run, or a permission request or model output before the prompt still ends the worker, with its trigger in `detail`\./);
+  assert.match(section, /The result's `detail`, which B's `worker_finished` record and its read view keep, then names the trigger from one closed list: the event's type, such as `hook\.start` or `session\.mcp_server_status_changed`, or `tool_call`, `permission_request`, or `model_output_before_prompt` for an evidence call outside the run, or a permission request or model output before the prompt\. Nothing the trigger carried is kept, and any detail outside that list is recorded as `null`\./);
+  assert.doesNotMatch(prose, /every other unexpected event, tool call, or permission request still ends the worker/,
+    'no stale claim that every other notice ends an existing-sign-in worker');
+  // The existing-sign-in proposal discloses that the worker's normal startup may start the owner's MCP servers and plugins, apart from
+  // the two evidence tools its model is offered.
+  assert.match(section, /Its `Worker startup` line says that the runtime may start the owner's configured MCP servers and plugins, while the worker's model is offered only the two evidence tools\./);
+  assert.match(section, /In the latest native attempt, the worker's runtime and session reported the expected account, and the worker recorded its version 2 readiness; it then ended with `unexpected_native_effect` after its prompt was admitted, before it read any evidence\. No attempt has passed, and strict isolated-worker qualification is deferred, not passed\./);
+  assert.doesNotMatch(section, /Only fake SDKs have run this branch|Whether a native runtime reports these accounts and this storage as the SDK declares is unknown/,
+    'no stale fake-only status for the branch');
+  assert.match(section, /strict isolated-worker qualification is deferred, not passed\./);
+  assert.doesNotMatch(prose, /(?:existing|saved) sign-in (?:is|was|has been) (?:natively )?(?:proven|qualified|verified)|isolated-worker qualification (?:passed|is complete)/i,
+    'no claim that the sign-in branch or strict isolation is natively established');
+  assert.match(reference, /Native attempts with that sign-in reached the worker's readiness, including its expected account, but no attempt has passed, and strict isolated-worker qualification is deferred, not passed\./);
+
+  // The preview names both plan versions that run natively, each only through --native with a complete, current plan.
+  assert.match(section, /The plan is one closed JSON object\. Version 2 runs the strict qualification and version 3 the normal collaboration route, each natively only through `--native` with a complete, current plan\./);
+  assert.doesNotMatch(prose, /Only version 2 can run natively/, 'no stale claim that only version 2 runs natively');
+  // Only a strict version-2 run starts the fixed observer, and the README separates the normal route's native attempts, none
+  // passed, from the strict qualification, which never ran natively.
+  assert.match(prose, /With `--native`, it runs the implemented but unverified native branch in `native-collaboration\.mjs`, which starts the fixed Windows observer `native-observer\.ps1` for a strict version-2 run but not for a version-3 run; see \[Qualification preview for maintainers\]\(#qualification-preview-for-maintainers\)\./);
+  assert.doesNotMatch(prose, /`native-collaboration\.mjs` with the fixed Windows observer/, 'no claim that every native run starts the observer');
+  const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(readme, /Native qualification of that collaboration remains incomplete: native attempts of its normal route have not passed, and its strict qualification has never run natively\./);
+  assert.doesNotMatch(readme, /maintainer runner is implemented but has not run natively/, 'no stale README claim that the runner never ran natively');
+
+  // The documented version-2 plan template has exactly the preview's closed keys and stays inert.
+  const raw = /### Qualification preview for maintainers\r?\n([\s\S]*?)\r?\n## Interruptions/.exec(guide)?.[1] ?? '';
+  const template = JSON.parse(/```json\s*([\s\S]*?)```/.exec(raw)?.[1] ?? 'null');
+  const { previewQualification } = await import(pathToFileURL(path.join(repoRoot, 'scripts/dude-a2a/qualify-collaboration.mjs')).href);
+  const { report, exitCode } = previewQualification(template);
+  assert.equal(template.version, 2, 'the template is the plan a native run takes');
+  assert.equal(exitCode, 1, 'the template is refused, never previewed as complete');
+  assert.equal(report.checks.some((/** @type {any} */ check) => check.id === 'plan.unknown' || check.status === 'missing'), false,
+    'every documented key is a plan key, and every plan key is documented');
+  assert.deepEqual([...new Set(report.stages.map((/** @type {any} */ stage) => stage.status))], ['blocked']);
+  for (const value of Object.values(/** @type {Record<string, unknown>} */ (template))) {
+    if (typeof value === 'string') assert.match(value, /^<[^>]+>$|^createSession$|^windows-etw$/, 'examples remain inert placeholders or fixed values');
+  }
 });
 
 test('buildDev rejects malformed canonical config before cleanup and leaves prior output byte-identical', () => {

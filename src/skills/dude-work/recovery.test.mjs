@@ -22,7 +22,8 @@ import {
   executeLightweightDefinitionRecoveryV1,
 } from '../dude-lightweight-execution/board.mjs';
 import * as recoveryRuntime from './recovery.mjs';
-import { createHostAdapter } from './host-adapter.mjs';
+import { createHostAdapter, createTemporaryCheckpointStore } from './host-adapter.mjs';
+import { runHostAdapter } from './host-adapter-runner.mjs';
 import { buildSpecialistAttestation } from './specialist-attestation.mjs';
 import {
   acquisitionMetrics,
@@ -30,6 +31,7 @@ import {
   expandModelPacket,
   HISTORY_INCIDENT_SHA256,
   mandatoryCompletionHeadroom,
+  measurePrivateInspection,
   measurePrivateModelView,
   measurePrivatePreflight,
   originalAvailableProjection,
@@ -3494,21 +3496,30 @@ test('packet byte overflow returns descriptor-only refusal without truncation or
   assert.equal(modelPacket(byteInspection), null);
 });
 
-test('model-packet ceiling: 262,145 complete non-owner bytes refuse without completion, recovery, or state charge', () => {
+test('model-packet ceiling: 262,145 complete non-owner bytes refuse without completion, recovery, or state charge', async () => {
   const raw = transitionRaw(TARGET);
   const prefix = collectEvidence(TARGET, raw).filter((item) => item.source !== 'session');
-  const oversizedSession = sizedFinalItem(limits.bytes + 1, prefix, 'session');
-  const oversizedRaw = {
-    ...raw,
-    session: {
-      target: TARGET,
-      availability: 'available',
-      bytes: Buffer.from(oversizedSession.text),
-    },
-  };
-  const completeItems = collectEvidence(TARGET, oversizedRaw);
+  // Size the unshared session against the production-selected packet in canonical
+  // source order; the literal-only oracle no longer prices structured history.
+  let length = sizedFinalItem(limits.bytes + 1, prefix, 'session').text.length;
+  let oversizedRaw;
+  let completeItems;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    oversizedRaw = {
+      ...raw,
+      session: { target: TARGET, availability: 'available', bytes: Buffer.from('x'.repeat(length)) },
+    };
+    completeItems = collectEvidence(TARGET, oversizedRaw);
+    const actual = Buffer.byteLength(canonicalJson(await renderPrivateModelProjection(TARGET, completeItems)));
+    if (actual === limits.bytes + 1) break;
+    length += limits.bytes + 1 - actual;
+  }
+  const oversizedSession = evidence('session', 'x'.repeat(length));
   const completeSession = completeItems.find((item) => item.source === 'session');
-  assert.equal(literalPacketBytes(TARGET, completeItems), limits.bytes + 1);
+  assert.equal(
+    Buffer.byteLength(canonicalJson(await renderPrivateModelProjection(TARGET, completeItems))),
+    limits.bytes + 1,
+  );
   assert.equal(completeSession?.status, 'present');
   assert.equal(completeSession?.text, oversizedSession.text);
 
@@ -26753,7 +26764,7 @@ function feature074SemanticIdentity(domain, material) {
  * Synthetic sole results use the existing capture-only producer. The test, not
  * the producer, supplies literal readable records in canonical envelope order.
  * @param {{ordinal?:number, count?:number, findingCount?:number, accepted?:boolean,
- *   checks?:{definition:string,outcome:string,evidence:string}[]}} [options]
+ *   checks?:{definition:string,outcome:string,evidence:string}[], findings?:Record<string,any>[]}} [options]
  */
 function feature074Pair(options = {}) {
   const ordinal = options.ordinal ?? 1;
@@ -26807,7 +26818,7 @@ function feature074Pair(options = {}) {
       observation: { kind: 'observed-evidence', evidence: 'observed "rejection" 🧪\r\n  no approval' },
     },
   ];
-  const findings = options.findingCount === undefined ? sourceFindings
+  const findings = options.findings ? clone(options.findings) : options.findingCount === undefined ? sourceFindings
     : Array.from({ length: options.findingCount }, (_, index) => {
       const finding = clone(sourceFindings[index % sourceFindings.length]);
       finding.basis.expectation.reference += ` ${index}`;
@@ -26901,6 +26912,19 @@ function feature074ChangedCapture(original, change) {
   return { ...clone(original), target: clone(body.target), outcomeHash: bytes.sha256, bytes };
 }
 
+/** Resolve one readable payload against its own v2 packet table by whole-string index; v1 text is unchanged.
+ * @param {Record<string,unknown>} packet @param {Record<string,unknown>} text */
+function packetReadableText(packet, text) {
+  if (packet.format !== 'dude-work-model-view-v2') return text;
+  const field = text.type === 'verification-text' ? 'checks' : 'findings';
+  return {
+    ...text,
+    [field]: text[field].map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [
+      key, typeof value === 'string' ? value : packet.texts[value.textRef],
+    ]))),
+  };
+}
+
 /** Public collected transport for normalized fixture items.
  * @param {Record<string,unknown>[]} items */
 function feature074Raw(items) {
@@ -26935,8 +26959,8 @@ test('Feature 074 T001: shared semantic identity preserves the producer calculat
   ));
 });
 
-test('Feature 074 T001: the immutable hash-only reference retains exact pre-feature Inspection and model bytes', () => {
-  withReferenceWorkspace(({ input, referenceBytes }) => {
+test('Feature 074 T001: the immutable hash-only reference retains exact pre-feature Inspection and model bytes', async () => {
+  await withReferenceWorkspace(async ({ input, referenceBytes }) => {
     const before = sha256(referenceBytes);
     const inspection = recoveryRuntime.runCommand('inspect', {
       trigger: 'explicit-inspection', input,
@@ -26948,11 +26972,16 @@ test('Feature 074 T001: the immutable hash-only reference retains exact pre-feat
       byteLength: 159_184,
     });
     assert.equal(inspection.evidenceHash, '27a5036bd5b744ddb1fc57f2f3b6c0886ba95303c2a44b620f4908bd3dca1bfa');
-    assert.deepEqual(contentDescriptor(canonicalJson(packet)), {
+    // The frozen v1 candidate keeps its exact bytes; the strictly smaller v2 is selected.
+    const literal = await renderPrivateModelProjection(inspection.target, inspection.items, { modelView: 'v1' });
+    assert.deepEqual(contentDescriptor(canonicalJson(literal)), {
       sha256: '5a222a609d4584f6a22500389a1812f310af400fcd33dcddbc734b8bd8c2c34e',
       byteLength: 107_680,
     });
+    assert.equal(packet.format, 'dude-work-model-view-v2');
+    assert.ok(Buffer.byteLength(canonicalJson(packet)) < 107_680);
     assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+    assert.deepEqual(expandModelPacket(literal), originalAvailableProjection(inspection));
     assert.equal(sha256(referenceBytes), before);
   });
 });
@@ -26965,8 +26994,11 @@ test('Feature 074 T001: fresh readable verification and both review observations
   const inspection = buildInspection(TARGET, items);
   const packet = modelPacket(inspection);
   assert.deepEqual(packet.items.map(item => item.tag), ['review', 'verification']);
-  assert.deepEqual(packet.items[0].payload.text, pair.reviewText);
-  assert.deepEqual(packet.items[1].payload.text, pair.verificationText);
+  // Both review check definitions repeat verification definitions, so v2 pools them.
+  assert.equal(packet.format, 'dude-work-model-view-v2');
+  assert.deepEqual(packet.texts, pair.reviewText.findings.map(row => row.checkDefinition));
+  assert.deepEqual(packetReadableText(packet, packet.items[0].payload.text), pair.reviewText);
+  assert.deepEqual(packetReadableText(packet, packet.items[1].payload.text), pair.verificationText);
   assert.deepEqual(packet.items[1].frames[0].occurrences, [
     { source: 'verification', position: 1 }, { source: 'lint', position: 2 },
   ]);
@@ -27773,7 +27805,8 @@ test('model packet cap: valid readable evidence between 128 and 256 KiB is admit
     accepted: true,
     checks: Array.from({ length: 12 }, (_, index) => ({
       definition: `mid-budget check ${index}`, outcome: 'passed',
-      evidence: 'r'.repeat(16_000),
+      // Unshared evidence: pooling cannot move this workload out of the measured range.
+      evidence: `${index}:${'r'.repeat(16_000 - String(index).length - 1)}`,
     })),
   });
   const items = feature074FreshItems(pair);
@@ -27801,7 +27834,8 @@ test('Feature 074 T001: all readable metadata pays the actual 262144 and 262145 
           accepted: true,
           checks: Array.from({ length: 16 }, (_, index) => ({
             definition: `bounded check ${index}`, outcome: index === 0 ? 'failed' : 'passed',
-            evidence: 'r'.repeat(index === 15 ? length : 16_384),
+            // Unshared padding: no pooled readable string can stand in for the byte boundary.
+            evidence: index === 15 ? 'r'.repeat(length) : `${index}:${'r'.repeat(16_384 - String(index).length - 1)}`,
           })),
         });
         const original = feature064TrustedItem('verification', pair.verificationCapture, pair.verificationState);
@@ -29313,12 +29347,17 @@ test('model-packet ceiling: history-bearing 262143, 262144, and 262145 byte pack
     }
     const actualBytes = Buffer.byteLength(canonicalJson(packet));
     assert.equal(actualBytes, expectedBytes);
-    assert.deepEqual(packet.items.map(item => item.tag), ['literal', 'current-run', 'literal']);
+    assert.equal(packet.format, 'dude-work-model-view-v2');
+    assert.deepEqual(packet.items.map(item => item.tag), ['task-history', 'current-run', 'literal']);
     assert.ok(packet.items[1].body.records.every(Array.isArray));
     assert.deepEqual(expandModelPacket(packet), originalAvailableProjection({ target: TARGET, items }));
+    const v1 = await renderPrivateModelProjection(TARGET, items, { modelView: 'v1' });
+    const v1Bytes = Buffer.byteLength(canonicalJson(v1));
+    assert.ok(v1Bytes > actualBytes, 'v2 is selected only when strictly smaller for identical evidence');
+    assert.deepEqual(expandModelPacket(v1), expandModelPacket(packet));
     const literal = await renderPrivateModelProjection(TARGET, items, { literalHistory: true });
     const literalBytes = Buffer.byteLength(canonicalJson(literal));
-    assert.ok(literalBytes > actualBytes);
+    assert.ok(literalBytes > v1Bytes);
     assert.deepEqual(expandModelPacket(literal), expandModelPacket(packet));
     const inspection = buildInspection(TARGET, items);
     assert.equal(inspection.overflow, expectedBytes > limits.bytes);
@@ -29341,7 +29380,7 @@ test('model-packet ceiling: history-bearing 262143, 262144, and 262145 byte pack
     }
     assert.equal(canonicalJson(history), historyBefore);
     measurements.push({
-      modelBytes: actualBytes, sameProjectionLiteralBytes: literalBytes,
+      modelBytes: actualBytes, format: packet.format, v1Bytes, sameProjectionLiteralBytes: literalBytes,
       netBytes: literalBytes - actualBytes, overflow: inspection.overflow,
       physicalItems: packet.items.length, availableOccurrences: expandModelPacket(packet).items.length,
       originalDescriptors: inspection.items.length,
@@ -29368,8 +29407,13 @@ test('Feature 065 T001: references preserve exact bodies, earliest lines, record
     ],
   );
   const { packet } = feature065RoundTrip(items);
-  assert.deepEqual(packet.items.map(item => item.tag), ['literal', 'current-run', 'current-run']);
-  assert.equal(packet.items[0].text, items[0].text);
+  assert.deepEqual(packet.items.map(item => item.tag), ['task-history', 'current-run', 'current-run']);
+  // Only exact canonical LF event lines are structured; the CRLF prose stays literal bytes.
+  const spans = packet.items[0].body.history;
+  assert.deepEqual(spans.filter(span => typeof span !== 'string'), [first, second, first]);
+  assert.equal(spans.filter(span => typeof span === 'string').join(''), [first, second, first].reduce(
+    (text, event) => text.replace(`${t002V2EventLine(event)}\n`, ''), JSON.parse(items[0].text).history,
+  ));
   const historyLines = JSON.parse(items[0].text).history.split(/\r\n|\r|\n/);
   const firstLine = historyLines.indexOf(t002V2EventLine(first));
   const secondLine = historyLines.indexOf(t002V2EventLine(second));
@@ -29431,7 +29475,10 @@ test('Feature 065 T001: declared event versions and complete escaped Unicode bod
   const wrapped = feature065RoundTrip(feature065HistoryItems(
     [legacy], [[legacy]], [`${buildLaneEventLine(legacy)}\n`],
   )).packet;
-  assert.ok(wrapped.items.every(item => item.tag === 'literal'));
+  // The wrapped legacy line is not a declared event: no reference and no structured span.
+  assert.equal(wrapped.items[1].tag, 'literal');
+  assert.ok(wrapped.items[0].tag === 'literal'
+    || wrapped.items[0].body.history.every(span => typeof span === 'string'));
 });
 
 test('Feature 065 T001: noncanonical, extra-field, unknown, and invalid captures stay entirely literal', () => {
@@ -29537,7 +29584,7 @@ test('Feature 065 T001: coordinates are local available occurrences, not descrip
   for (const prefix of [[owner], [owner, history], [current], [current, history]]) {
     const packet = await renderPrivateModelProjection(TARGET, prefix);
     assert.deepEqual(expandModelPacket(packet), originalAvailableProjection({ target: TARGET, items: prefix }));
-    assert.ok(packet.items.every(item => item.tag === 'literal'), 'no forward or omitted anchor');
+    assert.ok(packet.items.every(item => item.tag !== 'current-run'), 'no forward or omitted anchor');
   }
   const trusted = t002EnvelopeFixture();
   const verification = feature064TrustedItem('verification', trusted.verificationCapture, 'failed');
@@ -29546,7 +29593,7 @@ test('Feature 065 T001: coordinates are local available occurrences, not descrip
   const items = [verification, { ...verification, source: 'lint' }, missing('session'), history, current];
   const packet = await renderPrivateModelProjection(TARGET, items);
   assert.equal(packet.items[0].frames[0].occurrences.length, 2);
-  assert.equal(packet.items[1].tag, 'literal');
+  assert.equal(packet.items[1].tag, 'task-history');
   assert.deepEqual(packet.items[2].body.records[0], [2, reference[1]]);
   assert.deepEqual(expandModelPacket(packet), originalAvailableProjection({ target: TARGET, items }));
   const corrupted = clone(packet);
@@ -29559,10 +29606,12 @@ test('Feature 065 T001: at least one reference and a strictly smaller complete i
   const items = feature065HistoryItems([event]);
   const { packet } = feature065RoundTrip(items);
   const literal = await renderPrivateModelProjection(TARGET, items, { literalHistory: true });
+  const referenced = await renderPrivateModelProjection(TARGET, items, { modelView: 'v1' });
   const bytes = value => Buffer.byteLength(canonicalJson(value));
   assert.equal(packet.items.length, literal.items.length);
-  assert.ok(bytes(packet.items[1]) < bytes(literal.items[1]));
-  assert.equal(bytes(literal) - bytes(packet), bytes(literal.items[1]) - bytes(packet.items[1]),
+  assert.deepEqual(packet.items[1], referenced.items[1], 'v2 keeps the v1 current-run references unchanged');
+  assert.ok(bytes(referenced.items[1]) < bytes(literal.items[1]));
+  assert.equal(bytes(literal) - bytes(referenced), bytes(literal.items[1]) - bytes(referenced.items[1]),
     'full-item accounting includes tags, frames, descriptors, tuple digits, and escaping');
   for (const historyCost of ['tie', 'larger']) {
     // Declared events are substantial. Inject only their selection cost to
@@ -29617,7 +29666,7 @@ test('Feature 065 T001: history sharing leaves trusted payload, co-role, and mal
     feature064TrustedItem('lint', fixture.verificationCapture, 'failed'),
   ]);
   const { packet } = feature065RoundTrip([...history, ...items]);
-  assert.deepEqual(packet.items.map(item => item.tag), ['literal', 'current-run', 'review', 'verification']);
+  assert.deepEqual(packet.items.map(item => item.tag), ['task-history', 'current-run', 'review', 'verification']);
   const control = modelPacket(buildInspection(TARGET, items));
   for (const tag of ['review', 'verification']) {
     const actual = clone(packet.items.find(item => item.tag === tag));
@@ -29939,4 +29988,1398 @@ test('Feature 065 T001: complete incident baseline and pure preflight expose sam
       },
     }));
   });
+});
+
+// Feature 094 T001: smaller-only lossless packet projection. Every specialist
+// record below is synthetic test evidence, not verification or review of a task.
+
+/** @param {unknown} value */
+function terminalBytes(value) {
+  return Buffer.byteLength(canonicalJson(value));
+}
+
+/**
+ * Render the production selection and both complete candidates for exactly these
+ * items. Each inverse must restore the original available projection, and the
+ * selection must be v2 only when strictly smaller.
+ * @param {Record<string, unknown>[]} items @param {Record<string, unknown>} [target]
+ */
+async function terminalCandidates(items, target = TARGET) {
+  const before = canonicalJson(items);
+  const selected = await renderPrivateModelProjection(target, items);
+  const v1 = await renderPrivateModelProjection(target, items, { modelView: 'v1' });
+  const v2 = await renderPrivateModelProjection(target, items, { modelView: 'v2' });
+  const expected = originalAvailableProjection({ target, items });
+  for (const packet of [selected, v1, v2]) assert.deepEqual(expandModelPacket(packet), expected);
+  assert.equal(v1.format, 'dude-work-model-view-v1');
+  assert.equal(v2.format, 'dude-work-model-view-v2');
+  const bytes = { v1: terminalBytes(v1), v2: terminalBytes(v2), selected: terminalBytes(selected) };
+  assert.deepEqual(selected, bytes.v2 < bytes.v1 ? v2 : v1, 'v2 only when strictly smaller; ties and losses keep v1');
+  assert.equal(canonicalJson(items), before, 'rendering never changes source bytes or descriptors');
+  return { selected, v1, v2, bytes };
+}
+
+/** Physical table and reference overhead of one packet. @param {Record<string, any>} packet */
+function terminalTableOverhead(packet) {
+  let references = 0;
+  let referenceBytes = 0;
+  /** @param {unknown} value */
+  const visit = (value) => {
+    if (Array.isArray(value)) return value.forEach(visit);
+    if (value === null || typeof value !== 'object') return undefined;
+    if (Object.hasOwn(value, 'textRef')) {
+      references += 1;
+      referenceBytes += terminalBytes(value);
+      return undefined;
+    }
+    return Object.values(value).forEach(visit);
+  };
+  visit(packet.items);
+  return {
+    entries: packet.texts?.length ?? 0,
+    tableBytes: packet.texts ? terminalBytes(packet.texts) : 0,
+    references,
+    referenceBytes,
+  };
+}
+
+/** @param {Record<string, any>} packet */
+function terminalHistorySpans(packet) {
+  const history = packet.items.find((item) => item.tag === 'task-history');
+  if (!history) return { structured: false, events: 0, literals: 0 };
+  return {
+    structured: true,
+    events: history.body.history.filter((span) => typeof span !== 'string').length,
+    literals: history.body.history.filter((span) => typeof span === 'string').length,
+  };
+}
+
+/** @param {Record<string, any>} packet @param {string} tag */
+function terminalItems(packet, tag) {
+  return packet.items.filter((item) => item.tag === tag);
+}
+
+test('terminal-work packet: v1 and v2 inverses restore literal, typed, current-run, lint, Unicode, failures, duplicates, and bindings', async () => {
+  const approach = t002ApproachEvent();
+  const finding = t002FindingEvent();
+  const learning = feature065LearningEvents();
+  const foreign = t002ApproachEvent({ target: SECOND_TARGET, attemptOrdinal: 2 });
+  const lines = [
+    '\nRetained prose 雪 😀 e\u0301\r\n\n',
+    `${t002V2EventLine(approach)}\n`,
+    `${t002V2EventLine(foreign)}\n`,
+    `${t002V2EventLine(finding)}\r\n`,
+    `${t002V2EventLine(learning[0])}\n`,
+    '  indented note\n',
+    `${t002V2EventLine(learning[1])}\n`,
+    `${t002V2EventLine(approach)}\n`,
+  ];
+  const history = feature065HistoryItems(
+    [approach], [[approach, finding, learning[1], approach], [approach], [approach]], lines,
+  );
+  const failing = feature074Pair({ ordinal: 1 });
+  const shared = failing.verificationText.checks.map((row) => row.definition);
+  const passing = shared.map((definition, ordinal) => feature074Pair({
+    ordinal: ordinal + 2,
+    accepted: true,
+    checks: shared.map((candidate, index) => ({
+      definition: candidate, outcome: 'passed', evidence: `passing ${ordinal}:${index} evidence Ω\r\n`,
+    })),
+  }));
+  const attached = feature074Pair({
+    ordinal: 9,
+    checks: shared.map((definition, index) => ({
+      definition, outcome: index === 0 ? 'failed' : 'passed', evidence: `attached ${index} 🧪`,
+    })),
+  });
+  const attachedOriginal = feature064TrustedItem('verification', attached.verificationCapture, attached.verificationState);
+  const failingItems = feature074FreshItems(failing);
+  const items = [
+    ownerEvidence('owner event 雪 😀'),
+    ...history,
+    ...failingItems,
+    { ...failingItems[1], source: 'lint' },
+    ...passing.flatMap(feature074FreshItems),
+    attachedOriginal,
+    feature074Item('verification', attached.verificationState, [
+      feature074Attachment(attachedOriginal, attached.verificationText),
+    ]),
+    evidence('session', 'session note: quotes " backslash \\ 雪 😀\r\n'),
+  ];
+  const { selected, v1, v2, bytes } = await terminalCandidates(items);
+  assert.equal(selected.format, 'dude-work-model-view-v2');
+  assert.ok(bytes.v2 < bytes.v1);
+
+  // Only exact canonical LF lines are structured, including another task's valid
+  // event; the CRLF finding line, prose, and indentation stay literal bytes.
+  const structured = terminalItems(v2, 'task-history');
+  assert.equal(structured.length, 1);
+  const spans = structured[0].body.history;
+  assert.deepEqual(spans.filter((span) => typeof span !== 'string'), [approach, foreign, learning[0], learning[1], approach]);
+  assert.ok(spans.every((span, index) => typeof span !== 'string' || (span !== '' && typeof spans[index - 1] !== 'string')));
+  assert.ok(spans.filter((span) => typeof span === 'string').join('').includes(`${t002V2EventLine(finding)}\r\n`));
+  // References are unchanged, still point only at this target's lines, and the
+  // foreign event is never an anchor.
+  assert.deepEqual(terminalItems(v2, 'current-run'), terminalItems(v1, 'current-run'));
+  const anchors = terminalItems(v2, 'current-run').flatMap((item) => item.body.records.filter(Array.isArray));
+  const historyLines = JSON.parse(history[0].text).history.split(/\r\n|\r|\n/);
+  assert.ok(anchors.length > 0);
+  assert.ok(anchors.every(([, line]) => historyLines[line] !== t002V2EventLine(foreign)));
+  assert.ok(terminalItems(v2, 'current-run')[0].body.records.some((record) => !Array.isArray(record) && record.event.type === finding.type),
+    'the event whose only line is CRLF stays inline');
+
+  // Frames, descriptors, outer states, captures, and bindings are identical; only
+  // complete repeated readable strings become table references.
+  for (const tag of ['verification', 'review']) {
+    const before = terminalItems(v1, tag);
+    const after = terminalItems(v2, tag);
+    assert.equal(after.length, before.length);
+    for (const [index, item] of after.entries()) {
+      assert.deepEqual(item.frames, before[index].frames);
+      const { text: compactText, ...payload } = item.payload;
+      const { text: literalText, ...literalPayload } = before[index].payload;
+      assert.deepEqual(payload, literalPayload);
+      assert.deepEqual(compactText === undefined ? undefined : packetReadableText(v2, compactText), literalText);
+    }
+  }
+  assert.ok(shared.every((definition) => v2.texts.includes(definition)));
+  assert.ok(terminalItems(v2, 'verification').some((item) => item.frames[0].occurrences.length === 2), 'lint co-role');
+  assert.ok(terminalItems(v2, 'review').some((item) => item.frames.length === passing.length), 'shared accepted review payload');
+  assert.ok(v2.items.some((item) => item.frames.some((frame) => Object.hasOwn(frame, 'reference'))), 'attachment frame');
+  assert.equal(terminalItems(v2, 'current-run').length, 3, 'duplicate captures keep separate occurrences');
+});
+
+test('terminal-work packet: only exact canonical LF current-format event lines become structured history', async () => {
+  const event = t002ApproachEvent();
+  const foreign = t002ApproachEvent({ target: SECOND_TARGET, attemptOrdinal: 3 });
+  const line = t002V2EventLine(event);
+  const legacy = buildLearningReviewEvent(learningEventInput());
+  const eligible = [`${line}\n`, `${t002V2EventLine(foreign)}\n`];
+  const ineligible = [
+    `${line}\r\n`,
+    `${line}\r`,
+    ` ${line}\n`,
+    `${line} \n`,
+    `- dude-run-event:  ${canonicalJson(event)}\n`,
+    `${line.replace('"version":1', '"version":0,"version":1')}\n`,
+    `- dude-run-event: ${canonicalJson({ ...event, type: 'unknown-event' })}\n`,
+    `- dude-run-event: ${canonicalJson({ ...event, eventHash: sha256('forged event body') })}\n`,
+    '- dude-run-event: {\n',
+    `${buildLaneEventLine(legacy)}\n`,
+    'Prose that mentions - dude-run-event: but is not one 雪\n',
+  ];
+  const lines = [ineligible[0], eligible[0], ...ineligible.slice(1, 6), eligible[1], ...ineligible.slice(6), line];
+  const items = feature065HistoryItems([event], [[event]], lines);
+  const { v1, v2 } = await terminalCandidates(items);
+  const original = JSON.parse(items[0].text).history;
+  const spans = terminalItems(v2, 'task-history')[0].body.history;
+  assert.deepEqual(spans.filter((span) => typeof span !== 'string'), [event, foreign]);
+  assert.equal(
+    spans.filter((span) => typeof span === 'string').join(''),
+    eligible.reduce((text, exact) => text.replace(exact, ''), original),
+    'every ineligible line, including the unterminated final line, stays literal',
+  );
+  assert.ok(original.endsWith(line), 'the final exact event body has no LF and stays literal');
+  // The only anchor is this target's exact LF line, unchanged from v1.
+  assert.deepEqual(terminalItems(v2, 'current-run'), terminalItems(v1, 'current-run'));
+  const [[, anchorLine]] = terminalItems(v2, 'current-run')[0].body.records;
+  assert.equal(original.split(/\r\n|\r|\n/)[anchorLine], line);
+  assert.equal(original.split(/(\r\n|\r|\n)/)[anchorLine * 2 + 1], '\n');
+  // Structuring grants no authority: the machine Inspection is unchanged.
+  assert.equal(buildInspection(TARGET, items).evidenceHash, evidenceHash(TARGET, items));
+});
+
+/** Base v2 packet with a two-entry table, structured history, and current-run references. */
+async function terminalReferenceFixture() {
+  const event = t002ApproachEvent();
+  const history = feature065HistoryItems([event], [[event]], ['Prose before\n', `${t002V2EventLine(event)}\n`, 'Prose after\n']);
+  const failing = feature074Pair({ ordinal: 1 });
+  const passing = feature074Pair({
+    ordinal: 2,
+    accepted: true,
+    checks: failing.verificationText.checks.map((row, index) => ({
+      definition: row.definition, outcome: 'passed', evidence: `distinct passing evidence ${index}`,
+    })),
+  });
+  const items = [
+    ownerEvidence('reference fixture owner'),
+    ...history,
+    ...feature074FreshItems(failing),
+    ...feature074FreshItems(passing),
+  ];
+  const { v2 } = await terminalCandidates(items);
+  assert.ok(v2.texts.length >= 2);
+  return { items, v2 };
+}
+
+test('terminal-work packet: the independent inverse rejects invalid, omitted, foreign, forward, unused, and recursive references', async () => {
+  const { items, v2 } = await terminalReferenceFixture();
+  /** @param {(packet:Record<string, any>)=>void} change */
+  const mutated = (change) => {
+    const packet = clone(v2);
+    change(packet);
+    return packet;
+  };
+  /** @param {Record<string, any>} packet @returns {Record<string, any>[]} */
+  const references = (packet) => {
+    const found = [];
+    const visit = (value) => {
+      if (Array.isArray(value)) return value.forEach(visit);
+      if (value === null || typeof value !== 'object') return undefined;
+      if (Object.hasOwn(value, 'textRef')) return found.push(value);
+      return Object.values(value).forEach(visit);
+    };
+    visit(packet.items);
+    return found;
+  };
+  const historyOf = (packet) => terminalItems(packet, 'task-history')[0].body.history;
+  const cases = [
+    ['unused entry', p => { p.texts.push('an unused complete string'); }, /repeated readable string/],
+    ['omitted entry', p => { references(p)[0].textRef = p.texts.length; }, /inside this packet table/],
+    ['negative index', p => { references(p)[0].textRef = -1; }, /inside this packet table/],
+    ['extra reference field', p => { references(p)[0].note = 'x'; }, /deep-equal|deepStrictEqual/],
+    ['forward reference order', p => {
+      [p.texts[0], p.texts[1]] = [p.texts[1], p.texts[0]];
+      for (const reference of references(p)) {
+        if (reference.textRef < 2) reference.textRef = 1 - reference.textRef;
+      }
+    }, /first reference order/],
+    ['recursive entry', p => { p.texts[0] = { textRef: 1 }; }, /never a reference/],
+    ['duplicate entry', p => { p.texts.push(p.texts[0]); }, /appears once/],
+    ['pooled literal', p => {
+      for (const item of p.items) {
+        for (const row of item.payload?.text?.checks ?? item.payload?.text?.findings ?? []) {
+          for (const key of Object.keys(row)) {
+            if (typeof row[key] === 'object') {
+              row[key] = p.texts[row[key].textRef];
+              return;
+            }
+          }
+        }
+      }
+    }, /referenced at every readable position/],
+    ['foreign reference', p => { p.items.find(item => item.tag === 'verification').payload.checks[0].outcome = { textRef: 0 }; }, null],
+    ['event not at a line start', p => {
+      const spans = historyOf(p);
+      const index = spans.findIndex((span, position) => typeof span !== 'string' && typeof spans[position - 1] === 'string');
+      spans[index - 1] += 'x';
+    }, /begins a logical line/],
+    ['adjacent literal spans', p => {
+      const spans = historyOf(p);
+      const index = spans.findIndex(span => typeof span === 'string' && span.length > 1);
+      spans.splice(index, 1, spans[index].slice(0, 1), spans[index].slice(1));
+    }, /adjacent literal spans/],
+    ['empty literal span', p => { historyOf(p).push(''); }, /nonempty/],
+    ['changed event span', p => {
+      const event = historyOf(p).find(span => typeof span !== 'string');
+      event.occurrence.chronology.attemptOrdinal += 1;
+    }, null],
+    ['reference to a literal line', p => {
+      const record = terminalItems(p, 'current-run')[0].body.records.find(Array.isArray);
+      record[1] = 0;
+    }, null],
+    ['omitted history anchor', p => {
+      // Position 0 is the owner log: an earlier available item that is not task history.
+      terminalItems(p, 'current-run')[0].body.records.find(Array.isArray)[0] = 0;
+    }, /earlier emitted literal occurrence/],
+    ['structured history in v1', p => { p.format = 'dude-work-model-view-v1'; delete p.texts; }, null],
+  ];
+  assert.deepEqual(expandModelPacket(v2), originalAvailableProjection({ target: TARGET, items }));
+  for (const [label, change, message] of cases) {
+    const packet = mutated(change);
+    if (message) assert.throws(() => expandModelPacket(packet), message, label);
+    else assert.throws(() => expandModelPacket(packet), label);
+  }
+});
+
+test('terminal-work packet: v2 needs strict complete-packet savings and ties or losses keep v1', async t => {
+  const rows = [];
+  // One definition repeated by two distinct payloads. Its pooled saving is
+  // (2 - 1) x its JSON bytes - two 13-byte references; v2 also pays 11 bytes.
+  for (const [definitionJsonBytes, v2MinusV1] of [[26, 11], [36, 1], [37, 0], [38, -1]]) {
+    const definition = 'D'.repeat(definitionJsonBytes - 2);
+    const items = [1, 2].flatMap((ordinal) => feature074FreshItems(feature074Pair({
+      ordinal,
+      accepted: true,
+      checks: [{ definition, outcome: 'passed', evidence: `unique evidence ${ordinal}` }],
+    })));
+    const { selected, v2, bytes } = await terminalCandidates(items);
+    assert.equal(bytes.v2 - bytes.v1, v2MinusV1, `${definitionJsonBytes}-byte repeated definition`);
+    assert.deepEqual(v2.texts, definitionJsonBytes > 26 ? [definition] : []);
+    assert.equal(selected.format, v2MinusV1 < 0 ? 'dude-work-model-view-v2' : 'dude-work-model-view-v1');
+    assert.equal(modelPacket(buildInspection(TARGET, items)).format, selected.format);
+    rows.push({ definitionJsonBytes, ...bytes, selected: selected.format, table: terminalTableOverhead(v2) });
+  }
+  t.diagnostic(canonicalJson({ terminalWorkPacketSelection: rows }));
+});
+
+/** Two long readable definitions that every repeated attempt shares. */
+const TERMINAL_LONG_DEFINITIONS = Object.freeze([
+  `Run the focused "packet" regression and keep every byte \\ exact: ${'packet growth 雪 '.repeat(48)}`,
+  `Confirm the inverse restores frames, descriptors, and bindings: ${'lossless 😀 '.repeat(64)}`,
+]);
+const TERMINAL_EXPECTATION = 'Preserve the complete available evidence projection exactly.';
+
+/**
+ * One distinct attempt. Repeated attempts share the long definitions, reviewed
+ * definitions, and expectations but carry their own observations and outcomes,
+ * so whole-payload sharing cannot apply. The unique twin keeps the same shape
+ * with every semantic string distinct.
+ * @param {number} ordinal @param {boolean} unique @param {number} [observationBytes]
+ */
+function terminalGrowthPair(ordinal, unique, observationBytes = 0) {
+  const distinct = (text) => (unique ? `${text} [attempt ${ordinal}]` : text);
+  const definitions = TERMINAL_LONG_DEFINITIONS.map(distinct);
+  const padding = 'u'.repeat(observationBytes);
+  return feature074Pair({
+    ordinal,
+    checks: definitions.map((definition, index) => ({
+      definition,
+      outcome: index === 0 ? 'failed' : 'passed',
+      evidence: `attempt ${ordinal} check ${index} observed ${index === 0 ? 'a failure' : 'success'} 雪${padding}`,
+    })),
+    findings: definitions.map((definition, index) => ({
+      basis: {
+        expectation: { kind: 'governing-rule', reference: `${distinct(TERMINAL_EXPECTATION)} (${index})` },
+        subjects: ['src/readable-fixture.mjs'],
+        failureClass: 'semantic-loss',
+        checkDefinition: unique ? `${definition} (reviewed)` : definition,
+      },
+      observation: {
+        kind: 'observed-evidence', evidence: `attempt ${ordinal} reviewer observation ${index} 😀${padding}`,
+      },
+    })),
+  });
+}
+
+/**
+ * Raw collected sources for one growth workload: canonical approach/finding
+ * history with current-run counterparts, distinct specialist pairs with exact
+ * lint mirrors, and an owner log long enough that only a suffix may fit.
+ * @param {number} count @param {boolean} unique @param {number} [ownerEventBytes] @param {number} [observationBytes]
+ */
+function terminalGrowthRaw(count, unique, ownerEventBytes = 4_000, observationBytes = 0) {
+  const pairs = Array.from({ length: count }, (_, index) => terminalGrowthPair(index + 1, unique, observationBytes));
+  const events = pairs.flatMap((_, index) => [
+    t002ApproachEvent({ attemptOrdinal: index + 1 }),
+    t002FindingEvent({ attemptOrdinal: index + 1 }),
+  ]);
+  const lines = events.flatMap((event, index) => [
+    `${t002V2EventLine(event)}\n`, ...(index % 2 === 1 ? [`Attempt ${(index + 1) / 2} note 雪\r\n`] : []),
+  ]);
+  const items = pairs.flatMap(feature074FreshItems);
+  const raw = feature074Raw([
+    ...items,
+    ...items.filter((item) => item.source === 'verification').map((item) => ({ ...item, source: 'lint' })),
+  ]);
+  raw.tasks = { path: TASKS_PATH, bytes: t002HistoryTasksRecordBytes(lines) };
+  raw.currentRun = [recoveryRuntime.currentRunCapture(TARGET, events.map(buildProjectionRecord))];
+  const ownerEvents = Array.from({ length: 24 }, (_, index) => (
+    `- 2026-11-02 owner event ${index + 1} ${'o'.repeat(ownerEventBytes)}\n`
+  ));
+  raw.directIdeas = [{ path: IDEA_PATH, bytes: ideaBytes(SPEC_PATH, ownerEvents.join('')) }];
+  return { pairs, raw };
+}
+
+/** Byte identity of every raw source, so a measurement can prove it changed nothing. @param {Record<string, any>} raw */
+function terminalRawDigest(raw) {
+  return sha256(canonicalJson({
+    ideas: raw.directIdeas.map((idea) => [idea.path, sha256(idea.bytes)]),
+    tasks: sha256(raw.tasks.bytes),
+    streams: ['currentRun', 'review', 'verification', 'lint'].map((field) => raw[field].map((entry) => sha256(entry.bytes))),
+    ...(Object.hasOwn(raw, 'session') ? { session: sha256(raw.session.bytes ?? '') } : {}),
+  }));
+}
+
+test('terminal-work packet: 1, 2, 4, 8, and 16 distinct payloads with repeated readable text record strict v2 savings', async t => {
+  const rows = [];
+  for (const unique of [false, true]) {
+    for (const count of [1, 2, 4, 8, 16]) {
+      const { raw } = terminalGrowthRaw(count, unique);
+      const rawBefore = terminalRawDigest(raw);
+      const items = collectEvidence(TARGET, raw);
+      const itemsBefore = canonicalJson(items);
+      const production = await measurePrivateInspection(TARGET, items);
+      const v1Own = await measurePrivateInspection(TARGET, items, { modelView: 'v1' });
+      const inspection = buildInspection(TARGET, items);
+      assert.deepEqual(inspection, production.inspection, 'the private measurement is the production Inspection');
+      const sourceEntries = 3 + ['currentRun', 'review', 'verification', 'lint']
+        .reduce((total, field) => total + raw[field].length, 0);
+      const owner = (measured) => {
+        if (measured.inspection.overflow) return null;
+        const body = JSON.parse(measured.inspection.items.find((item) => item.source === 'owner-log').text);
+        return { included: body.includedEventCount, omitted: body.omittedEventCount, total: body.totalEventCount };
+      };
+      if (production.inspection.overflow) {
+        assert.equal(modelPacket(inspection), null);
+        assert.ok(inspection.items.every((item) => !Object.hasOwn(item, 'text')));
+        rows.push({ unique, count, overflow: true, sourceEntries, descriptors: inspection.items.length });
+      } else {
+        // Compare both complete candidates over the identical selected evidence and owner suffix.
+        const { selected, v1, v2, bytes } = await terminalCandidates(production.items);
+        assert.deepEqual(selected, production.packet);
+        assert.deepEqual(modelPacket(inspection), production.packet);
+        assert.equal(bytes.selected, production.modelBytes);
+        assert.ok(bytes.selected <= limits.bytes);
+        // The owner literal is identical in both candidates; growth comparisons exclude its suffix.
+        const ownerItem = terminalBytes(v2.items.find((item) => item.frames[0].occurrences[0].source === 'owner-log')) + 1;
+        rows.push({
+          unique,
+          count,
+          overflow: false,
+          sourceEntries,
+          descriptors: inspection.items.length,
+          physicalItems: selected.items.length,
+          availableOccurrences: expandModelPacket(selected).items.length,
+          selected: selected.format,
+          bytes,
+          nonOwnerBytes: { v1: bytes.v1 - ownerItem, v2: bytes.v2 - ownerItem },
+          savedBytes: bytes.v1 - bytes.v2,
+          ownerSuffix: { selected: owner(production), v1Only: owner(v1Own) },
+          table: terminalTableOverhead(v2),
+          history: terminalHistorySpans(v2),
+          v1History: terminalHistorySpans(v1),
+          inverse: true,
+        });
+      }
+      assert.equal(canonicalJson(items), itemsBefore);
+      assert.equal(terminalRawDigest(raw), rawBefore, 'original captures and history bytes are unchanged');
+    }
+  }
+  const repeated = rows.filter((row) => !row.unique);
+  const unique = rows.filter((row) => row.unique);
+  for (const row of repeated) {
+    assert.equal(row.overflow, false, `repeated ${row.count}`);
+    assert.equal(row.selected, 'dude-work-model-view-v2');
+    assert.ok(row.bytes.v2 < row.bytes.v1, `strict savings at ${row.count}`);
+    assert.ok(row.table.entries >= (row.count > 1 ? 4 : 2), 'definitions, reviewed definitions, and expectations are pooled');
+    assert.equal(row.history.events, row.count * 2, 'every canonical event line is structured');
+    assert.ok(row.ownerSuffix.selected.included >= (row.ownerSuffix.v1Only?.included ?? 0));
+  }
+  for (let index = 1; index < repeated.length; index += 1) {
+    assert.ok(repeated[index].savedBytes > repeated[index - 1].savedBytes, 'savings grow with repeated payloads');
+    // Pooled readable text makes each added repeated payload cheaper in v2 than in v1.
+    const v1Growth = repeated[index].nonOwnerBytes.v1 - repeated[index - 1].nonOwnerBytes.v1;
+    const v2Growth = repeated[index].nonOwnerBytes.v2 - repeated[index - 1].nonOwnerBytes.v2;
+    assert.ok(v2Growth < v1Growth, `per-payload growth from ${repeated[index - 1].count} to ${repeated[index].count}`);
+  }
+  for (const row of unique.filter((candidate) => !candidate.overflow)) {
+    assert.equal(row.table.entries, 0, `unique text is never pooled at ${row.count}`);
+    assert.equal(row.table.references, 0);
+  }
+  for (let index = 1; index < unique.length; index += 1) {
+    if (unique[index].overflow || unique[index - 1].overflow) continue;
+    // Every added unique readable string appears literally in the selected packet.
+    const addedReadable = terminalGrowthRaw(unique[index].count, true).pairs.slice(unique[index - 1].count)
+      .reduce((total, pair) => total + terminalBytes(pair.verificationText) + terminalBytes(pair.reviewText), 0);
+    assert.ok(unique[index].nonOwnerBytes.v2 - unique[index - 1].nonOwnerBytes.v2 > addedReadable,
+      `unique growth stays visible from ${unique[index - 1].count} to ${unique[index].count}`);
+  }
+  t.diagnostic(canonicalJson({ terminalWorkPacketGrowth: rows }));
+});
+
+test('terminal-work packet: unique growth reaches the fixed limit and refuses at the first excess', async t => {
+  // Larger unique observations and a one-character owner log: only evidence growth decides fit.
+  const rows = [];
+  let previous = null;
+  for (let count = 1; count <= 20; count += 1) {
+    const { raw } = terminalGrowthRaw(count, true, 1, 2_000);
+    const items = collectEvidence(TARGET, raw);
+    const inspection = buildInspection(TARGET, items);
+    const packet = modelPacket(inspection);
+    rows.push({ count, overflow: inspection.overflow, bytes: packet ? terminalBytes(packet) : null });
+    if (inspection.overflow) {
+      assert.equal(packet, null, 'no model packet at the first excess');
+      assert.ok(inspection.items.every((item) => !Object.hasOwn(item, 'text')));
+      assert.equal(inspection.items.length, items.length, 'every original descriptor survives');
+      assert.ok(inspection.blockers.some((blocker) => blocker.subject === 'model-packet'));
+      assert.ok(previous && !previous.overflow && previous.bytes <= limits.bytes, 'the previous count still fit');
+      t.diagnostic(canonicalJson({ terminalWorkUniqueGrowth: rows }));
+      return;
+    }
+    assert.ok(terminalBytes(packet) <= limits.bytes);
+    if (previous) assert.ok(terminalBytes(packet) > previous.bytes, 'unique evidence grows honestly');
+    previous = rows.at(-1);
+  }
+  assert.fail(`unique growth did not reach the fixed limit: ${canonicalJson(rows)}`);
+});
+
+test('terminal-work packet: unshared padding admits exactly 262143 and 262144 bytes and refuses 262145 with v2 selected', async t => {
+  const { raw } = terminalGrowthRaw(4, false);
+  raw.directIdeas = [{ path: IDEA_PATH, bytes: ideaBytes() }];
+  const rows = [];
+  for (const expectedBytes of [limits.bytes - 1, limits.bytes, limits.bytes + 1]) {
+    const withSession = (length) => collectEvidence(TARGET, {
+      ...raw, session: { target: TARGET, availability: 'available', bytes: Buffer.from('x'.repeat(length)) },
+    });
+    let length = expectedBytes - terminalBytes(await renderPrivateModelProjection(TARGET, withSession(0)));
+    let items;
+    let packet;
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      items = withSession(length);
+      packet = await renderPrivateModelProjection(TARGET, items);
+      const difference = expectedBytes - terminalBytes(packet);
+      if (difference === 0) break;
+      length += difference;
+    }
+    assert.equal(terminalBytes(packet), expectedBytes);
+    assert.equal(packet.format, 'dude-work-model-view-v2', 'the boundary is measured on the selected v2 packet');
+    const v1 = await renderPrivateModelProjection(TARGET, items, { modelView: 'v1' });
+    const inspection = buildInspection(TARGET, items);
+    assert.equal(inspection.overflow, expectedBytes > limits.bytes);
+    if (!inspection.overflow) {
+      assert.deepEqual(modelPacket(inspection), packet);
+      assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+      assert.doesNotThrow(() => validateInspection(inspection));
+    } else {
+      assert.equal(modelPacket(inspection), null, 'no model call can receive the first excess byte');
+      assert.ok(inspection.items.every((item) => !Object.hasOwn(item, 'text')));
+      assert.equal(inspection.items.length, items.length);
+      assert.deepEqual(inspection.blockers, [{
+        code: 'evidence-incomplete', subject: 'model-packet', evidenceHash: inspection.evidenceHash,
+      }]);
+      const forged = { ...inspection, items, overflow: false, blockers: [], evidenceHash: evidenceHash(TARGET, items) };
+      assert.throws(() => validateInspection(forged), /packet limits/);
+    }
+    rows.push({ expectedBytes, v2Bytes: terminalBytes(packet), v1Bytes: terminalBytes(v1), overflow: inspection.overflow, padding: length });
+  }
+  assert.ok(rows.every((row) => row.v1Bytes > row.v2Bytes), 'the same evidence costs more as v1');
+  t.diagnostic(canonicalJson({ terminalWorkPacketBoundary: rows }));
+});
+
+test('terminal-work packet: sharing buys no source, descriptor, body, aggregate, or transport allowance', async () => {
+  const pairs = Array.from({ length: 62 }, (_, index) => terminalGrowthPair(index + 1, false));
+  const event = t002ApproachEvent();
+  const withVerifications = (count) => {
+    const raw = feature074Raw(pairs.slice(0, count).map((pair) => feature074FreshItems(pair)[1]));
+    raw.tasks = { path: TASKS_PATH, bytes: t002HistoryTasksRecordBytes([`${t002V2EventLine(event)}\n`]) };
+    raw.currentRun = [recoveryRuntime.currentRunCapture(TARGET, [buildProjectionRecord(event)])];
+    return raw;
+  };
+  // Three workspace sources, one current run, and 60 pooled readable payloads are
+  // exactly 64 raw source entries. The 65th refuses however small sharing makes the packet.
+  const sixtyFour = collectEvidence(TARGET, withVerifications(60));
+  const { selected, bytes } = await terminalCandidates(sixtyFour);
+  assert.equal(selected.format, 'dude-work-model-view-v2');
+  assert.ok(selected.texts.length >= 2);
+  assert.ok(bytes.v2 < bytes.v1);
+  const sourceError = feature061Thrown(() => collectEvidence(TARGET, withVerifications(61)), 'source 65');
+  assert.deepEqual(recoveryRuntime.capacityDiagnostic(sourceError), {
+    budget: 'source-entries', limit: 64, required: 65, source: 'verification', target: canonicalTarget(TARGET),
+  });
+
+  // Original descriptors, including unavailable rows and an attachment, still pay 64/65.
+  const original = feature064TrustedItem('verification', pairs[0].verificationCapture, pairs[0].verificationState);
+  const base = [
+    ...feature065HistoryItems([event]),
+    original,
+    feature074Item('verification', pairs[0].verificationState, [feature074Attachment(original, pairs[0].verificationText)]),
+    ...pairs.slice(1, 40).map((pair) => feature074FreshItems(pair)[1]),
+  ];
+  const unavailable = (count) => Array.from({ length: count }, (_, index) => ({
+    source: 'session', required: false, status: 'nontext', ...contentDescriptor(`terminal unavailable ${index}`),
+  }));
+  const fit = buildInspection(TARGET, [...base, ...unavailable(64 - base.length)]);
+  assert.equal(fit.items.length, 64);
+  assert.equal(modelPacket(fit).format, 'dude-work-model-view-v2');
+  assert.deepEqual(expandModelPacket(modelPacket(fit)), originalAvailableProjection(fit));
+  const descriptorError = feature061Thrown(
+    () => buildInspection(TARGET, [...base, ...unavailable(65 - base.length)]), 'descriptor 65',
+  );
+  assert.deepEqual(recoveryRuntime.capacityDiagnostic(descriptorError), {
+    budget: 'retained-descriptors', limit: 64, required: 65, source: 'session', target: null,
+  });
+
+  // Individual and aggregate body limits are charged on raw bytes before any rendering.
+  const bodyError = feature061Thrown(() => collectEvidence(TARGET, {
+    ...withVerifications(2),
+    currentRun: [{ ...capture(TARGET, 'failed', [{ source: 'oversized' }]), bytes: Buffer.alloc(1_048_577) }],
+  }), 'source body');
+  assert.deepEqual(recoveryRuntime.capacityDiagnostic(bodyError), {
+    budget: 'source-body-bytes', limit: 1_048_576, required: 1_048_577, source: 'current-run', target: canonicalTarget(TARGET),
+  });
+  const aggregateBase = withVerifications(0);
+  const charged = aggregateBase.directIdeas.reduce((total, idea) => total + idea.bytes.byteLength, aggregateBase.tasks.bytes.byteLength);
+  const aggregateError = feature061Thrown(() => collectEvidence(TARGET, {
+    ...aggregateBase,
+    currentRun: splitBodyBytes(4_194_305 - charged, 4).map((byteLength, index) => (
+      sizedCapture(TARGET, 'failed', byteLength, `terminal-aggregate-${index}`)
+    )),
+  }), 'aggregate body');
+  assert.deepEqual(recoveryRuntime.capacityDiagnostic(aggregateError), {
+    budget: 'inspection-body-bytes', limit: 4_194_304, required: 4_194_305, source: 'current-run', target: canonicalTarget(TARGET),
+  });
+
+  // The transport ceiling is still checked on raw request bytes, before any packet exists.
+  const atLimit = runRecoveryCli('complete', sizedCanonicalCompleteRequest(6_291_456));
+  assert.equal(atLimit.status, 0, atLimit.stderr);
+  assert.equal(JSON.parse(atLimit.stdout).completion.reason, 'pending-not-found');
+  const overLimit = parseCanonicalCliError(runRecoveryCli('complete', sizedCanonicalCompleteRequest(6_291_457)), 'transport excess');
+  assert.equal(overLimit.code, 'recovery-resource-limit');
+  assert.match(overLimit.message, /cli-request-bytes limit of 6291456: 6291457 required/);
+});
+
+// --- Feature 094 T003: terminal-qualified fresh admission -------------------
+
+const ADMISSION_TIME = '2026-11-03T00:00:00Z';
+const ADMISSION_STATE_PATH = '.dude/state/task-state.json';
+
+/** An in-memory copy of the driver sink contract: fixed names written once and read back exactly. */
+function admissionSink() {
+  /** @type {Map<string, Buffer>} */
+  const files = new Map();
+  return {
+    files,
+    port: {
+      /** @param {string} name @param {unknown} value */
+      write(name, value) {
+        if (files.has(name)) throw new Error(`${name} already exists`);
+        const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+        files.set(name, bytes);
+        return { name, sha256: sha256(bytes), byteLength: bytes.byteLength };
+      },
+      /** @param {string} name */
+      read(name) {
+        const bytes = files.get(name);
+        if (bytes === undefined) throw new Error(`${name} is absent`);
+        return Buffer.from(bytes);
+      },
+    },
+  };
+}
+
+/**
+ * One disposable Lightweight workspace with an unblocked `[~]` target, plus a
+ * separate store root. Both are removed afterwards.
+ * @param {(root:string, store:string) => Promise<void>} run
+ */
+async function withAdmissionWorkspace(run) {
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dude-admission-')));
+  const root = path.join(base, 'ws');
+  const store = path.join(base, 'store');
+  try {
+    fs.mkdirSync(path.join(root, path.dirname(SPEC_PATH)), { recursive: true });
+    fs.mkdirSync(path.join(root, '.dude/ideas'), { recursive: true });
+    fs.mkdirSync(store);
+    fs.writeFileSync(path.join(root, SPEC_PATH), '# Spec\n');
+    fs.writeFileSync(path.join(root, IDEA_PATH), ideaBytes());
+    fs.writeFileSync(path.join(root, PLAN_PATH), noRegistryPlanBytes(SPEC_PATH));
+    fs.writeFileSync(path.join(root, TASKS_PATH), t002HistoryTasksBytes([]));
+    await run(root, store);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Run the actual original owner, its default ports, and the real runner to
+ * one hard stop and its own terminal handoff. An Assessment is answered with
+ * action `none`; a learning review with an invalid payload.
+ * @param {string} root @param {string} store
+ * @param {{retainedEvidence?:Record<string, unknown[]>, state?:Record<string, unknown>}} [options]
+ */
+async function admissionProducer(root, store, options = {}) {
+  const sink = admissionSink();
+  const result = await runHostAdapter({
+    version: 1,
+    root,
+    target: clone(TARGET),
+    owner: { ideaPath: IDEA_PATH, specPath: SPEC_PATH },
+    state: options.state ?? autonomousState(),
+    ...(options.retainedEvidence === undefined ? {} : { retainedEvidence: options.retainedEvidence }),
+  }, {
+    checkpoint: createTemporaryCheckpointStore({ root: store }),
+    retentionSink: sink.port,
+    /** @param {Record<string, any>} challenge */
+    exchange(challenge) {
+      const envelope = { version: 1, type: 'challenge-response', challengeIdentity: challenge.challengeIdentity, kind: challenge.kind };
+      if (challenge.kind !== 'assessment') return { ...envelope, review: { invalid: 'terminal-work admission producer stop' } };
+      return {
+        ...envelope,
+        assessment: {
+          evidenceHash: challenge.inspection.evidenceHash,
+          intent: 'unchanged',
+          action: 'none',
+          materialInputs: { targets: [], operations: [], checks: [] },
+          equivalence: 'none',
+          retention: 'transient',
+          summary: 'terminal-work admission producer stop',
+        },
+      };
+    },
+  });
+  assert.equal(result.outcome, 'hard-stop');
+  assert.equal(result.terminalDisposition.outcome, 'disposed', JSON.stringify(result.terminalDisposition));
+  return { result, files: sink.files };
+}
+
+/** The exact fresh lane binding the driver reacquires for the target. @param {string} root */
+function admissionBinding(root) {
+  const tasks = fs.readFileSync(path.join(root, TASKS_PATH));
+  const owner = fs.readFileSync(path.join(root, IDEA_PATH));
+  const statePath = path.join(root, ADMISSION_STATE_PATH);
+  const taskState = fs.existsSync(statePath) ? fs.readFileSync(statePath) : Buffer.from('{}\n');
+  const ownerDescriptor = contentDescriptor(owner);
+  const targetMapping = {
+    version: 1,
+    lane: 'lightweight',
+    target: clone(TARGET),
+    ownerBindingHash: sha256(canonicalJson({ ideaPath: IDEA_PATH, specPath: SPEC_PATH, ownerCapture: ownerDescriptor })),
+    tasksPath: TASKS_PATH,
+    tasksDescriptor: contentDescriptor(tasks),
+    taskStatePath: ADMISSION_STATE_PATH,
+    taskStateDescriptor: contentDescriptor(taskState),
+    taskKey: TASK_KEY,
+  };
+  const lanePrestate = {
+    version: 1,
+    lane: 'lightweight',
+    target: clone(TARGET),
+    glyph: '~',
+    blockedBy: null,
+    tasksDescriptor: contentDescriptor(tasks),
+    taskStateDescriptor: contentDescriptor(taskState),
+    ownerDescriptor,
+  };
+  return { targetMapping, lanePrestate };
+}
+
+/** @param {Map<string, Buffer>} files @param {string} name @returns {any} */
+function admissionJson(files, name) {
+  return JSON.parse(/** @type {Buffer} */ (files.get(name)).toString('utf8'));
+}
+
+/**
+ * One complete derivation request for the current workspace and handoff files.
+ * @param {string} root @param {Map<string, Buffer|null>} files @param {Record<string, unknown>} [overrides]
+ */
+function admissionRequest(root, files, overrides = {}) {
+  return {
+    version: 1,
+    root,
+    target: clone(TARGET),
+    requestIdentity: sha256('terminal-work admission request'),
+    policy: autonomousState().policy,
+    binding: admissionBinding(root),
+    controls: { checkpointKey: admissionJson(/** @type {Map<string, Buffer>} */ (files), 'terminal-evidence.json').binding.checkpointKey, status: 'absent' },
+    handoff: Object.fromEntries(recoveryRuntime.TERMINAL_HANDOFF_FILES.map((name) => [name, files.get(name) ?? null])),
+    operationTime: ADMISSION_TIME,
+    ...overrides,
+  };
+}
+
+/** @param {unknown} value */
+function admissionFile(value) {
+  return Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+/**
+ * Re-seal one handoff after a test-owned change: member descriptors, the
+ * inventory, and the disposition link are recomputed so every other proof
+ * stays valid and only the intended difference remains.
+ * @param {Map<string, Buffer>} files
+ * @param {(handoff:{manifest:any, disposition:any, files:Map<string, Buffer>})=>void} change
+ */
+function resealAdmission(files, change) {
+  const next = new Map(files);
+  const manifest = admissionJson(next, 'terminal-evidence.json');
+  const disposition = admissionJson(next, 'terminal-disposition.json');
+  change({ manifest, disposition, files: next });
+  manifest.files = manifest.files.map((/** @type {any} */ row) => {
+    const bytes = /** @type {Buffer} */ (next.get(row.name));
+    return { ...row, sha256: sha256(bytes), byteLength: bytes.byteLength };
+  });
+  manifest.inventoryHash = sha256(canonicalJson({ binding: manifest.binding, files: manifest.files }));
+  next.set('terminal-evidence.json', admissionFile(manifest));
+  if (disposition.manifestIdentity !== null) disposition.manifestIdentity = sha256(canonicalJson(manifest));
+  next.set('terminal-disposition.json', admissionFile(disposition));
+  return next;
+}
+
+/** Rebind the manifest's retained lane and requirement surfaces to the current workspace bytes. @param {any} manifest @param {string} root */
+function rebindAdmissionSurfaces(manifest, root) {
+  const describe = (/** @type {string} */ relative) => {
+    const file = path.join(root, relative);
+    const bytes = fs.existsSync(file) ? fs.readFileSync(file) : Buffer.from('{}\n');
+    return { path: relative, ...contentDescriptor(bytes) };
+  };
+  manifest.binding.requirements.spec = describe(SPEC_PATH);
+  manifest.binding.requirements.plan = describe(PLAN_PATH);
+  manifest.binding.lanePoststate = {
+    tasks: describe(TASKS_PATH), owner: describe(IDEA_PATH), taskState: describe(ADMISSION_STATE_PATH),
+  };
+}
+
+/** The transport captures of one inspect input. @param {Record<string, unknown>} input */
+function admissionCaptures(input) {
+  const transported = cliInput(input);
+  return Object.fromEntries(['currentRun', 'verification', 'review', 'lint'].map((field) => [field, transported[field] ?? []]));
+}
+
+/** Every authoritative surface the derivation may read, byte for byte. @param {string} root */
+function admissionSurfaceBytes(root) {
+  return Object.fromEntries([SPEC_PATH, PLAN_PATH, TASKS_PATH, IDEA_PATH, ADMISSION_STATE_PATH].map((relative) => {
+    const file = path.join(root, relative);
+    return [relative, fs.existsSync(file) ? sha256(fs.readFileSync(file)) : null];
+  }));
+}
+
+/** @param {Record<string, any>} admission @param {string} kind @param {string} subject @param {string} label */
+function assertAdmissionRefused(admission, kind, subject, label) {
+  assert.equal(admission.outcome, 'refused', `${label}: ${JSON.stringify(admission)}`);
+  assert.deepEqual(Object.keys(admission).sort(), ['missingProof', 'outcome', 'version'], label);
+  assert.deepEqual(Object.keys(admission.missingProof).sort(), ['kind', 'nextOwnerAction', 'required', 'subject'], label);
+  assert.equal(admission.missingProof.kind, kind, `${label}: ${JSON.stringify(admission.missingProof)}`);
+  assert.equal(admission.missingProof.subject, subject, label);
+}
+
+test('terminal-work admission: a producer-created disposed handoff admits a fresh state, ordinary Assessment, and an identity bound to every input', async () => {
+  await withAdmissionWorkspace(async (root, store) => {
+    const { result, files } = await admissionProducer(root, store);
+    assert.equal(result.reason, 'no-action');
+    const surfaces = admissionSurfaceBytes(root);
+    const handoff = new Map([...files].map(([name, bytes]) => [name, Buffer.from(bytes)]));
+    const storeBefore = fs.readdirSync(store, { recursive: true }).sort();
+
+    const request = admissionRequest(root, files);
+    const admission = recoveryRuntime.deriveFreshAdmissionV1(request);
+    assert.equal(admission.outcome, 'eligible', JSON.stringify(admission));
+    assert.deepEqual(admission.target, canonicalTarget(TARGET));
+    assert.deepEqual(admission.owner, { ideaPath: IDEA_PATH, specPath: SPEC_PATH });
+    // Fresh accounting from the current policy only; nothing is imported.
+    assert.equal(canonicalJson(admission.state), canonicalJson(autonomousState()));
+    assert.equal(admission.learningGate, 'assessment');
+    const manifest = admissionJson(files, 'terminal-evidence.json');
+    const disposition = admissionJson(files, 'terminal-disposition.json');
+    assert.deepEqual(admission.evidence, {
+      manifestIdentity: sha256(canonicalJson(manifest)),
+      dispositionIdentity: sha256(canonicalJson(disposition)),
+    });
+    const captures = admissionJson(files, 'retained-evidence.json');
+    const currentInspection = recoveryRuntime.runCommand('inspect', {
+      trigger: 'explicit-inspection',
+      input: { ...autonomousInspectInput(root), ...captures },
+    }).inspection;
+    assert.equal(admission.inspectionHash, currentInspection.evidenceHash);
+    // The identity binds exactly the request, policy, fresh state, evidence, owner, target, Inspection, and lane binding.
+    const binding = admissionBinding(root);
+    assert.equal(admission.admissionIdentity, sha256(canonicalJson({
+      version: 1,
+      domain: 'dude-work/terminal-fresh-admission',
+      requestIdentity: request.requestIdentity,
+      policy: autonomousState().policy,
+      freshStateHash: sha256(canonicalJson(autonomousState())),
+      manifestIdentity: admission.evidence.manifestIdentity,
+      dispositionIdentity: admission.evidence.dispositionIdentity,
+      owner: { ideaPath: IDEA_PATH, specPath: SPEC_PATH },
+      target: canonicalTarget(TARGET),
+      inspectionHash: currentInspection.evidenceHash,
+      targetMappingHash: sha256(canonicalJson(binding.targetMapping)),
+      lanePrestateHash: sha256(canonicalJson(binding.lanePrestate)),
+    })));
+    const otherRequest = recoveryRuntime.deriveFreshAdmissionV1({ ...request, requestIdentity: sha256('another explicit request') });
+    assert.notEqual(otherRequest.admissionIdentity, admission.admissionIdentity, 'each new request mints its own admission');
+    const finitePolicy = { overall: 2, recovery: 1, recover: true, untilBlocked: false, mode: 'autonomous' };
+    const finite = recoveryRuntime.deriveFreshAdmissionV1({ ...request, policy: finitePolicy });
+    assert.equal(canonicalJson(finite.state), canonicalJson({ policy: finitePolicy, overallUsed: 0, recoveryUsed: [], pending: [], completed: [] }));
+    assert.notEqual(finite.admissionIdentity, admission.admissionIdentity);
+    // Read-only: no workspace, handoff, or store byte changed.
+    assert.deepEqual(admissionSurfaceBytes(root), surfaces);
+    for (const [name, bytes] of handoff) assert.deepEqual(files.get(name), bytes, name);
+    assert.deepEqual(fs.readdirSync(store, { recursive: true }).sort(), storeBefore);
+  });
+});
+
+test('terminal-work admission: old nonzero accounting and completed obligations stay evidence while the fresh state starts at zero', async () => {
+  await withAdmissionWorkspace(async (root, store) => {
+    const tuple = { evidenceHash: sha256('old evidence'), approachHash: sha256('old approach'), resultHash: sha256('old result') };
+    const oldState = { ...autonomousState(), overallUsed: 1, completed: [tuple] };
+    validateRunState(oldState);
+    const { files } = await admissionProducer(root, store, { state: oldState });
+    const originalBefore = Buffer.from(/** @type {Buffer} */ (files.get('terminal-original.json')));
+    const admission = recoveryRuntime.deriveFreshAdmissionV1(admissionRequest(root, files));
+    assert.equal(admission.outcome, 'eligible', JSON.stringify(admission));
+    assert.equal(canonicalJson(admission.state), canonicalJson(autonomousState()), 'no budget is refunded or imported');
+    const original = admissionJson(files, 'terminal-original.json');
+    const retainedState = JSON.parse(Buffer.from(original.stateBase64, 'base64').toString('utf8'));
+    assert.equal(retainedState.overallUsed, 1);
+    assert.deepEqual(retainedState.completed, [tuple]);
+    assert.deepEqual(files.get('terminal-original.json'), originalBefore, 'the original terminal stays byte-identical');
+  });
+});
+
+test('terminal-work admission: an eligible repeat routes to the existing resume-learning gate from absent or exactly matching required projection', async () => {
+  await withAdmissionWorkspace(async (root, store) => {
+    const flow = t003PublicFlow(root, 'approach', 'selected-alternative');
+    for (const [label, events] of /** @type {[string, Record<string, unknown>[]][]} */ ([
+      ['absent required projection', flow.occurrenceEvents],
+      ['exactly matching required projection', flow.governedEvents],
+    ])) {
+      const input = t002RetentionInput(root, events, events, flow.fixtures);
+      const { result, files } = await admissionProducer(root, store, { retainedEvidence: admissionCaptures(input) });
+      assert.equal(result.reason, 'challenge-response-invalid', `${label}: the producer stopped at required learning`);
+      const oldState = JSON.parse(Buffer.from(result.stateBase64, 'base64').toString('utf8'));
+      assert.equal(oldState.learningGovernance.phase, 'required', `${label}: the original learning stays evidence`);
+      const surfaces = admissionSurfaceBytes(root);
+      const admission = recoveryRuntime.deriveFreshAdmissionV1(admissionRequest(root, files));
+      assert.equal(admission.outcome, 'eligible', `${label}: ${JSON.stringify(admission)}`);
+      assert.equal(admission.learningGate, 'resume-learning', label);
+      // The fresh state carries no governance: the runner restores it through the existing route.
+      assert.equal(Object.hasOwn(admission.state, 'learningGovernance'), false, label);
+      assert.equal(canonicalJson(admission.state), canonicalJson(autonomousState()), label);
+      assert.deepEqual(admissionSurfaceBytes(root), surfaces, `${label}: read-only`);
+    }
+  });
+});
+
+test('terminal-work admission: later, resolved, conflicting, stale, and one-sided learning refuse before any lane write', async () => {
+  await withAdmissionWorkspace(async (root, store) => {
+    const { files: base } = await admissionProducer(root, store);
+    const selected = t003PublicFlow(root, 'approach', 'selected-alternative');
+    const resolved = t003PublicFlow(root, 'finding', 'no-progress');
+    const staleGovernance = recoveryRuntime.buildGovernanceEventV1({
+      ...t002RequiredGovernance(selected.occurrenceEvents), revision: 2,
+    });
+    const staleEvents = [...selected.occurrenceEvents, staleGovernance];
+    /** @type {[string, ReturnType<typeof t003PublicFlow>, Record<string, unknown>[], Record<string, unknown>[]][]} */
+    const cases = [
+      ['later selected alternative', selected, selected.learnedEvents, selected.learnedEvents],
+      ['resolved no-progress branch', resolved, resolved.learnedEvents, resolved.learnedEvents],
+      ['stale required revision', selected, staleEvents, staleEvents],
+      ['conflicting surfaces', selected, selected.governedEvents, staleEvents],
+      ['one-sided required projection', selected, selected.occurrenceEvents, selected.governedEvents],
+    ];
+    for (const [label, flow, currentEvents, laneEvents] of cases) {
+      const input = t002RetentionInput(root, currentEvents, laneEvents, flow.fixtures);
+      const files = resealAdmission(base, ({ manifest, files: next }) => {
+        next.set('retained-evidence.json', admissionFile(admissionCaptures(input)));
+        rebindAdmissionSurfaces(manifest, root);
+      });
+      const surfaces = admissionSurfaceBytes(root);
+      const admission = recoveryRuntime.deriveFreshAdmissionV1(admissionRequest(root, files));
+      assertAdmissionRefused(admission, 'learning-authority', TASK_KEY, label);
+      assert.deepEqual(admissionSurfaceBytes(root), surfaces, `${label}: refused before any marker or lane write`);
+    }
+  });
+});
+
+test('terminal-work admission: absent, unusable, or mismatched handoff files, controls, effects, and surfaces each name one first missing proof', async () => {
+  await withAdmissionWorkspace(async (root, store) => {
+    const { files } = await admissionProducer(root, store);
+    const manifest = admissionJson(files, 'terminal-evidence.json');
+    const key = manifest.binding.checkpointKey;
+    /** @param {string} name @param {Buffer|null} bytes */
+    const without = (name, bytes) => new Map([...files, [name, bytes]]);
+    /** @param {(handoff:{manifest:any, disposition:any, files:Map<string, Buffer>})=>void} change */
+    const resealed = (change) => resealAdmission(files, change);
+    /** @param {string} name @param {(value:any)=>void} change */
+    const member = (name, change) => resealed(({ files: next }) => {
+      const value = admissionJson(next, name);
+      change(value);
+      next.set(name, admissionFile(value));
+    });
+    const refusedProof = { kind: 'effect-settlement', subject: 'authorize-attempt', required: 'fixture', nextOwnerAction: 'fixture' };
+    /** @type {[string, Map<string, Buffer|null>, string, string][]} */
+    const cases = [
+      ['missing manifest', without('terminal-evidence.json', null), 'owner-fence', 'terminal-evidence.json'],
+      ['unparseable manifest', without('terminal-evidence.json', Buffer.from('{not json')), 'owner-fence', 'terminal-evidence.json'],
+      ['manifest edited without its inventory', without('terminal-evidence.json', admissionFile({
+        ...manifest, binding: { ...manifest.binding, terminalReason: 'another-reason' },
+      })), 'owner-fence', 'terminal-evidence.json'],
+      ['missing disposition', without('terminal-disposition.json', null), 'owner-fence', 'terminal-disposition.json'],
+      ['disposition of another manifest', without('terminal-disposition.json', admissionFile({
+        ...admissionJson(files, 'terminal-disposition.json'), manifestIdentity: sha256('another manifest'),
+      })), 'owner-fence', 'terminal-disposition.json'],
+      ['refused original disposition', resealed(({ disposition }) => {
+        Object.assign(disposition, { outcome: 'refused', removal: { checkpoint: 'retained', claim: 'retained' }, missingProof: refusedProof });
+      }), 'effect-settlement', 'authorize-attempt'],
+      ['missing effect evidence', without('terminal-effects.json', null), 'retained-source', 'terminal-effects.json'],
+      ['changed original terminal bytes', without('terminal-original.json', Buffer.concat([
+        /** @type {Buffer} */ (files.get('terminal-original.json')), Buffer.from(' '),
+      ])), 'retained-source', 'terminal-original.json'],
+      ['original terminal of another stop', member('terminal-original.json', (value) => { value.reason = 'another-stop'; }),
+        'retained-source', 'terminal-original.json'],
+      ['fence of another invocation', member('terminal-fence.json', (value) => { value.invocationIdentity = sha256('another invocation'); }),
+        'owner-fence', 'terminal-fence.json'],
+      ['controls of another checkpoint', member('terminal-controls.json', (value) => {
+        const record = JSON.parse(Buffer.from(value.checkpoint.base64, 'base64').toString('utf8'));
+        record.recordHash = sha256('another checkpoint');
+        value.checkpoint = recoveryRuntime.capturedBytesV1(Buffer.from(canonicalJson(record)));
+      }), 'exact-control-pair', 'terminal-controls.json'],
+      ['captures outside the closed streams', member('retained-evidence.json', (value) => { value.session = []; }),
+        'retained-source', 'retained-evidence.json'],
+      ['another workspace', resealed(({ manifest: next }) => { next.binding.workspaceIdentity = sha256('another workspace'); }),
+        'current-target', TASK_KEY],
+      ['unsettled effects', member('terminal-effects.json', (value) => { value.unaccounted = 'authorize-attempt'; value.qualified = false; }),
+        'effect-settlement', 'authorize-attempt'],
+      ['exposed specialist pair', member('terminal-effects.json', (value) => { value.exchange.specialistPairExposed = true; }),
+        'effect-settlement', 'specialist-pair'],
+      ['injected runtime port', member('terminal-effects.json', (value) => { value.ports.runtime = 'injected'; }),
+        'effect-settlement', 'terminal-effects.json'],
+    ];
+    const surfaces = admissionSurfaceBytes(root);
+    for (const [label, handoff, kind, subject] of cases) {
+      assertAdmissionRefused(recoveryRuntime.deriveFreshAdmissionV1(admissionRequest(root, files, {
+        handoff: Object.fromEntries(recoveryRuntime.TERMINAL_HANDOFF_FILES.map((name) => [name, handoff.get(name) ?? null])),
+      })), kind, subject, label);
+    }
+    assertAdmissionRefused(recoveryRuntime.deriveFreshAdmissionV1(admissionRequest(root, files, {
+      controls: { checkpointKey: key, status: 'loaded' },
+    })), 'removal-absence', key, 'a present control pair');
+    // Fully settled synchronous effects qualify like no effects: only unsettled ones refuse.
+    const settled = member('terminal-effects.json', (value) => {
+      value.receipts = [{ settled: 'fixture receipt standing for a committed owned lane write' }];
+    });
+    assert.equal(recoveryRuntime.deriveFreshAdmissionV1(admissionRequest(root, settled)).outcome, 'eligible');
+
+    // Changed requirement and lane surfaces refuse with their own path; nothing is mapped.
+    /** @type {[string, string, string|null][]} */
+    const drifts = [
+      ['changed spec', SPEC_PATH, '# Spec\n\nA changed requirement.\n'],
+      ['changed plan', PLAN_PATH, `${noRegistryPlanBytes(SPEC_PATH).toString('utf8')}\nA changed design.\n`],
+      ['changed owner log', IDEA_PATH, `${ideaBytes().toString('utf8')}- 2026-11-02 later coordinator event\n`],
+      ['changed task-state snapshot', ADMISSION_STATE_PATH, `${JSON.stringify({ [TASKS_PATH]: { glyphs: { [TASK_KEY]: '~' }, updated_at: '2026-11-02T00:00:00.000Z' } }, null, 2)}\n`],
+    ];
+    for (const [label, relative, text] of drifts) {
+      const file = path.join(root, relative);
+      const before = fs.existsSync(file) ? fs.readFileSync(file) : null;
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, /** @type {string} */ (text));
+      try {
+        assertAdmissionRefused(recoveryRuntime.deriveFreshAdmissionV1(admissionRequest(root, files)), 'current-target', relative, label);
+      } finally {
+        if (before === null) fs.rmSync(file);
+        else fs.writeFileSync(file, before);
+      }
+    }
+    assert.deepEqual(admissionSurfaceBytes(root), surfaces);
+    assert.equal(recoveryRuntime.deriveFreshAdmissionV1(admissionRequest(root, files)).outcome, 'eligible', 'restored');
+  });
+});
+
+test('terminal-work admission: the current target, dependencies, and precedence refuse first, before any handoff file is read', async () => {
+  await withAdmissionWorkspace(async (root, store) => {
+    const { files } = await admissionProducer(root, store);
+    const tasksBefore = fs.readFileSync(path.join(root, TASKS_PATH));
+    const missingHandoff = Object.fromEntries(recoveryRuntime.TERMINAL_HANDOFF_FILES.map((name) => [name, null]));
+    /** @type {[string, {id:string,glyph?:string,deps?:string[],blockedBy?:string,parallel?:boolean}[], string][]} */
+    const cases = [
+      ['blocked target', [{ id: TASK_KEY, glyph: '~', blockedBy: 'waiting on another owner' }], TASK_KEY],
+      ['done target', [{ id: TASK_KEY, glyph: 'x' }], TASK_KEY],
+      ['pending target', [{ id: TASK_KEY, glyph: ' ' }], TASK_KEY],
+      ['rekeyed target', [{ id: SECOND_TASK_KEY, glyph: '~' }], TASK_KEY],
+      ['unmet dependency', [{ id: SECOND_TASK_KEY, glyph: ' ' }, { id: TASK_KEY, glyph: '~', deps: [SECOND_TASK_KEY] }], SECOND_TASK_KEY],
+      // Precedence follows phase, then task number: T000 comes before the target.
+      ['earlier in-progress task', [{ id: 'T000@aaaaaaaa', glyph: '~' }, { id: TASK_KEY, glyph: '~' }], 'T000@aaaaaaaa'],
+    ];
+    try {
+      for (const [label, tasks, subject] of cases) {
+        fs.writeFileSync(path.join(root, TASKS_PATH), t002HistoryTasksRecordBytes([], tasks));
+        for (const handoff of [Object.fromEntries(recoveryRuntime.TERMINAL_HANDOFF_FILES.map((name) => [name, files.get(name) ?? null])), missingHandoff]) {
+          // The fresh caller binding of the changed board cannot make the task eligible either.
+          assertAdmissionRefused(recoveryRuntime.deriveFreshAdmissionV1({ ...admissionRequest(root, files), handoff }),
+            'current-target', subject, label);
+        }
+      }
+      // A stale caller binding refuses rather than trusting the supplied prestate.
+      fs.writeFileSync(path.join(root, TASKS_PATH), tasksBefore);
+      const stale = admissionBinding(root);
+      stale.lanePrestate.tasksDescriptor = contentDescriptor('another tasks.md');
+      assertAdmissionRefused(recoveryRuntime.deriveFreshAdmissionV1(admissionRequest(root, files, { binding: stale })),
+        'current-target', TASKS_PATH, 'stale caller binding');
+    } finally {
+      fs.writeFileSync(path.join(root, TASKS_PATH), tasksBefore);
+    }
+  });
+});
+
+test('terminal-work admission: fixed raw-source, packet, runner extra-source, and known claim-footprint limits gate admission', async () => {
+  await withAdmissionWorkspace(async (root, store) => {
+    // The runner pays one more initially empty live current-run source after
+    // retained history: 58 seeded captures leave one source of headroom, 59 none.
+    const live = recoveryRuntime.currentRunCapture(clone(TARGET), []);
+    const seeded = (/** @type {number} */ count) => ({
+      currentRun: Array.from({ length: count }, () => ({ ...live, bytes: { base64: live.bytes.toString('base64') } })),
+      verification: [], review: [], lint: [],
+    });
+    const fits = await admissionProducer(root, store, { retainedEvidence: seeded(58) });
+    assert.equal(admissionJson(fits.files, 'retained-evidence.json').currentRun.length, 59, 'the producer kept its own live capture');
+    assert.equal(recoveryRuntime.deriveFreshAdmissionV1(admissionRequest(root, fits.files)).outcome, 'eligible');
+    const full = await admissionProducer(root, store, { retainedEvidence: seeded(59) });
+    assert.equal(admissionJson(full.files, 'retained-evidence.json').currentRun.length, 60);
+    assertAdmissionRefused(recoveryRuntime.deriveFreshAdmissionV1(admissionRequest(root, full.files)),
+      'capacity', 'capacity:source-entries:current-run:65', 'runner extra source');
+
+    // The exact current packet, then the complete known claim marker/snapshot footprint.
+    const { files } = await admissionProducer(root, store);
+    const tasksFile = path.join(root, TASKS_PATH);
+    const tasksBefore = fs.readFileSync(tasksFile);
+    const packetBytes = () => Buffer.byteLength(canonicalJson(modelPacket(recoveryRuntime.runCommand('inspect', {
+      trigger: 'explicit-inspection', input: autonomousInspectInput(root),
+    }).inspection)));
+    /** Unshared literal task history text, so the packet grows exactly one byte per padding byte. @param {number} padding */
+    const padded = (padding) => {
+      fs.writeFileSync(tasksFile, Buffer.concat([tasksBefore, Buffer.from(`x${'p'.repeat(padding)}\n`)]));
+      return resealAdmission(files, ({ manifest }) => rebindAdmissionSurfaces(manifest, root));
+    };
+    try {
+      padded(0);
+      const zero = packetBytes();
+      /** Pad until the current packet is exactly `bytes`; descriptor digits make growth only nearly linear. @param {number} bytes */
+      const paddedTo = (bytes) => {
+        let padding = bytes - zero;
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          const sealed = padded(padding);
+          const actual = packetBytes();
+          if (actual === bytes) return sealed;
+          padding += bytes - actual;
+        }
+        return assert.fail(`the current packet did not converge to ${bytes} bytes`);
+      };
+      // Far enough below the limit to admit the marker; then close enough that the marker is the first excess.
+      const roomy = paddedTo(limits.bytes - 4_096);
+      assert.equal(recoveryRuntime.deriveFreshAdmissionV1(admissionRequest(root, roomy)).outcome, 'eligible');
+      const tight = paddedTo(limits.bytes - 64);
+      const tightAdmission = recoveryRuntime.deriveFreshAdmissionV1(admissionRequest(root, tight));
+      assert.equal(tightAdmission.outcome, 'refused', JSON.stringify(tightAdmission));
+      assert.equal(tightAdmission.missingProof.kind, 'capacity', 'known claim footprint');
+      assert.match(tightAdmission.missingProof.subject, /^capacity:model-packet-bytes:model-packet:\d+$/);
+      const over = padded(limits.bytes + 1_024 - zero);
+      assertAdmissionRefused(recoveryRuntime.deriveFreshAdmissionV1(admissionRequest(root, over)),
+        'capacity', 'model-packet', 'current packet overflow');
+    } finally {
+      fs.writeFileSync(tasksFile, tasksBefore);
+    }
+  });
+});
+
+test('terminal-work admission: the issuer rederives the admission identity and eligibility; a self-consistent supplied identity is refused', async () => {
+  await withAdmissionWorkspace(async (root, store) => {
+    const { files } = await admissionProducer(root, store);
+    const admission = recoveryRuntime.deriveFreshAdmissionV1(admissionRequest(root, files));
+    assert.equal(admission.outcome, 'eligible');
+    const manifest = admissionJson(files, 'terminal-evidence.json');
+    const disposition = admissionJson(files, 'terminal-disposition.json');
+    const captures = admissionJson(files, 'retained-evidence.json');
+    const binding = admissionBinding(root);
+    const owner = fs.readFileSync(path.join(root, IDEA_PATH));
+    /** @param {Record<string, unknown>} [fields] */
+    const mutation = (fields = {}) => recoveryRuntime.buildTerminalFreshClaimMutationV1({
+      target: clone(TARGET),
+      ownerPath: IDEA_PATH,
+      expectedOwnerHash: sha256(owner),
+      time: ADMISSION_TIME,
+      requestIdentity: admission.requestIdentity,
+      admissionIdentity: admission.admissionIdentity,
+      manifestIdentity: admission.evidence.manifestIdentity,
+      dispositionIdentity: admission.evidence.dispositionIdentity,
+      ...fields,
+    });
+    /** @param {Record<string, unknown>} [overrides] */
+    const issue = (overrides = {}) => recoveryRuntime.runCommand('transition', {
+      mode: 'issue-lane-permit',
+      state: admission.state,
+      input: { ...autonomousInspectInput(root), ...captures },
+      mutation: mutation(),
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+      terminalAdmission: { requestIdentity: admission.requestIdentity, manifest, disposition },
+      ...overrides,
+    }).transition;
+    const issued = issue();
+    assert.equal(issued.issued, true, JSON.stringify(issued));
+    assert.equal(issued.permit.mutationIdentity, sha256(canonicalJson(mutation())));
+    assert.deepEqual([issued.permit.governanceIdentity, issued.permit.attemptIdentity], [null, null]);
+    assert.equal(canonicalJson(issued.state), canonicalJson(admission.state), 'issuance is pure');
+
+    /**
+     * This handoff's admission material with its manifest bound to one workspace
+     * identity. The inventory, the disposition link, the marker, and the admission
+     * identity are all rederived from it, so workspace applicability is the only
+     * check that can tell two rebindings apart.
+     * @param {string} workspaceIdentity
+     */
+    const reboundTo = (workspaceIdentity) => {
+      const rebound = { ...manifest, binding: { ...manifest.binding, workspaceIdentity } };
+      rebound.inventoryHash = sha256(canonicalJson({ binding: rebound.binding, files: rebound.files }));
+      const manifestIdentity = sha256(canonicalJson(rebound));
+      const linked = { ...disposition, manifestIdentity };
+      const dispositionIdentity = sha256(canonicalJson(linked));
+      const admissionIdentity = sha256(canonicalJson({
+        version: 1,
+        domain: 'dude-work/terminal-fresh-admission',
+        requestIdentity: admission.requestIdentity,
+        policy: admission.state.policy,
+        freshStateHash: sha256(canonicalJson(admission.state)),
+        manifestIdentity,
+        dispositionIdentity,
+        owner: { ideaPath: IDEA_PATH, specPath: SPEC_PATH },
+        target: canonicalTarget(TARGET),
+        inspectionHash: admission.inspectionHash,
+        targetMappingHash: sha256(canonicalJson(binding.targetMapping)),
+        lanePrestateHash: sha256(canonicalJson(binding.lanePrestate)),
+      }));
+      return {
+        mutation: mutation({ manifestIdentity, dispositionIdentity, admissionIdentity }),
+        terminalAdmission: { requestIdentity: admission.requestIdentity, manifest: rebound, disposition: linked },
+      };
+    };
+    // The control: rebound to this workspace, the same construction is the eligible issuance itself.
+    const local = reboundTo(manifest.binding.workspaceIdentity);
+    assert.equal(local.mutation.admissionIdentity, admission.admissionIdentity, 'the rebuilt identity is the issuer\'s own');
+    assert.equal(issue(local).issued, true, 'the rebuilt material issues when its workspace is this one');
+    const foreign = reboundTo(sha256(canonicalJson({ version: 1, root: `${root}-another` })));
+    assert.notEqual(foreign.terminalAdmission.manifest.inventoryHash, manifest.inventoryHash, 'the foreign inventory is resealed');
+
+    const forged = sha256('a self-consistent but forged admission identity');
+    const tuple = { evidenceHash: sha256('old evidence'), approachHash: sha256('old approach'), resultHash: sha256('old result') };
+    const refusedDisposition = {
+      ...disposition, outcome: 'refused', removal: { checkpoint: 'retained', claim: 'retained' },
+      missingProof: { kind: 'owner-fence', subject: 'fixture', required: 'fixture', nextOwnerAction: 'fixture' },
+    };
+    /** @type {[string, Record<string, unknown>, string][]} */
+    const refusals = [
+      ['forged self-consistent identity', { mutation: mutation({ admissionIdentity: forged }) }, 'permit-transition-mismatch'],
+      ['identity for another request', { mutation: mutation({ requestIdentity: sha256('another request') }) }, 'permit-transition-mismatch'],
+      ['marker for other evidence', { mutation: mutation({ manifestIdentity: sha256('other evidence') }) }, 'permit-transition-mismatch'],
+      ['imported nonzero state', { state: { ...admission.state, overallUsed: 1, completed: [tuple] } }, 'permit-transition-mismatch'],
+      ['missing admission material', { terminalAdmission: undefined }, 'permit-transition-mismatch'],
+      ['refused disposition', { terminalAdmission: { requestIdentity: admission.requestIdentity, manifest, disposition: refusedDisposition } }, 'permit-transition-mismatch'],
+      // Internally consistent material that differs from the control only by its workspace.
+      ['manifest of another workspace', foreign, 'permit-transition-mismatch'],
+    ];
+    for (const [label, overrides, reason] of refusals) {
+      const request = { ...overrides };
+      if (Object.hasOwn(request, 'terminalAdmission') && request.terminalAdmission === undefined) {
+        const refused = recoveryRuntime.runCommand('transition', {
+          mode: 'issue-lane-permit', state: admission.state, input: { ...autonomousInspectInput(root), ...captures },
+          mutation: mutation(), lanePrestate: binding.lanePrestate, targetMapping: binding.targetMapping,
+        }).transition;
+        assert.deepEqual([refused.issued, refused.reason], [false, reason], label);
+        continue;
+      }
+      const refused = issue(request);
+      assert.deepEqual([refused.issued, refused.reason], [false, reason], label);
+    }
+    // Admission material and the admission identity never ride on an ordinary mutation:
+    // the same ordinary block issues alone, but not with either addition.
+    const ordinary = {
+      version: 1, lane: 'lightweight', kind: 'task-blocked', reason: 'task-blocked', target: clone(TARGET),
+      fromGlyph: '~', toGlyph: '!', blocker: { kind: 'add', before: null, after: 'waiting on a fixture owner' },
+      eventLines: { kind: 'none' }, ownerLog: { kind: 'none' }, snapshotUpdatedAt: ADMISSION_TIME,
+    };
+    const plain = recoveryRuntime.runCommand('transition', {
+      mode: 'issue-lane-permit', state: admission.state, input: { ...autonomousInspectInput(root), ...captures },
+      mutation: ordinary, lanePrestate: binding.lanePrestate, targetMapping: binding.targetMapping,
+    }).transition;
+    assert.equal(plain.issued, true, `the ordinary block itself issues: ${plain.reason}`);
+    for (const [label, overrides] of /** @type {[string, Record<string, unknown>][]} */ ([
+      ['admission material on an ordinary mutation', { mutation: ordinary }],
+      ['admission identity on an ordinary mutation', {
+        mutation: { ...ordinary, admissionIdentity: admission.admissionIdentity }, terminalAdmission: undefined,
+      }],
+      ['same-glyph ordinary resume claim', {
+        mutation: {
+          ...ordinary, kind: 'claim', reason: 'resume-claim', toGlyph: '~',
+          blocker: { kind: 'unchanged', before: null, after: null },
+        },
+        terminalAdmission: undefined,
+      }],
+    ])) {
+      const request = {
+        mode: 'issue-lane-permit', state: admission.state, input: { ...autonomousInspectInput(root), ...captures },
+        mutation: mutation(), lanePrestate: binding.lanePrestate, targetMapping: binding.targetMapping,
+        terminalAdmission: { requestIdentity: admission.requestIdentity, manifest, disposition },
+        ...overrides,
+      };
+      if (request.terminalAdmission === undefined) delete request.terminalAdmission;
+      const refused = recoveryRuntime.runCommand('transition', request).transition;
+      assert.deepEqual([refused.issued, refused.reason], [false, 'permit-transition-mismatch'], label);
+    }
+    // A changed lane surface after derivation is drift, not a new admission.
+    const statePath = path.join(root, ADMISSION_STATE_PATH);
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(statePath, `${JSON.stringify({ [TASKS_PATH]: { glyphs: { [TASK_KEY]: '~' }, updated_at: '2026-11-02T00:00:00.000Z' } }, null, 2)}\n`);
+    try {
+      const drifted = issue({ lanePrestate: admissionBinding(root).lanePrestate, targetMapping: admissionBinding(root).targetMapping });
+      assert.deepEqual([drifted.issued, drifted.reason], [false, 'lane-prestate-mismatch']);
+    } finally {
+      fs.rmSync(path.dirname(statePath), { recursive: true, force: true });
+    }
+    assert.equal(issue().issued, true, 'restored surfaces issue again');
+  });
+});
+
+test('terminal-work admission: recovery accepts the terminal-fresh-claim reason and admission identity only on the exact same-glyph alternative', () => {
+  const marker = (/** @type {Record<string, string>} */ fields = {}) => recoveryRuntime.terminalFreshClaimMarkerV1({
+    time: ADMISSION_TIME,
+    taskKey: TASK_KEY,
+    requestIdentity: sha256('request'),
+    admissionIdentity: sha256('admission'),
+    manifestIdentity: sha256('manifest'),
+    dispositionIdentity: sha256('disposition'),
+    ...fields,
+  });
+  const exact = recoveryRuntime.buildTerminalFreshClaimMutationV1({
+    target: clone(TARGET), ownerPath: IDEA_PATH, expectedOwnerHash: sha256('owner'), time: ADMISSION_TIME,
+    requestIdentity: sha256('request'), admissionIdentity: sha256('admission'),
+    manifestIdentity: sha256('manifest'), dispositionIdentity: sha256('disposition'),
+  });
+  assert.equal(exact.ownerLog.exactLines[0], marker());
+  assert.deepEqual(recoveryRuntime.parseTerminalFreshClaimMarkerV1(marker()), {
+    time: ADMISSION_TIME, taskKey: TASK_KEY, requestIdentity: sha256('request'), admissionIdentity: sha256('admission'),
+    manifestIdentity: sha256('manifest'), dispositionIdentity: sha256('disposition'),
+  });
+  assert.match(marker(), /the prior Work run remains terminal\.$/);
+  const validated = recoveryRuntime.validateTerminalFreshClaimMutationV1(exact, clone(TARGET));
+  assert.equal(validated.mutationIdentity, sha256(canonicalJson(exact)));
+  /** @param {(mutation:any)=>void} change */
+  const changed = (change) => {
+    const mutation = clone(exact);
+    change(mutation);
+    return mutation;
+  };
+  const event = t002ApproachEvent();
+  const shape = /is not the exact unblocked same-glyph terminal fresh claim/;
+  const alternative = /terminal-fresh-claim is only the Lightweight same-glyph claim alternative/;
+  /** @type {[string, Record<string, unknown>, Record<string, unknown>, RegExp][]} */
+  const cases = [
+    ['pending-to-claimed glyphs', changed((mutation) => { mutation.fromGlyph = ' '; }), TARGET, shape],
+    ['completed glyph', changed((mutation) => { mutation.toGlyph = 'x'; }), TARGET, shape],
+    ['blocker change', changed((mutation) => { mutation.blocker = { kind: 'remove', before: 'waiting', after: null }; }), TARGET, shape],
+    ['event lines', changed((mutation) => {
+      mutation.eventLines = {
+        kind: 'append-exact',
+        appendIfAbsent: true,
+        lines: [{ eventHash: event.eventHash, exactLine: `- dude-run-event: ${canonicalJson(event)}`, terminator: 'LF' }],
+      };
+    }), TARGET, shape],
+    ['no owner marker', changed((mutation) => { mutation.ownerLog = { kind: 'none' }; }), TARGET, shape],
+    ['two owner lines', changed((mutation) => { mutation.ownerLog.exactLines.push('- 2026-11-03T00:00:00Z - work: another line'); }), TARGET, shape],
+    ['marker for another admission', changed((mutation) => { mutation.ownerLog.exactLines = [marker({ admissionIdentity: sha256('other') })]; }), TARGET, shape],
+    ['marker for another task', changed((mutation) => { mutation.ownerLog.exactLines = [marker({ taskKey: SECOND_TASK_KEY })]; }), TARGET, shape],
+    ['marker at another time', changed((mutation) => { mutation.ownerLog.exactLines = [marker({ time: '2026-11-03T00:00:01Z' })]; }), TARGET, shape],
+    ['missing admission identity', changed((mutation) => { delete mutation.admissionIdentity; }), TARGET, /missing field 'admissionIdentity'/],
+    ['another kind', changed((mutation) => { mutation.kind = 'task-blocked'; }), TARGET, alternative],
+    ['tracked lane', changed((mutation) => {
+      Object.assign(mutation, { lane: 'tracked', target: clone(TRACKED), fromStatus: 'in_progress', toStatus: 'in_progress' });
+      delete mutation.fromGlyph;
+      delete mutation.toGlyph;
+      delete mutation.snapshotUpdatedAt;
+    }), TRACKED, alternative],
+  ];
+  for (const [label, mutation, target, pattern] of cases) {
+    assert.throws(() => recoveryRuntime.validateTerminalFreshClaimMutationV1(mutation, clone(target)), pattern, label);
+  }
+  // Only this one reason selects the alternative; every other claim keeps the unchanged matrix.
+  const sameGlyphOrdinary = changed((mutation) => {
+    delete mutation.admissionIdentity;
+    Object.assign(mutation, { reason: 'resume-claim', ownerLog: { kind: 'none' } });
+  });
+  assert.throws(() => recoveryRuntime.validateTerminalFreshClaimMutationV1(sameGlyphOrdinary, clone(TARGET)), /must be terminal-fresh-claim/);
+  assert.equal(recoveryRuntime.parseTerminalFreshClaimMarkerV1(`${marker()} `), null, 'only the exact line parses');
+  assert.throws(() => recoveryRuntime.terminalFreshClaimMarkerV1({
+    time: ADMISSION_TIME, taskKey: TASK_KEY, requestIdentity: 'not-a-hash', admissionIdentity: sha256('admission'),
+    manifestIdentity: sha256('manifest'), dispositionIdentity: sha256('disposition'),
+  }), /must render one exact canonical line/);
 });

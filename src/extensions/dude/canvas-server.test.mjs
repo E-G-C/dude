@@ -1390,17 +1390,23 @@ function copiedExtensionHarness() {
     exports: { './extension': './extension.mjs' },
   }));
   fs.writeFileSync(path.join(sdkRoot, 'extension.mjs'), [
+    // Counted per evaluation: the extension's fixed loader must import this same resolved module the driver does.
+    'globalThis.__dudeSdkEvaluations = (globalThis.__dudeSdkEvaluations ?? 0) + 1;',
     'let canvas;',
     'let sessionOptions;',
     'let logCalls = 0;',
+    'let joins = 0;',
     'export function createCanvas(value) { canvas = value; return value; }',
     'export async function joinSession(value) {',
+    '  joins += 1;',
     '  sessionOptions = value;',
     '  return { log: async () => { logCalls += 1; throw new Error("rejected session log"); } };',
     '}',
     'export function registeredCanvas() { return canvas; }',
     'export function registeredSessionSummary() {',
     '  return {',
+    '    joins,',
+    '    evaluations: globalThis.__dudeSdkEvaluations,',
     '    optionKeys: Object.keys(sessionOptions).sort(),',
     '    toolNames: sessionOptions.tools.map((tool) => tool.name),',
     '    operationNames: sessionOptions.tools[0].parameters.properties.op.enum,',
@@ -3591,13 +3597,17 @@ test('extension lifecycle contains rejected session logs without touching stdout
     assert.equal(result.sessionLogCalls, 3, 'both opens and the successful close attempt session logging');
     assert.equal(result.stdoutWrites, 0, 'neither lifecycle nor logging containment may use stdout');
     assert.deepEqual(result.sessionRegistration, {
+      joins: 1,
+      evaluations: 1,
       optionKeys: ['canvases', 'onEvent', 'tools'],
-      toolNames: ['dude_needs_you', 'dude_a2a_propose', 'dude_a2a_ask', 'dude_a2a_receive', 'dude_a2a_reply', 'dude_a2a_verify'],
+      toolNames: ['dude_needs_you', 'dude_a2a_propose', 'dude_a2a_ask', 'dude_a2a_receive', 'dude_a2a_reply', 'dude_a2a_verify', 'dude_a2a_conversation'],
       operationNames: ['request', 'acknowledge'],
       acknowledgmentKinds: ['canvas_response', 'outside_answer', 'capture', 'import_result'],
       hasOnEvent: true,
       canvasCount: 1,
-    }, 'the existing Canvas, one closed two-operation handoff, and the opt-in A2A ask, receive, reply, and verify tools share the joined session, which requests no environment variable such as the app\'s GitHub token');
+    }, 'the fixed loader imports the one package-resolved SDK module and joins once, with no permission handler, hook, or tool filter; '
+      + 'the existing Canvas, one closed two-operation handoff, and the opt-in A2A ask, receive, reply, verify, and conversation tools share the joined session, '
+      + 'which requests no environment variable such as the app\'s GitHub token');
   } finally {
     fs.rmSync(harness.root, { recursive: true, force: true });
   }

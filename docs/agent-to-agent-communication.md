@@ -17,6 +17,37 @@ generated A2A module and disposable releases. These are separate from native
 host qualification: no host or peer combination is qualified for the full
 scope, and Dude does not claim support for any real use.
 
+Feature 089 adds optional nonblocking collaboration between two independent
+Dudes: the `dude_a2a_conversation` tool, B's restricted evidence worker,
+bounded local transcripts with a read-only live view, and optional peer
+number advice for a first capture. Its source, controlled checks, and a
+real-TLS component suite are delivered. Its native qualification has not
+passed: no actual independent AI exchange, unrelated main-agent progress,
+causal capture, live or retained inspection, or confirmed cleanup has been
+observed. The maintainer runner's native branch and its fixed Windows observer
+are implemented but unverified: no native attempt of the branch has passed,
+only controlled checks have exercised the observer, and the qualification
+preview still reports every native stage blocked. The
+native branch now observes the two prerequisites it once could not: one
+model-driven after-view control, and the session storage B's worker records,
+whose files it classifies by documented purpose. Only controlled checks have
+exercised them; whether a native host passes either is unknown.
+See [Collaboration between two Dudes](#collaboration-between-two-dudes).
+
+B's evidence worker can instead reuse the Copilot runtime's own saved
+sign-in, on Windows only, without a token file. This existing-sign-in branch
+is implemented in the product, and controlled checks and the real-TLS
+component suite exercise it with fake SDKs. Native qualification attempts,
+with both mains also on their saved sign-in, reached both mains' account
+checks, both proposals and their human activation approvals, and the
+readiness of B's worker, including its own account checks. In the latest
+attempt, the worker then ended with `unexpected_native_effect` after its
+prompt was admitted, before it read any evidence. No attempt has passed.
+Strict isolated-worker qualification is deferred and not passed for this
+branch. The Canvas GitHub sign-in in Settings > Accounts, which reads pack
+sources, is a separate feature that collaboration never uses. See
+[Existing sign-in](#existing-sign-in).
+
 The approved remaining acceptance scope is local GitHub Copilot CLI on one
 Windows computer, with two isolated session/workspace contexts, real loopback
 TLS, and harmless fixture processes. Retain the three observed Windows-to-Windows
@@ -162,9 +193,17 @@ The core Dude extension contains everything the feature needs at run time, so
 consumers need no npm install:
 
 - `lib/a2a.mjs` handles configuration, proposal preparation, activation, and the
-  five tools: propose, ask, receive, verify, and reply.
+  five synchronous tools: propose, ask, receive, verify, and reply.
 - `lib/a2a-transport.mjs` sends and receives messages over mutual TLS.
 - `lib/a2a-verify.mjs` runs named commands and records what it observed.
+- `lib/a2a-collaboration.mjs` adds the optional nonblocking
+  `dude_a2a_conversation` tool and its number-advice messages.
+- `lib/a2a-peer-worker.mjs` runs B's restricted evidence worker for one
+  conversation and checks its readiness before the worker's first prompt.
+- `lib/a2a-sdk-loader.mjs` loads the public Copilot SDK for the extension's one
+  join and for B's worker, and records which file each one imported.
+- `lib/a2a-transcript.mjs` keeps each conversation's bounded local transcript
+  and provides its read-only terminal view.
 - `lib/a2a-runtime.mjs` is a prebuilt bundle of `@a2a-js/sdk` 1.2.0 and Express
   5.2.1. The extension loads it only after a local approval. License notices for
   every bundled package are in `lib/a2a-runtime.mjs.LEGAL.txt`.
@@ -286,6 +325,7 @@ single-line text, and numbers must be positive integers.
 | `listen.address`, `listen.port` | serve | yes | The IP address and port B listens on |
 | `evidenceRoots` | serve | yes | Absolute paths of existing folders, not links, whose files B may attach. The array may be empty. |
 | `verification` | serve | no | Command approval. See [Named commands](#named-commands). |
+| `collaboration` | both | no | An agreed project ID and, for serving, B's evidence worker. See [Collaboration between two Dudes](#collaboration-between-two-dudes). |
 
 ### Example: share-only setup
 
@@ -921,6 +961,894 @@ To approve the current files instead of a pinned commit, set `"revision"` to
 `"worktree"`. The `git` key is then optional, and without it every run records
 the revision as unknown.
 
+## Collaboration between two Dudes
+
+Feature 089 lets two independent Dudes collaborate over approved activations.
+Each peer has its own workspace root, owner configuration, TLS material,
+journals, and approval. They need no shared checkout, Git directory, filesystem,
+or host, and nothing allocates numbers for both. The delivered use is number
+advice: A asks one question, B's restricted evidence worker reads B's own
+approved lifecycle records and reports the highest number it found, and A may
+use that observation in its own first capture. This is advice between
+independent roots, not a shared allocator, lock, or reservation. Two captures
+can still choose the same number with different slugs, which Feature 076 keeps
+valid. Two peers bound this proof; it makes no many-to-many claim. Only
+loopback runs on one computer have been exercised, in delivered component
+tests and in native attempts. Native attempts of the normal collaboration
+route (plan version 3) reached both mains' saved-sign-in account checks, both
+proposals and the human activation approvals, both conversation starts, and
+B's worker readiness. In the latest attempt, B's worker then ended with
+`unexpected_native_effect` after its prompt was admitted, before it read any
+evidence. No attempt has passed. The strict qualification (plan version 2) has
+never run natively, and strict isolation remains deferred. Private-LAN and
+other-platform use remain unqualified.
+
+### Collaboration profiles
+
+A profile opts in with an optional `collaboration` object. Without it, the
+activation behaves exactly as before, records nothing, and the conversation
+tool refuses with `not_collaborating`.
+
+| Key | Role | Value |
+| --- | --- | --- |
+| `collaboration.projectId` | both | The project ID both owners agree on: letters, digits, `.`, `_`, and `-`, at most 64 characters. It is correlation only, not authentication or enrollment. |
+| `collaboration.worker` | serve | Required for serving and refused for asking. |
+| `collaboration.worker.model` | serve | The worker's model ID. There is no default. |
+| `collaboration.worker.runtime.path` | serve | Absolute path of the runtime executable; `.cmd`, `.bat`, and `.ps1` files are refused. |
+| `collaboration.worker.runtime.args` | serve | Arguments placed before the SDK's own. Must be empty with `auth`. |
+| `collaboration.worker.runtime.env` | serve | `inherit` and `set`, as for named commands; the worker receives only these variables. With `tokenFile`, credential variables (`COPILOT_SDK_AUTH_TOKEN`, `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`) and `COPILOT_RUNTIME_PROCESS_FILE_LOGGING` are refused. So are home, temp, and per-user location variables (`HOME`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `TEMP`, `TMP`, `TMPDIR`, `APPDATA`, `LOCALAPPDATA`, and the `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, and `XDG_CACHE_HOME` directories), in any letter case: the worker uses its own folders. With `auth`, `set` must be empty and `inherit` may name only `SystemRoot`, `windir`, `ComSpec`, `PATHEXT`, `PATH`, `HOME`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `APPDATA`, and `LOCALAPPDATA`, each once in any letter case, and must name `USERPROFILE`, `APPDATA`, and `LOCALAPPDATA`. |
+| `collaboration.worker.runtime.tokenFile` | serve | The token branch: absolute path of a file holding the worker's one credential. Proposal preparation reads and hashes it; its value is never shown or recorded. A runtime names exactly one of `tokenFile` and `auth`. |
+| `collaboration.worker.runtime.auth` | serve | The existing-sign-in branch, Windows only: exactly `kind` `"existing-sign-in"`, `baseDirectory`, and `expectedAccount`. It holds no credential. See [Existing sign-in](#existing-sign-in). |
+| `collaboration.worker.runtime.auth.baseDirectory` | serve | The runtime's real base directory for its configuration, sessions, and logs, usually `%USERPROFILE%\.copilot`: an absolute path of at most 1,024 UTF-8 bytes, outside the workspace and every evidence root. Proposal preparation checks only that it is an existing directory, not a link, and where it resolves; it never reads the directory's contents. |
+| `collaboration.worker.runtime.auth.expectedAccount` | serve | Exactly `host`, a canonical HTTPS origin such as `https://github.com`, and `login`; each is at most 256 UTF-8 bytes, and the login compares without letter case. It is the account the runtime and the worker's session must report, not a peer identity. |
+| `collaboration.worker.roots` | serve | A non-empty list; each entry must be one of the profile's `evidenceRoots`. |
+| `collaboration.worker.qualification` | serve | Optional, and only for a native qualification run: exactly `version`, a lowercase UUID `runId`, an absolute `fixtureRoot` outside the workspace and every evidence root, and the fixture manifest's lowercase SHA-256 `fixtureSha256`. `version` is `1` with `tokenFile` and `2` with `auth`. Ordinary use leaves it out. |
+
+The proposal shows collaboration as separately labeled lines: `PROJECT` and
+`RECORDING` on both sides, `CONVERSATION` on the asking side, and on the
+serving side a `WORKER` scope naming the runtime, arguments, environment names,
+token file (value hidden), model, the two evidence tools and roots, limits
+including the 10-second startup, and the owned storage folders. An
+existing-sign-in worker's `WORKER` scope names its expected login and host
+instead of a token file, the resolved base directory the approval binds, and
+the runtime's normal effects: the real home and app data, configuration,
+sessions, logging, and sign-in lookup, which are not isolated. Its
+`Worker startup` line says that the runtime may start the owner's configured
+MCP servers and plugins, while the worker's model is offered only the two
+evidence tools. A
+qualification profile adds a `QUALIFICATION` line with its run, fixture, and
+manifest digest, and lines for its probes and release latches; a version 2
+profile has latches only. The serving
+approval line says that it grants SHARING and the separate WORKER scope
+together. Only an approval of such a proposal creates the activation's worker
+permit; the transport grant alone never starts a worker. The fixed 4,490-byte
+cap covers the complete proposal, including these lines.
+
+### Begin, read, and cancel
+
+`dude_a2a_conversation` takes exactly one of these argument shapes:
+
+| Arguments | Result |
+| --- | --- |
+| `{"op":"begin_receive"}` | Serving: returns an `operationId` and the transcript path at once, then waits in the background for one project question. |
+| `{"op":"begin_ask","slug":"<slug>","tentativeNumber":<1-999>,"question":"<text>"}` | Asking: returns at once and sends one `number_advice` question in the background. |
+| `{"op":"read","operationId":"<id>"}` | The operation's current phase, or its decided result. |
+| `{"op":"cancel","operationId":"<id>"}` | Ends answer acceptance at once and reports the result. |
+
+- `accepted` means local admission only, not readiness or delivery. Both main
+  agents can continue unrelated work and read the result at a later tool
+  boundary. Read and cancel send, approve, and prompt nothing.
+- One current operation runs per activation. A second begin is refused as
+  `busy`, and the synchronous `dude_a2a_ask` and `dude_a2a_receive` refuse with
+  `conversation_in_progress`; nothing is queued, retried, or fanned out. A new
+  begin replaces the readable handle, never the old transcript.
+- The begin call's normal return does not end the operation. Stop, expiry,
+  binding drift, root abort, new or queued root input in that session, a
+  context or workspace change, and shutdown do. Keep working within the
+  current turn rather than sending a new prompt while an operation is pending.
+- Cancel ends answer acceptance at once, and `read` may show bounded cleanup
+  still settling. A question cancelled before its first byte is known unsent;
+  after that, delivery is `may_have_occurred`. A late answer never revives a
+  decided result.
+- An operation ends by min(120 seconds, the asking profile's `askTimeoutMs`,
+  validity). B's worker gets min(90 seconds, what remains). Cleanup is awaited
+  at most 10 seconds before the result freezes with cleanup unconfirmed.
+
+Asking results are `answer`, `refused`, `unavailable`, `rejected` (B answered,
+but not with valid advice), `cancelled`, `timeout`, `uncertain`, or `failed`.
+Serving results are `sent`, `refused`, `cancelled`, `timeout`, `uncertain`, or
+`failed`. Each also reports `delivery`, the transcript path, and `recording`:
+`pending` until the result freezes, then `complete` or `incomplete`.
+
+B admits one authenticated question only while its receive waits, and only
+when the question is closed `number_advice` JSON for B's project. Anything else
+is refused or answered `unavailable` without reaching a model. Only then does
+B start its worker. B's HTTP response stays open while the worker reasons; if
+A disconnects, B's operation and worker end and nothing is written.
+
+The session log shows `Status: conversation <operationId> accepted; <role>;
+transcript <path>`, `... waiting for one project question`, `... admitted;
+<exchangeId>`, and `... <outcome>`, plus warnings for kept worker storage,
+unobserved cleanup, and an incomplete transcript. Log lines carry metadata
+only.
+
+### B's restricted evidence worker
+
+The extension and B's worker load the public Copilot SDK only through two fixed
+loaders in `lib/a2a-sdk-loader.mjs`: one for the extension's single
+`joinSession` and one for the worker's client. Each resolves the normal package
+name through Node's module resolution, requires the result to be a regular file
+of at most 16 MiB at its real path, not a link, records that file's path, size,
+and SHA-256, imports the same file, and checks that it did not change. There is
+no other path, default location, or fallback. If the extension's loader
+refuses, the extension does not join. If the worker's loader refuses, the
+worker ends with `sdk_provenance_unavailable`, `sdk_artifact_changed`, or
+`sdk_unavailable` before anything starts. An SDK handed in by a test adapter is
+recorded as `test_adapter`, never as production provenance.
+
+The worker creates one owned temporary directory with `work`, `config`, `home`,
+and `temp` folders. It points `HOME` and `USERPROFILE` at `home` and `TEMP`,
+`TMP`, and `TMPDIR` at `temp`, and starts exactly the approved runtime,
+arguments, environment, credential, and model, with the logged-in user and
+runtime logging off. Its fresh session turns off configuration discovery,
+custom and on-demand instructions, file hooks, skills, memory, the session
+store, host Git context, extensions, Canvas tools, and MCP servers. It offers
+only `dude_a2a_evidence_inventory` and `dude_a2a_evidence_read`, which reach
+only the approved lifecycle records through B's safe evidence reader, and it
+rejects every permission request. These are configured settings, not proven
+enforcement: no native run has shown that a host honors them.
+
+Before its first prompt, within 10 seconds of starting, the worker checks its
+own session through the public SDK. Right after the session is created, and
+again at the end of these checks, it reads the session's own metadata snapshot
+and its public `workspacePath`. The snapshot must name this session, a local
+one not already in use, working in the worker's `work` folder, and the two
+answers must agree. A reported workspace must be an existing folder, reached
+through no link, strictly inside the worker's own `config` or `home` folder,
+with a path of at most 1,024 UTF-8 bytes, and it must be the same folder both
+times. A snapshot `null` with an `undefined` getter, both times, is recorded
+only as observed absence: it does not show that the session keeps nothing on
+disk, and it turns nothing on. The runtime must report its status; the
+session's current model must be the approved model; the initialized tool
+catalog must be exactly the two evidence tools with their approved schemas and
+no deferred or MCP tool; and the session must report no instruction source,
+skill, MCP server, extension, custom agent, or selected agent. A fixed invalid
+inventory call then goes through the session's own tool pipeline, and it must
+reach this worker's handler and return exactly `invalid_arguments`. A failed
+check refuses before the prompt with a closed reason such as
+`preflight_unsupported`, `storage_unavailable`, `model_mismatch`,
+`tool_catalog_uninitialized`, `tool_catalog_mismatch`,
+`probe_cause_unrecognized`, or `unexpected_native_effect`. A missing, failing,
+malformed, or mismatched storage answer is `preflight_unsupported`, and an
+unsafe, missing, oversized, or changed folder is `storage_unavailable`;
+neither ever counts as absence.
+
+B's journal then records `worker_preflight`, an observation of at most 8 KiB:
+the binding, both loader records, the extension's process ID, the runtime
+version, the model, the owned folder, the session storage the worker observed
+(the workspace path with its device and inode, or `none`), the catalog's
+schema digests, the counts, and each probe's classification. It holds no
+prompt, instruction text, snapshot content, credential, or error text. Right
+before it records `worker_ready`, and again right before the prompt, the
+worker rereads the getter and the workspace folder's identity, and any change
+refuses with `storage_unavailable`. The worker records `worker_ready`, sends
+the prompt, and records the admission ID that `send` returns as
+`worker_request_admitted`. Each record is checked against the operation, its
+deadline, and the grant before and after it is written. Only that admission's
+root replies count. The answer is the last root reply when the session goes
+idle, and an evidence call is served only after a root tool request of that
+admission names its call ID. Replies to another admission, subagent output,
+and uncorrelated calls are non-answers. A hook, skill, subagent, or MCP event,
+or a notification that an instruction file was discovered, at any time until
+the worker's result is decided, or any permission request before the prompt,
+ends the worker with `unexpected_native_effect`, and nothing more is
+disclosed. The result's `detail`, which B's `worker_finished` record and its
+read view keep, then names the trigger from one closed list: the event's
+type, such as `hook.start` or `session.mcp_server_status_changed`, or
+`tool_call`, `permission_request`, or `model_output_before_prompt` for an
+evidence call outside the run, or a permission request or model output
+before the prompt. Nothing the trigger carried is kept, and any detail
+outside that list is recorded as `null`.
+
+A native qualification run sets `collaboration.worker.qualification`. Before
+its client starts, that worker copies the synthetic canaries listed in
+`<fixtureRoot>/manifest.json`, which must match `fixtureSha256`, into its own
+folders. Its readiness adds fixed probes: unknown-name controls before and
+after, a read of a synthetic denied target, which must be `not_listed`, and
+`view`, `create`, PowerShell `exit 0`, and a canary MCP name, each of which
+must be rejected as an unoffered name with no effect. Only one answer counts
+as that rejection: a JSON-RPC error with code `-32602` whose message is exactly
+`Tool '<name>' is not available in this session.` for the name asked. Both
+controls must give it, and every probe must match them. Any other answer
+refuses with `probe_cause_unrecognized`, even when every lookup gives the same
+one: another code or text, a result object, or a generic, transport, or
+argument failure. The worker then waits for
+`<fixtureRoot>/<workerId>.startup-release.json` before its prompt, and holds the
+model's first evidence call, recorded as `worker_evidence_pending`, until
+`<workerId>.evidence-release.json` appears. Each release must be the exact
+closed record for this run, worker, operation, grant, session, and observation,
+plus, for the evidence release, the admission and call. A release is an
+observation, not permission. The 10-second startup bound ends when
+`worker_preflight` is recorded; both waits count against the worker's own
+limit.
+
+On the token branch, only fake SDKs have run these checks; native attempts
+have run the existing-sign-in branch's readiness checks, as
+[Existing sign-in](#existing-sign-in) describes. No native run has shown that
+a host reports its status, catalog, model, or ambient state truthfully. No
+native run has shown what a host reports about a token-branch session's
+storage either, or whether it sends the discovery notification. A host that
+reports schemas or model IDs in another form than the approved ones makes the
+worker refuse rather than
+continue. The same holds for unoffered names: the
+public SDK declares no code, text, or result for a name that `tools.execute`
+does not offer, so the recognized rejection is the worker's own closed
+contract, and only fake SDKs produce it. A native host that rejects unoffered
+names any other way refuses qualification. Accepting another form needs
+source evidence of that exact form and a reviewed change, never a broader
+pattern.
+
+B replies only when the worker's answer checks out: its maximum equals the
+largest number in the listing it inspected, which must still be unchanged, and
+each citation is a listed record it actually read, which must reread with the
+same bytes. Otherwise the reply is a content-free non-answer; no number is
+defaulted. A then checks that the reply names its project, conversation, and
+slug, and that a positive maximum cites a record with that number. Otherwise
+A's result is `rejected`.
+
+Cleanup aborts a running worker, stops its client, and force-stops it when
+needed, within 10 seconds. None of these steps proves that the runtime and
+every process it started have exited. Once a runtime may have started,
+cessation is reported `unconfirmed`, and the worker's temporary folder is kept
+and reported locally, never deleted and never described to the peer.
+
+### Existing sign-in
+
+Instead of a token file, B's worker can reuse the saved sign-in that the
+Copilot runtime itself keeps, as a normal Copilot session does. Dude
+implements no sign-in for it: it never requests, reads, copies, or shows a
+credential, and it never logs in, switches accounts, or falls back to the
+token branch. This branch runs on Windows only; elsewhere the proposal is
+refused.
+
+The profile names the runtime's real base directory, usually
+`%USERPROFILE%\.copilot`, and the expected account: a canonical HTTPS host and
+a login. Its environment is an explicit selection from the names listed under
+[Collaboration profiles](#collaboration-profiles), with no fixed values.
+Unselected names that Windows would otherwise hand to the runtime are passed
+empty, and `HOME` is `USERPROFILE` when it is not selected. Proposal
+preparation binds the selected values and the resolved base directory into
+the approval without showing the values, and every admission and readiness
+checkpoint binds them again; any change ends the activation.
+
+The worker owns only `work` and `temp` folders and points `TEMP`, `TMP`, and
+`TMPDIR` at `temp`. Its client runs in the runtime's normal `copilot-cli`
+mode with the logged-in user on, the approved base directory, and normal
+logging, and it passes no token. The runtime therefore reads the owner's real
+home, app data, and configuration, resolves its own saved sign-in or GitHub
+CLI login as usual, and keeps its sessions and logs under the base directory.
+These effects are not isolated, and the proposal says so. The session keeps
+the token branch's two tools, rejected permissions, and disabled features;
+those remain configured settings, not proven enforcement.
+
+Before its first prompt, the worker asks the client it owns
+(`getAuthStatus`) and its new session (`gitHubAuth.getStatus`) for their
+accounts. Each must be signed in, by an interactive sign-in or the GitHub
+CLI, as the expected login at the expected host. The worker asks again after
+the startup latch, before each evidence text reaches the model, and before
+an answer counts. Each check runs within the worker's deadline and
+cancellation, and the worker rechecks its session and admission after each
+wait. A missing, failing, or malformed answer ends the worker with
+`auth_unavailable`, a signed-out one with `auth_required`, and another
+account or kind with `auth_mismatch`; no status text or error is kept. These
+checks hold at points in time; they are not an account lock, an entitlement
+check, or a revocation check.
+
+Readiness also observes the session's normal storage. Its metadata snapshot
+and getter must agree on this session, the owned `work` folder, and a
+workspace path of at most 1,024 UTF-8 bytes, or none, and they must agree
+again after the latch and before the prompt. No ambient count or probe runs.
+The worker records `worker_preflight` version 2, at most 8 KiB, with the
+binding, loaders, process ID, runtime version, model, owned folder, both
+accounts as observed, the normal storage, and the catalog digests, and with
+no ambient or probe result. B's receiver records only the approved branch's
+version and refuses the other as `readiness_mismatch`. A notification that an
+instruction file was discovered is not an error on this branch, and neither
+are the runtime's MCP server notices, `session.mcp_servers_loaded` and
+`session.mcp_server_status_changed`, whatever they list: a normal runtime may
+start the owner's configured MCP servers and plugins even though the session
+itself names none, while the session's tool filters still offer the worker
+model only the two evidence tools. A hook, skill, or subagent event, an
+evidence call outside the run, or a permission request or model output before
+the prompt still ends the worker, with its trigger in `detail`. A
+version 2 qualification, for a native run only, binds a manifest of exactly
+`{"version": 2, "runId": "<runId>"}`, copies nothing, runs no probe, and uses
+the same two release latches.
+
+Cleanup is unchanged: cessation stays unconfirmed once a runtime may have
+started, the worker's own folder is kept, and nothing in the owner's home or
+base directory is ever deleted. In the latest native attempt, the worker's
+runtime and session reported the expected account, and the worker recorded
+its version 2 readiness; it then ended with `unexpected_native_effect` after
+its prompt was admitted, before it read any evidence. No attempt has passed,
+and strict isolated-worker qualification is deferred, not passed.
+
+### Live and retained transcripts
+
+Each peer records each operation in its own workspace at
+`.dude/state/a2a/<operationId>.jsonl`, beside a `.gitignore` marker that keeps
+the folder out of Git without touching its index. Recording must be ready
+before anything is admitted or sent. Each boundary is appended before the
+disclosure it records: the exact request body before its first byte, each of
+B's readiness records before its worker goes on, each evidence text before the
+worker model sees it, and the exact reply body before its first byte. An
+answered asking journal is exactly eight records: `opened`, `accepted`,
+`request_prepared`, `request_write_started`, `reply_received`,
+`reply_validated`, `terminal`, and `closed`.
+
+- No record carries credentials, TLS keys, HTTP headers, approval codes, the
+  worker prompt, model reasoning, SDK history, or refused request text. Each
+  journal's header lists these omissions.
+- A journal is at most 1 MiB, and its last 16 KiB are kept for closing
+  records. A begin call refuses `recording_capacity` when one successful
+  exchange at the profile's `contentBytes` could not fit: currently above
+  45,148 bytes when serving or 146,578 bytes when asking. B's readiness
+  records lowered the serving limit from 46,452 bytes, so a serving profile
+  between the two values that was accepted before is now refused. Profiles of
+  32 KiB still fit on both sides.
+- At most ten conversations are retained, counting journals and capture
+  receipts. Nothing is rotated or deleted; at ten, a begin call refuses
+  `recording_full` until the owner deletes old files.
+- A failed append stops further disclosure and fails the operation with
+  `recording_failed`. A journal missing its terminal or closed record, or
+  with a gap, reads as incomplete.
+- Journals are locally sensitive, protected only by ordinary file
+  permissions, and kept until the owner deletes them.
+
+Watch or reread a journal with the read-only terminal view:
+
+```text
+node .github/extensions/dude/lib/a2a-transcript.mjs --root <workspace> --operation <operationId> [--follow]
+```
+
+It prints each complete record with terminal controls escaped, then whether
+the journal is complete and, if not, why. `--follow` keeps printing until the
+`closed` record or an interrupt. It opens the journal read-only, writes
+nothing, contacts no peer or session, and acts on nothing a record says. Exit
+status: 0 complete, 1 incomplete or unreadable, 2 usage.
+
+### Using advice in a first capture
+
+Reading an answer captures and stages nothing. Only an explicit decision to
+use it for one first capture, under that capture's normal authority, hands the
+answer's `advice.capture` to the publisher's optional
+`--number-advice <absolute-staged-advice-file>`, with the staged ledger's
+SHA-256, the canonical workspace, and a short reason added. The publisher
+rechecks the advice against the staged ledger, this workspace, and the local
+journal of the asking operation, which it finds from the `operationId` and
+which must be complete with the validated reply. It then re-inventories locally
+and chooses `max(fresh local maximum, accepted peer observed maximum) + 1`. It
+stops above `999`, on any inventory diagnostic, and on a duplicate slug, and it
+creates the ledger and the receipt `.dude/state/a2a/captures/<operationId>.json`
+in one transaction. The receipt records whether the advice raised the number
+(`influence: "raised"`) or local drift dominated it (`"none"`). Invalid advice
+stops before any write, with no automatic local fallback. Without
+`--number-advice`, capture is unchanged; refresh, reopen, and definition never
+use advice. See [`@dude brainstorm`](commands.md#dude-brainstorm).
+
+### Evidence layers and qualification status
+
+| Layer | Evidence | Status |
+| --- | --- | --- |
+| Controlled unit and contract checks | `a2a-sdk-loader.test.mjs`, `a2a-peer-worker.test.mjs`, `a2a-collaboration.test.mjs`, `a2a-transcript.test.mjs`, and the publisher's advice tests use fake hosts, in-memory connections, and a fake worker SDK, for both the token and existing-sign-in worker branches. | Delivered; not real TLS. |
+| Real-TLS component suite | In `a2a-collaboration-tls.test.mjs`, two independent Node processes with separate roots run the real listener, client, bundled SDK, Express, and journals over loopback mutual TLS with certificates the test creates. B's worker drives a labeled fake SDK, handed in through a test adapter so its readiness records carry no production SDK provenance, and a scripted model. One check gives B's worker the existing-sign-in branch, whose fake account proves no native sign-in. | Delivered; component evidence only. |
+| Controlled native-branch checks | `qualify-collaboration.test.mjs`, `native-collaboration.test.mjs`, and `native-observer.test.mjs` cover the preview, the native branch's refusals, consent and approval handling, the permission relays, scripted runs from consent through the after-view control, startup, the held call, the answer, capture, cancellation, and the observer's final drain, the release files and recorded session storage against the actual worker module, the after-view control's required facts each removed alone, every session event type the SDK declares walked through each phase of that control and refused unless the phase permits it in its permitted form, each permitted type's other forms and identity statements walked where it is permitted, storage classification by documented purpose, and the observer's fixed source, event attribution, worker-relative paths, and stop sequence. Terminals, SDKs, and observers are scripted by the tests, and nothing stands in for an observation the run needs. | Delivered; controlled only, never native evidence. |
+| Native independent AI | Two actual selected Dudes and B's actually served worker on the public host. | Attempted natively; not passed. |
+| Native progress, capture, and inspection | Both main agents' unrelated progress while a real worker is pending, causal capture, and live plus retained reading. | Not run; blocked. |
+
+The component suite covers real wire correlation, wrong client and server
+pins, certificates outside their validity, a client without a certificate, an
+over-budget question, held work and busy refusals, cancellation and socket
+loss with no late success, a killed peer, recording capacity and recording
+failure on either side, live and retained reading, and both processes exiting
+on their own. Its measured times are component observations. The proposed
+native targets of at most 1 second for begin, read, and cancel remain
+unmeasured.
+
+Cleanup evidence stays separate by layer:
+
+- **Component:** the fake runtime reports a clean stop, yet the product still
+  reports cessation `unconfirmed` and keeps the worker folder. The suite
+  removes only its own temporary roots.
+- **Native product:** once a real runtime may have started, `closed.runtime`
+  stays `unconfirmed`, and `client.stop()` returning no errors is not
+  process-tree proof.
+- **External:** only an observer outside the product, anchored to the run's
+  own process lineage, can confirm that every owned process ended. The fixed
+  Windows observer, `scripts/dude-a2a/native-observer.ps1`, is that observer
+  for a native qualification run, and it has never run natively. Its record
+  stays in the run's proof folder, separate from product results and journals,
+  which it never rewrites. It kills and deletes nothing.
+
+Native qualification of Feature 089 is incomplete. None of these evidence
+sources has been established natively:
+
+- **Served worker observation.** B's journal now records the served worker's
+  own readiness before its prompt, and its admission once `send` returns and
+  before any of that prompt's events are accepted. A native attempt's worker
+  produced both, but no held evidence call. The native branch checks them
+  against the operation, session, permit, loaders, extension process, and
+  observed processes before it writes each release.
+- **Actual SDK use.** The fixed loaders now record the SDK file that the
+  extension and its worker imported. In a native attempt, B's records matched
+  the plan's SDK files, but that attempt did not pass. A path, file hashes, or
+  a qualifier's own import still do not show which SDK a running extension
+  loaded. `createSession` silently falls back from an invalid
+  `extensionSdkPath`, and `joinSession` ignores it.
+- **Ambient feature enforcement.** Settings, tool metadata, refusals, or a
+  model saying it cannot do something do not prove that discovery, hooks,
+  skills, memory, the session store, and host Git stayed off in the served
+  worker session. The native branch combines the worker's own counts and
+  probes, synthetic canaries whose recognition a model-less control session
+  checks first, and the observer's process and file counts. A kind none of
+  them establishes fails as unobservable. The native branch now also runs one
+  model-driven after-view control, whose genuine view must surface and load
+  the control's `AGENTS.md` canary by public notification, loaded-source
+  digest, and observed reads, and it validates the session storage B's
+  worker records and classifies the worker's file accesses, reads and opens
+  as well as writes, by that workspace's documented purpose; observed absence
+  allows none. Only controlled checks have exercised these, and no native
+  strict run has.
+- **Owned process-tree cessation.** The fixed observer must see each worker's
+  process tree end within 10 seconds of that worker's own recorded finish or
+  cancellation, the control runtime's within 10 seconds of its own stop and
+  before either main starts, and every other process the run started end
+  within 10 seconds of teardown. Its event decoding and attribution are
+  unverified.
+- **Native permission.** Earlier native permissions expired, and a definition
+  or Ship authorization grants none. The native branch asks for consent itself,
+  at run time, on an interactive terminal.
+
+Native main-agent progress needs model-requested native tool calls that
+succeed while B's real worker is pending; harness counters and direct
+`tools.execute` calls are not model progress. Each native proposal must be
+shown complete, B's with its SHARING and WORKER scopes, and approved by the
+human typing that session's exact current approval.
+
+### Qualification preview for maintainers
+
+`scripts/dude-a2a/qualify-collaboration.mjs` previews a native qualification
+run without effects. With `--native`, it runs one under a fresh human
+decision:
+
+```text
+node scripts/dude-a2a/qualify-collaboration.mjs --plan <absolute-plan.json>
+node scripts/dude-a2a/qualify-collaboration.mjs --native --plan <absolute-v2-plan.json>
+```
+
+The plan is one closed JSON object. Version 2 runs the strict qualification
+and version 3 the normal collaboration route, each natively only through
+`--native` with a complete, current plan. Version 1
+is still previewed; it names each main's progress as free text and has no
+runtime payload or observation. This version-2 template is inert; for example,
+its string port is refused:
+
+```json
+{
+  "version": 2,
+  "expiresAt": "<UTC time, YYYY-MM-DDTHH:MM:SSZ, when the requested scope ends>",
+  "operator": "<the named human operator>",
+  "coordinator": "<the named coordinator>",
+  "fixtureParent": "<short absolute path of a new, empty folder outside this repository and any Git work tree>",
+  "artifacts": {
+    "cli": "<absolute path of the installed Copilot CLI executable>",
+    "runtimePayload": "<absolute path of the runtime file that executable loads, or null if it is the whole runtime>",
+    "sdk": "<absolute path of the public copilot-sdk folder>",
+    "sdkAppliedAt": "createSession"
+  },
+  "models": { "a": "<A's model ID>", "b": "<B's model ID>", "worker": "<B's worker model ID>" },
+  "credentials": { "a": "<A's credential file>", "b": "<B's credential file>", "worker": "<B's worker token file>" },
+  "tls": {
+    "a": { "certFile": "<A's certificate PEM>", "keyFile": "<A's private key PEM>" },
+    "b": { "certFile": "<B's certificate PEM>", "keyFile": "<B's private key PEM>" }
+  },
+  "transport": { "port": "<B's loopback port from 1024 to 65535, as a number>", "projectId": "<the agreed project ID>" },
+  "progress": {
+    "a": { "path": "progress-a.txt", "initial": "pending\n", "final": "complete\n" },
+    "b": { "path": "progress-b.txt", "initial": "pending\n", "final": "complete\n" }
+  },
+  "capture": { "slug": "<the slug A captures, at most 57 characters>" },
+  "observation": "windows-etw"
+}
+```
+
+The preview validates the plan and refuses: an SDK folder that would fall
+back, being missing or without `index.js` and `extension.js`; an SDK path
+applied at `joinSession`; a CLI that is Node, a script, or a file inside this
+repository; a fixture folder that is not new or empty, or is inside this
+repository or any Git work tree; secret files inside the repository or a fixture
+workspace; and every unknown key, including approvals, consent, proof, stage
+results, model providers, fakes, and adapters. For version 2 it also refuses
+progress fixtures or an observation other than the fixed ones, a runtime
+payload that is not a regular file outside this repository, and a longer slug.
+It records the path, size, and SHA-256 of the CLI, the runtime payload, and
+the SDK's two files, and prints one bounded JSON report: each check, the
+planned effects for a human decision, a scope digest, the proof sources
+(permission missing, every other source unverified), and every native stage
+`blocked`. A version-2 digest also binds this runner's, the native branch's,
+and the observer's source, which define the fixed after-view control and the
+worker-relative path observation, the core bundle rendered from this
+repository's source, and the fixed canary manifest. The planned effects
+disclose that control's model, credential route, session, prompt, view
+target, surfaced canary reads, relay, and bound, and the path observation,
+before any consent. The preview never imports or
+constructs the SDK; starts no runtime, session, model, listener, connection,
+or observation; opens no credential or TLS file; asks for or records no
+approval; and writes, kills, or deletes nothing. Exit status: 3 for a complete
+plan, which qualifies nothing; 1 for an invalid, incomplete, or expired plan;
+2 for usage or an unreadable plan. It never exits 0. No flag or plan field
+grants authority.
+
+#### Native run
+
+The native branch, `scripts/dude-a2a/native-collaboration.mjs`, is
+implemented, but it has never run this strict qualification natively, so
+nothing about that run's native behavior is known. It needs:
+
+- Windows, with Windows PowerShell 5.1 in
+  `%SystemRoot%\System32\WindowsPowerShell\v1.0`, and an interactive terminal
+  for both input and prompts.
+- Membership in Administrators or Performance Log Users, in a terminal you
+  opened that way, because the observer opens a real-time Event Tracing for
+  Windows (ETW) session. Without it the run stops with
+  `observer_privilege_missing`. Nothing elevates, installs, or registers a
+  service.
+- A version-2 plan that previews with no failing check, and everything it
+  names: the installed CLI and public SDK, both owners' credential,
+  certificate, and key files, B's worker token, the three models, and a free
+  loopback port.
+- A runtime payload. A plan whose `runtimePayload` is `null` previews, but a
+  native run refuses it before consent as `runtime_identity_unobserved`:
+  nothing observable shows that the executable alone is the whole runtime.
+- A short fixture parent. B's complete proposal names the fixture paths and
+  must fit the 4,490-byte cap. A longer path can exceed the cap, which is
+  refused, never raised.
+
+A run proceeds in this order and stops at the first failed check:
+
+1. It shows the whole scope on the terminal. Under ACTION NEEDED it shows
+   the exact consent line,
+   `approve native <first 16 characters of the scope digest>`; type or paste
+   that one line and press Enter. Redirected, ended, or multi-line input
+   refuses; anything entered before a prompt appears is ignored, and the
+   prompt asks again. It then recomputes
+   the scope and stops if the plan, an artifact, its own source, the observer,
+   the rendered core, or the fixture changed, or the plan expired.
+2. It creates only the short folders below the fixture parent: `a`, `b`, and
+   a control side `k`, each with `w`, `h`, `c`, and `t` for
+   workspace, home, configuration, and temp; `q` for the canary fixture; and
+   `p` for proof. It renders the core bundle into both workspaces, seeds A
+   with record 100 and B with records 100 and 101, and writes each owner's
+   configuration.
+3. It starts the fixed observer, `scripts/dude-a2a/native-observer.ps1`,
+   which must calibrate on a Node helper that writes, reads, and exits before
+   any SDK loads. The run owns the observer from launch: if it never reports
+   ready, the run closes its input, waits a bounded time for it to exit, and
+   reports its end unconfirmed rather than killing it.
+4. A control runtime, whose client uses the SDK's empty mode, must recognize
+   each canary form from its own parsed public answer at its exact location:
+   agents, instructions, hooks, skills, and MCP servers through discovery
+   with no discovery errors, and the Git canary through the control session's
+   metadata. A file read, or another form of the same kind, never stands in.
+   Each instruction canary must come back with its own documented type, as a
+   `repository` or `working-directory` source of the scanned project, the two
+   locations the SDK documents for a project scan, still bound to its exact
+   path and digest.
+   An unrecognized form stops the run as `ambient_state_unobservable`. That
+   discovery session is then disconnected, and one fresh session in the same
+   runtime, with A's model and A's credential and only the built-in `view`,
+   working in `k/t`, is sent one fixed prompt to view
+   `k/w/dude-canary-denied-read.txt` once; type `approve-once` or `reject` for
+   its read. Its own model's view must surface and load `k/w/AGENTS.md`: the
+   run requires that one root view request, its successful model-facing
+   output, at most 4,096 bytes, holding the synthetic file's text exactly
+   once (a heading or line number around it is fine), the public
+   instruction-discovered notification for `AGENTS.md`, `AGENTS.md` among the
+   session's loaded sources by digest with a documented repository type and
+   location (type `repo` or `nested-agents`, location `repository`), and the
+   control runtime's observed reads of both files after the discovery
+   checks, all within one 60-second phase that ends before either main
+   starts. Anything less, including a host that sends no such notification,
+   stops the run as `ambient_state_unobservable`. Every public event of that
+   session must be one its phase permits, in the form that phase permits;
+   any other stops the run the same way, including an event of a type the
+   SDK does not declare, a subagent's, one without the documented envelope,
+   and a list of skills, commands, custom agents, MCP servers, or extensions
+   even when it is empty or disabled. Before the prompt, the session may only
+   start once as itself while it is created, report idle, its system message,
+   and its tool catalog, and, only until the run asks for each check, select
+   its model at startup or through the SDK and report its working directory.
+   From the prompt to its turn's end it may only admit that one prompt and
+   show the system message, that turn's model messages, the view's one
+   request, its read's permission, start, progress, output, and discovery
+   notification, and the model's own processing: its turns, intent,
+   reasoning, streaming, usage of its own conversation's calls (never a
+   sub-agent's, sampling, background, or compaction call), successful model
+   dispatches that requested no file edit, and an assistant idle that was
+   not aborted. Its permission events must be that one read, for the relay to
+   answer once, with no hook, delegated owner, assisted approval, recovery,
+   or kept grant. After the turn's end, through the post-turn snapshot and
+   source query, only housekeeping and another normal idle may come; every
+   other event, including any further prompt, tool call, notification, or
+   reply, stops the run, and none of them can supply a fact the turn did not
+   show. Housekeeping, the session's title and its token or quota
+   accounting, may come at any time. An event that states the session, an
+   admission, or a tool call must state the ones the run established, so
+   another session, a reply or prompt of another admission, or a tool call
+   other than the view stops the run. Once the run asked for the model
+   check, a tool catalog update must name the checked model. A change of the
+   model or of the working directory after the run asked for its check stops
+   the run, even the same one restated; a model selection or working
+   directory reported before its check is superseded by that check. The
+   model named on the turn's own events, such as its turns and usage, is a
+   telemetry label, not proof of which model ran; the run does not compare
+   it, and it may read `unknown`. Everything the session sent before the
+   prompt is judged just before the prompt is sent, so after such an event
+   nothing is sent. The control runtime is then
+   stopped, and its whole process tree must be seen to end within 10 seconds
+   of that stop before either main starts, or the run stops as
+   `cessation_unconfirmed`; the final summary judges that window again. A
+   snapshot that lost, could not decode, or could not attribute events while
+   the runtime stopped confirms nothing, and the run stops with that
+   observer coverage reason. The control's event judgment ends with its
+   post-turn source query: what the session delivers during that stop is
+   neither judged nor listed in `refusedEvents`, though the stop is still
+   checked as above and the session's event log still fails the run if it
+   overflows.
+5. B and A start with project discovery, requested extensions, and
+   `extensionSdkPath` at `createSession`. Each runtime, like the control's and
+   each worker's, must be observed as the run's new CLI process loading the
+   plan's runtime payload. Each session must run one `project:dude` extension
+   and select the rendered Dude agent.
+6. Each main's model calls `dude_a2a_propose`; under your consent the relay
+   approves that exact call without asking, as described below. Its complete
+   result is shown whole. Read it,
+   then type that session's exact current approval or `dude a2a stop`. The
+   ACTION NEEDED block shows that approval line; if it cannot pick out
+   exactly one `Approval` line in the result, it explains where to find that
+   line instead. Only your entered line, without surrounding spaces, is sent,
+   and the unchanged classifier must accept it
+   as an unattributed root message, or the run stops.
+7. Both whole exchange instructions are sent together, and the relay approves
+   each main's own conversation calls for that exchange, and its reads of its
+   own workspace, under your consent, as described below. Sending them does not
+   order them, so the run then requires the order in the runtimes' own event
+   stamps: both instructions admitted strictly before the earlier begin
+   request, and B reporting that it waits strictly before A asks. A tie, a
+   missing stamp, or an uncorrelated request stops the run as
+   `instruction_order_unproven`, and no root prompt follows while an operation
+   is pending. The runner writes the worker's startup release only after its
+   recorded readiness, its observed processes and their images, and its
+   storage check out. Its recorded session workspace must still be the same
+   directory by path, device, and inode; recorded absence allows no session
+   persistence. Every file the worker touched since the observer started,
+   before that check as well as after it, is then classified: in its
+   configuration and home storage every access, a read or open as well as a
+   write, must be the creation, opening, reading, or writing of that
+   workspace's `events.jsonl`, `workspace.yaml`, or `plan.md` or of something
+   in its `checkpoints` or `files` folder, or the creation or opening of that
+   workspace or a folder on the way to it. Its temp area stays allowed, it may
+   read its working folder, and it may open its own folder, whose name is
+   compared without case, as Windows compares it. A shell or any
+   other unverified image fails as `unexpected_native_effect`, and a store the
+   run cannot classify, such as a sidecar or staging name, another session,
+   the runtime's own settings or any other configuration or home file, a path
+   in its own folder that the observer could not read as one plain spelling,
+   or any session access after recorded absence, fails as
+   `ambient_storage_unclassified`. A genuine
+   run may stop here on a read it cannot explain, such as the runtime opening
+   its own settings file. Nothing is learned from such traffic: any allowance
+   for it needs a planning decision backed by evidence, and the
+   worker-relative paths the observer keeps show what was touched. When the
+   worker's first evidence call is held, `progress-a.txt` and `progress-b.txt`
+   appear; each main's own model
+   must change its file from `pending` to `complete` through a native tool
+   call it requested for this instruction, inside that interval, before the
+   evidence release is written.
+8. A decides whether to use the advice. Its normal capture runs the actual
+   publisher with `--number-advice`, and the receipt must show local 100, peer
+   101, chosen 102, and `raised`. Under your consent the relay approves A's
+   reads of its own workspace in this step; the inventory, hash, and
+   publisher commands, each new staging file, and any read of A's temp folder
+   each need your typed `approve-once`, as described below.
+9. One more exchange starts a fresh worker. While its first evidence call is
+   held, `cancel-a.txt` appears, and A's model cancels through the
+   conversation tool, a call the relay approves under your consent like the
+   rest of that exchange's conversation calls.
+10. Only SDK lifecycle stops run. The answering worker's process tree must end
+    within 10 seconds of its recorded finish, checked before capture, and the
+    cancelled worker's within 10 seconds of B's terminal record. At teardown,
+    permissions close first, then every client stops at once within one
+    shared 10-second budget, and every other owned process must end within
+    it. The observer then stops its trace, drains every buffered event, and
+    writes its final summary; every check runs again on that summary, and the
+    helper's actual exit is awaited. Both journals are shown live as they grow
+    and again after the sessions end; compare them, then type
+    `reread reviewed`.
+
+Each main's permission requests go to a fixed relay, and only for a tool
+call that the session's own model requested for its current instruction.
+Dude's own tools ask for permission in the runtime's normal mode, and your
+consent covers the current step's exact calls of them: the relay approves
+each such call once without asking you, from the moment the step's
+instruction is admitted until its turn ends. In each proposal step that is
+`dude_a2a_propose` with that session's `a2a.json` and profile. In the advice
+exchange it is B's `dude_a2a_conversation` `begin_receive` and `read`, and
+A's `begin_ask` for the plan's slug with the fixed question and an integer
+tentative number, and `read`; in the cancellation exchange it is the same
+for B, and A's `begin_ask` for `<slug>-cancel`, `cancel`, and `read`.
+`read` and `cancel` need a well-formed operation ID, and the product checks
+which operation it names. A view can ask for permission to read too, even
+inside the session's own working directory, so your consent also covers
+reads of each session's own workspace, `a/w` for A and `b/w` for B: in both
+exchanges and the capture step, the relay approves once, the same way, each
+read that the session's own model requests of that folder or of anything in
+it while the step's turn is open. It never approves a read of the other
+session's workspace or anywhere else, a subagent's read, or a read after the
+turn ended. A call or read that managed policy marks as needing a person is
+rejected instead. The approval steps allow neither, and the capture step
+allows no Dude tool call. The report counts these approvals for each session
+in `toolApprovals`, by tool and operation and, for those reads, as
+`workspace.read`. It lists each rejected request in `permissions` with a
+`target` of at most 256 bytes, the requested path or the tool, command, or
+extension name, never a command's text, arguments, or contents; it keeps the
+first 50 requests rejected without asking and counts any more in
+`permissionsOmitted`; requests presented for typed approval are always
+kept. A request
+that comes while no step or phase is open is rejected as `not_pending`.
+
+Every other request is shown only when it is a pending allowlisted action
+of a call the session's own model requested for its current instruction:
+the progress file's exact
+`pending`-to-`complete` edit, and in the capture step the exact inventory
+command, one fixed `Get-FileHash` of a staged ledger, the publisher command
+for the plan's slug with staged files under A's temp folder, new staging
+files there, and a read of that folder itself or of anything in it. Type
+`approve-once` or `reject` for each. Requests are shown one
+at a time; each has 60 seconds, counting its wait in line, and at most 8
+wait. A request is withdrawn, before its turn or after your answer, if its
+step ended, its call completed, its exact action changed, the run began
+closing, or the scope expired. Everything else is rejected without asking,
+including removing the staging folder, so staged files stay in A's temp
+folder. The worker's own permission requests stay denied by the product.
+The after-view control's session has its own fixed relay, asked the same
+way: it shows only a read that its sole pending model-requested view needs,
+of the view's target or a fixed instruction canary that view may surface,
+and its prompt ends with the control's 60-second phase or the scope's
+expiry, whichever comes first, when the prompt itself is released. Its
+request is also withdrawn, before its turn or after your answer, as soon as
+that session reports the view's turn ended, aborted, or failed, or any other
+operation in it. Any other event that would fail the control, as in step 4,
+withdraws it the same way. It never answers
+for a main session or the worker. Apart from the step-scoped Dude tool
+calls and workspace reads that your consent covers, there is no approve-all
+mode, saved consent, computed approval, or permission file. Both
+`dude a2a approve` lines and `reread reviewed` are still yours to type.
+
+The plan is at most 16 KiB. The report is at most 64 KiB; it goes to stdout
+and, once the fixture exists, to `<fixtureParent>/p/report.json`. A larger
+report is replaced by a closed `observation_overflow` refusal, never
+truncated. Whenever the after-view control's session ran, however its phase
+ended, the report's `control` record keeps `refusedEvents`: one entry per
+distinct event type and class that it refused, in the order first seen, at
+most 8, each `{ "type", "class", "count", "id" }`. Types are told apart by
+their own values, never by how they are shown below, so two types shown alike
+stay two entries.
+`type` is the event's type when it is at most 64 characters from `A-Z`,
+`a-z`, `0-9`, `_`, `.`, and `-`; otherwise it is `(unavailable: N bytes)`
+with its UTF-8 length, or `(unavailable: no type)` for a delivery that was no
+event. `class` is `undeclared` (a type the SDK does not declare), `malformed`
+(an undocumented envelope), `competing` (a type its phase does not permit, or
+a form that phase does not permit), `subagent`, `contradicting` (another
+session, model, admission, or tool call than the control established), or
+`after_turn` (anything after its turn ended other than housekeeping or
+another normal idle). `id` is the first such event's ID when
+that is a safe identifier, otherwise `null`. `refusedEventsOmitted` counts any
+further distinct entries. A second view request, view start, or view
+completion before the turn ends is named by the closed problems
+`tool_requests`, `start`, and `completion` and need not appear in
+`refusedEvents`; a second prompt is named `other_prompt` and, as another
+admission, a `contradicting` entry. No event data, prompt, model text, or
+reasoning is kept; the `after_view_control` check's detail names the same
+entries, and so does the stop of a run that refused before the prompt. Each
+session's event log keeps at most 8,192 events and 4 MiB, and
+one message at most 64 tool requests; more fails the run as
+`observation_overflow` instead of dropping events. The observer's summary
+is at most 64 KiB and 128 processes. Below each worker's own folder it also
+keeps, from its start, each file's path relative to that folder, except in
+the worker's temp area, and charges each new row to that 64 KiB when it first
+appears; a row that would not fit, or a path over 1,024 characters, is a
+sticky overflow that fails the run, never a dropped row. A path there that is
+not one plain spelling (a `.` or `..` segment, an empty or forward separator,
+a trailing dot or space, a stream name, or an 8.3 short name) keeps no name,
+gets no area, and fails the run. Outside the worker
+folders it keeps path classes and counts only. An operation has 120 seconds,
+the worker 90 seconds, its startup 10 seconds, and cleanup 10 seconds; begin,
+read, and cancel must each return within 1 second by the runtime's own
+timestamps. Exit status: 0 only when a native run passed every check; 4 for
+every refusal or failure; 1 for a plan that cannot run natively. Nothing is
+retried, rerun, killed, or deleted; the fixture, the worker folders, and the
+staging files stay for inspection.
+
+These native properties are unverified, and each one fails the run rather
+than passing it:
+
+- The observer reads fixed Kernel-Process and Kernel-File event properties by
+  name and attributes each event to the process and thread identity current
+  at its timestamp, including events delivered after their process exited.
+  Those names, write attribution for cached or asynchronous I/O, and the
+  mapping of device paths to drive letters are untested on a real host.
+- The CLI's permission requests for reads and edits, whether the control's
+  discovery and session metadata answer as documented, whether the host
+  rejects unoffered tool names in the one recognized form, whether a runtime
+  admits both instructions before either begins, and whether models follow
+  the polling and progress instructions within the hold are untested.
+- Whether a host sends the instruction-discovered notification and loads the
+  surfaced `AGENTS.md` after the control's genuine view, what it reports as
+  that view's output and as that source's type and location, which files a
+  served worker's session actually reads and writes, and the names the
+  observer sees for them are untested; a host that shows anything else fails
+  the run.
+- The control's phase lists are derived from the SDK 1.0.102 declarations
+  its source cites, and any event outside them stops the control.
+  Newer installed SDKs (1.0.106) also declare `session.journal_link` and
+  `instruction.update`, an authoritative developer-instruction update that
+  may accompany instruction discovery; older ones declare `factory.run_*`
+  events; and the 1.0.102 runtime itself names events its SDK never
+  declares, such as `session.usage_record` and `model.call_start`, which
+  stay refused because nothing shows when it sends them. Use the CLI and
+  SDK pair of the plan's source basis (1.0.102). A genuine host may also
+  stop the control by sending any list of skills, commands, custom agents,
+  MCP servers, or extensions, or a capability or indexed-search update,
+  even an empty or disabled one; by updating its tool catalog during the
+  turn, or its model or working directory after the run asked for that
+  check, even unchanged; by delivering its own start only after its
+  creation returned, or any turn event after the turn's idle; by
+  reporting a completion receipt, a failed or retried model call, or an
+  informational notice during the turn; by reporting a permission or mode
+  change, such as `session.permissions_changed`, a task-completion notice,
+  or a compaction or truncation of its conversation history; by sending a
+  null `agentId` or
+  `parentToolCallId`, an event ID over 128 bytes, or no `data` object; or
+  by labeling `AGENTS.md` after the view, or an instruction canary in the
+  scan, with another type or location than the documented ones above. The
+  notification's `sourcePath` is documented only as a relative path, with
+  no base, so only `k/w` and `k/t` are tried. A first genuine run may stop
+  on any of these. The refused event's type and class in the report are
+  where a planning decision starts; nothing is learned or allowed from such
+  a refusal by itself.
+- Product cessation stays `unconfirmed` by design; only the observer's record
+  can confirm that owned processes ended.
+
+This is the prerequisite sequence; nothing here authorizes any step:
+
+1. Write a complete version-2 plan and preview it until no check fails.
+2. B's own readiness records remain the only source of evidence about B's
+   actually served worker; see
+   [B's restricted evidence worker](#bs-restricted-evidence-worker). The native
+   branch reads them from B's journal during a run; the preview does not.
+3. Present the planned effects and scope digest to the human through the
+   existing Needs You or manual operator handoff. The decision stays there;
+   the runner neither receives nor verifies it.
+4. Only under that current decision may an operator run the native branch at
+   an interactive terminal, where it asks for the consent literal itself.
+   Preview again on the day of the run, because any change to the plan, the
+   hashed files, the runner, the observer, or the core changes the scope
+   digest.
+
+For Feature 089, this guide summarizes the outcomes of native attempts but
+records no native input, run ID, timestamp, or raw result.
+
 ## Interruptions, cancellation, and uncertain outcomes
 
 | Event | Effect |
@@ -965,6 +1893,8 @@ stopped.
   can start.
 - Disclosure cannot be recalled, and ordinary host transcripts are not
   suppressed.
+- Collaboration journals and capture receipts keep authorized message content
+  in each workspace; they are locally sensitive until the owner deletes them.
 - The configuration and key files are protected only by their file permissions.
 - Communication never changes Dude's workflow state: no task claims, task
   states, reviews, or closures.
@@ -980,6 +1910,10 @@ owners must explicitly authorize each of these by exact value:
 - what may be disclosed, and the evidence folders;
 - the command catalog, parameters, revision policy, declared effects, and
   resource and time limits;
+- for collaboration, the project ID, B's worker runtime, arguments,
+  environment names, model, token file or existing-sign-in base directory
+  and expected account, roots, and kept storage, and the
+  recording and retention of both peers' journals and receipts;
 - the cleanup afterward, such as stopping both activations and removing any
   certificates or firewall rules created for the test.
 
@@ -1032,5 +1966,23 @@ native/live qualification.
   and `scripts/build-release.test.mjs` check that parity and the default-off
   release behavior.
 - The offline tests are `src/extensions/dude/a2a.test.mjs`,
-  `a2a-transport.test.mjs`, and `a2a-verify.test.mjs`. They use fake hosts and
-  in-memory connections, so they do not prove real host behavior.
+  `a2a-transport.test.mjs`, `a2a-verify.test.mjs`, `a2a-sdk-loader.test.mjs`,
+  `a2a-peer-worker.test.mjs`, `a2a-collaboration.test.mjs`, and
+  `a2a-transcript.test.mjs`. They use fake hosts and in-memory connections, so
+  they do not prove real host behavior.
+- `src/extensions/dude/a2a-collaboration-tls.test.mjs` runs two peer processes
+  over real loopback mutual TLS with certificates it creates and a fake worker
+  SDK. It needs no OpenSSL or install, and it is component evidence, not native
+  qualification.
+- `scripts/dude-a2a/qualify-collaboration.mjs` previews native qualification
+  without effects. With `--native`, it runs the implemented but unverified
+  native branch in `native-collaboration.mjs`, which starts the fixed Windows
+  observer `native-observer.ps1` for a strict version-2 run but not for a
+  version-3 run; see
+  [Qualification preview for maintainers](#qualification-preview-for-maintainers).
+  None of them ships, and neither do their tests,
+  `qualify-collaboration.test.mjs`, `native-collaboration.test.mjs`, and
+  `native-observer.test.mjs`. The tests start no runtime, model, or ETW
+  session. On Windows, the observer test compiles the embedded reader and
+  drives its event entry points, attribution, and stop-and-drain sequence
+  with synthetic events and test doubles for process handles.

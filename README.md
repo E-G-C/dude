@@ -208,7 +208,13 @@ external config path and profile ID. Review its complete native tool result
 before the exact next eligible local approval; an assistant summary or
 private-log relay is not a substitute. Source and local distribution have
 offline checks, but native result/status visibility and real host use remain
-unqualified. See
+unqualified. Feature 089 adds optional nonblocking collaboration on top of it:
+two independent Dudes exchange number advice through
+`dude_a2a_conversation`, each records a bounded local transcript you can watch
+live and reread, and A may explicitly use the advice in a first capture.
+Ordinary capture is unchanged. Native qualification of that collaboration
+remains incomplete: native attempts of its normal route have not passed, and
+its strict qualification has never run natively. See
 [Agent-to-agent communication](docs/agent-to-agent-communication.md). Installed
 pack files use the reserved `dude-pack-*` namespace and survive core upgrades.
 
@@ -446,6 +452,6 @@ Read these when you need more than the first-feature path:
 - [Starting from a PRD draft](docs/prd-drafts.md) — use a longer product draft as input.
 - [Definition and execution reference](docs/reference.md) — advanced details and ownership rules.
 - [Pack catalog](library/packs/README.md) — optional expansions and how to install them.
-- [Agent-to-agent communication](docs/agent-to-agent-communication.md) — `dude_a2a_propose`, complete native-result review, and local approval for opt-in questions and named verification; real host use remains unqualified.
+- [Agent-to-agent communication](docs/agent-to-agent-communication.md) — `dude_a2a_propose`, complete native-result review, and local approval for opt-in questions, named verification, and nonblocking two-Dude number advice; real host use remains unqualified.
 - [Upgrading the bundle](docs/upgrading.md) — update Dude itself safely.
 - [Repository development workflow](docs/commands.md#repository-development-workflow) — core, pack, project-local, and docs-only changes.

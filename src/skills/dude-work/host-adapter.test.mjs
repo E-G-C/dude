@@ -16,17 +16,17 @@ import {
   approachHash,
   buildApproachOccurrenceEventV1,
   buildGovernanceEventV1,
-  captureCompletionV2,
+  buildTerminalFreshClaimMutationV1,
   canonicalJson,
   canonicalTarget,
   capacityDiagnostic,
   capturedBytesV1,
   classifyOutcomeReason,
-  commitLaneReceiptV2,
   contentDescriptor,
   currentRunCapture,
   deriveEarliestRepeatRelationshipV1,
   deriveFailedApproachSetV1,
+  deriveFreshAdmissionV1,
   deriveSequenceIdentity,
   describeUnattendedHalt,
   inspect,
@@ -36,15 +36,17 @@ import {
   normalizeIndependentReviewEnvelopeV2,
   normalizeVerificationEnvelopeV2,
   OUTCOME_REASON_CLASSES,
-  prepareProjectionV2,
   requiredChecksForAction,
-  resumeGovernanceV2,
   runCommand,
   sha256,
   targetHash,
   targetKey,
+  TERMINAL_HANDOFF_FILES,
   validateApproachOccurrenceEventV1,
   validateAssessment,
+  validateLaneMutationPermitV1,
+  validateLightweightAtomicReceiptV1,
+  validateProjectionPermitV1,
   validateRecoveryRuntimeResultV1,
   validateRunState,
 } from './recovery.mjs';
@@ -62,6 +64,7 @@ import {
   measurePrivateModelView,
   measurePrivatePreflight,
   originalAvailableProjection,
+  privateRecoveryRuntime,
   publishCurrentRun,
   rawSourceCount,
   readRetentionEpisodeFixture,
@@ -349,8 +352,11 @@ nodeTest('sealed public API removes caller-authored incidents and low-level rout
     'validateHostAdapterRequest',
     'validateHostAdapterResult',
     'validateHostAdapterSession',
+    'validateTerminalDispositionV1',
+    'validateTerminalEvidenceManifestV1',
   ]);
-  assert.deepEqual(Object.keys(adapter).sort(), ['end', 'ownership', 'run', 'snapshot']);
+  // Terminal sealing is lifecycle framing beside end, not an eleventh operation.
+  assert.deepEqual(Object.keys(adapter).sort(), ['end', 'ownership', 'run', 'sealTerminalOwner', 'snapshot']);
   assert.throws(
     () => createAuthorizedHostAdapter(sealedInitial(), {
       supervisorSession: sealedSupervisorSession(),
@@ -636,8 +642,8 @@ nodeTest('adapter construction takes no process-global target lock without a che
   const second = createHostAdapter(sealedInitial());
   assert.notEqual(first.snapshot().invocationIdentity, second.snapshot().invocationIdentity);
   assert.equal(first.snapshot().acceptedStateHash, second.snapshot().acceptedStateHash);
-  assert.deepEqual(Object.keys(first).sort(), ['end', 'ownership', 'run', 'snapshot']);
-  assert.deepEqual(Object.keys(second).sort(), ['end', 'ownership', 'run', 'snapshot']);
+  assert.deepEqual(Object.keys(first).sort(), ['end', 'ownership', 'run', 'sealTerminalOwner', 'snapshot']);
+  assert.deepEqual(Object.keys(second).sort(), ['end', 'ownership', 'run', 'sealTerminalOwner', 'snapshot']);
   assert.equal(first.ownership(), null);
 });
 
@@ -5089,7 +5095,7 @@ nodeTest('Feature 074 T003: frozen hash-only approaches reach one bound learning
             assert.deepEqual(row.frame.reference, {
               sourceCaptureIdentity: identity, sourceOutcomeHash: originalEntry.outcomeHash,
             });
-            assert.deepEqual(row.payload.text, fixture.preimages[source][index]);
+            assert.deepEqual(packetReadableText(challenge.modelPacket, row.payload.text), fixture.preimages[source][index]);
             const envelope = JSON.parse(Buffer.from(capture.bytes.base64, 'base64'));
             assert.equal(row.frame.binding.envelopeIdentity, envelope.envelopeIdentity);
             assert.equal(row.frame.binding.attemptIdentity, envelope.attemptIdentity);
@@ -5849,7 +5855,9 @@ nodeTest('Feature 074 T002: two actual failed attempts reach a fresh bound learn
             const match = frames(tag).find(({ frame }) => frame.binding.envelopeIdentity === envelope.envelopeIdentity);
             assert.ok(match, `${tag}: exact attempt ${index + 1} frame`);
             const { type, version, target, checks, verdict: resultVerdict, findings, ...binding } = envelope;
-            assert.deepEqual(match.payload, {
+            assert.deepEqual({
+              ...match.payload, text: packetReadableText(challenge.modelPacket, match.payload.text),
+            }, {
               type, version, target,
               ...(tag === 'verification' ? { checks } : { verdict: resultVerdict, findings }),
               text,
@@ -7925,15 +7933,30 @@ function assertFocusedTrustedCompletionRejected(
 
 const FEATURE_029_PACKET_BYTES = limits.bytes;
 
+/** Resolve one readable payload against its own v2 packet table by whole-string index; v1 text is unchanged.
+ * @param {Record<string, any>} packet @param {Record<string, any>} text */
+function packetReadableText(packet, text) {
+  if (packet.format !== 'dude-work-model-view-v2') return text;
+  const field = text.type === 'verification-text' ? 'checks' : 'findings';
+  return {
+    ...text,
+    [field]: text[field].map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [
+      key, typeof value === 'string' ? value : packet.texts[value.textRef],
+    ]))),
+  };
+}
+
 /**
  * Recreate the exact model-packet projection only to measure the immediately
- * larger owner suffix beside the real Inspection's other evidence.
+ * larger owner suffix beside the real Inspection's other evidence. Owner and
+ * session bodies are literal items in both formats, and the v1/v2 choice never
+ * depends on them, so swapping one keeps the measurement exact for either format.
  * @param {Record<string, unknown>} inspection
  * @param {Record<string, unknown>[]} [items]
  */
 function feature029Packet(inspection, items = /** @type {Record<string, unknown>[]} */ (inspection.items)) {
   const packet = clone(modelPacket(inspection));
-  assert.equal(packet.format, 'dude-work-model-view-v1');
+  assert.ok(['dude-work-model-view-v1', 'dude-work-model-view-v2'].includes(packet.format));
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index];
     if (canonicalJson(item) === canonicalJson(inspection.items[index])) continue;
@@ -13186,9 +13209,12 @@ nodeTest('T002 runner freshly prechecks lane-first and publishes exactly the pri
     assert.equal(result.reason, 'task-settled', result.reason);
     assert.equal(applications.length, 1);
     const { preparations, item, permit } = applications[0];
-    assert.equal(preparations.length, 2, 'preparation is freshly rederived before the lane owner');
-    assert.deepEqual(preparations[1].request, preparations[0].request);
-    assert.deepEqual(preparations[1].request.input.currentRun, [], 'staged bytes are not observed authority');
+    assert.equal(preparations.length, 3, 'the completion fit check, then preparation freshly rederived before the lane owner');
+    const [fit, prepared, rederived] = preparations;
+    assert.deepEqual(rederived.request, prepared.request);
+    assert.deepEqual({ ...fit.request, operationTime: prepared.request.operationTime }, prepared.request,
+      'the fit check measured the same provisional state, batch, complete input, and lane binding');
+    assert.deepEqual(prepared.request.input.currentRun, [], 'staged bytes are not observed authority');
     assert.deepEqual(permit, item.projectionPermit);
     assert.deepEqual(applications[0].currentBefore, [], 'the actual retained stream is still old at the writer');
     assert.deepEqual(applications[0].currentAfterWrite, [], 'even the lane-first poststate has no publication yet');
@@ -13786,11 +13812,13 @@ for (const packetBytes of [limits.bytes, limits.bytes + 1]) {
 
 /**
  * Each target-description byte appears in both task-history and lane-history,
- * so the default padding leaves the complete receipt exactly one byte over the
- * packet limit after the unpredicted append in the post-apply growth test.
+ * so the default padding leaves the complete selected (v2) receipt exactly one
+ * byte over the packet limit after the unpredicted append in the post-apply
+ * growth test. The known receipt without that append still fits, so the
+ * completion fit check admits the capture.
  * @param {string} root @param {number} [descriptionBytes]
  */
-function latePacketOverflowRunnerRequest(root, descriptionBytes = limits.bytes / 2 - 8_337) {
+function latePacketOverflowRunnerRequest(root, descriptionBytes = limits.bytes / 2 - 8_154) {
   const tasksPath = path.join(root, TASKS_PATH);
   fs.writeFileSync(tasksPath, fs.readFileSync(tasksPath, 'utf8').replace(
     'Adapter core',
@@ -13826,7 +13854,7 @@ nodeTest('descriptor-only overflow: unknown post-apply growth reports the fresh 
           assert.equal(applied.ok, true);
           // External bytes arriving after the prechecked lane transaction were
           // not knowable at preparation. Its receipt is not claimed settled.
-          fs.appendFileSync(path.join(root, TASKS_PATH), `${'x'.repeat(1_089)}\n`);
+          fs.appendFileSync(path.join(root, TASKS_PATH), `${'x'.repeat(1_090)}\n`);
           return applied;
         },
       },
@@ -13881,10 +13909,10 @@ nodeTest('descriptor-only overflow: unknown post-apply growth reports the fresh 
 
 nodeTest('T002 known growth: forked runner exits nonzero before its excessive projection is applied', async (context) => {
   await withSealedWorkspace(async (root) => {
-    const request = latePacketOverflowRunnerRequest(root, limits.bytes / 2 - 7_789);
+    const request = latePacketOverflowRunnerRequest(root, limits.bytes / 2 - 7_606);
     // Task padding occurs in both task and lane evidence. Readable text and
     // the larger descriptor byte counts also pay the complete packet budget.
-    request.specialistResult.verification.checks[0].evidence += '.';
+    request.specialistResult.verification.checks[0].evidence += '....';
     const filesBefore = laneSurfaceDigests(root);
     const temp = path.join(root, 'tmp');
     fs.mkdirSync(temp);
@@ -14100,7 +14128,7 @@ nodeTest('descriptor-only overflow: an effectful runner port cannot claim a no-e
           if (command === 'transition' && lowLevelRequest.mode === 'commit-lane-receipt') {
             // The mandatory last owner event alone must exceed the byte budget;
             // dropping the preceding owner event must not make this guard moot.
-            fs.appendFileSync(ownerPath, `\n- 2026-08-10 ${marker} ${'x'.repeat(1_085)}\n`);
+            fs.appendFileSync(ownerPath, `\n- 2026-08-10 ${marker} ${'x'.repeat(1_088)}\n`);
             receiptInput = clone(lowLevelRequest.input);
           }
           const value = runCommand(command, lowLevelRequest);
@@ -14122,7 +14150,8 @@ nodeTest('descriptor-only overflow: an effectful runner port cannot claim a no-e
     context.diagnostic(canonicalJson({
       effectfulOverflow: { modelBytes: measured.modelBytes, limit: limits.bytes },
     }));
-    assert.equal(calls.length, 7, 'the fresh application precheck precedes the late receipt refusal');
+    assert.equal(calls.length, 8, 'the completion fit check and fresh application precheck precede the late receipt refusal');
+    assert.equal(calls[4], 'transition:prepare-projection', 'the fit check runs inside record-attempt-result');
     assert.equal(calls.at(-1), 'transition:commit-lane-receipt');
     assert.equal(result.outcome, 'hard-stop');
     assert.equal(result.reason, 'runtime-output-malformed');
@@ -14373,9 +14402,10 @@ function t003CheckSummary(input) {
  *   inspection:Record<string, unknown>,
  *   privateView?:Awaited<ReturnType<typeof measurePrivateModelView>>,
  * }} value
+ * @param {{modelPacket:typeof modelPacket}} [runtime] The renderer the recorded stages were measured with.
  */
-async function t003StageMeasurement(value) {
-  const packet = value.privateView?.packet ?? modelPacket(value.inspection);
+async function t003StageMeasurement(value, runtime = { modelPacket }) {
+  const packet = value.privateView?.packet ?? runtime.modelPacket(value.inspection);
   assert.ok(packet, `${value.label}: complete test view`);
   const items = value.privateView?.items
     ?? /** @type {Record<string, unknown>[]} */ (value.inspection.items);
@@ -14441,10 +14471,11 @@ async function t003StageMeasurement(value) {
 
 /**
  * Add one inert optional session whose complete model-view footprint is exactly
- * `bytes`, measured with the production renderer rather than an assumed offset.
+ * `bytes`, measured with the given renderer rather than an assumed offset.
  * @param {Record<string, unknown>} input @param {Record<string, unknown>} target @param {number} bytes
+ * @param {{runCommand:typeof runCommand,modelPacket:typeof modelPacket}} runtime @param {'v1'|'v2'} modelView
  */
-async function t003ReservedSessionInput(input, target, bytes) {
+async function t003ReservedSessionInput(input, target, bytes, runtime, modelView) {
   let length = bytes;
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const candidate = {
@@ -14455,11 +14486,11 @@ async function t003ReservedSessionInput(input, target, bytes) {
         bytes: { base64: Buffer.from('x'.repeat(length)).toString('base64') },
       },
     };
-    const { inspection } = runCommand('inspect', { trigger: 'explicit-inspection', input: candidate });
-    const packet = modelPacket(inspection);
+    const { inspection } = runtime.runCommand('inspect', { trigger: 'explicit-inspection', input: candidate });
+    const packet = runtime.modelPacket(inspection);
     assert.ok(packet, 'the reserved session itself fits');
     const withoutSession = await renderPrivateModelProjection(
-      target, inspection.items.filter(item => item.source !== 'session'),
+      target, inspection.items.filter(item => item.source !== 'session'), { modelView },
     );
     const footprint = Buffer.byteLength(canonicalJson(packet)) - Buffer.byteLength(canonicalJson(withoutSession));
     if (footprint === bytes) return candidate;
@@ -14479,17 +14510,28 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
   }) => {
     const target = canonicalTarget(referenceInput.target);
     assert.notEqual(root, path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..'));
+    // These component dynamics were recorded with the v1 renderer. Replay them in
+    // memory through the same runtime with only that selection forced, as the
+    // literal-history and former-budget controls do; production selects the
+    // strictly smaller v2 packet for the same evidence (checked below).
+    const v1 = await privateRecoveryRuntime({ modelView: 'v1' });
     // These component dynamics were recorded against the former 131,072-byte
     // budget. One inert optional session reserves exactly the revised capacity
     // difference, so every owner suffix, admitted prefix, and the first overflow
     // stay at that effective boundary. The byte ceiling, not a count limit,
     // still ends the counterfactual growth.
     const reservedBytes = limits.bytes - 131_072;
-    const initialInput = await t003ReservedSessionInput(referenceInput, target, reservedBytes);
-    const initialInspection = runCommand('inspect', {
+    const initialInput = await t003ReservedSessionInput(referenceInput, target, reservedBytes, v1, 'v1');
+    const initialInspection = v1.runCommand('inspect', {
       trigger: 'explicit-inspection',
       input: initialInput,
     }).inspection;
+    const production = runCommand('inspect', { trigger: 'explicit-inspection', input: initialInput }).inspection;
+    assert.deepEqual(production, initialInspection, 'the recorded reference Inspection is unchanged');
+    const productionPacket = modelPacket(production);
+    assert.equal(productionPacket.format, 'dude-work-model-view-v2');
+    assert.ok(Buffer.byteLength(canonicalJson(productionPacket)) < 107_680 + reservedBytes);
+    assert.deepEqual(expandModelPacket(productionPacket), originalAvailableProjection(production));
     const literalReference = await measurePrivateModelView(initialInput, { literalHistory: true });
     assert.equal(literalReference.modelBytes - reservedBytes, 131_023, 'the immutable pre-compaction reference control');
     const historicalReference = await measurePrivateModelView(referenceInput, {
@@ -14510,7 +14552,7 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
       reference,
       input: initialInput,
       inspection: initialInspection,
-    })];
+    }, v1)];
     // The reserved session adds its exact bytes and one item, occurrence, and
     // source to each recorded measurement. It replaces the already-retained
     // unavailable-session descriptor, and byte headroom is unchanged.
@@ -14567,7 +14609,7 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
     assert.equal(governance[1].reviewIdentity, learning.reviewIdentity);
 
     const historicalState = t003HistoricalState(target, historicalEvents);
-    const directResume = resumeGovernanceV2(
+    const directResume = v1.resumeGovernanceV2(
       historicalState,
       initialInput,
       undefined,
@@ -14607,7 +14649,7 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
     // Use the existing historical-shape builder and independent pending state
     // for every ordinal. These component calls never claim Work admission.
     for (let ordinal = 5; ordinal <= 14; ordinal += 1) {
-      const preCaptureInspection = runCommand('inspect', {
+      const preCaptureInspection = v1.runCommand('inspect', {
         trigger: 'explicit-inspection',
         input: retainedInput,
       }).inspection;
@@ -14635,7 +14677,7 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
       );
       const stateBefore = canonicalJson(state);
       const filesBefore = t003FileIdentities(root, reference);
-      const capturedPrefix = captureCompletionV2(
+      const capturedPrefix = v1.captureCompletionV2(
         state,
         captureInput,
         pair.completion,
@@ -14643,7 +14685,7 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
         true,
       );
       if (capturedPrefix.inspection.overflow) {
-        const privateView = await measurePrivateModelView(captureInput);
+        const privateView = await measurePrivateModelView(captureInput, { modelView: 'v1' });
         const measured = await t003StageMeasurement({
           label: `ordinal-${ordinal}-captures-refused`,
           root,
@@ -14651,7 +14693,7 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
           input: captureInput,
           inspection: capturedPrefix.inspection,
           privateView,
-        });
+        }, v1);
         stages.push(measured);
         assert.deepEqual(Object.keys(capturedPrefix), ['inspection']);
         assert.equal(canonicalJson(state), stateBefore);
@@ -14670,7 +14712,7 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
         // The reserved session is the last source, so its prefix is the first
         // to cross; every earlier descriptor still loses its text, and only
         // the packet blocker names the byte stop.
-        assert.equal(modelPacket(capturedPrefix.inspection), null);
+        assert.equal(v1.modelPacket(capturedPrefix.inspection), null);
         assert.ok(capturedPrefix.inspection.items.every(item => !Object.hasOwn(item, 'text')));
         assert.equal(capturedPrefix.inspection.items.at(-1).source, 'session');
         assert.equal(capturedPrefix.inspection.items.at(-1).status, 'overflow');
@@ -14712,7 +14754,7 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
         reference,
         input: captureInput,
         inspection: capturedPrefix.inspection,
-      }));
+      }, v1));
       if (ordinal === 5) {
         // Today's producer also retains readable text. Measure it separately;
         // do not mistake the frozen hash-only growth oracle for current output.
@@ -14731,7 +14773,7 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
           assert.equal(body.records.length, 2, `${field}: current captures keep readable text`);
           currentInput[field].push(...currentPair.streams[field]);
         }
-        const currentCapture = captureCompletionV2(
+        const currentCapture = v1.captureCompletionV2(
           state, currentInput, currentPair.completion, undefined, true,
         );
         assert.equal(currentCapture.inspection.overflow, false);
@@ -14742,7 +14784,7 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
           reference,
           input: currentInput,
           inspection: currentCapture.inspection,
-        });
+        }, v1);
         assert.equal(currentReadableCapture.capacityAdmissible, true);
         assert.equal(currentReadableCapture.canonicalBytes, 118_351 + reservedBytes);
         assert.equal(currentReadableCapture.canonicalBytes - stages.at(-1).canonicalBytes, 2_656);
@@ -14752,7 +14794,7 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
       const capturedState = capturedPrefix.completion.state;
       const batch = capturedPrefix.completion.projectionBatch;
       const binding = t003LaneBinding(root, reference, target);
-      const preparedPrefix = prepareProjectionV2(
+      const preparedPrefix = v1.prepareProjectionV2(
         capturedState,
         captureInput,
         batch,
@@ -14776,7 +14818,7 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
         mutation: projection.mutation,
       });
       assert.equal(application.ok, true, JSON.stringify(application));
-      const laneInspection = runCommand('inspect', {
+      const laneInspection = v1.runCommand('inspect', {
         trigger: 'explicit-inspection',
         input: captureInput,
       }).inspection;
@@ -14786,14 +14828,14 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
         reference,
         input: captureInput,
         inspection: laneInspection,
-      }));
+      }, v1));
       assert.equal(stages.at(-1).surfaces.equal, false);
       assert.equal(
         stages.at(-1).surfaces.laneTarget,
         stages.at(-1).surfaces.currentRun + 1,
       );
       const publishedInput = publishCurrentRun(captureInput, projection.currentRunRecord);
-      const receiptInspection = runCommand('inspect', {
+      const receiptInspection = v1.runCommand('inspect', {
         trigger: 'explicit-inspection',
         input: publishedInput,
       }).inspection;
@@ -14803,9 +14845,9 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
         reference,
         input: publishedInput,
         inspection: receiptInspection,
-      }));
+      }, v1));
       assert.equal(stages.at(-1).surfaces.equal, true);
-      const receipt = commitLaneReceiptV2(
+      const receipt = v1.commitLaneReceiptV2(
         capturedState,
         publishedInput,
         projection.projectionPermit,
@@ -14815,7 +14857,7 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
       );
       assert.equal(receipt.transition.committed, true, receipt.transition.reason);
       assert.deepEqual(receipt.inspection, receiptInspection);
-      const finalized = runCommand('complete', {
+      const finalized = v1.runCommand('complete', {
         mode: 'finalize',
         state: capturedState,
         input: publishedInput,
@@ -14927,7 +14969,9 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
         classification: 'counterfactual-component-growth-not-supported-Work-continuation',
         fixture: readRetentionEpisodeFixture().descriptor,
         reference: contentDescriptor(referenceBytes),
-        productionFormat: 'dude-work-model-view-v1',
+        productionFormat: productionPacket.format,
+        replayedFormat: 'dude-work-model-view-v1',
+        productionReferenceBytes: Buffer.byteLength(canonicalJson(productionPacket)),
         productionOrder: 'lane-first',
         packetLimit: limits.bytes,
         reservedSessionBytes: reservedBytes,
@@ -18453,5 +18497,2797 @@ nodeTest('Feature 060 T003: a synthetic non-overflow governance refusal preserve
     assert.deepEqual(kinds, ['learning-review', 'learning-review']);
     assert.deepEqual(feature060Preimages(root), files);
     context.diagnostic('Synthetic contracts only: resume-learning packet=131020, overflow=false, missing governance projection; runner/CLI review-learning refuses an outstanding projection commitment without optional session padding. Historical 062 cause remains unisolated.');
+  });
+});
+
+// Feature 094 T001: a known completion is measured before its provisional capture
+// is accepted. Specialist records here are synthetic fixtures, not real verification.
+
+/** Rejected findings that make a multi-event occurrence-retention batch. @param {string} label @param {number} count */
+function terminalCompletionFindings(label, count) {
+  return Array.from({ length: count }, (_, index) => ({
+    basis: {
+      expectation: { kind: 'governing-rule', reference: `terminal completion rule:${label}:${index}` },
+      subjects: [TARGET.taskKey],
+      failureClass: 'review-rejection',
+      checkDefinition: `focused check:${label}`,
+    },
+    observation: { kind: 'observed-evidence', evidence: `terminal completion finding:${label}:${index}` },
+  }));
+}
+
+/** One model-visible earlier lint capture of `length` padding characters. @param {number} length */
+function terminalPaddedLint(length) {
+  return sealedTransportInput({
+    lane: { kind: 'lightweight' },
+    lint: [sealedCapture(TARGET, 'passed', [{ padding: 'x'.repeat(length) }])],
+  }).lint;
+}
+
+/**
+ * One autonomous completion at the record boundary: the exact adapter-built pair,
+ * the accumulated evidence every later operation carries, and the production
+ * preparation oracle's measurements for that known completion.
+ * @param {string} root
+ * @param {{label?:string,findings?:number,session?:string,earlierLint?:Record<string, unknown>[]}} [options]
+ */
+async function terminalCompletionCase(root, options = {}) {
+  const label = options.label ?? 'terminal-completion';
+  const state = pendingState('autonomous');
+  const fixture = sealedTrustedFixture(state, label, 'rejected', terminalCompletionFindings(label, options.findings ?? 2));
+  const prepared = hostAdapterModule.prepareSpecialistResult(state, fixture.semantic);
+  const session = options.session === undefined ? {} : {
+    session: {
+      target: clone(TARGET), availability: 'available', bytes: { base64: Buffer.from(options.session).toString('base64') },
+    },
+  };
+  const recordInput = { ...sealedRecordInput(root), ...session };
+  const earlierLint = options.earlierLint ?? [];
+  const binding = sealedLaneBinding(root);
+  const laneBinding = {
+    lanePrestate: binding.lanePrestate, targetMapping: binding.targetMapping, operationTime: LANE_MUTATION.snapshotUpdatedAt,
+  };
+  const captureInput = { ...recordInput, ...prepared.streams };
+  const accumulated = { ...captureInput, lint: [...clone(earlierLint), ...prepared.streams.lint] };
+  const captured = runCommand('complete', {
+    mode: 'capture', state, input: captureInput, completion: prepared.completion,
+  });
+  assert.equal(captured.completion.captured, true, captured.completion.reason);
+  const predicted = await measurePrivatePreflight({
+    state: captured.completion.state, input: accumulated, batch: captured.completion.projectionBatch, laneBinding,
+  });
+  return {
+    state, fixture, prepared, binding, laneBinding, accumulated, predicted,
+    request: {
+      attemptResult: {
+        input: recordInput,
+        result: fixture.semantic,
+        completionFit: { captures: { verification: [], review: [], lint: clone(earlierLint) }, laneBinding },
+      },
+    },
+  };
+}
+
+/** @param {string} label @param {Record<string, unknown>[]} calls */
+function terminalCountingLaneOwner(label, calls) {
+  return {
+    identity: sha256(`terminal-completion-lane:${label}`),
+    apply(request) {
+      calls.push(clone(request));
+      return applyLightweightWorkRequest(request);
+    },
+  };
+}
+
+nodeTest('terminal-work completion: the fit check predicts every actual capture, lane-first, and receipt postimage byte', async (context) => {
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const files = [IDEA_PATH, TASKS_PATH, TASK_STATE_PATH, TARGET.specPath, TARGET.specPath.replace('/spec.md', '/plan.md')];
+    const calls = [];
+    const applications = [];
+    let fit = null;
+    let assessment;
+    let dispatched = false;
+    const request = focusedRunnerRequest(root);
+    delete request.assessment;
+    delete request.specialistResult;
+    const result = await runHostAdapter(request, {
+      checkpoint: memoryCheckpointStore().port,
+      runtime: {
+        identity: sha256('terminal-completion-oracle-runtime'),
+        invoke(command, lowLevelRequest) {
+          if (lowLevelRequest.mode === 'prepare-projection' && calls.at(-1)?.mode === 'capture') {
+            fit = {
+              request: clone(lowLevelRequest),
+              files: files.map((relative) => [relative, fs.readFileSync(path.join(root, relative))]),
+            };
+          }
+          const value = runCommand(command, lowLevelRequest);
+          calls.push({ command, mode: lowLevelRequest.mode ?? null, request: clone(lowLevelRequest), value: clone(value) });
+          return { status: 'returned', value };
+        },
+      },
+      laneOwner: {
+        identity: sha256('terminal-completion-oracle-lane'),
+        apply(application) {
+          const applied = applyLightweightWorkRequest(application);
+          assert.equal(applied.ok, true, canonicalJson(applied));
+          if (application.operation === 'work-project') {
+            const preparation = calls.filter((call) => call.mode === 'prepare-projection').at(-1);
+            applications.push(runCommand('inspect', {
+              trigger: 'explicit-inspection', input: preparation.request.input,
+            }).inspection);
+          }
+          return applied;
+        },
+      },
+      exchange(challenge) {
+        if (challenge.kind === 'assessment') {
+          if (dispatched) return focusedCancelResponse(challenge);
+          assessment = focusedChallengeAssessment(challenge);
+          return focusedChallengeResponse(challenge, 'assessment', assessment);
+        }
+        dispatched = true;
+        const pair = focusedSpecialistPair(assessment, 'terminal-oracle', 'rejected');
+        const [finding] = pair.review.findings;
+        pair.review.findings = Array.from({ length: 3 }, (_, index) => ({
+          ...clone(finding),
+          basis: { ...clone(finding.basis), expectation: { kind: 'governing-rule', reference: `terminal-oracle-${index}` } },
+        }));
+        return focusedChallengeResponse(challenge, 'specialistResult', pair);
+      },
+    });
+    assert.equal(result.reason, 'cancelled', result.detail ?? result.reason);
+    assert.ok(fit, 'the fit check ran inside record-attempt-result');
+    const preparations = calls.filter((call) => call.mode === 'prepare-projection');
+    const receipts = calls.filter((call) => call.mode === 'commit-lane-receipt');
+    const events = fit.request.projectionBatch.events;
+    assert.equal(events.length, 4);
+    assert.equal(applications.length, events.length);
+    assert.equal(receipts.length, events.length);
+    // The first actual preparation measured the same complete evidence.
+    assert.deepEqual({ ...fit.request, operationTime: preparations[1].request.operationTime }, preparations[1].request);
+    await withSealedWorkspace(async (measurementRoot) => {
+      for (const [relative, bytes] of fit.files) {
+        fs.mkdirSync(path.dirname(path.join(measurementRoot, relative)), { recursive: true });
+        fs.writeFileSync(path.join(measurementRoot, relative), bytes);
+      }
+      const predicted = await measurePrivatePreflight({
+        state: fit.request.state,
+        input: { ...fit.request.input, root: measurementRoot },
+        batch: fit.request.projectionBatch,
+        laneBinding: {
+          lanePrestate: fit.request.lanePrestate,
+          targetMapping: fit.request.targetMapping,
+          operationTime: fit.request.operationTime,
+        },
+      });
+      assert.equal(predicted.capacity, null);
+      assert.equal(predicted.result.transition.reason, 'projection-prepared');
+      assert.equal(predicted.measurements.length, 1 + events.length * 2);
+      assert.deepEqual(predicted.measurements[0].inspection, preparations[1].value.inspection);
+      const rows = [];
+      for (let index = 0; index < events.length; index += 1) {
+        const laneFirst = predicted.measurements[1 + index * 2];
+        const receipt = predicted.measurements[2 + index * 2];
+        assert.deepEqual(laneFirst.inspection, applications[index], `lane-first ${index + 1}`);
+        assert.deepEqual(receipt.inspection, receipts[index].value.inspection, `receipt ${index + 1}`);
+        assert.equal(laneFirst.modelBytes, Buffer.byteLength(canonicalJson(modelPacket(applications[index]))));
+        assert.equal(receipt.modelBytes, Buffer.byteLength(canonicalJson(modelPacket(receipts[index].value.inspection))));
+        rows.push({ event: events[index].type, laneFirst: laneFirst.modelBytes, receipt: receipt.modelBytes });
+      }
+      context.diagnostic(canonicalJson({
+        terminalCompletionOracle: { capture: predicted.measurements[0].modelBytes, prefixes: rows, limit: limits.bytes },
+      }));
+    });
+  });
+});
+
+nodeTest('terminal-work completion: the first known excess refuses before capture acceptance and keeps every predecessor fact', async (t) => {
+  for (const boundary of ['accumulated-capture', 'lane-first', 'receipt']) {
+    await t.test(boundary, async () => {
+      await withSealedWorkspace(async (root) => {
+        writeSealedTaskState(root);
+        const index = { 'accumulated-capture': 0, 'lane-first': 1, receipt: 2 }[boundary];
+        // Earlier captures are carried by every later operation but never by the
+        // capture itself; session padding is carried by both. Each adds one byte per character.
+        const sized = (length) => terminalCompletionCase(root, boundary === 'accumulated-capture'
+          ? { label: `terminal-${boundary}`, earlierLint: terminalPaddedLint(length) }
+          : { label: `terminal-${boundary}`, session: 'x'.repeat(length) });
+        let length = 1;
+        let fit = await sized(length);
+        for (let attempt = 0; attempt < 6; attempt += 1) {
+          const difference = limits.bytes + 1 - fit.predicted.measurements[index].modelBytes;
+          if (difference === 0) break;
+          length += difference;
+          fit = await sized(length);
+        }
+        assert.equal(fit.predicted.measurements[index].modelBytes, limits.bytes + 1);
+        assert.ok(fit.predicted.measurements.slice(0, index).every((row) => row.modelBytes <= limits.bytes),
+          'this is the first known excess');
+        assert.equal(fit.predicted.measurements.length, index + 1, 'measurement stops at the first excess');
+
+        const laneCalls = [];
+        const files = laneSurfaceDigests(root);
+        const adapter = createHostAdapter(sealedInitial({ state: fit.state }), {
+          laneOwner: terminalCountingLaneOwner(boundary, laneCalls),
+        });
+        const before = adapter.snapshot();
+        const refused = adapter.run(sealedRequest(adapter, 'record-attempt-result', fit.request));
+        assert.equal(refused.outcome, 'hard-stop', refused.reason);
+        assert.equal(refused.reason, 'evidence-incomplete');
+        if (index === 0) {
+          assert.equal(Object.hasOwn(refused, 'capacity'), false, 'an evidence overflow is descriptor-only');
+        } else {
+          assert.deepEqual(refused.capacity, {
+            budget: 'model-packet-bytes', limit: limits.bytes, required: limits.bytes + 1,
+            source: 'model-packet', target: canonicalTarget(TARGET),
+          });
+        }
+        assert.equal(refused.session.pendingEffect, null, 'the provisional capture was never accepted');
+        assert.deepEqual(acceptedAuthorityTuple(refused.session), acceptedAuthorityTuple(before),
+          'predecessor, counters, and pending authorization are unchanged');
+        assert.equal(Object.hasOwn(refused.session.acceptedState, 'pendingCompletion'), false);
+        assert.deepEqual(laneCalls, []);
+        assert.deepEqual(laneSurfaceDigests(root), files, 'no predictable lane write follows');
+        assert.equal(adapter.run(sealedRequest(adapter, 'record-attempt-result', fit.request)).reason, 'evidence-incomplete',
+          'the stopped operation is not retried');
+
+        // Control without the fit check: the same capture is accepted first and only
+        // the later preparation reaches the identical refusal.
+        const control = createHostAdapter(sealedInitial({ state: fit.state }), {
+          laneOwner: terminalCountingLaneOwner(`${boundary}-control`, laneCalls),
+        });
+        const { completionFit, ...withoutFit } = fit.request.attemptResult;
+        assert.ok(completionFit);
+        const accepted = control.run(sealedRequest(control, 'record-attempt-result', { attemptResult: withoutFit }));
+        assert.equal(accepted.outcome, 'effect-required', accepted.reason);
+        assert.equal(accepted.reason, 'occurrence-retention-required');
+        const late = control.run(sealedRequest(control, 'prepare-authoritative-projection', {
+          projection: { input: fit.accumulated, laneBinding: fit.laneBinding },
+        }));
+        assert.equal(late.outcome, 'hard-stop');
+        assert.equal(late.reason, 'evidence-incomplete');
+        assert.deepEqual(late.capacity, refused.capacity);
+        assert.notEqual(late.session.pendingEffect, null, 'without the fit check the refusal follows acceptance');
+        assert.deepEqual(laneCalls, []);
+      });
+    });
+  }
+});
+
+nodeTest('terminal-work completion: drift and later evidence keep the later preparation authoritative', async () => {
+  // A binding that drifted before the record leaves fit unestablished, so the
+  // capture is admitted for the ordinary authoritative preparation.
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const fit = await terminalCompletionCase(root, { label: 'terminal-stale-binding' });
+    fs.appendFileSync(path.join(root, TASKS_PATH), 'A note written after the binding was read.\n');
+    const laneCalls = [];
+    const adapter = createHostAdapter(sealedInitial({ state: fit.state }), {
+      laneOwner: terminalCountingLaneOwner('stale-binding', laneCalls),
+    });
+    const accepted = adapter.run(sealedRequest(adapter, 'record-attempt-result', fit.request));
+    assert.equal(accepted.outcome, 'effect-required', accepted.reason);
+    assert.equal(accepted.reason, 'occurrence-retention-required');
+    const fresh = sealedLaneBinding(root);
+    const prepared = adapter.run(sealedRequest(adapter, 'prepare-authoritative-projection', {
+      projection: {
+        input: fit.accumulated,
+        laneBinding: {
+          lanePrestate: fresh.lanePrestate, targetMapping: fresh.targetMapping, operationTime: LANE_MUTATION.snapshotUpdatedAt,
+        },
+      },
+    }));
+    assert.equal(prepared.reason, 'projection-prepared', prepared.reason);
+    assert.deepEqual(laneCalls, []);
+  });
+  // An admitted fit grants nothing: evidence arriving later is measured afresh.
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const largest = (candidate) => Math.max(...candidate.predicted.measurements.map((row) => row.modelBytes));
+    let length = 1;
+    let fit = await terminalCompletionCase(root, { label: 'terminal-later-growth', session: 'x' });
+    for (let attempt = 0; attempt < 6 && largest(fit) !== limits.bytes - 400; attempt += 1) {
+      length += limits.bytes - 400 - largest(fit);
+      fit = await terminalCompletionCase(root, { label: 'terminal-later-growth', session: 'x'.repeat(length) });
+    }
+    assert.equal(largest(fit), limits.bytes - 400);
+    assert.equal(fit.predicted.result.transition.reason, 'projection-prepared');
+    const laneCalls = [];
+    const adapter = createHostAdapter(sealedInitial({ state: fit.state }), {
+      laneOwner: terminalCountingLaneOwner('later-growth', laneCalls),
+    });
+    const accepted = adapter.run(sealedRequest(adapter, 'record-attempt-result', fit.request));
+    assert.equal(accepted.outcome, 'effect-required', accepted.reason);
+    fs.appendFileSync(path.join(root, IDEA_PATH), `- 2026-08-10 later owner growth ${'g'.repeat(1_200)}\n`);
+    const fresh = sealedLaneBinding(root);
+    const laneBinding = {
+      lanePrestate: fresh.lanePrestate, targetMapping: fresh.targetMapping, operationTime: LANE_MUTATION.snapshotUpdatedAt,
+    };
+    const later = await measurePrivatePreflight({
+      state: accepted.session.pendingEffect.provisionalState,
+      input: fit.accumulated,
+      batch: accepted.session.pendingEffect.projectionBatch,
+      laneBinding,
+    });
+    assert.ok(later.capacity !== null || later.result.inspection.overflow, 'the later evidence no longer fits');
+    const before = adapter.snapshot();
+    const refused = adapter.run(sealedRequest(adapter, 'prepare-authoritative-projection', {
+      projection: { input: fit.accumulated, laneBinding },
+    }));
+    assert.equal(refused.outcome, 'hard-stop');
+    assert.equal(refused.reason, 'evidence-incomplete');
+    if (later.capacity !== null) assert.deepEqual(refused.capacity, later.capacity);
+    assert.deepEqual(refused.session.pendingEffect, before.pendingEffect, 'the earlier acceptance is not rolled back');
+    assert.deepEqual(acceptedAuthorityTuple(refused.session), acceptedAuthorityTuple(before));
+    assert.deepEqual(laneCalls, []);
+  });
+});
+
+nodeTest('terminal-work completion: an admitted fit check issues no permit and keeps no plan', async () => {
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const fit = await terminalCompletionCase(root, { label: 'terminal-disposal' });
+    assert.equal(fit.predicted.result.transition.reason, 'projection-prepared');
+    // The exact plan the fit check derived: same state, batch, input, binding, and time.
+    const item = fit.predicted.result.transition.plan.items[0];
+    const laneCalls = [];
+    const adapter = createHostAdapter(sealedInitial({ state: fit.state }), {
+      laneOwner: terminalCountingLaneOwner('disposal', laneCalls),
+    });
+    const accepted = adapter.run(sealedRequest(adapter, 'record-attempt-result', fit.request));
+    assert.equal(accepted.outcome, 'effect-required', accepted.reason);
+    assert.equal(Object.hasOwn(accepted, 'product'), false, 'no plan leaves the operation');
+    const refused = adapter.run(sealedRequest(adapter, 'apply-lane-effect', {
+      laneApplication: { ...fit.binding.application, permit: clone(item.projectionPermit), mutation: clone(item.mutation) },
+    }));
+    assert.equal(refused.outcome, 'hard-stop');
+    assert.equal(refused.reason, 'lane-permit-not-authorized', 'the discarded prediction is not a permit');
+    assert.deepEqual(laneCalls, []);
+
+    // Only the ordinary authoritative preparation issues that same permit.
+    const issued = createHostAdapter(sealedInitial({ state: fit.state }), {
+      laneOwner: terminalCountingLaneOwner('disposal-issued', laneCalls),
+    });
+    assert.equal(issued.run(sealedRequest(issued, 'record-attempt-result', fit.request)).outcome, 'effect-required');
+    const prepared = issued.run(sealedRequest(issued, 'prepare-authoritative-projection', {
+      projection: { input: fit.accumulated, laneBinding: fit.laneBinding },
+    }));
+    assert.equal(prepared.reason, 'projection-prepared');
+    assert.deepEqual(prepared.product.plan.items[0].projectionPermit, item.projectionPermit);
+    const applied = issued.run(sealedRequest(issued, 'apply-lane-effect', {
+      laneApplication: { ...fit.binding.application, permit: clone(item.projectionPermit), mutation: clone(item.mutation) },
+    }));
+    assert.equal(applied.reason, 'lane-projection-applied', applied.reason);
+    assert.equal(laneCalls.length, 1);
+  });
+});
+
+nodeTest('terminal-work completion: the runner retains the rejected pair and asks for nothing more at a known excess', async (context) => {
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const history = (await observedRunnerHistory(root, 'terminal-history', [0])).retainedEvidence;
+    // Admission and authorization fit with 1,000 bytes of headroom; the new pair needs more.
+    let length = limits.bytes;
+    let retained;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      retained = clone(history);
+      retained.lint = terminalPaddedLint(length);
+      const measured = await measurePrivateModelView(seededRunnerInput(root, retained));
+      const difference = limits.bytes - 1_000 - measured.modelBytes;
+      if (difference === 0) break;
+      length += difference;
+    }
+    const files = laneSurfaceDigests(root);
+    const original = canonicalJson(retained);
+    const calls = [];
+    const kinds = [];
+    let assessment;
+    let pair;
+    const request = focusedRunnerRequest(root, { retainedEvidence: retained });
+    delete request.assessment;
+    delete request.specialistResult;
+    const result = await runHostAdapter(request, {
+      checkpoint: memoryCheckpointStore().port,
+      runtime: {
+        identity: sha256('terminal-completion-retention-runtime'),
+        invoke(command, lowLevelRequest) {
+          const call = { command, mode: lowLevelRequest.mode ?? null, request: clone(lowLevelRequest) };
+          calls.push(call);
+          const value = runCommand(command, lowLevelRequest);
+          call.value = clone(value);
+          return { status: 'returned', value };
+        },
+      },
+      exchange(challenge) {
+        kinds.push(challenge.kind);
+        if (challenge.kind === 'assessment') {
+          assessment = focusedChallengeAssessment(challenge, {
+            materialInputs: focusedMaterialInputs(['src/terminal-rejected-pair.mjs']),
+          });
+          return focusedChallengeResponse(challenge, 'assessment', assessment);
+        }
+        assert.equal(challenge.kind, 'specialist-pair', 'no model call follows the known excess');
+        pair = focusedSpecialistPair(assessment, 'terminal-rejected-pair', 'rejected');
+        return focusedChallengeResponse(challenge, 'specialistResult', pair);
+      },
+    });
+    assert.equal(result.outcome, 'hard-stop', result.detail ?? result.reason);
+    assert.equal(result.reason, 'evidence-incomplete');
+    assert.deepEqual(kinds, ['assessment', 'specialist-pair']);
+    assert.equal(result.steps.at(-1).step, 'attempt:1:record-attempt-result');
+    const capture = calls.find((call) => call.mode === 'capture');
+    const fitCall = calls[calls.indexOf(capture) + 1];
+    assert.equal(fitCall.mode, 'prepare-projection');
+    assert.equal(fitCall, calls.at(-1), 'nothing runs after the refused fit check');
+    assert.equal(fitCall.value.inspection.overflow, true);
+    assert.equal(capture.value.inspection.overflow, false, 'the capture alone fit');
+    // The rejected pair reached the runtime exactly as built; the fit input
+    // carries every earlier original before it.
+    const accepted = focusedRunnerAcceptedState(result);
+    const built = hostAdapterModule.prepareSpecialistResult(accepted, pair).streams;
+    for (const field of ['verification', 'review', 'lint']) {
+      assert.deepEqual(capture.request.input[field], built[field], `${field}: actual rejected pair`);
+      assert.deepEqual(fitCall.request.input[field], [...retained[field], ...built[field]], `${field}: retained then rejected`);
+    }
+    assert.equal(accepted.pending.length, 1, 'the authorization stays pending');
+    assert.equal(Object.hasOwn(accepted, 'pendingCompletion'), false);
+    assert.deepEqual(accepted.completed, []);
+    assert.equal(canonicalJson(retained), original);
+    assert.deepEqual(laneSurfaceDigests(root), files, 'no lane write followed the refusal');
+    assert.equal(result.haltReport.resolved, true);
+    assert.equal(result.haltReport.evidenceHash, fitCall.value.inspection.evidenceHash);
+    context.diagnostic(canonicalJson({
+      terminalCompletionRetention: {
+        captureOverflow: capture.value.inspection.overflow,
+        fitOverflow: fitCall.value.inspection.overflow,
+        retainedVerification: retained.verification.length,
+        rejectedVerification: built.verification.length,
+      },
+    }));
+  });
+});
+
+// Feature 094 T001 F1: when a completion repeats an earlier finding basis,
+// finalization derives required learning from the retained occurrences alone.
+// That batch is known before the capture is accepted, so the same fit check owns
+// its lane-first and receipt prefixes. Specialist records are synthetic fixtures.
+
+/**
+ * Two rejected attempts whose reviews share one finding basis, so the second
+ * completion requires learning. Retained lint padding reaches every acquisition
+ * after admission at one byte per character, and the sealed owner log keeps one
+ * mandatory event, so every packet in the run grows by exactly that length. A
+ * learning review, when reached, is cancelled.
+ * @param {string} root @param {number} padding
+ */
+async function terminalRequiredLearningRun(root, padding) {
+  writeSealedTaskState(root);
+  const files = [IDEA_PATH, TASKS_PATH, TASK_STATE_PATH, TARGET.specPath, TARGET.specPath.replace('/spec.md', '/plan.md')];
+  const retainedEvidence = { currentRun: [], verification: [], review: [], lint: terminalPaddedLint(padding) };
+  const original = canonicalJson(retainedEvidence);
+  const request = focusedRunnerRequest(root, { retainedEvidence });
+  delete request.assessment;
+  delete request.specialistResult;
+  /** @type {Record<string, any>[]} */
+  const calls = [];
+  /** @type {string[]} */
+  const kinds = [];
+  /** @type {{type:string,inspection:Record<string, unknown>}[]} */
+  const laneFirst = [];
+  /** @type {{pair:Record<string, any>,state:Record<string, unknown>}[]} */
+  const pairs = [];
+  /** @type {Record<string, any>} */
+  let assessment = {};
+  /** @type {{files:Record<string, string>,state:Record<string, unknown>}|null} */
+  let beforeSecondRecord = null;
+  const result = await runHostAdapter(request, {
+    checkpoint: memoryCheckpointStore().port,
+    runtime: {
+      identity: sha256('terminal-required-learning-runtime'),
+      invoke(command, lowLevelRequest) {
+        /** @type {Record<string, any>} */
+        const call = { command, mode: lowLevelRequest.mode ?? null, request: clone(lowLevelRequest) };
+        if (call.mode === 'prepare-projection' && calls.at(-1)?.mode === 'capture') {
+          call.files = files.map((relative) => [relative, fs.readFileSync(path.join(root, relative))]);
+        }
+        calls.push(call);
+        const value = runCommand(command, lowLevelRequest);
+        call.value = clone(value);
+        return { status: 'returned', value };
+      },
+    },
+    laneOwner: {
+      identity: sha256('terminal-required-learning-lane'),
+      apply(application) {
+        const applied = applyLightweightWorkRequest(application);
+        assert.equal(applied.ok, true, canonicalJson(applied));
+        if (application.operation === 'work-project') {
+          const [line] = application.mutation.eventLines.lines;
+          const preparation = calls.filter((call) => call.mode === 'prepare-projection').at(-1);
+          laneFirst.push({
+            type: JSON.parse(line.exactLine.slice('- dude-run-event: '.length)).type,
+            inspection: runCommand('inspect', {
+              trigger: 'explicit-inspection', input: preparation.request.input,
+            }).inspection,
+          });
+        }
+        return applied;
+      },
+    },
+    exchange(challenge) {
+      kinds.push(challenge.kind);
+      if (challenge.kind === 'learning-review') return focusedCancelResponse(challenge);
+      if (challenge.kind === 'assessment') {
+        assessment = focusedChallengeAssessment(challenge, {
+          materialInputs: focusedMaterialInputs([`src/terminal-learning-${pairs.length}.mjs`]),
+        });
+        return focusedChallengeResponse(challenge, 'assessment', assessment);
+      }
+      const state = focusedRunnerAcceptedState(challenge);
+      if (pairs.length === 1) beforeSecondRecord = { files: laneSurfaceDigests(root), state };
+      const pair = focusedSpecialistPair(assessment, 'terminal-repeated-finding', 'rejected');
+      pairs.push({ pair, state });
+      return focusedChallengeResponse(challenge, 'specialistResult', pair);
+    },
+  });
+  return {
+    result,
+    calls,
+    kinds,
+    laneFirst,
+    pairs,
+    beforeSecondRecord,
+    retainedEvidence,
+    original,
+    captures: calls.filter((call) => call.mode === 'capture'),
+    fits: calls.filter((call, index) => call.mode === 'prepare-projection' && calls[index - 1]?.mode === 'capture'),
+    receipts: calls.filter((call) => call.mode === 'commit-lane-receipt'),
+  };
+}
+
+/** @param {Record<string, unknown>} inspection */
+function terminalPacketBytes(inspection) {
+  return Buffer.byteLength(canonicalJson(modelPacket(inspection)));
+}
+
+nodeTest('terminal-work completion: a deterministic required-learning first excess refuses before capture acceptance', async (t) => {
+  // Calibrate on one actual run that fits: it projects both completions and the
+  // required learning, then cancels the learning review. Its padding already has
+  // the same decimal width as at the boundary, so every byte-length field the
+  // packet carries keeps its width and each packet moves by exactly the shift.
+  const padding = 200_000;
+  const calibration = await withSealedWorkspace((root) => terminalRequiredLearningRun(root, padding));
+  assert.equal(calibration.result.reason, 'cancelled', calibration.result.detail ?? calibration.result.reason);
+  assert.deepEqual(calibration.kinds, ['assessment', 'specialist-pair', 'assessment', 'specialist-pair', 'learning-review']);
+  assert.deepEqual(calibration.laneFirst.map((row) => row.type), [
+    'approach-occurrence', 'finding-occurrence', 'approach-occurrence', 'finding-occurrence', 'learning-governance',
+  ]);
+  assert.equal(calibration.receipts.length, 5);
+  assert.equal(calibration.fits.length, 2);
+  const governanceStart = calibration.calls.findIndex((call) => call.mode === 'prepare-projection'
+    && call.request.projectionBatch.purpose === 'governance-required');
+  assert.ok(governanceStart > calibration.calls.indexOf(calibration.fits[1]));
+  // Every packet admitted before the first required-learning write: admission,
+  // both captures and fit checks, and every occurrence lane-first and receipt.
+  const earlier = Math.max(
+    ...calibration.calls.slice(0, governanceStart)
+      .filter((call) => call.value?.inspection).map((call) => terminalPacketBytes(call.value.inspection)),
+    ...calibration.laneFirst.slice(0, 4).map((row) => terminalPacketBytes(row.inspection)),
+  );
+  const governanceLaneFirst = terminalPacketBytes(calibration.laneFirst[4].inspection);
+  const governanceReceipt = terminalPacketBytes(calibration.receipts[4].value.inspection);
+  assert.ok(earlier < governanceLaneFirst, 'required learning is the largest known write');
+  assert.ok(governanceLaneFirst < governanceReceipt, 'its receipt adds bytes beyond the lane-first window');
+  t.diagnostic(canonicalJson({
+    terminalRequiredLearning: { padding, earlier, governanceLaneFirst, governanceReceipt, limit: limits.bytes },
+  }));
+
+  for (const [boundary, calibrated] of /** @type {[string, number][]} */ ([
+    ['required-learning lane-first', governanceLaneFirst],
+    ['required-learning receipt', governanceReceipt],
+  ])) {
+    await t.test(boundary, async () => {
+      const shift = limits.bytes + 1 - calibrated;
+      // Every earlier packet stays within the limit after the same shift.
+      assert.ok(earlier + shift <= limits.bytes);
+      if (boundary.endsWith('receipt')) assert.ok(governanceLaneFirst + shift <= limits.bytes);
+      await withSealedWorkspace(async (root) => {
+        const run = await terminalRequiredLearningRun(root, padding + shift);
+        assert.equal(run.result.outcome, 'hard-stop', run.result.detail ?? run.result.reason);
+        assert.equal(run.result.reason, 'evidence-incomplete');
+        // The shift lands exactly on this first excess, wherever it is refused.
+        assert.deepEqual(run.result.capacity, {
+          budget: 'model-packet-bytes', limit: limits.bytes, required: limits.bytes + 1,
+          source: 'model-packet', target: canonicalTarget(TARGET),
+        });
+        assert.deepEqual(run.kinds, ['assessment', 'specialist-pair', 'assessment', 'specialist-pair'],
+          'no model call follows the known excess');
+        // The refusal precedes acceptance of the repeating capture and every write it implies.
+        assert.equal(run.result.steps.at(-1).step, 'attempt:2:record-attempt-result');
+        assert.equal(run.result.steps.some((row) => row.step.startsWith('attempt:2:completion')), false);
+        assert.equal(run.fits.length, 2);
+        assert.equal(run.fits[1], run.calls.at(-1), 'nothing runs after the refused fit check');
+        assert.deepEqual(run.laneFirst.map((row) => row.type), ['approach-occurrence', 'finding-occurrence'],
+          'only the earlier completion reached the lane');
+        assert.deepEqual(laneSurfaceDigests(root), run.beforeSecondRecord?.files, 'no occurrence or learning write followed');
+        const stopped = focusedRunnerAcceptedState(run.result);
+        assert.deepEqual(stopped, run.beforeSecondRecord?.state, 'predecessor, counters, and pending authorization are unchanged');
+        assert.equal(stopped.overallUsed, 2);
+        assert.equal(stopped.pending.length, 1, 'the second authorization stays pending');
+        assert.equal(stopped.completed.length, 1, 'the earlier completion stays settled');
+        assert.equal(Object.hasOwn(stopped, 'pendingCompletion'), false);
+        assert.equal(Object.hasOwn(stopped, 'learningGovernance'), false);
+        // The capture received the rejected pair exactly as built; the fit check
+        // carried every retained and earlier original before it.
+        const [first, second] = run.pairs.map(({ pair, state }) => hostAdapterModule.prepareSpecialistResult(state, pair).streams);
+        for (const field of ['verification', 'review', 'lint']) {
+          assert.deepEqual(run.captures[1].request.input[field], second[field], `${field}: actual rejected pair`);
+          assert.deepEqual(run.fits[1].request.input[field],
+            [...run.retainedEvidence[field], ...first[field], ...second[field]],
+            `${field}: retained and earlier originals, then the rejected pair`);
+        }
+        assert.equal(canonicalJson(run.retainedEvidence), run.original);
+        assert.equal(run.result.haltReport.resolved, true);
+      });
+    });
+  }
+
+  await t.test('fit-check oracle', async () => {
+    // The same fit check measured the deterministic required-learning batch
+    // against the actual postimages that run later wrote and receipted.
+    const fit = calibration.fits[1];
+    await withSealedWorkspace(async (measurementRoot) => {
+      for (const [relative, bytes] of fit.files) {
+        fs.mkdirSync(path.dirname(path.join(measurementRoot, relative)), { recursive: true });
+        fs.writeFileSync(path.join(measurementRoot, relative), bytes);
+      }
+      const predicted = await measurePrivatePreflight({
+        state: fit.request.state,
+        input: { ...fit.request.input, root: measurementRoot },
+        batch: fit.request.projectionBatch,
+        laneBinding: {
+          lanePrestate: fit.request.lanePrestate,
+          targetMapping: fit.request.targetMapping,
+          operationTime: fit.request.operationTime,
+        },
+      });
+      assert.equal(predicted.capacity, null);
+      assert.equal(predicted.result.transition.reason, 'projection-prepared');
+      assert.equal(fit.request.projectionBatch.events.length, 2);
+      // The capture, then lane-first and receipt for both occurrences and the required learning.
+      assert.equal(predicted.measurements.length, 1 + 3 * 2);
+      assert.deepEqual(predicted.measurements[0].inspection, fit.value.inspection);
+      for (let index = 0; index < 3; index += 1) {
+        const laneFirst = calibration.laneFirst[2 + index].inspection;
+        const receipt = calibration.receipts[2 + index].value.inspection;
+        assert.deepEqual(predicted.measurements[1 + index * 2].inspection, laneFirst, `lane-first ${index + 1}`);
+        assert.deepEqual(predicted.measurements[2 + index * 2].inspection, receipt, `receipt ${index + 1}`);
+        assert.equal(predicted.measurements[1 + index * 2].modelBytes, terminalPacketBytes(laneFirst));
+        assert.equal(predicted.measurements[2 + index * 2].modelBytes, terminalPacketBytes(receipt));
+      }
+    });
+  });
+});
+
+const TERMINAL_EVIDENCE_ORDER = [
+  'terminal-original.json', 'retained-evidence.json', 'terminal-controls.json',
+  'terminal-fence.json', 'terminal-effects.json', 'terminal-evidence.json',
+];
+
+/**
+ * A test-owned in-memory sink with the driver sink's contract: fixed names are
+ * written once and read back exactly. Faults are explicit per name. A rewrite
+ * models a sink that does not retain faithfully: it stores, describes, and
+ * rereads self-consistent bytes of a changed copy, so hash readback alone passes.
+ * `sent` keeps the canonical material each write received before any fault, and
+ * `described` a copy of each descriptor as returned. With `alias`, the sink keeps
+ * every value it was handed and every descriptor it returned, and changes all of
+ * them again at the start of each later callback.
+ * @param {{log?:string[], failWrite?:string, corruptRead?:string, rewrite?:Record<string, (value:any)=>void>, alias?:boolean}} [options]
+ */
+function terminalRetentionSink(options = {}) {
+  /** @type {Map<string, Buffer>} */
+  const files = new Map();
+  /** @type {Map<string, string>} */
+  const sent = new Map();
+  /** @type {Map<string, {name:string, sha256:string, byteLength:number}>} */
+  const described = new Map();
+  /** @type {{name:string, value:any, descriptor:{name:string, sha256:string, byteLength:number}}[]} */
+  const held = [];
+  const log = options.log ?? [];
+  const changeHeld = () => {
+    for (const entry of held) {
+      Object.assign(entry.descriptor, {
+        name: `aliased-${entry.name}`, sha256: sha256(`terminal-work aliased ${entry.name}`), byteLength: 0,
+      });
+      try {
+        entry.value.sinkAlias = (entry.value.sinkAlias ?? 0) + 1;
+      } catch {
+        // A frozen value cannot change.
+      }
+    }
+  };
+  return {
+    files,
+    log,
+    sent,
+    described,
+    held,
+    /** @param {string} name */
+    json(name) {
+      return JSON.parse(/** @type {Buffer} */ (files.get(name)).toString('utf8'));
+    },
+    port: {
+      /** @param {string} name @param {any} value */
+      write(name, value) {
+        log.push(`write:${name}`);
+        changeHeld();
+        if (options.failWrite === name) throw new Error(`fixture ${name} write fault`);
+        if (files.has(name)) throw new Error(`fixture ${name} already exists`);
+        sent.set(name, canonicalJson(value));
+        const rewrite = options.rewrite?.[name];
+        let stored = value;
+        if (rewrite !== undefined) {
+          stored = JSON.parse(JSON.stringify(value));
+          rewrite(stored);
+        }
+        const bytes = Buffer.from(`${JSON.stringify(stored, null, 2)}\n`);
+        files.set(name, bytes);
+        const descriptor = { name, sha256: sha256(bytes), byteLength: bytes.byteLength };
+        described.set(name, { ...descriptor });
+        if (options.alias) held.push({ name, value, descriptor });
+        return descriptor;
+      },
+      /** @param {string} name */
+      read(name) {
+        log.push(`read:${name}`);
+        changeHeld();
+        const bytes = files.get(name);
+        if (bytes === undefined) throw new Error(`fixture ${name} is absent`);
+        return options.corruptRead === name ? Buffer.concat([bytes, Buffer.from(' ')]) : Buffer.from(bytes);
+      },
+    },
+  };
+}
+
+/**
+ * A real temporary store under the test root whose removals join the sink log.
+ * @param {string} root @param {string[]} log @param {typeof hostAdapterModule} [module]
+ */
+function terminalStore(root, log, module = hostAdapterModule) {
+  const store = module.createTemporaryCheckpointStore({ root });
+  /** @type {string[]} */
+  const reasons = [];
+  const port = {
+    ...store,
+    /** @param {unknown[]} args */
+    clear(...args) {
+      log.push('clear');
+      reasons.push(/** @type {string} */ (args[3]));
+      return store.clear(...args);
+    },
+  };
+  return { port, reasons };
+}
+
+/** The bound pair's current bytes by artifact kind. @param {string} root */
+function terminalPairBytes(root) {
+  const directory = artifactDirectory(root);
+  if (!fs.existsSync(directory)) return {};
+  return Object.fromEntries(fs.readdirSync(directory).map(name => [
+    name.endsWith('.claim') ? 'claim' : 'checkpoint', fs.readFileSync(path.join(directory, name)),
+  ]));
+}
+
+/**
+ * The exact pair bytes when terminal retention starts: after the owner's last
+ * own write and its seal, before any removal.
+ * @param {ReturnType<typeof terminalRetentionSink>} sink @param {string} root
+ */
+function terminalPairAtRetention(sink, root) {
+  const observed = { pair: /** @type {Record<string, Buffer>} */ ({}) };
+  const write = sink.port.write;
+  /** @param {string} name @param {unknown} value */
+  sink.port.write = (name, value) => {
+    if (name === 'terminal-original.json') observed.pair = terminalPairBytes(root);
+    return write(name, value);
+  };
+  return observed;
+}
+
+/**
+ * Whether the bound pair is still byte-identical to the pair present when retention began.
+ * @param {string} root @param {{pair:Record<string, Buffer>}} atRetention
+ */
+function terminalPairKept(root, atRetention) {
+  const pair = terminalPairBytes(root);
+  return Object.keys(atRetention.pair).length === 2 && Object.keys(pair).length === 2
+    && ['claim', 'checkpoint'].every((kind) => pair[kind]?.equals(atRetention.pair[kind]) === true);
+}
+
+/** A rejected first-Assessment payload: on the first exchange this nominates Feature 056's release. @param {Record<string, unknown>} challenge */
+function terminalInvalidAssessment(challenge) {
+  return focusedChallengeResponse(challenge, 'assessment', { invalid: 'terminal-work disposition payload' });
+}
+
+/** A valid bound Assessment whose action none stops at authorization with no dispatch authority. @param {Record<string, unknown>} challenge */
+function terminalNoActionAssessment(challenge) {
+  return focusedChallengeResponse(challenge, 'assessment', focusedChallengeAssessment(challenge, {
+    action: 'none',
+    materialInputs: { targets: [], operations: [], checks: [] },
+    equivalence: 'none',
+  }));
+}
+
+/**
+ * Open a real correction and its pending one-shot notice on a live handle: a
+ * malformed authorization is refused, then its authorized correction is refused
+ * again, which consumes the correction and leaves the notice pending.
+ * @param {ReturnType<typeof createHostAdapter>} handle
+ */
+function terminalPendingCorrection(handle) {
+  /** @param {Record<string, unknown>} [overrides] */
+  const malformed = (overrides = {}) => sealedRequest(handle, 'authorize-attempt', {
+    authorization: { input: {}, assessment: { invalid: 'terminal-work correction payload' } },
+  }, overrides);
+  const opened = handle.run(malformed());
+  assert.deepEqual([opened.outcome, opened.reason, opened.next.kind], ['closed-refusal', 'malformed-request', 'correction']);
+  const corrected = handle.run(malformed({ correctionIdentity: opened.next.correctionIdentity }));
+  assert.equal(corrected.outcome, 'closed-refusal');
+  assert.equal(Object.hasOwn(corrected, 'recoveryNotice'), false, 'a refused outcome never renders the notice');
+  const session = handle.snapshot();
+  assert.equal(session.correction.consumed, true);
+  assert.deepEqual(session.recoveryNotice, {
+    incidentClassification: 'malformed-request', statePreserved: true, resumedAction: 'authorize-attempt',
+  });
+  return { correction: clone(session.correction), recoveryNotice: clone(session.recoveryNotice) };
+}
+
+/** A request whose first exchange is the matched first Assessment, without an initial pair unless one is given. @param {string} root @param {Record<string, unknown>} [overrides] */
+function terminalRunnerRequest(root, overrides = {}) {
+  const request = focusedRunnerRequest(root, { assessment: null, ...overrides });
+  if (!Object.hasOwn(overrides, 'specialistResult')) delete request.specialistResult;
+  return request;
+}
+
+/**
+ * The retained original terminal equals the returned one apart from the
+ * auxiliary disposition and resource fields.
+ * @param {Record<string, unknown>} result @param {ReturnType<typeof terminalRetentionSink>} sink
+ */
+function assertOriginalTerminal(result, sink) {
+  const original = sink.json('terminal-original.json');
+  const { terminalDisposition: _disposition, ...returned } = result;
+  for (const field of ['cleanup', 'orphan']) {
+    if (Object.hasOwn(original, field)) returned[field] = original[field];
+    else delete returned[field];
+  }
+  assert.deepEqual(returned, original, 'the original terminal returns unchanged beside resource fields');
+  assert.equal(result.steps.filter(step => step.outcome === 'hard-stop').length, 1, 'one original stop');
+  return original;
+}
+
+/**
+ * A refused disposition keeps the original stop and pair and names one proof.
+ * @param {Record<string, unknown>} result @param {ReturnType<typeof terminalRetentionSink>} sink
+ * @param {string} kind @param {string} subject @param {{checkpoint:string,claim:string}} removal
+ */
+function assertTerminalRefusal(result, sink, kind, subject, removal) {
+  const disposition = sink.json('terminal-disposition.json');
+  assert.equal(disposition.outcome, 'refused', kind);
+  assert.equal(disposition.missingProof.kind, kind);
+  assert.equal(disposition.missingProof.subject, subject);
+  assert.deepEqual(disposition.removal, removal, kind);
+  assert.deepEqual(Object.keys(disposition.missingProof).sort(), ['kind', 'nextOwnerAction', 'required', 'subject']);
+  assert.doesNotThrow(() => hostAdapterModule.validateTerminalDispositionV1(disposition));
+  assert.deepEqual(result.terminalDisposition, { ...disposition, dispositionIdentity: sha256(canonicalJson(disposition)) });
+  assert.notEqual(result.cleanup, 'cleared', kind);
+  return disposition;
+}
+
+nodeTest('terminal-work disposition: the original owner fences, retains, and removes the exact pair once after built-in reads and a pure authorization refusal', async () => {
+  const module = await workModuleWithObservation('host-adapter-runner.mjs', true);
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const lanes = laneSurfaceDigests(root);
+    /** @type {string[]} */
+    const log = [];
+    const sink = terminalRetentionSink({ log });
+    const store = terminalStore(root, log, module.testAdapterModule);
+    const request = terminalRunnerRequest(root);
+    // The owner's own authorization rewrites its checkpoint after the challenge.
+    const atRetention = terminalPairAtRetention(sink, root);
+    /** @type {Record<string, unknown>|null} */
+    let fencedAtClear = null;
+    const clear = store.port.clear;
+    store.port.clear = (...args) => {
+      const owner = module.testOwnerContext.adapter;
+      fencedAtClear = owner.run(sealedRequest(owner, 'fresh-inspection', { input: {} }));
+      return clear(...args);
+    };
+    const result = await module.runHostAdapter(request, {
+      checkpoint: store.port,
+      retentionSink: sink.port,
+      exchange: terminalNoActionAssessment,
+    });
+    const pair = atRetention.pair;
+    assert.equal(result.outcome, 'hard-stop');
+    assert.equal(result.reason, 'no-action');
+    assert.equal(result.haltReport.halted, true);
+    const original = assertOriginalTerminal(result, sink);
+    assert.equal(Object.hasOwn(original, 'cleanup'), false, 'an adapter stop carries no resource field of its own');
+    assert.deepEqual([result.cleanup, result.orphan], ['cleared', false]);
+
+    // Every member and the manifest are written and reread before the only clear.
+    assert.deepEqual(log, [
+      ...TERMINAL_EVIDENCE_ORDER.map(name => `write:${name}`),
+      ...TERMINAL_EVIDENCE_ORDER.map(name => `read:${name}`),
+      'clear', 'write:terminal-disposition.json', 'read:terminal-disposition.json',
+    ]);
+    assert.deepEqual(store.reasons, ['terminal-disposition'], 'one guarded clear, never the 056 end');
+    assert.equal(fencedAtClear?.reason, 'owner-fenced', 'the owner was already fenced at removal');
+
+    const manifest = hostAdapterModule.validateTerminalEvidenceManifestV1(sink.json('terminal-evidence.json'));
+    const disposition = sink.json('terminal-disposition.json');
+    assert.deepEqual(disposition, {
+      version: 1,
+      manifestIdentity: sha256(canonicalJson(manifest)),
+      outcome: 'disposed',
+      removal: { checkpoint: 'absent', claim: 'absent' },
+      missingProof: null,
+    });
+    assert.deepEqual(result.terminalDisposition, { ...disposition, dispositionIdentity: sha256(canonicalJson(disposition)) });
+    for (const file of manifest.files) {
+      assert.equal(sha256(/** @type {Buffer} */ (sink.files.get(file.name))), file.sha256, file.name);
+    }
+    const binding = manifest.binding;
+    const record = JSON.parse(pair.checkpoint.toString('utf8'));
+    const claim = JSON.parse(pair.claim.toString('utf8'));
+    assert.equal(binding.terminalHash, sha256(canonicalJson(original)));
+    assert.deepEqual([binding.terminalOutcome, binding.terminalReason], ['hard-stop', result.reason]);
+    assert.deepEqual([binding.acceptedStateHash, binding.acceptedRevision], [result.stateHash, result.acceptedRevision]);
+    assert.deepEqual([binding.checkpointHash, binding.claimHash], [record.recordHash, claim.claimHash]);
+    assert.equal(binding.checkpointHostRevision, record.hostRevision);
+    assert.ok(binding.fenceHostRevision > binding.checkpointHostRevision, 'the fence revision is local and later');
+    assert.deepEqual([binding.invocationIdentity, binding.workerGeneration], [record.invocationIdentity, record.workerGeneration]);
+    assert.equal(binding.workerTokenHash, sha256(record.workerToken));
+    // The controls are the exact bytes this owner created, never reconstructed from hashes.
+    const controls = sink.json('terminal-controls.json');
+    assert.deepEqual(Buffer.from(controls.claim.base64, 'base64'), pair.claim);
+    assert.deepEqual(Buffer.from(controls.checkpoint.base64, 'base64'), pair.checkpoint);
+    const effects = sink.json('terminal-effects.json');
+    assert.deepEqual(effects.ports, { runtime: 'built-in', laneOwner: 'built-in', observation: 'complete' });
+    assert.deepEqual(effects.operations.map(entry => [entry.operation, entry.outcome, entry.routes.map(route => route.command)]), [
+      ['fresh-inspection', 'accepted', ['inspect']],
+      ['fresh-inspection', 'accepted', ['inspect']],
+      ['authorize-attempt', 'hard-stop', ['authorize']],
+    ]);
+    assert.deepEqual([effects.unaccounted, effects.qualified, effects.exchange.outstanding], [null, true, null]);
+    assert.deepEqual([effects.correction, effects.recoveryNotice], [null, null], 'no transient record was pending at the seal');
+    assert.deepEqual(fs.readdirSync(artifactDirectory(root)), []);
+    assert.deepEqual(laneSurfaceDigests(root), lanes, 'no lane write, task reset, or continuation');
+
+    // The fence is permanent: no run, end, second seal, handoff, or resume executes.
+    const owner = module.testOwnerContext.adapter;
+    const fenced = owner.snapshot();
+    assert.deepEqual([fenced.acceptedStateHash, fenced.acceptedRevision], [result.stateHash, result.acceptedRevision]);
+    assert.equal(fenced.hostRevision, binding.fenceHostRevision);
+    for (const reuse of [
+      () => owner.run(sealedRequest(owner, 'fresh-inspection', { input: {} })),
+      () => owner.end('hard-stop-recorded'),
+      () => owner.end('task-settled'),
+    ]) {
+      const refused = reuse();
+      assert.deepEqual([refused.outcome, refused.reason], ['hard-stop', 'owner-fenced']);
+    }
+    assert.equal(owner.sealTerminalOwner().refusal, 'owner-fence-consumed');
+    const adapterModule = module.testAdapterModule;
+    const prior = { workerToken: record.workerToken, workerGeneration: record.workerGeneration };
+    const handoff = adapterModule.handoffHostWorker({
+      workspaceIdentity: record.workspaceIdentity,
+      target: clone(TARGET),
+      ownerIdentity: record.ownerIdentity,
+      invocationIdentity: record.invocationIdentity,
+      priorWorker: prior,
+      observedExit: { ...prior, exitCode: 9 },
+    }, {
+      checkpoint: adapterModule.createTemporaryCheckpointStore({ root }),
+      supervisorSession: sealedSupervisorSession(),
+      noEffectAuthority: sealedNoEffectAuthority(),
+    });
+    assert.equal(handoff.reason, 'owner-fenced');
+    const receiptBody = {
+      version: 1,
+      checkpointKey: record.checkpointKey,
+      invocationIdentity: record.invocationIdentity,
+      priorWorkerToken: record.workerToken,
+      priorWorkerGeneration: record.workerGeneration,
+      workerToken: sha256('terminal-work replacement worker'),
+      workerGeneration: record.workerGeneration + 1,
+      acceptedStateHash: record.acceptedStateHash,
+      acceptedRevision: record.acceptedRevision,
+      hostRevision: record.hostRevision + 1,
+      claimHash: claim.claimHash,
+      recordHash: record.recordHash,
+      supervisorAuthorityIdentity: sha256('terminal-work supervisor'),
+      admissionIdentity: sha256('terminal-work admission'),
+    };
+    const receipt = { ...receiptBody, receiptHash: sha256(canonicalJson(receiptBody)) };
+    const resumed = adapterModule.resumeHostAdapter({
+      workspaceIdentity: record.workspaceIdentity,
+      target: clone(TARGET),
+      ownerIdentity: record.ownerIdentity,
+      prestate: { taskPrestateIdentity: record.taskPrestateIdentity, lanePrestateIdentity: record.lanePrestateIdentity },
+      invocationIdentity: record.invocationIdentity,
+      worker: { workerToken: receipt.workerToken, workerGeneration: receipt.workerGeneration },
+      handoffReceipt: receipt,
+    }, { checkpoint: adapterModule.createTemporaryCheckpointStore({ root }), noEffectAuthority: sealedNoEffectAuthority() });
+    assert.equal(resumed.reason, 'owner-fenced');
+    const emitted = canonicalJson(result);
+    for (const secret of [record.invocationIdentity, record.workerToken, claim.claimHash, record.recordHash]) {
+      assert.equal(emitted.includes(secret), false, 'private identities stay out of the returned result');
+    }
+  });
+});
+
+nodeTest('terminal-work disposition: a pure authorization refusal disposes from entered routes, but a copied-default injected runtime cannot', async () => {
+  for (const injected of [false, true]) {
+    await withSealedWorkspace(async (root) => {
+      writeSealedTaskState(root);
+      /** @type {string[]} */
+      const log = [];
+      const sink = terminalRetentionSink({ log });
+      const store = terminalStore(root, log);
+      const request = terminalRunnerRequest(root);
+      const result = await runHostAdapter(request, {
+        checkpoint: store.port,
+        retentionSink: sink.port,
+        ...(injected ? {
+          runtime: {
+            // A copied built-in identity is only a label; the selection is still injected.
+            identity: sha256('dude-work/recovery.runCommand:v1'),
+            invoke: (command, lowLevelRequest) => ({ status: 'returned', value: runCommand(command, lowLevelRequest) }),
+          },
+        } : {}),
+        exchange: terminalNoActionAssessment,
+      });
+      const label = injected ? 'injected' : 'built-in';
+      assert.deepEqual([result.outcome, result.reason], ['hard-stop', 'no-action'], label);
+      assertOriginalTerminal(result, sink);
+      assert.deepEqual(focusedRunnerAcceptedState(result), request.state, `${label}: no accounting changed`);
+      const effects = sink.json('terminal-effects.json');
+      const authorization = effects.operations.at(-1);
+      assert.deepEqual(
+        [authorization.operation, authorization.outcome, authorization.reason, authorization.routes.map(route => route.command)],
+        ['authorize-attempt', 'hard-stop', 'no-action', ['authorize']],
+        `${label}: the entered route and its authoritative refusal are the proof`,
+      );
+      if (!injected) {
+        assert.equal(result.terminalDisposition.outcome, 'disposed');
+        assert.equal(result.cleanup, 'cleared');
+        assert.deepEqual(store.reasons, ['terminal-disposition']);
+        assert.deepEqual(fs.readdirSync(artifactDirectory(root)), []);
+        return;
+      }
+      assert.deepEqual(effects.ports.runtime, 'injected');
+      assertTerminalRefusal(result, sink, 'effect-settlement', 'runtime-port', { checkpoint: 'retained', claim: 'retained' });
+      assert.deepEqual(store.reasons, [], 'no clear');
+      assert.equal(fs.readdirSync(artifactDirectory(root)).length, 2, 'the pair stays');
+      assert.equal(Object.hasOwn(result, 'cleanup'), false, 'no resource field is added without a removal attempt');
+    });
+  }
+});
+
+nodeTest('terminal-work disposition: without the retention sink the exact 056 release remains and no proof is fabricated', async () => {
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const checkpoint = ownerFinalizationStore(root);
+    const request = terminalRunnerRequest(root);
+    const result = await runHostAdapter(request, {
+      checkpoint: checkpoint.port,
+      exchange: terminalInvalidAssessment,
+    });
+    assertOwnerFinalizationStop(result, request.state);
+    assert.deepEqual([result.cleanup, result.orphan], ['cleared', false]);
+    assert.equal(Object.hasOwn(result, 'terminalDisposition'), false, 'no fresh-admission proof');
+    assert.deepEqual(checkpoint.calls.filter(call => call === 'clear'), ['clear'], 'at most one clear');
+    assert.deepEqual(fs.readdirSync(artifactDirectory(root)), []);
+  });
+});
+
+/** The runner request seeded with retained repeat evidence that rederives required learning. @param {string} root */
+function terminalRequiredLearningRequest(root) {
+  const required = requiredGovernanceFixture(root);
+  const occurrences = required.governedEvents.filter(event => event.type.endsWith('occurrence'));
+  const seeded = sealedRetentionInput(root, occurrences, occurrences, required.streams);
+  const retainedEvidence = Object.fromEntries(RETAINED_STREAMS.map(field => [field, clone(seeded[field])]));
+  return terminalRunnerRequest(root, { retainedEvidence });
+}
+
+nodeTest('terminal-work disposition: fully settled synchronous governance projection qualifies, but an injected lane writer cannot', async () => {
+  for (const injected of [false, true]) {
+    await withSealedWorkspace(async (root) => {
+      writeSealedTaskState(root);
+      const request = terminalRequiredLearningRequest(root);
+      /** @type {string[]} */
+      const log = [];
+      const sink = terminalRetentionSink({ log });
+      const store = terminalStore(root, log);
+      /** @type {string[]} */
+      const kinds = [];
+      let writes = 0;
+      const result = await runHostAdapter(request, {
+        checkpoint: store.port,
+        retentionSink: sink.port,
+        ...(injected ? {
+          laneOwner: {
+            identity: sha256('dude-lightweight-execution/board.applyLightweightWorkRequest:v1'),
+            apply(laneRequest) {
+              writes += 1;
+              return applyLightweightWorkRequest(laneRequest);
+            },
+          },
+        } : {}),
+        exchange(challenge) {
+          kinds.push(challenge.kind);
+          if (challenge.kind === 'learning-review') {
+            const { review } = governanceReview(focusedRunnerAcceptedState(challenge), 'selected-alternative');
+            return focusedChallengeResponse(challenge, 'review', review);
+          }
+          return terminalInvalidAssessment(challenge);
+        },
+      });
+      const label = injected ? 'injected writer' : 'built-in writer';
+      assert.deepEqual(kinds, ['learning-review', 'assessment'], label);
+      assert.deepEqual([result.outcome, result.reason], ['hard-stop', 'challenge-response-invalid'], label);
+      assertOriginalTerminal(result, sink);
+      const state = focusedRunnerAcceptedState(result);
+      assert.equal(state.learningGovernance.phase, 'alternative-inspected', `${label}: learning stays exactly as accepted`);
+      assert.deepEqual([state.overallUsed, state.pending.length], [request.state.overallUsed, 0]);
+      const effects = sink.json('terminal-effects.json');
+      assert.ok(effects.receipts.length > 0, `${label}: the owner applied and committed its own projection`);
+      assert.ok(effects.operations.some(entry => entry.operation === 'settle-effect' && entry.reason === 'projection-verified'));
+      assert.ok(effects.operations.every(entry => entry.lane.every(lane => lane.status === 'applied')));
+      if (!injected) {
+        const manifest = hostAdapterModule.validateTerminalEvidenceManifestV1(sink.json('terminal-evidence.json'));
+        const last = effects.receipts.at(-1);
+        assert.deepEqual(
+          [manifest.binding.lanePoststate.tasks.sha256, manifest.binding.lanePoststate.taskState.sha256, manifest.binding.lanePoststate.owner.sha256],
+          [last.tasksPoststateHash, last.taskStatePoststateHash, last.ownerPoststateHash],
+          'the current lane is exactly the last owned receipt poststate',
+        );
+        assert.equal(result.terminalDisposition.outcome, 'disposed');
+        assert.deepEqual(store.reasons, ['terminal-disposition']);
+        assert.deepEqual(fs.readdirSync(artifactDirectory(root)), []);
+        return;
+      }
+      assert.ok(writes > 0);
+      assert.equal(effects.ports.laneOwner, 'injected');
+      assertTerminalRefusal(result, sink, 'effect-settlement', 'lane-owner-port', { checkpoint: 'retained', claim: 'retained' });
+      assert.deepEqual(store.reasons, []);
+      assert.equal(fs.readdirSync(artifactDirectory(root)).length, 2);
+    });
+  }
+});
+
+/** Answer required learning with a selected alternative, then reject the first Assessment. @param {Record<string, unknown>} challenge */
+function terminalLearningExchange(challenge) {
+  if (challenge.kind === 'learning-review') {
+    const { review } = governanceReview(focusedRunnerAcceptedState(challenge), 'selected-alternative');
+    return focusedChallengeResponse(challenge, 'review', review);
+  }
+  return terminalInvalidAssessment(challenge);
+}
+
+/**
+ * Re-establish every lane effect the original owner applied from the
+ * manifest-bound retained files alone, never from the live adapter. Each member
+ * must match the manifest. Each write's exact permit, mutation, mapping,
+ * prestate, subject state, and full receipt must validate and bind through the
+ * existing validators. The unchanged builder must rebuild its exact postimages
+ * from the retained preimages, chaining write to write and ending at the bound
+ * current lane surfaces. The retained commit and settlement, the lane history,
+ * and the settled current run must each hold every projected event.
+ * @param {ReturnType<typeof terminalRetentionSink>} sink
+ */
+function assertRetainedLaneEffects(sink) {
+  const manifest = hostAdapterModule.validateTerminalEvidenceManifestV1(sink.json('terminal-evidence.json'));
+  /** @type {Record<string, any>} */
+  const members = {};
+  for (const file of manifest.files) {
+    const bytes = /** @type {Buffer} */ (sink.files.get(file.name));
+    assert.deepEqual([sha256(bytes), bytes.byteLength], [file.sha256, file.byteLength], `${file.name}: the manifest-bound bytes`);
+    members[file.role] = JSON.parse(bytes.toString('utf8'));
+  }
+  const { binding } = manifest;
+  const { operations } = members.effects;
+  /** @param {any} capture @param {string} label */
+  const preimage = (capture, label) => {
+    const bytes = Buffer.from(capture.base64, 'base64');
+    assert.deepEqual(capturedBytesV1(bytes), capture, `${label}: one exact retained capture`);
+    return bytes;
+  };
+  /** @param {{tasks:Buffer, owner:Buffer, taskState:Buffer}} images */
+  const describe = (images) => [images.tasks, images.owner, images.taskState].map(bytes => contentDescriptor(bytes));
+  /** @type {{tasks:Buffer, owner:Buffer, taskState:Buffer}|null} */
+  let previous = null;
+  /** @type {any[]} */
+  const receipts = [];
+  /** @type {{event:any, lines:any[], settlement:any}[]} */
+  const projected = [];
+  operations.forEach((/** @type {any} */ entry, /** @type {number} */ index) => {
+    for (const lane of entry.lane) {
+      assert.equal(lane.status, 'applied', 'a settled disposal holds only applied writes');
+      const { request, lanePrestate, result } = lane;
+      const permit = request.permit.kind === 'lane-projection'
+        ? validateProjectionPermitV1(request.permit)
+        : validateLaneMutationPermitV1(request.permit);
+      assert.deepEqual([result.ok, result.phase], [true, 'committed'], 'the built-in owner committed this write');
+      const receipt = validateLightweightAtomicReceiptV1(result.receipt);
+      assert.deepEqual([lane.permitHash, lane.receiptHash], [permit.permitHash, receipt.receiptHash]);
+      assert.equal(request.operation, permit.kind === 'lane-projection' ? 'work-project' : 'work-set');
+      for (const subject of [request.target, permit.target, receipt.target]) assert.deepEqual(subject, binding.target);
+      assert.deepEqual(
+        [receipt.permitHash, receipt.mutationIdentity, receipt.targetMappingHash, receipt.lanePrestateHash],
+        [permit.permitHash, permit.mutationIdentity, permit.targetMappingHash, permit.lanePrestateHash],
+        'the full receipt binds its exact permit',
+      );
+      assert.deepEqual(
+        [permit.mutationIdentity, permit.targetMappingHash, permit.lanePrestateHash, permit.subjectRunStateHash],
+        [request.mutation, request.mapping, lanePrestate, request.state].map(value => sha256(canonicalJson(value))),
+        'the permit binds the exact retained mutation, mapping, prestate, and subject state',
+      );
+      const before = {
+        tasks: preimage(request.expected.tasks, 'tasks preimage'),
+        owner: preimage(request.owner.ownerCapture, 'owner preimage'),
+        taskState: preimage(request.expected.taskState, 'task-state preimage'),
+      };
+      assert.deepEqual(describe(before),
+        [lanePrestate.tasksDescriptor, lanePrestate.ownerDescriptor, lanePrestate.taskStateDescriptor],
+        'the permit-bound prestate describes exactly the retained preimages');
+      if (previous !== null) assert.deepEqual(before, previous, 'each write starts where the previous owned write ended');
+      const { mutation } = request;
+      const after = buildLightweightWorkPostimages({
+        tasks: before.tasks,
+        owner: before.owner,
+        taskState: before.taskState,
+        tasksPath: request.expected.tasksPath,
+        taskKey: binding.target.taskKey,
+        kind: mutation.kind,
+        toGlyph: mutation.toGlyph,
+        blocker: mutation.blocker,
+        eventLines: mutation.eventLines.kind === 'none' ? [] : mutation.eventLines.lines.map((/** @type {any} */ line) => line.exactLine),
+        ownerLogLines: mutation.ownerLog.kind === 'none' ? [] : mutation.ownerLog.exactLines,
+        snapshotUpdatedAt: mutation.snapshotUpdatedAt,
+      });
+      if ('reason' in after) assert.fail(`the retained preimages and mutation do not rebuild: ${after.reason}`);
+      assert.deepEqual(
+        [after.tasks, after.taskState, after.owner].map(bytes => sha256(bytes)),
+        [receipt.tasksPoststateHash, receipt.taskStatePoststateHash, receipt.ownerPoststateHash],
+        'the unchanged builder rebuilds the receipt\'s exact poststate',
+      );
+      previous = after;
+      receipts.push(receipt);
+      const later = operations.slice(index + 1);
+      const commitAt = later.findIndex((/** @type {any} */ candidate) => candidate.operation === 'commit-lane-receipt'
+        && canonicalJson(candidate.routes[0]?.request?.permit) === canonicalJson(permit));
+      assert.notEqual(commitAt, -1, 'the retained commit of this exact permit');
+      const commit = later[commitAt];
+      assert.equal(commit.reason, 'lane-receipt-committed');
+      assert.equal(commit.routes.length, 1);
+      const [commitRoute] = commit.routes;
+      assert.deepEqual([commitRoute.mode, commitRoute.status, commitRoute.result.status], ['commit-lane-receipt', 'returned', 'returned']);
+      assert.deepEqual(commitRoute.request.receipt, receipt, 'the commit input is the exact receipt');
+      const committed = commitRoute.result.value.transition;
+      assert.deepEqual([committed.committed, committed.reason, committed.receipt], [true, 'lane-receipt-committed', receipt]);
+      if (permit.kind !== 'lane-projection') continue;
+      const settlement = later.slice(commitAt + 1).find((/** @type {any} */ candidate) => candidate.operation === 'settle-effect'
+        && candidate.routes[0]?.request?.projectionBatch?.batchIdentity === permit.batchIdentity);
+      assert.ok(settlement, 'the retained settlement of this projection batch');
+      assert.deepEqual([settlement.outcome, settlement.reason, settlement.routes.length], ['accepted', 'projection-verified', 1]);
+      const [settleRoute] = settlement.routes;
+      const verified = settleRoute.result.value.transition;
+      assert.deepEqual([settleRoute.mode, settleRoute.result.status, verified.verified, verified.reason],
+        ['verify-projection', 'returned', true, 'projection-verified']);
+      assert.equal(verified.projectionRef.batchIdentity, permit.batchIdentity);
+      assert.ok(verified.projectionRef.eventHashes.includes(permit.eventHash), 'the settlement binds this event');
+      const event = settleRoute.request.projectionBatch.events.find((/** @type {any} */ candidate) => candidate.eventHash === permit.eventHash);
+      assert.ok(event, 'the settled batch holds the projected event');
+      projected.push({ event, lines: mutation.eventLines.lines, settlement: settleRoute });
+    }
+  });
+  assert.ok(receipts.length > 0, 'the owner applied lane writes');
+  assert.deepEqual(members.effects.receipts, receipts, 'the full ordered committed receipts');
+  const last = /** @type {{tasks:Buffer, owner:Buffer, taskState:Buffer}} */ (/** @type {unknown} */ (previous));
+  const bound = binding.lanePoststate;
+  assert.deepEqual(describe(last),
+    [bound.tasks, bound.owner, bound.taskState].map((/** @type {any} */ surface) => ({ sha256: surface.sha256, byteLength: surface.byteLength })),
+    'the last rebuilt postimages are exactly the bound current lane surfaces');
+  const history = last.tasks.toString('utf8');
+  for (const { event, lines, settlement } of projected) {
+    for (const line of lines) assert.ok(history.includes(`${line.exactLine}\n`), 'lane-history publication of the event');
+    const records = settlement.request.input.currentRun.flatMap((/** @type {any} */ capture) => (
+      JSON.parse(Buffer.from(capture.bytes.base64, 'base64').toString('utf8')).records
+    ));
+    assert.ok(records.some((/** @type {any} */ record) => canonicalJson(record.substantive) === canonicalJson({ event })),
+      'current-run publication of the event in the settled input');
+  }
+  return { writes: receipts.length, projected: projected.length };
+}
+
+nodeTest('terminal-work disposition: a settled governance disposal is re-established from manifest-bound retained material alone', async (t) => {
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    /** @type {string[]} */
+    const log = [];
+    const sink = terminalRetentionSink({ log });
+    const store = terminalStore(root, log);
+    const result = await runHostAdapter(terminalRequiredLearningRequest(root), {
+      checkpoint: store.port,
+      retentionSink: sink.port,
+      exchange: terminalLearningExchange,
+    });
+    assert.deepEqual([result.outcome, result.reason], ['hard-stop', 'challenge-response-invalid']);
+    assertOriginalTerminal(result, sink);
+    assert.equal(result.terminalDisposition.outcome, 'disposed');
+    assert.deepEqual(store.reasons, ['terminal-disposition']);
+    // Only the retained files are read below; the live adapter and workspace are not consulted.
+    const proof = assertRetainedLaneEffects(sink);
+    assert.ok(proof.projected > 0 && proof.projected === proof.writes, `every write was a settled projection: ${canonicalJson(proof)}`);
+    t.diagnostic(canonicalJson({
+      ...proof,
+      effectsBytes: /** @type {Buffer} */ (sink.files.get('terminal-effects.json')).byteLength,
+      capturesBytes: /** @type {Buffer} */ (sink.files.get('retained-evidence.json')).byteLength,
+    }));
+  });
+});
+
+nodeTest('terminal-work disposition: unretained, corrupt, or missing settled-effect proof refuses before any clear', async () => {
+  const module = await workModuleWithObservation('host-adapter-runner.mjs', true);
+  /** @param {any} effects */
+  const appliedWrites = (effects) => effects.operations.flatMap((/** @type {any} */ entry) => entry.lane)
+    .filter((/** @type {any} */ lane) => lane.status === 'applied');
+  /** The retained commit and settlement routes, each with its exact runtime request and result. @param {any} effects */
+  const settlementRoutes = (effects) => effects.operations
+    .filter((/** @type {any} */ entry) => ['commit-lane-receipt', 'settle-effect'].includes(entry.operation))
+    .flatMap((/** @type {any} */ entry) => entry.routes);
+  /** @type {[string, {failWrite?:string, rewrite?:(effects:any)=>void, omitted?:(sent:any, stored:any)=>void}][]} */
+  const variants = [
+    ['unretained effects', { failWrite: 'terminal-effects.json' }],
+    ['corrupt receipt', {
+      rewrite: (effects) => { effects.receipts.at(-1).ownerPoststateHash = sha256('terminal-work corrupt receipt'); },
+    }],
+    ['corrupt preimage', {
+      rewrite: (effects) => {
+        const write = appliedWrites(effects)[0];
+        if (write?.request === undefined) return;
+        const tasks = Buffer.from(write.request.expected.tasks.base64, 'base64');
+        write.request.expected.tasks = capturedBytesV1(Buffer.concat([tasks, Buffer.from('- corrupt retained preimage\n')]));
+      },
+    }],
+    ['missing settlement', {
+      rewrite: (effects) => {
+        effects.operations = effects.operations.filter((/** @type {any} */ entry) => entry.operation !== 'settle-effect');
+      },
+    }],
+    // No applied write or receipt is left to check; the commits and settlements stay, unmatched.
+    ['omitted lane writes and receipts', {
+      rewrite: (effects) => {
+        effects.operations = effects.operations.filter((/** @type {any} */ entry) => (
+          !entry.lane.some((/** @type {any} */ lane) => lane.status === 'applied')));
+        effects.receipts = [];
+      },
+      omitted: (sent, stored) => {
+        assert.ok(appliedWrites(sent).length > 0 && sent.receipts.length > 0, 'the owner sent its applied writes and receipts');
+        assert.deepEqual([appliedWrites(stored).length, stored.receipts.length], [0, 0]);
+        assert.ok(settlementRoutes(stored).length > 0, 'the commits and settlements remain without their writes');
+      },
+    }],
+    // Writes, permits, receipts, batches, and results stay intact; only the exact runtime inputs are gone.
+    ['omitted commit and settlement inputs', {
+      rewrite: (effects) => {
+        for (const route of settlementRoutes(effects)) delete route.request.input;
+      },
+      omitted: (sent, stored) => {
+        assert.ok(settlementRoutes(sent).length > 0, 'the owner sent its commits and settlements');
+        assert.ok(settlementRoutes(sent).every((/** @type {any} */ route) => Object.hasOwn(route.request, 'input')));
+        assert.equal(settlementRoutes(stored).some((/** @type {any} */ route) => Object.hasOwn(route.request, 'input')), false);
+        assert.deepEqual([appliedWrites(stored), stored.receipts], [appliedWrites(sent), sent.receipts]);
+      },
+    }],
+  ];
+  /** @type {Record<string, unknown>[]} */
+  const outcomes = [];
+  /** @type {(() => void)[]} */
+  const refusals = [];
+  for (const [label, fault] of variants) {
+    await withSealedWorkspace(async (root) => {
+      writeSealedTaskState(root);
+      /** @type {string[]} */
+      const log = [];
+      const sink = terminalRetentionSink({
+        log,
+        ...(fault.failWrite === undefined ? {} : { failWrite: fault.failWrite }),
+        ...(fault.rewrite === undefined ? {} : { rewrite: { 'terminal-effects.json': fault.rewrite } }),
+      });
+      const store = terminalStore(root, log, module.testAdapterModule);
+      const atRetention = terminalPairAtRetention(sink, root);
+      const request = terminalRequiredLearningRequest(root);
+      const result = await module.runHostAdapter(request, {
+        checkpoint: store.port,
+        retentionSink: sink.port,
+        exchange: terminalLearningExchange,
+      });
+      // The original stop and accepted state stay exactly as the owner accepted them.
+      assert.deepEqual([result.outcome, result.reason], ['hard-stop', 'challenge-response-invalid'], label);
+      assertOriginalTerminal(result, sink);
+      const fence = sink.json('terminal-fence.json');
+      const owner = module.testOwnerContext.adapter;
+      const live = owner.snapshot();
+      assert.deepEqual([result.stateHash, result.acceptedRevision], [fence.acceptedStateHash, fence.acceptedRevision], label);
+      assert.deepEqual([live.acceptedStateHash, live.acceptedRevision], [fence.acceptedStateHash, fence.acceptedRevision], label);
+      const state = focusedRunnerAcceptedState(result);
+      assert.equal(state.learningGovernance.phase, 'alternative-inspected', label);
+      assert.deepEqual([state.overallUsed, state.pending.length], [request.state.overallUsed, 0], label);
+      // The original owner stays fenced: no run or second seal executes.
+      const reused = owner.run(sealedRequest(owner, 'fresh-inspection', { input: {} }));
+      assert.deepEqual([reused.outcome, reused.reason], ['hard-stop', 'owner-fenced'], label);
+      assert.equal(owner.sealTerminalOwner().refusal, 'owner-fence-consumed', label);
+      if (fault.rewrite !== undefined) {
+        // The owner itself accounted for every entered effect; only the retained proof is deficient.
+        const stored = sink.json('terminal-effects.json');
+        assert.equal(stored.unaccounted, null, label);
+        // The sink stores, describes, and rereads its own bytes, and the closed manifest binds them...
+        const bytes = /** @type {Buffer} */ (sink.files.get('terminal-effects.json'));
+        const described = sink.described.get('terminal-effects.json');
+        assert.deepEqual([sha256(bytes), bytes.byteLength], [described?.sha256, described?.byteLength], `${label}: described`);
+        assert.deepEqual(Buffer.from(sink.port.read('terminal-effects.json')), bytes, `${label}: reread`);
+        const manifest = hostAdapterModule.validateTerminalEvidenceManifestV1(sink.json('terminal-evidence.json'));
+        const row = manifest.files.find((/** @type {any} */ file) => file.name === 'terminal-effects.json');
+        assert.deepEqual([row?.sha256, row?.byteLength], [described?.sha256, described?.byteLength], `${label}: bound`);
+        // ...yet they are not the material the owner sent.
+        const sent = JSON.parse(/** @type {string} */ (sink.sent.get('terminal-effects.json')));
+        assert.notEqual(canonicalJson(stored), canonicalJson(sent), `${label}: the stored material differs from the original`);
+        fault.omitted?.(sent, stored);
+      }
+      const { terminalDisposition: disposition } = result;
+      outcomes.push({
+        label,
+        disposition: [disposition.outcome, disposition.missingProof?.kind ?? null, disposition.missingProof?.subject ?? null],
+        removal: disposition.removal,
+        published: log.filter((entry) => entry === 'write:terminal-disposition.json').length,
+        clears: log.filter((entry) => entry === 'clear').length,
+        reasons: store.reasons,
+        pairKept: terminalPairKept(root, atRetention),
+      });
+      refusals.push(() => assertTerminalRefusal(result, sink, 'retained-source', 'terminal-effects.json', {
+        checkpoint: 'retained', claim: 'retained',
+      }));
+    });
+  }
+  // Each fault is one published refusal naming the effects member, with no clear and the exact pair kept.
+  assert.deepEqual(outcomes, variants.map(([label]) => ({
+    label,
+    disposition: ['refused', 'retained-source', 'terminal-effects.json'],
+    removal: { checkpoint: 'retained', claim: 'retained' },
+    published: 1,
+    clears: 0,
+    reasons: [],
+    pairKept: true,
+  })));
+  for (const refusal of refusals) refusal();
+});
+
+nodeTest('terminal-work disposition: every retained member must reread as its exact original material, so a self-consistent rewrite of any one refuses before any clear', async () => {
+  /** One self-consistent rewrite per fixed member, in retention order. @type {[string, string, (value:any)=>void][]} */
+  const rewrites = [
+    ['terminal-original.json', 'a duplicated step', (terminal) => { terminal.steps.push(clone(terminal.steps.at(-1))); }],
+    ['retained-evidence.json', 'an omitted stream', (captures) => { delete captures.lint; }],
+    ['terminal-controls.json', 'other canonical claim bytes', (controls) => {
+      controls.claim = capturedBytesV1(Buffer.concat([Buffer.from(controls.claim.base64, 'base64'), Buffer.from('\n')]));
+    }],
+    ['terminal-fence.json', 'a changed identity string', (fence) => { fence.admissionIdentity = sha256('terminal-work rewritten admission'); }],
+    ['terminal-effects.json', 'reordered operations', (effects) => { effects.operations.reverse(); }],
+    ['terminal-evidence.json', 'a rehashed closed binding', (manifest) => {
+      manifest.binding.terminalReason = 'terminal-work rewritten reason';
+      manifest.inventoryHash = sha256(canonicalJson({ binding: manifest.binding, files: manifest.files }));
+    }],
+  ];
+  /** @type {Record<string, unknown>[]} */
+  const observed = [];
+  for (const [name, change, rewrite] of rewrites) {
+    await withSealedWorkspace(async (root) => {
+      writeSealedTaskState(root);
+      /** @type {string[]} */
+      const log = [];
+      const sink = terminalRetentionSink({ log, rewrite: { [name]: rewrite } });
+      const store = terminalStore(root, log);
+      const atRetention = terminalPairAtRetention(sink, root);
+      const result = await runHostAdapter(terminalRunnerRequest(root), {
+        checkpoint: store.port,
+        retentionSink: sink.port,
+        exchange: terminalNoActionAssessment,
+      });
+      const label = `${name}: ${change}`;
+      assert.deepEqual([result.outcome, result.reason], ['hard-stop', 'no-action'], label);
+      // The returned stop is the original the owner sent, whichever member the sink changed.
+      const sentTerminal = JSON.parse(/** @type {string} */ (sink.sent.get('terminal-original.json')));
+      const { terminalDisposition: disposition, ...returned } = result;
+      for (const field of ['cleanup', 'orphan']) {
+        if (Object.hasOwn(sentTerminal, field)) returned[field] = sentTerminal[field];
+        else delete returned[field];
+      }
+      assert.deepEqual(returned, sentTerminal, `${label}: the original stop returns unchanged`);
+      // The sink stores, describes, and rereads its own bytes, and the closed manifest binds them...
+      const bytes = /** @type {Buffer} */ (sink.files.get(name));
+      const described = sink.described.get(name);
+      assert.deepEqual([sha256(bytes), bytes.byteLength], [described?.sha256, described?.byteLength], `${label}: described`);
+      assert.deepEqual(Buffer.from(sink.port.read(name)), bytes, `${label}: reread`);
+      const manifest = sink.json('terminal-evidence.json');
+      assert.doesNotThrow(() => hostAdapterModule.validateTerminalEvidenceManifestV1(manifest), `${label}: a closed manifest`);
+      if (name !== 'terminal-evidence.json') {
+        const row = manifest.files.find((/** @type {any} */ file) => file.name === name);
+        assert.deepEqual([row?.sha256, row?.byteLength], [described?.sha256, described?.byteLength], `${label}: bound`);
+      }
+      observed.push({
+        name,
+        // ...yet they are not the material the owner sent.
+        changed: canonicalJson(sink.json(name)) !== sink.sent.get(name),
+        disposition: [disposition.outcome, disposition.missingProof?.kind ?? null, disposition.missingProof?.subject ?? null],
+        removal: disposition.removal,
+        clears: log.filter((entry) => entry === 'clear').length,
+        reasons: store.reasons,
+        pairKept: terminalPairKept(root, atRetention),
+      });
+    });
+  }
+  assert.deepEqual(observed, rewrites.map(([name]) => ({
+    name,
+    changed: true,
+    disposition: ['refused', 'retained-source', name],
+    removal: { checkpoint: 'retained', claim: 'retained' },
+    clears: 0,
+    reasons: [],
+    pairKept: true,
+  })));
+});
+
+nodeTest('terminal-work disposition: a sink that keeps handed values and changes returned descriptors later cannot change any expectation, row, binding, or returned result', async () => {
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    /** @type {string[]} */
+    const log = [];
+    const sink = terminalRetentionSink({ log, alias: true });
+    const store = terminalStore(root, log);
+    const result = await runHostAdapter(terminalRunnerRequest(root), {
+      checkpoint: store.port,
+      retentionSink: sink.port,
+      exchange: terminalNoActionAssessment,
+    });
+    const names = [...TERMINAL_EVIDENCE_ORDER, 'terminal-disposition.json'];
+    const retainedManifest = sink.files.has('terminal-evidence.json') ? sink.json('terminal-evidence.json') : null;
+    assert.deepEqual({
+      // Each later callback changed every descriptor the sink returned and every value it was handed...
+      changedDescriptors: sink.held.map((entry) => entry.descriptor.name),
+      changedValues: sink.held.filter((entry) => entry.value.sinkAlias > 0).map((entry) => entry.name),
+      // ...yet the returned stop is no tree the sink kept, every member holds exactly what the owner
+      // sent, each row is its descriptor as returned, and the disposal proceeds.
+      returnedAlias: Object.hasOwn(result, 'sinkAlias'),
+      faithful: names.filter((name) => sink.files.has(name) && canonicalJson(sink.json(name)) === sink.sent.get(name)),
+      rows: retainedManifest?.files.map((/** @type {any} */ file) => ({
+        name: file.name, sha256: file.sha256, byteLength: file.byteLength,
+      })) ?? null,
+      disposition: result.terminalDisposition.outcome,
+      reasons: store.reasons,
+    }, {
+      changedDescriptors: names.map((name) => `aliased-${name}`),
+      changedValues: names,
+      returnedAlias: false,
+      faithful: names,
+      rows: TERMINAL_EVIDENCE_ORDER.slice(0, -1).map((name) => sink.described.get(name)),
+      disposition: 'disposed',
+      reasons: ['terminal-disposition'],
+    });
+    assert.deepEqual([result.outcome, result.reason], ['hard-stop', 'no-action']);
+    const original = assertOriginalTerminal(result, sink);
+    assert.deepEqual([result.cleanup, result.orphan], ['cleared', false]);
+    const manifest = hostAdapterModule.validateTerminalEvidenceManifestV1(retainedManifest);
+    assert.equal(manifest.binding.terminalHash, sha256(canonicalJson(original)));
+    const disposition = sink.json('terminal-disposition.json');
+    assert.deepEqual(disposition, {
+      version: 1,
+      manifestIdentity: sha256(canonicalJson(manifest)),
+      outcome: 'disposed',
+      removal: { checkpoint: 'absent', claim: 'absent' },
+      missingProof: null,
+    });
+    assert.deepEqual(result.terminalDisposition, { ...disposition, dispositionIdentity: sha256(canonicalJson(disposition)) });
+    assert.deepEqual(store.reasons, ['terminal-disposition']);
+    assert.deepEqual(fs.readdirSync(artifactDirectory(root)), []);
+  });
+});
+
+nodeTest('terminal-work disposition: lost, foreign, replaced, or handed-off owner authority refuses before any removal', async () => {
+  const module = await workModuleWithObservation('host-adapter-runner.mjs', true);
+  for (const fault of ['missing supervisor', 'foreign supervisor', 'foreign worker', 'replaced handle', 'worker handoff']) {
+    await withSealedWorkspace(async (root) => {
+      writeSealedTaskState(root);
+      /** @type {string[]} */
+      const log = [];
+      const sink = terminalRetentionSink({ log });
+      const store = terminalStore(root, log, module.testAdapterModule);
+      const request = terminalRunnerRequest(root);
+      const atRetention = terminalPairAtRetention(sink, root);
+      const result = await module.runHostAdapter(request, {
+        checkpoint: store.port,
+        retentionSink: sink.port,
+        exchange(challenge) {
+          const owner = module.testOwnerContext;
+          const supervisor = owner.ports.supervisorSession;
+          const session = owner.adapter.snapshot();
+          if (fault === 'missing supervisor') delete supervisor.admit;
+          if (fault === 'foreign supervisor') supervisor.identity = sha256('terminal-work foreign supervisor');
+          if (fault === 'foreign worker') {
+            module.testAdapterModule.testAdmittedInvocations.set(session.invocationIdentity, {
+              workerToken: sha256('terminal-work foreign worker'), workerGeneration: session.workerGeneration,
+            });
+          }
+          if (fault === 'replaced handle') owner.replaceAdapter({ ...owner.adapter });
+          if (fault === 'worker handoff') {
+            const record = JSON.parse(terminalPairBytes(root).checkpoint.toString('utf8'));
+            const prior = { workerToken: record.workerToken, workerGeneration: record.workerGeneration };
+            const handed = module.testAdapterModule.handoffHostWorker({
+              workspaceIdentity: record.workspaceIdentity,
+              target: clone(TARGET),
+              ownerIdentity: record.ownerIdentity,
+              invocationIdentity: record.invocationIdentity,
+              priorWorker: prior,
+              observedExit: { ...prior, exitCode: 9 },
+            }, {
+              checkpoint: module.testAdapterModule.createTemporaryCheckpointStore({ root }),
+              supervisorSession: sealedSupervisorSession(),
+              noEffectAuthority: sealedNoEffectAuthority(),
+            });
+            assert.equal(handed.outcome, 'handed-off');
+          }
+          return terminalNoActionAssessment(challenge);
+        },
+      });
+      // Authorization runs under each fault; a handoff already rewrote the checkpoint the owner's own check reads.
+      assert.deepEqual([result.outcome, result.reason], ['hard-stop', fault === 'worker handoff' ? 'checkpoint-drift' : 'no-action'], fault);
+      assertOriginalTerminal(result, sink);
+      const key = fs.readdirSync(artifactDirectory(root))[0].split('.')[0];
+      assertTerminalRefusal(result, sink, 'owner-fence', key, { checkpoint: 'retained', claim: 'retained' });
+      assert.deepEqual(store.reasons, [], `${fault}: no clear`);
+      assert.equal(Object.keys(atRetention.pair).length, 2, `${fault}: both controls existed when retention began`);
+      assert.deepEqual(terminalPairBytes(root), atRetention.pair, `${fault}: the pair is untouched`);
+      assert.equal(result.terminalDisposition.missingProof.required.includes('fences its own'), true);
+    });
+  }
+});
+
+nodeTest('terminal-work disposition: outstanding, foreign, or escaped exchanges and any specialist pair refuse with the pair retained', async () => {
+  /** @type {[string, string, string, (challenge:Record<string, unknown>)=>unknown, Record<string, unknown>][]} */
+  const cases = [
+    ['foreign response', 'challenge-response-foreign', 'assessment', challenge => ({
+      ...terminalInvalidAssessment(challenge), challengeIdentity: sha256('terminal-work foreign challenge'),
+    }), {}],
+    ['lost exchange context', 'exchange-context-lost', 'assessment', () => {
+      throw new Error('terminal-work transport loss');
+    }, {}],
+    ['accepted dispatch', 'exchange-context-lost', 'authorize-attempt', challenge => {
+      if (challenge.kind === 'assessment') {
+        return focusedChallengeResponse(challenge, 'assessment', focusedChallengeAssessment(challenge));
+      }
+      throw new Error('terminal-work specialist transport loss');
+    }, {}],
+    ['initial specialist pair', 'no-action', 'specialist-pair', terminalNoActionAssessment, {
+      specialistResult: specialistResult('terminal-work initial pair', 'accepted'),
+    }],
+  ];
+  for (const [label, reason, subject, exchange, overrides] of cases) {
+    await withSealedWorkspace(async (root) => {
+      writeSealedTaskState(root);
+      /** @type {string[]} */
+      const log = [];
+      const sink = terminalRetentionSink({ log });
+      const store = terminalStore(root, log);
+      const request = terminalRunnerRequest(root, overrides);
+      const result = await runHostAdapter(request, { checkpoint: store.port, retentionSink: sink.port, exchange });
+      assert.deepEqual([result.outcome, result.reason], ['hard-stop', reason], label);
+      assertOriginalTerminal(result, sink);
+      assertTerminalRefusal(result, sink, 'effect-settlement', subject, { checkpoint: 'retained', claim: 'retained' });
+      assert.deepEqual(store.reasons, [], `${label}: no clear`);
+      assert.equal(fs.readdirSync(artifactDirectory(root)).length, 2, `${label}: the pair stays`);
+      const effects = sink.json('terminal-effects.json');
+      assert.equal(effects.qualified, false, label);
+      if (label === 'accepted dispatch') {
+        assert.equal(focusedRunnerAcceptedState(result).pending.length, 1, 'the accepted attempt stays pending, unrefunded');
+        assert.equal(effects.exchange.outstanding, 'specialist-pair');
+        assert.equal(effects.exchange.specialistPairExposed, true);
+      }
+    });
+  }
+});
+
+nodeTest('terminal-work disposition: an unknown lane writer refuses even with equal state, counters, and built-in routes', async () => {
+  for (const surface of [IDEA_PATH, TASK_STATE_PATH]) {
+    await withSealedWorkspace(async (root) => {
+      writeSealedTaskState(root);
+      /** @type {string[]} */
+      const log = [];
+      const sink = terminalRetentionSink({ log });
+      const store = terminalStore(root, log);
+      const request = terminalRunnerRequest(root);
+      let challenges = 0;
+      const result = await runHostAdapter(request, {
+        checkpoint: store.port,
+        retentionSink: sink.port,
+        exchange(challenge) {
+          challenges += 1;
+          if (challenges === 1) fs.appendFileSync(path.join(root, surface), surface === IDEA_PATH ? '\n- 2026-08-11 unknown writer\n' : '\n');
+          return terminalNoActionAssessment(challenge);
+        },
+      });
+      // One write outside every owned route. An owner-log line changes the Inspection, so one fresh
+      // Assessment binds it; a trailing task-state newline leaves the Inspection equal, yet its bytes differ.
+      assert.deepEqual([result.outcome, result.reason, challenges], ['hard-stop', 'no-action', surface === IDEA_PATH ? 2 : 1], surface);
+      assertOriginalTerminal(result, sink);
+      assert.deepEqual(focusedRunnerAcceptedState(result), request.state, `${surface}: equal state and counters`);
+      assert.equal(sink.json('terminal-effects.json').unaccounted, null, `${surface}: every entered route was built-in`);
+      assertTerminalRefusal(result, sink, 'effect-settlement', surface, { checkpoint: 'retained', claim: 'retained' });
+      assert.deepEqual(store.reasons, [], `${surface}: no clear`);
+      assert.equal(fs.readdirSync(artifactDirectory(root)).length, 2);
+    });
+  }
+});
+
+nodeTest('terminal-work disposition: a rehashed or partial pair at the seal keeps every artifact and retains the original bytes', async () => {
+  for (const fault of ['rehashed checkpoint', 'rehashed claim', 'missing claim']) {
+    await withSealedWorkspace(async (root) => {
+      writeSealedTaskState(root);
+      /** @type {string[]} */
+      const log = [];
+      const sink = terminalRetentionSink({ log });
+      const store = terminalStore(root, log);
+      /** @type {Record<string, Buffer>} */
+      let original = {};
+      /** @type {Record<string, Buffer>} */
+      let changed = {};
+      let key = '';
+      const result = await runHostAdapter(terminalRunnerRequest(root), {
+        checkpoint: store.port,
+        retentionSink: sink.port,
+        exchange(challenge) {
+          original = terminalPairBytes(root);
+          key = fs.readdirSync(artifactDirectory(root))[0].split('.')[0];
+          if (fault === 'rehashed checkpoint') {
+            rewriteCheckpointRecord(root, key, record => { record.inspectionIdentity = sha256('terminal-work rehashed'); });
+          }
+          if (fault === 'rehashed claim') rewriteCheckpointClaim(root, key, claim => { claim.createdAt = '2000-01-01T00:00:00.000Z'; });
+          if (fault === 'missing claim') fs.rmSync(artifactPath(root, key, 'claim'));
+          changed = terminalPairBytes(root);
+          return terminalNoActionAssessment(challenge);
+        },
+      });
+      // The owner's own authorization finds the changed pair first; the seal then retains the original bytes.
+      assert.deepEqual([result.outcome, result.reason],
+        ['hard-stop', fault === 'missing claim' ? 'checkpoint-corrupt' : 'checkpoint-drift'], fault);
+      assertOriginalTerminal(result, sink);
+      assertTerminalRefusal(result, sink, 'exact-control-pair', key, fault === 'missing claim'
+        ? { checkpoint: 'retained', claim: 'unestablished' }
+        : { checkpoint: 'retained', claim: 'retained' });
+      assert.deepEqual(store.reasons, [], `${fault}: no clear`);
+      assert.deepEqual(terminalPairBytes(root), changed, `${fault}: nothing removed or repaired`);
+      const controls = sink.json('terminal-controls.json');
+      assert.deepEqual(Buffer.from(controls.claim.base64, 'base64'), original.claim, `${fault}: original claim bytes`);
+      assert.deepEqual(Buffer.from(controls.checkpoint.base64, 'base64'), original.checkpoint, `${fault}: original checkpoint bytes`);
+    });
+  }
+});
+
+nodeTest('terminal-work disposition: a claim read failure after the confirmed checkpoint removal keeps that removal fact, the claim, and the fence, with no retry', async (context) => {
+  const module = await workModuleWithObservation('host-adapter-runner.mjs', true);
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    /** @type {string[]} */
+    const log = [];
+    const sink = terminalRetentionSink({ log });
+    const store = terminalStore(root, log, module.testAdapterModule);
+    const atRetention = terminalPairAtRetention(sink, root);
+    const real = { read: fs.readFileSync, remove: fs.rmSync };
+    let checkpointRemoved = false;
+    /** @type {string[]} */
+    const faults = [];
+    // After the store's own unlink of the checkpoint, every read of the claim fails with an I/O error:
+    // first the clear's claim read, then the later pair observation.
+    const mocks = [
+      context.mock.method(fs, 'rmSync', (/** @type {any} */ target, /** @type {any} */ options) => {
+        const removed = real.remove(target, options);
+        if (String(target).endsWith('.checkpoint')) checkpointRemoved = true;
+        return removed;
+      }),
+      context.mock.method(fs, 'readFileSync', (/** @type {any} */ target, /** @type {any} */ options) => {
+        if (checkpointRemoved && String(target).endsWith('.claim')) {
+          faults.push('read:claim');
+          throw Object.assign(new Error('EIO: terminal-work claim read fault'), { code: 'EIO', syscall: 'read', path: String(target) });
+        }
+        return real.read(target, options);
+      }),
+    ];
+    let result;
+    try {
+      result = await module.runHostAdapter(terminalRunnerRequest(root), {
+        checkpoint: store.port,
+        retentionSink: sink.port,
+        exchange: terminalNoActionAssessment,
+      });
+    } finally {
+      for (const mocked of mocks.reverse()) mocked.mock.restore();
+    }
+    const returned = /** @type {Record<string, any>} */ (result);
+    assert.deepEqual([returned.outcome, returned.reason], ['hard-stop', 'no-action']);
+    assertOriginalTerminal(returned, sink);
+    const key = Object.keys(atRetention.pair).length === 2
+      ? JSON.parse(atRetention.pair.claim.toString('utf8')).checkpointKey
+      : assert.fail('both controls existed when retention began');
+    assert.ok(faults.length >= 2, `the clear's claim read and the later pair load both failed: ${faults.length}`);
+    // The confirmed checkpoint removal survives the unknown later status; the unread claim stays unestablished.
+    assertTerminalRefusal(returned, sink, 'removal-absence', key, { checkpoint: 'removed', claim: 'unestablished' });
+    assert.equal(returned.cleanup, 'failed', 'the attempted removal is reported');
+    // One guarded clear, never retried, and nothing removed or restored afterward.
+    assert.deepEqual(store.reasons, ['terminal-disposition']);
+    assert.deepEqual(log.filter(entry => entry === 'clear'), ['clear']);
+    assert.deepEqual(log.slice(log.indexOf('clear')), ['clear', 'write:terminal-disposition.json', 'read:terminal-disposition.json']);
+    assert.deepEqual(terminalPairBytes(root), { claim: atRetention.pair.claim }, 'the claim remains unchanged; no checkpoint is recreated');
+    const controls = sink.json('terminal-controls.json');
+    assert.deepEqual(Buffer.from(controls.claim.base64, 'base64'), atRetention.pair.claim, 'the retained original claim');
+    // The original owner stays fenced: no run, end, second seal, or replacement.
+    const owner = module.testOwnerContext.adapter;
+    for (const reuse of [
+      () => owner.run(sealedRequest(owner, 'fresh-inspection', { input: {} })),
+      () => owner.end('hard-stop-recorded'),
+    ]) {
+      const refused = reuse();
+      assert.deepEqual([refused.outcome, refused.reason], ['hard-stop', 'owner-fenced']);
+    }
+    assert.equal(owner.sealTerminalOwner().refusal, 'owner-fence-consumed');
+    assert.equal(module.testAdapterModule.testAdmittedInvocations.get(owner.snapshot().invocationIdentity)?.fenced, true);
+    assert.deepEqual(store.reasons, ['terminal-disposition'], 'the fenced owner never reaches the store again');
+    assert.deepEqual(terminalPairBytes(root), { claim: atRetention.pair.claim });
+  });
+});
+
+nodeTest('terminal-work disposition: an applied lane write without its committed receipt, publication, or built-in writer is never removable', () => {
+  for (const stop of ['missing receipt', 'one-sided publication', 'uncertain writer', 'settled']) {
+    withSealedWorkspace((root) => {
+      writeSealedTaskState(root);
+      const required = requiredGovernanceFixture(root);
+      const events = required.governedEvents;
+      sealedRetentionInput(root, events, events, required.streams);
+      const published = events.map(event => ({ event }));
+      const input = () => sealedTransportInput(sealedInspectionInput(root, {
+        policyMode: 'autonomous',
+        currentRun: [sealedCapture(TARGET, 'failed', published)],
+        ...required.streams,
+      }));
+      const store = createTemporaryCheckpointStore({ root });
+      const adapter = createHostAdapter(checkpointInitial({ state: required.state }), {
+        checkpoint: store,
+        ...(stop === 'uncertain writer' ? {
+          laneOwner: {
+            identity: sha256('dude-lightweight-execution/board.applyLightweightWorkRequest:v1'),
+            apply(laneRequest) {
+              applyLightweightWorkRequest(laneRequest);
+              return { ok: false, phase: 'rollback-uncertain' };
+            },
+          },
+        } : {}),
+      });
+      const { review } = governanceReview(required.state, 'selected-alternative');
+      const reviewed = adapter.run(sealedRequest(adapter, 'advance-governance', {
+        governance: { action: 'review-learning', input: input(), review },
+      }));
+      assert.equal(reviewed.outcome, 'effect-required', stop);
+      /** @param {number} index */
+      const prepareItem = (index) => {
+        const binding = sealedLaneBinding(root);
+        const prepared = adapter.run(sealedRequest(adapter, 'prepare-authoritative-projection', {
+          projection: {
+            input: input(),
+            laneBinding: {
+              lanePrestate: binding.lanePrestate, targetMapping: binding.targetMapping,
+              operationTime: LANE_MUTATION.snapshotUpdatedAt,
+            },
+          },
+        }));
+        assert.equal(prepared.reason, 'projection-prepared', stop);
+        return { binding, item: prepared.product.plan.items[index] };
+      };
+      const batchSize = reviewed.effect.projectionBatch.events.length;
+      // Every earlier item is applied, published, and committed exactly as the runner does.
+      for (let index = 0; stop === 'settled' && index < batchSize - 1; index += 1) {
+        const earlier = prepareItem(index);
+        const appliedEarlier = adapter.run(sealedRequest(adapter, 'apply-lane-effect', {
+          laneApplication: { ...earlier.binding.application, permit: earlier.item.projectionPermit, mutation: earlier.item.mutation },
+        }));
+        assert.equal(appliedEarlier.reason, 'lane-projection-applied');
+        published.push(clone(earlier.item.currentRunRecord.substantive));
+        const committedEarlier = adapter.run(sealedRequest(adapter, 'commit-lane-receipt', {
+          laneReceipt: { input: input(), permit: earlier.item.projectionPermit, receipt: appliedEarlier.product.receipt },
+        }));
+        assert.equal(committedEarlier.reason, 'lane-receipt-committed');
+      }
+      const { binding, item } = prepareItem(stop === 'settled' ? batchSize - 1 : 0);
+      const applied = adapter.run(sealedRequest(adapter, 'apply-lane-effect', {
+        laneApplication: { ...binding.application, permit: item.projectionPermit, mutation: item.mutation },
+      }));
+      if (stop === 'uncertain writer') {
+        assert.equal(applied.reason, 'lane-effect-indeterminate');
+      } else {
+        assert.equal(applied.reason, 'lane-projection-applied', stop);
+        if (stop !== 'missing receipt') {
+          // One-sided publication commits the lane receipt but never publishes the staged record.
+          if (stop === 'settled') published.push(clone(item.currentRunRecord.substantive));
+          const committed = adapter.run(sealedRequest(adapter, 'commit-lane-receipt', {
+            laneReceipt: { input: input(), permit: item.projectionPermit, receipt: applied.product.receipt },
+          }));
+          assert.deepEqual([committed.outcome, committed.reason], ['effect-required', 'lane-receipt-committed'], stop);
+          const settled = adapter.run(sealedRequest(adapter, 'settle-effect', { input: input() }));
+          assert.deepEqual([settled.outcome, settled.reason], stop === 'settled'
+            ? ['accepted', 'projection-verified']
+            : ['effect-required', 'projection-missing-current-run'], stop);
+        }
+      }
+      const pair = terminalPairBytes(root);
+      const sealed = adapter.sealTerminalOwner();
+      assert.notEqual(sealed.fence, null, `${stop}: the original owner fences`);
+      const expected = {
+        'missing receipt': 'commit-lane-receipt',
+        'one-sided publication': 'pending-effect',
+        'uncertain writer': 'lane-owner-port',
+        settled: null,
+      }[stop];
+      assert.equal(sealed.effects.unaccounted, expected, stop);
+      if (stop === 'uncertain writer') {
+        assert.equal(sealed.effects.operations.at(-1).lane[0].status, 'indeterminate');
+      }
+      const disposal = sealed.dispose(sha256(`terminal-work disposal:${stop}`));
+      if (stop === 'settled') {
+        assert.deepEqual([disposal.stage, disposal.attempted, disposal.cleared], ['removed', true, true]);
+        assert.deepEqual(fs.readdirSync(artifactDirectory(root)), []);
+      } else {
+        assert.deepEqual([disposal.stage, disposal.attempted], ['effects', false], `${stop}: the capability refuses`);
+        assert.deepEqual(terminalPairBytes(root), pair, `${stop}: no control removed`);
+      }
+      assert.equal(sealed.dispose(sha256('terminal-work second disposal')).stage, 'consumed', `${stop}: one use only`);
+    });
+  }
+});
+
+nodeTest('terminal-work disposition: closed manifest and disposition validators reject unknown, rehashed, and contradictory records', async () => {
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const sink = terminalRetentionSink();
+    await runHostAdapter(terminalRunnerRequest(root), {
+      checkpoint: terminalStore(root, []).port,
+      retentionSink: sink.port,
+      exchange: terminalNoActionAssessment,
+    });
+    const { validateTerminalEvidenceManifestV1, validateTerminalDispositionV1 } = hostAdapterModule;
+    const manifest = sink.json('terminal-evidence.json');
+    const disposition = sink.json('terminal-disposition.json');
+    assert.doesNotThrow(() => validateTerminalEvidenceManifestV1(manifest));
+    assert.doesNotThrow(() => validateTerminalDispositionV1(disposition));
+    /** @param {(copy:any)=>void} change @param {boolean} [rehash] */
+    const mutated = (change, rehash = true) => {
+      const copy = clone(manifest);
+      change(copy);
+      if (rehash) copy.inventoryHash = sha256(canonicalJson({ binding: copy.binding, files: copy.files }));
+      return copy;
+    };
+    for (const [label, value] of /** @type {[string, unknown][]} */ ([
+      ['unknown field', mutated(copy => { copy.extra = true; })],
+      ['unknown binding field', mutated(copy => { copy.binding.pid = 4242; })],
+      ['missing binding field', mutated(copy => { delete copy.binding.fenceHostRevision; })],
+      ['unrehashed binding change', mutated(copy => { copy.binding.acceptedRevision += 1; }, false)],
+      ['fence revision not after the checkpoint', mutated(copy => { copy.binding.fenceHostRevision = copy.binding.checkpointHostRevision; })],
+      ['foreign checkpoint key', mutated(copy => { copy.binding.checkpointKey = sha256('terminal-work foreign key'); })],
+      ['reordered members', mutated(copy => { copy.files.reverse(); })],
+      ['extra member', mutated(copy => { copy.files.push({ ...copy.files[0] }); })],
+      ['arbitrary member name', mutated(copy => { copy.files[1].name = '../status.json'; })],
+      ['unsafe surface path', mutated(copy => { copy.binding.requirements.plan.path = '../plan.md'; })],
+      ['not a hard stop', mutated(copy => { copy.binding.terminalOutcome = 'ended'; })],
+    ])) {
+      assert.throws(() => validateTerminalEvidenceManifestV1(value), TypeError, label);
+    }
+    const refused = {
+      version: 1,
+      manifestIdentity: null,
+      outcome: 'refused',
+      removal: { checkpoint: 'retained', claim: 'retained' },
+      missingProof: { kind: 'owner-fence', subject: 'T001', required: 'required proof', nextOwnerAction: 'next owner action' },
+    };
+    assert.doesNotThrow(() => validateTerminalDispositionV1(refused));
+    for (const [label, value] of /** @type {[string, unknown][]} */ ([
+      ['disposed with a retained artifact', { ...disposition, removal: { checkpoint: 'retained', claim: 'absent' } }],
+      ['disposed with a missing proof', { ...disposition, missingProof: refused.missingProof }],
+      ['disposed without retained evidence', { ...disposition, manifestIdentity: null }],
+      ['refused without a missing proof', { ...refused, missingProof: null }],
+      ['refused as absent', { ...refused, removal: { checkpoint: 'absent', claim: 'retained' } }],
+      ['unknown proof kind', { ...refused, missingProof: { ...refused.missingProof, kind: 'cleanup-confirmation' } }],
+      ['two proofs', { ...refused, missingProof: [refused.missingProof, refused.missingProof] }],
+      ['control text', { ...refused, missingProof: { ...refused.missingProof, subject: 'line\nbreak' } }],
+      ['unknown field', { ...refused, pid: 4242 }],
+    ])) {
+      assert.throws(() => validateTerminalDispositionV1(value), TypeError, label);
+    }
+  });
+});
+
+/** Nonzero prior accounting a Feature 056 release must keep exactly. */
+function terminal056State() {
+  const state = emptyState('autonomous');
+  state.overallUsed = 2;
+  state.recoveryUsed = [{ targetKey: targetKey(SECOND_TARGET), targetHash: targetHash(SECOND_TARGET), count: 1 }];
+  state.completed = [1, 2].map(ordinal => ({
+    evidenceHash: sha256(`terminal-work 056 prior evidence ${ordinal}`),
+    approachHash: sha256(`terminal-work 056 prior approach ${ordinal}`),
+    resultHash: sha256(`terminal-work 056 prior result ${ordinal}`),
+  }));
+  validateRunState(state);
+  return state;
+}
+
+/**
+ * The Feature 056 outcome a retention sink must leave unchanged.
+ * @param {Record<string, any>} result @param {number} challengeRevision
+ */
+function terminal056Outcome(result, challengeRevision) {
+  return {
+    outcome: result.outcome,
+    reason: result.reason,
+    detail: result.detail,
+    cleanup: result.cleanup,
+    cleanupReason: result.cleanupReason ?? null,
+    orphan: result.orphan,
+    revisionDelta: Object.hasOwn(result, 'hostRevision') ? result.hostRevision - challengeRevision : null,
+    acceptedRevision: result.acceptedRevision,
+    stateHash: result.stateHash,
+    haltReport: result.haltReport,
+    stops: result.steps.filter((/** @type {any} */ step) => step.outcome === 'hard-stop').length,
+  };
+}
+
+nodeTest('terminal-work disposition: a nominated 056 first-Assessment release keeps precedence with or without the sink and never reaches the owner seal', async (context) => {
+  const module = await workModuleWithObservation('host-adapter-runner.mjs', true);
+  /** @type {[string, {stale?:boolean, fault?:(root:string)=>void, failClear?:boolean, decodeFault?:boolean, cleanup:string, cleanupReason?:string}][]} */
+  const cases = [
+    ['invalid first Assessment', { cleanup: 'cleared' }],
+    ['stale first Assessment', { stale: true, cleanup: 'cleared' }],
+    ['replaced handle', {
+      fault: () => module.testOwnerContext.replaceAdapter({ ...module.testOwnerContext.adapter }),
+      cleanup: 'not-attempted', cleanupReason: 'owner-context-changed',
+    }],
+    ['entered claim phase', {
+      fault: () => assert.equal(module.testOwnerContext.refreshInspection('attempt:1:fresh-inspection:reinspect').terminal, null),
+      cleanup: 'not-attempted', cleanupReason: 'claim-phase-changed',
+    }],
+    ['pending correction and notice', {
+      fault: () => { terminalPendingCorrection(module.testOwnerContext.adapter); },
+      cleanup: 'not-attempted', cleanupReason: 'owner-obligations-pending',
+    }],
+    ['changed lane bytes', {
+      fault: (root) => fs.appendFileSync(path.join(root, TASK_STATE_PATH), '\n'),
+      cleanup: 'not-attempted', cleanupReason: 'owner-binding-changed',
+    }],
+    ['rehashed checkpoint', {
+      fault: (root) => {
+        const key = fs.readdirSync(artifactDirectory(root))[0].split('.')[0];
+        rewriteCheckpointRecord(root, key, record => { record.inspectionIdentity = sha256('terminal-work 056 drift'); });
+      },
+      cleanup: 'not-attempted', cleanupReason: 'checkpoint-drift',
+    }],
+    ['stale worker', {
+      fault: () => {
+        const session = module.testOwnerContext.adapter.snapshot();
+        module.testAdapterModule.testAdmittedInvocations.set(session.invocationIdentity, {
+          workerToken: sha256('terminal-work 056 foreign worker'), workerGeneration: session.workerGeneration,
+        });
+      },
+      cleanup: 'not-attempted', cleanupReason: 'stale-worker',
+    }],
+    ['failed partial cleanup', { failClear: true, cleanup: 'failed', cleanupReason: 'checkpoint-cleanup-failed' }],
+    ['terminal report unavailable', { decodeFault: true, cleanup: 'not-attempted', cleanupReason: 'terminal-report-unavailable' }],
+  ];
+  /** @param {(typeof cases)[number][1]} spec @param {boolean} withSink */
+  const run056 = (spec, withSink) => withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const sink = terminalRetentionSink();
+    const store = module.testAdapterModule.createTemporaryCheckpointStore({ root });
+    /** @type {string[]} */
+    const clears = [];
+    const checkpoint = {
+      ...store,
+      /** @param {any[]} args */
+      clear(...args) {
+        clears.push(args[3]);
+        if (!spec.failClear) return store.clear(...args);
+        return { version: 1, status: 'failed', checkpointKey: store.load(args[0]).checkpointKey, reason: 'terminal-work 056 backend fault' };
+      },
+    };
+    const request = terminalRunnerRequest(root, {
+      state: terminal056State(),
+      // Supplied but never exposed: the owner seal refuses any pair; Feature 056 never consults one.
+      specialistResult: specialistResult('terminal-work 056 unexposed pair', 'accepted'),
+    });
+    const from = Buffer.from;
+    /** @type {{mock:{restore:()=>void}}|undefined} */
+    let decoding;
+    let refusedDecodes = 0;
+    let challengeRevision = -1;
+    let result;
+    try {
+      result = await module.runHostAdapter(request, {
+        checkpoint,
+        ...(withSink ? { retentionSink: sink.port } : {}),
+        exchange(challenge) {
+          challengeRevision = challenge.hostRevision;
+          spec.fault?.(root);
+          if (spec.decodeFault) {
+            decoding = context.mock.method(Buffer, 'from', (value, encoding, length) => {
+              if (value === challenge.stateBase64 && encoding === 'base64') {
+                refusedDecodes += 1;
+                throw new TypeError('terminal-work 056 decoding fault');
+              }
+              return from(value, encoding, length);
+            });
+          }
+          return focusedChallengeResponse(challenge, 'assessment', spec.stale
+            ? focusedChallengeAssessment(challenge, { evidenceHash: sha256('terminal-work 056 stale payload') })
+            : { invalid: 'terminal-work 056 payload' });
+        },
+      });
+    } finally {
+      decoding?.mock.restore();
+    }
+    const returned = /** @type {Record<string, any>} */ (result);
+    return {
+      result: returned,
+      outcome: terminal056Outcome(returned, challengeRevision),
+      clears,
+      refusedDecodes,
+      remaining: fs.readdirSync(artifactDirectory(root)).length,
+      files: [...sink.files.keys()],
+      captures: sink.files.has('retained-evidence.json') ? sink.json('retained-evidence.json') : null,
+      state: request.state,
+    };
+  });
+  for (const [label, spec] of cases) {
+    const plain = await run056(spec, false);
+    const sunk = await run056(spec, true);
+    for (const [mode, run] of /** @type {const} */ ([['without sink', plain], ['with sink', sunk]])) {
+      const tag = `${label} ${mode}`;
+      const { result } = run;
+      assert.deepEqual([result.outcome, result.reason],
+        ['hard-stop', spec.stale ? 'challenge-response-stale' : 'challenge-response-invalid'], tag);
+      assert.deepEqual([result.cleanup, result.cleanupReason ?? null], [spec.cleanup, spec.cleanupReason ?? null], tag);
+      assert.equal(result.stateHash, sha256(canonicalJson(run.state)), `${tag}: nonzero prior accounting is kept`);
+      assert.equal(result.acceptedRevision, 0, tag);
+      assert.equal(Object.hasOwn(result, 'terminalDisposition'), false, `${tag}: no owner seal or disposition`);
+      // At most one clear, and only the 056 end's own, even after a failed partial release.
+      assert.deepEqual(run.clears, spec.cleanup === 'not-attempted' ? [] : ['hard-stop-recorded'], tag);
+      assert.equal(run.remaining, spec.cleanup === 'cleared' ? 0 : 2, tag);
+      if (spec.cleanup === 'cleared') {
+        assert.equal(result.orphan, false, tag);
+        assert.equal(run.outcome.revisionDelta, 1, `${tag}: the real end revision`);
+      }
+      if (spec.decodeFault) assert.equal(run.refusedDecodes, 1, `${tag}: only the halt report decode was faulted`);
+    }
+    assert.deepEqual(sunk.outcome, plain.outcome, `${label}: the sink changes no 056 outcome or revision`);
+    // The sink receives only ordinary captures: no fence, controls, effects, manifest, or disposition.
+    assert.deepEqual(plain.files, [], label);
+    assert.deepEqual(sunk.files, ['retained-evidence.json'], label);
+    assert.deepEqual(Object.keys(sunk.captures), ['currentRun', 'verification', 'review', 'lint'], label);
+  }
+});
+
+nodeTest('terminal-work disposition: the seal keeps the exact pending correction and notice, never consumes or emits them, and refuses only actual unsettled effects', () => {
+  for (const variant of ['settled', 'pending attempt']) {
+    withSealedWorkspace((root) => {
+      writeSealedTaskState(root);
+      const state = variant === 'settled' ? emptyState('autonomous') : pendingState('autonomous');
+      const adapter = createHostAdapter(checkpointInitial({ state }), { checkpoint: createTemporaryCheckpointStore({ root }) });
+      const pending = terminalPendingCorrection(adapter);
+      const pair = terminalPairBytes(root);
+      // The checkpoint keeps only a correction summary and never the notice.
+      const stored = JSON.parse(pair.checkpoint.toString('utf8'));
+      assert.deepEqual(Object.keys(stored.correction).sort(), [
+        'consumed', 'identity', 'incidentClass', 'originHostRevision', 'semanticOperation', 'workerGeneration',
+      ], variant);
+      assert.equal(Object.hasOwn(stored, 'recoveryNotice'), false, variant);
+
+      const sealed = adapter.sealTerminalOwner();
+      assert.notEqual(sealed.fence, null, variant);
+      assert.deepEqual(sealed.effects.correction, pending.correction, `${variant}: the complete original correction`);
+      assert.deepEqual(sealed.effects.recoveryNotice, pending.recoveryNotice, `${variant}: the pending notice, unrendered`);
+      // The seal neither consumes the correction nor emits or clears the notice.
+      const after = adapter.snapshot();
+      assert.deepEqual([after.correction, after.recoveryNotice], [pending.correction, pending.recoveryNotice], variant);
+      const reused = adapter.run(sealedRequest(adapter, 'fresh-inspection', { input: {} }));
+      assert.deepEqual([reused.outcome, reused.reason], ['hard-stop', 'owner-fenced'], variant);
+      assert.equal(Object.hasOwn(reused, 'recoveryNotice'), false, `${variant}: no terminal outcome renders the notice`);
+      assert.deepEqual(adapter.snapshot().recoveryNotice, pending.recoveryNotice, variant);
+
+      const disposal = sealed.dispose(sha256(`terminal-work conservation:${variant}`));
+      if (variant === 'settled') {
+        assert.equal(sealed.effects.unaccounted, null, 'presence alone is not an unsettled effect');
+        assert.deepEqual([disposal.stage, disposal.attempted, disposal.cleared], ['removed', true, true]);
+        assert.deepEqual(fs.readdirSync(artifactDirectory(root)), []);
+        return;
+      }
+      assert.equal(sealed.effects.unaccounted, 'pending-attempt', 'the actual pending attempt still refuses');
+      assert.deepEqual([disposal.stage, disposal.attempted], ['effects', false]);
+      assert.deepEqual(terminalPairBytes(root), pair, 'no control removed');
+    });
+  }
+});
+
+nodeTest('terminal-work disposition: a pending correction and notice at the original stop are retained beside the trace and alone never block disposal', async () => {
+  const module = await workModuleWithObservation('host-adapter-runner.mjs', true);
+  for (const variant of ['retained', 'effects retention failure', 'escaped dispatch']) {
+    await withSealedWorkspace(async (root) => {
+      writeSealedTaskState(root);
+      const escaped = variant === 'escaped dispatch';
+      const request = escaped ? terminalRunnerRequest(root) : terminalRequiredLearningRequest(root);
+      /** @type {string[]} */
+      const log = [];
+      const sink = terminalRetentionSink({ log, ...(variant === 'effects retention failure' ? { failWrite: 'terminal-effects.json' } : {}) });
+      const store = terminalStore(root, log, module.testAdapterModule);
+      /** @type {{correction:Record<string, unknown>, recoveryNotice:Record<string, unknown>}|null} */
+      let pending = null;
+      const result = await module.runHostAdapter(request, {
+        checkpoint: store.port,
+        retentionSink: sink.port,
+        exchange(challenge) {
+          if (challenge.kind === 'learning-review') {
+            const { review } = governanceReview(focusedRunnerAcceptedState(challenge), 'selected-alternative');
+            return focusedChallengeResponse(challenge, 'review', review);
+          }
+          if (escaped && challenge.kind === 'assessment') {
+            return focusedChallengeResponse(challenge, 'assessment', focusedChallengeAssessment(challenge));
+          }
+          // The original owner holds a real pending correction and notice at its stop.
+          pending = terminalPendingCorrection(module.testOwnerContext.adapter);
+          if (escaped) throw new Error('terminal-work specialist transport loss');
+          return terminalInvalidAssessment(challenge);
+        },
+      });
+      const held = /** @type {NonNullable<typeof pending>} */ (pending);
+      assert.deepEqual([result.outcome, result.reason], ['hard-stop', escaped ? 'exchange-context-lost' : 'challenge-response-invalid'], variant);
+      assertOriginalTerminal(result, sink);
+      // Never emitted or discharged: no result or step renders the notice, and the fenced owner still holds both.
+      assert.equal(Object.hasOwn(result, 'recoveryNotice'), false, variant);
+      assert.equal(result.steps.some((/** @type {any} */ step) => Object.hasOwn(step, 'recoveryNotice')), false, variant);
+      const owner = module.testOwnerContext.adapter.snapshot();
+      assert.deepEqual([owner.correction, owner.recoveryNotice], [held.correction, held.recoveryNotice], variant);
+      if (variant === 'effects retention failure') {
+        assertTerminalRefusal(result, sink, 'retained-source', 'terminal-effects.json', { checkpoint: 'retained', claim: 'retained' });
+        assert.deepEqual(store.reasons, [], `${variant}: no clear`);
+        assert.equal(fs.readdirSync(artifactDirectory(root)).length, 2);
+        return;
+      }
+      const effects = sink.json('terminal-effects.json');
+      assert.deepEqual(effects.correction, held.correction, `${variant}: the exact original correction`);
+      assert.deepEqual(effects.recoveryNotice, held.recoveryNotice, `${variant}: the exact pending notice`);
+      assert.ok(effects.operations.length > 0, `${variant}: beside the existing operation trace`);
+      if (escaped) {
+        assertTerminalRefusal(result, sink, 'effect-settlement', 'authorize-attempt', { checkpoint: 'retained', claim: 'retained' });
+        assert.deepEqual(store.reasons, [], `${variant}: no clear`);
+        assert.equal(fs.readdirSync(artifactDirectory(root)).length, 2);
+        return;
+      }
+      assert.equal(effects.unaccounted, null, 'presence alone is not an unsettled effect');
+      assert.equal(result.terminalDisposition.outcome, 'disposed');
+      assert.deepEqual(store.reasons, ['terminal-disposition']);
+      assert.deepEqual(fs.readdirSync(artifactDirectory(root)), []);
+    });
+  }
+});
+
+nodeTest('terminal-work disposition: the owner records every entered operation past 4096 rows, and only an actual observation loss is incomplete', () => {
+  withSealedWorkspace((root) => {
+    writeSealedTaskState(root);
+    const adapter = createHostAdapter(checkpointInitial({ state: emptyState('autonomous') }), {
+      checkpoint: memoryCheckpointStore().port,
+    });
+    // Each entered read reaches the built-in runtime, which refuses the empty input
+    // without effect. The existing no-effect probe ledger, not the operation record,
+    // ends the run: after 4096 probes the next entered operation stops before its route.
+    for (let index = 0; index < 4096; index += 1) {
+      const refused = adapter.run(sealedRequest(adapter, 'fresh-inspection', { input: {} }));
+      if (refused.outcome !== 'closed-refusal') assert.fail(`read ${index + 1}: ${refused.outcome} ${refused.reason}`);
+    }
+    const stopped = adapter.run(sealedRequest(adapter, 'fresh-inspection', { input: {} }));
+    assert.deepEqual([stopped.outcome, stopped.reason], ['hard-stop', 'no-effect-probe-ledger-exhausted']);
+    const sealed = adapter.sealTerminalOwner();
+    assert.notEqual(sealed.fence, null);
+    const { operations } = sealed.effects;
+    assert.equal(operations.length, 4097, 'every entered operation, including the one past 4096 rows');
+    assert.equal(sealed.effects.ports.observation, 'complete');
+    assert.equal(operations.slice(0, 4096).every((/** @type {any} */ entry) => entry.operation === 'fresh-inspection'
+      && entry.outcome === 'closed-refusal' && entry.reason === operations[0].reason && entry.lane.length === 0
+      && canonicalJson(entry.routes) === canonicalJson([{ command: 'inspect', mode: null, status: 'threw' }])), true);
+    assert.deepEqual(operations[4096], {
+      operation: 'fresh-inspection', routes: [], lane: [], outcome: 'hard-stop', reason: 'no-effect-probe-ledger-exhausted',
+    });
+    assert.equal(sealed.effects.unaccounted, null);
+    const disposal = sealed.dispose(sha256('terminal-work complete operation record'));
+    assert.deepEqual([disposal.stage, disposal.attempted, disposal.cleared], ['removed', true, true]);
+
+    // An actual observation loss still leaves provenance incomplete and keeps the pair.
+    let observations = 0;
+    const lossy = createHostAdapter(checkpointInitial({ state: emptyState('autonomous') }), {
+      checkpoint: memoryCheckpointStore().port,
+      runtimeEvidence() {
+        observations += 1;
+        if (observations === 2) throw new Error('terminal-work observation loss');
+      },
+    });
+    const input = sealedTransportInput(sealedInspectionInput(root, { policyMode: 'autonomous' }));
+    const observed = lossy.run(sealedRequest(lossy, 'fresh-inspection', { input }));
+    assert.equal(observed.reason, 'inspection-refreshed', 'a failed observer never changes the route or result');
+    const lost = lossy.sealTerminalOwner();
+    assert.equal(lost.effects.ports.observation, 'incomplete');
+    assert.equal(lost.effects.operations.length, 1, 'the entered operation itself is still recorded');
+    assert.equal(lost.effects.unaccounted, 'runtime-observation');
+    assert.deepEqual([lost.dispose(sha256('terminal-work lost observation')).stage], ['effects']);
+  });
+});
+
+// --- Feature 094 T003: terminal-qualified fresh handoff ---------------------
+
+const FRESH_HANDOFF_TIME = '2026-11-03T00:00:00Z';
+
+/** The sealed owner log ends with LF, so the exact marker appends, and the snapshot exists. @param {string} root */
+function freshHandoffWorkspace(root) {
+  const ideaFile = path.join(root, IDEA_PATH);
+  const owner = fs.readFileSync(ideaFile, 'utf8');
+  if (!owner.endsWith('\n')) fs.writeFileSync(ideaFile, `${owner}\n`);
+  writeSealedTaskState(root);
+}
+
+/**
+ * The real original owner, its built-in ports, and the real runner to one hard
+ * stop and its own disposed terminal handoff.
+ * @param {string} root @param {Record<string, unknown>} request
+ * @param {(challenge:Record<string, any>)=>unknown} exchange
+ */
+async function freshHandoffProducer(root, request, exchange) {
+  /** @type {string[]} */
+  const log = [];
+  const sink = terminalRetentionSink({ log });
+  const store = terminalStore(root, log);
+  const result = await runHostAdapter(request, { checkpoint: store.port, retentionSink: sink.port, exchange });
+  assert.equal(result.terminalDisposition.outcome, 'disposed', JSON.stringify(result.terminalDisposition));
+  assert.deepEqual(fs.readdirSync(artifactDirectory(root)), [], 'the original owner removed its own pair');
+  return { result, sink };
+}
+
+/** The read-only derivation over the exact handoff files and the fresh lane binding. @param {string} root @param {ReturnType<typeof terminalRetentionSink>} sink */
+function freshHandoffAdmission(root, sink) {
+  const binding = sealedLaneBinding(root);
+  return deriveFreshAdmissionV1({
+    version: 1,
+    root,
+    target: clone(TARGET),
+    requestIdentity: sha256('terminal-work fresh handoff: new explicit request'),
+    policy: emptyState('autonomous').policy,
+    binding: { targetMapping: binding.targetMapping, lanePrestate: binding.lanePrestate },
+    controls: { checkpointKey: sink.json('terminal-evidence.json').binding.checkpointKey, status: 'absent' },
+    handoff: Object.fromEntries(TERMINAL_HANDOFF_FILES.map((name) => [name, sink.files.get(name) ?? null])),
+    operationTime: FRESH_HANDOFF_TIME,
+  });
+}
+
+/**
+ * The official setup sequence through the real adapter, as the driver runs it:
+ * fresh Inspection over the original captures, the issuer's own rederivation at
+ * authorize, the lane owner's exact apply, commit, and a controlled end. Returns
+ * the runner request a successful claim publishes.
+ * @param {string} root @param {ReturnType<typeof terminalRetentionSink>} sink @param {Record<string, any>} admission
+ */
+function freshHandoffSetup(root, sink, admission) {
+  const captures = sink.json('retained-evidence.json');
+  const input = { ...sealedTransportInput(sealedInspectionInput(root, { policyMode: 'autonomous' })), ...clone(captures) };
+  const inspection = runCommand('inspect', { trigger: 'explicit-inspection', input }).inspection;
+  assert.equal(inspection.evidenceHash, admission.inspectionHash, 'setup inspects exactly what admission derived from');
+  const binding = sealedLaneBinding(root);
+  const workspace = {
+    workspaceIdentity: sha256(canonicalJson({ version: 1, root })),
+    ownerIdentity: sha256(canonicalJson({ version: 1, owner: binding.application.owner })),
+    taskPrestateIdentity: sha256(canonicalJson({
+      version: 1, target: canonicalTarget(TARGET), glyph: '~', blockedBy: null,
+      tasksDescriptor: binding.targetMapping.tasksDescriptor,
+    })),
+    lanePrestateIdentity: sha256(canonicalJson(binding.lanePrestate)),
+  };
+  const checkpoint = memoryCheckpointStore();
+  const setup = createHostAdapter(sealedInitial({
+    state: clone(admission.state), workspace, inspectionIdentity: sha256(canonicalJson(inspection)),
+  }), { checkpoint: checkpoint.port });
+  const setupIdentity = setup.snapshot().invocationIdentity;
+  assert.equal(setup.run(sealedRequest(setup, 'fresh-inspection', { input })).reason, 'inspection-refreshed');
+  const mutation = buildTerminalFreshClaimMutationV1({
+    target: clone(TARGET),
+    ownerPath: IDEA_PATH,
+    expectedOwnerHash: binding.application.owner.ownerCapture.sha256,
+    time: FRESH_HANDOFF_TIME,
+    requestIdentity: admission.requestIdentity,
+    admissionIdentity: admission.admissionIdentity,
+    manifestIdentity: admission.evidence.manifestIdentity,
+    dispositionIdentity: admission.evidence.dispositionIdentity,
+  });
+  const issued = setup.run(sealedRequest(setup, 'authorize-lane-effect', {
+    laneEffect: {
+      input,
+      mutation,
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+      terminalAdmission: {
+        requestIdentity: admission.requestIdentity,
+        manifest: sink.json('terminal-evidence.json'),
+        disposition: sink.json('terminal-disposition.json'),
+      },
+    },
+  }));
+  assert.equal(issued.reason, 'lane-permit-issued', issued.reason);
+  const permit = issued.product.permit;
+  const applied = setup.run(sealedRequest(setup, 'apply-lane-effect', {
+    laneApplication: { ...binding.application, mutation, permit },
+  }));
+  assert.equal(applied.reason, 'lane-mutation-applied', applied.reason);
+  const receipt = applied.product.receipt;
+  const committed = setup.run(sealedRequest(setup, 'commit-lane-receipt', { laneReceipt: { input, permit, receipt } }));
+  assert.equal(committed.reason, 'lane-receipt-committed', committed.reason);
+  assert.equal(committed.session.acceptedStateBytes, canonicalJson(admission.state), 'setup leaves the fresh state unchanged');
+  const ended = setup.end('controlled-end');
+  assert.deepEqual([ended.outcome, ended.reason], ['ended', 'controlled-end']);
+  assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+  const request = {
+    version: 1,
+    root,
+    target: clone(TARGET),
+    owner: { ideaPath: IDEA_PATH, specPath: TARGET.specPath },
+    state: ended.session.acceptedState,
+    retainedEvidence: clone(captures),
+    priorTerminal: {
+      manifestIdentity: admission.evidence.manifestIdentity,
+      dispositionIdentity: admission.evidence.dispositionIdentity,
+      freshAdmissionIdentity: admission.admissionIdentity,
+      setupReceipt: {
+        version: 1,
+        mutation,
+        permit,
+        receipt,
+        targetMapping: binding.targetMapping,
+        lanePrestate: binding.lanePrestate,
+        preimages: {
+          tasks: binding.application.expected.tasks,
+          owner: binding.application.owner.ownerCapture,
+          taskState: binding.application.expected.taskState,
+        },
+      },
+    },
+  };
+  return { request: clone(request), setupIdentity, receipt, requirements: clone(sink.json('terminal-evidence.json').binding.requirements) };
+}
+
+/**
+ * The trusted host's single-use start observation of one exact request, carrying
+ * the admission-bound requirements its issuing claim recorded.
+ * @param {Record<string, any>} request @param {Record<string, unknown>} requirements
+ */
+function freshHandoffStart(request, requirements) {
+  const requestIdentity = sha256(canonicalJson(request));
+  const record = Buffer.from(`${JSON.stringify({ version: 1, kind: 'runner-request-used', requestIdentity }, null, 2)}\n`);
+  return {
+    version: 1,
+    kind: 'runner-request-start',
+    requestIdentity,
+    freshAdmissionIdentity: request.priorTerminal.freshAdmissionIdentity,
+    record: { name: 'runner-request-used.json', sha256: sha256(record), byteLength: record.byteLength },
+    requirements: clone(requirements),
+  };
+}
+
+/**
+ * Start the fresh runner once; record each challenge's kind, accepted state, and
+ * live owner identity, and each Inspection input; cancel at the first challenge.
+ * @param {Record<string, any>} request @param {unknown} start
+ */
+async function freshHandoffRun(request, start) {
+  const checkpoint = memoryCheckpointStore();
+  /** @type {{kind:string, state:Record<string, any>, invocationIdentity:string}[]} */
+  const challenges = [];
+  /** @type {Record<string, any>[]} */
+  const inputs = [];
+  const result = await runHostAdapter(request, {
+    checkpoint: checkpoint.port,
+    requestStart: start,
+    runtime: {
+      identity: sha256('terminal-work fresh handoff runtime'),
+      invoke(command, lowLevelRequest) {
+        if (command === 'inspect') inputs.push(clone(lowLevelRequest.input));
+        return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+      },
+    },
+    exchange(challenge) {
+      challenges.push({
+        kind: challenge.kind,
+        state: focusedRunnerAcceptedState(challenge),
+        invocationIdentity: checkpoint.pair.claim.invocationIdentity,
+      });
+      return focusedCancelResponse(challenge);
+    },
+  });
+  return { result, challenges, inputs };
+}
+
+nodeTest('terminal-work fresh handoff: a disposed original handoff and its fresh setup start a new ordinary Assessment with the original captures and new identities', async () => {
+  await withSealedWorkspace(async (root) => {
+    freshHandoffWorkspace(root);
+    const { sink } = await freshHandoffProducer(root, terminalRunnerRequest(root), terminalNoActionAssessment);
+    const handoff = new Map([...sink.files].map(([name, bytes]) => [name, Buffer.from(bytes)]));
+    const manifest = sink.json('terminal-evidence.json');
+    const captures = sink.json('retained-evidence.json');
+    const admission = freshHandoffAdmission(root, sink);
+    assert.equal(admission.outcome, 'eligible', JSON.stringify(admission));
+    assert.equal(admission.learningGate, 'assessment');
+
+    const before = { tasks: fs.readFileSync(path.join(root, TASKS_PATH)), owner: fs.readFileSync(path.join(root, IDEA_PATH), 'utf8') };
+    const setup = freshHandoffSetup(root, sink, admission);
+    // The one setup write: identical task bytes, one appended marker, and a refreshed snapshot.
+    assert.ok(fs.readFileSync(path.join(root, TASKS_PATH)).equals(before.tasks), 'tasks.md is unchanged');
+    const marker = setup.request.priorTerminal.setupReceipt.mutation.ownerLog.exactLines[0];
+    assert.equal(fs.readFileSync(path.join(root, IDEA_PATH), 'utf8'), `${before.owner}${marker}\n`);
+    assert.match(marker, new RegExp(`under admission ${admission.admissionIdentity}, bound to terminal evidence ${admission.evidence.manifestIdentity}`
+      + ` and disposition ${admission.evidence.dispositionIdentity}; the prior Work run remains terminal\\.$`));
+    assert.equal(t003SnapshotGlyph(root, TARGET), '~');
+    assert.equal(setup.receipt.targetStateChanged, false);
+
+    const start = freshHandoffStart(setup.request, setup.requirements);
+    const run = await freshHandoffRun(setup.request, start);
+    assert.equal(run.result.reason, 'cancelled', run.result.detail ?? run.result.reason);
+    assert.deepEqual(run.challenges.map((challenge) => challenge.kind), ['assessment'], 'ordinary Assessment first');
+    assert.equal(canonicalJson(run.challenges[0].state), canonicalJson(admission.state), 'the fresh state, never the original');
+    const fresh = run.challenges[0].invocationIdentity;
+    assert.match(fresh, /^[0-9a-f]{64}$/);
+    assert.notEqual(fresh, manifest.binding.invocationIdentity, 'not the original invocation');
+    assert.notEqual(fresh, setup.setupIdentity, 'not the setup invocation');
+    assert.ok(run.inputs.length > 0);
+    assert.deepEqual(run.inputs[0].currentRun.slice(0, captures.currentRun.length), captures.currentRun,
+      'the original captures lead the fresh input');
+    for (const field of ['verification', 'review', 'lint']) assert.deepEqual(run.inputs[0][field], captures[field], field);
+    for (const [name, bytes] of handoff) assert.ok(/** @type {Buffer} */ (sink.files.get(name)).equals(bytes), `${name} stays evidence`);
+
+    // The start is single-use in this runner as well: neither the observation nor the request starts again.
+    await assert.rejects(runHostAdapter(setup.request, { checkpoint: memoryCheckpointStore().port, requestStart: start }),
+      { name: 'TypeError', message: /start observation was already used/ });
+    await assert.rejects(runHostAdapter(setup.request, {
+      checkpoint: memoryCheckpointStore().port, requestStart: freshHandoffStart(setup.request, setup.requirements),
+    }), { name: 'TypeError', message: /request was already started/ });
+  });
+});
+
+nodeTest('terminal-work fresh handoff: an eligible required repeat restores learning through the existing route before Assessment', async () => {
+  await withSealedWorkspace(async (root) => {
+    freshHandoffWorkspace(root);
+    const { result, sink } = await freshHandoffProducer(root, terminalRequiredLearningRequest(root), (challenge) => (
+      challenge.kind === 'learning-review'
+        ? focusedChallengeResponse(challenge, 'review', { invalid: 'terminal-work fresh handoff learning stop' })
+        : terminalInvalidAssessment(challenge)));
+    assert.equal(result.reason, 'challenge-response-invalid');
+    assert.equal(focusedRunnerAcceptedState(result).learningGovernance.phase, 'required', 'the original stopped at required learning');
+    const admission = freshHandoffAdmission(root, sink);
+    assert.equal(admission.outcome, 'eligible', JSON.stringify(admission));
+    assert.equal(admission.learningGate, 'resume-learning');
+    assert.equal(Object.hasOwn(admission.state, 'learningGovernance'), false, 'no governance is imported');
+
+    const setup = freshHandoffSetup(root, sink, admission);
+    assert.equal(Object.hasOwn(setup.request.state, 'learningGovernance'), false);
+    const run = await freshHandoffRun(setup.request, freshHandoffStart(setup.request, setup.requirements));
+    assert.equal(run.result.reason, 'cancelled', run.result.detail ?? run.result.reason);
+    assert.deepEqual(run.challenges.map((challenge) => challenge.kind), ['learning-review'], 'the existing learning gate comes first');
+    const restored = run.challenges[0].state;
+    assert.equal(restored.learningGovernance.phase, 'required', 'restored from current evidence by the existing route');
+    assert.deepEqual([restored.overallUsed, restored.recoveryUsed, restored.pending, restored.completed], [0, [], [], []]);
+  });
+});
+
+nodeTest('terminal-work fresh handoff: settled later learning in a disposed handoff refuses fresh admission before any lane write', async () => {
+  await withSealedWorkspace(async (root) => {
+    freshHandoffWorkspace(root);
+    const { result, sink } = await freshHandoffProducer(root, terminalRequiredLearningRequest(root), terminalLearningExchange);
+    assert.equal(focusedRunnerAcceptedState(result).learningGovernance.phase, 'alternative-inspected');
+    const lane = laneSurfaceDigests(root);
+    const admission = freshHandoffAdmission(root, sink);
+    assert.equal(admission.outcome, 'refused', JSON.stringify(admission));
+    assert.deepEqual([admission.missingProof.kind, admission.missingProof.subject], ['learning-authority', TARGET.taskKey]);
+    assert.deepEqual(laneSurfaceDigests(root), lane, 'no claim marker or other lane write');
+  });
+});
+
+nodeTest('terminal-work fresh handoff: omitted or forged start observations, corrupt or foreign receipts, source drift, and old authority import refuse before admission', async () => {
+  await withSealedWorkspace(async (root) => {
+    freshHandoffWorkspace(root);
+    const { sink } = await freshHandoffProducer(root, terminalRunnerRequest(root), terminalNoActionAssessment);
+    const admission = freshHandoffAdmission(root, sink);
+    assert.equal(admission.outcome, 'eligible', JSON.stringify(admission));
+    const { request, requirements } = freshHandoffSetup(root, sink, admission);
+    const checkpoint = memoryCheckpointStore();
+    let lane = laneSurfaceDigests(root);
+    /** @param {Record<string, any>} candidate @param {unknown} start @param {RegExp} message @param {string} label */
+    const refused = async (candidate, start, message, label) => {
+      await assert.rejects(runHostAdapter(candidate, {
+        checkpoint: checkpoint.port,
+        ...(start === undefined ? {} : { requestStart: start }),
+        exchange: () => assert.fail(`${label}: no challenge is issued`),
+      }), { name: 'TypeError', message }, label);
+      assert.deepEqual(checkpoint.calls, [], `${label}: refused before any ownership claim`);
+      assert.deepEqual(laneSurfaceDigests(root), lane, `${label}: no lane write`);
+    };
+    /** @param {Record<string, any>} candidate @param {RegExp} message @param {string} label */
+    const refusedStarted = (candidate, message, label) => refused(candidate, freshHandoffStart(candidate, requirements), message, label);
+    /** @param {(next:Record<string, any>)=>void} change */
+    const variant = (change) => {
+      const next = clone(request);
+      change(next);
+      return next;
+    };
+    /** A self-consistent receipt that differs only by the given fields. @param {Record<string, any>} next @param {Record<string, unknown>} fields */
+    const rehashedReceipt = (next, fields) => {
+      const { receiptHash: _hash, ...body } = { ...next.priorTerminal.setupReceipt.receipt, ...fields };
+      next.priorTerminal.setupReceipt.receipt = { ...body, receiptHash: sha256(canonicalJson(body)) };
+    };
+
+    // The trusted start observation is a dependency, never a field, and binds this exact request.
+    const observed = () => freshHandoffStart(request, requirements);
+    await refused(request, undefined, /requires the driver's trusted single-use start observation/, 'omitted observation');
+    await refused(request, new Proxy(observed(), {}), /requires the driver's trusted single-use start observation/, 'proxied observation');
+    for (const [label, field, value] of /** @type {[string, string, unknown][]} */ ([
+      ['an observation of another request', 'requestIdentity', sha256('another runner request')],
+      ['an observation of another admission', 'freshAdmissionIdentity', sha256('another admission')],
+      ['an observation of another record', 'record', { name: 'runner-request.json', sha256: sha256('record'), byteLength: 1 }],
+    ])) {
+      await refused(request, { ...observed(), [field]: value }, /start observation does not bind this exact request/, label);
+    }
+    // It also carries the admission-bound definition in its closed shape; a malformed one consumes nothing.
+    const { requirements: _omitted, ...unbound } = observed();
+    await refused(request, unbound, /runner request start is missing field 'requirements'/, 'an observation without requirements');
+    await refused(request, { ...observed(), requirements: { ...requirements, note: 'caller-authored' } },
+      /runner request start\.requirements contains unknown field 'note'/, 'open requirements');
+    await refused(request, { ...observed(), requirements: { ...requirements, plan: { ...requirements.plan, sha256: 'not-a-hash' } } },
+      /start observation does not carry the admission-bound requirements/, 'a malformed requirement descriptor');
+    await assert.rejects(runHostAdapter({ ...request, priorTerminal: { ...request.priorTerminal, freshStart: observed() } }, {
+      checkpoint: checkpoint.port, requestStart: observed(),
+    }), { name: 'TypeError', message: /priorTerminal contains unknown field 'freshStart'/ }, 'an observation carried as a request field');
+    const ordinary = variant((next) => { delete next.priorTerminal; });
+    await refused(ordinary, observed(), /requestStart applies only to a priorTerminal request/, 'an observation for an ordinary request');
+
+    // The closed request: the original captures, a closed priorTerminal, and a complete setup receipt.
+    await refusedStarted(variant((next) => { delete next.retainedEvidence; }), /requires the original retainedEvidence/, 'no original captures');
+    await refusedStarted(variant((next) => { next.priorTerminal.setupReceipt.note = 'caller-authored'; }),
+      /setupReceipt contains unknown field 'note'/, 'an open setup receipt');
+
+    // Old authority import: the original accounting, obligations, and policy subject stay evidence.
+    const tuple = { evidenceHash: sha256('old evidence'), approachHash: sha256('old approach'), resultHash: sha256('old result') };
+    await refusedStarted(variant((next) => { Object.assign(next.state, { overallUsed: 1, completed: [tuple] }); }),
+      /admits only a fresh state; the original accepted state stays evidence/, 'imported nonzero accounting');
+    await refusedStarted(variant((next) => { next.state.policy.overall = 4; }),
+      /setup receipt does not bind its exact permit, mutation, and prestate/, 'a state other than the setup permit subject');
+
+    // Corrupt or foreign receipts, other preimages, and another admission or evidence.
+    await refusedStarted(variant((next) => { next.priorTerminal.setupReceipt.receipt.receiptHash = sha256('corrupt receipt'); }),
+      /receiptHash must equal the recomputed receipt hash/, 'a corrupt receipt');
+    await refusedStarted(variant((next) => rehashedReceipt(next, { permitHash: sha256('another permit') })),
+      /setup receipt does not bind its exact permit, mutation, and prestate/, 'a receipt of another permit');
+    await refusedStarted(variant((next) => rehashedReceipt(next, { ownerPoststateHash: sha256('another owner poststate') })),
+      /setup receipt is not the rebuilt authorized postimage/, 'a receipt of another poststate');
+    await refusedStarted(variant((next) => {
+      next.priorTerminal.setupReceipt.preimages.owner = capturedBytesV1(Buffer.from('another owner log\n'));
+    }), /setup preimages do not match their bound prestate/, 'preimages other than the bound prestate');
+    await refusedStarted(variant((next) => { next.priorTerminal.manifestIdentity = sha256('another manifest'); }),
+      /marker does not bind this fresh admission and its terminal evidence/, 'another terminal manifest');
+    await refusedStarted(variant((next) => { next.priorTerminal.freshAdmissionIdentity = sha256('another admission'); }),
+      /marker does not bind this fresh admission and its terminal evidence/, 'another fresh admission');
+
+    // Source drift after setup: the exact request is consumed by its failed start and never reruns.
+    const tasksFile = path.join(root, TASKS_PATH);
+    const tasksBefore = fs.readFileSync(tasksFile);
+    fs.appendFileSync(tasksFile, '- 2026-11-03T00:00:01Z - a later history line\n');
+    lane = laneSurfaceDigests(root);
+    await refused(request, observed(), /current lane surfaces differ from the authorized setup poststate/, 'drift after setup');
+    fs.writeFileSync(tasksFile, tasksBefore);
+    lane = laneSurfaceDigests(root);
+    await refused(request, observed(), /request was already started/, 'the failed start stays consumed');
+  });
+});
+
+nodeTest('terminal-work fresh handoff: a spec, plan, or task-unit change between setup and start refuses before any ownership, Assessment, or lane write', async () => {
+  const directory = TARGET.specPath.slice(0, -'spec.md'.length);
+  const taskLine = `- [~] ${TARGET.taskKey} [Shared] Adapter core`;
+  /** @type {[string, (text:string)=>string][]} */
+  const cases = [
+    [TARGET.specPath, (text) => `${text}\nA changed requirement after the claim.\n`],
+    [`${directory}plan.md`, (text) => `${text}\nA changed design after the claim.\n`],
+    [TASKS_PATH, (text) => text.replace(taskLine, `${taskLine}, now with another scope`)],
+  ];
+  for (const [relative, change] of cases) {
+    await withSealedWorkspace(async (root) => {
+      freshHandoffWorkspace(root);
+      const { sink } = await freshHandoffProducer(root, terminalRunnerRequest(root), terminalNoActionAssessment);
+      const admission = freshHandoffAdmission(root, sink);
+      assert.equal(admission.outcome, 'eligible', JSON.stringify(admission));
+      const setup = freshHandoffSetup(root, sink, admission);
+      // A well-formed definition change after the claim.
+      const file = path.join(root, relative);
+      const before = fs.readFileSync(file, 'utf8');
+      fs.writeFileSync(file, change(before));
+      assert.notEqual(fs.readFileSync(file, 'utf8'), before, `${relative}: changed`);
+      const lane = laneSurfaceDigests(root);
+      const checkpoint = memoryCheckpointStore();
+      /** @type {string[]} */
+      const challenges = [];
+      let failure = null;
+      try {
+        await runHostAdapter(setup.request, {
+          checkpoint: checkpoint.port,
+          requestStart: freshHandoffStart(setup.request, setup.requirements),
+          exchange(challenge) {
+            challenges.push(challenge.kind);
+            return focusedCancelResponse(challenge);
+          },
+        });
+      } catch (error) {
+        failure = error;
+      }
+      assert.deepEqual(challenges, [], `${relative}: no Assessment`);
+      assert.deepEqual(checkpoint.calls, [], `${relative}: no ownership pair`);
+      assert.ok(failure instanceof TypeError, `${relative}: refused at the start: ${failure}`);
+      assert.equal(failure.message,
+        `HostAdapterRunnerRequest.priorTerminal current requirements differ from the admission-bound definition: ${relative}`);
+      assert.deepEqual(laneSurfaceDigests(root), lane, `${relative}: the claim marker and every lane byte are preserved`);
+      await assert.rejects(runHostAdapter(setup.request, {
+        checkpoint: checkpoint.port, requestStart: freshHandoffStart(setup.request, setup.requirements),
+      }), { name: 'TypeError', message: /request was already started/ }, `${relative}: the refused start stays consumed`);
+    });
+  }
+});
+
+nodeTest('terminal-work fresh handoff: the adapter accepts terminal admission material only in its closed shape on authorize-lane-effect', async () => {
+  await withSealedWorkspace(async (root) => {
+    freshHandoffWorkspace(root);
+    const { sink } = await freshHandoffProducer(root, terminalRunnerRequest(root), terminalNoActionAssessment);
+    const manifest = sink.json('terminal-evidence.json');
+    const disposition = sink.json('terminal-disposition.json');
+    const adapter = createHostAdapter(sealedInitial({ state: emptyState('autonomous') }));
+    /** @param {unknown} terminalAdmission */
+    const authorize = (terminalAdmission) => sealedRequest(adapter, 'authorize-lane-effect', {
+      laneEffect: { input: {}, mutation: clone(LANE_MUTATION), lanePrestate: {}, targetMapping: {}, terminalAdmission },
+    });
+    const admission = { requestIdentity: sha256('terminal-work fresh handoff: request'), manifest, disposition };
+    assert.equal(validateHostAdapterRequest(authorize(admission)).operation, 'authorize-lane-effect');
+    for (const [label, value, message] of /** @type {[string, unknown, RegExp][]} */ ([
+      ['an extra field', { ...admission, admissionIdentity: sha256('caller-authored') }, /terminalAdmission contains unknown field 'admissionIdentity'/],
+      ['a missing disposition', { requestIdentity: admission.requestIdentity, manifest }, /terminalAdmission is missing field 'disposition'/],
+      ['a malformed request identity', { ...admission, requestIdentity: 'not-a-hash' }, /terminalAdmission\.requestIdentity/],
+      ['an open manifest', { ...admission, manifest: { ...manifest, note: 'caller-authored' } }, /note/],
+      ['an open disposition', { ...admission, disposition: { ...disposition, note: 'caller-authored' } }, /note/],
+    ])) {
+      assert.throws(() => validateHostAdapterRequest(authorize(value)), { name: 'TypeError', message }, label);
+    }
   });
 });

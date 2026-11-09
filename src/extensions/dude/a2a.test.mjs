@@ -231,7 +231,8 @@ function transportFixture() {
  *   session?: Parameters<typeof sessionFixture>[0],
  *   document?: (document: any) => void,
  *   runner?: Parameters<typeof createA2a>[0]['runner'],
- * }} [options]
+ *   host?: {platform?: NodeJS.Platform, environment?: NodeJS.ProcessEnv},
+ * }} [options] `host` replaces the platform and process environment an existing-sign-in worker is bound from.
  */
 function providerFixture(options = {}) {
   const dirs = options.dirs ?? directories();
@@ -256,6 +257,7 @@ function providerFixture(options = {}) {
         return () => { timer.cancelled = true; };
       },
     },
+    ...options.host,
   });
   provider.bindSession(/** @type {any} */ (session));
   return { dirs, document, clock, timers, transport, session, logs, provider };
@@ -2501,6 +2503,400 @@ test('clearing the context ends an admitted exchange with its activation and wit
   assert.deepEqual([ended.outcome, ended.reason], ['ended', 'activation_ended']);
 });
 
+/**
+ * A collaboration serve profile with a worker over the fixture's evidence root and no commands.
+ * @param {ReturnType<typeof directories>} dirs
+ */
+function workerProfileDocument(dirs) {
+  const document = configDocument(dirs);
+  const serve = document.profiles['b-serve'];
+  delete (/** @type {any} */ (serve)).verification;
+  delete (/** @type {any} */ (serve)).expiresAt;
+  serve.sharing = { allowed: 'Record numbers', excluded: 'Secrets', purpose: 'Numbering advice' };
+  fs.writeFileSync(path.join(dirs.external, 'worker-token.txt'), 'fixture-worker-token-not-a-credential\n');
+  /** @type {any} */ (serve).collaboration = {
+    projectId: 'dude-number-poc',
+    worker: {
+      model: 'fixture-model',
+      runtime: { path: path.join(dirs.external, 'copilot.exe'), args: [], env: { inherit: ['SystemRoot'], set: {} }, tokenFile: path.join(dirs.external, 'worker-token.txt') },
+      roots: [dirs.evidence],
+    },
+  };
+  return document;
+}
+
+test('a worker qualification block is closed, optional, and bound outside the workspace and every evidence root', () => {
+  const dirs = directories();
+  const qualification = { version: 1, runId: randomUUID(), fixtureRoot: path.join(dirs.base, 'qualification'), fixtureSha256: 'a'.repeat(64) };
+  const plain = parseA2aConfig(workerProfileDocument(dirs)).profiles.get('b-serve');
+  assert.equal(plain?.collaboration?.worker?.qualification, null, 'an ordinary worker has no qualification run');
+  const document = workerProfileDocument(dirs);
+  document.profiles['b-serve'].collaboration.worker.qualification = { ...qualification };
+  assert.deepEqual(parseA2aConfig(document).profiles.get('b-serve')?.collaboration?.worker?.qualification, qualification);
+  for (const [label, mutate, rule] of /** @type {Array<[string, (value: any) => void, RegExp]>} */ ([
+    ['another version', (value) => { value.version = 2; }, /qualification\.version must be 1/],
+    ['an uppercase run ID', (value) => { value.runId = value.runId.toUpperCase(); }, /qualification\.runId must be a lowercase UUID/],
+    ['a relative fixture root', (value) => { value.fixtureRoot = 'qualification'; }, /qualification\.fixtureRoot must be an absolute path/],
+    ['a fixture root inside the workspace', (value) => { value.fixtureRoot = path.join(dirs.workspace, 'qualification'); },
+      /qualification\.fixtureRoot must be outside the workspace and every evidence root/],
+    ['a fixture root holding the workspace', (value) => { value.fixtureRoot = dirs.base; }, /qualification\.fixtureRoot must be outside/],
+    ['an uppercase manifest digest', (value) => { value.fixtureSha256 = 'A'.repeat(64); }, /qualification\.fixtureSha256 must be 64 lowercase hex digits/],
+    ['a missing manifest digest', (value) => { delete value.fixtureSha256; }, /qualification\.fixtureSha256 is required/],
+    ['an approval smuggled in', (value) => { value.approved = true; }, /qualification\.approved is not a recognized key/],
+    ['a command smuggled in', (value) => { value.command = 'probe.exe'; }, /qualification\.command is not a recognized key/],
+  ])) {
+    const changed = workerProfileDocument(dirs);
+    const value = { ...qualification };
+    mutate(value);
+    changed.profiles['b-serve'].collaboration.worker.qualification = value;
+    assert.throws(() => parseA2aConfig(changed), (error) => {
+      assert.ok(error instanceof A2aError, label);
+      assert.equal(error.code, 'invalid_config', label);
+      assert.match(error.message, rule, label);
+      return true;
+    }, label);
+  }
+});
+
+test('the worker\'s home, temp, and per-user location variables cannot be configured, inherited or fixed, in any case', () => {
+  const dirs = directories();
+  for (const name of ['HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'TEMP', 'TMP', 'TMPDIR', 'APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME',
+    'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME']) {
+    for (const [how, env] of /** @type {Array<[string, any]>} */ ([
+      ['inherited', { inherit: [name], set: {} }],
+      ['fixed in lower case', { inherit: [], set: { [name.toLowerCase()]: 'C:\\owner-location' } }],
+    ])) {
+      const document = workerProfileDocument(dirs);
+      document.profiles['b-serve'].collaboration.worker.runtime.env = env;
+      assert.throws(() => parseA2aConfig(document), (error) => {
+        assert.ok(error instanceof A2aError);
+        assert.match(error.message, /runtime\.env must not name [A-Za-z_]+: the worker's home, temp, and per-user locations are its own folders/, `${name} ${how}`);
+        assert.equal(error.message.includes('owner-location'), false, 'refusals name keys and rules, never values');
+        return true;
+      }, `${name} ${how}`);
+    }
+  }
+  assert.ok(parseA2aConfig(workerProfileDocument(dirs)).profiles.get('b-serve'), 'other declared names, such as SystemRoot, stay allowed');
+});
+
+test('a qualification proposal discloses its fixture, probes, latches, and outside observation on their own lines, adds no separate grant, and fits the fixed cap', async () => {
+  const dirs = directories();
+  const qualification = { version: 1, runId: randomUUID(), fixtureRoot: path.join(dirs.base, 'q'), fixtureSha256: 'a'.repeat(64) };
+  const fixture = providerFixture({
+    dirs,
+    document: (document) => {
+      Object.assign(document, workerProfileDocument(dirs));
+      document.profiles['b-serve'].collaboration.worker.qualification = qualification;
+      document.profiles['b-plain'] = structuredClone(document.profiles['b-serve']);
+      document.profiles['b-plain'].collaboration.worker.qualification = undefined;
+      delete document.profiles['b-plain'].collaboration.worker.qualification;
+    },
+  });
+  const qualified = await propose(fixture, 'b-serve');
+  const plain = await propose(fixture, 'b-plain');
+  assert.equal(qualified.resultType, 'success', qualified.text);
+  assert.equal(plain.resultType, 'success', plain.text);
+  const bytes = Buffer.byteLength(qualified.text, 'utf8');
+  assert.ok(bytes <= A2A_PROPOSAL_BYTES, `${bytes} bytes`);
+  const lines = qualified.text.split('\n');
+  const storage = lines.findIndex((line) => line.startsWith('Worker storage: '));
+  assert.deepEqual(lines.slice(storage + 1, storage + 5), [
+    `QUALIFICATION: run ${qualification.runId}; fixture ${qualification.fixtureRoot} sha256:${'a'.repeat(64)}; `
+      + "its synthetic canaries are copied into the worker's own folders",
+    'Qualification probes: invalid and unlisted worker-tool calls, unknown-name controls, view and create on synthetic targets, '
+      + 'powershell exit 0, and a canary MCP name must each be refused; a broken host could touch only those targets',
+    'Qualification latches: <workerId>.startup-release.json before the prompt and <workerId>.evidence-release.json before evidence; '
+      + 'observations, not permission; outside observation may record its processes and files',
+    'RECORDING: each conversation is recorded locally before any disclosure, or refused while recording is unavailable; '
+      + 'records are locally sensitive and kept until the owner deletes them',
+  ], 'qualification lines follow the WORKER scope and stay apart from SHARING');
+  assert.equal(plain.text.includes('QUALIFICATION'), false, 'an ordinary worker discloses no qualification run');
+  for (const text of [qualified.text, plain.text]) {
+    assert.match(text, /\nWorker storage: one owned temporary directory with work, config, home, and temp folders, which HOME, USERPROFILE, TEMP, TMP, and TMPDIR name;/);
+    assert.match(text, /\nWorker limits: one at a time; 65536 bytes per result and answer; startup 10000 ms; worker 90000 ms;/);
+    assert.match(text, /\nApproval: dude a2a approve [0-9a-f]{12}; current matching proposal\/context only, consumed once; grants SHARING and the separate WORKER scope together\n/);
+  }
+  assert.equal(Buffer.byteLength(qualified.text) - Buffer.byteLength(plain.text) < 700, true, 'the qualification disclosure stays compact');
+  assert.equal(fixture.transport.calls.length, 0, 'a proposal starts nothing');
+});
+
+// The existing-sign-in branch: a closed, exclusive runtime branch that reuses the runtime's own saved sign-in. The
+// process environment and platform are test-owned through the provider's host seams; no account is looked up here.
+
+const AMBIENT_TOKEN = 'ambient-credential-value-never-selected';
+const AMBIENT_PATH = 'ambient-path-value-never-selected';
+
+/**
+ * An existing-sign-in serve profile: the worker of `workerProfileDocument`, reusing the runtime's own saved sign-in
+ * with a base directory beside the workspace.
+ * @param {ReturnType<typeof directories>} dirs
+ */
+function signInProfileDocument(dirs) {
+  const document = workerProfileDocument(dirs);
+  const baseDirectory = path.join(dirs.base, 'copilot-home');
+  fs.mkdirSync(baseDirectory, { recursive: true });
+  /** @type {any} */ (document.profiles['b-serve']).collaboration.worker.runtime = {
+    path: path.join(dirs.external, 'copilot.exe'),
+    args: [],
+    env: { inherit: ['SystemRoot', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA'], set: {} },
+    auth: { kind: 'existing-sign-in', baseDirectory, expectedAccount: { host: 'https://github.com', login: 'Fixture-Owner' } },
+  };
+  return document;
+}
+
+/**
+ * A Windows process environment: the owner's locations as absolute paths, and ambient values no selection names.
+ * @param {ReturnType<typeof directories>} dirs
+ * @returns {Record<string, string>}
+ */
+function signInEnvironment(dirs) {
+  const home = path.join(dirs.base, 'home');
+  return {
+    SystemRoot: 'C:\\Windows', USERPROFILE: home, APPDATA: path.join(home, 'AppData', 'Roaming'), LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
+    GH_TOKEN: AMBIENT_TOKEN, TEMP: path.join(dirs.base, 'owner-temp'), PATH: AMBIENT_PATH,
+  };
+}
+
+/**
+ * A provider whose serve profile is the existing-sign-in worker, on the given platform and environment.
+ * @param {{platform?: NodeJS.Platform, environment?: Record<string, string>, change?: (document: any, dirs: ReturnType<typeof directories>) => void}} [options]
+ */
+function signInFixture(options = {}) {
+  const dirs = directories();
+  const environment = options.environment ?? signInEnvironment(dirs);
+  const fixture = providerFixture({
+    dirs,
+    document: (document) => {
+      Object.assign(document, signInProfileDocument(dirs));
+      options.change?.(document, dirs);
+    },
+    host: { platform: options.platform ?? 'win32', environment },
+  });
+  return { ...fixture, environment };
+}
+
+/** The registered proposal tool's own result for `b-serve`. @param {ReturnType<typeof providerFixture>} fixture */
+function proposeRaw(fixture) {
+  const args = { configPath: fixture.dirs.configPath, profileId: 'b-serve' };
+  return proposalTool(fixture).handler(args, proposalInvocation(fixture, args));
+}
+
+test('an existing-sign-in worker runtime is a closed branch exclusive of the token file, with metadata-only path limits, a canonical account, and an explicit Windows selection', () => {
+  const dirs = directories();
+  const parsed = parseA2aConfig(signInProfileDocument(dirs)).profiles.get('b-serve')?.collaboration?.worker;
+  assert.deepEqual(parsed, {
+    model: 'fixture-model',
+    path: path.join(dirs.external, 'copilot.exe'),
+    args: [],
+    env: { inherit: ['SystemRoot', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA'], set: [] },
+    auth: { kind: 'existing-sign-in', baseDirectory: path.join(dirs.base, 'copilot-home'), expectedAccount: { host: 'https://github.com', login: 'Fixture-Owner' } },
+    roots: [dirs.evidence],
+    qualification: null,
+  }, 'no token file, and nothing defaulted');
+  assert.equal(Object.hasOwn(/** @type {object} */ (parsed), 'tokenFile'), false);
+  const token = parseA2aConfig(workerProfileDocument(dirs)).profiles.get('b-serve')?.collaboration?.worker;
+  assert.deepEqual(Object.keys(/** @type {object} */ (token)), ['model', 'path', 'args', 'env', 'tokenFile', 'roots', 'qualification'],
+    'the token branch keeps its exact shape');
+
+  const runtimeOf = (/** @type {any} */ document) => document.profiles['b-serve'].collaboration.worker.runtime;
+  const qualification = { version: 2, runId: randomUUID(), fixtureRoot: path.join(dirs.base, 'qualification'), fixtureSha256: 'a'.repeat(64) };
+  for (const [label, mutate] of /** @type {Array<[string, (document: any) => void]>} */ ([
+    ['allowed names in any letter case, with HOME and PATH', (document) => {
+      runtimeOf(document).env.inherit = ['systemroot', 'UserProfile', 'appdata', 'LocalAppData', 'Path', 'home', 'ComSpec', 'PATHEXT', 'windir'];
+    }],
+    ['a latch-only version 2 qualification', (document) => { document.profiles['b-serve'].collaboration.worker.qualification = { ...qualification }; }],
+    ['a GitHub Enterprise origin with a port', (document) => { runtimeOf(document).auth.expectedAccount.host = 'https://example.ghe.com:8443'; }],
+  ])) {
+    const document = signInProfileDocument(dirs);
+    mutate(document);
+    assert.ok(parseA2aConfig(document).profiles.get('b-serve'), label);
+  }
+
+  const long = path.join(dirs.base, 'b'.repeat(1_025 - Buffer.byteLength(path.join(dirs.base, '')) ));
+  for (const [label, mutate, rule] of /** @type {Array<[string, (document: any) => void, RegExp]>} */ ([
+    ['both a token file and existing sign-in', (document) => { runtimeOf(document).tokenFile = path.join(dirs.external, 'worker-token.txt'); },
+      /runtime\.tokenFile is not a recognized key/],
+    ['neither', (document) => { delete runtimeOf(document).auth; }, /runtime\.tokenFile is required/],
+    ['another sign-in kind', (document) => { runtimeOf(document).auth.kind = 'device-login'; }, /auth\.kind must be "existing-sign-in"/],
+    ['an unknown sign-in key', (document) => { runtimeOf(document).auth.token = AMBIENT_TOKEN; }, /auth\.token is not a recognized key/],
+    ['a relative base directory', (document) => { runtimeOf(document).auth.baseDirectory = 'copilot-home'; }, /auth\.baseDirectory must be an absolute path/],
+    ['a base directory over 1,024 UTF-8 bytes', (document) => { runtimeOf(document).auth.baseDirectory = long; }, /auth\.baseDirectory must be at most 1024 UTF-8 bytes/],
+    ['a base directory inside the workspace', (document) => { runtimeOf(document).auth.baseDirectory = path.join(dirs.workspace, '.copilot'); },
+      /auth\.baseDirectory must be outside the workspace and every evidence root/],
+    ['a base directory holding the workspace', (document) => { runtimeOf(document).auth.baseDirectory = dirs.base; }, /auth\.baseDirectory must be outside/],
+    ['a host with a trailing slash', (document) => { runtimeOf(document).auth.expectedAccount.host = 'https://github.com/'; }, /expectedAccount\.host must be a canonical HTTPS origin/],
+    ['an uppercase host', (document) => { runtimeOf(document).auth.expectedAccount.host = 'https://GitHub.com'; }, /expectedAccount\.host must be a canonical HTTPS origin/],
+    ['an HTTP host', (document) => { runtimeOf(document).auth.expectedAccount.host = 'http://github.com'; }, /expectedAccount\.host must be a canonical HTTPS origin/],
+    ['a host with the default port', (document) => { runtimeOf(document).auth.expectedAccount.host = 'https://github.com:443'; }, /expectedAccount\.host must be/],
+    ['a host with credentials', (document) => { runtimeOf(document).auth.expectedAccount.host = 'https://user@github.com'; }, /expectedAccount\.host must be/],
+    ['a host over 256 bytes', (document) => { runtimeOf(document).auth.expectedAccount.host = `https://${'h'.repeat(250)}.com`; }, /expectedAccount\.host must be/],
+    ['a login with a control character', (document) => { runtimeOf(document).auth.expectedAccount.login = 'fixture\towner'; },
+      /expectedAccount\.login must be non-empty single-line text/],
+    ['a login over 256 bytes', (document) => { runtimeOf(document).auth.expectedAccount.login = 'l'.repeat(257); }, /expectedAccount\.login must be at most 256 UTF-8 bytes/],
+    ['no login', (document) => { delete runtimeOf(document).auth.expectedAccount.login; }, /expectedAccount\.login is required/],
+    ['runtime arguments', (document) => { runtimeOf(document).args = ['--fixture-flag']; }, /runtime\.args must be empty for an existing-sign-in worker/],
+    ['a fixed environment value', (document) => { runtimeOf(document).env.set = { FIXTURE_SETTING: SECRET }; }, /runtime\.env\.set must be empty for an existing-sign-in worker/],
+    ['an inherited credential variable', (document) => { runtimeOf(document).env.inherit.push('GH_TOKEN'); },
+      /runtime\.env must not name GH_TOKEN: an existing-sign-in worker inherits only SystemRoot, windir, ComSpec, PATHEXT, PATH, HOME, USERPROFILE, HOMEDRIVE, HOMEPATH, APPDATA, LOCALAPPDATA/],
+    ['an inherited temp folder', (document) => { runtimeOf(document).env.inherit.push('TMP'); }, /runtime\.env must not name TMP: an existing-sign-in worker inherits only/],
+    ['inherited runtime file logging', (document) => { runtimeOf(document).env.inherit.push('COPILOT_RUNTIME_PROCESS_FILE_LOGGING'); },
+      /runtime\.env must not name COPILOT_RUNTIME_PROCESS_FILE_LOGGING/],
+    ['one name twice in another letter case', (document) => { runtimeOf(document).env.inherit.push('appData'); },
+      /runtime\.env\.inherit must not repeat a name in any letter case/],
+    ['no LOCALAPPDATA', (document) => { runtimeOf(document).env.inherit = ['SystemRoot', 'USERPROFILE', 'APPDATA']; },
+      /runtime\.env\.inherit must include USERPROFILE, APPDATA, LOCALAPPDATA/],
+    ['a strict version 1 qualification', (document) => {
+      document.profiles['b-serve'].collaboration.worker.qualification = { ...qualification, version: 1 };
+    }, /qualification\.version must be 2 for an existing-sign-in worker/],
+  ])) {
+    const document = signInProfileDocument(dirs);
+    mutate(document);
+    assert.throws(() => parseA2aConfig(document), (error) => {
+      assert.ok(error instanceof A2aError, label);
+      assert.equal(error.code, 'invalid_config', label);
+      assert.match(error.message, rule, label);
+      for (const value of [AMBIENT_TOKEN, SECRET, 'Fixture-Owner']) assert.equal(error.message.includes(value), false, `${label}: no value is named`);
+      return true;
+    }, label);
+  }
+});
+
+test('an existing-sign-in proposal discloses the expected account, the resolved base directory, and the normal runtime effects, binds no token file, and refuses before any disclosure off Windows or without usable locations', async (context) => {
+  await context.test('a Windows proposal reads no token file and hides every environment value', async () => {
+    const fixture = signInFixture();
+    fs.rmSync(path.join(fixture.dirs.external, 'worker-token.txt'));
+    const proposal = await propose(fixture);
+    assert.equal(proposal.resultType, 'success', proposal.text);
+    const lines = proposal.text.split('\n');
+    const worker = lines.findIndex((line) => line.startsWith('WORKER: '));
+    assert.deepEqual(lines.slice(worker + 1, worker + 4), [
+      `Worker runtime: ${path.join(fixture.dirs.external, 'copilot.exe')}; argv []; environment names inherit SystemRoot, USERPROFILE, APPDATA, `
+        + 'LOCALAPPDATA; fixed none; values hidden; Windows only',
+      'Worker sign-in and model: existing saved sign-in, expected Fixture-Owner at https://github.com on the runtime and its session, checked, '
+        + 'not locked; nothing is read, copied, or shown here; no login or fallback; model fixture-model',
+      'Worker startup: may start the owner\'s configured MCP servers and plugins; its model is offered only the evidence tools',
+    ]);
+    assert.ok(lines.includes(`Worker storage: real home and app data, and ${fs.realpathSync.native(path.join(fixture.dirs.base, 'copilot-home'))} `
+      + 'for normal configuration, sessions, logging, and sign-in lookup, not isolated; its own work folder and temp folder for TEMP, TMP, and '
+      + 'TMPDIR; once a runtime may have started, its cessation is unconfirmed and nothing is deleted'), proposal.text);
+    assert.doesNotMatch(proposal.text, /token file|logged-in user off|QUALIFICATION/);
+    for (const value of Object.values(fixture.environment)) assert.equal(proposal.text.includes(value), false, `${value} stays hidden`);
+    assert.ok(Buffer.byteLength(proposal.text, 'utf8') <= A2A_PROPOSAL_BYTES);
+    assert.match(await approve(fixture, String(proposal.code)), /^Activation: active; serve profile b-serve/);
+  });
+
+  await context.test('a version 2 qualification discloses its fixture and latches only, with no canary or probe line', async () => {
+    const qualification = { version: 2, runId: randomUUID(), fixtureRoot: '', fixtureSha256: 'b'.repeat(64) };
+    const fixture = signInFixture({
+      change: (document, dirs) => {
+        qualification.fixtureRoot = path.join(dirs.base, 'q');
+        document.profiles['b-serve'].collaboration.worker.qualification = qualification;
+      },
+    });
+    const proposal = await propose(fixture);
+    assert.equal(proposal.resultType, 'success', proposal.text);
+    const lines = proposal.text.split('\n');
+    const storage = lines.findIndex((line) => line.startsWith('Worker storage: '));
+    assert.deepEqual(lines.slice(storage + 1, storage + 3), [
+      `QUALIFICATION: run ${qualification.runId}; fixture ${qualification.fixtureRoot} sha256:${'b'.repeat(64)}; latches only, with no canaries or probes`,
+      'Qualification latches: <workerId>.startup-release.json before the prompt and <workerId>.evidence-release.json before evidence; '
+        + 'observations, not permission; outside observation may record its processes and files',
+    ]);
+    assert.doesNotMatch(proposal.text, /Qualification probes:|synthetic canaries/);
+    assert.ok(Buffer.byteLength(proposal.text, 'utf8') <= A2A_PROPOSAL_BYTES);
+  });
+
+  for (const [label, options, refusal] of /** @type {Array<[string, Parameters<typeof signInFixture>[0], RegExp]>} */ ([
+    ['another platform', { platform: 'linux' }, /an existing-sign-in worker runs only on Windows/],
+    ['a missing base directory', { change: (document) => { document.profiles['b-serve'].collaboration.worker.runtime.auth.baseDirectory += '-missing'; } },
+      /the existing-sign-in baseDirectory must be an existing directory, not a link/],
+    ['a base directory that is a file', {
+      change: (document, dirs) => {
+        const file = path.join(dirs.base, 'copilot-file');
+        fs.writeFileSync(file, 'not a directory\n');
+        document.profiles['b-serve'].collaboration.worker.runtime.auth.baseDirectory = file;
+      },
+    }, /the existing-sign-in baseDirectory must be an existing directory, not a link/],
+    ['a base directory that is a link into the workspace', {
+      change: (document, dirs) => {
+        const link = path.join(dirs.base, 'copilot-link');
+        fs.symlinkSync(dirs.evidence, link, process.platform === 'win32' ? 'junction' : 'dir');
+        document.profiles['b-serve'].collaboration.worker.runtime.auth.baseDirectory = link;
+      },
+    }, /the existing-sign-in baseDirectory must be an existing directory, not a link/],
+  ])) {
+    await context.test(label, async () => {
+      const fixture = signInFixture(options);
+      proposalRefused(await proposeRaw(fixture), refusal);
+      assert.deepEqual(fixture.transport.calls, [], label);
+    });
+  }
+
+  for (const [label, change] of /** @type {Array<[string, (environment: Record<string, string>) => void]>} */ ([
+    ['no APPDATA value', (environment) => { delete environment.APPDATA; }],
+    ['a relative LOCALAPPDATA', (environment) => { environment.LOCALAPPDATA = 'AppData\\Local'; }],
+    ['an empty USERPROFILE', (environment) => { environment.USERPROFILE = ''; }],
+  ])) {
+    await context.test(label, async () => {
+      const dirs = directories();
+      const environment = signInEnvironment(dirs);
+      change(environment);
+      const fixture = providerFixture({ dirs, document: (document) => Object.assign(document, signInProfileDocument(dirs)), host: { platform: 'win32', environment } });
+      const result = await proposeRaw(fixture);
+      proposalRefused(result, /an existing-sign-in worker needs USERPROFILE, APPDATA, and LOCALAPPDATA, and any HOME, as absolute paths here/);
+      for (const value of Object.values(environment)) if (value) assert.equal(result.textResultForLlm.includes(value), false, `${label}: no value is named`);
+    });
+  }
+
+  await context.test('a selected HOME must be absolute too', async () => {
+    const fixture = signInFixture({
+      change: (document) => { document.profiles['b-serve'].collaboration.worker.runtime.env.inherit.push('HOME'); },
+    });
+    fixture.environment.HOME = 'relative-home';
+    proposalRefused(await proposeRaw(fixture), /an existing-sign-in worker needs USERPROFILE, APPDATA, and LOCALAPPDATA, and any HOME/);
+  });
+});
+
+test('existing-sign-in approval and every admission rebind the selected environment values and the resolved base directory: drift refuses, while unselected values do not bind', async (context) => {
+  await context.test('a selected value that changes after the proposal refuses the approval', async () => {
+    const fixture = signInFixture();
+    const proposal = await propose(fixture);
+    fixture.environment.USERPROFILE = path.join(fixture.dirs.base, 'another-home');
+    assert.match(await approve(fixture, String(proposal.code)), /A2A approval refused: the configuration, TLS files, session, or workspace changed after the proposal/);
+    assert.deepEqual(fixture.transport.calls, []);
+  });
+
+  for (const [label, drift, ends] of /** @type {Array<[string, (fixture: ReturnType<typeof signInFixture>) => void, boolean]>} */ ([
+    ['a selected APPDATA value changes while active', (f) => { f.environment.APPDATA = path.join(f.dirs.base, 'other-roaming'); }, true],
+    ['the base directory is removed while active', (f) => { fs.rmSync(path.join(f.dirs.base, 'copilot-home'), { recursive: true }); }, true],
+    ['the base directory is replaced by a link while active', (f) => {
+      const base = path.join(f.dirs.base, 'copilot-home');
+      fs.renameSync(base, `${base}-old`);
+      fs.symlinkSync(`${base}-old`, base, process.platform === 'win32' ? 'junction' : 'dir');
+    }, true],
+    ['an unselected ambient value changes while active', (f) => {
+      f.environment.GH_TOKEN = `${AMBIENT_TOKEN}-rotated`;
+      f.environment.PATH = `${AMBIENT_PATH}-changed`;
+      f.environment.TEMP = path.join(f.dirs.base, 'other-temp');
+    }, false],
+  ])) {
+    await context.test(label, async () => {
+      const fixture = signInFixture();
+      const { options } = await activeServe(fixture);
+      assert.equal(options.checkBinding(), true, `${label}: the binding holds before the change`);
+      drift(fixture);
+      assert.equal(options.checkBinding(), !ends, label);
+      if (ends) {
+        const ended = await until(() => fixture.logs.find((line) => line.message.startsWith('A2A activation ended')), label);
+        assert.match(ended.message, /no longer match the approval/, label);
+        assert.equal(options.checkBinding(), false, `${label}: stays ended`);
+      } else {
+        assert.equal(logged(fixture, /^A2A activation ended/), false, label);
+      }
+    });
+  }
+});
+
 // @@A2A_TEST_APPEND@@
 
 /**
@@ -2618,6 +3014,8 @@ try {
   report.defaultOffReply = { resultType: replied.resultType, ...JSON.parse(replied.textResultForLlm) };
   const verified = await callTool('dude_a2a_verify', { exchangeId: 'x', commandId: 'unit-tests', params: {} });
   report.defaultOffVerify = { resultType: verified.resultType, ...JSON.parse(verified.textResultForLlm) };
+  const conversed = await callTool('dude_a2a_conversation', { op: 'begin_receive' });
+  report.defaultOffConversation = { resultType: conversed.resultType, ...JSON.parse(conversed.textResultForLlm) };
   report.importsAfterDefaultOffAsk = globalThis.__dudeA2aRuntimeImports ?? 0;
   options.onEvent({ type: 'user.message', data: { content: 'hello' } });
   const proposalArgs = ${JSON.stringify({ configPath, profileId: 'a-ask' })};
@@ -2661,6 +3059,7 @@ report.stdoutWrites = stdoutWrites;
 process.send?.(report);
 `);
   return {
+    root,
     cleanup() {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(owner, { recursive: true, force: true });
@@ -2698,8 +3097,9 @@ test('the extension joins once, registers the A2A tools beside Needs You and Can
     assert.equal(report.error, undefined, report.error);
     assert.equal(report.joins, 1, 'one normal joinSession');
     assert.deepEqual(report.optionKeys, ['canvases', 'onEvent', 'tools'], 'no hooks, permission handler, or tool filters');
-    assert.deepEqual(report.toolNames, ['dude_needs_you', 'dude_a2a_propose', 'dude_a2a_ask', 'dude_a2a_receive', 'dude_a2a_reply', 'dude_a2a_verify'],
-      'Needs You first, then the A2A propose, ask, receive, reply, and verify tools');
+    assert.deepEqual(report.toolNames, [
+      'dude_needs_you', 'dude_a2a_propose', 'dude_a2a_ask', 'dude_a2a_receive', 'dude_a2a_reply', 'dude_a2a_verify', 'dude_a2a_conversation',
+    ], 'Needs You first, then the A2A propose, ask, receive, reply, verify, and conversation tools');
     assert.deepEqual(report.canvasIds, ['dude']);
     assert.equal(report.importsAtStart, 0, 'the SDK runtime is not loaded at startup');
     assert.deepEqual(
@@ -2707,10 +3107,15 @@ test('the extension joins once, registers the A2A tools beside Needs You and Can
       ['failure', 'refused', 'no_activation', 'not_sent'],
       'the registered handler refuses while A2A is off',
     );
-    for (const [label, result] of [['receive', report.defaultOffReceive], ['reply', report.defaultOffReply], ['verify', report.defaultOffVerify]]) {
+    for (const [label, result] of [
+      ['receive', report.defaultOffReceive], ['reply', report.defaultOffReply], ['verify', report.defaultOffVerify],
+      ['conversation', report.defaultOffConversation],
+    ]) {
       assert.deepEqual([result.resultType, result.outcome, result.reason], ['failure', 'refused', 'no_activation'], `default-off ${label} refuses`);
     }
     assert.equal(report.importsAfterDefaultOffAsk, 0, 'default-off tool calls load nothing');
+    assert.equal(fs.existsSync(path.join(harness.root, '.dude', 'state', 'a2a')), false,
+      'default-off calls, proposals, and a refused approval create no transcript folder or journal');
     assert.equal(report.proposal.resultType, 'success');
     assert.equal(report.replacement.resultType, 'success');
     assert.match(report.proposal.textResultForLlm, /^Proposal only: nothing is activated\.[^\n]*\nProposal: A ask\nConfig: /);

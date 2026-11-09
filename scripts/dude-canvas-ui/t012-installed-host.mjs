@@ -4375,7 +4375,7 @@ async function listen(server) {
 }
 
 const RAW_DUDE_TOOLS = Object.freeze([
-  'read', 'edit', 'search', 'execute', 'todo', 'agent', 'dude_needs_you',
+  'read', 'edit', 'search', 'execute', 'todo', 'agent', 'dude_needs_you', 'dude_a2a_propose', 'dude_a2a_conversation',
 ]);
 const RAW_SPEC_LEAD_TOOLS = Object.freeze(['read', 'edit', 'search']);
 

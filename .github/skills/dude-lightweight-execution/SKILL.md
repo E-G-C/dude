@@ -46,6 +46,8 @@ Autonomous `dude-work` never mutates this lane through the CLI above. It calls t
 
 The boundary freshly rereads `tasks.md`, `.dude/state/task-state.json`, and the unique owner idea, recomputes every binding and identity it was handed, and applies all three as one all-or-restored transaction. Every failure returns one closed result: a refusal that leaves all three surfaces byte-for-byte unchanged, or an indeterminate rollback that is a run-wide hard stop. `dude-work` owns the autonomous learning governance that decides when such a request may be made.
 
+The closed `work-set` request also carries one Lightweight-only claim alternative, `terminal-fresh-claim`, for a terminal-qualified fresh admission: an unblocked `[~]` task stays `[~]`, with no event lines and one append-only owner-log marker. `dude-work` (`### Original-Owner Terminal Disposition And Fresh Admission`) decides when it may be requested; every other claim, resume, blocked, and tracked transition keeps its existing rules.
+
 ## Select And Route
 
 After ownership passes, read applicable spec, plan, and supporting artifacts. When a workflow selected an idea first, retain the inventory's returned exact numbered `ideaPath` and exact `spec_path:` binding; never rebuild an idea path from its slug. Stop if tasks are absent, malformed, or empty. Resume a clear `[~]` task first; otherwise select an eligible `[ ]` task, preferring a consistent generated Ready view, then respecting `[!]`, durable `deps:`, phase order, and `[P]` candidate work. `[P]` alone never authorizes fan-out; use `dude-parallel-dispatch` for that proof. Route through `dude-generic-routing`. Use `dude-work` only for continuous iteration.

@@ -15,7 +15,8 @@ const CORE_AGENTS_DIRECTORY = fileURLToPath(new URL('../../../agents/', import.m
 const GENERATED_AGENTS_DIRECTORY = fileURLToPath(new URL('../../../../.github/agents/', import.meta.url));
 const CONFIG = loadAgentModelConfig(CONFIG_PATH);
 const COPILOT_TOOLS = Object.freeze([
-  'read', 'edit', 'search', 'execute', 'todo', 'agent', 'dude_needs_you', 'workiq/*', 'workiq2/*',
+  'read', 'edit', 'search', 'execute', 'todo', 'agent', 'dude_needs_you', 'dude_a2a_propose', 'dude_a2a_conversation',
+  'workiq/*', 'workiq2/*',
 ]);
 const DEFAULT_TOOLS = Object.freeze(['read', 'edit', 'search', 'execute', 'todo', 'agent']);
 const CODING_AGENT_APPLY_TO = '.github/agents/dude-pack-coding-*.agent.md';
@@ -583,12 +584,12 @@ test('accepts exactly the current Copilot selectors and rejects unmappable selec
   }
 });
 
-test('projects the coordinator-only Needs You grant while Spec Lead keeps its existing scope', async () => {
+test('projects the coordinator-only Needs You and A2A proposal/conversation grants while Spec Lead keeps its existing scope', async () => {
   // Arrange
   const cases = [
     {
       stem: 'dude',
-      expectedTools: ['read', 'edit', 'search', 'execute', 'todo', 'agent', 'dude_needs_you'],
+      expectedTools: ['read', 'edit', 'search', 'execute', 'todo', 'agent', 'dude_needs_you', 'dude_a2a_propose', 'dude_a2a_conversation'],
     },
     {
       stem: 'dude-spec-lead',

@@ -745,6 +745,21 @@
     },
     "updated_at": "2026-11-03T06:50:26.000Z"
   },
+  ".dude/specs/089-feature-number-reservations/tasks.md": {
+    "glyphs": {
+      "T004@d7k2m9q4": "x",
+      "T005@f3n8r5v2": "x",
+      "T006@h6p4s9c7": "x",
+      "T007@j2w7b5m8": "x",
+      "T009@n5v8c2s6": "x",
+      "T010@q7m2v8c4": "x",
+      "T011@r8c4n6p2": "x",
+      "T012@s6h3w9k5": "x",
+      "T013@v4m7q2d8": "x",
+      "T008@l9r3q6t4": "~"
+    },
+    "updated_at": "2026-11-09T22:09:46.193Z"
+  },
   ".dude/specs/089-github-login-pack-reads/tasks.md": {
     "glyphs": {
       "T001@9e4b7c26": "x",
@@ -760,5 +775,14 @@
       "T001@5b7c2d90": "x"
     },
     "updated_at": "2026-11-02T02:13:21.000Z"
+  },
+  ".dude/specs/094-terminal-work-fresh-admission/tasks.md": {
+    "glyphs": {
+      "T001@6f4a8d21": "x",
+      "T005@e8c73a41": "x",
+      "T003@d7a105bc": "x",
+      "T004@c2f68e94": "x"
+    },
+    "updated_at": "2026-11-04T01:56:04.000Z"
   }
 }

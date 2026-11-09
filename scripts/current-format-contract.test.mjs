@@ -20,6 +20,7 @@ import {
   expandModelPacket,
   originalAvailableProjection,
   readRetentionEpisodeFixture,
+  renderPrivateModelProjection,
   withReferenceWorkspace,
 } from './fixtures/064-work-receipt-overflow-handling/model-view-test-helpers.mjs';
 import {
@@ -826,6 +827,30 @@ function staleRecoveryPhrases(section) {
   return STALE_RECOVERY_PHRASES
     .filter(([, pattern]) => pattern.test(section))
     .map(([label]) => `stale recovery phrase: ${label}`);
+}
+
+/**
+ * Prove that an unanchored section requirement depends on one exact clause:
+ * the clause occurs once in the section, the requirement passes, and deleting
+ * only that clause makes the requirement fail.
+ * @param {string} section
+ * @param {[string, RegExp[] | RegExp[][]]} requirement
+ * @param {string[]} clauses
+ * @param {string} context
+ */
+function assertClauseDeletionFalsifiers(section, requirement, clauses, context) {
+  const [label] = requirement;
+  // Soft wraps are presentation, so clauses are matched in unwrapped paragraphs.
+  const flat = unwrappedParagraphs(section);
+  assert.deepEqual(missingParagraphRequirements(flat, [requirement]), [], `${context}: ${label}`);
+  for (const clause of clauses) {
+    assert.equal(flat.split(clause).length - 1, 1, `${context}: ${label} has one exact clause ${JSON.stringify(clause)}`);
+    assert.deepEqual(
+      missingParagraphRequirements(flat.replace(clause, ''), [requirement]),
+      [label],
+      `${context}: deleting ${JSON.stringify(clause)} must fail ${label}`,
+    );
+  }
 }
 
 /** @param {string} relative @param {string} heading @param {string} ruleLine */
@@ -3263,7 +3288,8 @@ test('Work capacity guidance keeps inventory, raw admission, and model-view budg
       /Count admission promises no future byte fit/i,
     ]],
     ['lossless complete model evidence with only the established owner suffix', [
-      /`dude-work-model-view-v1`/i,
+      /`dude-work-model-view-v2` only when its complete canonical bytes are strictly smaller than `dude-work-model-view-v1` for the same evidence and owner suffix/i,
+      /so a tie keeps v1/i,
       /self-contained lossless projection/i,
       /exact, complete, validated verification or review payloads/i,
       /every ordered occurrence, original descriptor, and authority binding/i,
@@ -3271,18 +3297,45 @@ test('Work capacity guidance keeps inventory, raw admission, and model-view budg
       /all other metadata/i,
       /machine Inspection, captured bytes and hashes/i,
       /complete byte-identical event bodies through private packet-local current-run references/i,
-      /earlier literal task history/i,
+      /into earlier task history/i,
       /record order and duplicates/i,
       /unmatched records inline/i,
       /complete encoded item is smaller/i,
       /ineligible captures stay literal/i,
       /Rebuild event references within each actual packet/i,
-      /task history stays literal, and current-run references restore every original record/i,
+      /A v2 packet carries exactly `format`, `target`, `texts`, and `items`/,
+      /structures only exact canonical current-format history event lines/i,
+      /pools only whole byte-identical repeated strings at validated readable fields/i,
+      /pool a string only when its table entry, references, and metadata cost fewer bytes than the repeated literals/i,
+      /Both formats have an exact inverse and share every limit and budget below/i,
+      /v1 keeps task history literal, v2's structured spans restore its exact original bytes, and current-run references restore every original record/i,
       /maximal whole-event suffix/i,
       /omitted owner events are not inspected text/i,
       /do not prune or retire history or create persistent compaction state/i,
     ]],
   ]), []);
+  // The v1/v2 boundary is the intentional change: deleting the strict-smaller
+  // selection, the tie rule, the closed v2 shape, or the history restoration fails.
+  assertClauseDeletionFalsifiers(work, ['v1/v2 selection and literal-history boundary', [
+    /`dude-work-model-view-v2` only when its complete canonical bytes are strictly smaller than `dude-work-model-view-v1`/,
+    /so a tie keeps v1/,
+    /A v2 packet carries exactly `format`, `target`, `texts`, and `items`/,
+    /Both formats have an exact inverse/,
+    /v1 keeps task history literal, v2's structured spans restore its exact original bytes/,
+  ]], [
+    'only when its complete canonical bytes are strictly smaller than',
+    'so a tie keeps v1',
+    'A v2 packet carries exactly `format`, `target`, `texts`, and `items`.',
+    'Both formats have an exact inverse',
+    "v2's structured spans restore its exact original bytes",
+  ], `${RECOVERY_POLICY_OWNER} ## Inspection And Recovery`);
+  for (const [label, section] of [['work', work], ['commands', commands]]) {
+    assert.doesNotMatch(
+      section.replace(/\s+/g, ' '),
+      /earlier literal task history|task history stays (?:complete and )?literal|one self-contained `dude-work-model-view-v1` packet/i,
+      `${label}: no v1-only or always-literal task-history claim remains`,
+    );
+  }
 
   for (const exact of [
     '`6,291,456` bytes for the complete encoded CLI request',
@@ -3299,11 +3352,13 @@ test('Work capacity guidance keeps inventory, raw admission, and model-view budg
   }
   assert.deepEqual(missingParagraphRequirements(commands, [
     ['self-contained complete model projection', [
-      /`dude-work-model-view-v1`/, /self-contained/i, /lossless/i,
+      /one self-contained packet and one Assessment/i, /lossless/i,
+      /That packet uses `dude-work-model-view-v2` only if, for the same evidence and owner suffix, v2 is strictly shorter in complete canonical bytes than `dude-work-model-view-v1`/,
+      /a tie keeps v1/i,
       /exact, complete, validated verification or review payloads and complete byte-identical event bodies/i,
-      /private packet-local current-run references into earlier literal task history/i,
+      /private packet-local current-run references into earlier task history/i,
       /Every original byte, descriptor, ordered occurrence, and authority binding/i,
-      /Task history stays complete and literal/i,
+      /Stored task history is never rewritten: v1 carries it literally and v2 restores its exact bytes/i,
       /current-run model view stays complete and exactly reconstructible/i,
     ]],
     ['whole canonical packet charged independently of attestation checks', [
@@ -3327,6 +3382,15 @@ test('Work capacity guidance keeps inventory, raw admission, and model-view budg
       /no task or lane write/i, /no future byte fit/i,
     ]],
   ]), []);
+  assertClauseDeletionFalsifiers(commands, ['docs v1/v2 selection and stored-history boundary', [
+    /That packet uses `dude-work-model-view-v2` only if, for the same evidence and owner suffix, v2 is strictly shorter in complete canonical bytes than `dude-work-model-view-v1`/,
+    /a tie keeps v1/,
+    /Stored task history is never rewritten: v1 carries it literally and v2 restores its exact bytes/,
+  ]], [
+    'v2 is strictly shorter in complete canonical bytes than',
+    'a tie keeps v1',
+    'v2 restores its exact bytes',
+  ], 'docs/commands.md ### `@dude work`');
   assert.deepEqual(missingParagraphRequirements(runtime, [
     ['exact known Lightweight growth before usable permits', [
       /autonomous Lightweight permit becomes usable/i,
@@ -3437,33 +3501,49 @@ test('Work delivery charges raw source entries before normalization or payload s
   });
 });
 
-test('Work delivery emits the complete closed packet with reversible trusted frames and original bytes', () => {
+test('Work delivery emits the complete closed packet with reversible trusted frames and original bytes', async () => {
+  /** @type {any} */
+  let inspection = null;
   withReferenceWorkspace(({ root, input, filePreimages }) => {
     const request = { trigger: 'explicit-inspection', input };
     const response = workRuntime.runCommand('inspect', request);
     assert.deepEqual(Object.keys(response), ['inspection']);
     assert.equal(workRuntime.validateRecoveryRuntimeResultV1('inspect', request, response), true);
-    const inspection = response.inspection;
-    const packet = workRuntime.modelPacket(inspection);
-    assert.ok(packet);
-    assert.equal(packet.format, 'dude-work-model-view-v1');
-    assert.deepEqual(Object.keys(packet).sort(), ['format', 'items', 'target']);
-    assert.deepEqual(new Set(packet.items.map(item => item.tag)),
-      new Set(['literal', 'current-run', 'verification', 'review']));
-    const currentRun = packet.items.find(item => item.tag === 'current-run');
-    assert.ok(currentRun.body.records.length > 0);
-    assert.ok(currentRun.body.records.every(record => Array.isArray(record) && record.length === 2));
-    const expanded = expandModelPacket(packet);
-    assert.deepEqual(expanded, originalAvailableProjection(inspection));
-    assert.ok(packet.items.length <= expanded.items.length);
-    assert.ok(expanded.items.length <= inspection.items.length);
-    assert.ok(inspection.items.length <= workRuntime.limits.items);
-    assert.ok(Buffer.byteLength(workRuntime.canonicalJson(packet)) <= workRuntime.limits.bytes);
-    assert.deepEqual(workRuntime.modelPacket(workRuntime.buildInspection(inspection.target, inspection.items)), packet);
+    inspection = response.inspection;
     for (const [relative, bytes] of filePreimages) {
       assert.deepEqual(fs.readFileSync(path.join(root, relative)), bytes, relative);
     }
   });
+  const packet = workRuntime.modelPacket(inspection);
+  assert.ok(packet);
+  // Both closed formats render the same complete evidence through the unchanged
+  // production renderer; only a strictly smaller v2 replaces v1.
+  const v1 = await renderPrivateModelProjection(inspection.target, inspection.items, { modelView: 'v1' });
+  const v2 = await renderPrivateModelProjection(inspection.target, inspection.items, { modelView: 'v2' });
+  /** @param {unknown} value */
+  const bytes = (value) => Buffer.byteLength(workRuntime.canonicalJson(value));
+  assert.equal(v1.format, 'dude-work-model-view-v1');
+  assert.deepEqual(Object.keys(v1).sort(), ['format', 'items', 'target']);
+  assert.deepEqual(new Set(v1.items.map(item => item.tag)),
+    new Set(['literal', 'current-run', 'verification', 'review']), 'v1 keeps task history literal');
+  assert.equal(v2.format, 'dude-work-model-view-v2');
+  assert.deepEqual(Object.keys(v2).sort(), ['format', 'items', 'target', 'texts']);
+  assert.deepEqual(new Set(v2.items.map(item => item.tag)),
+    new Set(['literal', 'task-history', 'current-run', 'verification', 'review']), 'v2 structures canonical task history');
+  assert.ok(bytes(v2) < bytes(v1), `the reference evidence saves bytes as v2: ${bytes(v2)} < ${bytes(v1)}`);
+  assert.deepEqual(packet, v2, 'the strictly smaller complete candidate is the one emitted packet');
+  for (const candidate of [v1, v2]) {
+    const currentRun = candidate.items.find(item => item.tag === 'current-run');
+    assert.ok(currentRun.body.records.length > 0);
+    assert.ok(currentRun.body.records.every(record => Array.isArray(record) && record.length === 2));
+    const expanded = expandModelPacket(candidate);
+    assert.deepEqual(expanded, originalAvailableProjection(inspection), `${candidate.format} has the exact inverse`);
+    assert.ok(candidate.items.length <= expanded.items.length);
+    assert.ok(expanded.items.length <= inspection.items.length);
+    assert.ok(bytes(candidate) <= workRuntime.limits.bytes);
+  }
+  assert.ok(inspection.items.length <= workRuntime.limits.items);
+  assert.deepEqual(workRuntime.modelPacket(workRuntime.buildInspection(inspection.target, inspection.items)), packet);
 });
 
 test('Work delivery charges complete canonical packet bytes and preserves descriptor-only late overflow', () => {
@@ -7036,7 +7116,7 @@ test('Feature 074 T004: readable handoff guidance is section-bound and deletion-
         /neither expands alternative authority nor automatically restarts Work or Ship/,
       ]],
       ['docs bind the single readable packet', 'Before every task start or resume', [
-        /one self-contained `dude-work-model-view-v1` packet/,
+        /one self-contained packet and one Assessment bound to that Inspection's `evidenceHash`/,
         /Readable text and bindings belong in that same packet before the learning exchange is bound/,
         /no late attachment or second packet can amend it/,
       ]],
@@ -7236,6 +7316,7 @@ test('T003 the adapter owns every ordinary Work runtime route', () => {
         /same live supervisor, adapter, current run, captures, pending effects, and replay ledger/,
         /returns one terminal `ended` or `hard-stop` result/,
         /narrow original-owner release below can make that hard stop non-orphan without turning it into an `ended` result/,
+        /the terminal disposition below can do the same for a hard stop that passes its proof gate/,
         /other unresolved hard stops retain their existing orphan behavior/,
         /optional `dependencies\.exchange\(challenge\)` capability/,
         /exactly one bound `assessment`, `specialist-pair`, or `learning-review` challenge and response at a time/,
@@ -7267,7 +7348,7 @@ test('T003 the adapter owns every ordinary Work runtime route', () => {
         /malformed envelopes and exchange failures use their own fixed runner-owned detail/,
         /none may expose rejected strings, paths, evidence, hashes, exception messages, unknown field names, or validator messages/,
         /payload rejection enters `### Original-Owner First-Assessment Finalization` only at that section's exact provenance and eligibility boundary/,
-        /Otherwise both rejection labels keep the existing terminal orphan hard stop with no retry, correction, cleanup, or path normalization/,
+        /Otherwise both rejection labels keep the existing terminal hard stop with no retry, correction, or path normalization, and only the original owner's terminal disposition can release its pair/,
       ],
     ]],
     ['autonomous attestation is cooperative and host-derived', [
@@ -7283,6 +7364,15 @@ test('T003 the adapter owns every ordinary Work runtime route', () => {
     ]],
   ]);
   assert.deepEqual(failures, [], `${ADAPTER_OWNER} ${ADAPTER_BOUNDARY_SECTION}: adapter ownership contract`);
+  // The terminal disposition is the intentional new release boundary: deleting
+  // either clause that admits it fails, so it cannot silently widen or vanish.
+  assertClauseDeletionFalsifiers(boundary, ['only the original owner\'s proof-gated disposition joins the narrow release', [
+    [/the terminal disposition below can do the same for a hard stop that passes its proof gate/],
+    [/only the original owner's terminal disposition can release its pair/],
+  ]], [
+    'the terminal disposition below can do the same for a hard stop that passes its proof gate',
+    'only the original owner\'s terminal disposition can release its pair',
+  ], `${ADAPTER_OWNER} ${ADAPTER_BOUNDARY_SECTION}`);
 
   // The documented count is bound to the runtime's closed operation list, so a
   // widened or narrowed adapter surface cannot leave the prose behind.
@@ -7322,7 +7412,18 @@ test("T004 production Work topology keeps exactly ten operations and five govern
   assert.deepEqual(actions, ["bind-alternative", "controlled-end", "resume-learning", "review-learning", "verify-no-progress"]);
   assert.match(runner, /export async function runHostAdapter/);
   assert.match(runner, /adapter = createHostAdapter\(/);
-  assert.match(runner, /runCommand\(command, lowLevelRequest\)/);
+  // The adapter owns the one built-in runtime port and observes its actual
+  // boundary; the runner wraps no runtime of its own and supplies only the
+  // trusted observer. Its closed dependencies add the driver's retention sink
+  // and single-use start observation, never a route or an operation.
+  assert.match(adapter, /let runtimeInvoke = \(command, request\) => \(\{\s+status: 'returned',\s+value: runRecoveryCommand\(command, request\),\s+\}\);/);
+  assert.match(adapter, /const runtimeIsDefault = !Object\.hasOwn\(dependencies, 'runtime'\);/);
+  assert.match(runner, /runtimeEvidence: observeRuntime,/);
+  assert.doesNotMatch(runner, /invoke\(command, lowLevelRequest\)|runCommand\(command, lowLevelRequest\)/, 'the runner wraps no runtime port');
+  assert.match(runner, /\['checkpoint', 'runtime', 'laneOwner', 'exchange', 'retentionSink', 'requestStart'\]\.includes\(field\)/);
+  // The terminal fence is a lifecycle step on the original handle, not an eleventh operation.
+  assert.match(adapter, /^ {4}sealTerminalOwner\(\) \{$/m);
+  assert.equal(operations.includes('seal-terminal-owner'), false);
   assert.match(runner, /return finish\(endedRow\);/);
   assert.match(runner, /describeUnattendedHalt/);
 });
@@ -7470,10 +7571,17 @@ test('T003 checkpoint lifecycle keeps one exclusive claim and confirmed bounded-
     ['a failed clear blocks replacement instead of reporting an end', [
       [/A failed clear never reports an end/, /blocks replacement work/],
     ]],
-    ['the automatic release is one pre-authorization exception and broadens no other hard stop', [
+    ['the automatic releases are the two original-owner proof gates and broaden no other hard stop', [
       [
-        /only automatic pre-authorization hard-stop release is `### Original-Owner First-Assessment Finalization`/,
-        /does not broaden any later or unrelated hard stop/,
+        /The runner's automatic hard-stop releases are `### Original-Owner First-Assessment Finalization` and, when the driver supplies its retention sink, `### Original-Owner Terminal Disposition And Fresh Admission`/,
+        /each stays inside its own proof gate, and no other hard stop gains a release/,
+      ],
+    ]],
+    ['the terminal disposition supplies no manual-cleanup consent and leaves remainders to the manual rules', [
+      [
+        /The original owner's terminal disposition is separate from manual cleanup/,
+        /supplies no manual-cleanup consent or supervisor-absence confirmation/,
+        /any artifact it leaves behind falls under the manual rules in this section/,
       ],
     ]],
     ['age is diagnostic and authorizes nothing', [
@@ -7506,6 +7614,19 @@ test('T003 checkpoint lifecycle keeps one exclusive claim and confirmed bounded-
     ]],
   ]);
   assert.deepEqual(failures, [], `${ADAPTER_OWNER} ${ADAPTER_LIFECYCLE_SECTION}: checkpoint lifecycle contract`);
+  // The closed release set and the separate manual consent are the intentional
+  // change: deleting any clause that bounds them fails.
+  assertClauseDeletionFalsifiers(lifecycle, ['the release set stays closed and manual consent stays separate', [
+    [
+      /when the driver supplies its retention sink, `### Original-Owner Terminal Disposition And Fresh Admission`/,
+      /no other hard stop gains a release/,
+    ],
+    [/supplies no manual-cleanup consent or supervisor-absence confirmation/],
+  ]], [
+    'when the driver supplies its retention sink',
+    'no other hard stop gains a release',
+    'supplies no manual-cleanup consent or supervisor-absence confirmation',
+  ], `${ADAPTER_OWNER} ${ADAPTER_LIFECYCLE_SECTION}`);
 });
 
 test('T003 the coordinator carries one terse adapter pointer and no adapter detail', () => {
@@ -7757,6 +7878,7 @@ const DRIVER_COMMAND = 'node .github/skills/dude-work/driver.mjs';
 // One documented form per subcommand, plus the learning-review and cancel forms, each with every flag it requires.
 const DRIVER_COMMAND_FORMS = [
   ['claim', ['--root', '--spec', '--task']],
+  ['claim', ['--root', '--spec', '--task', '--terminal-evidence']],
   ['run', ['--request']],
   ['assess', ['--root', '--challenge', '--input']],
   ['respond', ['--root', '--challenge', '--tester', '--reviewer', '--changed']],
@@ -8002,6 +8124,458 @@ test('Feature 090 T001: the cookbook documents the learning-review response, its
     'the learning step carries its exact command form',
   );
   assert.equal(cookbook.split('--learning-review').length - 1, 1, 'one documented learning-review command');
+});
+
+// --- Feature 094: terminal Work disposition and fresh admission -----------------
+
+const TERMINAL_WORK_SECTION = '### Original-Owner Terminal Disposition And Fresh Admission';
+const TERMINAL_WORK_COOKBOOK_SECTION = '### Claim an in-progress task from its terminal handoff';
+const TERMINAL_WORK_DOC_SECTION = '#### Terminal stops and fresh admission';
+// Detail only the Work owner and its cookbook state; pointers and user docs never restate it.
+// Each sample proves its pattern is live, so no absence check passes vacuously.
+const TERMINAL_WORK_DETAIL_MARKERS = [
+  ['the driver option', /--terminal-evidence\b/, 'claim --terminal-evidence <exchange>/terminal-evidence.json'],
+  ['run-local file names', /\b(?:terminal-(?:evidence|disposition|original|controls|fence|effects)|runner-request-used)\.json\b/, 'runner-request-used.json'],
+  ['missing-proof kinds', /`(?:owner-fence|exact-control-pair|effect-settlement|retained-source|current-target|learning-authority|removal-absence)`/, 'kind `effect-settlement`'],
+  ['the lane mutation identity field', /`admissionIdentity`/, 'its `admissionIdentity`'],
+];
+
+const TERMINAL_WORK_REQUIREMENTS = [
+  ['the subsection needs the driver sink, keeps the first-Assessment release first, and keeps the manual paths distinct',
+    'This subsection applies when the bundled driver supplies the runner\'s retention sink', [[
+      /without the sink a call produces no terminal evidence and behaves as before/,
+      /`### Original-Owner First-Assessment Finalization` keeps precedence and is unchanged/,
+      /never enters this disposition: at most one clear follows a stop/,
+      /the sink receives only the ordinary captures, never terminal proof, so that release leaves no terminal handoff/,
+      /Neither path is general cleanup or fresh-admission permission/,
+      /`## Checkpoint Lifecycle And Manual Cleanup` and `## Explicit Manual Terminal Resolution` stay unchanged and distinct: this disposition supplies none of their consents or proofs, and they supply none of its/,
+    ]]],
+  ['the live original owner fences, qualifies only settled built-in effects, retains manifest last, and removes its exact pair once',
+    '**Disposition.**', [[
+      /the still-live original owner irreversibly fences its own admitted capability before a hard stop returns/,
+      /refuses any later run, end, handoff, or resume of that invocation, and accepted state, counters, and history stay unchanged/,
+      /qualifies effects only from actual entered built-in routes: built-in reads, a pure authorization refusal, and fully receipted synchronous lane effects/,
+      /An injected port, accepted dispatch authority or any specialist pair, pending work, an unknown writer, a handoff, an outstanding exchange, or a lost identity makes disposition refuse/,
+      /retains immutable run-local evidence outside the workspace/,
+      /then a manifest last/,
+      /rereads every member against the canonical bytes fixed before the sink received them/,
+      /rechecks the current owner, task, requirement, and lane surfaces against that retained basis/,
+      /remove the exact pair once through the existing guarded clear, checkpoint first and claim second with both freshly absent/,
+    ]]],
+  ['the original stop returns once with an auxiliary disposition and one first missing proof',
+    'The runner returns the original hard stop once and nonzero', [[
+      /with only an auxiliary `terminalDisposition`/,
+      /`cleanup: 'cleared'` with `orphan: false`/,
+      /resource release alone, never task success, a discharged obligation, continuation, or a new invocation/,
+      /exactly one first missing proof, `\{kind, subject, required, nextOwnerAction\}`/,
+      /`owner-fence`, `exact-control-pair`, `effect-settlement`, `retained-source`, `current-target`, `learning-authority`, `capacity`, or `removal-absence`/,
+      /Known partial removal and every remaining artifact are preserved, and nothing retries or restores a removed control/,
+      /Run directories are private to their owner on POSIX/,
+    ]]],
+  ['fresh admission needs a new explicit request and the exact known handoff and runs fixed-order gates',
+    '**Fresh admission.**', [[
+      /requires a new explicit execution request; an old request, cancellation, retrospective question, saved state, or cleanup consent supplies none/,
+      /only for the same unblocked `\[~\]` task, and only with the exact terminal handoff the coordinator already holds from the original run/,
+      /the driver never searches old sessions, temporary directories, or checkpoints/,
+      /imports no accepted state and takes its captures from that handoff, so it accepts no separate state or retained-evidence source/,
+      /current target and normal precedence; the original fence, disposition, and retained files; unchanged requirements and lane surfaces; fresh absence of both controls; retained-occurrence authority and settled effects; learning; then capacity/,
+      /no repeat uses ordinary Assessment, an eligible repeat uses the existing `resume-learning` route, and later or resolved learning refuses before any lane write/,
+    ]]],
+  ['an eligible admission is one same-glyph marker claim with a single-use request and fresh accounting',
+    'An eligible admission proceeds without a further prompt', [[
+      /one Lightweight-only `terminal-fresh-claim` mutation in place of `initial-claim`: `~` to `~`, no events, one append-only owner-log marker/,
+      /an `admissionIdentity` the issuer derives from fresh evidence, never one merely supplied/,
+      /The runner request is single use/,
+      /`run` refuses a relocated copy, records its one start, and refuses spec, plan, task-unit, or lane drift before taking ownership/,
+      /A partly committed setup or start keeps its actual effects and is never erased to retry/,
+      /fresh identities and accounting under its current policy, and the old state, counters, obligations, and learning remain evidence only/,
+    ]]],
+  ['finishing old work starts nothing, unproved and refused runs stay refused, and refusals are reported once',
+    'Finishing an old invocation never starts fresh admission', [[
+      /A legacy run \(including one without the driver's retention sink\) or a terminal handoff with a missing or mismatched manifest or disposition, or a mismatched fence file, lacks proof of an original fence and published handoff, so admission reports `owner-fence`/,
+      /A fenced run whose disposition refused, for example because dispatch authority escaped, stays fenced and refused/,
+      /The handoff it retained admits nothing, and admission repeats the disposition's own missing proof, such as `effect-settlement`, rather than a different diagnosis/,
+      /the driver supplies no retrospective host-death or post-dispatch effect proof/,
+      /report its one missing proof once and relay the named owner action; never ask the user for technical facts or cleanup consent/,
+      /not a workflow, daemon, registry, or hidden live owner/,
+    ]]],
+];
+
+const TERMINAL_WORK_FALSIFIERS = [
+  ['the subsection needs the driver sink, keeps the first-Assessment release first, and keeps the manual paths distinct', 'at most one clear follows a stop'],
+  ['the subsection needs the driver sink, keeps the first-Assessment release first, and keeps the manual paths distinct', 'this disposition supplies none of their consents or proofs, and they supply none of its'],
+  ['the live original owner fences, qualifies only settled built-in effects, retains manifest last, and removes its exact pair once', 'accepted dispatch authority or any specialist pair'],
+  ['the live original owner fences, qualifies only settled built-in effects, retains manifest last, and removes its exact pair once', 'then a manifest last'],
+  ['the live original owner fences, qualifies only settled built-in effects, retains manifest last, and removes its exact pair once', 'checkpoint first and claim second with both freshly absent'],
+  ['the original stop returns once with an auxiliary disposition and one first missing proof', 'never task success, a discharged obligation, continuation, or a new invocation'],
+  ['the original stop returns once with an auxiliary disposition and one first missing proof', 'nothing retries or restores a removed control'],
+  ['fresh admission needs a new explicit request and the exact known handoff and runs fixed-order gates', 'an old request, cancellation, retrospective question, saved state, or cleanup consent supplies none'],
+  ['fresh admission needs a new explicit request and the exact known handoff and runs fixed-order gates', 'so it accepts no separate state or retained-evidence source'],
+  ['fresh admission needs a new explicit request and the exact known handoff and runs fixed-order gates', 'later or resolved learning refuses before any lane write'],
+  ['an eligible admission is one same-glyph marker claim with a single-use request and fresh accounting', 'never one merely supplied'],
+  ['an eligible admission is one same-glyph marker claim with a single-use request and fresh accounting', 'records its one start'],
+  ['an eligible admission is one same-glyph marker claim with a single-use request and fresh accounting', 'is never erased to retry'],
+  ['finishing old work starts nothing, unproved and refused runs stay refused, and refusals are reported once', 'stays fenced and refused'],
+  ['finishing old work starts nothing, unproved and refused runs stay refused, and refusals are reported once', 'rather than a different diagnosis'],
+  ['finishing old work starts nothing, unproved and refused runs stay refused, and refusals are reported once', 'never ask the user for technical facts or cleanup consent'],
+];
+
+test('Feature 094 T004: Work owns terminal disposition and fresh admission in one section-bound, deletion-falsifiable subsection', () => {
+  const owner = read(ADAPTER_OWNER);
+  const section = markdownSection(owner, TERMINAL_WORK_SECTION);
+  assertSectionBoundGuidance(section, TERMINAL_WORK_REQUIREMENTS, TERMINAL_WORK_FALSIFIERS, `${ADAPTER_OWNER} ${TERMINAL_WORK_SECTION}`);
+
+  // The documented proof kinds, lane reason, and fence are the runtime's own closed values.
+  const recovery = read('src/skills/dude-work/recovery.mjs');
+  assert.deepEqual(frozenRuntimeList(recovery, 'TERMINAL_MISSING_PROOF_KINDS_V1'), [
+    'owner-fence', 'exact-control-pair', 'effect-settlement', 'retained-source',
+    'current-target', 'learning-authority', 'capacity', 'removal-absence',
+  ]);
+  assert.match(recovery, /const TERMINAL_FRESH_CLAIM_REASON = 'terminal-fresh-claim';/);
+  assert.match(read('src/skills/dude-lightweight-execution/board.mjs'), /const TERMINAL_FRESH_CLAIM_REASON = 'terminal-fresh-claim';/);
+  assert.match(read(ADAPTER_SOURCE), /if \(sealed\) return hardStop\(current, 'owner-fenced'\);/);
+
+  // The changed neighbouring owner sentences, each deletion-falsifiable.
+  const boundary = adapterOwnerSection(ADAPTER_BOUNDARY_SECTION);
+  assertClauseDeletionFalsifiers(boundary, ['terminal fencing is lifecycle framing, never an eleventh operation', [
+    /framed by the adapter's own begin, worker handoff, resume, end, and terminal-fence lifecycle steps, none of which is an eleventh operation/,
+  ]], ['none of which is an eleventh operation'], `${ADAPTER_OWNER} ${ADAPTER_BOUNDARY_SECTION}`);
+  assertClauseDeletionFalsifiers(boundary, ['retained inputs are the adapter-observed originals and a terminal claim takes the handoff captures', [
+    [/Preserve original raw inputs exactly as the adapter's runtime boundary received them, which the runner observes and the driver's retention sink publishes/],
+    [/A terminal-qualified claim instead takes its captures from the original run's terminal handoff/],
+  ]], [
+    'exactly as the adapter\'s runtime boundary received them',
+    'A terminal-qualified claim instead takes its captures from the original run\'s terminal handoff',
+  ], `${ADAPTER_OWNER} ${ADAPTER_BOUNDARY_SECTION}`);
+  assertClauseDeletionFalsifiers(markdownSection(owner, '### Refusal Reporting'), ['a missing-proof report is auxiliary and reclassifies nothing', [
+    /A missing-proof report from `### Original-Owner Terminal Disposition And Fresh Admission` is auxiliary/,
+    /never replaces or reclassifies that result's reason, `blocker`, `capacity`, `haltReport`, accepted state, or counters, and it adds no stop reason/,
+    /Its `subject` is a validated target, source, or artifact, never rejected model text/,
+  ]], ['it adds no stop reason', 'never rejected model text'], `${ADAPTER_OWNER} ### Refusal Reporting`);
+  assertClauseDeletionFalsifiers(adapterOwnerSection(ADAPTER_CONTINUITY_SECTION), ['a fresh invocation restores no prior supervisor or authority', [
+    /A new explicit request may start a fresh invocation through `### Original-Owner Terminal Disposition And Fresh Admission`; it restores no supervisor, identity, state, or authority/,
+  ]], ['it restores no supervisor, identity, state, or authority'], `${ADAPTER_OWNER} ${ADAPTER_CONTINUITY_SECTION}`);
+
+  // The explicit manual paths stay outside Work and grant no fresh claim.
+  const manual = markdownSection(owner, '## Explicit Manual Terminal Resolution');
+  assert.deepEqual(
+    TERMINAL_WORK_DETAIL_MARKERS.filter(([, pattern]) => pattern.test(manual)).map(([label]) => label),
+    [],
+    'Explicit Manual Terminal Resolution names no fresh-admission mechanism',
+  );
+  assert.doesNotMatch(manual.replace(/\s+/g, ' '), /terminal-fresh-claim|fresh claim (?:is|becomes) (?:allowed|permitted|available)/i);
+  assert.doesNotMatch(
+    markdownSection(owner, '## Checkpoint Lifecycle And Manual Cleanup').replace(/\s+/g, ' '),
+    /terminal-fresh-claim|--terminal-evidence/,
+    'manual cleanup grants no terminal-qualified claim',
+  );
+});
+
+test('Feature 094 T004: Ship, intake, coordinator, and lane carry only pointers to the Work owner', () => {
+  const intake = markdownSection(read('src/skills/dude-work-intake/SKILL.md'), '## Ship');
+  assertSectionBoundGuidance(intake, [
+    ['a new explicit request goes to Work with the exact handoff and Work owns the outcome',
+      'When an earlier Work hard stop left an unblocked in-progress task', [[
+        /a new explicit Ship or Work request for that target passes the existing gates, then goes to Work with the exact terminal handoff the original run produced, when the coordinator holds it/,
+        /Work owns the proof \(`dude-work` `### Original-Owner Terminal Disposition And Fresh Admission`\) and uses an eligible admission automatically/,
+        /its one missing-proof report, naming the affected proof and the owner action, is the outcome, returned unchanged like any Work outcome/,
+        /Never ask the user to supply technical facts or give cleanup consent/,
+        /Intake decides that a request is new and explicit: an old request, cancellation, retrospective question, saved file, or the end of an old invocation never qualifies/,
+      ]]],
+  ], [
+    ['a new explicit request goes to Work with the exact handoff and Work owns the outcome', 'uses an eligible admission automatically'],
+    ['a new explicit request goes to Work with the exact handoff and Work owns the outcome', 'Never ask the user to supply technical facts or give cleanup consent'],
+    ['a new explicit request goes to Work with the exact handoff and Work owns the outcome', 'or the end of an old invocation never qualifies'],
+  ], 'src/skills/dude-work-intake/SKILL.md ## Ship');
+
+  const lane = markdownSection(read('src/skills/dude-lightweight-execution/SKILL.md'), '## Autonomous Work Lane Wrapper');
+  assertSectionBoundGuidance(lane, [
+    ['one Lightweight-only same-glyph claim alternative whose use Work decides',
+      'The closed `work-set` request also carries one Lightweight-only claim alternative', [[
+        /`terminal-fresh-claim`, for a terminal-qualified fresh admission/,
+        /an unblocked `\[~\]` task stays `\[~\]`, with no event lines and one append-only owner-log marker/,
+        /`dude-work` \(`### Original-Owner Terminal Disposition And Fresh Admission`\) decides when it may be requested/,
+        /every other claim, resume, blocked, and tracked transition keeps its existing rules/,
+      ]]],
+  ], [
+    ['one Lightweight-only same-glyph claim alternative whose use Work decides', 'decides when it may be requested'],
+    ['one Lightweight-only same-glyph claim alternative whose use Work decides', 'every other claim, resume, blocked, and tracked transition keeps its existing rules'],
+  ], 'src/skills/dude-lightweight-execution/SKILL.md ## Autonomous Work Lane Wrapper');
+
+  const coordinator = read('src/agents/dude.agent.md');
+  const ship = markdownSection(coordinator, '## Ship');
+  const work = markdownSection(coordinator, '## Work');
+  assertSectionBoundGuidance(ship, [
+    ['the coordinator passes only the exact handoff and returns Work\'s one report',
+      'For a new explicit Ship or Work request for the same in-progress task', [[
+        /automatically pass only the original run's exact terminal handoff to `dude-work`'s terminal-qualified fresh admission/,
+        /never search for one or ask the user for technical facts or cleanup consent/,
+        /Return Work's one missing-proof report unchanged if admission is refused/,
+        /finishing the old invocation never starts a new one/,
+      ]]],
+  ], [
+    ['the coordinator passes only the exact handoff and returns Work\'s one report', 'never search for one or ask the user for technical facts or cleanup consent'],
+    ['the coordinator passes only the exact handoff and returns Work\'s one report', 'finishing the old invocation never starts a new one'],
+  ], 'src/agents/dude.agent.md ## Ship');
+  assertSectionBoundGuidance(work, [
+    ['the Work owner holds the live-owner fence and the other release paths stay distinct',
+      'For autonomous hard stops while the original owner is live', [[
+        /`\.github\/skills\/dude-work\/SKILL\.md` owns fencing, immutable evidence retention, and proof-gated release of exact controls/,
+        /unfenced legacy runs, manual orphan cleanup, first-Assessment release, and Explicit Manual Terminal Resolution remain unchanged and distinct/,
+      ]]],
+  ], [
+    ['the Work owner holds the live-owner fence and the other release paths stay distinct', 'remain unchanged and distinct'],
+  ], 'src/agents/dude.agent.md ## Work');
+
+  // Each pointer stays a pointer: bounded, and free of the owner's mechanism.
+  for (const [label, block] of [
+    ['intake Ship pointer', anchoredRuleBlocks(intake, 'When an earlier Work hard stop left')[0].normalized],
+    ['lane pointer', anchoredRuleBlocks(lane, 'The closed `work-set` request also carries')[0].normalized],
+    ['coordinator Ship pointer', anchoredRuleBlocks(ship, 'For a new explicit Ship or Work request')[0].normalized],
+    ['coordinator Work pointer', anchoredRuleBlocks(work, 'For autonomous hard stops while')[0].normalized],
+  ]) {
+    assert.ok(Buffer.byteLength(block, 'utf8') <= 800, `${label} is ${Buffer.byteLength(block, 'utf8')} bytes (limit 800)`);
+    assert.deepEqual(
+      TERMINAL_WORK_DETAIL_MARKERS.filter(([, pattern]) => pattern.test(block)).map(([detail]) => detail),
+      [],
+      `${label} restates no owner detail`,
+    );
+  }
+  for (const [label, pattern, sample] of TERMINAL_WORK_DETAIL_MARKERS) {
+    assert.match(sample, pattern, `${label}: the pattern must be live`);
+  }
+});
+
+test('Feature 094 T004: the cookbook owns the terminal-evidence claim, its files, and its outcomes, bound to the driver', () => {
+  const cookbook = read(DRIVER_COOKBOOK);
+  const driver = read(DRIVER_SOURCE);
+  const recovery = read('src/skills/dude-work/recovery.mjs');
+  const runner = read(ADAPTER_RUNNER_SOURCE);
+
+  // The one new claim option, declared only on claim and exclusive of carried state and captures.
+  const declared = declaredDriverFlags();
+  assert.deepEqual(
+    [...declared.entries()].filter(([, flags]) => flags.has('--terminal-evidence')).map(([command]) => command),
+    ['claim'],
+  );
+  assert.match(driver, /'--terminal-evidence excludes --state and --retained-evidence: /);
+  const claimSection = markdownSection(cookbook, TERMINAL_WORK_COOKBOOK_SECTION);
+  assertSectionBoundGuidance(claimSection, [
+    ['only a new explicit request uses the exact reported handoff, read without search, and never with state or captures',
+      'Use this form only for a new explicit Work or Ship request', [[
+        /for the unblocked `\[~\]` task whose earlier run stopped with a `disposed` terminal disposition/,
+        /an old request, a cancellation, a question about the stop, a saved file, or the end of the old run never is/,
+        /Pass the exact `terminalEvidence` path that run reported/,
+      ]]],
+    ['the claim reads only fixed files and refuses combination with carried state or captures',
+      'The driver reads that manifest and its fixed sibling files', [[
+        /`terminal-disposition\.json`, `terminal-original\.json`, `retained-evidence\.json`, `terminal-controls\.json`, `terminal-fence\.json`, and `terminal-effects\.json`, and nothing else/,
+        /it never searches sessions, temporary directories, or checkpoints for a handoff/,
+        /A file with another name exits 2 at stage `terminal-evidence`/,
+        /Combining the option with `--state` or `--retained-evidence` exits 64/,
+      ]]],
+    ['admission is read-only, fixed-order, and stops at its first missing proof',
+      'Admission is read-only', [[
+        /the current target and normal precedence; the original fence, disposition, and retained files; unchanged spec, plan, task unit, and lane surfaces; fresh absence of both original controls; retained-occurrence authority and settled effects; learning; and capacity/,
+        /The first failed check exits 2 at stage `admission` with one `missingProof`, and nothing is written to the workspace/,
+      ]]],
+    ['the request is single use, bound by the claim report, and consumed at its real start',
+      'The marker consumes the handoff', [[
+        /a second claim from it exits 2 with `current-target`/,
+        /`run` accepts it only from the claim directory that issued it, with unchanged bytes and no `--retained-evidence`; otherwise it exits 2 before creating anything/,
+        /At its real start `run` creates `runner-request-used\.json` beside the request, and every later `run` of that request exits 2 as already used, even after a failed or uncertain start/,
+        /stops the run as `hard-stop`\/`request-invalid` before the runner takes ownership, and the request stays used/,
+        /Nothing erases a committed marker or start record to retry/,
+      ]]],
+    ['a refusal is reported once without asking for facts or consent',
+      'Report the proof once and relay its `nextOwnerAction`', [[
+        /Do not ask the user to fill the gap, since a user's facts or cleanup consent supply no proof, and do not retry the claim to get a different answer/,
+        /When the original disposition was itself refused, admission reports that disposition's kind and subject/,
+      ]]],
+  ], [
+    ['only a new explicit request uses the exact reported handoff, read without search, and never with state or captures', 'or the end of the old run never is'],
+    ['the claim reads only fixed files and refuses combination with carried state or captures', 'and nothing else'],
+    ['the claim reads only fixed files and refuses combination with carried state or captures', 'exits 64'],
+    ['admission is read-only, fixed-order, and stops at its first missing proof', 'nothing is written to the workspace'],
+    ['the request is single use, bound by the claim report, and consumed at its real start', 'even after a failed or uncertain start'],
+    ['the request is single use, bound by the claim report, and consumed at its real start', 'Nothing erases a committed marker or start record to retry'],
+    ['a refusal is reported once without asking for facts or consent', 'since a user\'s facts or cleanup consent supply no proof'],
+  ], `${DRIVER_COOKBOOK} ${TERMINAL_WORK_COOKBOOK_SECTION}`);
+
+  // File names, the marker, and the examples are the producing code's own values.
+  for (const name of [
+    'terminal-original.json', 'terminal-controls.json', 'terminal-fence.json', 'terminal-effects.json',
+    'terminal-evidence.json', 'terminal-disposition.json', 'retained-evidence.json',
+  ]) {
+    assert.ok(driver.includes(`'${name}'`), `the driver's sink publishes ${name}`);
+    assert.ok(cookbook.includes(`\`${name}\``), `the cookbook names ${name}`);
+  }
+  assert.match(recovery, /export const TERMINAL_HANDOFF_FILES = Object\.freeze\(\[\s+TERMINAL_MANIFEST_FILE, TERMINAL_DISPOSITION_FILE, \.\.\.TERMINAL_MEMBER_FILES\.map/);
+  assert.match(driver, /const REQUEST_USED_FILE = 'runner-request-used\.json';/);
+  assert.match(driver, /const CLAIM_REPORT_FILE = 'setup-report\.json';/);
+  // Fenced examples by the same fence rules `visibleMarkdown` applies, including indented list fences.
+  /** @type {{info:string, body:string}[]} */
+  const fenced = [];
+  /** @type {{marker:string, length:number, info:string, body:string[]}|null} */
+  let open = null;
+  for (const line of cookbook.split('\n')) {
+    const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (open === null) {
+      if (fence) open = { marker: fence[1][0], length: fence[1].length, info: fence[2].trim(), body: [] };
+    } else if (fence && fence[1][0] === open.marker && fence[1].length >= open.length && fence[2].trim() === '') {
+      fenced.push({ info: open.info, body: open.body.join('\n') });
+      open = null;
+    } else {
+      open.body.push(line);
+    }
+  }
+  /** @param {string} needle */
+  const example = (needle) => {
+    const matches = fenced.filter(({ body }) => body.includes(needle));
+    assert.equal(matches.length, 1, `exactly one cookbook example contains ${JSON.stringify(needle)}`);
+    return matches[0];
+  };
+  const identity = (/** @type {string} */ label) => workRuntime.sha256(`cookbook marker ${label}`);
+  const fields = {
+    time: '2026-11-03T00:00:00Z', taskKey: 'T001@a1b2c3d4', requestIdentity: identity('request'),
+    admissionIdentity: identity('admission'), manifestIdentity: identity('manifest'), dispositionIdentity: identity('disposition'),
+  };
+  const template = example('work: Freshly claimed').body.trim();
+  assert.equal(
+    template.replace('<UTC>', fields.time).replace('<taskKey>', fields.taskKey)
+      .replace('<requestIdentity>', fields.requestIdentity).replace('<admissionIdentity>', fields.admissionIdentity)
+      .replace('<manifestIdentity>', fields.manifestIdentity).replace('<dispositionIdentity>', fields.dispositionIdentity),
+    workRuntime.terminalFreshClaimMarkerV1(fields),
+    'the documented marker is the runtime marker',
+  );
+  const claimRefusal = JSON.parse(example('"stage": "admission"').body);
+  assert.deepEqual(Object.keys(claimRefusal.missingProof), ['kind', 'subject', 'required', 'nextOwnerAction']);
+  assert.ok(recovery.includes(`'${claimRefusal.missingProof.required}'`) && recovery.includes(`'${claimRefusal.missingProof.nextOwnerAction}'`),
+    'the claim example uses the admission\'s own proof text');
+  assert.equal(claimRefusal.detail, `fresh admission refused: ${claimRefusal.missingProof.kind} (${claimRefusal.missingProof.subject})`);
+  const disposition = JSON.parse(example('"outcome": "refused"').body);
+  assert.deepEqual(Object.keys(disposition), ['version', 'manifestIdentity', 'outcome', 'removal', 'missingProof', 'dispositionIdentity']);
+  assert.ok(runner.includes(`'${disposition.missingProof.required}'`) && runner.includes(`'${disposition.missingProof.nextOwnerAction}'`),
+    'the disposition example uses the producer\'s own proof text');
+
+  // Run-local files, manifest-last order, privacy, outcomes, cleanup boundary, and pitfalls.
+  const run = markdownSection(cookbook, '## 3. Run the exchange');
+  assertClauseDeletionFalsifiers(run, ['terminal files are written content first, manifest last, then removal and disposition', [
+    [/writes the terminal files content first and the manifest last, rereads each against the bytes it meant to write/],
+    [/Only then does it remove its exact pair once, checkpoint first, and publish the disposition/],
+    [/`terminal-controls\.json` holds raw control bytes, so keep it private and out of reports/],
+  ]], ['content first and the manifest last', 'checkpoint first, and publish the disposition', 'keep it private and out of reports'], `${DRIVER_COOKBOOK} ## 3. Run the exchange`);
+  assertClauseDeletionFalsifiers(run, ['run directories are new and private only to their owner', [
+    /refuses a directory that already exists, creates any missing parent with ordinary permissions, and makes only the new directory private/,
+    /on POSIX it gets mode `0700`, and every file the driver publishes in it is created as `0600`/,
+    /A parent is never narrowed/,
+    /Windows gets no mode change, so the directory inherits its parent's access control/,
+  ]], ['makes only the new directory private', 'A parent is never narrowed', 'Windows gets no mode change'], `${DRIVER_COOKBOOK} ## 3. Run the exchange`);
+  assert.match(driver, /fs\.mkdirSync\(directory, \{ mode: 0o700 \}\);/);
+  assert.match(driver, /fs\.writeFileSync\(temporary, jsonText\(value\), \{ flag: 'wx', mode: 0o600 \}\);/);
+  assert.match(driver, /function jsonText\(value\) \{\n  return `\$\{JSON\.stringify\(value, null, 2\)\}\\n`;\n\}/);
+
+  const terminal = markdownSection(cookbook, '## 8. Read the terminal result');
+  assertClauseDeletionFalsifiers(terminal, ['the finished fields and the disposition rows keep the stop unchanged', [
+    [/`ownership`, and `terminalDisposition` when the runner returned them/, /and `terminalEvidence` \(the run's `terminal-evidence\.json`\)/],
+    [/`hard-stop` \/ any reason, `terminalDisposition\.outcome` `disposed`/, /removed its own pair once \(`cleanup: "cleared"`, `orphan: false`\); the stop itself is unchanged/],
+    [/`hard-stop` \/ any reason, `terminalDisposition\.outcome` `refused`/, /Stop and report the halt fields and the one `missingProof`/],
+    [/`terminalDisposition` is auxiliary/, /the task stays `\[~\]`, the goal does not continue, and no claim follows/],
+  ]], [
+    'and `terminalDisposition` when the runner returned them',
+    'the stop itself is unchanged',
+    'Stop and report the halt fields and the one `missingProof`',
+    'the goal does not continue, and no claim follows',
+  ], `${DRIVER_COOKBOOK} ## 8. Read the terminal result`);
+  assert.match(driver, /'detail', 'target', 'blocker', 'capacity', 'cleanup', 'cleanupReason', 'orphan', 'ownership', 'terminalDisposition',/);
+  assert.match(driver, /terminalEvidence: sink\.written\.get\('terminal-evidence\.json'\)\?\.file \?\? null,/);
+
+  const stops = markdownSection(cookbook, '## 10. Stops and the manual cleanup boundary');
+  assertClauseDeletionFalsifiers(stops, ['only the original owner releases automatically and every other stop keeps the manual rules', [
+    /The automatic releases at a hard stop belong to the original owner alone/,
+    /A refused disposition keeps every remaining artifact, and its `missingProof` is no consent for manual cleanup or proof that the supervisor is gone/,
+    /Legacy or unfenced runs, lost runs, and every other hard stop or `claim` exit 5 keep the manual rules/,
+  ]], ['belong to the original owner alone', 'is no consent for manual cleanup', 'Legacy or unfenced runs, lost runs, and every other hard stop'], `${DRIVER_COOKBOOK} ## 10. Stops and the manual cleanup boundary`);
+
+  const pitfalls = markdownSection(cookbook, '## Pitfalls');
+  assertClauseDeletionFalsifiers(pitfalls, ['packet format, known-completion preflight, and respond preflight limits', [
+    [/a packet is v2 only if that form is strictly shorter than v1 in complete canonical bytes, and a tie keeps v1/],
+    [/Passing `respond` preflight does not prove the evidence fits/, /before it accepts the capture/, /keeps the rejected pair in `retained-evidence\.json` beside the earlier originals/],
+  ]], ['and a tie keeps v1', 'Passing `respond` preflight does not prove the evidence fits', 'before it accepts the capture'], `${DRIVER_COOKBOOK} ## Pitfalls`);
+});
+
+test('Feature 094 T004: user docs point to terminal disposition and fresh admission without restating the mechanism', () => {
+  const commands = read('docs/commands.md');
+  const docs = markdownSection(commands, TERMINAL_WORK_DOC_SECTION);
+  assert.equal(
+    `#${TERMINAL_WORK_DOC_SECTION.replace(/^#{1,6}\s+/, '').toLowerCase().replace(/\s+/g, '-')}`,
+    '#terminal-stops-and-fresh-admission',
+    'the doc heading exposes its stable anchor',
+  );
+  assertSectionBoundGuidance(docs, [
+    ['only a live original owner with settled built-in effects releases its own controls',
+      'With the bundled driver, the original owner of an autonomous Lightweight hard', [[
+        /fences its run so that run can never continue/,
+        /removes its exact pair only when every effect it entered was built-in and settled/,
+        /The hard stop itself comes back unchanged/,
+        /A run that authorized an attempt or exposed a specialist pair, lost its owner, or cannot account for an effect keeps its pair and reports one missing proof/,
+        /Legacy and unfenced runs keep the manual cleanup rules/,
+      ]]],
+    ['only a new explicit request is admitted, with fresh accounting or one first missing proof',
+      'Only a new explicit Work or Ship request can take that in-progress task again', [[
+        /either starts a run with fresh accounting or reports the first missing proof and its owner action/,
+        /the old run's state, counters, and learning remain evidence/,
+        /Neither the first-Assessment release above nor the explicit manual terminal resolution grants this admission/,
+        /\]\(\.\.\/\.github\/skills\/dude-work\/COOKBOOK\.md\)/,
+      ]]],
+  ], [
+    ['only a live original owner with settled built-in effects releases its own controls', 'The hard stop itself comes back unchanged'],
+    ['only a live original owner with settled built-in effects releases its own controls', 'Legacy and unfenced runs keep the manual cleanup rules'],
+    ['only a new explicit request is admitted, with fresh accounting or one first missing proof', 'Neither the first-Assessment release above nor the explicit manual terminal resolution grants this admission'],
+  ], `docs/commands.md ${TERMINAL_WORK_DOC_SECTION}`);
+
+  const pointers = [
+    ['docs/commands.md', markdownSection(commands, '### `@dude ship`'), 'If an earlier Work run on the target ended in a hard stop', [
+      /a new Ship request gives Work that exact handoff/,
+      /reports the one missing proof with the next owner action, and Ship passes that report on as Work wrote it/,
+      /never asked for technical facts or cleanup consent, and finishing the old run never starts a new one/,
+      /\]\(#terminal-stops-and-fresh-admission\)/,
+    ], 'finishing the old run never starts a new one'],
+    ['docs/reference.md', markdownSection(read('docs/reference.md'), '## Execution Workflow'), 'When the bundled driver runs autonomous Lightweight Work, a hard stop', [
+      /removes the exact pair only after it accounts for every effect as built-in and settled; otherwise the pair stays and one missing proof is reported/,
+      /needs a new explicit request and the retained evidence, and the new run never inherits the old run's accounting or learning/,
+      /\]\(commands\.md#terminal-stops-and-fresh-admission\)/,
+    ], 'never inherits the old run\'s accounting or learning'],
+    ['docs/workflow.md', markdownSection(read('docs/workflow.md'), '### Optional Continuous Work'), 'With the bundled driver, the original owner of a hard stop', [
+      /remove its own claim and checkpoint when every effect it entered is accounted for as built-in and settled/,
+      /A later explicit request can then start a fresh run of the same in-progress task, or it gets the one missing proof that prevents that/,
+      /\]\(commands\.md#terminal-stops-and-fresh-admission\)/,
+    ], 'or it gets the one missing proof that prevents that'],
+    ['docs/workflow.md', markdownSection(read('docs/workflow.md'), SHIP_WORKFLOW_DOC_SECTION), 'After an earlier Work hard stop, a new Ship request', [
+      /hands Work the old run's terminal evidence/,
+      /Work alone decides whether a fresh run may start, and Ship asks you for no technical fact or cleanup consent/,
+    ], 'Work alone decides whether a fresh run may start'],
+  ];
+  for (const [relative, section, anchor, signals, target] of /** @type {[string, string, string, RegExp[], string][]} */ (pointers)) {
+    const label = `${relative} terminal-work pointer`;
+    assertSectionBoundGuidance(section, [[label, anchor, [signals]]], [[label, target]], `${relative} ${anchor}`);
+    const [block] = anchoredRuleBlocks(section, anchor);
+    assert.deepEqual(
+      TERMINAL_WORK_DETAIL_MARKERS.filter(([, pattern]) => pattern.test(block.normalized)).map(([detail]) => detail),
+      [],
+      `${label} restates no cookbook detail`,
+    );
+  }
+  assert.deepEqual(
+    TERMINAL_WORK_DETAIL_MARKERS.filter(([, pattern]) => pattern.test(docs)).map(([detail]) => detail),
+    [],
+    'the docs subsection restates no cookbook detail',
+  );
+  // The cleanup paragraphs now name their scope; the manual protocol itself is unchanged.
+  for (const relative of ['docs/reference.md', 'docs/workflow.md']) {
+    assert.ok(read(relative).includes('Any other leftover ownership claims and checkpoints are cleaned up by hand.'), relative);
+    assert.equal(read(relative).includes('Stale ownership claims and checkpoints are cleaned up by hand.'), false, `${relative}: the unscoped claim is gone`);
+  }
 });
 
 // --- T004: one detailed unattended-continuity owner ---------------------------
@@ -11963,5 +12537,49 @@ test('terminal administrative reconciliation: generated instruction parity', () 
     }
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('T007 089 brainstorm owners document optional peer number advice beside the unchanged ordinary first-capture command', () => {
+  // Planned skill text for the advice handoff. The code contract it documents is
+  // src/skills/dude-feature-definition/capture-number-advice.mjs and publish-first-capture.mjs.
+  const ordinary = 'node .github/skills/dude-feature-definition/publish-first-capture.mjs --root . --slug <slug> --stage <absolute-staged-ledger-file>';
+  const advised = `${ordinary} --number-advice <absolute-staged-advice-file>`;
+  const definitionSource = read('src/skills/dude-feature-definition/SKILL.md');
+  const rawBrainstorm = rawMarkdownSectionBody(definitionSource, '## Brainstorm');
+  assert.equal(fencedBlockContaining(rawBrainstorm, `${ordinary}\n`), `\`\`\`bash\n${ordinary}\n\`\`\``,
+    'the ordinary command keeps its own exact block');
+  assert.equal(fencedBlockContaining(rawBrainstorm, advised), `\`\`\`bash\n${advised}\n\`\`\``,
+    'the advised command is one exact block of its own');
+
+  const definition = normalizeMarkdownBlock(markdownSection(definitionSource, '## Brainstorm'));
+  for (const [label, pattern] of /** @type {Array<[string, RegExp]>} */ ([
+    ['only an explicit use decision admits advice', /explicit(?:ly)? (?:decides?|decision) to use/i],
+    ['reading an answer is effect-free', /reading an answer captures and stages nothing/i],
+    ['the conversation handoff is staged as is', /`advice\.capture`/],
+    ['the owner adds the draft digest, workspace, and reason', /`ledgerSha256`[^.]*`workspace`[^.]*`reason`/],
+    ['the publisher selects from fresh local and accepted peer maxima', /`max\(fresh local maximum, accepted peer observed maximum\) \+ 1`/],
+    ['the receipt path', /`\.dude\/state\/a2a\/captures\/<operationId>\.json`/],
+    ['invalid advice never falls back silently', /no automatic fallback/i],
+    ['advice grants nothing', /evidence, not permission or a reservation/i],
+    ['076 prefix sharing stays valid', /Different slugs may share a lifecycle number; the inventory rejects a duplicate slug, not a shared number\./],
+  ])) {
+    assert.match(definition, pattern, `src/skills/dude-feature-definition/SKILL.md ## Brainstorm: ${label}`);
+  }
+
+  const intake = normalizeMarkdownBlock(markdownSection(read('src/skills/dude-work-intake/SKILL.md'), '## Brainstorm'));
+  for (const [label, pattern] of /** @type {Array<[string, RegExp]>} */ ([
+    ['the advice comes from a conversation answer', /`dude_a2a_conversation`/],
+    ['only an explicit use decision admits advice', /explicit(?:ly)? (?:decides?|decision) to use/i],
+    ['reading an answer is effect-free', /reading an answer captures and stages nothing/i],
+    ['the publisher option', /`--number-advice`/],
+    ['invalid advice never falls back silently', /no automatic (?:local )?fallback/i],
+  ])) {
+    assert.match(intake, pattern, `src/skills/dude-work-intake/SKILL.md ## Brainstorm: ${label}`);
+  }
+
+  for (const relative of ['skills/dude-feature-definition/SKILL.md', 'skills/dude-work-intake/SKILL.md']) {
+    assert.ok(fs.readFileSync(path.join(ROOT, '.github', relative)).equals(fs.readFileSync(path.join(ROOT, 'src', relative))),
+      `.github/${relative} matches its source`);
   }
 });

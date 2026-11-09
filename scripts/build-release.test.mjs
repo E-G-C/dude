@@ -89,26 +89,41 @@ const REVIEW_LIB_FILES = Object.freeze([
   'lib/review/data.mjs',
   'lib/review/png.mjs',
 ]);
-/** The delivered A2A surface: wiring, modules, the lazily imported runtime, and its notice. */
+/** The delivered A2A surface: wiring, modules, the fixed SDK loader, the lazily imported runtime, and its notice. */
 const A2A_RUNTIME_FILES = Object.freeze([
   'extension.mjs',
   'lib/a2a.mjs',
   'lib/a2a-transport.mjs',
   'lib/a2a-verify.mjs',
+  'lib/a2a-peer-worker.mjs',
+  'lib/a2a-sdk-loader.mjs',
+  'lib/a2a-collaboration.mjs',
+  'lib/a2a-transcript.mjs',
   'lib/a2a-runtime.mjs',
   'lib/a2a-runtime.mjs.LEGAL.txt',
 ]);
-/** Test and build-only inputs of the A2A runtime; none may ship. */
+/** Test, build-only, and maintainer qualification inputs of the A2A runtime; none may ship. */
 const A2A_BUILD_ONLY = Object.freeze([
   'src/extensions/dude/a2a.test.mjs',
   'src/extensions/dude/a2a-transport.test.mjs',
   'src/extensions/dude/a2a-verify.test.mjs',
+  'src/extensions/dude/a2a-peer-worker.test.mjs',
+  'src/extensions/dude/a2a-sdk-loader.test.mjs',
+  'src/extensions/dude/a2a-collaboration.test.mjs',
+  'src/extensions/dude/a2a-transcript.test.mjs',
+  'src/extensions/dude/a2a-collaboration-tls.test.mjs',
   'scripts/dude-a2a/.gitignore',
   'scripts/dude-a2a/build.mjs',
   'scripts/dude-a2a/build.test.mjs',
   'scripts/dude-a2a/entry.mjs',
   'scripts/dude-a2a/package-lock.json',
   'scripts/dude-a2a/package.json',
+  'scripts/dude-a2a/qualify-collaboration.mjs',
+  'scripts/dude-a2a/qualify-collaboration.test.mjs',
+  'scripts/dude-a2a/native-collaboration.mjs',
+  'scripts/dude-a2a/native-collaboration.test.mjs',
+  'scripts/dude-a2a/native-observer.ps1',
+  'scripts/dude-a2a/native-observer.test.mjs',
 ]);
 const T007_PROJECTION_PAIRS = [
   ['src/skills/dude-bundle-import/SKILL.md', '.github/skills/dude-bundle-import/SKILL.md'],
@@ -117,6 +132,21 @@ const T007_PROJECTION_PAIRS = [
   ['src/skills/dude-bundle-import/lib/directory-risk.mjs', '.github/skills/dude-bundle-import/lib/directory-risk.mjs'],
   ['src/skills/dude-bundle-import/lib/directory-source.mjs', '.github/skills/dude-bundle-import/lib/directory-source.mjs'],
   ['src/skills/dude-lint/lint.mjs', '.github/skills/dude-lint/lint.mjs'],
+];
+/** Feature 089's advised first capture: the publisher and its optional advice checks. */
+const ADVISED_CAPTURE_PAIRS = [
+  ['src/skills/dude-feature-definition/publish-first-capture.mjs', '.github/skills/dude-feature-definition/publish-first-capture.mjs'],
+  ['src/skills/dude-feature-definition/capture-number-advice.mjs', '.github/skills/dude-feature-definition/capture-number-advice.mjs'],
+];
+/** Feature 094's co-versioned terminal-work path: driver, runner, adapter, guidance, and cookbook. */
+const TERMINAL_WORK_PAIRS = [
+  ['src/skills/dude-work/driver.mjs', '.github/skills/dude-work/driver.mjs'],
+  ['src/skills/dude-work/host-adapter-runner.mjs', '.github/skills/dude-work/host-adapter-runner.mjs'],
+  ['src/skills/dude-work/host-adapter.mjs', '.github/skills/dude-work/host-adapter.mjs'],
+  ['src/skills/dude-work/SKILL.md', '.github/skills/dude-work/SKILL.md'],
+  ['src/skills/dude-work/COOKBOOK.md', '.github/skills/dude-work/COOKBOOK.md'],
+  ['src/skills/dude-work-intake/SKILL.md', '.github/skills/dude-work-intake/SKILL.md'],
+  ['src/skills/dude-lightweight-execution/SKILL.md', '.github/skills/dude-lightweight-execution/SKILL.md'],
 ];
 
 /** @param {string} root @param {string} rel @param {string | Uint8Array} content */
@@ -403,6 +433,8 @@ test('buildRelease preserves unrelated source bytes and excludes source tests', 
       ['src/skills/dude-compose/lib/pack-acquisition.mjs', '.github/skills/dude-compose/lib/pack-acquisition.mjs'],
       ['src/skills/dude-engine/lib/github-content.mjs', '.github/skills/dude-engine/lib/github-content.mjs'],
       ...T007_PROJECTION_PAIRS,
+      ...ADVISED_CAPTURE_PAIRS,
+      ...TERMINAL_WORK_PAIRS,
     ]) {
       assert.ok(result.files.includes(deployRel), deployRel);
       assert.deepEqual(
@@ -449,6 +481,36 @@ test('buildRelease preserves unrelated source bytes and excludes source tests', 
     assert.ok(visited.has(path.join(outDir, '.github/skills/dude-engine/lib/github-content.mjs')),
       'the released acquisition imports the released GitHub transport');
     assert.equal(typeof (await import(pathToFileURL(acquisition).href)).acquireRemoteCatalog, 'function');
+    // Feature 089 T007: the released advice checks import the released A2A modules across the skill/extension
+    // boundary; the released publisher loads them only for an advised capture, and neither suite ships.
+    const advice = path.join(outDir, '.github/skills/dude-feature-definition/capture-number-advice.mjs');
+    checkImports(advice);
+    for (const reused of ['a2a-collaboration.mjs', 'a2a-transcript.mjs', 'a2a-transport.mjs']) {
+      assert.ok(visited.has(path.join(outDir, '.github/extensions/dude/lib', reused)), `the released advice checks import ${reused}`);
+    }
+    assert.equal(typeof (await import(pathToFileURL(advice).href)).readNumberAdvice, 'function');
+    assert.match(fs.readFileSync(path.join(outDir, '.github/skills/dude-feature-definition/publish-first-capture.mjs'), 'utf8'),
+      /await import\('\.\/capture-number-advice\.mjs'\)/);
+    for (const name of ['capture-number-advice.test.mjs', 'publish-first-capture.test.mjs']) {
+      assert.equal(fs.statSync(path.join(repoRoot, 'src/skills/dude-feature-definition', name)).isFile(), true, name);
+      assert.equal(result.files.includes(`.github/skills/dude-feature-definition/${name}`), false, `${name} does not ship`);
+    }
+    // Feature 094: the released driver loads only the released runner, adapter, and reducer
+    // it was built with, and no driver test or run-local terminal evidence ships beside it.
+    const releasedDriver = path.join(outDir, '.github/skills/dude-work/driver.mjs');
+    checkImports(releasedDriver);
+    for (const module of ['host-adapter-runner.mjs', 'host-adapter.mjs', 'recovery.mjs', 'specialist-attestation.mjs']) {
+      assert.ok(visited.has(path.join(outDir, '.github/skills/dude-work', module)), `the released driver imports the released ${module}`);
+    }
+    assert.ok(visited.has(path.join(outDir, '.github/skills/dude-lightweight-execution/board.mjs')), 'the released driver reaches the released lane owner');
+    await import(pathToFileURL(releasedDriver).href);
+    assert.equal(fs.statSync(path.join(repoRoot, 'src/skills/dude-work/driver.test.mjs')).isFile(), true);
+    assert.equal(result.files.includes('.github/skills/dude-work/driver.test.mjs'), false, 'driver.test.mjs does not ship');
+    assert.deepEqual(
+      listRelativeFiles(outDir).filter(relative => /(?:^|\/)(?:terminal-[a-z]+|retained-evidence|runner-request(?:-used)?|setup-report|status|result)\.json$/.test(relative)),
+      [],
+      'no run-local terminal or exchange evidence ships',
+    );
     const fixturePaths = [
       ...['README.md', 'reference.json', 'retention-episode.json', 'model-view-test-helpers.mjs']
         .map(filename => `scripts/fixtures/064-work-receipt-overflow-handling/${filename}`),
@@ -662,6 +724,7 @@ try {
     receive: await call('dude_a2a_receive', {}),
     reply: await call('dude_a2a_reply', { exchangeId: 'x', conclusion: 'c', limitations: 'l', evidence: [] }),
     verify: await call('dude_a2a_verify', { exchangeId: 'x', commandId: 'unit-tests', params: {} }),
+    conversation: await call('dude_a2a_conversation', { op: 'begin_receive' }),
   });
   report.defaultOff = await defaultOff();
   report.importsAfterDefaultOff = imports();
@@ -882,7 +945,9 @@ test('T018 release ships the lazy A2A runtime and notice byte-for-byte, and its 
     assert.equal(report.stderr, '');
     assert.equal(report.joins, 1, 'one normal joinSession');
     assert.deepEqual(report.optionKeys, ['canvases', 'onEvent', 'tools'], 'no hooks, permission handler, or tool filters');
-    assert.deepEqual(report.toolNames, ['dude_needs_you', 'dude_a2a_propose', 'dude_a2a_ask', 'dude_a2a_receive', 'dude_a2a_reply', 'dude_a2a_verify']);
+    assert.deepEqual(report.toolNames, [
+      'dude_needs_you', 'dude_a2a_propose', 'dude_a2a_ask', 'dude_a2a_receive', 'dude_a2a_reply', 'dude_a2a_verify', 'dude_a2a_conversation',
+    ]);
     assert.deepEqual(report.canvasIds, ['dude'], 'the Dude canvas is still registered');
     assert.deepEqual(report.needsYouOps, ['request', 'acknowledge']);
     assert.equal(report.hasOnEvent, true);
@@ -895,12 +960,14 @@ test('T018 release ships the lazy A2A runtime and notice byte-for-byte, and its 
         ['failure', 'refused', 'no_activation', 'not_sent'],
         phase,
       );
-      for (const name of ['receive', 'reply', 'verify']) {
+      for (const name of ['receive', 'reply', 'verify', 'conversation']) {
         const refused = outcomes[name];
         assert.deepEqual([refused.resultType, refused.outcome, refused.reason], ['failure', 'refused', 'no_activation'], `${phase}: ${name}`);
       }
     }
     assert.equal(report.importsAfterDefaultOff, 0, 'default-off tool calls load nothing');
+    assert.equal(fs.existsSync(path.join(outDir, '.dude', 'state', 'a2a')), false,
+      'the delivered extension creates no transcript folder or journal without an approved conversation');
     assert.equal(report.stopWhileOff, 'A2A stop: nothing was active or pending. Nothing changed.');
     assert.match(report.retiredRoute, /^A2A command not recognized; request a proposal with dude_a2a_propose/);
     assert.equal(report.retiredApproval, 'A2A approval refused: no proposal is pending. Nothing was activated.');

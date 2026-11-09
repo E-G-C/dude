@@ -2,10 +2,11 @@
 // @ts-check
 /**
  * Work driver: host integration for autonomous Lightweight Work through the
- * official setup adapter and runner. It claims one pending task, bridges the
- * runner's sequential challenges through files outside the workspace, builds
- * and preflights responses with the official validators, captures attempt
- * baselines, and probes one ownership pair.
+ * official setup adapter and runner. It claims one pending task, or freshly
+ * admits a new request for an unblocked in-progress task from its original
+ * owner's own terminal handoff, bridges the runner's sequential challenges
+ * through files outside the workspace, builds and preflights responses with the
+ * official validators, captures attempt baselines, and probes one ownership pair.
  *
  * Every authority decision stays with the co-versioned runtime imported below.
  * The driver composes its exports, makes no model call, dispatches no
@@ -39,12 +40,20 @@ import {
   createTemporaryCheckpointStore,
   prepareSpecialistResult,
   validateHostAdapterRequest,
+  validateTerminalDispositionV1,
+  validateTerminalEvidenceManifestV1,
 } from './host-adapter.mjs';
 import {
+  TERMINAL_HANDOFF_FILES,
+  assertDenseDataArrayLength,
+  buildTerminalFreshClaimMutationV1,
   canonicalJson,
   canonicalTarget,
+  capacityDiagnostic,
   capturedBytesV1,
   contentDescriptor,
+  currentRunCapture,
+  deriveFreshAdmissionV1,
   inspectRetainedOccurrencesV2,
   parseInvocation,
   prepareLearningReviewV2,
@@ -58,7 +67,7 @@ import {
 } from './recovery.mjs';
 
 const USAGE = `usage:
-  node driver.mjs claim --root <workspace> --spec <specPath> --task <taskKey> [--out <dir>] [--state <accepted-state.json>] -- <work arguments>
+  node driver.mjs claim --root <workspace> --spec <specPath> --task <taskKey> [--out <dir>] [--state <accepted-state.json>] [--retained-evidence <file>] [--terminal-evidence <terminal-evidence.json>] -- <work arguments>
   node driver.mjs run --request <runner-request.json> [--dir <dir>] [--retained-evidence <file>]
   node driver.mjs assess --root <workspace> --challenge <challenge-n.json> --input <file>
   node driver.mjs respond --root <workspace> --challenge <challenge-n.json> (--tester <file> --reviewer <file> --changed <file> | --learning-review <file> | --cancel)
@@ -71,14 +80,23 @@ const HASH_PATTERN = /^[0-9a-f]{64}$/;
 const CHALLENGE_KINDS = ['assessment', 'specialist-pair', 'learning-review'];
 const ASSESSMENT_INPUT_FIELDS = ['action', 'targets', 'summary', 'intent', 'equivalence', 'retention'];
 const RETAINED_STREAMS = ['currentRun', 'verification', 'review', 'lint'];
-const ATTEMPT_STREAMS = ['verification', 'review', 'lint']; // the streams a completion capture carries for its attempt alone
-const TERMINAL_FIELDS = ['detail', 'target', 'blocker', 'capacity', 'cleanup', 'cleanupReason', 'orphan', 'ownership'];
-const RUNTIME_IDENTITY = sha256('dude-work/driver:recovery-runtime:v1');
+const TERMINAL_FIELDS = [
+  'detail', 'target', 'blocker', 'capacity', 'cleanup', 'cleanupReason', 'orphan', 'ownership', 'terminalDisposition',
+];
+// The fixed run-local files the runner's terminal retention may publish through this driver's sink.
+const RETAINED_FILES = new Set([
+  'retained-evidence.json', 'terminal-original.json', 'terminal-controls.json', 'terminal-fence.json',
+  'terminal-effects.json', 'terminal-evidence.json', 'terminal-disposition.json',
+]);
 const MAX_RESPONSE_BYTES = 1_048_576; // the runner CLI's own per-response ceiling
 const POLL_MS = 250;
 const RENAME_RETRY_MS = 60_000;
 const SCAN_SKIP = new Set(['.git', 'node_modules']);
 const EMPTY_TASK_STATE = Buffer.from('{}\n');
+// The one immutable run-local record that consumes a terminal-qualified runner request.
+const REQUEST_USED_FILE = 'runner-request-used.json';
+// The issuing claim's report, beside its request, that binds a terminal-qualified request.
+const CLAIM_REPORT_FILE = 'setup-report.json';
 
 class UsageError extends Error {}
 
@@ -209,7 +227,9 @@ function outsideWorkspace(root, value, label) {
 
 /**
  * A caller-named run directory must be new; the default is a fresh short
- * `dw-XXXXXX` directory under the operating system temporary directory.
+ * `dw-XXXXXX` directory under the operating system temporary directory. Either
+ * way the run directory is private to its owner, as the checkpoint store's root
+ * is; only that new directory is narrowed, never a parent.
  * @param {string} root @param {string|undefined} value @param {string} label
  */
 function freshRunDirectory(root, value, label) {
@@ -220,7 +240,11 @@ function freshRunDirectory(root, value, label) {
   const directory = outsideWorkspace(root, value, label);
   if (fs.existsSync(directory)) throw new Refusal(`${label} already exists; give a new directory: ${directory}`);
   fs.mkdirSync(path.dirname(directory), { recursive: true });
-  fs.mkdirSync(directory);
+  fs.mkdirSync(directory, { mode: 0o700 });
+  if (process.platform !== 'win32') {
+    // Windows relies on inherited ACLs; no POSIX mode or ownership claim is made there.
+    fs.chmodSync(directory, 0o700);
+  }
   return directory;
 }
 
@@ -276,13 +300,15 @@ function jsonText(value) {
 /**
  * Publish one complete JSON file through a sibling temporary file and one
  * rename, so a poller never observes a partial message. Unless replacement is
- * explicit, an existing file is refused and its bytes stay untouched.
+ * explicit, an existing file is refused and its bytes stay untouched. As in the
+ * checkpoint store, the temporary file is created owner-only, and the rename
+ * keeps that mode on the published file.
  * @param {string} file @param {unknown} value @param {boolean} [replace]
  */
 function publishJson(file, value, replace = false) {
   if (!replace && fs.existsSync(file)) throw new Refusal(`refusing to replace existing ${file}`);
   const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${randomBytes(6).toString('hex')}.tmp`);
-  fs.writeFileSync(temporary, jsonText(value), { flag: 'wx' });
+  fs.writeFileSync(temporary, jsonText(value), { flag: 'wx', mode: 0o600 });
   try {
     renameRetrying(temporary, file);
   } catch (error) {
@@ -294,6 +320,49 @@ function publishJson(file, value, replace = false) {
     throw error;
   }
   return file;
+}
+
+/**
+ * The runner's trusted synchronous retention sink for one run directory. It
+ * publishes only fixed producer-named files, each once through the existing
+ * atomic publication, and reads every one back before acknowledging its exact
+ * bytes. Failures are recorded here and rethrown; nothing is retried, replaced,
+ * or removed. No durability beyond that publication is claimed.
+ * @param {string} dir
+ */
+function retentionSink(dir) {
+  /** @type {Map<string, {file:string, sha256:string, byteLength:number}>} */
+  const written = new Map();
+  /** @type {Map<string, unknown>} */
+  const failures = new Map();
+  /** @param {unknown} name */
+  const fileFor = (name) => {
+    if (typeof name !== 'string' || !RETAINED_FILES.has(name)) throw new Error('retention sink name is not a fixed run-local file');
+    return path.join(dir, name);
+  };
+  const port = Object.freeze({
+    /** @param {string} name @param {unknown} value */
+    write(name, value) {
+      try {
+        const file = fileFor(name);
+        const expected = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+        publishJson(file, value);
+        const actual = fs.readFileSync(file);
+        if (!actual.equals(expected)) throw new Error(`${name} did not read back exactly as published`);
+        const descriptor = { name, sha256: sha256(actual), byteLength: actual.byteLength };
+        written.set(name, { file, sha256: descriptor.sha256, byteLength: descriptor.byteLength });
+        return descriptor;
+      } catch (error) {
+        failures.set(String(name), error);
+        throw error;
+      }
+    },
+    /** @param {string} name */
+    read(name) {
+      return fs.readFileSync(fileFor(name));
+    },
+  });
+  return { port, written, failures };
 }
 
 /**
@@ -364,6 +433,155 @@ function emptyRuntimeInput(root, target) {
     lint: [],
     policyMode: 'autonomous',
   };
+}
+
+/**
+ * The claim's runtime input: the runner's empty input, or that input carrying
+ * the retained original captures exactly as given, in order and with duplicates.
+ * @param {string} root @param {{specPath:string}} target @param {Record<string, unknown[]>|null} retained
+ */
+function runtimeInput(root, target, retained) {
+  const input = emptyRuntimeInput(root, target);
+  if (retained === null) return input;
+  return { ...input, ...Object.fromEntries(RETAINED_STREAMS.map((field) => [field, [...retained[field]]])) };
+}
+
+/** The identity of the four capture streams one input or retained-evidence object carries. @param {Record<string, unknown>} value */
+function capturesHash(value) {
+  return sha256(canonicalJson(Object.fromEntries(RETAINED_STREAMS.map((field) => [field, value[field]]))));
+}
+
+/**
+ * Read the owner-selected original captures of a task whose lane history
+ * already holds attempts: the closed four-stream object `run` and the runner
+ * accept. Only that envelope is checked here; the runtime Inspection validates
+ * every capture before any claim.
+ * @param {string} file @returns {Record<string, unknown[]>}
+ */
+function readRetainedEvidence(file) {
+  const value = readJson(file, '--retained-evidence');
+  if (!isRecord(value)) throw new Refusal('--retained-evidence is one JSON object');
+  const unknown = Object.keys(value).filter((field) => !RETAINED_STREAMS.includes(field));
+  const missing = RETAINED_STREAMS.filter((field) => !Object.hasOwn(value, field));
+  if (unknown.length !== 0 || missing.length !== 0) {
+    throw new Refusal('--retained-evidence has exactly these fields', { fields: RETAINED_STREAMS, unknown, missing });
+  }
+  for (const field of RETAINED_STREAMS) {
+    checked(() => assertDenseDataArrayLength(value[field], `retainedEvidence.${field}`));
+  }
+  return value;
+}
+
+/** Freeze one validated JSON value throughout. @template T @param {T} value @returns {T} */
+function deepFreeze(value) {
+  if (value !== null && typeof value === 'object') {
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+/**
+ * The exact bytes of one fixed run-local handoff file, or null when it is
+ * absent, not a regular file, or unreadable. Nothing else is searched.
+ * @param {string} file
+ */
+function readHandoffFile(file) {
+  try {
+    return fs.lstatSync(file).isFile() ? fs.readFileSync(file) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The terminal-qualified claim's read-only admission for an unblocked
+ * in-progress task. It reads only the exact named manifest and its fixed
+ * sibling handoff files, applies the producer's closed validators, observes the
+ * exact pair through the official store, and returns the recovery derivation's
+ * one decision. A refusal names exactly one first missing proof.
+ * @param {string} root @param {string} file @param {{specPath:string,lane:'lightweight',taskKey:string}} target
+ * @param {Record<string, unknown>} policy @param {ReturnType<typeof laneBinding>} binding
+ * @param {Record<string, any>} report @param {{stage:string}} progress
+ */
+function terminalAdmission(root, file, target, policy, binding, report, progress) {
+  progress.stage = 'terminal-evidence';
+  const manifestFile = path.resolve(file);
+  if (path.basename(manifestFile) !== 'terminal-evidence.json') {
+    throw new Refusal('--terminal-evidence names the original owner\'s run-local terminal-evidence.json');
+  }
+  const directory = path.dirname(manifestFile);
+  /** @type {Record<string, Buffer|null>} */
+  const handoff = Object.fromEntries(TERMINAL_HANDOFF_FILES.map((name) => [name, readHandoffFile(path.join(directory, name))]));
+  // A manifest or disposition outside the producer's closed contract is unusable evidence.
+  for (const [name, validate] of /** @type {[string, (value:unknown)=>unknown][]} */ ([
+    ['terminal-evidence.json', validateTerminalEvidenceManifestV1],
+    ['terminal-disposition.json', validateTerminalDispositionV1],
+  ])) {
+    const bytes = handoff[name];
+    if (bytes === null) continue;
+    try {
+      validate(JSON.parse(bytes.toString('utf8')));
+    } catch {
+      handoff[name] = null;
+    }
+  }
+  report.terminalEvidence = { file: manifestFile };
+
+  progress.stage = 'ownership';
+  const pair = createTemporaryCheckpointStore().load(checkpointBinding(binding.workspace, target));
+
+  progress.stage = 'admission';
+  // The newly authorized claim call mints the request identity this admission binds.
+  const requestIdentity = randomHex();
+  const admission = /** @type {Record<string, any>} */ (deriveFreshAdmissionV1({
+    version: 1,
+    root,
+    target,
+    requestIdentity,
+    policy,
+    binding: { targetMapping: binding.targetMapping, lanePrestate: binding.lanePrestate },
+    controls: { checkpointKey: pair.checkpointKey, status: pair.status },
+    handoff,
+    operationTime: canonicalTime(),
+  }));
+  if (admission.outcome !== 'eligible') {
+    report.admission = admission;
+    const proof = admission.missingProof;
+    throw new Refusal(`fresh admission refused: ${proof.kind} (${proof.subject})`, { missingProof: proof });
+  }
+  report.admission = {
+    outcome: admission.outcome,
+    requestIdentity,
+    admissionIdentity: admission.admissionIdentity,
+    learningGate: admission.learningGate,
+    inspectionHash: admission.inspectionHash,
+  };
+  Object.assign(report.terminalEvidence, admission.evidence);
+  /** @param {string} name */
+  const json = (name) => JSON.parse(/** @type {Buffer} */ (handoff[name]).toString('utf8'));
+  return {
+    admission,
+    requestIdentity,
+    manifest: json('terminal-evidence.json'),
+    disposition: json('terminal-disposition.json'),
+    captures: json('retained-evidence.json'),
+    capturesFile: path.join(directory, 'retained-evidence.json'),
+  };
+}
+
+/**
+ * The claim's read-only Inspection gate: no overflow, no blocker, and complete
+ * retained-occurrence evidence.
+ * @param {Record<string, any>} inspection @param {string} label
+ */
+function requireAdmissible(inspection, label) {
+  if (inspection.overflow) throw new Refusal(`${label} overflowed its model packet (evidence-incomplete)`);
+  if (inspection.blockers.length !== 0) throw new Refusal(`${label} has blockers`, { blockers: inspection.blockers });
+  const retention = inspectRetainedOccurrencesV2(inspection);
+  if (retention.blocker) {
+    throw new Refusal('retained-occurrence evidence is missing or invalid', { blocker: retention.blocker });
+  }
 }
 
 /**
@@ -700,39 +918,102 @@ function claimPrerequisites(root, values, workArguments, report, progress) {
     refuse(`tasks.md lacks the exact owner breadcrumb ${breadcrumb}`);
   }
 
-  progress.stage = 'task';
-  if (task.glyph !== ' ' || task.blockedBy !== null) {
-    refuse(`${target.taskKey} is not an unblocked pending task: [${task.glyph}]${task.blockedBy ? ` blocked-by: ${task.blockedBy}` : ''}`);
+  const terminalFile = values['terminal-evidence'];
+  if (terminalFile === undefined) {
+    progress.stage = 'task';
+    if (task.glyph !== ' ' || task.blockedBy !== null) {
+      refuse(`${target.taskKey} is not an unblocked pending task: [${task.glyph}]${task.blockedBy ? ` blocked-by: ${task.blockedBy}` : ''}`);
+    }
+    const active = parsed.tasks.filter((entry) => entry.state === 'in-progress' && entry.blockedBy === null);
+    if (active.length !== 0) refuse(`an unblocked in-progress task comes first: ${active.map((entry) => entry.id).join(', ')}`);
+    const unfinished = task.deps.filter((dependency) => parsed.byId.get(dependency)?.state !== 'done');
+    if (unfinished.length !== 0) refuse(`dependencies are not done: ${unfinished.join(', ')}`);
+    const first = readyTasks(parsed)[0]?.id ?? null;
+    if (first !== target.taskKey) refuse(`${target.taskKey} is not the first ready task; the first ready task is ${first ?? 'none'}`);
   }
-  const active = parsed.tasks.filter((entry) => entry.state === 'in-progress' && entry.blockedBy === null);
-  if (active.length !== 0) refuse(`an unblocked in-progress task comes first: ${active.map((entry) => entry.id).join(', ')}`);
-  const unfinished = task.deps.filter((dependency) => parsed.byId.get(dependency)?.state !== 'done');
-  if (unfinished.length !== 0) refuse(`dependencies are not done: ${unfinished.join(', ')}`);
-  const first = readyTasks(parsed)[0]?.id ?? null;
-  if (first !== target.taskKey) refuse(`${target.taskKey} is not the first ready task; the first ready task is ${first ?? 'none'}`);
 
   progress.stage = 'owner-log';
   if (!binding.ownerBytes.toString('utf8').endsWith('\n')) {
     refuse(`${owner.ideaPath} must end with LF for the exact claim-log append; the driver never repairs it`);
   }
 
+  if (terminalFile !== undefined) {
+    // The derivation owns the in-progress target, precedence, handoff, absence,
+    // retained-source, learning, and capacity gates in its fixed order.
+    const terminal = terminalAdmission(root, terminalFile, target, invocation.policy, binding, report, progress);
+    progress.stage = 'inspection';
+    const retained = /** @type {Record<string, unknown[]>} */ (terminal.captures);
+    const inspection = runCommand('inspect', {
+      trigger: 'explicit-inspection', input: runtimeInput(root, target, retained),
+    }).inspection;
+    report.inspection = { evidenceHash: inspection.evidenceHash, overflow: inspection.overflow, blockers: inspection.blockers };
+    if (inspection.evidenceHash !== terminal.admission.inspectionHash) {
+      refuse('the Inspection changed after fresh admission was derived; make a new request');
+    }
+    report.retainedEvidence = {
+      file: terminal.capturesFile,
+      entries: Object.fromEntries(RETAINED_STREAMS.map((field) => [field, retained[field].length])),
+      capturesHash: capturesHash(retained),
+    };
+    const fresh = /** @type {Record<string, any>} */ (terminal.admission.state);
+    report.initialStateHash = sha256(canonicalJson(fresh));
+    return {
+      target, owner, state: fresh, workspace: binding.workspace, inspection, retained: deepFreeze(retained), terminal,
+    };
+  }
+
   progress.stage = 'inspection';
-  const inspection = runCommand('inspect', { trigger: 'explicit-inspection', input: emptyRuntimeInput(root, target) }).inspection;
+  // A task whose lane history already holds attempts needs its original
+  // captures; the explicit owner-selected file is their only source.
+  const retained = values['retained-evidence'] === undefined ? null : readRetainedEvidence(values['retained-evidence']);
+  /** @type {Record<string, unknown>} */
+  const provenance = {};
+  if (retained !== null) {
+    report.retainedEvidence = Object.assign(provenance, {
+      file: path.resolve(values['retained-evidence']),
+      entries: Object.fromEntries(RETAINED_STREAMS.map((field) => [field, retained[field].length])),
+    });
+  }
+  const input = runtimeInput(root, target, retained);
+  const inspection = runCommand('inspect', { trigger: 'explicit-inspection', input }).inspection;
   report.inspection = { evidenceHash: inspection.evidenceHash, overflow: inspection.overflow, blockers: inspection.blockers };
-  if (inspection.overflow) refuse('the Inspection overflowed its model packet (evidence-incomplete)');
-  if (inspection.blockers.length !== 0) refuse('the Inspection has blockers', { blockers: inspection.blockers });
-  const retention = inspectRetainedOccurrencesV2(inspection);
-  if (retention.blocker) refuse('retained-occurrence evidence is missing or invalid', { blocker: retention.blocker });
-  return { target, owner, state, workspace: binding.workspace, inspection };
+  requireAdmissible(inspection, 'the Inspection');
+  if (retained !== null && retained.currentRun.length !== 0) {
+    // The runner's own admission input adds one initially empty live current-run
+    // capture after seeded current-run history. Inspect that exact input as well,
+    // so the source headroom comes from the runtime and the runner cannot refuse
+    // admission for what this claim accepted.
+    const live = currentRunCapture(target, []);
+    const admissionInput = {
+      ...input,
+      currentRun: [...input.currentRun, { ...live, bytes: { base64: live.bytes.toString('base64') } }],
+    };
+    const label = "the runner's admission Inspection, with its initially empty live current-run capture,";
+    let admission;
+    try {
+      admission = runCommand('inspect', { trigger: 'explicit-inspection', input: admissionInput }).inspection;
+    } catch (error) {
+      const capacity = capacityDiagnostic(error);
+      throw new Refusal(`${label} is refused: ${messageOf(error)}`, capacity === null ? {} : { capacity });
+    }
+    requireAdmissible(admission, label);
+  }
+  if (retained !== null) provenance.capturesHash = capturesHash(retained);
+  // Every later reader, from setup to the published request, sees these exact rows.
+  return { target, owner, state, workspace: binding.workspace, inspection, retained: deepFreeze(retained), terminal: null };
 }
 
 /** @param {string[]} argv */
 async function claim(argv) {
   const { values, rest } = parseArgs(argv, {
-    options: ['root', 'spec', 'task', 'out', 'state'],
+    options: ['root', 'spec', 'task', 'out', 'state', 'retained-evidence', 'terminal-evidence'],
     required: ['root', 'spec', 'task'],
     rest: true,
   });
+  if (Object.hasOwn(values, 'terminal-evidence')
+    && (Object.hasOwn(values, 'state') || Object.hasOwn(values, 'retained-evidence'))) {
+    throw new UsageError('--terminal-evidence excludes --state and --retained-evidence: a fresh admission imports no state, and its own handoff supplies the original captures');
+  }
   const root = workspaceRoot(values.root);
   const out = freshRunDirectory(root, values.out, 'claim --out');
   /** @type {Record<string, any>} */
@@ -740,7 +1021,7 @@ async function claim(argv) {
   /** @param {number} code @param {string} stage @param {string} detail @param {Record<string, unknown>} [extra] */
   const finish = (code, stage, detail, extra = {}) => {
     Object.assign(report, { ok: code === 0, exitCode: code, stage, detail, ...extra, finishedAt: new Date().toISOString() });
-    const reportFile = publishJson(path.join(out, 'setup-report.json'), report);
+    const reportFile = publishJson(path.join(out, CLAIM_REPORT_FILE), report);
     print({
       ok: code === 0,
       command: 'claim',
@@ -749,6 +1030,8 @@ async function claim(argv) {
       detail,
       out,
       report: reportFile,
+      // A refused fresh admission names its one first missing proof, once.
+      ...(Object.hasOwn(extra, 'missingProof') ? { missingProof: extra.missingProof } : {}),
       ...(code === 0 ? { runnerRequest: report.runnerRequest } : {}),
     });
     return code;
@@ -761,7 +1044,9 @@ async function claim(argv) {
   } catch (error) {
     return finish(2, progress.stage, messageOf(error), error instanceof Refusal ? error.details : {});
   }
-  const { target, owner, state, workspace, inspection } = context;
+  const { target, owner, state, workspace, inspection, retained, terminal } = context;
+  // Every setup operation inspects the same frozen captures the claim validated.
+  const setupInput = () => runtimeInput(root, target, retained);
 
   // Mint the setup supervisor identity and retain it outside checkpoint bytes
   // before adapter admission.
@@ -812,6 +1097,8 @@ async function claim(argv) {
   const step = (label, operation, payload, correctionIdentity) => {
     const current = adapter.snapshot();
     if (operation === 'apply-lane-effect') laneWriteEntered = true;
+    const carried = /** @type {Record<string, any>} */ (payload);
+    const input = carried.input ?? carried.laneEffect?.input ?? carried.laneReceipt?.input;
     const result = /** @type {Record<string, any>} */ (adapter.run({
       version: 1,
       operation,
@@ -826,6 +1113,8 @@ async function claim(argv) {
       operation,
       outcome: result.outcome,
       reason: result.reason,
+      // With retained evidence, name the captures this step's runtime input carried.
+      ...(retained !== null && input !== undefined ? { capturesHash: capturesHash(input) } : {}),
       ...(result.incidentClass ? { incidentClass: result.incidentClass } : {}),
       ...(result.next ? { next: result.next } : {}),
       ...(result.product ? { productKind: result.product.kind } : {}),
@@ -845,7 +1134,7 @@ async function claim(argv) {
       result = step(`${label}:correction`, operation, payload, result.next.correctionIdentity);
       if (!refused(result)) return { result, reinspected: false };
     }
-    const fresh = step(`${label}:reinspect`, 'fresh-inspection', { input: emptyRuntimeInput(root, target) });
+    const fresh = step(`${label}:reinspect`, 'fresh-inspection', { input: setupInput() });
     const reinspected = fresh.outcome === 'accepted' && fresh.reason === 'inspection-refreshed';
     return { result: reinspected ? result : fresh, reinspected };
   };
@@ -877,14 +1166,42 @@ async function claim(argv) {
   };
 
   const proceed = () => {
-    const inspected = deterministic('fresh-inspection', 'fresh-inspection', () => ({ input: emptyRuntimeInput(root, target) }));
+    const inspected = deterministic('fresh-inspection', 'fresh-inspection', () => ({ input: setupInput() }));
     if (!accepted(inspected, 'inspection-refreshed')) return stop('fresh-inspection', inspected);
 
     /** @type {Record<string, any>} */
     let mutation = {};
+    /** @type {ReturnType<typeof laneBinding>|null} */
+    let issuedBinding = null;
     const issued = deterministic('authorize-lane-effect', 'authorize-lane-effect', () => {
       const binding = laneBinding(root, target, owner);
       const time = canonicalTime();
+      issuedBinding = binding;
+      if (terminal !== null) {
+        // The same-glyph claim alternative with its exact append-only marker; the
+        // issuer rederives its admission binding and eligibility from fresh evidence.
+        mutation = buildTerminalFreshClaimMutationV1({
+          target,
+          ownerPath: owner.ideaPath,
+          expectedOwnerHash: binding.application.owner.ownerCapture.sha256,
+          time,
+          requestIdentity: terminal.requestIdentity,
+          admissionIdentity: terminal.admission.admissionIdentity,
+          manifestIdentity: terminal.admission.evidence.manifestIdentity,
+          dispositionIdentity: terminal.admission.evidence.dispositionIdentity,
+        });
+        return {
+          laneEffect: {
+            input: setupInput(),
+            mutation,
+            lanePrestate: binding.lanePrestate,
+            targetMapping: binding.targetMapping,
+            terminalAdmission: {
+              requestIdentity: terminal.requestIdentity, manifest: terminal.manifest, disposition: terminal.disposition,
+            },
+          },
+        };
+      }
       mutation = {
         version: 1,
         lane: 'lightweight',
@@ -907,7 +1224,7 @@ async function claim(argv) {
       };
       return {
         laneEffect: {
-          input: emptyRuntimeInput(root, target),
+          input: setupInput(),
           mutation,
           lanePrestate: binding.lanePrestate,
           targetMapping: binding.targetMapping,
@@ -918,15 +1235,18 @@ async function claim(argv) {
     const permit = issued.product.permit;
     Object.assign(report, { mutation, permit: { permitHash: permit.permitHash, mutationIdentity: permit.mutationIdentity } });
 
-    const applied = deterministic('apply-lane-effect', 'apply-lane-effect', () => ({
-      laneApplication: { ...laneBinding(root, target, owner).application, mutation, permit },
-    }));
+    /** @type {Record<string, any>|null} */
+    let appliedApplication = null;
+    const applied = deterministic('apply-lane-effect', 'apply-lane-effect', () => {
+      appliedApplication = laneBinding(root, target, owner).application;
+      return { laneApplication: { ...appliedApplication, mutation, permit } };
+    });
     if (!accepted(applied, 'lane-mutation-applied')) return stop('apply-lane-effect', applied);
     const receipt = applied.product.receipt;
     report.receipt = { receiptHash: receipt.receiptHash };
 
     const committed = deterministic('commit-lane-receipt', 'commit-lane-receipt', () => ({
-      laneReceipt: { input: emptyRuntimeInput(root, target), permit, receipt },
+      laneReceipt: { input: setupInput(), permit, receipt },
     }));
     if (!accepted(committed, 'lane-receipt-committed')) return stop('commit-lane-receipt', committed);
     // The committed receipt settled setup inside run(); settle-effect is never called for it.
@@ -955,9 +1275,45 @@ async function claim(argv) {
     if (canonicalJson(acceptedState) !== canonicalJson(state)) {
       return finish(5, 'poststate', 'the accepted state changed during setup', { pair });
     }
+    // A terminal-qualified request carries its fresh admission and the complete
+    // setup receipt, so the runner can rebuild and compare the exact poststate.
+    const priorTerminal = terminal === null ? null : {
+      manifestIdentity: terminal.admission.evidence.manifestIdentity,
+      dispositionIdentity: terminal.admission.evidence.dispositionIdentity,
+      freshAdmissionIdentity: terminal.admission.admissionIdentity,
+      setupReceipt: {
+        version: 1,
+        mutation,
+        permit,
+        receipt,
+        targetMapping: /** @type {ReturnType<typeof laneBinding>} */ (/** @type {unknown} */ (issuedBinding)).targetMapping,
+        lanePrestate: /** @type {ReturnType<typeof laneBinding>} */ (/** @type {unknown} */ (issuedBinding)).lanePrestate,
+        preimages: {
+          tasks: /** @type {Record<string, any>} */ (appliedApplication).expected.tasks,
+          owner: /** @type {Record<string, any>} */ (appliedApplication).owner.ownerCapture,
+          taskState: /** @type {Record<string, any>} */ (appliedApplication).expected.taskState,
+        },
+      },
+    };
     report.runnerRequest = publishJson(path.join(out, 'runner-request.json'), {
       version: 1, root, target, owner, state: acceptedState,
+      // The validated captures travel with the request, so run never rereads their file.
+      ...(retained === null ? {} : { retainedEvidence: retained }),
+      ...(priorTerminal === null ? {} : { priorTerminal }),
     });
+    if (priorTerminal !== null) {
+      // Bind the one request this claim issued to its canonical location and exact
+      // bytes: run consumes only that file, so a relocated copy can never start it
+      // again. The admission-bound definition travels with it to the runner's start.
+      const issuedBytes = fs.readFileSync(report.runnerRequest);
+      report.terminalRequest = {
+        version: 1,
+        path: fs.realpathSync(report.runnerRequest),
+        sha256: sha256(issuedBytes),
+        byteLength: issuedBytes.byteLength,
+        requirements: terminal.manifest.binding.requirements,
+      };
+    }
     return finish(0, 'claimed', `${target.taskKey} is in progress; run the request next`, {
       ownerLogLine: mutation.ownerLog.exactLines[0],
       acceptedStateHash: sha256(canonicalJson(acceptedState)),
@@ -994,6 +1350,103 @@ function settledState(result) {
 }
 
 /**
+ * The issuing claim's binding of one terminal-qualified runner request. The
+ * claim's own setup report beside the request's canonical location must name
+ * that exact location and these exact bytes, so only the originally issued file
+ * can be consumed. A copy elsewhere, with or without its sibling files, has no
+ * such binding and is refused before anything is created. The binding also
+ * carries the admission-bound requirement descriptors to the runner's start.
+ * Under the cooperative host model this binds location and integrity; it is
+ * not a registry.
+ * @param {string} requestFile @param {Buffer} bytes
+ */
+function issuedTerminalRequest(requestFile, bytes) {
+  let file;
+  try {
+    file = fs.realpathSync(requestFile);
+  } catch (error) {
+    throw new Refusal(`runner request is unreadable: ${messageOf(error)}`);
+  }
+  const reportFile = path.join(path.dirname(file), CLAIM_REPORT_FILE);
+  /** @param {string} mismatch @returns {never} */
+  const refuse = (mismatch) => {
+    throw new Refusal('a terminal-qualified runner request runs only from the claim directory that issued it', {
+      request: file, report: reportFile, mismatch,
+    });
+  };
+  /** @type {unknown} */
+  let report = null;
+  try {
+    if (fs.lstatSync(reportFile).isFile()) report = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
+  } catch {
+    // An absent, unreadable, or malformed report binds nothing.
+  }
+  if (!isRecord(report) || report.command !== 'claim' || report.ok !== true || report.exitCode !== 0
+    || !isRecord(report.terminalRequest) || report.terminalRequest.version !== 1
+    || !isRecord(report.terminalRequest.requirements)) {
+    refuse('no-issuing-claim-report');
+  }
+  const binding = report.terminalRequest;
+  if (binding.path !== file) refuse('issued-elsewhere');
+  if (binding.sha256 !== sha256(bytes) || binding.byteLength !== bytes.byteLength) refuse('bytes-changed');
+  return { file, requirements: /** @type {Record<string, unknown>} */ (binding.requirements) };
+}
+
+/**
+ * Consume one terminal-qualified runner request at its real start, before the
+ * runner is invoked: exclusively create the immutable run-local record beside
+ * the originally issued request, binding its exact bytes and fresh admission.
+ * Reuse finds that record and refuses; a failed or uncertain start stays
+ * consumed and is never erased to retry. The record is neither a registry nor a lock.
+ * @param {string} root @param {ReturnType<typeof issuedTerminalRequest>} issued
+ * @param {Buffer} bytes @param {Record<string, any>} request
+ */
+function consumeTerminalRequest(root, issued, bytes, request) {
+  const requestFile = issued.file;
+  const prior = request.priorTerminal;
+  const freshAdmissionIdentity = isRecord(prior) ? prior.freshAdmissionIdentity : undefined;
+  if (typeof freshAdmissionIdentity !== 'string' || !HASH_PATTERN.test(freshAdmissionIdentity)) {
+    throw new Refusal('priorTerminal binds no fresh admission identity');
+  }
+  let requestIdentity;
+  try {
+    requestIdentity = sha256(canonicalJson(request));
+  } catch {
+    throw new Refusal('the terminal-qualified runner request is not canonical JSON data');
+  }
+  const file = outsideWorkspace(root, path.join(path.dirname(requestFile), REQUEST_USED_FILE), REQUEST_USED_FILE);
+  const text = `${JSON.stringify({
+    version: 1,
+    kind: 'runner-request-used',
+    request: path.basename(requestFile),
+    requestSha256: sha256(bytes),
+    requestByteLength: bytes.byteLength,
+    requestIdentity,
+    freshAdmissionIdentity,
+  }, null, 2)}\n`;
+  try {
+    fs.writeFileSync(file, text, { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'EEXIST') throw error;
+    throw new Refusal('this terminal-qualified runner request was already used; a new request needs the most recent terminal handoff and a new claim', {
+      requestUsed: file,
+    });
+  }
+  // The trusted start observation for this exact request, never a request field.
+  return {
+    file,
+    start: Object.freeze({
+      version: 1,
+      kind: 'runner-request-start',
+      requestIdentity,
+      freshAdmissionIdentity,
+      record: Object.freeze({ name: REQUEST_USED_FILE, sha256: sha256(text), byteLength: Buffer.byteLength(text) }),
+      requirements: deepFreeze(JSON.parse(JSON.stringify(issued.requirements))),
+    }),
+  };
+}
+
+/**
  * Run the official runner in this process and bridge its sequential challenges
  * through files: one atomic challenge at a time, then wait for its response
  * with a fixed polling delay and no timeout.
@@ -1002,16 +1455,47 @@ function settledState(result) {
 async function run(argv) {
   const { values } = parseArgs(argv, { options: ['request', 'dir', 'retained-evidence'], required: ['request'] });
   const requestFile = path.resolve(values.request);
-  const request = readJson(requestFile, 'runner request');
+  let requestBytes;
+  try {
+    requestBytes = fs.readFileSync(requestFile);
+  } catch (error) {
+    throw new Refusal(`runner request is unreadable: ${messageOf(error)}`);
+  }
+  let request;
+  try {
+    request = JSON.parse(requestBytes.toString('utf8'));
+  } catch {
+    throw new Refusal(`runner request is not JSON: ${requestFile}`);
+  }
   if (!isRecord(request) || typeof request.root !== 'string') throw new Refusal('the runner request has no workspace root');
   const root = workspaceRoot(request.root);
+  const terminalRequest = Object.hasOwn(request, 'priorTerminal');
   if (values['retained-evidence'] !== undefined) {
+    if (terminalRequest) {
+      throw new Refusal('a terminal-qualified runner request carries its own original captures; give no separate --retained-evidence');
+    }
     if (Object.hasOwn(request, 'retainedEvidence')) {
       throw new Refusal('the runner request already carries retainedEvidence; give exactly one source');
     }
     request.retainedEvidence = readJson(values['retained-evidence'], '--retained-evidence');
   }
+  // Only the originally issued request can be consumed; it is checked before anything is created.
+  const issued = terminalRequest ? issuedTerminalRequest(requestFile, requestBytes) : null;
   const dir = freshRunDirectory(root, values.dir, 'run --dir');
+  let used = null;
+  if (issued !== null) {
+    try {
+      used = consumeTerminalRequest(root, issued, requestBytes, request);
+    } catch (error) {
+      // Only this call's own new, still empty run directory is removed.
+      try {
+        fs.rmdirSync(dir);
+      } catch {
+        // An inert empty directory outside the workspace may remain.
+      }
+      throw error;
+    }
+  }
   const statusFile = path.join(dir, 'status.json');
   /** @param {Record<string, unknown>} fields */
   const status = (fields) => publishJson(statusFile, {
@@ -1019,44 +1503,12 @@ async function run(argv) {
   }, true);
   /** @param {Record<string, unknown>} event */
   const emit = (event) => process.stdout.write(`${JSON.stringify(event)}\n`);
-  status({ state: 'running', request: requestFile });
+  status({ state: 'running', request: requestFile, ...(used === null ? {} : { requestUsed: used.file }) });
   emit({ event: 'started', pid: process.pid, dir, status: statusFile });
 
-  // The original capture streams the runtime received, in received order. Every
-  // runtime input except a completion capture carries the runner's accumulated
-  // streams, which replace these whole. A capture carries the accumulated current
-  // run but only the current attempt's specialist streams; the runner adds each
-  // of those rows to its accumulation once, and so does this copy. A stop during
-  // a later capture therefore keeps every earlier attempt's captures. Rows are
-  // copied as received, never rebuilt.
-  /** @type {Record<string, unknown[]>|null} */
-  let received = null;
-  const runtime = {
-    identity: RUNTIME_IDENTITY,
-    /** @param {string} command @param {Record<string, any>} lowLevelRequest */
-    invoke(command, lowLevelRequest) {
-      const input = lowLevelRequest?.input;
-      if (isRecord(input) && RETAINED_STREAMS.every((field) => Array.isArray(input[field]))) {
-        /** @type {Record<string, unknown[]>} */
-        const streams = Object.fromEntries(
-          RETAINED_STREAMS.map((field) => [field, JSON.parse(JSON.stringify(input[field]))]),
-        );
-        const accumulated = received;
-        if (lowLevelRequest.mode === 'capture' && accumulated !== null) {
-          accumulated.currentRun = streams.currentRun;
-          for (const field of ATTEMPT_STREAMS) {
-            for (const row of streams[field]) {
-              const bytes = canonicalJson(row);
-              if (!accumulated[field].some((entry) => canonicalJson(entry) === bytes)) accumulated[field].push(row);
-            }
-          }
-        } else {
-          received = streams;
-        }
-      }
-      return { status: 'returned', value: runCommand(command, lowLevelRequest) };
-    },
-  };
+  // The runner observes the actual runtime boundary itself and publishes the
+  // original captures and any terminal evidence through this run-local sink.
+  const sink = retentionSink(dir);
   let challenges = 0;
   /** @param {Record<string, any>} challenge */
   const exchange = async (challenge) => {
@@ -1086,7 +1538,11 @@ async function run(argv) {
   /** @type {Record<string, any>} */
   let result;
   try {
-    result = await runHostAdapter(request, { runtime, exchange });
+    result = await runHostAdapter(request, {
+      exchange,
+      retentionSink: sink.port,
+      ...(used === null ? {} : { requestStart: used.start }),
+    });
   } catch (error) {
     // The refusal shape the official runner CLI emits for an unusable request.
     result = {
@@ -1099,8 +1555,11 @@ async function run(argv) {
   const acceptedStateFile = result.outcome === 'ended' && result.reason === 'task-settled'
     ? publishJson(path.join(dir, 'accepted-state.json'), settledState(result))
     : null;
-  const retained = /** @type {Record<string, unknown[]>|null} */ (received);
-  const retainedFile = retained === null ? null : publishJson(path.join(dir, 'retained-evidence.json'), retained);
+  // A disposition reports its own retention failures; any other end, including a
+  // Feature 056 release, keeps the failure visible as an unexpected error, as it always has.
+  const capturesFailure = sink.failures.get('retained-evidence.json');
+  if (capturesFailure !== undefined && !Object.hasOwn(result, 'terminalDisposition')) throw capturesFailure;
+  const retainedFile = sink.written.get('retained-evidence.json')?.file ?? null;
   const exitCode = result.outcome === 'ended' ? 0 : 1;
   const terminal = {
     outcome: result.outcome,
@@ -1115,6 +1574,7 @@ async function run(argv) {
     result: resultFile,
     acceptedState: acceptedStateFile,
     retainedEvidence: retainedFile,
+    terminalEvidence: sink.written.get('terminal-evidence.json')?.file ?? null,
   };
   status({ state: 'finished', ...terminal });
   emit({ event: 'finished', ...terminal });
@@ -1143,7 +1603,7 @@ async function assess(argv) {
   }
   const { action } = input;
   if (action === 'none') {
-    throw new Refusal('action none hard-stops at authorization and keeps the ownership pair', {
+    throw new Refusal('action none hard-stops at authorization; it never ends the task', {
       hint: 'to end this task, answer the challenge with respond --cancel',
     });
   }
