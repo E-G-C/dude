@@ -140,8 +140,9 @@
  *
  * A run with injected adapters is a controlled test, labeled as such, and can
  * never report native success, however far it runs. The real branch has never
- * run this strict qualification natively; version-3 attempts have run
- * natively, and none has passed.
+ * run this strict qualification natively. Its version-3 route passed natively
+ * once (run 41f9334f, 2026-11-12) after earlier attempts failed; that history
+ * grants nothing to any later run.
  *
  * Version 3: normal collaboration. A version-3 scope selects this branch
  * before any effect; a strict scope never falls through to it. It starts no

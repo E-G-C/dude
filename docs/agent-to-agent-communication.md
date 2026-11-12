@@ -21,13 +21,16 @@ Feature 089 adds optional nonblocking collaboration between two independent
 Dudes: the `dude_a2a_conversation` tool, B's restricted evidence worker,
 bounded local transcripts with a read-only live view, and optional peer
 number advice for a first capture. Its source, controlled checks, and a
-real-TLS component suite are delivered. Its native qualification has not
-passed: no actual independent AI exchange, unrelated main-agent progress,
-causal capture, live or retained inspection, or confirmed cleanup has been
-observed. The maintainer runner's native branch and its fixed Windows observer
-are implemented but unverified: no native attempt of the branch has passed,
-only controlled checks have exercised the observer, and the qualification
-preview still reports every native stage blocked. The
+real-TLS component suite are delivered. One native run of its normal route
+passed on 2026-11-12 on one Windows computer. It observed an actual
+independent AI exchange, unrelated main-agent progress, causal capture, live
+and retained inspection, and a real cancellation, but not confirmed cleanup:
+process-tree cessation stayed unconfirmed. See
+[First passing normal-route run](#first-passing-normal-route-run) for its
+evidence and limits. The maintainer runner's native branch is implemented, but
+its strict route and fixed Windows observer are unverified: the strict route
+has never run natively, only controlled checks have exercised the observer,
+and the qualification preview still reports every native stage blocked. The
 native branch now observes the two prerequisites it once could not: one
 model-driven after-view control, and the session storage B's worker records,
 whose files it classifies by documented purpose. Only controlled checks have
@@ -37,14 +40,13 @@ See [Collaboration between two Dudes](#collaboration-between-two-dudes).
 B's evidence worker can instead reuse the Copilot runtime's own saved
 sign-in, on Windows only, without a token file. This existing-sign-in branch
 is implemented in the product, and controlled checks and the real-TLS
-component suite exercise it with fake SDKs. Native qualification attempts,
-with both mains also on their saved sign-in, reached both mains' account
-checks, both proposals and their human activation approvals, and the
-readiness of B's worker, including its own account checks. In the latest
-attempt, the worker then ended with `unexpected_native_effect` after its
-prompt was admitted, before it read any evidence. No attempt has passed.
-Strict isolated-worker qualification is deferred and not passed for this
-branch. The Canvas GitHub sign-in in Settings > Accounts, which reads pack
+component suite exercise it with fake SDKs. The passing native run used this
+branch, with both mains also on their saved sign-in: every runtime and session
+it checked reported the expected account, and B's worker read its evidence and
+answered. In an earlier attempt, the worker had ended with
+`unexpected_native_effect` after its prompt was admitted, before it read any
+evidence. Strict isolated-worker qualification is deferred and not passed for
+this branch. The Canvas GitHub sign-in in Settings > Accounts, which reads pack
 sources, is a separate feature that collaboration never uses. See
 [Existing sign-in](#existing-sign-in).
 
@@ -1153,14 +1155,13 @@ independent roots, not a shared allocator, lock, or reservation. Two captures
 can still choose the same number with different slugs, which Feature 076 keeps
 valid. Two peers bound this proof; it makes no many-to-many claim. Only
 loopback runs on one computer have been exercised, in delivered component
-tests and in native attempts. Native attempts of the normal collaboration
-route (plan version 3) reached both mains' saved-sign-in account checks, both
-proposals and the human activation approvals, both conversation starts, and
-B's worker readiness. In the latest attempt, B's worker then ended with
+tests and in native runs. Earlier native attempts of the normal collaboration
+route (plan version 3) stopped before a pass; in one, B's worker ended with
 `unexpected_native_effect` after its prompt was admitted, before it read any
-evidence. No attempt has passed. The strict qualification (plan version 2) has
-never run natively, and strict isolation remains deferred. Private-LAN and
-other-platform use remain unqualified.
+evidence. One normal-route run then passed on 2026-11-12; see
+[First passing normal-route run](#first-passing-normal-route-run). The strict
+qualification (plan version 2) has never run natively, and strict isolation
+remains deferred. Private-LAN and other-platform use remain unqualified.
 
 ### Collaboration profiles
 
@@ -1452,11 +1453,14 @@ the same two release latches.
 
 Cleanup is unchanged: cessation stays unconfirmed once a runtime may have
 started, the worker's own folder is kept, and nothing in the owner's home or
-base directory is ever deleted. In the latest native attempt, the worker's
-runtime and session reported the expected account, and the worker recorded
-its version 2 readiness; it then ended with `unexpected_native_effect` after
-its prompt was admitted, before it read any evidence. No attempt has passed,
-and strict isolated-worker qualification is deferred, not passed.
+base directory is ever deleted. In the
+[passing native run](#first-passing-normal-route-run), each worker's runtime
+and session reported the expected account and each recorded its version 2
+readiness; the answering worker read its evidence and answered, and both
+workers' stops reported no errors, with cessation unconfirmed. An earlier
+attempt's worker had ended with `unexpected_native_effect` after its prompt was
+admitted, before it read any evidence. That pass is one point-in-time result on
+one computer, and strict isolated-worker qualification is deferred, not passed.
 
 ### Live and retained transcripts
 
@@ -1528,17 +1532,17 @@ use advice. See [`@dude brainstorm`](commands.md#dude-brainstorm).
 | Controlled unit and contract checks | `a2a-sdk-loader.test.mjs`, `a2a-peer-worker.test.mjs`, `a2a-collaboration.test.mjs`, `a2a-transcript.test.mjs`, and the publisher's advice tests use fake hosts, in-memory connections, and a fake worker SDK, for both the token and existing-sign-in worker branches. | Delivered; not real TLS. |
 | Real-TLS component suite | In `a2a-collaboration-tls.test.mjs`, two independent Node processes with separate roots run the real listener, client, bundled SDK, Express, and journals over loopback mutual TLS with certificates the test creates. B's worker drives a labeled fake SDK, handed in through a test adapter so its readiness records carry no production SDK provenance, and a scripted model. One check gives B's worker the existing-sign-in branch, whose fake account proves no native sign-in. | Delivered; component evidence only. |
 | Controlled native-branch checks | `qualify-collaboration.test.mjs`, `native-collaboration.test.mjs`, and `native-observer.test.mjs` cover the preview, the native branch's refusals, consent and approval handling, the permission relays, scripted runs from consent through the after-view control, startup, the held call, the answer, capture, cancellation, and the observer's final drain, the release files and recorded session storage against the actual worker module, the after-view control's required facts each removed alone, every session event type the SDK declares walked through each phase of that control and refused unless the phase permits it in its permitted form, each permitted type's other forms and identity statements walked where it is permitted, storage classification by documented purpose, and the observer's fixed source, event attribution, worker-relative paths, and stop sequence. Terminals, SDKs, and observers are scripted by the tests, and nothing stands in for an observation the run needs. | Delivered; controlled only, never native evidence. |
-| Native independent AI | Two actual selected Dudes and B's actually served worker on the public host. | Attempted natively; not passed. |
-| Native progress, capture, and inspection | Both main agents' unrelated progress while a real worker is pending, causal capture, and live plus retained reading. | Not run; blocked. |
+| Native independent AI | Two actual selected Dudes and B's actually served worker on the public host. | Passed once on the normal route (plan version 3) on 2026-11-12; see [First passing normal-route run](#first-passing-normal-route-run). The strict route has not run. |
+| Native progress, capture, and inspection | Both main agents' unrelated progress while a real worker is pending, causal capture, and live plus retained reading. | Passed in that same run; process-tree cessation stayed unconfirmed. |
 
 The component suite covers real wire correlation, wrong client and server
 pins, certificates outside their validity, a client without a certificate, an
 over-budget question, held work and busy refusals, cancellation and socket
 loss with no late success, a killed peer, recording capacity and recording
 failure on either side, live and retained reading, and both processes exiting
-on their own. Its measured times are component observations. The proposed
-native targets of at most 1 second for begin, read, and cancel remain
-unmeasured.
+on their own. Its measured times are component observations; native times,
+including begin, read, and cancel against their 1-second target, are recorded
+under [First passing normal-route run](#first-passing-normal-route-run).
 
 Cleanup evidence stays separate by layer:
 
@@ -1555,21 +1559,22 @@ Cleanup evidence stays separate by layer:
   stays in the run's proof folder, separate from product results and journals,
   which it never rewrites. It kills and deletes nothing.
 
-Native qualification of Feature 089 is incomplete. None of these evidence
-sources has been established natively:
+Native qualification of Feature 089 is incomplete: the strict route has never
+run natively, and none of its evidence sources has been established natively:
 
 - **Served worker observation.** B's journal now records the served worker's
   own readiness before its prompt, and its admission once `send` returns and
-  before any of that prompt's events are accepted. A native attempt's worker
-  produced both, but no held evidence call. The native branch checks them
-  against the operation, session, permit, loaders, extension process, and
-  observed processes before it writes each release.
+  before any of that prompt's events are accepted. In the passing normal-route
+  run, each of its two workers recorded both and held its first evidence call;
+  that route checks them without an observer. A strict run checks them against
+  the operation, session, permit, loaders, extension process, and observed
+  processes before it writes each release.
 - **Actual SDK use.** The fixed loaders now record the SDK file that the
-  extension and its worker imported. In a native attempt, B's records matched
-  the plan's SDK files, but that attempt did not pass. A path, file hashes, or
-  a qualifier's own import still do not show which SDK a running extension
-  loaded. `createSession` silently falls back from an invalid
-  `extensionSdkPath`, and `joinSession` ignores it.
+  extension and its worker imported. In the passing normal-route run, B's
+  records matched the plan's SDK files. A path, file hashes, or a qualifier's
+  own import still do not show which SDK a running extension loaded.
+  `createSession` silently falls back from an invalid `extensionSdkPath`, and
+  `joinSession` ignores it.
 - **Ambient feature enforcement.** Settings, tool metadata, refusals, or a
   model saying it cannot do something do not prove that discovery, hooks,
   skills, memory, the session store, and host Git stayed off in the served
@@ -1599,6 +1604,61 @@ succeed while B's real worker is pending; harness counters and direct
 `tools.execute` calls are not model progress. Each native proposal must be
 shown complete, B's with its SHARING and WORKER scopes, and approved by the
 human typing that session's exact current approval.
+
+### First passing normal-route run
+
+On 2026-11-12, native run `41f9334f-384c-4841-9c61-55fe06a1ccd6` of the
+normal collaboration route (plan version 3) ended at
+`2026-11-12T16:36:27.811Z` with exit status 0 and the verdict
+`collaboration_qualified`: all 46 checks and all 11 phases passed. Its
+retained report has SHA-256
+`9983f87804e401feb8ada5acebb8488a2d33fc881215000ce1089241e5ac80e8`. It is the
+first passing native run of Feature 089, and its verdict covers only the route
+it observed, within the limits listed after the table.
+
+| Area | What the run observed |
+| --- | --- |
+| Host | One Windows computer with Copilot runtime `1.0.102-0.unstable.r41779900948.gf482387`, protocol 3, and the qualifier running on Node 24.21.0. A and B were normal signed-in sessions in two independent fixture workspaces, connected by loopback mutual TLS with pinned certificates. |
+| Models | Both main sessions reported the plan's main model as current, and each of B's workers recorded the plan's worker model, a different one, in its readiness. The run's plan and report keep the model IDs. |
+| Accounts | Each main's runtime and actual session reported an authenticated GitHub CLI (`gh-cli`) sign-in as the expected login `E-G-C` at `https://github.com` in an initial check right after that session was created, and in a recheck before each of the main's prompts, including the first (5 rechecks for A, 4 for B). Each of B's workers recorded the same for its own runtime and session before its prompt. |
+| Consent and approval | The qualifier received the fresh run consent at its interactive terminal. B's and A's complete proposals measured 4,401 and 2,235 bytes against the 4,490-byte cap. The qualifier received each session's exact current approval at the same terminal and relayed it to that session, and the unchanged classifier accepted each as an unattributed root message. No standing pairing was used. |
+| Exchange | B's worker recorded readiness that matched the run's checks, and its first evidence call, an inventory, was held before any evidence was read. After the release it listed B's approved records, read record 101, and answered; B sent that reasoned reply, and A read and validated it. |
+| Main progress | During the 5,177 ms that call was held, each main's own model edited its progress file through a tool call it requested: A's edit completed at 3,227 ms and B's at 5,161 ms. |
+| Capture | A's model decided to use the advice. The installed Spec Lead staged the ledger and the advice in two synchronous tasks, and A's model ran the actual publisher with `--number-advice`. The receipt records fresh local maximum 100, peer maximum 101, chosen number 102, and `influence: "raised"`. The new ledger, `.dude/ideas/102-a2a-number-proof.md`, is in A's disposable fixture workspace, not this repository, and its SHA-256 matches the receipt. A's answered journal kept exactly its eight records. |
+| Cancellation | In a second exchange, A's model cancelled while a fresh worker's first evidence call was held. The cancel call took 7 ms. A's result reported possible prior delivery, B's operation ended `cancelled`, and neither journal changed afterward. |
+| Bounds | Begin and read calls took at most 24 ms in the advice exchange, and begin, read, and cancel calls at most 38 ms in the cancellation exchange, against 1 second. B's answering worker started in 1,462 ms and ran for 11,869 ms, against 10 and 90 seconds. A's and B's operations took 11,942 and 14,199 ms, against 120 seconds. |
+| Stops | Both workers' bounded stops and both mains' SDK stops reported no errors and needed no force-stop; the mains stopped in 116 and 138 ms. Process-tree cessation stayed unconfirmed. All run and normal runtime storage and logs were kept, and nothing was killed or deleted. |
+| Inspection | The qualifier wrote the journals to its terminal live as they grew. After the sessions ended, all four reread complete, closed, and identical to the live view: B's 17 and A's 8 records for the advice, and B's 11 and A's 6 for the cancellation. The qualifier then received the acknowledgment `reread reviewed` at that terminal. The report's `retained[].records` values (19, 10, 13, and 8) count rendered lines, including the reader's header and summary. |
+
+These limits apply to that result:
+
+- It covers one same-computer Windows run in the runtime's normal mode, with
+  the effects that mode discloses. Strict isolated-worker qualification is
+  deferred: not run and not passed. No observer, ETW trace, canary,
+  after-view control, authentication-only fresh home, or process-tree check
+  ran, so the run shows nothing about ambient-input exclusion, confinement, or
+  complete cessation.
+- It qualifies no physical LAN, macOS, Linux, GitHub Copilot App, other
+  runtime or Node version, standing-pairing use, or any other A2A use.
+  `collaboration_qualified` is not the strict verdict `qualified`.
+- Its account results are point-in-time observations of one account that all
+  three roles used, not an account lock, an entitlement check, or a peer
+  identity.
+- Its consent, approvals, and `reread reviewed` acknowledgment rest on
+  ordinary local trust: terminal input and unattributed root messages are not
+  proof of who entered them, and terminal output is not proof of what the
+  screen displayed.
+- It grants nothing. Any new run needs its own plan preview, freshly typed
+  consent, typed activation approvals, current account checks, and new native
+  evidence, and the preview still reports every native stage blocked.
+  Recording the run here does not accept or close Feature 089's qualification
+  task.
+
+Earlier version-3 attempts stopped before a pass. In one, B's worker ended with
+`unexpected_native_effect` after its prompt was admitted, before it read any
+evidence. Others stopped, for example, at the progress, capture, or
+cancellation checks, when no activation approval was entered in time, or when
+consent timed out.
 
 ### Qualification preview for maintainers
 
@@ -2072,8 +2132,10 @@ This is the prerequisite sequence; nothing here authorizes any step:
    hashed files, the runner, the observer, or the core changes the scope
    digest.
 
-For Feature 089, this guide summarizes the outcomes of native attempts but
-records no native input, run ID, timestamp, or raw result.
+For Feature 089, this guide records one passing run's ID, end time, and report
+digest under [First passing normal-route run](#first-passing-normal-route-run)
+and summarizes earlier attempts. It records no native input, consent line,
+approval code, private path, or raw result.
 
 ## Interruptions, cancellation, and uncertain outcomes
 
@@ -2214,10 +2276,11 @@ native/live qualification.
   SDK. It needs no OpenSSL or install, and it is component evidence, not native
   qualification.
 - `scripts/dude-a2a/qualify-collaboration.mjs` previews native qualification
-  without effects. With `--native`, it runs the implemented but unverified
-  native branch in `native-collaboration.mjs`, which starts the fixed Windows
-  observer `native-observer.ps1` for a strict version-2 run but not for a
-  version-3 run; see
+  without effects. With `--native`, it runs the native branch in
+  `native-collaboration.mjs`, whose version-3 route has passed natively once
+  and whose strict version-2 route is unverified. That branch starts the fixed
+  Windows observer `native-observer.ps1` for a strict version-2 run but not
+  for a version-3 run; see
   [Qualification preview for maintainers](#qualification-preview-for-maintainers).
   None of them ships, and neither do their tests,
   `qualify-collaboration.test.mjs`, `native-collaboration.test.mjs`, and

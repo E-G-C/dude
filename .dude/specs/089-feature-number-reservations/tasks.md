@@ -5,7 +5,7 @@
 - (none)
 
 ### In Progress
-- T008@l9r3q6t4 [Shared] Qualify and document the collaboration-first two-Dude proof with `scripts/dude-a2a/qualify-collaboration.mjs`; keep strict isolated-worker qualification deferred and not passed.
+- (none)
 
 ### Blocked
 - (none)
@@ -20,6 +20,7 @@
 - T011@r8c4n6p2 [US5] Assess the documented normal Copilot saved-sign-in contract against current collaboration callers, preserving a read-only compatibility-assessment purpose.
 - T012@s6h3w9k5 [US5] Add the explicit direct normal saved-sign-in branch to the existing production collaboration parser, binding, worker, and receiving path; preserve the strict token branch unchanged.
 - T013@v4m7q2d8 [US5] Wire the existing qualifier's exclusive normal-collaboration v3 route through the actual T012 product integration, without a second harness or authentication flow.
+- T008@l9r3q6t4 [Shared] Qualify and document the collaboration-first two-Dude proof with `scripts/dude-a2a/qualify-collaboration.mjs`; keep strict isolated-worker qualification deferred and not passed.
 
 <!-- dude:board:end -->
 
@@ -237,9 +238,8 @@ definition approval, controlled tests, a test adapter, or a passing wrapper.
 
 ## Phase 10: Native qualification and delivery
 
-- [~] T008@l9r3q6t4 [Shared] Qualify and document the collaboration-first two-Dude proof with `scripts/dude-a2a/qualify-collaboration.mjs`; keep strict isolated-worker qualification deferred and not passed.
+- [x] T008@l9r3q6t4 [Shared] Qualify and document the collaboration-first two-Dude proof with `scripts/dude-a2a/qualify-collaboration.mjs`; keep strict isolated-worker qualification deferred and not passed.
     deps: T007@j2w7b5m8, T009@n5v8c2s6, T010@q7m2v8c4, T011@r8c4n6p2, T012@s6h3w9k5, T013@v4m7q2d8
-    blocked-by: external-dependency: Live collaboration rows 14-15 and specific native consent remain unmet; the legacy terminal Work has no original owner fence/published handoff, and same-key close still requires current acceptance plus the applicable terminal administrative gate.
 
     Trace: plan T008: actual collaboration qualification and documentation; First milestone: preserved collaboration contracts; Retained deferred strict mechanisms; Bounds and failure behavior; Terminal Work and coordinator disposition. US1-US5; active FR/SC, with FR-024 and related strict portions explicitly deferred by user direction. One-to-one changed task, same qualification/docs purpose; preserve `[~]`, all current deps, partial implementation, accepted controlled integration/R6, failures, verification, review, and historical unmet evidence. No reset, rekey, successor, closure, or positive-evidence transfer.
     Prerequisites: usable accepted T011 assessment, accepted T012/T013 direct normal integration, specific native consent, and applicable execution admission. This definition supplies none. Normal-session reuse is not yet implemented in the token-only caller; source-supported design is not native account proof. Do not repeat isolated auth-source research, implement login, ask for GH_TOKEN, copy/export/create tokens, merge code, or execute a run under this definition approval.

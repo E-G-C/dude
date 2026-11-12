@@ -689,12 +689,14 @@ test('T028 operator guide documents the frozen byte bound without upgrading nati
   assert.doesNotMatch(prose, /T019 remains in progress|current runtime has no new output-size limit|T028 delivery remain pending/);
 });
 
-test('T008 operator guide documents two-Dude collaboration without upgrading its native qualification', async () => {
+test('T008 operator guide documents two-Dude collaboration and its first normal-route pass without upgrading strict, pairing, or platform qualification', async () => {
   const guide = fs.readFileSync(path.join(repoRoot, 'docs/agent-to-agent-communication.md'), 'utf8');
   const prose = guide.replace(/\s+/g, ' ');
   const section = /## Collaboration between two Dudes (.*?) ## Interruptions, cancellation, and uncertain outcomes/.exec(prose)?.[1];
   assert.ok(section, 'the guide has a collaboration section');
-  assert.match(prose, /Its native qualification has not passed: no actual independent AI exchange, unrelated main-agent progress, causal capture, live or retained inspection, or confirmed cleanup has been observed\./);
+  assert.match(prose, /One native run of its normal route passed on 2026-11-12 on one Windows computer\. It observed an actual independent AI exchange, unrelated main-agent progress, causal capture, live and retained inspection, and a real cancellation, but not confirmed cleanup: process-tree cessation stayed unconfirmed\. See \[First passing normal-route run\]\(#first-passing-normal-route-run\) for its evidence and limits\./);
+  assert.doesNotMatch(prose, /Its native qualification has not passed|no actual independent AI exchange, unrelated main-agent progress/,
+    'no stale claim that no native collaboration was observed');
   assert.match(section, /not a shared allocator, lock, or reservation/);
   assert.match(section, /`accepted` means local admission only, not readiness or delivery/);
   assert.match(section, /An answered asking journal is exactly eight records: `opened`, `accepted`, `request_prepared`, `request_write_started`, `reply_received`, `reply_validated`, `terminal`, and `closed`\./);
@@ -702,38 +704,43 @@ test('T008 operator guide documents two-Dude collaboration without upgrading its
   assert.match(section, /Without `--number-advice`, capture is unchanged/);
   assert.match(section, /These are configured settings, not proven enforcement/);
   assert.match(section, /Delivered; component evidence only\./);
-  assert.match(section, /\| Native independent AI \| Two actual selected Dudes and B's actually served worker on the public host\. \| Attempted natively; not passed\. \|/);
-  assert.equal(section.split('Not run; blocked.').length - 1, 1, 'native progress, capture, and inspection stay unrun and blocked');
-  assert.match(section, /Native qualification of Feature 089 is incomplete\./);
+  assert.match(section, /\| Native independent AI \| Two actual selected Dudes and B's actually served worker on the public host\. \| Passed once on the normal route \(plan version 3\) on 2026-11-12; see \[First passing normal-route run\]\(#first-passing-normal-route-run\)\. The strict route has not run\. \|/);
+  assert.match(section, /\| Native progress, capture, and inspection \| Both main agents' unrelated progress while a real worker is pending, causal capture, and live plus retained reading\. \| Passed in that same run; process-tree cessation stayed unconfirmed\. \|/);
+  assert.doesNotMatch(section, /Attempted natively; not passed\.|Not run; blocked\.|begin, read, and cancel remain unmeasured/, 'no stale unrun native status');
+  assert.match(section, /Native qualification of Feature 089 is incomplete: the strict route has never run natively, and none of its evidence sources has been established natively:/);
   assert.match(section, /It never exits 0\./);
   assert.match(section, /nothing here authorizes any step/);
-  assert.match(section, /For Feature 089, this guide summarizes the outcomes of native attempts but records no native input, run ID, timestamp, or raw result\./);
+  assert.match(section, /For Feature 089, this guide records one passing run's ID, end time, and report digest under \[First passing normal-route run\]\(#first-passing-normal-route-run\) and summarizes earlier attempts\. It records no native input, consent line, approval code, private path, or raw result\./);
+  assert.doesNotMatch(section, /records no native input, run ID, timestamp, or raw result/, 'no stale claim that the guide records no run ID or time');
   assert.doesNotMatch(prose, /No native [^.]*result for Feature 089 is recorded/i,
     'no blanket claim that the guide records no native result for Feature 089');
   assert.doesNotMatch(section, /Feature 089 (?:is|was) (?:natively )?qualified|native qualification (?:passed|is complete)/i);
 
-  // The native branch and observer are implemented, documented with their operator flow and bounds, and stay unverified: native
-  // attempts of the branch have passed nothing, only controlled checks have run the observer, and the strict run never ran natively.
-  assert.match(prose, /The maintainer runner's native branch and its fixed Windows observer are implemented but unverified: no native attempt of the branch has passed, only controlled checks have exercised the observer, and the qualification preview still reports every native stage blocked\./);
+  // The native branch and observer are implemented and documented with their operator flow and bounds. The branch's version-3 route
+  // passed natively once; its strict route never ran natively, only controlled checks have run the observer, and the preview stays blocked.
+  assert.match(prose, /The maintainer runner's native branch is implemented, but its strict route and fixed Windows observer are unverified: the strict route has never run natively, only controlled checks have exercised the observer, and the qualification preview still reports every native stage blocked\./);
+  assert.doesNotMatch(prose, /no native attempt of the branch has passed/, 'no stale claim that no native attempt of the branch passed');
   assert.match(section, /Delivered; controlled only, never native evidence\./);
   assert.match(section, /is implemented, but it has never run this strict qualification natively, so nothing about that run's native behavior is known\./);
   assert.doesNotMatch(prose, /native qualification has not run|exercised them, and the qualification preview|has never run natively, so nothing about native behavior/,
     'no stale claim that the native branch never ran natively');
-  // The collaboration introduction separates delivered component tests from native attempts, which passed nothing, and the
-  // qualifier's and native branch's own descriptions say never run natively only of the strict qualification.
-  assert.match(section, /Only loopback runs on one computer have been exercised, in delivered component tests and in native attempts\. Native attempts of the normal collaboration route \(plan version 3\) reached both mains' saved-sign-in account checks, both proposals and the human activation approvals, both conversation starts, and B's worker readiness\. In the latest attempt, B's worker then ended with `unexpected_native_effect` after its prompt was admitted, before it read any evidence\. No attempt has passed\. The strict qualification \(plan version 2\) has never run natively, and strict isolation remains deferred\. Private-LAN and other-platform use remain unqualified\./);
+  // The collaboration introduction separates delivered component tests from native runs and keeps the earlier failed attempts as
+  // history beside the one normal-route pass; the qualifier's and native branch's own descriptions say never run natively only of the
+  // strict qualification.
+  assert.match(section, /Only loopback runs on one computer have been exercised, in delivered component tests and in native runs\. Earlier native attempts of the normal collaboration route \(plan version 3\) stopped before a pass; in one, B's worker ended with `unexpected_native_effect` after its prompt was admitted, before it read any evidence\. One normal-route run then passed on 2026-11-12; see \[First passing normal-route run\]\(#first-passing-normal-route-run\)\. The strict qualification \(plan version 2\) has never run natively, and strict isolation remains deferred\. Private-LAN and other-platform use remain unqualified\./);
   assert.doesNotMatch(prose, /only as component tests|have been exercised, and only as component/,
     'no claim that loopback collaboration ran only in component tests');
   const sourceComment = (/** @type {string} */ file) => fs.readFileSync(path.join(repoRoot, file), 'utf8')
     .replace(/\r?\n[ \t]*\*[ \t]?/g, ' ').replace(/\s+/g, ' ');
   const qualifierSource = sourceComment('scripts/dude-a2a/qualify-collaboration.mjs');
-  assert.match(qualifierSource, /That branch is implemented\. Native version-3 attempts have reached both mains' saved-sign-in account checks, both proposals and the human activation approvals, both conversation starts, and B's worker readiness; the latest attempt's worker ended with unexpected_native_effect after its prompt was admitted, before it read any evidence\. No attempt has passed, the strict version-2 qualification has never run natively, and strict isolation stays deferred\./);
+  assert.match(qualifierSource, /That branch is implemented\. After earlier native version-3 attempts failed, one of them when B's worker ended with unexpected_native_effect after its prompt was admitted, one version-3 run \(41f9334f, 2026-11-12\) passed as collaboration_qualified on one Windows computer\. That history grants nothing: each new plan needs its own fresh consent, current account checks, and native evidence\. The strict version-2 qualification has never run natively, and strict isolation stays deferred\. Success is not inferred from this preview, from tests, or from an earlier run\./);
   assert.match(qualifierSource, /The native branch implements how each would be observed; none has been observed in a native strict run, so none is available here\./);
-  assert.doesNotMatch(qualifierSource, /That branch is implemented but has never run natively|none has been observed natively, so none is available here/,
-    'no claim in the qualifier that its native branch or proof sources never ran natively');
+  assert.doesNotMatch(qualifierSource, /That branch is implemented but has never run natively|none has been observed natively, so none is available here|No attempt has passed|the latest attempt's worker/,
+    'no claim in the qualifier that its native branch or proof sources never ran natively, or that no version-3 attempt passed');
   const nativeSource = sourceComment('scripts/dude-a2a/native-collaboration.mjs');
-  assert.match(nativeSource, /The real branch has never run this strict qualification natively; version-3 attempts have run natively, and none has passed\./);
-  assert.doesNotMatch(nativeSource, /The real branch has never run natively\./, 'no claim that the native branch never ran natively');
+  assert.match(nativeSource, /The real branch has never run this strict qualification natively\. Its version-3 route passed natively once \(run 41f9334f, 2026-11-12\) after earlier attempts failed; that history grants nothing to any later run\./);
+  assert.doesNotMatch(nativeSource, /The real branch has never run natively\.|version-3 attempts have run natively, and none has passed/,
+    'no claim that the native branch never ran natively or that no version-3 run passed');
   assert.match(section, /Membership in Administrators or Performance Log Users, in a terminal you opened that way/);
   assert.match(section, /Nothing elevates, installs, or registers a service\./);
   assert.match(section, /Under ACTION NEEDED it shows the exact consent line, `approve native <first 16 characters of the scope digest>`; type or paste that one line and press Enter\. Redirected, ended, or multi-line input refuses; anything entered before a prompt appears is ignored, and the prompt asks again\./);
@@ -838,8 +845,8 @@ test('T008 operator guide documents two-Dude collaboration without upgrading its
   assert.match(section, /Use the CLI and SDK pair of the plan's source basis \(1\.0\.102\)\./);
   assert.match(section, /The notification's `sourcePath` is documented only as a relative path, with no base, so only `k\/w` and `k\/t` are tried\. A first genuine run may stop on any of these\. The refused event's type and class in the report are where a planning decision starts; nothing is learned or allowed from such a refusal by itself\./);
 
-  // T009: the fixed loaders, B's readiness records, the lowered serving capacity, and their native status: a native attempt produced
-  // B's readiness, admission, and loader records, but none of these evidence sources is established.
+  // T009: the fixed loaders, B's readiness records, the lowered serving capacity, and their native status: the passing normal-route run
+  // produced B's readiness, admission, held-call, and loader records without an observer, so none of the strict evidence sources is established.
   assert.match(section, /two fixed loaders in `lib\/a2a-sdk-loader\.mjs`/);
   assert.match(section, /There is no other path, default location, or fallback\. If the extension's loader refuses, the extension does not join\./);
   assert.match(section, /Before its first prompt, within 10 seconds of starting, the worker checks its own session through the public SDK\./);
@@ -861,9 +868,11 @@ test('T008 operator guide documents two-Dude collaboration without upgrading its
   assert.match(section, /A release is an observation, not permission\./);
   assert.match(section, /currently above 45,148 bytes when serving or 146,578 bytes when asking\. B's readiness records lowered the serving limit from 46,452 bytes/);
   assert.match(section, /handed in through a test adapter so its readiness records carry no production SDK provenance/);
-  assert.match(section, /Native qualification of Feature 089 is incomplete\. None of these evidence sources has been established natively:/);
-  assert.match(section, /A native attempt's worker produced both, but no held evidence call\./);
-  assert.match(section, /In a native attempt, B's records matched the plan's SDK files, but that attempt did not pass\./);
+  assert.match(section, /Native qualification of Feature 089 is incomplete: the strict route has never run natively, and none of its evidence sources has been established natively:/);
+  assert.match(section, /In the passing normal-route run, each of its two workers recorded both and held its first evidence call; that route checks them without an observer\. A strict run checks them against the operation, session, permit, loaders, extension process, and observed processes before it writes each release\./);
+  assert.match(section, /In the passing normal-route run, B's records matched the plan's SDK files\. A path, file hashes, or a qualifier's own import still do not show which SDK a running extension loaded\./);
+  assert.doesNotMatch(section, /A native attempt's worker produced both, but no held evidence call|In a native attempt, B's records matched the plan's SDK files, but that attempt did not pass/,
+    'no stale claim that no native worker reached its held call or that no loader match passed');
   assert.doesNotMatch(section, /None of these evidence sources has been produced natively|but only fake SDKs have produced those records|but no native run has produced those records/,
     'no stale claim that only fake SDKs produced the served worker\'s or the loaders\' records');
   assert.doesNotMatch(section, /readiness (?:is|was|has been) (?:natively )?(?:proven|qualified|confirmed)|native readiness (?:passed|is complete)/i);
@@ -871,11 +880,11 @@ test('T008 operator guide documents two-Dude collaboration without upgrading its
   assert.match(reference, /The serving peer's evidence worker records its readiness before its first prompt, and native qualification of this collaboration is incomplete\./);
   assert.doesNotMatch(reference, /only fake SDKs have exercised that|no native run has observed its account/, 'no stale fake-only or unobserved-account claim');
 
-  // T012: the direct existing-sign-in branch is documented as implemented, with controlled and component evidence on fake SDKs and
-  // native attempts that reached B's worker readiness but passed nothing, with strict isolation deferred, no sign-in of Dude's own,
-  // and the Canvas GitHub sign-in kept a separate feature.
+  // T012: the direct existing-sign-in branch is documented as implemented, with controlled and component evidence on fake SDKs, one
+  // passing native run on it after earlier failed attempts, strict isolation deferred, no sign-in of Dude's own, and the Canvas GitHub
+  // sign-in kept a separate feature.
   assert.match(prose, /B's evidence worker can instead reuse the Copilot runtime's own saved sign-in, on Windows only, without a token file\./);
-  assert.match(prose, /Native qualification attempts, with both mains also on their saved sign-in, reached both mains' account checks, both proposals and their human activation approvals, and the readiness of B's worker, including its own account checks\. In the latest attempt, the worker then ended with `unexpected_native_effect` after its prompt was admitted, before it read any evidence\. No attempt has passed\. Strict isolated-worker qualification is deferred and not passed for this branch\./);
+  assert.match(prose, /The passing native run used this branch, with both mains also on their saved sign-in: every runtime and session it checked reported the expected account, and B's worker read its evidence and answered\. In an earlier attempt, the worker had ended with `unexpected_native_effect` after its prompt was admitted, before it read any evidence\. Strict isolated-worker qualification is deferred and not passed for this branch\./);
   assert.doesNotMatch(prose, /no native run has observed an actual account|native sign-in behavior is unproven|both with fake SDKs, have exercised it/,
     'no stale fake-only status for the branch');
   assert.match(prose, /The Canvas GitHub sign-in in Settings > Accounts, which reads pack sources, is a separate feature that collaboration never uses\./);
@@ -893,24 +902,63 @@ test('T008 operator guide documents two-Dude collaboration without upgrading its
   // The existing-sign-in proposal discloses that the worker's normal startup may start the owner's MCP servers and plugins, apart from
   // the two evidence tools its model is offered.
   assert.match(section, /Its `Worker startup` line says that the runtime may start the owner's configured MCP servers and plugins, while the worker's model is offered only the two evidence tools\./);
-  assert.match(section, /In the latest native attempt, the worker's runtime and session reported the expected account, and the worker recorded its version 2 readiness; it then ended with `unexpected_native_effect` after its prompt was admitted, before it read any evidence\. No attempt has passed, and strict isolated-worker qualification is deferred, not passed\./);
+  assert.match(section, /In the \[passing native run\]\(#first-passing-normal-route-run\), each worker's runtime and session reported the expected account and each recorded its version 2 readiness; the answering worker read its evidence and answered, and both workers' stops reported no errors, with cessation unconfirmed\. An earlier attempt's worker had ended with `unexpected_native_effect` after its prompt was admitted, before it read any evidence\. That pass is one point-in-time result on one computer, and strict isolated-worker qualification is deferred, not passed\./);
   assert.doesNotMatch(section, /Only fake SDKs have run this branch|Whether a native runtime reports these accounts and this storage as the SDK declares is unknown/,
     'no stale fake-only status for the branch');
   assert.match(section, /strict isolated-worker qualification is deferred, not passed\./);
   assert.doesNotMatch(prose, /(?:existing|saved) sign-in (?:is|was|has been) (?:natively )?(?:proven|qualified|verified)|isolated-worker qualification (?:passed|is complete)/i,
     'no claim that the sign-in branch or strict isolation is natively established');
-  assert.match(reference, /Native attempts with that sign-in reached the worker's readiness, including its expected account, but no attempt has passed, and strict isolated-worker qualification is deferred, not passed\./);
+  assert.match(reference, /One native run with that sign-in passed on 2026-11-12, for the observed same-computer Windows route only, and strict isolated-worker qualification is deferred, not passed\. See \[Collaboration between two Dudes\]\(agent-to-agent-communication\.md#collaboration-between-two-dudes\) and its \[first passing normal-route run\]\(agent-to-agent-communication\.md#first-passing-normal-route-run\)\./);
+  assert.doesNotMatch(reference, /no attempt has passed/i, 'no stale reference claim that no native attempt passed');
 
   // The preview names both plan versions that run natively, each only through --native with a complete, current plan.
   assert.match(section, /The plan is one closed JSON object\. Version 2 runs the strict qualification and version 3 the normal collaboration route, each natively only through `--native` with a complete, current plan\./);
   assert.doesNotMatch(prose, /Only version 2 can run natively/, 'no stale claim that only version 2 runs natively');
-  // Only a strict version-2 run starts the fixed observer, and the README separates the normal route's native attempts, none
-  // passed, from the strict qualification, which never ran natively.
-  assert.match(prose, /With `--native`, it runs the implemented but unverified native branch in `native-collaboration\.mjs`, which starts the fixed Windows observer `native-observer\.ps1` for a strict version-2 run but not for a version-3 run; see \[Qualification preview for maintainers\]\(#qualification-preview-for-maintainers\)\./);
-  assert.doesNotMatch(prose, /`native-collaboration\.mjs` with the fixed Windows observer/, 'no claim that every native run starts the observer');
+  // Only a strict version-2 run starts the fixed observer, and the README separates the normal route's one native pass from the
+  // strict qualification, which never ran natively.
+  assert.match(prose, /With `--native`, it runs the native branch in `native-collaboration\.mjs`, whose version-3 route has passed natively once and whose strict version-2 route is unverified\. That branch starts the fixed Windows observer `native-observer\.ps1` for a strict version-2 run but not for a version-3 run; see \[Qualification preview for maintainers\]\(#qualification-preview-for-maintainers\)\./);
+  assert.doesNotMatch(prose, /`native-collaboration\.mjs` with the fixed Windows observer|runs the implemented but unverified native branch/,
+    'no claim that every native run starts the observer, or that the whole branch is unverified');
   const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8').replace(/\s+/g, ' ');
-  assert.match(readme, /Native qualification of that collaboration remains incomplete: native attempts of its normal route have not passed, and its strict qualification has never run natively\./);
-  assert.doesNotMatch(readme, /maintainer runner is implemented but has not run natively/, 'no stale README claim that the runner never ran natively');
+  assert.match(readme, /One \[native run of its normal route\]\(docs\/agent-to-agent-communication\.md#first-passing-normal-route-run\) passed on 2026-11-12 on one Windows computer; its strict qualification has never run natively, so native qualification of that collaboration remains incomplete\./);
+  assert.doesNotMatch(readme, /maintainer runner is implemented but has not run natively|native attempts of its normal route have not passed/,
+    'no stale README claim that the runner never ran natively or that no normal-route attempt passed');
+
+  // The first passing normal-route run is recorded once, in its own section: its identity, what it observed, and its limits. It grants
+  // nothing, and the guide reproduces no consent line, approval code, digest other than the report's, or private path.
+  assert.equal((guide.match(/^### First passing normal-route run\r?$/gm) ?? []).length, 1, 'the run has exactly one section');
+  const firstPass = /### First passing normal-route run (.*?) ### Qualification preview for maintainers/.exec(prose)?.[1];
+  assert.ok(firstPass, 'the run\'s section sits between the evidence layers and the maintainer preview');
+  for (const [label, pattern] of /** @type {Array<[string, RegExp]>} */ ([
+    ['identity, verdict, and report digest', /^On 2026-11-12, native run `41f9334f-384c-4841-9c61-55fe06a1ccd6` of the normal collaboration route \(plan version 3\) ended at `2026-11-12T16:36:27\.811Z` with exit status 0 and the verdict `collaboration_qualified`: all 46 checks and all 11 phases passed\. Its retained report has SHA-256 `9983f87804e401feb8ada5acebb8488a2d33fc881215000ce1089241e5ac80e8`\. It is the first passing native run of Feature 089, and its verdict covers only the route it observed, within the limits listed after the table\./],
+    ['host and runtime', /\| Host \| One Windows computer with Copilot runtime `1\.0\.102-0\.unstable\.r41779900948\.gf482387`, protocol 3, and the qualifier running on Node 24\.21\.0\. A and B were normal signed-in sessions in two independent fixture workspaces, connected by loopback mutual TLS with pinned certificates\. \|/],
+    ['models by role', /\| Models \| Both main sessions reported the plan's main model as current, and each of B's workers recorded the plan's worker model, a different one, in its readiness\. The run's plan and report keep the model IDs\. \|/],
+    ['expected-account observations', /\| Accounts \| Each main's runtime and actual session reported an authenticated GitHub CLI \(`gh-cli`\) sign-in as the expected login `E-G-C` at `https:\/\/github\.com` in an initial check right after that session was created, and in a recheck before each of the main's prompts, including the first \(5 rechecks for A, 4 for B\)\. Each of B's workers recorded the same for its own runtime and session before its prompt\. \|/],
+    ['received consent, complete proposals, and relayed approvals', /\| Consent and approval \| The qualifier received the fresh run consent at its interactive terminal\. B's and A's complete proposals measured 4,401 and 2,235 bytes against the 4,490-byte cap\. The qualifier received each session's exact current approval at the same terminal and relayed it to that session, and the unchanged classifier accepted each as an unattributed root message\. No standing pairing was used\. \|/],
+    ['B\'s held call, permitted reads, and reasoned reply', /\| Exchange \| B's worker recorded readiness that matched the run's checks, and its first evidence call, an inventory, was held before any evidence was read\. After the release it listed B's approved records, read record 101, and answered; B sent that reasoned reply, and A read and validated it\. \|/],
+    ['both mains\' progress inside the hold', /\| Main progress \| During the 5,177 ms that call was held, each main's own model edited its progress file through a tool call it requested: A's edit completed at 3,227 ms and B's at 5,161 ms\. \|/],
+    ['peer-informed capture outside this repository', /\| Capture \| A's model decided to use the advice\. The installed Spec Lead staged the ledger and the advice in two synchronous tasks, and A's model ran the actual publisher with `--number-advice`\. The receipt records fresh local maximum 100, peer maximum 101, chosen number 102, and `influence: "raised"`\. The new ledger, `\.dude\/ideas\/102-a2a-number-proof\.md`, is in A's disposable fixture workspace, not this repository, and its SHA-256 matches the receipt\. A's answered journal kept exactly its eight records\. \|/],
+    ['real pending cancellation without revival', /\| Cancellation \| In a second exchange, A's model cancelled while a fresh worker's first evidence call was held\. The cancel call took 7 ms\. A's result reported possible prior delivery, B's operation ended `cancelled`, and neither journal changed afterward\. \|/],
+    ['measured bounds', /\| Bounds \| Begin and read calls took at most 24 ms in the advice exchange, and begin, read, and cancel calls at most 38 ms in the cancellation exchange, against 1 second\. B's answering worker started in 1,462 ms and ran for 11,869 ms, against 10 and 90 seconds\. A's and B's operations took 11,942 and 14,199 ms, against 120 seconds\. \|/],
+    ['bounded stops with cessation unconfirmed', /\| Stops \| Both workers' bounded stops and both mains' SDK stops reported no errors and needed no force-stop; the mains stopped in 116 and 138 ms\. Process-tree cessation stayed unconfirmed\. All run and normal runtime storage and logs were kept, and nothing was killed or deleted\. \|/],
+    ['retained reread counts journal records, not rendered lines', /\| Inspection \| The qualifier wrote the journals to its terminal live as they grew\. After the sessions ended, all four reread complete, closed, and identical to the live view: B's 17 and A's 8 records for the advice, and B's 11 and A's 6 for the cancellation\. The qualifier then received the acknowledgment `reread reviewed` at that terminal\. The report's `retained\[\]\.records` values \(19, 10, 13, and 8\) count rendered lines, including the reader's header and summary\. \|/],
+    ['strict deferred and no isolation shown', /- It covers one same-computer Windows run in the runtime's normal mode, with the effects that mode discloses\. Strict isolated-worker qualification is deferred: not run and not passed\. No observer, ETW trace, canary, after-view control, authentication-only fresh home, or process-tree check ran, so the run shows nothing about ambient-input exclusion, confinement, or complete cessation\./],
+    ['no platform, pairing, or general A2A qualification', /- It qualifies no physical LAN, macOS, Linux, GitHub Copilot App, other runtime or Node version, standing-pairing use, or any other A2A use\. `collaboration_qualified` is not the strict verdict `qualified`\./],
+    ['accounts are point-in-time observations', /- Its account results are point-in-time observations of one account that all three roles used, not an account lock, an entitlement check, or a peer identity\./],
+    ['terminal and root input rest on ordinary local trust', /- Its consent, approvals, and `reread reviewed` acknowledgment rest on ordinary local trust: terminal input and unattributed root messages are not proof of who entered them, and terminal output is not proof of what the screen displayed\./],
+    ['the history grants nothing', /- It grants nothing\. Any new run needs its own plan preview, freshly typed consent, typed activation approvals, current account checks, and new native evidence, and the preview still reports every native stage blocked\. Recording the run here does not accept or close Feature 089's qualification task\./],
+    ['earlier failures stay history', /Earlier version-3 attempts stopped before a pass\. In one, B's worker ended with `unexpected_native_effect` after its prompt was admitted, before it read any evidence\. Others stopped, for example, at the progress, capture, or cancellation checks, when no activation approval was entered in time, or when consent timed out\.$/],
+  ])) {
+    assert.match(firstPass, pattern, `first passing run: ${label}`);
+  }
+  assert.deepEqual(guide.match(/\b[0-9a-f]{64}\b/g), ['9983f87804e401feb8ada5acebb8488a2d33fc881215000ce1089241e5ac80e8'],
+    'the report digest is the only digest the guide records');
+  assert.doesNotMatch(guide, /approve native [0-9a-f]{16}|literalSha256|[A-Za-z]:\\Users\\/i, 'no consent line, consent digest, or private path');
+  assert.doesNotMatch(prose, /No attempt has passed|no attempt has passed|none has passed|In the latest (?:native )?attempt/,
+    'no stale denial of the pass and no stale latest-attempt status');
+  assert.doesNotMatch(prose, /(?:strict|isolated-worker) (?:qualification|isolation) (?:has )?(?:passed|is complete)/i, 'no strict pass');
+  assert.doesNotMatch(prose, /\b(?:macOS|Linux|physical[- ]LAN|private[- ]LAN|GitHub Copilot App)\b[^.]*\b(?:is|are|was|were) (?:now )?(?:qualified|supported)\b/i,
+    'no LAN, other-platform, or App support claim');
 
   // The documented version-2 plan template has exactly the preview's closed keys and stays inert.
   const raw = /### Qualification preview for maintainers\r?\n([\s\S]*?)\r?\n## Interruptions/.exec(guide)?.[1] ?? '';
