@@ -36,14 +36,21 @@ const PROOF_IDS = ['native_permission', 'served_worker_observation', 'actual_sdk
 const ANSWERED = ['opened', 'accepted', 'request_prepared', 'request_write_started', 'reply_received', 'reply_validated', 'terminal', 'closed'];
 const SECRET_IDS = ['credentials.a', 'credentials.b', 'credentials.worker', 'tls.a.certFile', 'tls.a.keyFile', 'tls.b.certFile', 'tls.b.keyFile'];
 /**
- * What both native routes disclose before consent about the main relay they share, for a plan capturing `slug`: the step-scoped Dude
- * tool calls and the reads of each session's own workspace that this consent covers, which the relay approves itself, and everything
- * else still shown for a typed approve-once or refused.
+ * What both native routes disclose before consent about the main relay they share, for a plan capturing `slug`: every request this
+ * consent covers, which the relay approves once each without asking (each step's Dude tool calls and workspace reads, each progress
+ * file's exact edit, and the capture step's exact commands, staging files, and reads of the staging folder), the capture step's one
+ * exception for the installed Spec Lead's staging, the report's account of those approvals, and that both activation approvals and the
+ * final reread stay typed.
  * @param {string} slug
  */
 const mainRelayParts = (slug) => [
-  'only for a tool call that session\'s own root model requested for its current step',
-  'Under this consent the relay itself approves once each, without asking you, only that step\'s exact calls to Dude\'s own tools, from the '
+  'only for a tool call that session\'s own root model requested for its current step, or, in A\'s capture step alone, one that the installed '
+    + 'Spec Lead (A\'s rendered .github/agents/dude-spec-lead.agent.md, checked by path and bytes) requested inside a synchronous task call that '
+    + 'A\'s root model made for that step, while that task runs.',
+  'A Spec Lead request counts only when A\'s own session events show that root task call and its start selecting the Spec Lead in sync mode, '
+    + 'the runtime\'s start of one sub-agent for that call with no spawning sub-agent, that sub-agent\'s own request of the call, and that '
+    + 'permission request still pending; no other or nested sub-agent, background task, earlier instruction, or ended task counts.',
+  'Under this consent the relay itself approves once each, without asking you, that step\'s exact calls to Dude\'s own tools, from the '
     + 'step\'s admitted instruction until its turn ends',
   'in each proposal step, dude_a2a_propose with that session\'s a2a.json and profile',
   `in the advice exchange, dude_a2a_conversation begin_receive and read for B, and begin_ask (slug ${slug}, the fixed question, and an integer `
@@ -51,16 +58,25 @@ const mainRelayParts = (slug) => [
   `in the cancellation exchange, the same for B, and begin_ask (slug ${slug}-cancel), cancel, and read for A.`,
   'Read and cancel need a well-formed operation ID, and the product checks which operation it names.',
   'In both exchanges and the capture step it also approves once each, the same way, a read that the session\'s own root model requests of '
-    + 'its own workspace (a/w for A, b/w for B) or of anything below it while that step\'s turn is open; never a read of the other workspace '
-    + 'or anywhere else, a subagent\'s read, or one after that turn ends.',
-  'A call or read that managed policy marks as needing a person is rejected instead.',
+    + 'its own workspace (a/w for A, b/w for B) or of anything below it while that step\'s turn is open, and in the capture step such a read of '
+    + 'a/w by that Spec Lead; never a read of the other workspace or anywhere else, any other subagent\'s read, or one after that turn ends.',
   'The approval steps allow neither, and the capture step no Dude tool call.',
-  'The report counts these approvals per session by tool and operation, and those reads as workspace.read.',
-  'Every other request is shown for a freshly typed approve-once only when it is the pending progress file\'s exact edit, or in the capture '
-    + 'step the exact inventory command, one fixed Get-FileHash of a staged ledger, the publisher command for this slug with staged files '
-    + 'below a/t, new staging files below a/t, or a read of a/t itself or of anything below it.',
+  'Inside the progress interval it also approves once each, the same way, each session\'s exact edit of its own progress file from pending to '
+    + 'complete, and while the capture step\'s turn is open: from A\'s root model only, the exact inventory command, one fixed Get-FileHash of a '
+    + 'staged ledger, and the publisher command for this slug with staged files below a/t; from the Spec Lead only, each new staging file below '
+    + 'a/t, as its own complete creation; and from either, a read of a/t itself or of anything below it.',
+  'Right before it approves one of these edits, commands, staging files, or reads of a/t, the relay checks again that the request is still '
+    + 'pending and unchanged, still made by the same model or Spec Lead, and still inside that interval or turn and this scope; otherwise it '
+    + 'rejects the request.',
+  'A request that managed policy marks as needing a person is rejected instead.',
+  'The report counts these approvals per session by tool and operation, workspace reads as workspace.read, and the Spec Lead\'s as '
+    + 'spec_lead.workspace.read; progress edits as progress.edit, the inventory, hash, and publisher commands as capture.command, reads of a/t '
+    + 'as capture.read, or spec_lead.capture.read for the Spec Lead\'s, and staging files as spec_lead.capture.staging.',
+  'It also keeps a permission entry, answered consented, for each approval under those last five keys, within the same 50-entry bound as its '
+    + 'rejections.',
+  'Only A\'s root model runs a command, and it stages nothing itself; the Spec Lead runs no command and calls no Dude or other tool.',
   'Everything else, including removing the staging folder, is rejected.',
-  'Both dude a2a approve lines are still yours to type.',
+  'Both dude a2a approve lines and the final reread reviewed are still yours to type.',
   'Worker permissions stay denied by the product.',
 ];
 /** @param {Buffer | string} value */
@@ -693,10 +709,14 @@ test('a complete version-2 plan previews as blocked and binds this runner, the n
   assert.match(effects.progress_and_capture, /progress-a\.txt and progress-b\.txt appear holding pending/);
   assert.match(effects.progress_and_capture, /No root prompt is sent while an operation is pending, and nothing given to A names B's records or the expected number\./);
   for (const part of mainRelayParts('delta')) assert.ok(effects.permissions.includes(part), `permissions: ${part}`);
+  assert.doesNotMatch(effects.permissions, /anywhere else, a subagent's read/, 'no blanket rule against the capture\'s Spec Lead staging');
+  assert.match(effects.progress_and_capture, /its normal capture of delta has the installed Spec Lead stage the ledger and the advice in two synchronous tasks, and A's root model runs the inventory, the hash, and the actual publisher with --number-advice, which writes the ledger/);
   assert.doesNotMatch(effects.permissions, /Each is shown and needs a freshly typed approve-once/, 'no stale claim that every main request is asked');
+  assert.doesNotMatch(effects.permissions, /Every other request is shown|shown for a freshly typed approve-once|asked the same way/,
+    'no main-session request is shown for a typed approve-once');
   assert.doesNotMatch(effects.permissions, /pending progress read|approval and capture steps allow no Dude tool call/,
     'no stale claim that the progress file\'s read is asked, or that the capture step allows nothing');
-  assert.match(effects.permissions, /The after-view control session has its own fixed relay, only for its one view's reads of the files named there, asked the same way; it never answers for a main session or the worker\./);
+  assert.match(effects.permissions, /The after-view control session has its own fixed relay, only for its one view's reads of the files named there, each of which you approve with a freshly typed approve-once; it never answers for a main session or the worker\./);
   assert.match(effects.cancellation_and_teardown, /Nothing is killed, deleted, retried, or rerun/);
   assert.ok(effects.recording.includes(`qualification evidence goes only to ${path.join(f.fixtureParent, 'p')}, never into a journal`));
   assert.equal(scope.scopeSha256, report.scopeSha256, 'the in-process scope is the one the report names');
@@ -1115,6 +1135,9 @@ test('a complete version-3 plan previews as blocked for normal collaboration onl
   for (const [scopeId, detail] of Object.entries(effects)) {
     if (scopeId !== 'deferred_strict') assert.doesNotMatch(detail, /after-view|canary recognition through|windows-etw|explicit credential|logged-in user off/, scopeId);
   }
+  assert.match(effects.progress_and_capture, /its normal capture of delta has the installed Spec Lead stage the ledger and the advice in two synchronous tasks, and A's root model runs the inventory, the hash, and the actual publisher with --number-advice, which writes the ledger/);
+  assert.doesNotMatch(effects.permissions, /anywhere else, a subagent's read/, 'no blanket rule against the capture\'s Spec Lead staging');
+  assert.doesNotMatch(effects.permissions, /approve-once/, 'a version-3 run asks the human about no permission: the relay approves what the consent covers');
   const disclosed = Buffer.byteLength(report.plannedEffects.map((/** @type {any} */ entry) => entry.detail).join('\n'), 'utf8');
   assert.ok(disclosed > A2A_PROPOSAL_BYTES, `the qualifier's own complete disclosure (${disclosed} bytes) is separately authorized: no product cap cuts it`);
   assert.ok(Buffer.byteLength(`${JSON.stringify(report, null, 2)}\n`) <= QUALIFICATION_LIMITS.reportBytes, 'and the report stays within its own bound');

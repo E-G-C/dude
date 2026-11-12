@@ -121,12 +121,13 @@ const A2A_RUNTIME_FILES = Object.freeze([
   'lib/a2a-sdk-loader.mjs',
   'lib/a2a-collaboration.mjs',
   'lib/a2a-transcript.mjs',
+  'lib/a2a-pairing.mjs',
   'lib/a2a-runtime.mjs',
   'lib/a2a-runtime.mjs.LEGAL.txt',
 ]);
 const A2A_TEST_FILES = Object.freeze([
   'a2a.test.mjs', 'a2a-transport.test.mjs', 'a2a-verify.test.mjs', 'a2a-peer-worker.test.mjs', 'a2a-sdk-loader.test.mjs', 'a2a-collaboration.test.mjs',
-  'a2a-transcript.test.mjs', 'a2a-collaboration-tls.test.mjs',
+  'a2a-transcript.test.mjs', 'a2a-collaboration-tls.test.mjs', 'a2a-pairing.test.mjs',
 ]);
 /** Repository-only A2A inputs: the runtime build and the maintainer qualification preview, native branch, and observer. None may reach generated output. */
 const A2A_BUILD_INPUTS = Object.freeze(['.gitignore', 'build.mjs', 'build.test.mjs', 'entry.mjs', 'package-lock.json', 'package.json',
@@ -738,24 +739,38 @@ test('T008 operator guide documents two-Dude collaboration without upgrading its
   assert.match(section, /Under ACTION NEEDED it shows the exact consent line, `approve native <first 16 characters of the scope digest>`; type or paste that one line and press Enter\. Redirected, ended, or multi-line input refuses; anything entered before a prompt appears is ignored, and the prompt asks again\./);
   assert.match(section, /The ACTION NEEDED block shows that approval line; if it cannot pick out exactly one `Approval` line in the result, it explains where to find that line instead\. Only your entered line, without surrounding spaces, is sent, and the unchanged classifier must accept it as an unattributed root message, or the run stops\./);
   assert.match(section, /no root prompt follows while an operation is pending/);
-  assert.match(section, /Type `approve-once` or `reject` for each\./);
-  // The consented step-scoped Dude tool calls and workspace reads the main relay approves itself, and the qualified claim that nothing else
-  // is computed.
+  // Only the after-view control's read is typed approve-once; no main-session request is.
+  assert.match(section, /type `approve-once` or `reject` for its read\./);
+  assert.doesNotMatch(section, /Type `approve-once` or `reject` for each|need your typed `approve-once`|requests presented for typed approval|before it shows the request/,
+    'no main-session request is shown for a typed approve-once');
+  // Everything the main relay approves itself under the consent, each step's calls and reads and each phase's exact actions, and the
+  // qualified claim that nothing else is computed.
   assert.match(section, /Each main's model calls `dude_a2a_propose`; under your consent the relay approves that exact call without asking, as described below\./);
   assert.match(section, /Both whole exchange instructions are sent together, and the relay approves each main's own conversation calls for that exchange, and its reads of its own workspace, under your consent, as described below\./);
-  assert.match(section, /Under your consent the relay approves A's reads of its own workspace in this step; the inventory, hash, and publisher commands, each new staging file, and any read of A's temp folder each need your typed `approve-once`, as described below\./);
+  assert.match(section, /before the evidence release is written\. Under your consent the relay approves that exact edit without asking you\./);
+  assert.match(section, /A decides whether to use the advice\. Its normal capture has the installed Spec Lead stage the ledger and then the advice, each in its own synchronous task, while A's root model runs the inventory, hash, and actual publisher commands, the publisher with `--number-advice`; the receipt must show local 100, peer 101, chosen 102, and `raised`\. Under your consent the relay approves, without asking you, reads of A's own workspace in this step, by A's model or that Spec Lead, and also the exact inventory, hash, and publisher commands, each new staging file, and any read of A's temp folder, as described below\. Nothing in this step waits for your input\./);
   assert.match(section, /A's model cancels through the conversation tool, a call the relay approves under your consent like the rest of that exchange's conversation calls\./);
+  assert.match(section, /Each main's permission requests go to a fixed relay, and only for a tool call that the session's own model requested for its current instruction, with one exception in A's capture step, described below\./);
   assert.match(section, /Dude's own tools ask for permission in the runtime's normal mode, and your consent covers the current step's exact calls of them: the relay approves each such call once without asking you, from the moment the step's instruction is admitted until its turn ends\./);
   assert.match(section, /In each proposal step that is `dude_a2a_propose` with that session's `a2a\.json` and profile\. In the advice exchange it is B's `dude_a2a_conversation` `begin_receive` and `read`, and A's `begin_ask` for the plan's slug with the fixed question and an integer tentative number, and `read`; in the cancellation exchange it is the same for B, and A's `begin_ask` for `<slug>-cancel`, `cancel`, and `read`\./);
-  assert.match(section, /A view can ask for permission to read too, even inside the session's own working directory, so your consent also covers reads of each session's own workspace, `a\/w` for A and `b\/w` for B: in both exchanges and the capture step, the relay approves once, the same way, each read that the session's own model requests of that folder or of anything in it while the step's turn is open\. It never approves a read of the other session's workspace or anywhere else, a subagent's read, or a read after the turn ended\./);
-  assert.match(section, /A call or read that managed policy marks as needing a person is rejected instead\. The approval steps allow neither, and the capture step allows no Dude tool call\. The report counts these approvals for each session in `toolApprovals`, by tool and operation and, for those reads, as `workspace\.read`\./);
-  assert.match(section, /It lists each rejected request in `permissions` with a `target` of at most 256 bytes, the requested path or the tool, command, or extension name, never a command's text, arguments, or contents; it keeps the first 50 requests rejected without asking and counts any more in `permissionsOmitted`; requests presented for typed approval are always kept\. A request that comes while no step or phase is open is rejected as `not_pending`\./);
-  assert.match(section, /Every other request is shown only when it is a pending allowlisted action of a call the session's own model requested for its current instruction:/);
-  // The capture step's typed requests include a read of A's temp folder itself or of anything in it, as the relay asks for them; the
-  // progress file's reads are the workspace's, so only its exact edit is typed.
-  assert.match(section, /the progress file's exact `pending`-to-`complete` edit, and in the capture step the exact inventory command, one fixed `Get-FileHash` of a staged ledger, the publisher command for the plan's slug with staged files under A's temp folder, new staging files there, and a read of that folder itself or of anything in it\. Type `approve-once` or `reject` for each\./);
+  assert.match(section, /A view can ask for permission to read too, even inside the session's own working directory, so your consent also covers reads of each session's own workspace, `a\/w` for A and `b\/w` for B: in both exchanges and the capture step, the relay approves once, the same way, each read that the session's own model requests of that folder or of anything in it while the step's turn is open, and in the capture step the Spec Lead's reads of `a\/w` too\. It never approves a read of the other session's workspace or anywhere else, any other subagent's read, or a read after the turn ended\./);
+  assert.match(section, /A call or read that managed policy marks as needing a person is rejected instead\. The approval steps allow neither, and the capture step allows no Dude tool call\. The report counts these approvals for each session in `toolApprovals`, by tool and operation and, for those reads, as `workspace\.read`, or `spec_lead\.workspace\.read` for the Spec Lead's\. A request rejected as `not_pending` is one that no open step or phase allows\. One rejected as `approval_withdrawn` exactly matched what its step or phase allows, but that turn or interval ended, or the request otherwise stopped being allowed, before the relay answered\./);
+  // The capture step's one exception: the installed Spec Lead's staging, attributed only through A's own session events, with the root
+  // model's commands unchanged and nothing typed for either.
+  assert.match(section, /In A's capture step alone, the relay can also attribute a request to the installed Spec Lead: the rendered `\.github\/agents\/dude-spec-lead\.agent\.md`, which A's session must list at that path with exactly its rendered bytes before any prompt\./);
+  assert.match(section, /A permission callback names the session but not the agent that asked, so the relay waits briefly for A's own session events and requires all of them: A's model requested a task call for the current instruction that selects the Spec Lead in `sync` mode, and that call started; the runtime started exactly one sub-agent for it, with no spawning sub-agent; that sub-agent itself requested the call; and the request's permission event is still pending\./);
+  assert.match(section, /A background task, a sub-agent started by another sub-agent, any other agent, an earlier instruction, or a task, sub-agent, or call that already ended does not count, and the relay checks all of this again right before it answers\./);
+  assert.match(section, /The Spec Lead may only read and stage: A's model runs every command and stages nothing itself, and the Spec Lead runs no command and calls no Dude or other tool\./);
+  // Each phase's exact actions, a read of A's temp folder itself or of anything in it among them, are the consent's too, approved once
+  // without asking and checked again right before the answer; the progress file's reads are the workspace's, so only its exact edit is
+  // listed.
+  assert.match(section, /Your consent also covers these exact actions, each a call that the session's own model, or in the capture step that Spec Lead, requested for its current instruction: inside the progress interval, the progress file's exact `pending`-to-`complete` edit; and while the capture step's turn is open, from A's model only, the exact inventory command, one fixed `Get-FileHash` of a staged ledger, and the publisher command for the plan's slug with staged files under A's temp folder; from the Spec Lead only, each new staging file there, as its own complete creation; and from either, a read of that folder itself or of anything in it\. The relay approves each of these once without asking you\./);
+  assert.match(section, /Right before it answers, it checks again that the interval or turn is still open with your consent granted, the run not closing, and the scope current; that the call is still requested for that instruction, or is still the same live Spec Lead's, and has not completed; and that the request is still the exact action it matched\. Otherwise it rejects the request as `approval_withdrawn`\. A request that managed policy marks as needing a person is rejected instead\./);
+  assert.match(section, /The report counts these approvals in `toolApprovals` as `progress\.edit` for the edits, `capture\.command` for the commands, `capture\.read` for A's model's reads of its temp folder or `spec_lead\.capture\.read` for the Spec Lead's, and `spec_lead\.capture\.staging` for the staging files\./);
+  assert.match(section, /The report lists each rejected request in `permissions` with a `target` of at most 256 bytes, the requested path or the tool, command, or extension name, never a command's text, arguments, or contents\. Each approval of the exact actions just described is listed there too, with the answer `consented`\. It keeps the first 50 such entries, rejected or consented, and counts any further rejected request in `permissionsOmitted`; a further approval is still counted in `toolApprovals`\. A request shown to you for a typed answer, which only the after-view control's relay makes, is always kept\./);
   assert.doesNotMatch(section, /progress file's exact read|The approval and capture steps allow no Dude tool call/, 'no stale typed progress read, and no claim that capture allows nothing');
-  assert.match(section, /Apart from the step-scoped Dude tool calls and workspace reads that your consent covers, there is no approve-all mode, saved consent, computed approval, or permission file\. Both `dude a2a approve` lines and `reread reviewed` are still yours to type\./);
+  assert.doesNotMatch(section, /anywhere else, a subagent's read/, 'no blanket rule against the capture\'s Spec Lead staging');
+  assert.match(section, /Apart from the exact requests above that your consent covers, there is no approve-all mode, saved consent, computed approval, or permission file\. Both `dude a2a approve` lines and `reread reviewed` are still yours to type\./);
   assert.doesNotMatch(section, /\. There is no approve-all mode/, 'no unqualified claim that nothing is ever approved without a typed line');
   assert.match(section, /Exit status: 0 only when a native run passed every check; 4 for every refusal or failure; 1 for a plan that cannot run natively\./);
   assert.match(section, /These native properties are unverified, and each one fails the run rather than passing it/);
@@ -765,7 +780,7 @@ test('T008 operator guide documents two-Dude collaboration without upgrading its
   assert.match(section, /Its own model's view must surface and load `k\/w\/AGENTS\.md`/);
   assert.match(section, /all within one 60-second phase that ends before either main starts\. Anything less, including a host that sends no such notification, stops the run as `ambient_state_unobservable`\./);
   assert.match(section, /Its recorded session workspace must still be the same directory by path, device, and inode; recorded absence allows no session persistence\. Every file the worker touched since the observer started, before that check as well as after it, is then classified/);
-  assert.match(section, /The after-view control's session has its own fixed relay, asked the same way/);
+  assert.match(section, /The after-view control's session has its own fixed relay, the only relay that asks you, for a typed `approve-once` or `reject`: it shows only a read that its sole pending model-requested view needs/);
   assert.match(section, /a row that would not fit, or a path over 1,024 characters, is a sticky overflow that fails the run, never a dropped row/);
   assert.match(section, /and nothing stands in for an observation the run needs\. \| Delivered; controlled only, never native evidence\. \|/);
   assert.doesNotMatch(prose, /does not classify (?:that|it) yet|stand in for the two unobservable prerequisites|so today every native run stops here|a native run cannot pass: it stops/,
@@ -910,6 +925,103 @@ test('T008 operator guide documents two-Dude collaboration without upgrading its
   for (const value of Object.values(/** @type {Record<string, unknown>} */ (template))) {
     if (typeof value === 'string') assert.match(value, /^<[^>]+>$|^createSession$|^windows-etw$/, 'examples remain inert placeholders or fixed values');
   }
+});
+
+test('Feature 095 T005 operator guide documents standing pairing without upgrading its native qualification', () => {
+  const guide = fs.readFileSync(path.join(repoRoot, 'docs/agent-to-agent-communication.md'), 'utf8');
+  const prose = guide.replace(/\s+/g, ' ');
+  /** @param {RegExp} pattern @returns {string} */
+  const section = (pattern) => {
+    const match = pattern.exec(prose)?.[1];
+    assert.ok(match, `the guide has the section ${pattern}`);
+    return match;
+  };
+  const configuration = section(/## Configuration file (.*?) ## Turning it on and off /);
+  const pairing = section(/### Standing pairing (.*?) ## Turning it on and off /);
+  const propose = section(/### Propose (.*?) ### Approve /);
+  const reuse = section(/#### Reusing a standing pairing (.*?) ### Approve /);
+  const approve = section(/### Approve (.*?) ### Which messages can approve /);
+  const status = section(/### Status (.*?) ### Stop /);
+  const stop = section(/### Stop (.*?) ## Asking a question /);
+  const collaboration = section(/### Collaboration profiles (.*?) ### Begin, read, and cancel /);
+  const security = section(/## Security and disclosure limits (.*?) ## Before any live use /);
+  const liveUse = section(/## Before any live use (.*?) ## For maintainers /);
+
+  // The optional profile boolean is a request, never consent; ordinary profiles keep one-use approval, and a worker
+  // qualification block refuses it.
+  assert.match(configuration, /\| `pairing` \| both \| no \| `true` asks for a standing pairing, so one approval also covers later matching activations; absent or `false` keeps one-use approval\. It is a request, never consent\. See \[Standing pairing\]\(#standing-pairing\)\. \|/);
+  assert.match(pairing, /A profile that sets `"pairing": true` asks for a standing pairing: one approval that also covers later matching activations\. The setting is a request, never consent\. Without it, or with `false`, every activation still needs its own proposal and approval, exactly as before\./);
+  assert.match(pairing, /A serving profile whose worker has a `qualification` block refuses `"pairing": true`, so a native qualification run keeps its own typed approvals and consent\./);
+  // First enrollment through the complete proposal and the exact typed approval, then zero-prompt reuse with its notice.
+  assert.match(pairing, /\*\*Enrollment, once\.\*\* Request the profile with `dude_a2a_propose`\. The result is the complete proposal with its PAIRING lines\. Review all of it, then type or paste the exact `dude a2a approve <code>` from its `Approval` line\. That one approval also saves the pairing\./);
+  assert.match(pairing, /\*\*Later use, with no prompt\.\*\* A later `dude_a2a_propose` request for the same profile, in this or a later session on this computer, starts a fresh activation at once when the pairing still matches exactly\. There is no new proposal, code, or approval\. Before the activation goes live, Dude logs the required `A2A standing pairing in use` notice, and the tool result then begins `Activation: active`\./);
+  assert.match(pairing, /Each owner pairs only their own side\. One owner's pairing never enrolls or wakes the other side/);
+  // The external record: its exact location, never in a repository, and its closed digest-only content.
+  assert.match(guide, /```text\r?\n<config>\.pairings\/<sha256\(profile ID\)>\.json\r?\n```/);
+  assert.match(pairing, /`<config>` is the configuration file's full real path, and `<sha256\(profile ID\)>` is the SHA-256 of the exact, case-sensitive profile ID as 64 lowercase hex digits\. The record is never kept in a repository: its folder must be outside the session's workspace and outside every Git checkout or worktree/);
+  assert.match(pairing, /If your configuration is inside a repository, a paired profile is refused until you move the configuration to a local folder outside every repository; ordinary profiles are unaffected\./);
+  assert.match(pairing, /A record holds only `\{"version":1,"bindingSha256":"<64 hex digits>"\}`, at most 1 KiB: a digest of what was approved, never the values themselves, the proposal, a code, a session, a key, a credential, or a time\./);
+  // Exact identity and scope drift needs a new enrollment; allowances are per activation and expiries never extend.
+  assert.match(pairing, /so another folder later created at the same path does not match/);
+  assert.match(pairing, /including the peer's address and certificate pin/);
+  assert.match(pairing, /Any difference means no match, even a whitespace edit or a change to another profile in the same file\. The next request then gets the complete enrollment proposal again, and only its approval replaces the record\./);
+  assert.match(pairing, /Numeric `repeatUse` limits, for exchanges and for command runs, count within one activation and restart with the next; there is no standing total\. An `expiresAt` time is absolute and never extended/);
+  assert.match(pairing, /Restoring the exact approved configuration can match an old record again, so editing the configuration does not revoke a pairing\. Only deleting the record revokes it/);
+  assert.match(pairing, /Native qualification of pairing is deferred and not passed: actual host display of the PAIRING lines and the notice, human review and input delivery, native model behavior, saved sign-in, physical LAN, and other platforms remain unqualified\. No new host support is claimed\./);
+
+  // Propose: preparation-only and fresh approval per activation are scoped to unpaired profiles; the PAIRING lines are
+  // documented exactly; a matching record activates only after every check, never past the size cap.
+  assert.match(propose, /For an unpaired profile, and for a paired profile without a matching standing record, preparation validates the configuration, TLS files, and current local binding\. It does not approve, load the A2A runtime, open a listener or socket, connect to the peer, send a question, run verification or Git probes, save a pairing, or change workflow state\./);
+  assert.match(propose, /its `Approval` line ends with `; also saves the PAIRING grant`/);
+  const lines = guide.split(/\r?\n/);
+  for (const line of [
+    'PAIRING: this approval persists for later matching sessions on this machine; any binding change needs new full approval; numeric repeat use resets per activation; absolute expiries do not extend',
+    'Pairing record: <record path>; holds a digest only; revoke: dude a2a stop, then delete that file; stop or a config edit alone does not revoke',
+    'Pairing trust: ordinary root input does not prove human authorship; an unrestricted local file writer can forge or remove this grant',
+  ]) assert.ok(lines.includes(line), `documented PAIRING line: ${line}`);
+  assert.match(propose, /This holds for a paired profile too: a matching standing record never bypasses the cap\./);
+  assert.match(propose, /give fresh local approval for each activation of an unpaired profile\. A smaller paired profile skips that only through its own exact, matching standing pairing; no larger or refused profile lends it approval\./);
+  assert.match(reuse, /For a profile with `"pairing": true`, the same request first runs every check above, including the 4,490-byte cap on the complete proposal it would show\./);
+  assert.match(reuse, /\*\*No record, or one that does not match:\*\* the result is the complete enrollment proposal with its PAIRING lines\. It activates nothing; only its approval saves or replaces the record\./);
+  assert.match(reuse, /\*\*A damaged, unreadable, or linked record, or a disallowed location:\*\* a short refusal with no proposal body, code, or activation\. The record's content is never shown\./);
+  assert.match(reuse, /\*\*A matching record:\*\* no proposal, code, or approval input\. The request starts a fresh activation for this session, with the same queued-input, binding, and startup checks as a typed approval\. Before it can go live, Dude logs the required notice that begins `A2A standing pairing in use:`\./);
+  assert.match(reuse, /It asks for nothing\. If it cannot be logged, nothing goes live\./);
+  assert.match(reuse, /A successful automatic result begins `Activation: active`, and its `Authority:` line names the standing pairing and how to revoke it\. If startup fails, the result begins `A2A automatic activation is not active:` and states `Activation: inactive`: a saved pairing alone is never reported as a connection, and nothing retries\./);
+
+  // Approve saves the grant only after every check, with no one-use fallback; Status names each pairing notice.
+  assert.match(approve, /For a proposal with PAIRING lines, the same approval also saves the standing record, once every check above passes and before anything starts\. The log then shows `A2A pairing saved: <record path>\. \.\.\.`\. If the record cannot be saved, nothing activates, and there is no fallback to one-use approval\. If startup fails after the save, the record stays, the log says `A2A paired, inactive: <reason>\. \.\.\.`, and nothing retries/);
+  assert.match(status, /\| `Activation: active; \.\.\.` \| A typed approval took effect\. An automatic activation returns this text as its `dude_a2a_propose` result instead of logging it\. \|/);
+  assert.match(status, /\| `A2A pairing saved: <record path>\. \.\.\.` \|/);
+  assert.match(status, /\| `A2A paired, inactive: <reason>\. \.\.\.` \|/);
+  assert.match(status, /\| `A2A standing pairing in use: \.\.\.` \| Required before an automatic activation goes live\. It names the profile, peer, workspace, scopes, limits, record, and how to revoke, and needs no response\. \|/);
+
+  // Stop ends the current activation and keeps the grant; only deleting the record revokes.
+  assert.match(stop, /For a paired profile, stop ends only the current activation\. It keeps the standing record and never starts a replacement on its own\./);
+  assert.match(stop, /Only deleting the record revokes a pairing\. Use `dude a2a stop`, then delete the record file named in the proposal, the approval notices, and the automatic notice\. Deletion works while Dude is not running and needs no acknowledgment from the peer\./);
+  assert.match(stop, /Editing the configuration, removing the profile, or setting `pairing` to `false` does not revoke: restoring the exact approved configuration can match the record again\./);
+  assert.match(stop, /for a paired activation, its standing record is deleted, changed, or can no longer be read safely, checked during startup and before each admission, run, reply, and send;/);
+  assert.match(stop, /Nothing is restored from history\. For an unpaired profile, propose and approve again\. For a paired profile whose record still matches, a new request starts a fresh activation, never the old one\./);
+
+  // Collaboration scope: a fresh worker permit per activation only from a shown WORKER grant; qualification stays unpaired.
+  assert.match(collaboration, /Only an approval of such a proposal, or a standing pairing saved from one, creates a worker permit, new for each activation; the transport grant alone never starts a worker, and no permit outlives its activation\./);
+  assert.match(collaboration, /A worker with a `qualification` block cannot be paired: its profile refuses `"pairing": true`, so a standing pairing never replaces a native qualification run's typed approvals or consent\./);
+
+  // The ordinary local trust limit, and live use still needing exact authorization.
+  assert.match(security, /The configuration, key files, and pairing records are protected only by their file permissions\./);
+  assert.match(security, /Its one enrollment approval is root input, not proof of human authorship\. Anything that can write the `\.pairings` folder without restriction can forge or remove a grant; the record has no signature or seal\. After enrollment, anything that can call `dude_a2a_propose` in that session, including its model, can start a paired activation within the stored scope without asking you\./);
+  assert.match(liveUse, /for a standing pairing, each paired profile and its record location;/);
+  assert.match(liveUse, /Standing pairing has automated evidence only, and its native qualification is deferred and not passed/);
+
+  // The unscoped statements are gone, and the guide carries no concrete grant or claim of native qualification.
+  assert.doesNotMatch(prose, /Preparation validates the configuration/, 'preparation-only wording is scoped to unpaired profiles');
+  assert.doesNotMatch(prose, /give fresh local approval for each activation\. There is no summary/, 'fresh approval per activation is scoped to unpaired profiles');
+  assert.doesNotMatch(prose, /Nothing is restored from history; propose and approve again\./, 'propose-and-approve-again is scoped to unpaired profiles');
+  assert.doesNotMatch(prose, /Only an approval of such a proposal creates the activation's worker permit/, 'a standing pairing saved from a WORKER grant also creates permits');
+  assert.doesNotMatch(prose, /\bstop (?:also )?revokes\b/i, 'stop never revokes a pairing');
+  assert.doesNotMatch(guide, /\.pairings[\\/][0-9a-f]{64}\.json|"bindingSha256":"[0-9a-f]{64}"/, 'no concrete pairing record belongs in the guide');
+  assert.doesNotMatch(guide, /dude a2a approve [0-9a-f]{12}(?:\s|$)/, 'no usable approval code belongs in the guide');
+  assert.doesNotMatch(prose, /pairing (?:is|was|has been) (?:natively )?(?:qualified|verified|proven)|native qualification of pairing (?:passed|is complete)/i,
+    'no claim that pairing is natively qualified');
 });
 
 test('buildDev rejects malformed canonical config before cleanup and leaves prior output byte-identical', () => {

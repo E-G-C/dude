@@ -326,6 +326,7 @@ single-line text, and numbers must be positive integers.
 | `evidenceRoots` | serve | yes | Absolute paths of existing folders, not links, whose files B may attach. The array may be empty. |
 | `verification` | serve | no | Command approval. See [Named commands](#named-commands). |
 | `collaboration` | both | no | An agreed project ID and, for serving, B's evidence worker. See [Collaboration between two Dudes](#collaboration-between-two-dudes). |
+| `pairing` | both | no | `true` asks for a standing pairing, so one approval also covers later matching activations; absent or `false` keeps one-use approval. It is a request, never consent. See [Standing pairing](#standing-pairing). |
 
 ### Example: share-only setup
 
@@ -404,6 +405,101 @@ existing files under the sharing scope:
 }
 ```
 
+### Standing pairing
+
+A profile that sets `"pairing": true` asks for a standing pairing: one
+approval that also covers later matching activations. The setting is a
+request, never consent. Without it, or with `false`, every activation still
+needs its own proposal and approval, exactly as before. A serving profile
+whose worker has a `qualification` block refuses `"pairing": true`, so a
+native qualification run keeps its own typed approvals and consent.
+
+A pairing has two steps:
+
+1. **Enrollment, once.** Request the profile with `dude_a2a_propose`. The
+   result is the complete proposal with its PAIRING lines. Review all of it,
+   then type or paste the exact `dude a2a approve <code>` from its `Approval`
+   line. That one approval also saves the pairing. See [Propose](#propose)
+   and [Approve](#approve).
+2. **Later use, with no prompt.** A later `dude_a2a_propose` request for the
+   same profile, in this or a later session on this computer, starts a fresh
+   activation at once when the pairing still matches exactly. There is no new
+   proposal, code, or approval. Before the activation goes live, Dude logs
+   the required `A2A standing pairing in use` notice, and the tool result
+   then begins `Activation: active`. See
+   [Reusing a standing pairing](#reusing-a-standing-pairing).
+
+Each activation is new and belongs to its session: nothing from an earlier
+activation carries over. Each owner pairs only their own side. One owner's
+pairing never enrolls or wakes the other side, which stays unavailable until
+its own owner activates it.
+
+Dude keeps one small record for each paired profile, next to the
+configuration file:
+
+```text
+<config>.pairings/<sha256(profile ID)>.json
+```
+
+`<config>` is the configuration file's full real path, and
+`<sha256(profile ID)>` is the SHA-256 of the exact, case-sensitive profile ID
+as 64 lowercase hex digits. The record is never kept in a repository: its
+folder must be outside the session's workspace and outside every Git checkout
+or worktree, judged by a `.git` file or folder on that folder or any folder
+above it, even when an ignore rule covers it. The folder must not be a link,
+and the record must be a regular file. If your configuration is inside a
+repository, a paired profile is refused until you move the configuration to a
+local folder outside every repository; ordinary profiles are unaffected. Dude
+creates the folder only when an approval saves a record, and asks for
+owner-only permissions where the platform supports them. Keep pairing
+records on this computer: do not commit, sync, or copy them elsewhere.
+
+A record holds only `{"version":1,"bindingSha256":"<64 hex digits>"}`, at
+most 1 KiB: a digest of what was approved, never the values themselves, the
+proposal, a code, a session, a key, a credential, or a time. A missing record
+means the profile is not enrolled yet. A damaged, oversized, unreadable, or
+linked record, or a disallowed location, refuses the request without showing
+the record's content. Like the configuration and TLS files, this
+configuration's pairing records are never attached as evidence.
+
+The record matches only the exact binding its approval covered:
+
+- the workspace path, its real folder, and that folder's identity on disk, so
+  another folder later created at the same path does not match;
+- the configuration path, its real path, its exact bytes, and the exact
+  profile ID;
+- the profile's parsed settings and each selected command's full definition,
+  including the peer's address and certificate pin, the sharing text,
+  evidence roots, limits, expiries, revision policy, and worker;
+- the contents of this profile's TLS certificate and key files and of the
+  worker's token file, or, for an existing sign-in, its resolved base
+  directory and selected environment values, all hashed; no value is stored.
+
+Any difference means no match, even a whitespace edit or a change to another
+profile in the same file. The next request then gets the complete enrollment
+proposal again, and only its approval replaces the record. Mutual TLS still
+checks the actual peer's certificate on every connection; a matching label or
+project ID is not trust.
+
+Numeric `repeatUse` limits, for exchanges and for command runs, count within
+one activation and restart with the next; there is no standing total. An
+`expiresAt` time is absolute and never extended: once it passes, requests for
+that profile are refused as expired, and changing it changes the binding,
+which needs a new enrollment.
+
+Restoring the exact approved configuration can match an old record again, so
+editing the configuration does not revoke a pairing. Only deleting the record
+revokes it; see [Stop](#stop).
+
+Automated checks cover this behavior: offline provider and storage tests, a
+disposable release, and the real-TLS component suite, in which two
+independent processes each enroll once, then converse in two later automatic
+activations with no approval input, including after both processes restart.
+Native qualification of pairing is deferred and not passed: actual host
+display of the PAIRING lines and the notice, human review and input delivery,
+native model behavior, saved sign-in, physical LAN, and other platforms
+remain unqualified. No new host support is claimed.
+
 ## Turning it on and off
 
 ### Propose
@@ -439,12 +535,15 @@ observed troubleshooting, not a guaranteed workaround or permission to retry
 or reload. Historical inspection results or process IDs grant no current
 authority.
 
-Preparation validates the configuration, TLS files, and current local binding.
-It does not approve, load the A2A runtime, open a listener or socket, connect to
-the peer, send a question, run verification or Git probes, or change workflow
-state. A successful `ToolResultObject` has `resultType: "success"` and the
-complete plain-text proposal in `textResultForLlm`. Success means preparation,
-not activation or proof of display.
+For an unpaired profile, and for a paired profile without a matching standing
+record, preparation validates the configuration, TLS files, and current local
+binding. It does not approve, load the A2A runtime, open a listener or socket,
+connect to the peer, send a question, run verification or Git probes, save a
+pairing, or change workflow state. A successful `ToolResultObject` has
+`resultType: "success"` and the complete plain-text proposal in
+`textResultForLlm`. Success means preparation, not activation or proof of
+display. A paired profile whose record matches activates instead; see
+[Reusing a standing pairing](#reusing-a-standing-pairing).
 
 Open the native result detail for that tool call and review the entire body.
 An assistant paraphrase, a code by itself, or a private-event-log relay cannot
@@ -498,6 +597,17 @@ asking proposal shows B's endpoint, the sharing lines, `contentBytes`,
 listener or local verification grant. All three cases include the review,
 lifetime, and next-action instructions.
 
+A profile with `"pairing": true` adds three PAIRING lines after its scope
+lines, just before `Risks`, and its `Approval` line ends with
+`; also saves the PAIRING grant`. The record path is the profile's actual
+path, described in [Standing pairing](#standing-pairing):
+
+```text
+PAIRING: this approval persists for later matching sessions on this machine; any binding change needs new full approval; numeric repeat use resets per activation; absolute expiries do not extend
+Pairing record: <record path>; holds a digest only; revoke: dude a2a stop, then delete that file; stop or a config edit alone does not revoke
+Pairing trust: ordinary root input does not prove human authorship; an unrestricted local file writer can forge or remove this grant
+```
+
 Private key material and fixed environment values are omitted from proposals.
 That omission does not redact secrets placed in argv or prose, or anything a
 command later prints. The full proposal and its approval code are model-readable
@@ -519,18 +629,52 @@ limits are unchanged.
 
 An oversized proposal returns only the short `proposal_too_large` refusal,
 with no proposal body, code, approval line, or partial approvable result.
-An eligible replacement attempt withdraws the previous pending proposal even
-when the replacement is oversized. Neither a refused nor a replaced code can
-activate anything. Choose an explicitly smaller profile, request a fresh
-proposal, review its complete native result, and give fresh local approval
-for each activation. There is no summary, file, log, or paging fallback, and
-no automatic splitting or retry.
+This holds for a paired profile too: a matching standing record never
+bypasses the cap. An eligible replacement attempt withdraws the previous
+pending proposal even when the replacement is oversized. Neither a refused nor
+a replaced code can activate anything. Choose an explicitly smaller profile,
+request a fresh proposal, review its complete native result, and give fresh
+local approval for each activation of an unpaired profile. A smaller paired
+profile skips that only through its own exact, matching standing pairing; no
+larger or refused profile lends it approval. There is no summary, file, log,
+or paging fallback, and no automatic splitting or retry.
 
 The bound comes from the limited native CLI calibration above, not from the
 historical oversized App failure. Size eligibility and distribution parity
 still do not prove complete display or human review. Stop before approval
 whenever an accepted result is incomplete or inaccessible. A new refusal from
 the delivered guard does not change the 2026-09-30 App failure's verdict.
+
+#### Reusing a standing pairing
+
+For a profile with `"pairing": true`, the same request first runs every check
+above, including the 4,490-byte cap on the complete proposal it would show.
+It then reads that profile's standing record, described in
+[Standing pairing](#standing-pairing):
+
+- **No record, or one that does not match:** the result is the complete
+  enrollment proposal with its PAIRING lines. It activates nothing; only its
+  approval saves or replaces the record.
+- **A damaged, unreadable, or linked record, or a disallowed location:** a
+  short refusal with no proposal body, code, or activation. The record's
+  content is never shown.
+- **A matching record:** no proposal, code, or approval input. The request
+  starts a fresh activation for this session, with the same queued-input,
+  binding, and startup checks as a typed approval. Before it can go live,
+  Dude logs the required notice that begins `A2A standing pairing in use:`.
+  The notice names the profile, the peer and its fingerprint, the workspace,
+  SHARING, any separately approved COMMANDS and WORKER, the validity and
+  limits, the record path, and how to revoke. It asks for nothing. If it
+  cannot be logged, nothing goes live.
+
+A successful automatic result begins `Activation: active`, and its
+`Authority:` line names the standing pairing and how to revoke it. If startup
+fails, the result begins `A2A automatic activation is not active:` and states
+`Activation: inactive`: a saved pairing alone is never reported as a
+connection, and nothing retries. Cancelling the request before its result
+returns cancels the startup; the result's normal return does not end the
+activation. A session still holds one activation at a time, so stop the
+current one before requesting another profile.
 
 ### Approve
 
@@ -558,10 +702,18 @@ placeholder above. It approves that one current proposal, once:
   queued-input checks, and rechecks the exact binding and sharing/command
   validity. A wrong code consumes the pending proposal without activating.
   Request and review a fresh proposal after any invalidation.
+- For a proposal with PAIRING lines, the same approval also saves the
+  standing record, once every check above passes and before anything starts.
+  The log then shows `A2A pairing saved: <record path>. ...`. If the record
+  cannot be saved, nothing activates, and there is no fallback to one-use
+  approval. If startup fails after the save, the record stays, the log says
+  `A2A paired, inactive: <reason>. ...`, and nothing retries; a later
+  matching request can reuse the record.
 - B then starts its configured listener; A prepares its pinned client. Nothing
   is sent until A's model asks. The adapter emits an `Activation: active; ...`
-  notice with the profile, endpoint, validity, and available operations.
-  Native visibility of that notice is still unqualified.
+  notice with the profile, endpoint, validity, and available operations. For
+  a paired profile, its `Authority:` line names the saved pairing and how to
+  revoke it. Native visibility of that notice is still unqualified.
 
 Historical result text may remain visible after replacement, cancellation,
 consumption, expiry, or session shutdown. It is a snapshot, not live status,
@@ -604,8 +756,12 @@ unqualified, separately from proposal results:
 
 | Log line | Meaning |
 | --- | --- |
-| `Activation: active; ...` | The approval took effect. |
+| `Activation: active; ...` | A typed approval took effect. An automatic activation returns this text as its `dude_a2a_propose` result instead of logging it. |
 | `Activation: inactive` | The activation ended; the line before it says why. |
+| `A2A pairing saved: <record path>. ...` | An approval saved its profile's standing pairing, before anything started. |
+| `A2A paired, inactive: <reason>. ...` | The pairing was saved, but startup failed. Nothing is active or retried, and the record stays. |
+| `A2A standing pairing in use: ...` | Required before an automatic activation goes live. It names the profile, peer, workspace, scopes, limits, record, and how to revoke, and needs no response. |
+| `A2A automatic activation refused: ...` or `A2A automatic activation cancelled: ...` | An automatic activation did not go live; nothing was activated. |
 | `Status: waiting; current receive live` | B has a receive waiting, so B can admit one question. |
 | `Status: admitted; <exchange-ID>` | B admitted a question. |
 | `Status: reply sent; <exchange-ID>` | B's reply finished writing to the connection. |
@@ -631,19 +787,42 @@ termination is requested for a running command. Stop cannot recall anything
 already sent, and it does not stop work that a model started with its normal
 tools.
 
+For a paired profile, stop ends only the current activation. It keeps the
+standing record and never starts a replacement on its own. A later
+`dude_a2a_propose` request for that profile can start a fresh activation from
+the record.
+
+Only deleting the record revokes a pairing. Use `dude a2a stop`, then delete
+the record file named in the proposal, the approval notices, and the
+automatic notice. Deletion works while Dude is not running and needs no
+acknowledgment from the peer. A live paired activation rereads its record at
+every check, so deleting the record also ends it at its next check, and later
+requests get only the enrollment proposal. Editing the configuration,
+removing the profile, or setting `pairing` to `false` does not revoke:
+restoring the exact approved configuration can match the record again. There
+is no unpair command or remote revocation, and revoking cannot recall anything
+already disclosed or done.
+
 An activation also ends when:
 
 - the session shuts down or its conversation context is cleared;
 - `expiresAt` passes;
 - the activation notice's log call fails; a successful log call still does
   not establish native visibility;
+- for an automatic activation, its required `A2A standing pairing in use`
+  notice cannot be logged, so it never goes live;
+- for a paired activation, its standing record is deleted, changed, or can no
+  longer be read safely, checked during startup and before each admission,
+  run, reply, and send;
 - the configuration, the profile's TLS files, the session, or the workspace no
   longer matches the approval, checked before each admission, run, reply, and
   send.
 
 If the session's workspace changes, the extension instance refuses further
-activation until the extension restarts. Nothing is restored from history;
-propose and approve again.
+activation until the extension restarts. Nothing is restored from history.
+For an unpaired profile, propose and approve again. For a paired profile whose
+record still matches, a new request starts a fresh activation, never the old
+one.
 
 ## Asking a question
 
@@ -1020,9 +1199,15 @@ qualification profile adds a `QUALIFICATION` line with its run, fixture, and
 manifest digest, and lines for its probes and release latches; a version 2
 profile has latches only. The serving
 approval line says that it grants SHARING and the separate WORKER scope
-together. Only an approval of such a proposal creates the activation's worker
-permit; the transport grant alone never starts a worker. The fixed 4,490-byte
-cap covers the complete proposal, including these lines.
+together. Only an approval of such a proposal, or a standing pairing saved
+from one, creates a worker permit, new for each activation; the transport
+grant alone never starts a worker, and no permit outlives its activation. A
+standing pairing without a WORKER scope starts no worker, and one whose
+WORKER scope changed no longer matches. A worker with a `qualification` block
+cannot be paired: its profile refuses `"pairing": true`, so a standing pairing
+never replaces a native qualification run's typed approvals or consent. The
+fixed 4,490-byte cap covers the complete proposal, including these lines and
+any PAIRING lines.
 
 ### Begin, read, and cancel
 
@@ -1654,13 +1839,17 @@ A run proceeds in this order and stops at the first failed check:
    appear; each main's own model
    must change its file from `pending` to `complete` through a native tool
    call it requested for this instruction, inside that interval, before the
-   evidence release is written.
-8. A decides whether to use the advice. Its normal capture runs the actual
-   publisher with `--number-advice`, and the receipt must show local 100, peer
-   101, chosen 102, and `raised`. Under your consent the relay approves A's
-   reads of its own workspace in this step; the inventory, hash, and
-   publisher commands, each new staging file, and any read of A's temp folder
-   each need your typed `approve-once`, as described below.
+   evidence release is written. Under your consent the relay approves that
+   exact edit without asking you.
+8. A decides whether to use the advice. Its normal capture has the installed
+   Spec Lead stage the ledger and then the advice, each in its own synchronous
+   task, while A's root model runs the inventory, hash, and actual publisher
+   commands, the publisher with `--number-advice`; the receipt must show local
+   100, peer 101, chosen 102, and `raised`. Under your consent the relay
+   approves, without asking you, reads of A's own workspace in this step, by
+   A's model or that Spec Lead, and also the exact inventory, hash, and
+   publisher commands, each new staging file, and any read of A's temp
+   folder, as described below. Nothing in this step waits for your input.
 9. One more exchange starts a fresh worker. While its first evidence call is
    held, `cancel-a.txt` appears, and A's model cancels through the
    conversation tool, a call the relay approves under your consent like the
@@ -1677,7 +1866,8 @@ A run proceeds in this order and stops at the first failed check:
     `reread reviewed`.
 
 Each main's permission requests go to a fixed relay, and only for a tool
-call that the session's own model requested for its current instruction.
+call that the session's own model requested for its current instruction,
+with one exception in A's capture step, described below.
 Dude's own tools ask for permission in the runtime's normal mode, and your
 consent covers the current step's exact calls of them: the relay approves
 each such call once without asking you, from the moment the step's
@@ -1693,36 +1883,72 @@ inside the session's own working directory, so your consent also covers
 reads of each session's own workspace, `a/w` for A and `b/w` for B: in both
 exchanges and the capture step, the relay approves once, the same way, each
 read that the session's own model requests of that folder or of anything in
-it while the step's turn is open. It never approves a read of the other
-session's workspace or anywhere else, a subagent's read, or a read after the
+it while the step's turn is open, and in the capture step the Spec Lead's
+reads of `a/w` too. It never approves a read of the other session's
+workspace or anywhere else, any other subagent's read, or a read after the
 turn ended. A call or read that managed policy marks as needing a person is
 rejected instead. The approval steps allow neither, and the capture step
 allows no Dude tool call. The report counts these approvals for each session
 in `toolApprovals`, by tool and operation and, for those reads, as
-`workspace.read`. It lists each rejected request in `permissions` with a
-`target` of at most 256 bytes, the requested path or the tool, command, or
-extension name, never a command's text, arguments, or contents; it keeps the
-first 50 requests rejected without asking and counts any more in
-`permissionsOmitted`; requests presented for typed approval are always
-kept. A request
-that comes while no step or phase is open is rejected as `not_pending`.
+`workspace.read`, or `spec_lead.workspace.read` for the Spec Lead's. A request
+rejected as `not_pending` is one that no open step or phase allows. One
+rejected as `approval_withdrawn` exactly matched what its step or phase
+allows, but that turn or interval ended, or the request otherwise stopped
+being allowed, before the relay answered.
 
-Every other request is shown only when it is a pending allowlisted action
-of a call the session's own model requested for its current instruction:
-the progress file's exact
-`pending`-to-`complete` edit, and in the capture step the exact inventory
-command, one fixed `Get-FileHash` of a staged ledger, the publisher command
-for the plan's slug with staged files under A's temp folder, new staging
-files there, and a read of that folder itself or of anything in it. Type
-`approve-once` or `reject` for each. Requests are shown one
-at a time; each has 60 seconds, counting its wait in line, and at most 8
-wait. A request is withdrawn, before its turn or after your answer, if its
-step ended, its call completed, its exact action changed, the run began
-closing, or the scope expired. Everything else is rejected without asking,
-including removing the staging folder, so staged files stay in A's temp
-folder. The worker's own permission requests stay denied by the product.
-The after-view control's session has its own fixed relay, asked the same
-way: it shows only a read that its sole pending model-requested view needs,
+In A's capture step alone, the relay can also attribute a request to the
+installed Spec Lead: the rendered `.github/agents/dude-spec-lead.agent.md`,
+which A's session must list at that path with exactly its rendered bytes
+before any prompt. A permission callback names the session but not the agent
+that asked, so the relay waits briefly for A's own session events and
+requires all of them: A's model requested a task call for the current
+instruction that selects the Spec Lead in `sync` mode, and that call
+started; the runtime started exactly one sub-agent for it, with no spawning
+sub-agent; that sub-agent itself requested the call; and the request's
+permission event is still pending. A background task, a sub-agent started by
+another sub-agent, any other agent, an earlier instruction, or a task,
+sub-agent, or call that already ended does not count, and the relay checks
+all of this again right before it answers. A
+sub-agent's request that fails it is rejected with a `spec_lead_` reason
+naming the fact that failed. The Spec Lead may only read and stage: A's
+model runs every command and stages nothing itself, and the Spec Lead runs
+no command and calls no Dude or other tool.
+
+Your consent also covers these exact actions, each a call that the session's
+own model, or in the capture step that Spec Lead, requested for its current
+instruction: inside the progress interval, the progress file's exact
+`pending`-to-`complete` edit; and while the capture step's turn is open, from
+A's model only, the exact inventory command, one fixed `Get-FileHash` of a
+staged ledger, and the publisher command for the plan's slug with staged
+files under A's temp folder; from the Spec Lead only, each new staging file
+there, as its own complete creation; and from either, a read of that folder
+itself or of anything in it. The relay approves each of these once without
+asking you. Right before it answers, it checks again that the interval or
+turn is still open with your consent granted, the run not closing, and the
+scope current; that the call is still requested for that instruction, or is
+still the same live Spec Lead's, and has not completed; and that the request
+is still the exact action it matched. Otherwise it rejects the request as
+`approval_withdrawn`. A request that managed policy marks as needing a person
+is rejected instead. The report counts these approvals in `toolApprovals` as
+`progress.edit` for the edits, `capture.command` for the commands,
+`capture.read` for A's model's reads of its temp folder or
+`spec_lead.capture.read` for the Spec Lead's, and `spec_lead.capture.staging`
+for the staging files. Everything else is rejected without asking, including
+removing the staging folder, so staged files stay in A's temp folder. The
+worker's own permission requests stay denied by the product.
+
+The report lists each rejected request in `permissions` with a `target` of at
+most 256 bytes, the requested path or the tool, command, or extension name,
+never a command's text, arguments, or contents. Each approval of the exact
+actions just described is listed there too, with the answer `consented`. It
+keeps the first 50 such entries, rejected or consented, and counts any
+further rejected request in `permissionsOmitted`; a further approval is still
+counted in `toolApprovals`. A request shown to you for a typed answer, which
+only the after-view control's relay makes, is always kept.
+
+The after-view control's session has its own fixed relay, the only relay
+that asks you, for a typed `approve-once` or `reject`: it shows only a read
+that its sole pending model-requested view needs,
 of the view's target or a fixed instruction canary that view may surface,
 and its prompt ends with the control's 60-second phase or the scope's
 expiry, whichever comes first, when the prompt itself is released. Its
@@ -1730,10 +1956,10 @@ request is also withdrawn, before its turn or after your answer, as soon as
 that session reports the view's turn ended, aborted, or failed, or any other
 operation in it. Any other event that would fail the control, as in step 4,
 withdraws it the same way. It never answers
-for a main session or the worker. Apart from the step-scoped Dude tool
-calls and workspace reads that your consent covers, there is no approve-all
-mode, saved consent, computed approval, or permission file. Both
-`dude a2a approve` lines and `reread reviewed` are still yours to type.
+for a main session or the worker. Apart from the exact requests above that
+your consent covers, there is no approve-all mode, saved consent, computed
+approval, or permission file. Both `dude a2a approve` lines and
+`reread reviewed` are still yours to type.
 
 The plan is at most 16 KiB. The report is at most 64 KiB; it goes to stdout
 and, once the fixture exists, to `<fixtureParent>/p/report.json`. A larger
@@ -1895,7 +2121,15 @@ stopped.
   suppressed.
 - Collaboration journals and capture receipts keep authorized message content
   in each workspace; they are locally sensitive until the owner deletes them.
-- The configuration and key files are protected only by their file permissions.
+- The configuration, key files, and pairing records are protected only by
+  their file permissions.
+- A standing pairing rests on the same ordinary local trust. Its one
+  enrollment approval is root input, not proof of human authorship. Anything
+  that can write the `.pairings` folder without restriction can forge or
+  remove a grant; the record has no signature or seal. After enrollment,
+  anything that can call `dude_a2a_propose` in that session, including its
+  model, can start a paired activation within the stored scope without asking
+  you. The required notice reports that activation; it does not ask.
 - Communication never changes Dude's workflow state: no task claims, task
   states, reviews, or closures.
 
@@ -1914,11 +2148,16 @@ owners must explicitly authorize each of these by exact value:
   environment names, model, token file or existing-sign-in base directory
   and expected account, roots, and kept storage, and the
   recording and retention of both peers' journals and receipts;
+- for a standing pairing, each paired profile and its record location;
 - the cleanup afterward, such as stopping both activations and removing any
   certificates or firewall rules created for the test.
 
 Permission given for earlier experiments, including Feature 068's retired
 isolation gate (Q0), grants nothing now.
+
+Standing pairing has automated evidence only, and its native qualification is
+deferred and not passed; see [Standing pairing](#standing-pairing). Its
+automated checks grant no actual pairing.
 
 Proposal-only observation grants no activation, listener, peer exchange, or
 command permission. Remaining local Windows CLI qualification must inspect

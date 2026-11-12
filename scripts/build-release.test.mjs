@@ -99,6 +99,7 @@ const A2A_RUNTIME_FILES = Object.freeze([
   'lib/a2a-sdk-loader.mjs',
   'lib/a2a-collaboration.mjs',
   'lib/a2a-transcript.mjs',
+  'lib/a2a-pairing.mjs',
   'lib/a2a-runtime.mjs',
   'lib/a2a-runtime.mjs.LEGAL.txt',
 ]);
@@ -112,6 +113,7 @@ const A2A_BUILD_ONLY = Object.freeze([
   'src/extensions/dude/a2a-collaboration.test.mjs',
   'src/extensions/dude/a2a-transcript.test.mjs',
   'src/extensions/dude/a2a-collaboration-tls.test.mjs',
+  'src/extensions/dude/a2a-pairing.test.mjs',
   'scripts/dude-a2a/.gitignore',
   'scripts/dude-a2a/build.mjs',
   'scripts/dude-a2a/build.test.mjs',
@@ -565,6 +567,16 @@ test('T011 release stages exact published Canvas runtime bytes without frontend,
 });
 
 /**
+ * Feature 095's documented record location for one fixture profile, derived independently of the delivered
+ * module: `<config>.pairings/<sha256(profile ID)>.json`, beside the owner's real configuration path.
+ * @param {string} owner @param {string} profileId
+ */
+function releasedPairingRecord(owner, profileId) {
+  const config = fs.realpathSync.native(path.join(owner, 'a2a.json'));
+  return path.join(`${config}.pairings`, `${createHash('sha256').update(profileId, 'utf8').digest('hex')}.json`);
+}
+
+/**
  * Start a disposable release's own extension in a fake host: a package-shaped
  * stand-in for `@github/copilot-sdk/extension` that records the join and the
  * session log. The released runtime file is wrapped so each import is counted,
@@ -676,9 +688,13 @@ function runReleasedExtension(releaseRoot, owner) {
     profile.sharing.purpose += 'x'.repeat(padding);
     boundaryProfiles[profileId] = profile;
   }
-  w(owner, 'a2a.json', JSON.stringify({ ...document, profiles: { ...document.profiles, ...boundaryProfiles } }));
+  // Feature 095: an otherwise ordinary asking profile that requests a standing pairing.
+  const pairingProfiles = { 'a-pair': { ...structuredClone(document.profiles['a-ask']), pairing: true } };
+  w(owner, 'a2a.json', JSON.stringify({ ...document, profiles: { ...document.profiles, ...boundaryProfiles, ...pairingProfiles } }));
+  const pairingRecord = releasedPairingRecord(owner, 'a-pair');
   const driverPath = path.join(releaseRoot, 't018-driver.mjs');
   fs.writeFileSync(driverPath, `
+import fs from 'node:fs';
 import net from 'node:net';
 import tls from 'node:tls';
 import childProcess from 'node:child_process';
@@ -771,6 +787,29 @@ try {
   report.approvalOutcome = await waitFor(() => lines().slice(beforeApproval).find((line) => /^(?:Activation: active|A2A approval refused)/.test(line)));
   report.importsAfterApproval = imports();
   report.sessionSends = harness.sends();
+  // Feature 095, from the released files alone: preparing the paired profile's proposal saves nothing, only its typed
+  // approval saves the grant, and a later request reuses that grant with no proposal or code and reports its actual outcome.
+  const pairingRecord = ${JSON.stringify(pairingRecord)};
+  const readRecord = () => (fs.existsSync(pairingRecord) ? fs.readFileSync(pairingRecord, 'utf8') : null);
+  const pairArgs = { ...proposalArgs, profileId: 'a-pair' };
+  const pairing = { recordBeforeProposal: readRecord() };
+  const enrollment = new AbortController();
+  pairing.proposal = await call('dude_a2a_propose', pairArgs, enrollment.signal);
+  enrollment.abort(); // Normal SDK completion keeps the enrollment proposal pending.
+  pairing.recordAfterProposal = readRecord();
+  const pairCode = /approve ([0-9a-f]{12});/.exec(pairing.proposal.textResultForLlm)?.[1];
+  const beforePairApproval = lines().length;
+  options.onEvent({ type: 'user.message', data: { content: 'dude a2a approve ' + pairCode } });
+  await waitFor(() => lines().slice(beforePairApproval).some((line) => /^(?:Activation: active|A2A paired, inactive|A2A approval refused)/.test(line)));
+  pairing.approvalLines = lines().slice(beforePairApproval);
+  pairing.record = readRecord();
+  const beforeReuse = lines().length;
+  pairing.reuse = await call('dude_a2a_propose', pairArgs);
+  pairing.reuseLines = lines().slice(beforeReuse);
+  pairing.recordAfterReuse = readRecord();
+  pairing.imports = imports();
+  pairing.sessionSends = harness.sends();
+  report.pairing = pairing;
 } catch (error) {
   report.error = error instanceof Error ? error.stack : String(error);
 }
@@ -809,7 +848,8 @@ process.send?.(report);
  * @param {string} generation @param {string} code @param {string} digest @param {string} purpose
  */
 function expectedReleasedProposal(releaseRoot, owner, profileId, generation, code, digest, purpose) {
-  const ask = profileId === 'a-ask';
+  const pairing = profileId === 'a-pair';
+  const ask = profileId === 'a-ask' || pairing;
   const commands = ['b-command', 'b-atcap', 'b-above'].includes(profileId);
   const configPath = path.join(owner, 'a2a.json');
   return [
@@ -823,6 +863,13 @@ function expectedReleasedProposal(releaseRoot, owner, profileId, generation, cod
       `Purpose: ${purpose}`,
       'Limits: 4096 bytes per message; 1000 ms ask timeout',
       'Validity/repeat use: until activation ends; 1 exchange',
+      ...(pairing ? [
+        'PAIRING: this approval persists for later matching sessions on this machine; any binding change needs new full approval; '
+          + 'numeric repeat use resets per activation; absolute expiries do not extend',
+        `Pairing record: ${releasedPairingRecord(owner, profileId)}; holds a digest only; revoke: dude a2a stop, then delete that file; `
+          + 'stop or a config edit alone does not revoke',
+        'Pairing trust: ordinary root input does not prove human authorship; an unrestricted local file writer can forge or remove this grant',
+      ] : []),
     ] : [
       `Peer: A; client address 127.0.0.1; SHA-256 ${Array(32).fill('AB').join(':')}`,
       'Listen: https://127.0.0.1:18444/',
@@ -858,7 +905,8 @@ function expectedReleasedProposal(releaseRoot, owner, profileId, generation, cod
         : 'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted; command output is not automatically redacted. No command is approved by this proposal.',
     'Review: if any native result detail is hidden, truncated, or inaccessible, do not approve. An assistant summary or private-log relay cannot replace it.',
     'Lifetime: this result is a snapshot, not live status. Normal tool completion preserves an otherwise valid pending proposal. Stop, cancellation, expiry, replacement, intervening/queued input, or changed session/provider/workspace/config/TLS bindings invalidates it. Historical text may remain visible.',
-    `Approval: dude a2a approve ${code}; ${ask ? 'this current local proposal only' : 'current matching proposal/context only'}, consumed once`,
+    `Approval: dude a2a approve ${code}; ${ask ? 'this current local proposal only' : 'current matching proposal/context only'}, consumed once`
+      + (pairing ? '; also saves the PAIRING grant' : ''),
     'Next: after complete review, type or paste the exact current approval as the next eligible local root input. To decline or cancel, use dude a2a stop.',
   ].join('\n');
 }
@@ -1023,6 +1071,34 @@ test('T018 release ships the lazy A2A runtime and notice byte-for-byte, and its 
     assert.equal(report.connects, 0, 'no peer connection at any point');
     assert.equal(report.spawns, 0, 'no command or Git probe');
     assert.equal(report.sessionSends, 0, 'no model continuation through session.send');
+    await context.test('Feature 095 delivered pairing saves its grant only through the typed approval and reuses it without a code', () => {
+      const pairing = report.pairing;
+      const record = releasedPairingRecord(owner, 'a-pair');
+      assert.equal(pairing.recordBeforeProposal, null, 'no grant exists before enrollment');
+      assertReleasedProposal(pairing.proposal, outDir, owner, 'a-pair');
+      assert.equal(pairing.recordAfterProposal, null, 'preparing the complete enrollment proposal saves nothing');
+      assert.deepEqual(pairing.approvalLines, [
+        `A2A pairing saved: ${record}. It persists for later matching local sessions until you use dude a2a stop, then delete that file.`,
+        `A2A paired, inactive: the TLS certificate or key could not be loaded. The standing pairing stays saved at ${record}; `
+          + 'nothing was activated or retried. To revoke it, delete that file.',
+      ], 'the typed approval saves the grant before startup; fixture PEM text then leaves it paired and inactive, never one-use or retried');
+      assert.match(pairing.record, /^\{"version":1,"bindingSha256":"[0-9a-f]{64}"\}\n$/, 'exactly the closed, digest-only record');
+      const fromRelease = path.relative(outDir, record);
+      assert.ok(fromRelease.startsWith('..') || path.isAbsolute(fromRelease), 'the grant is kept beside the owner configuration, outside the workspace');
+      assert.deepEqual(pairing.reuse, {
+        resultType: 'failure',
+        textResultForLlm: [
+          'A2A automatic activation is not active: the TLS certificate or key could not be loaded.',
+          'Activation: inactive. Nothing is live or retried; a standing pairing alone is not a connection.',
+          'Next: correct the local cause, then request the profile again if you want to continue.',
+        ].join('\n'),
+      }, 'a later request uses the saved grant with no proposal, code, or approval, and never reports it as a live connection');
+      assert.deepEqual(pairing.reuseLines, ['A2A automatic activation refused: the TLS certificate or key could not be loaded. Nothing was activated.'],
+        'nothing could go live, so no standing-pairing notice was logged');
+      assert.equal(pairing.recordAfterReuse, pairing.record, 'reuse neither rewrites nor removes the grant');
+      assert.equal(pairing.imports, 1, 'still the one counted runtime import');
+      assert.equal(pairing.sessionSends, 0, 'no model continuation through session.send');
+    });
   } finally {
     fs.rmSync(outDir, { recursive: true, force: true });
     fs.rmSync(owner, { recursive: true, force: true });

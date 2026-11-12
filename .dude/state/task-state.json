@@ -784,5 +784,15 @@
       "T004@c2f68e94": "x"
     },
     "updated_at": "2026-11-04T01:56:04.000Z"
+  },
+  ".dude/specs/095-trusted-agent-pairing/tasks.md": {
+    "glyphs": {
+      "T001@k8m2q7v4": "x",
+      "T002@r5c9n3h6": "x",
+      "T003@s4w8d2p7": "x",
+      "T004@t6j3b9f5": "x",
+      "T005@v7g2x4m8": "x"
+    },
+    "updated_at": "2026-11-12T02:13:46.000Z"
   }
 }

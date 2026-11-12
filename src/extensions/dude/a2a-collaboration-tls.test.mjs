@@ -32,6 +32,15 @@
  * and retained reading, and process exit. It is not native AI, host,
  * isolation, LAN, or process-tree evidence, and its timings are not the
  * native targets.
+ *
+ * Feature 095's standing pairing runs over the same processes and files.
+ * Each owner enrolls once through its complete proposal and one synthetic
+ * typed approval, which saves a digest-only record beside that owner's
+ * configuration in its own root under the OS temp folder, outside every Git
+ * checkout. Later requests reactivate it, including from recreated processes
+ * over the same files. Third peer processes presenting the stranger
+ * certificate stand in for wrong peers. This proves no native notice
+ * visibility, human review, or real model, host, or account behavior.
  */
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -487,10 +496,11 @@ function writeIdea(root, number, slug) {
 /**
  * A separate Node process running the real provider in its own root.
  * @param {'a' | 'b'} side @param {PeerRoot} dirs
- * @param {{faultyDisk?: boolean, signIn?: {environment: Record<string, string>} | null}} [options] `signIn` binds an existing-sign-in
- *   worker from this test-owned Windows environment.
+ * @param {{faultyDisk?: boolean, signIn?: {environment: Record<string, string>} | null, sessionId?: string}} [options] `signIn` binds an
+ *   existing-sign-in worker from this test-owned Windows environment. `sessionId` names the process's host session; a peer
+ *   recreated over the same root gets a new one.
  */
-async function spawnPeer(side, dirs, { faultyDisk = false, signIn = null } = {}) {
+async function spawnPeer(side, dirs, { faultyDisk = false, signIn = null, sessionId = `component-session-${side}` } = {}) {
   /** @type {NodeJS.ProcessEnv} */
   const env = { HOME: dirs.home, USERPROFILE: dirs.home, TEMP: dirs.temp, TMP: dirs.temp, TMPDIR: dirs.temp };
   if (process.platform === 'win32' && process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
@@ -505,6 +515,10 @@ async function spawnPeer(side, dirs, { faultyDisk = false, signIn = null } = {})
     child,
     /** @type {string[]} */
     logs: [],
+    /** Every root `user.message` text this test delivered, in order: this test is the provider's only input channel. @type {string[]} */
+    inputs: [],
+    /** Every tool result this test received, in order. @type {Array<{tool: string, result: {resultType: string, textResultForLlm: string}}>} */
+    results: [],
     /** @type {Array<{event: string, sessionId?: string, text?: string}>} */
     worker: [],
     stderr: '',
@@ -541,11 +555,15 @@ async function spawnPeer(side, dirs, { faultyDisk = false, signIn = null } = {})
       });
     },
     /** @param {string} tool @param {unknown} args @returns {Promise<{resultType: string, textResultForLlm: string}>} */
-    call(tool, args) {
-      return peer.request({ type: 'call', tool, args });
+    async call(tool, args) {
+      const result = await peer.request({ type: 'call', tool, args });
+      peer.results.push({ tool, result });
+      return result;
     },
     /** @param {unknown} event */
     event(event) {
+      const root = /** @type {any} */ (event);
+      if (root?.type === 'user.message') peer.inputs.push(String(root.data?.content));
       return peer.request({ type: 'event', event });
     },
     /**
@@ -572,7 +590,7 @@ async function spawnPeer(side, dirs, { faultyDisk = false, signIn = null } = {})
       else entry?.reject(new Error(String(message.value)));
     }
   });
-  await peer.request({ type: 'init', side, root: dirs.workspace, sessionId: `component-session-${side}`, workerTemp: dirs.workerTemp, faultyDisk, signIn });
+  await peer.request({ type: 'init', side, root: dirs.workspace, sessionId, workerTemp: dirs.workerTemp, faultyDisk, signIn });
   return peer;
 }
 /** @typedef {Awaited<ReturnType<typeof spawnPeer>>} Peer */
@@ -643,27 +661,41 @@ async function startPair(options = {}) {
 /**
  * Each owner's configuration and TLS files. Each peer's certificate is its
  * own; each pins the other's certificate unless a case says otherwise.
+ * `pairing` makes both profiles request standing approval.
  * @param {Pair} pair
  * @param {{port: number, aCert?: ReturnType<typeof certificate>, bCert?: ReturnType<typeof certificate>, aPinsB?: string,
- *   bPinsA?: string, bContentBytes?: number}} settings
+ *   bPinsA?: string, bContentBytes?: number, pairing?: boolean}} settings
  */
 function writeConfigs(pair, settings) {
   const issuedNow = certificates();
   const aCert = settings.aCert ?? issuedNow.a;
   const bCert = settings.bCert ?? issuedNow.b;
-  const { a, b } = pair.dirs;
-  fs.writeFileSync(a.cert, aCert.certPem);
-  fs.writeFileSync(a.key, aCert.keyPem);
-  fs.writeFileSync(b.cert, bCert.certPem);
-  fs.writeFileSync(b.key, bCert.keyPem);
+  writeAsk(pair.dirs.a, { port: settings.port, cert: aCert, pinsB: settings.aPinsB ?? bCert.pin, pairing: settings.pairing });
+  writeServe(pair.dirs.b, {
+    port: settings.port, cert: bCert, pinsA: settings.bPinsA ?? aCert.pin, contentBytes: settings.bContentBytes, signIn: pair.signIn,
+    pairing: settings.pairing,
+  });
+}
+
+/**
+ * One serving owner's TLS files and configuration: profile b-serve, labeled B, presents `cert` on the loopback `port`
+ * and pins `pinsA`; its worker reads the owner's own workspace.
+ * @param {PeerRoot} b
+ * @param {{port: number, cert: ReturnType<typeof certificate>, pinsA: string, contentBytes?: number, signIn?: Pair['signIn'],
+ *   pairing?: boolean}} settings
+ */
+function writeServe(b, settings) {
+  fs.writeFileSync(b.cert, settings.cert.certPem);
+  fs.writeFileSync(b.key, settings.cert.keyPem);
+  const signIn = settings.signIn ?? null;
   const serve = {
     role: 'serve',
     label: 'B',
     workspace: b.workspace,
-    peer: { label: 'A', address: '127.0.0.1', certSha256: settings.bPinsA ?? aCert.pin },
+    peer: { label: 'A', address: '127.0.0.1', certSha256: settings.pinsA },
     tls: { certFile: b.cert, keyFile: b.key },
     sharing: { allowed: 'Lifecycle record numbers and cited record excerpts', excluded: 'Credentials and unrelated source', purpose: 'Advise first-capture numbering' },
-    contentBytes: settings.bContentBytes ?? 32_768,
+    contentBytes: settings.contentBytes ?? 32_768,
     repeatUse: 'activation',
     listen: { address: '127.0.0.1', port: settings.port },
     evidenceRoots: [b.workspace],
@@ -672,28 +704,40 @@ function writeConfigs(pair, settings) {
       worker: {
         model: WORKER_MODEL,
         // Never started: the component fake SDK only records the connection it is given.
-        runtime: pair.signIn ? {
+        runtime: signIn ? {
           path: path.join(b.owner, 'component-fake-runtime-never-started'), args: [],
           env: { inherit: ['SystemRoot', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA'], set: {} },
-          auth: { kind: 'existing-sign-in', baseDirectory: pair.signIn.baseDirectory, expectedAccount: { host: 'https://github.com', login: 'Component-Owner' } },
+          auth: { kind: 'existing-sign-in', baseDirectory: signIn.baseDirectory, expectedAccount: { host: 'https://github.com', login: 'Component-Owner' } },
         } : { path: path.join(b.owner, 'component-fake-runtime-never-started'), args: [], env: { inherit: [], set: {} }, tokenFile: b.token },
         roots: [b.workspace],
       },
     },
+    ...(settings.pairing ? { pairing: true } : {}),
   };
+  fs.writeFileSync(b.config, JSON.stringify({ profiles: { 'b-serve': serve } }));
+}
+
+/**
+ * One asking owner's TLS files and configuration: profile a-ask, labeled A, presents `cert` and asks B on the loopback
+ * `port`, pinning `pinsB`.
+ * @param {PeerRoot} a @param {{port: number, cert: ReturnType<typeof certificate>, pinsB: string, pairing?: boolean}} settings
+ */
+function writeAsk(a, settings) {
+  fs.writeFileSync(a.cert, settings.cert.certPem);
+  fs.writeFileSync(a.key, settings.cert.keyPem);
   const ask = {
     role: 'ask',
     label: 'A',
     workspace: a.workspace,
-    peer: { label: 'B', address: '127.0.0.1', port: settings.port, certSha256: settings.aPinsB ?? bCert.pin },
+    peer: { label: 'B', address: '127.0.0.1', port: settings.port, certSha256: settings.pinsB },
     tls: { certFile: a.cert, keyFile: a.key },
     sharing: { allowed: 'Number advice questions', excluded: 'Source and credentials', purpose: 'Ask B for its highest lifecycle number' },
     contentBytes: 32_768,
     askTimeoutMs: 60_000,
     repeatUse: 'activation',
     collaboration: { projectId: PROJECT },
+    ...(settings.pairing ? { pairing: true } : {}),
   };
-  fs.writeFileSync(b.config, JSON.stringify({ profiles: { 'b-serve': serve } }));
   fs.writeFileSync(a.config, JSON.stringify({ profiles: { 'a-ask': ask } }));
 }
 
@@ -705,11 +749,21 @@ function writeConfigs(pair, settings) {
 async function approve(peer, configPath, profileId) {
   const proposal = await peer.call('dude_a2a_propose', { configPath, profileId });
   assert.equal(proposal.resultType, 'success', proposal.textResultForLlm);
-  const code = /^Approval: dude a2a approve ([0-9a-f]{12});/m.exec(proposal.textResultForLlm)?.[1];
+  return approveShown(peer, proposal.textResultForLlm, profileId);
+}
+
+/**
+ * Approve the exact code of a returned proposal with a synthetic root message
+ * (component only, never human approval). Resolves with the activation line,
+ * a refusal, or a saved pairing's inactive startup.
+ * @param {Peer} peer @param {string} proposal The returned proposal text. @param {string} profileId
+ */
+async function approveShown(peer, proposal, profileId) {
+  const code = /^Approval: dude a2a approve ([0-9a-f]{12});/m.exec(proposal)?.[1];
   assert.ok(code, 'the proposal names its approval');
   const since = peer.logs.length;
   await peer.event(rootMessage(`dude a2a approve ${code}`));
-  return peer.waitLog((line) => /^(?:Activation: active|A2A approval refused)/.test(line), `${profileId} approval`, since);
+  return peer.waitLog((line) => /^(?:Activation: active|A2A approval refused|A2A paired, inactive)/.test(line), `${profileId} approval`, since);
 }
 
 /**
@@ -852,6 +906,280 @@ function connectionRefused(port) {
 
 /** The worker storage folders kept below B's worker temp folder. @param {Pair} pair */
 const retainedWorkerFolders = (pair) => fs.readdirSync(pair.dirs.b.workerTemp).filter((name) => name.startsWith('dude-a2a-w-'));
+
+// ---------------------------------------------------------------------------
+// Standing pairing over the real transport. Each owner enrolls once through
+// the existing typed handshake, and later requests reuse only that owner's
+// own saved grant. Every approval here is a synthetic root message, never
+// human approval. Each record sits beside its owner's configuration in that
+// peer's own disposable root under the OS temp folder, outside every
+// workspace and Git checkout.
+// ---------------------------------------------------------------------------
+
+/** The record kinds of an answered asking journal and of a sent serving journal. */
+const ANSWERED_KINDS = ['opened', 'accepted', 'request_prepared', 'request_write_started', 'reply_received', 'reply_validated', 'terminal', 'closed'];
+const SENT_KINDS = ['opened', 'accepted', 'request_admitted', 'worker_started', 'worker_preflight', 'worker_ready', 'worker_request_admitted',
+  'evidence_returned', 'evidence_returned', 'worker_finished', 'reply_prepared', 'reply_write_started', 'reply_written', 'terminal', 'cleanup', 'closed'];
+const NOTICE = 'A2A standing pairing in use: ';
+const REVOKED = 'the standing pairing record was deleted, changed, or can no longer be read safely';
+
+/**
+ * A loopback port for paired profiles. The port is part of each approved
+ * scope, so it stays the same across activations and restarts. It is free
+ * now and below the default dynamic ranges (Linux from 32768, Windows and
+ * macOS from 49152), so no ephemeral bind or outgoing connection takes it
+ * meanwhile.
+ */
+async function pairedPort() {
+  for (let attempt = 1; ; attempt += 1) {
+    const port = 20_000 + crypto.randomInt(12_000);
+    const server = net.createServer();
+    const free = await new Promise((resolve) => {
+      server.once('error', () => resolve(false));
+      server.listen(port, '127.0.0.1', () => { server.close(() => resolve(true)); });
+    });
+    if (free) return port;
+    assert.ok(attempt < 20, `no free loopback port below the dynamic ranges after ${attempt} attempts`);
+  }
+}
+
+/**
+ * Where one profile's standing record lives, derived independently of the
+ * provider: beside the canonical configuration, named by the SHA-256 of the
+ * exact profile ID.
+ * @param {string} config @param {string} profileId
+ */
+const recordPath = (config, profileId) => path.join(`${fs.realpathSync.native(config)}.pairings`, `${sha256(profileId)}.json`);
+
+/**
+ * The pairing store refuses a folder inside a Git checkout or worktree,
+ * recognized by a `.git` file or folder on the folder or any ancestor. These
+ * disposable owner folders, like the OS temp folder they are in, must be
+ * outside every one.
+ * @param {string} directory
+ */
+function assertOutsideCheckouts(directory) {
+  for (let folder = fs.realpathSync.native(directory); ; folder = path.dirname(folder)) {
+    let marked = true;
+    try {
+      fs.lstatSync(path.join(folder, '.git'));
+    } catch {
+      marked = false;
+    }
+    assert.equal(marked, false, `${folder} has a .git marker, so no standing record could be kept below ${directory}`);
+    if (path.dirname(folder) === folder) return;
+  }
+}
+
+/** A file's exact bytes and identity: equal states show it was reused, not rewritten. @param {string} file */
+function fileState(file) {
+  const stat = fs.statSync(file, { bigint: true });
+  return { bytes: fs.readFileSync(file).toString('base64'), ino: String(stat.ino), mtimeNs: String(stat.mtimeNs) };
+}
+
+/** A pin as the provider displays it. @param {string} hex */
+const fingerprint = (hex) => `SHA-256 ${hex.toUpperCase().replace(/(..)(?!$)/g, '$1:')}`;
+
+/**
+ * The required notice of one automatic activation, derived from the owner's
+ * configuration file independently of the provider's renderer: the standing
+ * pairing in use, the peer, the workspace, every scope and limit, and how to
+ * revoke it. It asks for nothing.
+ * @param {PeerRoot} dirs @param {string} profileId
+ */
+function expectedNotice(dirs, profileId) {
+  const profile = JSON.parse(fs.readFileSync(dirs.config, 'utf8')).profiles[profileId];
+  const serving = profile.role === 'serve';
+  return [
+    `${NOTICE}${profile.label} ${profile.role} profile ${profileId} starts automatically, without a new approval; this notice needs no response`,
+    `Peer: ${profile.peer.label}; ${serving ? `client address ${profile.peer.address}` : `https://${profile.peer.address}:${profile.peer.port}/`}; `
+      + fingerprint(profile.peer.certSha256),
+    `Workspace: ${profile.workspace}${serving ? `; listening https://${profile.listen.address}:${profile.listen.port}/` : ''}`,
+    `SHARING: ${profile.sharing.allowed}; excludes ${profile.sharing.excluded}`,
+    'COMMANDS: none',
+    `WORKER: ${serving ? `separately approved for project ${PROJECT}; model ${WORKER_MODEL}` : 'none'}`,
+    `Validity/limits: until activation ends; every in-scope exchange while active; ${profile.contentBytes} bytes per message`
+      + `${serving ? '' : `; ${profile.askTimeoutMs} ms ask timeout`}; counts restart with each activation`,
+    `Pairing record: ${recordPath(dirs.config, profileId)}; revoke: dude a2a stop, then delete that file`,
+  ].join('\n');
+}
+
+/**
+ * Both peers in their own roots, each with a pairing profile on one fixed
+ * loopback port. Nobody has enrolled yet, and nothing listens.
+ */
+async function startPairing() {
+  const pair = await startPair();
+  for (const directory of [os.tmpdir(), pair.dirs.a.owner, pair.dirs.b.owner]) assertOutsideCheckouts(directory);
+  pair.port = await pairedPort();
+  writeConfigs(pair, { port: pair.port, pairing: true });
+  return pair;
+}
+
+/**
+ * One owner's enrollment through the existing typed handshake: the complete
+ * PAIRING proposal, which saves, starts, and listens for nothing, then its
+ * exact code as a synthetic eligible root input. That approval saves only
+ * this owner's digest-only record, before its activation starts. Resolves
+ * with the activation line.
+ * @param {Peer} peer @param {'a-ask' | 'b-serve'} profileId @param {number} port
+ */
+async function enroll(peer, profileId, port) {
+  const record = recordPath(peer.dirs.config, profileId);
+  const { result, text: proposal } = await requestProfile(peer, profileId);
+  assert.equal(result.resultType, 'success', proposal);
+  const lines = proposal.split('\n');
+  assert.equal(lines[0], 'Proposal only: nothing is activated. Review this entire native tool result before local approval.', proposal);
+  for (const line of [
+    'PAIRING: this approval persists for later matching sessions on this machine; any binding change needs new full approval; '
+      + 'numeric repeat use resets per activation; absolute expiries do not extend',
+    `Pairing record: ${record}; holds a digest only; revoke: dude a2a stop, then delete that file; stop or a config edit alone does not revoke`,
+    'Pairing trust: ordinary root input does not prove human authorship; an unrestricted local file writer can forge or remove this grant',
+  ]) assert.ok(lines.includes(line), `${profileId}: the proposal shows ${line.slice(0, 48)}...`);
+  assert.match(proposal, /^Approval: dude a2a approve [0-9a-f]{12}; .+; also saves the PAIRING grant$/m);
+  assert.ok(Buffer.byteLength(proposal, 'utf8') <= 4_490, `${profileId}: the complete proposal fits the fixed display cap`);
+  assert.equal(fs.existsSync(path.dirname(record)), false, `${profileId}: preparing saves nothing`);
+  if (profileId === 'b-serve') assert.equal(await connectionRefused(port), true, 'preparing listens for nothing');
+  const since = peer.logs.length;
+  const outcome = await approveShown(peer, proposal, profileId);
+  assert.match(outcome, /^Activation: active; /, outcome);
+  assert.equal(outcome.split('\n')[1], 'Authority: this exact local approval, also saved as a standing pairing; revoke: dude a2a stop, '
+    + `then delete ${record}`);
+  assert.ok(peer.logs.slice(since).includes(`A2A pairing saved: ${record}. It persists for later matching local sessions until you use `
+    + 'dude a2a stop, then delete that file.'), JSON.stringify(peer.logs.slice(since)));
+  assert.match(fs.readFileSync(record, 'utf8'), /^\{"version":1,"bindingSha256":"[0-9a-f]{64}"\}\n$/, 'a digest-only record');
+  return outcome;
+}
+
+/**
+ * A later local request for a paired profile through the same proposal tool.
+ * Resolves with its result and every log line it produced.
+ * @param {Peer} peer @param {'a-ask' | 'b-serve'} profileId
+ */
+async function requestProfile(peer, profileId) {
+  const since = peer.logs.length;
+  const result = await peer.call('dude_a2a_propose', { configPath: peer.dirs.config, profileId });
+  return { result, text: result.textResultForLlm, logs: peer.logs.slice(since) };
+}
+
+/**
+ * A later request that a matching standing record activates on its own: a
+ * fresh activation with no code, approval instruction, or prompt, reported
+ * active only after its one required notice was delivered.
+ * @param {Peer} peer @param {'a-ask' | 'b-serve'} profileId @param {number} port
+ */
+async function activatePaired(peer, profileId, port) {
+  const { result, text, logs } = await requestProfile(peer, profileId);
+  assert.equal(result.resultType, 'success', text);
+  const head = profileId === 'b-serve' ? `Activation: active; serve profile b-serve; listening https://127.0.0.1:${port}/`
+    : 'Activation: active; ask profile a-ask; peer B';
+  assert.equal(text.split('\n').slice(0, 2).join('\n'), `${head}\nAuthority: the standing pairing from an earlier exact local approval; `
+    + `nothing new was approved; revoke: dude a2a stop, then delete ${recordPath(peer.dirs.config, profileId)}`, text);
+  assert.match(text, /\nConversation: dude_a2a_conversation begin_/, 'the approved collaboration scope is live');
+  assert.doesNotMatch(text, /dude a2a approve|Proposal only|preparation only/i, 'no fresh approval instruction');
+  assert.deepEqual(logs, [expectedNotice(peer.dirs, profileId)], 'exactly the required notice, delivered before the result');
+}
+
+/**
+ * The enrollment proposal that a request gets when this owner has no
+ * matching record: nothing activates, listens, or gives a notice.
+ * @param {Peer} peer @param {'a-ask' | 'b-serve'} profileId
+ */
+async function enrollmentOnly(peer, profileId) {
+  const { result, text, logs } = await requestProfile(peer, profileId);
+  assert.equal(result.resultType, 'success', text);
+  assert.match(text, /^Proposal only: nothing is activated\./, text);
+  assert.match(text, /^Approval: dude a2a approve [0-9a-f]{12}; .+; also saves the PAIRING grant$/m);
+  assert.deepEqual(logs, [], `${profileId}: no notice, and nothing activated`);
+}
+
+/**
+ * The approval prompts and inputs one owner's peer processes saw, from the
+ * first process on: every result or log line carrying an approval code, and
+ * every `dude a2a approve` root input.
+ * @param {Peer[]} processes
+ */
+function approvals(processes) {
+  const instruction = /dude a2a approve [0-9a-f]{12}/;
+  return {
+    prompts: processes.flatMap((peer) => [...peer.results.map((entry) => entry.result.textResultForLlm), ...peer.logs])
+      .filter((text) => instruction.test(text)).length,
+    inputs: processes.flatMap((peer) => peer.inputs).filter((input) => input.startsWith('dude a2a approve')).length,
+  };
+}
+
+/**
+ * One in-scope conversation over the live activations, its actual messages
+ * checked across both journals: A's recorded request is what B admitted,
+ * and B's recorded reply is what A received and accepted. Resolves with the
+ * identifiers it was given.
+ * @param {Pair} pair @param {string} question
+ * @param {{received: any, asked: any}} [begun] An exchange already begun with this question.
+ */
+async function converse(pair, question, begun) {
+  const { received, asked } = begun ?? await beginExchange(pair, { question });
+  const answer = await readUntil(pair.a, asked.operationId, decided, 'A answer');
+  const sent = await readUntil(pair.b, received.operationId, frozen, 'B frozen');
+  assert.deepEqual([answer.resultType, answer.outcome, answer.delivery, answer.recording, answer.advice?.observedMaximum],
+    ['success', 'answer', 'reached_peer', 'complete', 101], JSON.stringify(answer));
+  assert.deepEqual([sent.resultType, sent.outcome, sent.delivery, sent.recording], ['success', 'sent', 'written', 'complete'], JSON.stringify(sent));
+  const aRecords = journalRecords(asked.transcript);
+  const bRecords = journalRecords(received.transcript);
+  assert.deepEqual([kinds(aRecords), kinds(bRecords)], [ANSWERED_KINDS, SENT_KINDS], 'every boundary is recorded on both sides');
+  const requestBody = JSON.parse(only(aRecords, 'request_write_started').data.body);
+  const questionId = requestBody.params.message.messageId;
+  const admitted = only(bRecords, 'request_admitted').data;
+  assert.deepEqual([admitted.messageId, admitted.text], [questionId, requestBody.params.message.parts[0].text],
+    'B admitted exactly the request A recorded before its first byte');
+  assert.deepEqual(JSON.parse(admitted.text), {
+    version: 1, kind: 'number_advice', projectId: PROJECT, conversationId: asked.conversationId, slug: 'delta', tentativeNumber: 101, question,
+  });
+  const replyBody = JSON.parse(only(bRecords, 'reply_write_started').data.body);
+  const { questionId: repliedTo, ...reply } = only(aRecords, 'reply_received').data.reply;
+  assert.deepEqual(replyBody.result.message.parts, [{ data: reply, mediaType: 'application/json' }],
+    'A received exactly the reply B recorded before its first byte');
+  assert.deepEqual([replyBody.result.message.metadata.dudeA2a.replyTo, repliedTo, reply.exchangeId], [questionId, questionId, admitted.exchangeId]);
+  assert.deepEqual(answer.advice.evidence.map((/** @type {any} */ item) => [item.existingFile, item.excerpt]),
+    [['workspace/.dude/ideas/101-beta.md', fs.readFileSync(pair.beta, 'utf8')]]);
+  const { binding } = only(bRecords, 'worker_preflight').data;
+  assert.deepEqual([binding.operationId, binding.conversationId, binding.questionId, binding.exchangeId],
+    [received.operationId, asked.conversationId, questionId, admitted.exchangeId], "B's worker is bound to this exchange");
+  assert.match(binding.permitId, UUID);
+  return { asked, received, questionId, exchangeId: admitted.exchangeId, binding };
+}
+
+/**
+ * A's ask while no B serves: the existing unavailable outcome, with no
+ * request byte written anywhere.
+ * @param {Peer} asker
+ */
+async function unavailableAsk(asker) {
+  const asked = await conversation(asker, { op: 'begin_ask', slug: 'delta', tentativeNumber: 101, question: QUESTION });
+  assert.equal(asked.outcome, 'accepted', JSON.stringify(asked));
+  const view = await readUntil(asker, asked.operationId, frozen, 'A told B is unavailable');
+  assert.deepEqual([view.outcome, view.reason, view.delivery, view.advice, view.recording], ['unavailable', 'peer_unreachable', 'not_sent', undefined, 'complete'],
+    JSON.stringify(view));
+  assert.deepEqual(kinds(journalRecords(asked.transcript)), ['opened', 'accepted', 'request_prepared', 'terminal', 'closed'], 'no request byte left A');
+}
+
+/**
+ * A third independent peer process, in its own root, presenting the stranger
+ * certificate under the real peer's label and project. Its ordinary
+ * configuration pins the real other peer on the pair's port, so the only
+ * wrong thing about it is the identity it presents.
+ * @param {'a' | 'b'} side @param {number} port
+ */
+async function startImpostor(side, port) {
+  const dirs = peerRoot(side);
+  const issuedNow = certificates();
+  if (side === 'b') {
+    fs.writeFileSync(dirs.token, `${WORKER_TOKEN}\n`);
+    writeServe(dirs, { port, cert: issuedNow.stranger, pinsA: issuedNow.a.pin });
+  } else {
+    writeAsk(dirs, { port, cert: issuedNow.stranger, pinsB: issuedNow.b.pin });
+  }
+  return spawnPeer(side, dirs, { sessionId: `component-session-impostor-${side}` });
+}
 
 function defineTests() {
   after(removeEverything);
@@ -1216,6 +1544,379 @@ function defineTests() {
       assert.deepEqual(await finish(pair.a), { code: 0, signal: null });
       assert.deepEqual(await finish(pair.b), { code: 0, signal: null });
     } finally {
+      await dispose(pair);
+    }
+  });
+
+  test('standing pairing over real mutual TLS: each owner enrolls once with one typed approval, then two later automatic activations converse with zero approval prompts or inputs, the second after both processes are recreated over the same external files', { timeout: 120_000 }, async () => {
+    const pair = await startPairing();
+    const processes = { a: [pair.a], b: [pair.b] };
+    const records = { a: recordPath(pair.dirs.a.config, 'a-ask'), b: recordPath(pair.dirs.b.config, 'b-serve') };
+    const external = [pair.dirs.a.config, pair.dirs.a.cert, pair.dirs.a.key, pair.dirs.b.config, pair.dirs.b.cert, pair.dirs.b.key, pair.dirs.b.token];
+    const before = external.map(fileState);
+    try {
+      // Enrollment: each owner approves its own complete PAIRING proposal once, which saves only that owner's record.
+      await enroll(pair.b, 'b-serve', pair.port);
+      assert.equal(fs.existsSync(path.dirname(records.a)), false, "B's approval saves nothing for A");
+      await enroll(pair.a, 'a-ask', pair.port);
+      for (const side of /** @type {const} */ (['a', 'b'])) {
+        assert.deepEqual(approvals(processes[side]), { prompts: 1, inputs: 1 }, `${side}: one enrollment prompt and one approval input`);
+      }
+      const saved = { a: fileState(records.a), b: fileState(records.b) };
+      await deactivate(pair);
+
+      /** @type {Array<Awaited<ReturnType<typeof converse>>>} */
+      const rounds = [];
+      /** @type {Map<string, Buffer>} */
+      const retained = new Map();
+      for (const round of [1, 2]) {
+        if (round === 2) {
+          // Both sessions end with their processes. New processes, providers, and sessions start over the same roots and files.
+          assert.deepEqual(await finish(pair.a), { code: 0, signal: null });
+          assert.deepEqual(await finish(pair.b), { code: 0, signal: null });
+          pair.b = await spawnPeer('b', pair.dirs.b, { sessionId: 'component-session-b-recreated' });
+          pair.a = await spawnPeer('a', pair.dirs.a, { sessionId: 'component-session-a-recreated' });
+          processes.a.push(pair.a);
+          processes.b.push(pair.b);
+          assert.equal(await connectionRefused(pair.port), true, 'startup activates nothing');
+          assert.deepEqual([pair.a.logs, pair.b.logs], [[], []], 'and says nothing');
+        }
+        // Each later request alone starts a fresh activation, B's and then A's, each after its required notice.
+        await activatePaired(pair.b, 'b-serve', pair.port);
+        await activatePaired(pair.a, 'a-ask', pair.port);
+        const ids = await converse(pair, `${QUESTION} Round ${round}.`);
+        rounds.push(ids);
+        for (const file of [ids.asked.transcript, ids.received.transcript]) retained.set(file, fs.readFileSync(file));
+        await deactivate(pair);
+      }
+
+      // Each activation has its own identifiers; only the approved configuration is the same.
+      const [first, second] = rounds;
+      assert.deepEqual([first.binding.mainSessionId, second.binding.mainSessionId], ['component-session-b', 'component-session-b-recreated']);
+      assert.notEqual(second.binding.providerGeneration, first.binding.providerGeneration, 'the recreated provider is new');
+      for (const [label, earlier, later] of [
+        ['worker permit', first.binding.permitId, second.binding.permitId],
+        ['asking operation', first.asked.operationId, second.asked.operationId],
+        ['serving operation', first.received.operationId, second.received.operationId],
+        ['conversation', first.asked.conversationId, second.asked.conversationId],
+        ['question', first.questionId, second.questionId],
+        ['exchange', first.exchangeId, second.exchangeId],
+      ]) assert.notEqual(later, earlier, `the second activation has a new ${label}`);
+      const configDigest = sha256(fs.readFileSync(pair.dirs.b.config));
+      assert.deepEqual([first.binding.configDigest, second.binding.configDigest], [configDigest, configDigest]);
+
+      // SC-001: one enrollment approval per owner, and no approval prompt or input across both later activations.
+      for (const side of /** @type {const} */ (['a', 'b'])) {
+        assert.deepEqual(approvals(processes[side]), { prompts: 1, inputs: 1 }, `${side}: zero later approval prompts or inputs`);
+        const inputs = processes[side].flatMap((peer) => peer.inputs);
+        assert.deepEqual(inputs.slice(1), inputs.slice(1).map(() => 'dude a2a stop'), `${side}: after enrollment the only root inputs were stops`);
+        const logs = processes[side].flatMap((peer) => peer.logs);
+        assert.equal(logs.filter((line) => line.startsWith(NOTICE)).length, 2, `${side}: one required notice per automatic activation`);
+        assert.equal(logs.filter((line) => line.startsWith('A2A pairing saved:')).length, 1, `${side}: saved once, at enrollment`);
+        assert.equal(logs.some((line) => line.startsWith('A2A approval')), false, `${side}: no approval was attempted or refused`);
+        assert.deepEqual(fileState(records[side]), saved[side], `${side}: the record was reused, never rewritten`);
+      }
+      assert.deepEqual(external.map(fileState), before, 'the same external configuration, TLS, and token files throughout');
+
+      // Both processes end by themselves; each retained journal then rereads as complete and unchanged.
+      assert.deepEqual(await finish(pair.a), { code: 0, signal: null });
+      assert.deepEqual(await finish(pair.b), { code: 0, signal: null });
+      assert.equal(await connectionRefused(pair.port), true, "B's listener closed with its process");
+      for (const [index, ids] of rounds.entries()) {
+        const shown = [tail(pair.dirs.a.workspace, ids.asked.operationId, false), tail(pair.dirs.b.workspace, ids.received.operationId, false)];
+        assert.deepEqual(await Promise.all(shown.map((entry) => entry.exited)), [0, 0]);
+        assert.match(shown[0].output.stdout, /\n-- journal complete: 8 records; outcome answer\n$/);
+        assert.match(shown[1].output.stdout, /\n-- journal complete: 16 records; outcome sent\n$/);
+        assert.ok(shown.every((entry) => entry.output.stdout.includes(`${QUESTION} Round ${index + 1}.`)), `round ${index + 1}: its actual question`);
+      }
+      for (const [file, bytes] of retained) assert.deepEqual(fs.readFileSync(file), bytes, `${path.basename(file)} is retained unchanged`);
+      for (const [side, key] of /** @type {const} */ ([['a', 'asked'], ['b', 'received']])) {
+        const journals = fs.readdirSync(transcriptFolder(pair.dirs[side].workspace)).filter((name) => name.endsWith('.jsonl')).sort();
+        assert.deepEqual(journals, rounds.map((ids) => `${ids[key].operationId}.jsonl`).sort(), `${side}: exactly the two conversations are retained`);
+      }
+      const everything = [...retained.values()].map((bytes) => bytes.toString('utf8')).join('');
+      assert.doesNotMatch(everything, /approve [0-9a-f]{12}/, 'no approval code is recorded');
+      assert.equal(everything.includes(WORKER_TOKEN), false, 'no credential is recorded');
+    } finally {
+      await dispose(pair);
+    }
+  });
+
+  test('one-sided pairing over real mutual TLS: one owner\'s enrollment and automatic activations never enroll, reach, or wake the other, and a peer that is unpaired, stopped, or exited gives the existing unavailable outcome', { timeout: 120_000 }, async () => {
+    // The asker alone: A's owner enrolls A while B was never enrolled.
+    const pair = await startPairing();
+    const records = { a: recordPath(pair.dirs.a.config, 'a-ask'), b: recordPath(pair.dirs.b.config, 'b-serve') };
+    /** @type {Pair | null} */
+    let serverAlone = null;
+    try {
+      await enroll(pair.a, 'a-ask', pair.port);
+      await pair.a.event(rootMessage('dude a2a stop'));
+      await activatePaired(pair.a, 'a-ask', pair.port);
+      await unavailableAsk(pair.a);
+      assert.deepEqual(pair.b.logs, [], 'nothing reached or woke the unpaired B');
+      assert.equal(fs.existsSync(path.dirname(records.b)), false, "A's enrollment and activation saved nothing for B");
+      // B's own request gets only its own complete enrollment proposal: A's pairing does not enroll B.
+      await enrollmentOnly(pair.b, 'b-serve');
+      assert.equal(await connectionRefused(pair.port), true, 'nothing listens for B');
+
+      // B's owner then enrolls B through B's own typed approval, and B stops. A's ask finds the paired but stopped B
+      // unavailable, and B is not woken.
+      await enroll(pair.b, 'b-serve', pair.port);
+      await pair.b.event(rootMessage('dude a2a stop'));
+      const bRecord = fileState(records.b);
+      const quiet = pair.b.logs.length;
+      await unavailableAsk(pair.a);
+      assert.equal(pair.b.logs.length, quiet, 'nothing reached or woke the stopped B');
+
+      // B's process exits. A's next automatic activation finds B unavailable in the same way, and nothing restarts B.
+      assert.deepEqual(await finish(pair.b), { code: 0, signal: null });
+      await pair.a.event(rootMessage('dude a2a stop'));
+      await activatePaired(pair.a, 'a-ask', pair.port);
+      await unavailableAsk(pair.a);
+      assert.equal(await connectionRefused(pair.port), true, 'nothing listens for B');
+      assert.deepEqual(fileState(records.b), bRecord, "A's activations changed nothing of B's");
+      assert.deepEqual(approvals([pair.a]), { prompts: 1, inputs: 1 }, 'A was approved once, by its own owner');
+      assert.deepEqual(await finish(pair.a), { code: 0, signal: null });
+
+      // The server alone: B's owner enrolls B while A was never enrolled.
+      serverAlone = await startPairing();
+      const other = serverAlone;
+      const aRecord = recordPath(other.dirs.a.config, 'a-ask');
+      await enroll(other.b, 'b-serve', other.port);
+      await other.b.event(rootMessage('dude a2a stop'));
+      await activatePaired(other.b, 'b-serve', other.port);
+      const waiting = await conversation(other.b, { op: 'begin_receive' });
+      await other.b.waitLog((line) => line === `Status: conversation ${waiting.operationId} waiting for one project question`, 'B waiting');
+      assert.deepEqual(other.a.logs, [], 'nothing reached or woke the unpaired A');
+      // A gets only its own complete enrollment proposal, and without its own approval it cannot ask.
+      await enrollmentOnly(other.a, 'a-ask');
+      assert.equal(fs.existsSync(path.dirname(aRecord)), false, "B's enrollment and activations saved nothing for A");
+      const unasked = await conversation(other.a, { op: 'begin_ask', slug: 'delta', tentativeNumber: 101, question: QUESTION });
+      assert.deepEqual([unasked.outcome, unasked.reason], ['refused', 'no_activation']);
+      const idle = await conversation(other.b, { op: 'read', operationId: waiting.operationId });
+      assert.deepEqual([idle.outcome, idle.phase], ['pending', 'waiting'], 'B admitted nothing');
+      assert.deepEqual([approvals([other.a]).inputs, approvals([other.b])], [0, { prompts: 1, inputs: 1 }]);
+      assert.deepEqual(await finish(other.a), { code: 0, signal: null });
+      assert.deepEqual(await finish(other.b), { code: 0, signal: null });
+    } finally {
+      await dispose(pair);
+      if (serverAlone) await dispose(serverAlone);
+    }
+  });
+
+  test('deleting a standing record over real mutual TLS ends that side\'s live automatic activation at its next authority check, before its worker model sees any evidence; afterwards its request, in the same or a recreated session, gets only the enrollment proposal and nothing activates', { timeout: 120_000 }, async () => {
+    const pair = await startPairing();
+    const records = { a: recordPath(pair.dirs.a.config, 'a-ask'), b: recordPath(pair.dirs.b.config, 'b-serve') };
+    try {
+      await enroll(pair.b, 'b-serve', pair.port);
+      await enroll(pair.a, 'a-ask', pair.port);
+      await deactivate(pair);
+      await activatePaired(pair.b, 'b-serve', pair.port);
+      await activatePaired(pair.a, 'a-ask', pair.port);
+
+      // B's record is deleted while B's worker is held after B admitted A's question; its evidence call is the next check.
+      await pair.b.request({ type: 'hold' });
+      const { received, asked } = await beginExchange(pair);
+      await pair.b.waitWorker('prompted');
+      fs.rmSync(records.b);
+      const since = pair.b.logs.length;
+      await pair.b.request({ type: 'release' });
+      await pair.b.waitWorker('refused_late');
+      assert.equal(await pair.b.waitLog((line) => line.startsWith('A2A activation ended: '), 'B ended by revocation', since), [
+        `A2A activation ended: ${REVOKED}.`,
+        'Activation: inactive',
+        'Communication: ended; listener closed; any unsent reply is withheld and late replies are rejected',
+      ].join('\n'));
+      const bView = await readUntil(pair.b, received.operationId, frozen, 'B frozen after revocation');
+      assert.deepEqual([bView.outcome, bView.reason, bView.delivery, bView.worker?.outcome], ['cancelled', 'activation_ended', 'not_sent', 'cancelled'],
+        JSON.stringify(bView));
+      const bKinds = kinds(journalRecords(received.transcript));
+      assert.deepEqual([bKinds.includes('evidence_returned'), bKinds.includes('reply_prepared')], [false, false], 'nothing was disclosed');
+      const aView = await readUntil(pair.a, asked.operationId, frozen, 'A after B ended');
+      assert.deepEqual([aView.outcome, aView.reason, aView.delivery, aView.advice], ['uncertain', 'connection_lost', 'may_have_occurred', undefined],
+        'the withdrawn reply leaves A uncertain, never answered');
+      assert.equal(pair.b.worker.some((entry) => entry.event === 'answered'), false, 'the worker never answered');
+
+      // After deletion the same session's request gets only the enrollment proposal: nothing listens, and nothing recreates the record.
+      await enrollmentOnly(pair.b, 'b-serve');
+      assert.equal(fs.existsSync(records.b), false, 'nothing recreated the record');
+      assert.equal(await connectionRefused(pair.port), true, 'nothing listens');
+
+      // After session end, a recreated B process gets the same.
+      assert.deepEqual(await finish(pair.b), { code: 0, signal: null });
+      pair.b = await spawnPeer('b', pair.dirs.b, { sessionId: 'component-session-b-recreated' });
+      await enrollmentOnly(pair.b, 'b-serve');
+      assert.equal(await connectionRefused(pair.port), true, 'nothing listens after the restart either');
+
+      // A's own record is untouched: A still activates automatically, but finds B unavailable. Deleting A's record revokes A too.
+      await pair.a.event(rootMessage('dude a2a stop'));
+      await activatePaired(pair.a, 'a-ask', pair.port);
+      await unavailableAsk(pair.a);
+      await pair.a.event(rootMessage('dude a2a stop'));
+      fs.rmSync(records.a);
+      await enrollmentOnly(pair.a, 'a-ask');
+      assert.equal(fs.existsSync(records.a), false);
+      assert.equal(pair.a.logs.filter((line) => line.startsWith(NOTICE)).length, 2, 'A was activated automatically only while its record existed');
+      assert.equal(pair.b.logs.some((line) => line.startsWith(NOTICE)), false, 'the recreated B was never activated automatically');
+      assert.deepEqual(await finish(pair.a), { code: 0, signal: null });
+      assert.deepEqual(await finish(pair.b), { code: 0, signal: null });
+    } finally {
+      await dispose(pair);
+    }
+  });
+
+  test('no replay over real mutual TLS: a stop on either side ends the exchange in flight for good, the ended worker\'s late call is refused, and the stopped side\'s fresh automatic activation admits and answers only a new question', { timeout: 120_000 }, async () => {
+    const pair = await startPairing();
+    try {
+      await enroll(pair.b, 'b-serve', pair.port);
+      await enroll(pair.a, 'a-ask', pair.port);
+      await deactivate(pair);
+      await activatePaired(pair.b, 'b-serve', pair.port);
+      await activatePaired(pair.a, 'a-ask', pair.port);
+      /** @type {Map<string, Buffer>} */
+      const ended = new Map();
+
+      // B's owner stops B while B's worker is held after admitting A's first question.
+      await pair.b.request({ type: 'hold' });
+      const first = await beginExchange(pair, { question: `${QUESTION} First.` });
+      await pair.b.waitWorker('prompted');
+      await pair.b.event(rootMessage('dude a2a stop'));
+      const lost = await readUntil(pair.a, first.asked.operationId, frozen, 'A after B stopped');
+      assert.deepEqual([lost.outcome, lost.reason, lost.delivery, lost.advice], ['uncertain', 'connection_lost', 'may_have_occurred', undefined]);
+      const stopped = await readUntil(pair.b, first.received.operationId, frozen, 'B frozen after its stop');
+      assert.deepEqual([stopped.outcome, stopped.reason, stopped.delivery], ['cancelled', 'activation_ended', 'not_sent']);
+      await pair.b.request({ type: 'release' });
+      await pair.b.waitWorker('refused_late');
+      for (const file of [first.asked.transcript, first.received.transcript]) ended.set(file, fs.readFileSync(file));
+
+      // B's fresh automatic activation admits nothing of the ended exchange; the old handle reaches nothing.
+      await activatePaired(pair.b, 'b-serve', pair.port);
+      const receiving = await conversation(pair.b, { op: 'begin_receive' });
+      await pair.b.waitLog((line) => line === `Status: conversation ${receiving.operationId} waiting for one project question`, 'B waiting again');
+      const idle = await conversation(pair.b, { op: 'read', operationId: receiving.operationId });
+      assert.deepEqual([idle.outcome, idle.phase], ['pending', 'waiting'], 'nothing of the ended exchange is admitted');
+      const oldB = await conversation(pair.b, { op: 'read', operationId: first.received.operationId });
+      assert.deepEqual([oldB.outcome, oldB.reason], ['refused', 'unknown_operation']);
+      const secondQuestion = `${QUESTION} Second.`;
+      const asked = await conversation(pair.a, { op: 'begin_ask', slug: 'delta', tentativeNumber: 101, question: secondQuestion });
+      assert.equal(asked.outcome, 'accepted', JSON.stringify(asked));
+      const second = await converse(pair, secondQuestion, { received: receiving, asked });
+
+      // A's owner stops A while B's worker is held after admitting A's third question.
+      const prompted = pair.b.worker.filter((entry) => entry.event === 'prompted').length;
+      await pair.b.request({ type: 'hold' });
+      const third = await beginExchange(pair, { question: `${QUESTION} Third.` });
+      await pair.b.waitWorker('prompted', prompted + 1);
+      await pair.a.event(rootMessage('dude a2a stop'));
+      const cancelled = await readUntil(pair.a, third.asked.operationId, frozen, 'A after its stop');
+      assert.deepEqual([cancelled.outcome, cancelled.reason, cancelled.delivery, cancelled.advice],
+        ['cancelled', 'activation_ended', 'may_have_occurred', undefined]);
+      const left = await readUntil(pair.b, third.received.operationId, frozen, 'B after A left');
+      assert.deepEqual([left.outcome, left.reason, left.delivery], ['cancelled', 'asker_disconnected', 'not_sent']);
+      await pair.b.request({ type: 'release' });
+      await pair.b.waitWorker('refused_late', 2);
+      for (const file of [third.asked.transcript, third.received.transcript]) ended.set(file, fs.readFileSync(file));
+
+      // A's fresh automatic activation: its new question gets the only later answer, and the old handle reaches nothing.
+      await activatePaired(pair.a, 'a-ask', pair.port);
+      const fourth = await converse(pair, `${QUESTION} Fourth.`);
+      const oldA = await conversation(pair.a, { op: 'read', operationId: third.asked.operationId });
+      assert.deepEqual([oldA.outcome, oldA.reason], ['refused', 'unknown_operation']);
+
+      // Each ended exchange stays exactly as it ended: no reply was received, prepared, or written for it afterwards.
+      for (const [file, bytes] of ended) {
+        assert.deepEqual(fs.readFileSync(file), bytes, `${path.basename(file)} is unchanged`);
+        const recorded = kinds(journalRecords(file));
+        assert.equal(recorded.at(-1), 'closed');
+        assert.deepEqual(recorded.filter((kind) => ['reply_received', 'evidence_returned', 'reply_prepared', 'reply_written'].includes(kind)), []);
+      }
+      assert.deepEqual(pair.b.worker.filter((entry) => entry.event === 'answered').length, 2, 'only the two new questions were answered');
+      assert.notEqual(second.binding.permitId, only(journalRecords(first.received.transcript), 'worker_preflight').data.binding.permitId,
+        "B's fresh activation has a new worker permit");
+      const exchanges = [first, third].map((begun) => only(journalRecords(begun.received.transcript), 'request_admitted').data.exchangeId);
+      assert.equal(new Set([...exchanges, second.exchangeId, fourth.exchangeId]).size, 4, 'four distinct exchanges');
+      for (const side of /** @type {const} */ (['a', 'b'])) {
+        assert.deepEqual(approvals([pair[side]]), { prompts: 1, inputs: 1 }, `${side}: no approval after enrollment`);
+      }
+      assert.deepEqual(await finish(pair.a), { code: 0, signal: null });
+      assert.deepEqual(await finish(pair.b), { code: 0, signal: null });
+    } finally {
+      await dispose(pair);
+    }
+  });
+
+  test('a standing pairing lends no trust to another peer over real mutual TLS: with both approved configurations and records unchanged and still matching, an impostor presenting the stranger certificate under the same label is refused by the real pin check on either side, and the real pair then converses', { timeout: 120_000 }, async () => {
+    const pair = await startPairing();
+    const issuedNow = certificates();
+    const records = { a: recordPath(pair.dirs.a.config, 'a-ask'), b: recordPath(pair.dirs.b.config, 'b-serve') };
+    /** @type {Peer[]} */
+    const impostors = [];
+    try {
+      await enroll(pair.b, 'b-serve', pair.port);
+      await enroll(pair.a, 'a-ask', pair.port);
+      await deactivate(pair);
+      const approved = [pair.dirs.a.config, pair.dirs.a.cert, pair.dirs.a.key, records.a, pair.dirs.b.config, pair.dirs.b.cert, pair.dirs.b.key, records.b];
+      const before = approved.map(fileState);
+
+      // The serving identity changes: an impostor B presents the stranger certificate on B's port. A's unchanged
+      // configuration and record still activate A automatically, and A's real pin check refuses before any byte leaves.
+      const fakeB = await startImpostor('b', pair.port);
+      impostors.push(fakeB);
+      assert.match(await approve(fakeB, fakeB.dirs.config, 'b-serve'), new RegExp(`^Activation: active; serve profile b-serve; listening https://127\\.0\\.0\\.1:${pair.port}/`));
+      await activatePaired(pair.a, 'a-ask', pair.port);
+      const fakeReceive = await conversation(fakeB, { op: 'begin_receive' });
+      await fakeB.waitLog((line) => line === `Status: conversation ${fakeReceive.operationId} waiting for one project question`, 'impostor B waiting');
+      const toImpostor = await conversation(pair.a, { op: 'begin_ask', slug: 'delta', tentativeNumber: 101, question: QUESTION });
+      const refusedByA = await readUntil(pair.a, toImpostor.operationId, frozen, 'A refused the impostor');
+      assert.deepEqual([refusedByA.outcome, refusedByA.reason, refusedByA.delivery, refusedByA.advice], ['refused', 'certificate_mismatch', 'not_sent', undefined]);
+      assert.deepEqual(kinds(journalRecords(toImpostor.transcript)), ['opened', 'accepted', 'request_prepared', 'terminal', 'closed'], 'no request byte left A');
+      const fakeIdle = await conversation(fakeB, { op: 'read', operationId: fakeReceive.operationId });
+      assert.deepEqual([fakeIdle.outcome, fakeIdle.phase], ['pending', 'waiting'], 'the impostor admitted nothing');
+      assert.equal(fakeB.worker.length, 0, 'and started no worker');
+      assert.deepEqual(await finish(fakeB), { code: 0, signal: null });
+
+      // The asking identity changes: an impostor A presents the stranger certificate to the real B, which the unchanged
+      // record activated automatically. B's real pin check refuses it before admission.
+      await activatePaired(pair.b, 'b-serve', pair.port);
+      const fakeA = await startImpostor('a', pair.port);
+      impostors.push(fakeA);
+      assert.match(await approve(fakeA, fakeA.dirs.config, 'a-ask'), /^Activation: active; ask profile a-ask; peer B/);
+      const since = pair.b.logs.length;
+      const receiving = await conversation(pair.b, { op: 'begin_receive' });
+      await pair.b.waitLog((line) => line === `Status: conversation ${receiving.operationId} waiting for one project question`, 'B waiting');
+      const fromImpostor = await conversation(fakeA, { op: 'begin_ask', slug: 'delta', tentativeNumber: 101, question: QUESTION });
+      const impostorView = await readUntil(fakeA, fromImpostor.operationId, frozen, 'impostor A decided');
+      assert.deepEqual([impostorView.outcome, impostorView.reason, impostorView.delivery], ['uncertain', 'connection_lost', 'may_have_occurred']);
+      await pair.b.waitLog((line) => line.startsWith('A2A refused a peer request: certificate_mismatch.'), 'B refused the impostor', since);
+      const bIdle = await conversation(pair.b, { op: 'read', operationId: receiving.operationId });
+      assert.deepEqual([bIdle.outcome, bIdle.phase], ['pending', 'waiting'], 'B admitted nothing');
+      assert.deepEqual(kinds(journalRecords(receiving.transcript)), ['opened', 'accepted'], 'and recorded no question');
+      assert.equal(pair.b.worker.length, 0, 'and started no worker');
+      assert.deepEqual(await finish(fakeA), { code: 0, signal: null });
+
+      // The real A, still on its automatic activation, asks the real B, still receiving: the pair was valid throughout.
+      const question = `${QUESTION} Authentic.`;
+      const asked = await conversation(pair.a, { op: 'begin_ask', slug: 'delta', tentativeNumber: 101, question });
+      assert.equal(asked.outcome, 'accepted', JSON.stringify(asked));
+      const { binding } = await converse(pair, question, { received: receiving, asked });
+      assert.equal(binding.mainSessionId, 'component-session-b');
+      const answered = await conversation(pair.a, { op: 'read', operationId: asked.operationId });
+      assert.equal(answered.advice.capture.peerCertSha256, issuedNow.b.pin, "the answer is bound to B's real pin");
+      assert.deepEqual([journalRecords(asked.transcript)[0].data.peer, journalRecords(receiving.transcript)[0].data.peer],
+        [{ label: 'B', certSha256: issuedNow.b.pin }, { label: 'A', certSha256: issuedNow.a.pin }]);
+      assert.deepEqual(approved.map(fileState), before, 'no approved configuration, TLS file, or record changed');
+      for (const side of /** @type {const} */ (['a', 'b'])) {
+        assert.deepEqual(approvals([pair[side]]), { prompts: 1, inputs: 1 }, `${side}: no approval after enrollment`);
+      }
+      assert.deepEqual(await finish(pair.a), { code: 0, signal: null });
+      assert.deepEqual(await finish(pair.b), { code: 0, signal: null });
+    } finally {
+      for (const impostor of impostors) {
+        if (!impostor.exited) {
+          impostor.child.kill();
+          await within(impostor.exit, EXIT_MS);
+        }
+      }
       await dispose(pair);
     }
   });

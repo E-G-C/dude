@@ -809,8 +809,30 @@ const LIFETIME = 'Lifetime: this result is a snapshot, not live status. Normal t
 const NEXT = 'Next: after complete review, type or paste the exact current approval as the next eligible local root input. To decline or cancel, use dude a2a stop.';
 const RECORDING = 'RECORDING: each conversation is recorded locally before any disclosure, or refused while recording is unavailable; '
   + 'records are locally sensitive and kept until the owner deletes them';
+const PAIRING_APPROVAL = '; also saves the PAIRING grant';
 /** @param {string} hex */
 const fingerprint = (hex) => `SHA-256 ${hex.toUpperCase().replace(/(..)(?!$)/g, '$1:')}`;
+
+/**
+ * Where an opted-in profile's standing record lives: beside the canonical configuration, named by the exact profile
+ * ID's SHA-256.
+ * @param {string} configPath @param {string} profileId
+ */
+const recordPath = (configPath, profileId) => path.join(`${fs.realpathSync.native(configPath)}.pairings`, `${sha256(profileId)}.json`);
+
+/**
+ * The PAIRING section an opted-in profile's proposal adds after every scope it covers.
+ * @param {string} configPath @param {string} profileId
+ */
+function expectedPairing(configPath, profileId) {
+  return [
+    'PAIRING: this approval persists for later matching sessions on this machine; any binding change needs new full approval; '
+      + 'numeric repeat use resets per activation; absolute expiries do not extend',
+    `Pairing record: ${recordPath(configPath, profileId)}; holds a digest only; revoke: dude a2a stop, then delete that file; `
+      + 'stop or a config edit alone does not revoke',
+    'Pairing trust: ordinary root input does not prove human authorship; an unrestricted local file writer can forge or remove this grant',
+  ];
+}
 
 /**
  * Independent whole-result oracle for the collaboration proposals, built
@@ -821,6 +843,8 @@ function expectedProposal(pair, profileId, generation, code) {
   const serving = profileId === 'b-serve';
   const configPath = serving ? pair.dirs.configB : pair.dirs.configA;
   const profile = serving ? pair.serve : pair.ask;
+  const pairing = /** @type {any} */ (profile).pairing === true ? expectedPairing(configPath, profileId) : [];
+  const standing = /** @type {any} */ (profile).pairing === true ? PAIRING_APPROVAL : '';
   const header = [
     'Proposal only: nothing is activated. Review this entire native tool result before local approval.',
     `Proposal: ${profile.label} ${profile.role}`,
@@ -839,12 +863,13 @@ function expectedProposal(pair, profileId, generation, code) {
       project,
       'CONVERSATION: dude_a2a_conversation begin_ask sends one number_advice question in the background; one operation at a time; ends within 60000 ms',
       RECORDING,
+      ...pairing,
       ASK_RISKS,
       'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted. '
         + 'This asking profile grants no local verification operation.',
       REVIEW,
       LIFETIME,
-      `Approval: dude a2a approve ${code}; this current local proposal only, consumed once`,
+      `Approval: dude a2a approve ${code}; this current local proposal only, consumed once${standing}`,
       NEXT,
     ].join('\n');
   }
@@ -881,12 +906,13 @@ function expectedProposal(pair, profileId, generation, code) {
       : 'Worker storage: one owned temporary directory with work, config, home, and temp folders, which HOME, USERPROFILE, TEMP, TMP, and TMPDIR name; '
         + 'once a runtime may have started, its cessation is unconfirmed and the directory is kept and reported, never deleted',
     RECORDING,
+    ...pairing,
     SERVE_RISKS,
     'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted; '
       + 'command output is not automatically redacted. No command is approved by this proposal.',
     REVIEW,
     LIFETIME,
-    `Approval: dude a2a approve ${code}; current matching proposal/context only, consumed once; grants SHARING and the separate WORKER scope together`,
+    `Approval: dude a2a approve ${code}; current matching proposal/context only, consumed once; grants SHARING and the separate WORKER scope together${standing}`,
     NEXT,
   ].join('\n');
 }
@@ -947,6 +973,90 @@ test('the complete collaboration proposal keeps the fixed 4490-byte cap: 4490 is
     assert.equal(Buffer.byteLength(fits.textResultForLlm, 'utf8'), 4490);
     const { generation, code } = proposalIdentity(fits);
     assert.equal(fits.textResultForLlm, expectedProposal(pair, 'b-serve', generation, code));
+    assert.equal(pair.worker.state.loads, 0);
+  } finally {
+    pair.cleanup();
+  }
+});
+
+test('a paired worker and a paired collaboration asker keep every scope and the PAIRING section exactly within 4490 bytes; one owner\'s approval saves only that owner\'s record, before any worker can start', async (context) => {
+  const pair = await collaborationPair({
+    approve: false,
+    serve: (profile) => { profile.pairing = true; },
+    ask: (profile) => { profile.pairing = true; },
+  });
+  try {
+    const records = { b: recordPath(pair.dirs.configB, 'b-serve'), a: recordPath(pair.dirs.configA, 'a-ask') };
+    /** @type {Record<string, number>} */
+    const sizes = {};
+    /** @type {Record<string, string>} */
+    const codes = {};
+    for (const [side, configPath, profileId] of /** @type {Array<[Party, string, 'b-serve' | 'a-ask']>} */ ([
+      [pair.b, pair.dirs.configB, 'b-serve'], [pair.a, pair.dirs.configA, 'a-ask'],
+    ])) {
+      const result = await side.call('dude_a2a_propose', { configPath, profileId });
+      assert.equal(result.resultType, 'success', result.textResultForLlm);
+      const { generation, code } = proposalIdentity(result);
+      assert.equal(result.textResultForLlm, expectedProposal(pair, profileId, generation, code), `complete paired result for ${profileId}`);
+      sizes[profileId] = Buffer.byteLength(result.textResultForLlm, 'utf8');
+      assert.ok(sizes[profileId] <= 4490, `${profileId}: ${sizes[profileId]} bytes`);
+      for (const secret of [TOKEN, FIXED_VALUE]) assert.equal(result.textResultForLlm.includes(secret), false, `${profileId} hides ${secret}`);
+      codes[profileId] = code;
+    }
+    for (const file of Object.values(records)) assert.equal(fs.existsSync(path.dirname(file)), false, 'preparing creates no pairing storage');
+    assert.equal(pair.worker.state.loads, 0, 'preparing loads no SDK and starts no worker');
+    assert.equal(pair.listening, false, 'preparing starts no listener');
+    assert.equal(pair.connections.length, 0, 'preparing connects nowhere');
+
+    // Only B's owner approves; this synthetic root input is a test input, not consent.
+    pair.b.event(rootMessage(`dude a2a approve ${codes['b-serve']}`));
+    const outcome = await pair.b.logLine((line) => /^(?:Activation: active|A2A approval refused|A2A paired, inactive)/.test(line), 'B approval');
+    assert.match(outcome, /^Activation: active; serve profile b-serve/);
+    assert.match(fs.readFileSync(records.b, 'utf8'), /^\{"version":1,"bindingSha256":"[0-9a-f]{64}"\}\n$/, "B's own record holds only a digest");
+    assert.ok(pair.b.logs.includes(`A2A pairing saved: ${records.b}. It persists for later matching local sessions until you use dude a2a stop, then delete that file.`));
+    assert.equal(fs.existsSync(path.dirname(records.a)), false, "B's approval creates no grant for A");
+    assert.equal(pair.a.logs.some((line) => /^(?:Activation: active|A2A pairing saved)/.test(line)), false, 'and activates nothing for A');
+    assert.equal(pair.worker.state.loads, 0, 'enrollment starts no worker; only a later authenticated question can');
+    context.diagnostic(`paired collaboration proposal UTF-8 bytes: ${JSON.stringify(sizes)}`);
+  } finally {
+    pair.cleanup();
+  }
+});
+
+test('a paired worker proposal keeps the fixed 4490-byte cap with multibyte text: 4490 is approvable and saves its record, 4491 refuses with nothing pending or saved', async () => {
+  const pair = await collaborationPair({ approve: false, serve: (profile) => { profile.pairing = true; } });
+  try {
+    const record = recordPath(pair.dirs.configB, 'b-serve');
+    const outcomeLine = (/** @type {string} */ line) => /^(?:Activation: active|A2A approval refused|A2A paired, inactive)/.test(line);
+    const sized = (/** @type {number} */ bytes) => {
+      pair.serve.sharing.purpose = 'Advise first-capture numbering Ω漢🙂';
+      pair.writeConfigs();
+      const fill = bytes - Buffer.byteLength(expectedProposal(pair, 'b-serve', '00000000-0000-0000-0000-000000000000', '000000000000'), 'utf8');
+      assert.ok(fill > 0, 'the unpadded paired worker fits below the cap');
+      pair.serve.sharing.purpose += 'x'.repeat(fill);
+      pair.writeConfigs();
+    };
+    sized(4491);
+    const over = await pair.b.call('dude_a2a_propose', { configPath: pair.dirs.configB, profileId: 'b-serve' });
+    assert.equal(over.resultType, 'failure');
+    assert.match(over.textResultForLlm, /^A2A proposal refused: the complete proposal exceeds the fixed native-display size limit/);
+    assert.doesNotMatch(over.textResultForLlm, /WORKER:|PAIRING:|Approval:|dude a2a approve [0-9a-f]{12}/, 'no partial body, hidden annex, or code');
+    pair.b.event(rootMessage('dude a2a approve 000000000000'));
+    assert.match(await pair.b.logLine((line) => line.startsWith('A2A approval refused'), 'refusal'), /no proposal is pending/);
+    assert.equal(fs.existsSync(path.dirname(record)), false, 'an oversized candidate saves nothing');
+
+    sized(4490);
+    const fits = await pair.b.call('dude_a2a_propose', { configPath: pair.dirs.configB, profileId: 'b-serve' });
+    assert.equal(fits.resultType, 'success', fits.textResultForLlm);
+    assert.equal(Buffer.byteLength(fits.textResultForLlm, 'utf8'), 4490);
+    assert.ok(fits.textResultForLlm.length < 4490, 'the bound counts UTF-8 bytes, not characters');
+    const { generation, code } = proposalIdentity(fits);
+    assert.equal(fits.textResultForLlm, expectedProposal(pair, 'b-serve', generation, code), 'every scope and the PAIRING section at the bound');
+    const before = pair.b.logs.length;
+    pair.b.event(rootMessage(`dude a2a approve ${code}`));
+    await waitFor(() => pair.b.logs.slice(before).some(outcomeLine), 'approval');
+    assert.match(String(pair.b.logs.slice(before).find(outcomeLine)), /^Activation: active; serve profile b-serve/);
+    assert.match(fs.readFileSync(record, 'utf8'), /^\{"version":1,"bindingSha256":"[0-9a-f]{64}"\}\n$/);
     assert.equal(pair.worker.state.loads, 0);
   } finally {
     pair.cleanup();
@@ -3293,5 +3403,159 @@ test('the production readiness receiver records only the approved branch\'s work
     receiver.worker.state.hold?.resolve(undefined);
     await receiver.until((current) => current.cleanup !== 'pending', 'frozen after cancel');
   });
+});
+
+// Standing pairing in collaboration: each automatic activation reaches the worker and the recorder only through the
+// provider's own checks, with a new permit and operation each time. The approvals here are synthetic test inputs that
+// enroll an owner's pairing, never human consent.
+
+/**
+ * Stop one side, apply `between`, then request its profile again as a later turn would: a matching standing pairing
+ * activates on that request alone, and anything else gets its proposal.
+ * @param {Party} side @param {string} configPath @param {string} profileId @param {() => void} [between]
+ */
+async function requestAgain(side, configPath, profileId, between) {
+  const mark = side.logs.length;
+  side.event(rootMessage('dude a2a stop'));
+  await waitFor(() => side.logs.slice(mark).some((line) => line.startsWith('A2A activation ended: stopped by dude a2a stop.')), `${profileId} stopped`);
+  between?.();
+  return side.call('dude_a2a_propose', { configPath, profileId });
+}
+
+/** The notice an automatic activation delivered. @param {Party} side */
+const noticeOf = (side) => String(side.logs.find((line) => line.startsWith('A2A standing pairing in use:')));
+
+/** @param {Pair} pair */
+async function pairedServe(pair) {
+  await approve(pair.b, pair.dirs.configB, 'b-serve');
+  await approve(pair.a, pair.dirs.configA, 'a-ask');
+  const activated = await requestAgain(pair.b, pair.dirs.configB, 'b-serve');
+  assert.match(activated.textResultForLlm, /^Activation: active; serve profile b-serve; /, activated.textResultForLlm);
+  return activated;
+}
+
+test('a paired worker answers in each activation, the automatic one included, with its own new permit and operation, the approved credential only, and every boundary in its real journal; an earlier operation handle reaches nothing', async () => {
+  const pair = await collaborationPair({ approve: false, journals: true, serve: (profile) => { profile.pairing = true; } });
+  try {
+    await approve(pair.b, pair.dirs.configB, 'b-serve');
+    await approve(pair.a, pair.dirs.configA, 'a-ask');
+    const record = recordPath(pair.dirs.configB, 'b-serve');
+    const saved = fs.readFileSync(record);
+    /** @type {Array<{operationId: string, permitId: string}>} */
+    const rounds = [];
+    for (const round of [1, 2]) {
+      if (round === 2) {
+        const activated = await requestAgain(pair.b, pair.dirs.configB, 'b-serve');
+        assert.equal(activated.resultType, 'success', activated.textResultForLlm);
+        assert.match(activated.textResultForLlm,
+          /^Activation: active; serve profile b-serve; listening https:\/\/127\.0\.0\.1:18443\/\nAuthority: the standing pairing from an earlier exact local approval;/);
+        assert.match(activated.textResultForLlm,
+          /\nConversation: dude_a2a_conversation begin_receive waits in the background for one project dude-number-poc question/);
+        assert.doesNotMatch(activated.textResultForLlm, /dude a2a approve|Proposal only/);
+        assert.match(noticeOf(pair.b), /\nCOMMANDS: none\nWORKER: separately approved for project dude-number-poc; model fixture-model\n/);
+      }
+      const { received, asked } = await startExchange(pair);
+      const answer = await readUntil(pair.a, asked.operationId, (view) => view.outcome !== 'pending', `round ${round}: A answer`);
+      const sent = await readUntil(pair.b, received.operationId, frozen, `round ${round}: B frozen`);
+      assert.deepEqual([answer.outcome, answer.advice?.observedMaximum, sent.outcome, sent.recording], ['answer', 101, 'sent', 'complete'], `round ${round}`);
+      const records = journalRecords(received.transcript);
+      assert.deepEqual(records.map((entry) => entry.kind), ['opened', 'accepted', 'request_admitted', 'worker_started', 'worker_preflight', 'worker_ready',
+        'worker_request_admitted', 'evidence_returned', 'evidence_returned', 'worker_finished', 'reply_prepared', 'reply_write_started', 'reply_written',
+        'terminal', 'cleanup', 'closed'], `round ${round}: every boundary is recorded`);
+      const { binding } = only(records, 'worker_preflight').data;
+      assert.equal(binding.operationId, received.operationId, `round ${round}`);
+      assert.match(binding.permitId, UUID, `round ${round}`);
+      const client = pair.worker.state.clients[round - 1];
+      assert.deepEqual([client.options.gitHubToken, client.options.useLoggedInUser, client.options.mode], [TOKEN, false, 'empty'],
+        `round ${round}: the worker used exactly the approved credential, with no logged-in user`);
+      rounds.push({ operationId: received.operationId, permitId: binding.permitId });
+    }
+    assert.notEqual(rounds[1].permitId, rounds[0].permitId, 'the automatic activation has its own new worker permit');
+    assert.notEqual(rounds[1].operationId, rounds[0].operationId);
+    const stale = await conversation(pair.b, { op: 'read', operationId: rounds[0].operationId });
+    assert.deepEqual([stale.outcome, stale.reason], ['refused', 'unknown_operation'], 'an earlier operation handle reaches nothing');
+    assert.deepEqual(fs.readFileSync(record), saved, 'the record is reused, never rewritten');
+    assert.equal(pair.b.logs.filter((line) => line.startsWith('A2A pairing saved')).length, 1, 'B enrolled once');
+  } finally {
+    pair.cleanup();
+  }
+});
+
+test('a share-only pairing starts no worker in its automatic activation, and a changed worker scope gets the complete enrollment proposal and starts none', async () => {
+  const shareOnly = await collaborationPair({ approve: false, serve: (profile) => { delete profile.collaboration; profile.pairing = true; } });
+  try {
+    await approve(shareOnly.b, shareOnly.dirs.configB, 'b-serve');
+    const activated = await requestAgain(shareOnly.b, shareOnly.dirs.configB, 'b-serve');
+    assert.match(activated.textResultForLlm, /^Activation: active; serve profile b-serve; /);
+    assert.doesNotMatch(activated.textResultForLlm, /Conversation:/);
+    assert.match(noticeOf(shareOnly.b), /\nWORKER: none\n/);
+    const refused = await conversation(shareOnly.b, { op: 'begin_receive' });
+    assert.deepEqual([refused.outcome, refused.reason], ['refused', 'not_collaborating']);
+    assert.equal(shareOnly.worker.state.loads, 0, 'a share-only pairing loads no worker SDK');
+  } finally {
+    shareOnly.cleanup();
+  }
+
+  const changed = await collaborationPair({ approve: false, serve: (profile) => { profile.pairing = true; } });
+  try {
+    await approve(changed.b, changed.dirs.configB, 'b-serve');
+    const result = await requestAgain(changed.b, changed.dirs.configB, 'b-serve', () => {
+      /** @type {any} */ (changed.serve.collaboration).worker.model = 'another-model';
+      changed.writeConfigs();
+    });
+    const { generation, code } = proposalIdentity(result);
+    assert.ok(code, result.textResultForLlm);
+    assert.equal(result.textResultForLlm, expectedProposal(changed, 'b-serve', generation, code), 'the complete enrollment proposal for the changed WORKER scope');
+    assert.equal(changed.b.logs.some((line) => line.startsWith('A2A standing pairing in use:')), false);
+    const refused = await conversation(changed.b, { op: 'begin_receive' });
+    assert.deepEqual([refused.outcome, refused.reason], ['refused', 'no_activation']);
+    assert.equal(changed.worker.state.loads, 0, 'no worker starts');
+    assert.equal(changed.listening, false, 'nothing listens');
+  } finally {
+    changed.cleanup();
+  }
+});
+
+test('deleting B\'s standing record while its worker\'s evidence call is pending ends the automatic activation and its worker before the worker model sees any evidence, and nothing restarts', async () => {
+  const pair = await collaborationPair({ approve: false, serve: (profile) => { profile.pairing = true; } });
+  try {
+    await pairedServe(pair);
+    const record = recordPath(pair.dirs.configB, 'b-serve');
+    pair.worker.state.script = async (session) => {
+      fs.rmSync(record);
+      const listed = await session.call('dude_a2a_evidence_inventory', {});
+      return assistant(listed.textResultForLlm);
+    };
+    const { received, asked } = await startExchange(pair);
+    await pair.b.logLine((line) => line.startsWith('A2A activation ended: the standing pairing record was deleted, changed, or can no longer be read safely.'),
+      'B ended by revocation');
+    const b = await readUntil(pair.b, received.operationId, frozen, 'B frozen after revocation');
+    assert.deepEqual([b.outcome, b.reason, b.worker.outcome], ['cancelled', 'activation_ended', 'cancelled'], JSON.stringify(b));
+    assert.equal(pair.recorders.b?.kinds(received.operationId).includes('evidence_returned'), false,
+      'the evidence call reread the record, so the worker model saw nothing');
+    const a = await readUntil(pair.a, asked.operationId, (view) => view.outcome !== 'pending', 'A after B ended');
+    assert.deepEqual([a.outcome, a.delivery], ['uncertain', 'may_have_occurred'], 'the withdrawn reply leaves delivery uncertain, never answered');
+    await waitFor(() => !pair.listening, 'B stopped listening');
+    const again = await pair.b.call('dude_a2a_propose', { configPath: pair.dirs.configB, profileId: 'b-serve' });
+    assert.match(again.textResultForLlm, /^Proposal only: nothing is activated\./, 'the next request needs a complete new enrollment');
+  } finally {
+    pair.cleanup();
+  }
+});
+
+test('a paired automatic activation keeps the recording boundary: a question whose admission cannot be recorded starts no worker and discloses nothing', async () => {
+  const pair = await collaborationPair({ approve: false, recorders: { b: { failAt: 'request_admitted' } }, serve: (profile) => { profile.pairing = true; } });
+  try {
+    await pairedServe(pair);
+    const { received, asked } = await startExchange(pair);
+    const a = await readUntil(pair.a, asked.operationId, (view) => view.outcome !== 'pending', 'A told');
+    assert.deepEqual([a.outcome, a.reason, a.delivery], ['unavailable', 'recording_failed', 'reached_peer']);
+    const b = await readUntil(pair.b, received.operationId, frozen, 'B frozen');
+    assert.deepEqual([b.outcome, b.reason, b.recording], ['failed', 'recording_failed', 'incomplete']);
+    assert.equal(pair.worker.state.loads, 0, 'a worker starts only after its admission was recorded');
+    assert.equal(pair.recorders.b?.kinds(received.operationId).includes('reply_prepared'), false);
+  } finally {
+    pair.cleanup();
+  }
 });
 

@@ -90,7 +90,9 @@
  * inside that interval. Only then is the evidence release written. The
  * answering worker's whole process tree must end within 10 seconds of its
  * recorded finish, checked before A's capture. A's explicit use of the answer
- * goes through its normal capture to the actual publisher. One more exchange
+ * goes through its normal capture, whose staging A's root model delegates to
+ * the installed Spec Lead in two direct synchronous tasks, to the actual
+ * publisher that A's root model runs. One more exchange
  * is cancelled through the conversation tool while a fresh worker's model
  * call is held; that worker's tree must end within 10 seconds of B's terminal
  * record. Teardown uses only SDK lifecycle stops; the observer then stops its
@@ -100,33 +102,41 @@
  * the sessions end.
  *
  * Main-session permission requests go to a fixed relay, and only for a tool
- * call that session's own root model requested for its current instruction.
+ * call that session's own root model requested for its current instruction,
+ * or, in A's capture step alone, one that the installed Spec Lead requested
+ * inside a direct synchronous task call A's root model made for that
+ * instruction, while that task runs (`specLeadRequest`).
  * In normal mode Dude's own tools ask permission, and so does a view even of
  * a path inside the session's own working directory. The typed consent
- * covers only the current step's exact calls of Dude's tools and, in the
- * exchange and capture steps, reads inside that session's own workspace,
- * which the relay approves once each without asking (`permissionRelay`), from
- * the step instruction's admission until its turn ends: in each proposal
- * step, `dude_a2a_propose` with that side's configuration and profile; in
- * each exchange, `dude_a2a_conversation` `begin_receive` and `read` for B,
- * and `begin_ask` for that exchange's slug with the fixed question and `read`
- * for A, with `cancel` too in the cancel exchange. The approval steps allow
- * none, and the capture step only those reads. Every other request is shown
- * only when it is the exact pending progress edit, or in the capture step the
- * exact inventory command,
- * one fixed `Get-FileHash` of a staged ledger, the publisher command for the
- * plan's slug with literal staged paths under A's temp folder, new staging
- * files there, or a read of that folder itself or of anything in it. The
- * after-view control session
- * has its own fixed relay, only for its one view's reads, and that request is
- * withdrawn as soon as the view's turn ends, aborts, or errs, or its session
- * shows any event the control refuses: another operation, an activation, or
- * an event it cannot recognize. The relays show each such request in
- * turn, and each needs a freshly entered `approve-once` within its bound; after the
- * answer the request must still be pending, unchanged, in the same phase, and
- * within the scope, or it is rejected. Everything else is rejected. Worker
- * permissions stay denied by the product. Nothing here kills, deletes,
- * retries, or reruns.
+ * covers exactly the requests below, which the relay approves once each
+ * without asking anyone (`permissionRelay`). From the step instruction's
+ * admission until its turn ends, it covers the current step's exact calls
+ * of Dude's tools: in each proposal step, `dude_a2a_propose` with that side's
+ * configuration and profile; in each exchange, `dude_a2a_conversation`
+ * `begin_receive` and `read` for B, and `begin_ask` for that exchange's slug
+ * with the fixed question and `read` for A, with `cancel` too in the cancel
+ * exchange; and, in the exchange and capture steps, reads inside that
+ * session's own workspace (in the capture step the Spec Lead's too). While
+ * its phase is open, it also covers the exact pending progress edit, and in
+ * the capture step: from A's root model, the exact inventory command, one
+ * fixed `Get-FileHash` of a staged ledger, and the publisher command for the
+ * plan's slug with literal staged paths under A's temp folder; from the Spec
+ * Lead, each new staging file there as its own complete creation; and from
+ * either, a read of that folder itself or of anything in it. The approval
+ * steps allow none of these, and the capture step no Dude tool call. The
+ * Spec Lead runs no command, and A's root model stages nothing itself. Right
+ * before each answer the request must still be pending, unchanged, in the
+ * same step or phase, and within the scope, or it is rejected; one that
+ * managed policy marks as needing a person is never approved. Everything
+ * else is rejected. The after-view control session has its own fixed relay,
+ * the only one that asks the human about a permission, and only for its one
+ * view's reads: each needs a freshly entered `approve-once` within its bound,
+ * and after the answer it must still be pending, unchanged, in the same
+ * phase, and within the scope, or it is rejected. That request is withdrawn
+ * as soon as the view's turn ends, aborts, or errs, or its session shows any
+ * event the control refuses: another operation, an activation, or an event
+ * it cannot recognize. Worker permissions stay denied by the product.
+ * Nothing here kills, deletes, retries, or reruns.
  *
  * A run with injected adapters is a controlled test, labeled as such, and can
  * never report native success, however far it runs. The real branch has never
@@ -195,6 +205,11 @@ export const NATIVE_LIMITS = Object.freeze({
   acknowledgeMs: 600_000,
   runtimeMs: 60_000,
   turnMs: 240_000,
+  /**
+   * A's capture turn alone (`capture`): one turn holds its three commands and two Spec Lead tasks, each of which reads its definition
+   * skill before it stages its file, so it keeps a longer bound than every other turn.
+   */
+  captureTurnMs: 600_000,
   immediateMs: 1_000,
   operationMs: CONVERSATION_LIMITS.operationMs,
   workerMs: CONVERSATION_LIMITS.workerMs,
@@ -208,8 +223,11 @@ export const NATIVE_LIMITS = Object.freeze({
   toolRequests: 64,
   /** The after-view control report names at most this many distinct refused event types and classes, and counts the rest (`refusedEvents`). */
   refusedEvents: 8,
-  /** The report keeps an entry for at most this many permission requests refused without asking, and counts the rest (`permissionEntry`). */
-  permissionRefusals: 50,
+  /**
+   * The report keeps an entry for at most this many permission requests no person was asked about, refused or approved under the
+   * consent, and counts each further refusal (`permissionEntry`).
+   */
+  permissionEntries: 50,
   /** Each permission entry's `target` is at most this many UTF-8 bytes (`permissionTarget`). */
   targetBytes: 256,
   /** The after-view control's one model-facing view result; a completed call's model-facing result is kept only up to this. */
@@ -495,6 +513,8 @@ const CANCEL_CUE = Object.freeze({ path: 'cancel-a.txt', content: 'cancel\n' });
 const CONSENT_PREFIX = 'approve native ';
 const ACKNOWLEDGE = 'reread reviewed';
 const PERMISSION_ANSWERS = Object.freeze({ approve: 'approve-once', reject: 'reject' });
+/** The answer a main permission entry keeps for a request the relay approved itself under the typed consent: no person answered it. */
+const CONSENTED = 'consented';
 /** Every human prompt is only this; the action block right above it says what to enter (`actionBlock`). */
 const ANSWER_PROMPT = '> ';
 /** Written once per prompt when input that came too early to answer it is dropped (`readLiteralLine`). */
@@ -788,15 +808,13 @@ export function approvalAction(side, text) {
   };
 }
 
-/** The action block of one permission ask. @param {string} label The ask's tag: `A`, `B`, or `CONTROL`. */
-function permissionAction(label) {
-  return { title: `Approve or reject the ${label} request above`, line: PERMISSION_ANSWERS.approve,
-    alternative: `To reject it instead, enter: ${PERMISSION_ANSWERS.reject}`, note: 'Any other line also rejects it.' };
-}
+/** The action block of the after-view control's permission ask, the only permission a run asks the human about. */
+const CONTROL_PERMISSION_ACTION = Object.freeze({ title: 'Approve or reject the CONTROL request above', line: PERMISSION_ANSWERS.approve,
+  alternative: `To reject it instead, enter: ${PERMISSION_ANSWERS.reject}`, note: 'Any other line also rejects it.' });
 
 /**
- * One prompt at a time on the shared terminal, so concurrent permission
- * requests from both mains are asked separately and each answer is fresh.
+ * One prompt at a time on the shared terminal, so prompts that could overlap
+ * are asked separately and each answer is fresh.
  * Each ask has one absolute deadline on `clock` covering both its wait in the
  * queue and the typing; at most `NATIVE_LIMITS.humanQueue` asks wait at once.
  * A request that is no longer `valid` when its turn comes is never shown, and
@@ -1733,6 +1751,30 @@ export function checkReceipt(receipt, expected) {
   return problems;
 }
 
+/**
+ * The `capture_publisher` judgment of A's publisher call: it completed
+ * successfully, and its printed output ends with the captured idea's path
+ * once the native shell tool's one status line for exit code 0 is set aside.
+ * That tool ends a command's result with such a line: in run
+ * 056b7f4c-eaa3-4cd5-bdfa-70d89edb1a72 the publisher's was its idea path,
+ * then `<shellId: 2 completed with exit code 0>`. A failure's detail names
+ * the condition that failed, and output ending otherwise is shown only by
+ * its last 120 characters at most, JSON-quoted.
+ * @param {any} publisher The publisher call's summarized start, when one was observed.
+ * @param {any} output That call's summarized completion, when one was observed.
+ * @param {string} ideaPath
+ * @returns {{passed: boolean, detail: string}}
+ */
+export function publisherCheck(publisher, output, ideaPath) {
+  if (!publisher) return { passed: false, detail: 'no publisher command requested for this instruction was observed' };
+  if (!output?.success) return { passed: false, detail: 'the publisher call did not complete successfully' };
+  const printed = String(output.content ?? '').replace(/\r?\n<shellId: \d+ completed with exit code 0>\s*$/, '').trim();
+  if (printed.replace(/\\/g, '/').endsWith(ideaPath)) return { passed: true, detail: 'the actual publisher ran with --number-advice' };
+  const end = printed.length > 120 ? `...${printed.slice(-120)}` : printed;
+  return { passed: false, detail: `the publisher's printed output, its native status line set aside, did not end with ${ideaPath}`
+    + (printed ? `; it ended with ${JSON.stringify(end)}` : '') };
+}
+
 // ---------------------------------------------------------------------------
 // Main sessions: bounded event logs, proposals, progress, and the permission relay.
 // ---------------------------------------------------------------------------
@@ -1743,6 +1785,16 @@ const PUBLISHER_COMMAND = new RegExp(String.raw`^node \.github/skills/dude-featu
 /** The one fixed read-only command that hashes a staged ledger; the capture prompt names it exactly. */
 const HASH_COMMAND = /^\(Get-FileHash -Algorithm SHA256 -LiteralPath ('[^']+')\)\.Hash\.ToLowerInvariant\(\)$/;
 const ADVICE_ADDED = Object.freeze(['ledgerSha256', 'workspace', 'reason']);
+/**
+ * The runtime's built-in task tool and the two of its arguments the capture's
+ * delegation is judged by: which agent it starts, and that it waits for that
+ * agent (`mode` `sync`), as an installed-host acceptance drives it
+ * (scripts/dude-canvas-ui/t012-installed-host.mjs). A's own initialized
+ * catalog must declare both (`specLeadOf`); nothing else of the call is kept.
+ */
+const TASK = Object.freeze({ tool: 'task', agent: 'agent_type', mode: 'mode', sync: 'sync' });
+/** The installed Spec Lead, by its path in the rendered core: the one agent A's capture may delegate staging to (`specLeadRequest`). */
+const SPEC_LEAD = '.github/agents/dude-spec-lead.agent.md';
 
 /** @param {unknown} value @param {number} limit */
 function boundedText(value, limit) {
@@ -1757,6 +1809,16 @@ function presentText(value, limit) {
 /** Whether a documented optional string field is absent, or present as `presentText` requires. @param {unknown} value @param {number} limit */
 function optionalText(value, limit) {
   return value === undefined || presentText(value, limit);
+}
+
+/**
+ * A documented optional identifier as a session log keeps it: null when it is
+ * absent, the value when `presentText` accepts it, and false when it is
+ * present in any other form, so a malformed one is never read as absent.
+ * @param {unknown} value @param {number} limit @returns {string | null | false}
+ */
+function marker(value, limit) {
+  return value === undefined ? null : presentText(value, limit) ? /** @type {string} */ (value) : false;
 }
 
 /**
@@ -1803,7 +1865,7 @@ const UNVALIDATED = Object.freeze({ sessionId: null, model: null, modelFrom: nul
  * once found it never moves. For the after-view control, what the session
  * sends after it is post-turn (`controlRefusals`) and never read as the
  * turn's evidence (`checkAfterViewControl`); for a main session, it ends the
- * step's allowance (`stepOpen`) and its phase's typed requests
+ * step's allowance (`stepOpen`) and its phase's consented actions
  * (`phaseOpen`). An idle before that evidence, such as the session's startup
  * idle or an earlier turn's, ends nothing.
  * @param {any[]} events @param {string | null} admission
@@ -1915,16 +1977,52 @@ function unquote(value) {
 }
 
 /**
+ * An `apply_patch` header line: a file operation (an added, updated, or
+ * deleted file) or an updated file's move. Only a line's start opens one;
+ * the same text later in a line is that patch line's own.
+ */
+const PATCH_HEADER = /^\*\*\* (?:Add File|Update File|Delete File|Move to):/;
+/** The one header whose file may count as an `apply_patch` call's path: an added or updated file. */
+const PATCH_TARGET = /^\*\*\* (?:Add|Update) File: /;
+
+/**
+ * The one file an `apply_patch` patch adds or updates, or null. The patch is
+ * read only while it is at most 2,048 characters, the bound a shell
+ * command's kept text has, and counts only when its one header
+ * (`PATCH_HEADER`) adds or updates a file: a patch with no header, several
+ * file operations, a deletion, or a move names no file. The file is the rest
+ * of that header line, without a trailing carriage return or whitespace, so
+ * CRLF line ends name the same file, and is kept only while it is at most
+ * 1,024 characters, as a file tool's path is.
+ * @param {string} patch
+ */
+function patchTarget(patch) {
+  if (patch.length > 2_048) return null;
+  const headers = patch.split('\n').filter((line) => PATCH_HEADER.test(line));
+  const target = headers.length === 1 ? PATCH_TARGET.exec(headers[0]) : null;
+  const file = target ? headers[0].slice(target[0].length).trimEnd() : '';
+  return file && file.length <= 1_024 ? file : null;
+}
+
+/**
  * The bounded part of one tool call's arguments this run keeps: conversation
- * and proposal arguments whole, a file tool's path, and a shell command's text.
+ * and proposal arguments whole, a file tool's path, with an `apply_patch`
+ * patch's one added or updated file counting as its path (`patchTarget`),
+ * a shell command's text, and a task call's agent and mode only, never its
+ * prompt or description.
  * @param {unknown} name @param {unknown} args
  */
 function keptArguments(name, args) {
+  if (name === 'apply_patch' && typeof args === 'string') {
+    const file = patchTarget(args);
+    return file === null ? null : { path: file };
+  }
   if (!isRecord(args)) return null;
   if (name === CONVERSATION || name === PROPOSE) {
     const text = JSON.stringify(args);
     return text.length <= 2_048 ? JSON.parse(text) : { oversized: true };
   }
+  if (name === TASK.tool) return { [TASK.agent]: boundedText(args[TASK.agent], 128), [TASK.mode]: boundedText(args[TASK.mode], 32) };
   if (typeof args.path === 'string' && args.path.length <= 1_024) return { path: args.path };
   if (typeof args.command === 'string' && args.command.length <= 2_048) return { command: args.command };
   return null;
@@ -1952,7 +2050,22 @@ function argumentsDigest(args) {
  * prefix. An event of a type the control permits that states the session's
  * ID, the model its tool catalog was resolved for, the session owning a
  * permission, or the tool call it belongs to keeps that statement, bounded, as
- * `identity`, for `controlRefusals`.
+ * `identity`, for `controlRefusals`. A completed call that states an error
+ * message also keeps it, as `error`, under its content's bound: the native
+ * runtime reports a product's non-success result, such as a cancelled
+ * conversation, as `success: false` with no result and the product's text in
+ * `error.message` (run eed11bf5-4871-4337-a1ef-1be3d5c41fe9).
+ *
+ * Every event also keeps who sent it, for the capture step's Spec Lead
+ * attribution (`specLeadRequest`): `agent`, its own agent ID, and
+ * `parentToolCallId`, as `marker` keeps each (null when absent, false when
+ * malformed). A sub-agent's start keeps the call that started it, any
+ * spawning sub-agent, its name and type, and its execution mode; its end,
+ * that call and whether it was torn down by cancellation; a permission
+ * request, its request ID, tool call, the digest of its exact request, any
+ * agent stated as its owner, and whether a hook resolved it; a permission's
+ * completion, its request ID. Never a task's prompt or the agent's
+ * description.
  * @param {Record<string, any>} event @param {number} at
  */
 export function summarizeEvent(event, at) {
@@ -1961,7 +2074,8 @@ export function summarizeEvent(event, at) {
   const typeBytes = typeof event.type === 'string' ? Buffer.byteLength(event.type, 'utf8') : null;
   const base = { type: typeBytes !== null && typeBytes <= 64 ? event.type : null,
     ...(typeBytes !== null && typeBytes > 64 ? { typeBytes, typeSha256: sha256(event.type) } : {}), id: boundedText(event.id, 128), at,
-    ts: Number.isFinite(ts) ? ts : null, root: event.agentId === undefined || event.agentId === null, form: controlForm(event) };
+    ts: Number.isFinite(ts) ? ts : null, root: event.agentId === undefined || event.agentId === null, form: controlForm(event),
+    agent: marker(event.agentId, 128), parentToolCallId: marker(data.parentToolCallId, 256) };
   /** @param {Record<string, unknown>} identity */
   const stating = (identity) => ({ ...base, identity });
   switch (event.type) {
@@ -1991,9 +2105,10 @@ export function summarizeEvent(event, at) {
       const result = isRecord(data.result) ? data.result : {};
       const text = typeof result.detailedContent === 'string' ? result.detailedContent : typeof result.content === 'string' ? result.content : '';
       const model = typeof result.content === 'string' ? result.content : null;
+      const failure = isRecord(data.error) && typeof data.error.message === 'string' ? { error: boundedText(data.error.message, 16_384) } : {};
       return { ...base, toolCallId: boundedText(data.toolCallId, 256), success: data.success === true, content: boundedText(text, 16_384),
         contentSha256: sha256(text), resultBytes: model === null ? null : Buffer.byteLength(model, 'utf8'), resultSha256: model === null ? null : sha256(model),
-        result: boundedText(model, NATIVE_LIMITS.viewOutputBytes) };
+        result: boundedText(model, NATIVE_LIMITS.viewOutputBytes), ...failure };
     }
     case 'system.notification': {
       const kind = isRecord(data.kind) ? data.kind : {};
@@ -2017,12 +2132,21 @@ export function summarizeEvent(event, at) {
     case 'assistant.tool_call_delta':
       return stating({ call: boundedText(data.toolCallId, 256) });
     case 'permission.completed':
-      return stating(data.toolCallId !== undefined ? { call: boundedText(data.toolCallId, 256) } : {});
+      return { ...stating(data.toolCallId !== undefined ? { call: boundedText(data.toolCallId, 256) } : {}), requestId: boundedText(data.requestId, 256) };
     case 'permission.requested': {
       const request = isRecord(data.permissionRequest) ? data.permissionRequest : {};
-      return stating({ ...(data.ownerSessionId !== undefined ? { session: boundedText(data.ownerSessionId, 256) } : {}),
-        ...(request.toolCallId !== undefined ? { call: boundedText(request.toolCallId, 256) } : {}) });
+      return { ...stating({ ...(data.ownerSessionId !== undefined ? { session: boundedText(data.ownerSessionId, 256) } : {}),
+        ...(request.toolCallId !== undefined ? { call: boundedText(request.toolCallId, 256) } : {}) }),
+      requestId: boundedText(data.requestId, 256), toolCallId: marker(request.toolCallId, 256),
+      requestSha256: isRecord(data.permissionRequest) ? sha256(canonical(data.permissionRequest)) : null, ownerAgentId: marker(data.ownerAgentId, 128),
+      resolvedByHook: data.resolvedByHook === true };
     }
+    case 'subagent.started':
+      return { ...base, toolCallId: boundedText(data.toolCallId, 256), spawner: marker(data.parentId, 256), agentName: marker(data.agentName, 128),
+        agentType: marker(data.agentType, 128), executionMode: marker(data.executionMode, 32) };
+    case 'subagent.completed':
+    case 'subagent.failed':
+      return { ...base, toolCallId: boundedText(data.toolCallId, 256), cancelled: data.cancelled === true };
     default:
       return base;
   }
@@ -2064,21 +2188,204 @@ export function createSessionLog(side, clock = Date.now) {
 }
 
 /**
+ * Whether a summarized event is the root agent's own: it states no agent ID
+ * at all. A null, empty, or otherwise malformed one is never the root's.
+ * @param {any} event
+ */
+function rootEvent(event) {
+  return event.root === true && event.agent === null;
+}
+
+/**
  * Whether a root assistant message that the given admission started requested
  * this tool call. `originatingMessageId` is the ID `send` returned for that
- * admission; a message without it, or from a subagent, matches nothing.
+ * admission; a message without it, from a subagent, or with a malformed agent
+ * ID (`rootEvent`) matches nothing.
  * @param {any[]} events @param {string} toolCallId @param {string | null | undefined} admission
  */
 export function requestedBy(events, toolCallId, admission) {
-  return typeof admission === 'string' && admission.length > 0 && events.some((event) => event.type === 'assistant.message' && event.root
+  return typeof admission === 'string' && admission.length > 0 && events.some((event) => event.type === 'assistant.message' && rootEvent(event)
     && event.originatingMessageId === admission && (event.toolRequests ?? []).some((/** @type {any} */ entry) => entry.toolCallId === toolCallId));
+}
+
+/**
+ * The Spec Lead A's capture may delegate staging to, as `specLeadOf` found it
+ * in A's own session: `names`, every name the runtime lists it by that no
+ * other listed agent uses, and `selectors`, those of them its task tool may
+ * select it by.
+ * @typedef {Readonly<{names: readonly string[], selectors: readonly string[]}>} SpecLeadNames
+ */
+
+/**
+ * Whether one call is a direct synchronous Spec Lead task of an admission,
+ * from the session's own events: the root model requested it exactly once,
+ * for that admission, as the `task` tool selecting the Spec Lead (`agent_type`
+ * one of `selectors`) in `sync` mode; its one root start has exactly the
+ * requested arguments (`argumentsSha256`); and exactly one `subagent.started`
+ * names it, after that start, for a sub-agent of its own that no other start
+ * names, with no spawning sub-agent (`parentId`), only the Spec Lead's own
+ * `names` as its name (`agentName`, and `agentType` where stated), and `sync`
+ * execution where stated. Its display name is a label and decides nothing.
+ * @param {any[]} events @param {string} taskCallId @param {SpecLeadNames & {admission: string}} delegate
+ * @returns {{ok: true, agentId: string, at: number} | {ok: false, reason: 'unspawned' | 'nested' | 'not_spec_lead' | 'not_sync'}}
+ */
+function specLeadTask(events, taskCallId, { admission, names, selectors }) {
+  const requests = events.flatMap((event, index) => (event.type === 'assistant.message' ? (event.toolRequests ?? [])
+    .filter((/** @type {any} */ entry) => entry.toolCallId === taskCallId).map((/** @type {any} */ entry) => ({ event, entry, index })) : []));
+  if (requests.length !== 1 || !rootEvent(requests[0].event) || requests[0].event.originatingMessageId !== admission) {
+    return { ok: false, reason: 'unspawned' };
+  }
+  const [{ entry: task, index: askedAt }] = requests;
+  if (task.name !== TASK.tool || !selectors.includes(task.arguments?.[TASK.agent])) return { ok: false, reason: 'not_spec_lead' };
+  if (task.arguments[TASK.mode] !== TASK.sync) return { ok: false, reason: 'not_sync' };
+  const starts = events.filter((event) => event.type === 'tool.execution_start' && event.toolCallId === taskCallId);
+  const start = starts.length === 1 ? starts[0] : null;
+  if (!start || !(askedAt < events.indexOf(start)) || !rootEvent(start) || start.toolName !== TASK.tool
+    || start.argumentsSha256 !== task.argumentsSha256) return { ok: false, reason: 'unspawned' };
+  const spawns = events.filter((event) => event.type === 'subagent.started' && event.toolCallId === taskCallId);
+  const spawn = spawns.length === 1 ? spawns[0] : null;
+  if (!spawn || !(events.indexOf(start) < events.indexOf(spawn)) || typeof spawn.agent !== 'string'
+    || events.filter((event) => event.type === 'subagent.started' && event.agent === spawn.agent).length !== 1) return { ok: false, reason: 'unspawned' };
+  if (spawn.spawner !== null) return { ok: false, reason: 'nested' };
+  if (!names.includes(spawn.agentName) || (spawn.agentType !== null && !names.includes(spawn.agentType))) return { ok: false, reason: 'not_spec_lead' };
+  if (spawn.executionMode !== null && spawn.executionMode !== TASK.sync) return { ok: false, reason: 'not_sync' };
+  return { ok: true, agentId: spawn.agent, at: events.indexOf(spawn) };
+}
+
+/**
+ * The capture step's one exception to root-only attribution, at the relay
+ * (`permissionRelay`): whether one permission request of A's session comes
+ * from the installed Spec Lead, started for the current capture admission
+ * through a direct synchronous task (`specLeadTask`), and is still live. The
+ * callback names a session, never an agent, so each fact comes from the
+ * session's own events:
+ * - exactly one assistant message requested the call, a sub-agent's, and any
+ *   `parentToolCallId` it states is that sub-agent's task call (its
+ *   `originatingMessageId` is its own and is never read);
+ * - exactly one `subagent.started` names that sub-agent, with no spawning
+ *   sub-agent, for a Spec Lead task of the admission, before that request;
+ * - nothing ended it: no root idle or later root prompt after the
+ *   admission's own message, no completion or failure of the task or its
+ *   sub-agent, no idle of that sub-agent, and no completion of the call; and
+ * - exactly one pending `permission.requested` (no `permission.completed` of
+ *   its request ID) has this call and this request's exact digest, no hook
+ *   resolved it, and any agent it states, as sender or as owner, is that
+ *   sub-agent. Its owner session is routing metadata and decides nothing.
+ * A malformed agent ID is never the root's or a sub-agent's.
+ * @param {any[]} events A's summarized events. @param {string} toolCallId
+ * @param {string} requestSha256 The digest of the callback's exact request, `sha256(canonical(request))`.
+ * @param {SpecLeadNames & {admission: string | null | undefined}} delegate
+ * @returns {{ok: true, agentId: string, taskCallId: string}
+ *   | {ok: false, reason: 'unrequested' | 'contradictory' | 'unspawned' | 'nested' | 'not_spec_lead' | 'not_sync' | 'ended' | 'permission_unmatched'}}
+ */
+export function specLeadRequest(events, toolCallId, requestSha256, delegate) {
+  const { admission } = delegate;
+  if (!toolCallId || typeof admission !== 'string' || !admission) return { ok: false, reason: 'unrequested' };
+  const claims = events.filter((event) => event.type === 'assistant.message'
+    && (event.toolRequests ?? []).some((/** @type {any} */ entry) => entry.toolCallId === toolCallId));
+  if (claims.length === 0) return { ok: false, reason: 'unrequested' };
+  const [message] = claims;
+  const agentId = message.agent;
+  if (claims.length !== 1 || typeof agentId !== 'string'
+    || message.toolRequests.filter((/** @type {any} */ entry) => entry.toolCallId === toolCallId).length !== 1) return { ok: false, reason: 'contradictory' };
+  const spawns = events.filter((event) => event.type === 'subagent.started' && event.agent === agentId);
+  if (spawns.length !== 1 || typeof spawns[0].toolCallId !== 'string' || !spawns[0].toolCallId) return { ok: false, reason: 'unspawned' };
+  if (spawns[0].spawner !== null) return { ok: false, reason: 'nested' };
+  const taskCallId = spawns[0].toolCallId;
+  const task = specLeadTask(events, taskCallId, { ...delegate, admission });
+  if (!task.ok) return task;
+  if (message.parentToolCallId !== null && message.parentToolCallId !== taskCallId) return { ok: false, reason: 'contradictory' };
+  const admitted = events.findIndex((event) => event.type === 'user.message' && rootEvent(event) && event.messageId === admission);
+  if (admitted < 0 || !(task.at < events.indexOf(message))) return { ok: false, reason: 'unspawned' };
+  if (events.some((event, index) => (index > admitted && (event.type === 'user.message' || event.type === 'session.idle') && typeof event.agent !== 'string')
+    || ((event.type === 'tool.execution_complete' || event.type === 'subagent.completed' || event.type === 'subagent.failed') && event.toolCallId === taskCallId)
+    || (event.type === 'tool.execution_complete' && event.toolCallId === toolCallId) || (event.type === 'session.idle' && event.agent === agentId))) {
+    return { ok: false, reason: 'ended' };
+  }
+  const settled = new Set(events.filter((event) => event.type === 'permission.completed' && typeof event.requestId === 'string')
+    .map((event) => event.requestId));
+  const pending = events.filter((event) => event.type === 'permission.requested' && event.toolCallId === toolCallId && event.requestSha256 === requestSha256
+    && typeof event.requestId === 'string' && !settled.has(event.requestId));
+  if (pending.length !== 1 || pending[0].resolvedByHook) return { ok: false, reason: 'permission_unmatched' };
+  if ([pending[0].agent, pending[0].ownerAgentId].some((value) => value !== null && value !== agentId)) return { ok: false, reason: 'contradictory' };
+  return { ok: true, agentId, taskCallId };
+}
+
+/**
+ * The two Spec Lead tasks of A's capture admission that staged what its
+ * publisher read, in order: of the root task calls of that admission, the
+ * one whose sub-agent created the staged ledger, by exactly one successful
+ * call of its own of a tool that always changes a file (`FILE_CHANGE_TOOLS`),
+ * and a later one whose sub-agent created the staged advice the same way,
+ * each a Spec Lead task (`specLeadTask`) that its root call completed
+ * successfully and its sub-agent completed, neither failed nor torn down by
+ * cancellation. A read of a staged file, such as a view of it after its
+ * creation, names the file too but stages nothing. Each string names one
+ * problem; an empty list shows the delegation. Other task calls of the
+ * admission are only counted.
+ * @param {any[]} events @param {SpecLeadNames & {admission: string, ledger: string, advice: string}} expected
+ * @returns {{problems: string[], tasks: Array<{toolCallId: string, agentId: string}>, others: number}}
+ */
+export function checkStaging(events, { admission, names, selectors, ledger, advice }) {
+  const calls = events.filter((event) => event.type === 'assistant.message' && rootEvent(event) && event.originatingMessageId === admission)
+    .flatMap((event) => (event.toolRequests ?? []).filter((/** @type {any} */ entry) => entry.name === TASK.tool && typeof entry.toolCallId === 'string'))
+    .map((/** @type {any} */ entry) => entry.toolCallId);
+  /** @param {string} taskCallId @param {string} file */
+  const staged = (taskCallId, file) => {
+    const task = specLeadTask(events, taskCallId, { admission, names, selectors });
+    if (!task.ok) return null;
+    const ended = (/** @type {string} */ type) => events.filter((event) => event.type === type && event.toolCallId === taskCallId);
+    const done = ended('tool.execution_complete');
+    const completed = ended('subagent.completed');
+    if (done.length !== 1 || !done[0].success || completed.length !== 1 || completed[0].cancelled || ended('subagent.failed').length) return null;
+    // A read-back names the staged file too. Only a successful call of a tool that always changes its file counts, and on a staging path
+    // the relay allows no change but a new file's creation (`matchPermission`).
+    const created = events.filter((event) => event.type === 'tool.execution_start' && event.agent === task.agentId
+      && FILE_CHANGE_TOOLS.includes(String(event.toolName)) && event.toolName !== 'str_replace_editor' && typeof event.arguments?.path === 'string'
+      && samePath(event.arguments.path, file) && events.some((complete) => complete.type === 'tool.execution_complete' && complete.toolCallId === event.toolCallId
+        && complete.success));
+    return created.length === 1 ? { toolCallId: taskCallId, agentId: task.agentId } : null;
+  };
+  const first = calls.findIndex((call) => staged(call, ledger));
+  const second = first < 0 ? -1 : calls.findIndex((call, index) => index > first && staged(call, advice));
+  /** @type {string[]} */
+  const problems = [];
+  if (first < 0) problems.push('ledger_not_staged_by_spec_lead');
+  if (second < 0) problems.push('advice_not_staged_by_spec_lead');
+  const tasks = [first, second].filter((index) => index >= 0).map((index) => /** @type {{toolCallId: string, agentId: string}} */ (
+    staged(calls[index], index === first ? ledger : advice)));
+  return { problems, tasks, others: calls.length - tasks.length };
+}
+
+/** The conversation tool's success outcomes; the product returns every other outcome as a failure. */
+const SUCCESS_OUTCOMES = Object.freeze(['accepted', 'pending', 'answer', 'sent']);
+
+/**
+ * Whether `value` is the product's own non-success conversation result: an
+ * object whose `outcome` is none of the success outcomes and that has the
+ * `reason`, `next`, and `notice` texts every failure body has (`refusal` and
+ * `view` in src/extensions/dude/lib/a2a-collaboration.mjs).
+ * @param {unknown} value
+ */
+function productFailure(value) {
+  return isRecord(value) && typeof value.outcome === 'string' && !SUCCESS_OUTCOMES.includes(value.outcome)
+    && typeof value.reason === 'string' && typeof value.next === 'string' && typeof value.notice === 'string';
 }
 
 /**
  * The parsed JSON result of each completed conversation call that the
  * session's own root model requested for one admission, in order:
  * `{op, operationId, start, complete, result}`. Calls requested for an earlier
- * instruction, by a subagent, or by no model are not this admission's.
+ * instruction, by a subagent, or by no model are not this admission's. A call
+ * with content is parsed from that content. The native runtime completes a
+ * product non-success outcome, such as `cancelled`, with `success: false`, no
+ * content, and its JSON in `error.message` (run
+ * eed11bf5-4871-4337-a1ef-1be3d5c41fe9), so a failed call with no content is
+ * parsed from that kept failure text (`summarizeEvent`), but only when the
+ * text is such a result (`productFailure`). Any other failure text,
+ * success-shaped or not, failure text on a successful call, and a call with
+ * neither content nor failure text have a null result; `complete.success`
+ * still shows whether the call failed.
  * @param {any[]} events @param {string} admission
  */
 export function conversationCalls(events, admission) {
@@ -2092,13 +2399,15 @@ export function conversationCalls(events, admission) {
     }
     if (event.type === 'tool.execution_complete' && starts.has(event.toolCallId)) {
       const start = starts.get(event.toolCallId);
+      const failure = event.success === false && event.content === '' && typeof event.error === 'string';
       /** @type {any} */
       let result = null;
       try {
-        result = JSON.parse(event.content ?? '');
+        result = JSON.parse(failure ? event.error : event.content ?? '');
       } catch {
         result = null;
       }
+      if (failure && !productFailure(result)) result = null;
       calls.push({ op: start.arguments?.op ?? null, operationId: start.arguments?.operationId ?? result?.operationId ?? null, start, complete: event, result });
     }
   }
@@ -2220,13 +2529,21 @@ export function proposalOf(events, expected) {
 }
 
 /**
+ * The file tools whose call can change the file its kept path names (`keptArguments`); a view names a file as well and changes
+ * nothing. Each always changes it except `str_replace_editor`, whose view command keeps the same bare path as its create.
+ */
+const FILE_CHANGE_TOOLS = Object.freeze(['edit', 'create', 'str_replace_editor', 'apply_patch', 'write', 'str_replace']);
+
+/**
  * Whether one main made its own model progress inside the hold interval: a
  * root assistant message of that session's current instruction (its
  * `originatingMessageId` is the admission `send` returned) requested a tool
- * call on its progress file, and that call's native start and successful
- * completion follow it, all stamped inside [start, end] by the runtime and
- * received before the release. Direct qualifier calls, counters, requests for
- * an earlier instruction, and later or earlier edits do not count.
+ * call on its progress file (an `apply_patch` call through the one file its
+ * patch adds or updates, `keptArguments`), and that call's native start and
+ * successful completion follow it, all stamped inside [start, end] by the
+ * runtime and received before the release. Direct qualifier calls, counters,
+ * requests for an earlier instruction, and later or earlier edits do not
+ * count.
  * @param {any[]} events @param {{file: string, start: number, end: number, admission: string}} interval
  * @returns {{ok: true, toolCallId: string, requestedAt: number, completedAt: number} | {ok: false, reason: string}}
  */
@@ -2261,7 +2578,7 @@ export function checkProgress(events, { file, start, end, admission }) {
       continue;
     }
     // A view of a file that exists counts as a request on it too; only a completed change of the file counts as progress.
-    if (!['edit', 'create', 'str_replace_editor', 'apply_patch', 'write', 'str_replace'].includes(String(started.toolName))) {
+    if (!FILE_CHANGE_TOOLS.includes(String(started.toolName))) {
       reason = 'not_an_edit';
       continue;
     }
@@ -2290,6 +2607,21 @@ export function checkProgress(events, { file, start, end, admission }) {
 
 /** The one `toolApprovals` key under which the relay counts the reads inside a session's own workspace that it approves. */
 const WORKSPACE_READ = 'workspace.read';
+/** The `toolApprovals` key under which the relay counts the reads inside A's workspace that it approves for the capture's Spec Lead. */
+const SPEC_LEAD_READ = 'spec_lead.workspace.read';
+/**
+ * The closed `toolApprovals` keys of the open phase's exact actions, which the relay approves under the typed consent as it does a step's
+ * calls and reads (`matchPermission`), each named by its phase and, as `spec_lead.` names the Spec Lead's reads, by its requester: the
+ * progress file's edit; A's root model's inventory, hash, and publisher commands and its reads of A's temp folder; and the Spec Lead's
+ * reads of that folder and its new staging files there.
+ */
+const PHASE_ACTIONS = Object.freeze({
+  progressEdit: 'progress.edit',
+  command: 'capture.command',
+  read: 'capture.read',
+  specLeadRead: 'spec_lead.capture.read',
+  specLeadStaging: 'spec_lead.capture.staging',
+});
 
 /**
  * The argument fields each conversation operation takes, sorted: the closed
@@ -2368,75 +2700,100 @@ function needsPerson(request, invocation) {
 /**
  * The rule for one custom-tool request that passed `matchPermission`'s
  * session, request, and sandbox checks. Dude's own extension tools ask
- * permission in normal mode because neither sets `skipPermission`, and the
- * typed consent covers only the current step's exact calls (`tools`), which
- * the relay approves itself without asking; `relay` names the call's count.
+ * permission in normal mode because neither sets `skipPermission`, and of
+ * them the typed consent covers only the current step's exact calls
+ * (`tools`), which the relay approves itself without asking; `relay` names
+ * the call's count.
  * Exact means the operation's own fields only: `dude_a2a_propose` with the
  * step's configuration and profile; `begin_receive` alone; `begin_ask` with
  * the step's slug, the fixed question, and a safe-integer tentative number;
  * and `read` or `cancel` with a well-formed operation ID, whose operation the
  * product checks. A request that managed policy marks as needing a human
  * response, on itself or on its prompt, is refused, because the SDK forbids a
- * host's own approval of it; it is never asked here either. Every other tool,
- * operation, or argument is refused.
+ * host's own approval of it. Every other tool, operation, or argument is
+ * refused.
  * @param {Record<string, unknown>} request @param {Record<string, unknown>} invocation @param {ToolAllowance | null} tools
- * @returns {{ask: false, relay: string} | {ask: false, reason: string}}
+ * @returns {{relay: string} | {reason: string}}
  */
 function matchToolCall(request, invocation, tools) {
-  if (needsPerson(request, invocation)) return { ask: false, reason: 'managed_approval_required' };
-  if (!tools) return { ask: false, reason: 'tool_not_allowed' };
+  if (needsPerson(request, invocation)) return { reason: 'managed_approval_required' };
+  if (!tools) return { reason: 'tool_not_allowed' };
   const args = isRecord(request.args) ? request.args : null;
   if (request.toolName === PROPOSE && tools.propose) {
-    return args && canonical(args) === canonical(tools.propose) ? { ask: false, relay: PROPOSE } : { ask: false, reason: 'tool_args_not_allowed' };
+    return args && canonical(args) === canonical(tools.propose) ? { relay: PROPOSE } : { reason: 'tool_args_not_allowed' };
   }
   if (request.toolName === CONVERSATION && tools.conversation) {
     const op = args && typeof args.op === 'string' ? args.op : '';
-    if (!args || !tools.conversation.ops.includes(op)) return { ask: false, reason: 'tool_op_not_allowed' };
+    if (!args || !tools.conversation.ops.includes(op)) return { reason: 'tool_op_not_allowed' };
     const exact = canonical(Object.keys(args).sort()) === canonical(CONVERSATION_FIELDS[op])
       && (op === 'begin_receive'
         || (op === 'begin_ask' && args.slug === tools.conversation.slug && args.question === QUESTION && Number.isSafeInteger(args.tentativeNumber))
         || ((op === 'read' || op === 'cancel') && typeof args.operationId === 'string' && UUID.test(args.operationId)));
-    return exact ? { ask: false, relay: `${CONVERSATION}.${op}` } : { ask: false, reason: 'tool_args_not_allowed' };
+    return exact ? { relay: `${CONVERSATION}.${op}` } : { reason: 'tool_args_not_allowed' };
   }
-  return { ask: false, reason: 'tool_not_allowed' };
+  return { reason: 'tool_not_allowed' };
 }
 
 /**
- * Decide one main-session permission request: a pending allowlisted action
- * the human may be asked about, or one the relay approves itself under the
- * typed consent, never asking. The relay approves the current step's exact
- * Dude tool calls (`matchToolCall`), and, while that step allows its
- * session's own workspace, a read of an absolute path that resolves to that
- * folder itself or below it (`inWorkspace`), counted as `WORKSPACE_READ`,
- * unless managed policy marks the read as needing a person. In the progress
- * phase only the progress file's exact edit is asked, since its reads are the
- * workspace's. Everything else is rejected without asking: another session; a
- * call the session's own root model did not request for the current
- * admission, a subagent's included; another kind, tool, operation, path, or
+ * Decide one main-session permission request: an action the typed consent
+ * covers, which the relay approves itself without asking anyone, or a
+ * refusal with its reason. The consent covers the current step's exact Dude
+ * tool calls (`matchToolCall`), and, while that step allows its session's own
+ * workspace, a read of an absolute path that resolves to that folder itself
+ * or below it (`inWorkspace`), counted as `WORKSPACE_READ`; each lives as long
+ * as its step. It also covers the open phase's exact actions, each returned
+ * with the `summary` of its exact effect, to which the relay binds its
+ * approval while that phase is open (`PHASE_ACTIONS`). In the progress phase
+ * that is only the progress file's exact edit, since its reads are the
+ * workspace's. In the capture phase, by who requested it: A's root model may
+ * run the inventory, hash, and publisher commands and read its temp folder,
+ * and stages nothing itself (`staging_not_delegated`); the live Spec Lead
+ * that the relay proved (`child`, `specLeadRequest`) may read the workspace
+ * as `SPEC_LEAD_READ`, read that temp folder, or make one staging write, a
+ * new file whose one complete preview (`fileEdits`) creates it, bound by its
+ * text's size and SHA-256 (`newFileContents` must be that text, or become it
+ * once its line ends are CRLF), and nothing else (`spec_lead_not_allowed`):
+ * no command, Dude or other tool, or other kind. A request that managed
+ * policy marks as needing a person is refused, never approved. Everything
+ * else is refused: another session; a call neither the session's own root
+ * model requested for the current admission nor that proved Spec Lead, any
+ * other subagent's included; another kind, tool, operation, path, or
  * command; a broader or changed request; a sandbox bypass; a read outside the
- * allowed workspace that no phase asks about (`outside_workspace`); or no
- * open phase or step.
+ * allowed workspace that no phase covers (`outside_workspace`); or no open
+ * phase or step.
  * @param {unknown} request @param {unknown} invocation
  * @param {{sessionId: string, requested: readonly string[], phase: 'progress' | 'capture' | 'closed', admission?: string | null,
  *   progress: {file: string, initial: string, final: string} | null,
- *   capture: {tempRoot: string, slug: string, advice: Record<string, unknown> | null} | null, tools?: ToolAllowance | null}} allow
+ *   capture: {tempRoot: string, slug: string, advice: Record<string, unknown> | null, delegate?: SpecLeadNames} | null,
+ *   tools?: ToolAllowance | null, child?: {agentId: string, taskCallId: string} | null}} allow
  *   `requested` holds the tool-call IDs the session's root model requested for the current admission, as its own events show: that of
- *   the step's allowance when one is set, and otherwise the phase's.
- * @returns {{ask: true, summary: string} | {ask: false, relay: string} | {ask: false, reason: string}}
+ *   the step's allowance when one is set, and otherwise the phase's. `child` is the live Spec Lead the relay proved made the request;
+ *   it counts only in the capture phase.
+ * @returns {{relay: string, summary?: string} | {reason: string}} `relay` is the approval's `toolApprovals` key; a phase's action
+ *   also has the `summary` of its exact effect.
  */
 export function matchPermission(request, invocation, allow) {
-  if (!isRecord(invocation) || invocation.sessionId !== allow.sessionId) return { ask: false, reason: 'session_mismatch' };
-  if (!isRecord(request) || typeof request.toolCallId !== 'string' || !request.toolCallId) return { ask: false, reason: 'unidentified' };
-  if (!allow.requested.includes(request.toolCallId)) return { ask: false, reason: 'not_model_requested' };
-  if (request.requestSandboxBypass === true) return { ask: false, reason: 'sandbox_bypass' };
+  if (!isRecord(invocation) || invocation.sessionId !== allow.sessionId) return { reason: 'session_mismatch' };
+  if (!isRecord(request) || typeof request.toolCallId !== 'string' || !request.toolCallId) return { reason: 'unidentified' };
+  const child = allow.phase === 'capture' && allow.capture && allow.child ? allow.child : null;
+  if (!child && !allow.requested.includes(request.toolCallId)) return { reason: 'not_model_requested' };
+  if (request.requestSandboxBypass === true) return { reason: 'sandbox_bypass' };
+  // The Spec Lead only reads and stages: it runs no command and calls no Dude or other tool.
+  if (child && request.kind !== 'read' && request.kind !== 'write') return { reason: 'spec_lead_not_allowed' };
   const tools = allow.tools ?? null;
   if (request.kind === 'custom-tool') return matchToolCall(request, invocation, tools);
+  const person = needsPerson(request, invocation);
   const workspace = request.kind === 'read' ? tools?.workspace ?? null : null;
   if (workspace && inWorkspace(workspace, request.path)) {
-    return needsPerson(request, invocation) ? { ask: false, reason: 'managed_approval_required' } : { ask: false, relay: WORKSPACE_READ };
+    return person ? { reason: 'managed_approval_required' } : { relay: child ? SPEC_LEAD_READ : WORKSPACE_READ };
   }
   /** A read outside the allowed workspace refuses as such; any other request with the phase's or the closed relay's own reason. @param {string} reason */
-  const refused = (reason) => ({ ask: false, reason: workspace ? 'outside_workspace' : reason });
+  const refused = (reason) => ({ reason: workspace ? 'outside_workspace' : reason });
+  /**
+   * One exact action of the open phase, bound to its effect, unless managed policy marks it as needing a person: the SDK forbids a host's
+   * own approval of such a request. @param {string} relay @param {string} summary
+   */
+  const phaseAction = (relay, summary) => (person ? { reason: 'managed_approval_required' } : { relay, summary });
   if (allow.phase === 'progress' && allow.progress) {
     const { file, initial, final } = allow.progress;
     if (request.kind === 'write' && typeof request.fileName === 'string' && samePath(request.fileName, file)) {
@@ -2444,7 +2801,8 @@ export function matchPermission(request, invocation, allow) {
       const exact = edits.length === 1 && isRecord(edits[0]) && isRecord(edits[0].before) && isRecord(edits[0].after)
         && samePath(String(edits[0].before.path), file) && samePath(String(edits[0].after.path), file)
         && edits[0].before.content === initial && edits[0].after.content === final;
-      return exact ? { ask: true, summary: `edit ${file}: ${JSON.stringify(initial)} -> ${JSON.stringify(final)}` } : { ask: false, reason: 'edit_not_exact' };
+      return exact ? phaseAction(PHASE_ACTIONS.progressEdit, `edit ${file}: ${JSON.stringify(initial)} -> ${JSON.stringify(final)}`)
+        : { reason: 'edit_not_exact' };
     }
     return refused('not_progress');
   }
@@ -2462,21 +2820,34 @@ export function matchPermission(request, invocation, allow) {
     if (request.kind === 'shell') {
       const command = typeof request.fullCommandText === 'string' ? request.fullCommandText.trim() : '';
       if (request.hasWriteFileRedirection === true || (Array.isArray(request.possibleUrls) && request.possibleUrls.length)) {
-        return { ask: false, reason: 'command_effects' };
+        return { reason: 'command_effects' };
       }
-      if (command === INVENTORY_COMMAND) return { ask: true, summary: `run ${command}` };
+      if (command === INVENTORY_COMMAND) return phaseAction(PHASE_ACTIONS.command, `run ${command}`);
       const hash = HASH_COMMAND.exec(command);
-      if (hash && staged(hash[1])) return { ask: true, summary: `run ${command}` };
+      if (hash && staged(hash[1])) return phaseAction(PHASE_ACTIONS.command, `run ${command}`);
       const publish = PUBLISHER_COMMAND.exec(command);
-      if (publish && unquote(publish[1]) === slug && staged(publish[2]) && staged(publish[3])) return { ask: true, summary: `run ${command}` };
-      return { ask: false, reason: 'command_not_allowed' };
+      if (publish && unquote(publish[1]) === slug && staged(publish[2]) && staged(publish[3])) return phaseAction(PHASE_ACTIONS.command, `run ${command}`);
+      return { reason: 'command_not_allowed' };
     }
     if (request.kind === 'write' && typeof request.fileName === 'string') {
+      // Staging is the Spec Lead's alone: A's root model stages nothing itself.
+      if (!child) return { reason: 'staging_not_delegated' };
       const target = path.resolve(request.fileName);
-      const content = typeof request.newFileContents === 'string' ? request.newFileContents : null;
-      if (!isWithin(tempRoot, target) || samePath(target, tempRoot) || content === null || fs.existsSync(target)
+      // The approval names only this one file, but one request can write several (one `apply_patch` call can add many files): only a
+      // complete preview (`fileEdits`) of exactly this file's creation is approved, and its text, which the runtime writes, is what is
+      // bounded, checked, and bound to the approval. `newFileContents` must equal that text, or become it once its line ends are CRLF: native
+      // run be16d55a-639b-4c7f-8606-9c345faadcf5's request for the ledger, which an earlier relay rule refused, previewed CRLF while
+      // `newFileContents` kept the patch's LF text, and separate observations on the same host showed `apply_patch` Add File writing CRLF to disk.
+      const edits = Array.isArray(request.fileEdits) ? request.fileEdits : [];
+      const created = edits.length === 1 && isRecord(edits[0]) && edits[0].before === undefined && isRecord(edits[0].after)
+        && typeof edits[0].after.path === 'string' && samePath(edits[0].after.path, request.fileName) && typeof edits[0].after.content === 'string';
+      /** @type {string | null} */
+      const content = created ? edits[0].after.content : null;
+      const stated = request.newFileContents;
+      if (!isWithin(tempRoot, target) || samePath(target, tempRoot) || content === null || typeof stated !== 'string'
+        || (stated !== content && stated.replace(/\r?\n/g, '\r\n') !== content) || fs.existsSync(target)
         || Buffer.byteLength(content, 'utf8') > NATIVE_LIMITS.stagedBytes) {
-        return { ask: false, reason: 'staging_not_allowed' };
+        return { reason: 'staging_not_allowed' };
       }
       /** @type {unknown} */
       let staged = null;
@@ -2490,12 +2861,12 @@ export function matchPermission(request, invocation, allow) {
         const expected = advice ? [...Object.keys(advice), ...ADVICE_ADDED].sort() : [];
         const unchanged = advice && canonical(keys) === canonical(expected)
           && Object.keys(advice).every((key) => canonical(staged[key]) === canonical(advice[key]));
-        if (!unchanged) return { ask: false, reason: 'advice_changed' };
+        if (!unchanged) return { reason: 'advice_changed' };
       }
-      return { ask: true, summary: `create ${target} (${Buffer.byteLength(content, 'utf8')} bytes, sha256 ${sha256(content)})` };
+      return phaseAction(PHASE_ACTIONS.specLeadStaging, `create ${target} (${Buffer.byteLength(content, 'utf8')} bytes, sha256 ${sha256(content)})`);
     }
     if (request.kind === 'read' && typeof request.path === 'string' && isWithin(tempRoot, path.resolve(request.path))) {
-      return { ask: true, summary: `read ${path.resolve(request.path)}` };
+      return phaseAction(child ? PHASE_ACTIONS.specLeadRead : PHASE_ACTIONS.read, `read ${path.resolve(request.path)}`);
     }
     return refused('not_capture');
   }
@@ -3000,28 +3371,54 @@ export function exchangePrompt(kind, { slug, progressFile }) {
 }
 
 /**
- * The capture instruction. It names this session's staging folder, its
- * canonical workspace, and the one fixed hash command, because the relay
- * approves no other command; it never names the peer's records or a number.
- * It also has the session do every capture action itself, because the relay
- * refuses every request its root model did not make for this instruction,
- * a subagent's included.
- * @param {string} operationId @param {string} slug @param {{tempRoot: string, workspace: string}} where
+ * The capture instruction: A's normal first capture with the owner
+ * separation its procedure gives it (.github/skills/dude-feature-definition
+ * SKILL.md, `## Brainstorm`). A's root model decides whether to use the
+ * advice and runs the inventory, the one fixed hash, and the publisher; the
+ * installed Spec Lead stages the ledger in one direct synchronous task and the
+ * advice in a second, each as its own new file in one new folder in this
+ * session's temporary directory, and runs nothing. It names that folder, the
+ * canonical workspace, the exact commands, and the name A's task tool selects
+ * the Spec Lead by, because the relay approves no other command and
+ * attributes no other agent's request (`specLeadRequest`); it never names the
+ * peer's records or a number. It says that the relay itself approves reads
+ * of this workspace, by A or by the Spec Lead, so that A lets the Spec Lead
+ * read its definition skill, project memory, and conventions before it
+ * stages, as its procedure requires, and which other requests it approves.
+ * @param {string} operationId @param {string} slug
+ * @param {{tempRoot: string, workspace: string, specLead: string, named?: boolean}} where
+ *   `specLead` is the Spec Lead's name for the task tool, and `named` whether that tool takes a `name` argument (`specLeadOf`), which
+ *   the native task tool requires: only then is each task given its fixed short name, "stage-ledger" or "stage-advice".
  */
-export function capturePrompt(operationId, slug, { tempRoot, workspace }) {
+export function capturePrompt(operationId, slug, { tempRoot, workspace, specLead, named = false }) {
+  const agent = `agent_type ${JSON.stringify(specLead)}`;
+  /** The task call of one staging step. @param {string} name */
+  const task = (name) => `your task tool, with ${named ? `name ${JSON.stringify(name)}, ${agent}, and` : `${agent} and`} mode "sync"`;
   return [
     'Feature 089 native qualification, capture step.',
     `Operation ${operationId} ended with peer number advice for the slug ${slug}.`,
     `Decide explicitly whether to use that advice for the first capture of a new idea with slug ${slug} and this idea text: "${IDEA_TEXT}"`,
-    'If you decide to use it, capture that idea now through your normal first-capture procedure, passing that operation\'s advice.capture as the '
-      + 'number advice, and report the captured path. If you decide not to use it, capture nothing and give the reason.',
-    `Stage both files with your file creation tool in one new folder directly under this session's temporary directory ${tempRoot}. `
-      + `This workspace's canonical root is ${workspace}. To hash the staged ledger, run exactly `
-      + '(Get-FileHash -Algorithm SHA256 -LiteralPath \'<absolute staged ledger path>\').Hash.ToLowerInvariant()',
-    'Do every capture action yourself in this turn, including staging, hashing, and running the publisher; do not delegate to another agent '
-      + 'or use a subagent or task tool, because the operator rejects any action not requested by this session\'s own model.',
-    'The operator approves only the inventory command, that hash command, the publisher command, and that staging; any other command, '
-      + 'including removing the staging folder, is refused, so leave the folder in place.',
+    'If you decide not to use it, capture nothing and give the reason. If you decide to use it, capture that idea now through your normal '
+      + 'first-capture procedure, passing that operation\'s advice.capture as the number advice, in this order, and report the captured path:',
+    `1. Run the inventory command exactly: ${INVENTORY_COMMAND}`,
+    `2. Delegate staging the ledger to the installed Spec Lead with one synchronous call of ${task('stage-ledger')}. It creates the draft ledger as `
+      + `one new UTF-8 file in one new folder directly under this session's temporary directory ${tempRoot}, with its own file creation call; it `
+      + 'writes nothing in the workspace and runs no command.',
+    `3. This workspace's canonical root is ${workspace}, and the reason for using the advice is yours to write. Hash the staged ledger yourself `
+      + 'by running exactly (Get-FileHash -Algorithm SHA256 -LiteralPath \'<absolute staged ledger path>\').Hash.ToLowerInvariant()',
+    `4. Delegate staging the advice to the Spec Lead with a second synchronous call of ${task('stage-advice')}, giving it advice.capture unchanged `
+      + 'with that ledgerSha256, that workspace, and your reason. It creates the advice JSON as a second new file in the same folder, with its own '
+      + 'file creation call, and runs no command.',
+    `5. Run the publisher yourself: node .github/skills/dude-feature-definition/publish-first-capture.mjs --root . --slug ${slug} `
+      + '--stage <absolute staged ledger path> --number-advice <absolute staged advice path>',
+    'Only you run commands, and you stage nothing yourself; the Spec Lead only stages and starts no agent of its own, and nothing runs in the '
+      + 'background or in parallel.',
+    'Reads of this workspace, by you or by the Spec Lead (for example, its definition skill, project memory, and conventions), are approved '
+      + 'automatically.',
+    'So are the inventory command, that hash command, the publisher command, the Spec Lead\'s two new staging files, and reads of the staging '
+      + 'folder; anything else, including removing the staging folder, is refused, so leave the folder in place.',
+    'Each Spec Lead task must let the Spec Lead follow its normal procedure, including those workspace reads, before it stages; do not restrict '
+      + 'the Spec Lead\'s reads to the staging folder.',
     'Do not begin, read, or cancel any A2A operation.',
   ].join('\n');
 }
@@ -4280,13 +4677,16 @@ export function permissionTarget(request) {
  * names its `target` (`permissionTarget`): the after-view control's paths are
  * control evidence, which no report field but `control` carries. The report
  * keeps an entry for every request the human is asked about (`asked`), and
- * for at most `NATIVE_LIMITS.permissionRefusals` others, counting each
- * further refusal only in `permissionsOmitted`, so a model that repeats a
- * refused request cannot push the report past its bound. The main relay keeps
- * nothing for a request it approves itself, so it keeps an entry only once
- * the request is asked or refused; the control relay, which approves nothing
- * itself, keeps it from the request's arrival (`pending`), within the same
- * bound.
+ * for at most `NATIVE_LIMITS.permissionEntries` others, refused or approved
+ * under the consent alike, counting each further refusal only in
+ * `permissionsOmitted`, so a model that repeats a request cannot push the
+ * report past its bound. The main relay asks nothing. It keeps no entry for
+ * a step's call or read that it approves itself, which `toolApprovals` only
+ * counts; it keeps one, once decided, for a phase's exact action that it
+ * approves itself (`consented`, never `asked`) and for a refused request. An
+ * approval beyond the bound keeps no entry and is still counted in
+ * `toolApprovals`. The control relay, which approves nothing itself, keeps
+ * its entry from the request's arrival (`pending`), within the same bound.
  * @param {any} run @param {string} side @param {unknown} request
  */
 function permissionEntry(run, side, request) {
@@ -4299,7 +4699,7 @@ function permissionEntry(run, side, request) {
   const keep = (refused) => {
     if (state !== 'none') return;
     const permissions = (run.report.permissions ??= []);
-    if (entry.asked || permissions.filter((/** @type {any} */ kept) => !kept.asked).length < NATIVE_LIMITS.permissionRefusals) {
+    if (entry.asked || permissions.filter((/** @type {any} */ kept) => !kept.asked).length < NATIVE_LIMITS.permissionEntries) {
       permissions.push(entry);
       state = 'kept';
     } else if (refused) {
@@ -4315,6 +4715,12 @@ function permissionEntry(run, side, request) {
     asked: () => {
       entry.asked = true;
       keep(false);
+    },
+    /** The main relay approves the request itself, once, under the typed consent; no person answered it. */
+    consented: () => {
+      entry.answer = CONSENTED;
+      keep(false);
+      return { kind: 'approve-once' };
     },
     /** @param {string} reason */
     refuse: (reason) => {
@@ -4373,7 +4779,7 @@ export function controlPermissionRelay(run, control) {
     };
     const answer = await run.human.ask(ANSWER_PROMPT, {
       deadlineAt: Math.min(control.deadlineAt, deadline(run, NATIVE_LIMITS.permissionMs), run.expiresAtMs), valid,
-      preface: `\n[CONTROL permission] ${terminalLines(decision.summary)}`, action: permissionAction('CONTROL'),
+      preface: `\n[CONTROL permission] ${terminalLines(decision.summary)}`, action: CONTROL_PERMISSION_ACTION,
     });
     entry.answer = answer.ok ? answer.line : answer.reason;
     if (!answer.ok) return refuse(answer.reason);
@@ -4388,12 +4794,23 @@ export function controlPermissionRelay(run, control) {
 
 /**
  * Whether `asked` is still the session's current open phase, within an open run, the scope, and intact logs, with its admission's turn
- * not yet ended as this session's own events show it (`turnEnd`); that end can arrive before the run closes the phase.
+ * not yet ended as this session's own events show it (`turnEnd`); that end can arrive before the run closes the phase. A capture phase
+ * also ends at a later root prompt (`laterPrompt`).
  * @param {any} run @param {string} side @param {any} asked @param {{state: {events: any[]}}} log The session's own event log.
  */
 function phaseOpen(run, side, asked, log) {
   return !run.closing && run.allow[side] === asked && asked.phase !== 'closed' && turnEnd(log.state.events, asked.admission) < 0
-    && !expired(run) && !overflowedLog(run);
+    && (asked.phase !== 'capture' || !laterPrompt(log.state.events, asked.admission)) && !expired(run) && !overflowedLog(run);
+}
+
+/**
+ * Whether a user message other than a sub-agent's came after an admission's own: a later root prompt, or one whose agent ID is
+ * malformed, which is never a sub-agent's.
+ * @param {any[]} events @param {string | null | undefined} admission
+ */
+function laterPrompt(events, admission) {
+  const admitted = events.findIndex((event) => event.type === 'user.message' && event.messageId === admission);
+  return admitted >= 0 && events.some((event, index) => index > admitted && event.type === 'user.message' && typeof event.agent !== 'string');
 }
 
 /**
@@ -4416,30 +4833,52 @@ const CLOSED_ALLOW = Object.freeze({ sessionId: '', phase: 'closed', admission: 
  * that opens a phase sets its allowance for the same admission first). After
  * a short bounded wait for this session's own model request event, which can
  * trail the callback, while the phase or the step's allowance is open, the
- * request is decided (`matchPermission`).
+ * request is decided (`matchPermission`). The relay asks no one: what the
+ * typed consent covers is approved once by the relay itself, never claimed as
+ * a person's approval, and everything else is refused.
  *
- * What the typed consent covers is approved once by the relay itself, never
- * asked and never claimed as a person's approval: one of the step's exact
- * Dude tool calls, or a read inside the session's own workspace that the step
- * allows. Right before that answer, the run must still be open with consent
- * granted, the scope current, and every log intact, the allowance must still
- * be the side's current one with its turn not ended (`stepOpen`: this
- * session's own root idle, aborted or not, ends it even before the run clears
- * it), and the call must still be requested by its admission and not
- * completed; otherwise it is refused as `approval_withdrawn`. Each such
- * approval is only counted, per side, in the report's `toolApprovals`, by
- * tool and operation or as `workspace.read`, a closed set of keys that keeps
- * it bounded.
+ * One of the step's exact Dude tool calls, or a read inside the session's own
+ * workspace that the step allows, is approved while its step is open. Right
+ * before that answer, the run must still be open with consent granted, the
+ * scope current, and every log intact, the allowance must still be the side's
+ * current one with its turn not ended (`stepOpen`: this session's own root
+ * idle, aborted or not, ends it even before the run clears it), and the call
+ * must still be requested by its admission and not completed; otherwise it is
+ * refused as `approval_withdrawn`. Each such approval is only counted, per
+ * side, in the report's `toolApprovals`, by tool and operation or as
+ * `workspace.read`, a closed set of keys that keeps it bounded.
  *
- * Any other pending allowlisted action of the open phase is asked, and only a
- * freshly entered `approve-once` within the bound approves it, once. If the
- * phase changed or closed, its admission's turn ended (`turnEnd`), the run
- * began closing, the scope expired, the call completed, or the request no
- * longer matches what was shown, it is withdrawn, before its turn in the
- * queue or after the answer. Everything else is refused without asking; while
- * neither a phase nor a step allowance is open, a request is refused as
- * `not_pending`, not as one its model did not request. Each request keeps a
- * bounded entry (`permissionEntry`).
+ * One of the open phase's exact actions is approved while that phase is open,
+ * bound to its exact effect. Right before that answer, consent must still be
+ * granted, the phase must still be the side's current open one, within an
+ * open run, the scope, and intact logs, with its admission's turn not ended
+ * (`phaseOpen`), the call must still be requested by its admission, or still
+ * be the same live Spec Lead's, and not completed, and the request, matched
+ * again, must still be the same action with the same effect; otherwise it is
+ * refused as `approval_withdrawn`. Each such approval is counted under its own
+ * closed key (`PHASE_ACTIONS`) and keeps a bounded entry answered `consented`.
+ *
+ * Everything else is refused. `not_pending` means that no open phase or step
+ * allows the request: `matchPermission` found none that does, or, while
+ * neither is open, its model did not request it, which is then refused as
+ * `not_pending` rather than as one its model did not request. A request that
+ * matched, but whose phase or step closed, or that otherwise stopped being
+ * allowed, before the answer is refused as `approval_withdrawn` (above), even
+ * when neither is open by then. Each refused request keeps a bounded entry
+ * (`permissionEntry`).
+ *
+ * In the capture phase alone, a request that the root model did not make may
+ * be the installed Spec Lead's: the callback names A's session, never an
+ * agent, and the runtime hands it to the relay before it delivers the
+ * request's own events, so the relay waits within the same bound for the
+ * events that prove it (`specLeadRequest`) and refuses it with that proof's
+ * reason, as `spec_lead_<reason>`, when they never do. The proof is computed
+ * again right before the answer, and any other sub-agent, a change of
+ * sub-agent or task, the end of that task, its sub-agent, or the call, the
+ * request's own permission completing, a root idle or later root prompt, a
+ * closed phase, the run closing, an overflowed log, or the scope expiring
+ * refuses it. The approval is bound to the admission, the sub-agent and its
+ * task call, the request's exact digest, and the effect.
  * @param {any} run @param {'a' | 'b'} side @param {{state: {events: any[]}}} log The session's own event log.
  */
 export function permissionRelay(run, side, log) {
@@ -4453,41 +4892,53 @@ export function permissionRelay(run, side, log) {
     const record = permissionEntry(run, side, request);
     const { entry, refuse } = record;
     const kind = entry.kind;
+    const requestSha256 = isRecord(request) ? sha256(canonical(request)) : null;
     const requested = () => Boolean(toolCallId) && requestedBy(log.state.events, toolCallId, admission);
+    /** @type {SpecLeadNames | null} */
+    const delegate = asked.phase === 'capture' && isRecord(asked.capture?.delegate) ? asked.capture.delegate : null;
+    const delegated = () => (delegate && toolCallId && requestSha256
+      ? specLeadRequest(log.state.events, toolCallId, requestSha256, { ...delegate, admission: asked.admission }) : null);
     const open = () => phaseOpen(run, side, asked, log) || stepOpen(run, side, tools, log);
     const completed = () => log.state.events.some((event) => event.type === 'tool.execution_complete' && event.toolCallId === toolCallId);
-    // The model's request event can trail the callback: wait for it within a short bound on the run clock, while the phase or the step's
-    // allowance is open (an exchange step opens no phase until its progress interval).
+    // The model's request event can trail the callback, and a sub-agent's events always do: wait for them within a short bound on the run
+    // clock, while the phase or the step's allowance is open (an exchange step opens no phase until its progress interval).
     const requestBy = deadline(run, NATIVE_LIMITS.requestMs);
-    while (toolCallId && !requested() && run.clock() < requestBy && open()) await delay(NATIVE_LIMITS.pollMs);
-    const decision = matchPermission(request, invocation, { ...asked, tools, requested: requested() ? [toolCallId] : [] });
-    if ('relay' in decision) {
-      if (!stepOpen(run, side, tools, log) || !requested() || completed()) return refuse('approval_withdrawn');
+    while (toolCallId && !requested() && !delegated()?.ok && run.clock() < requestBy && open()) await delay(NATIVE_LIMITS.pollMs);
+    const proof = requested() ? null : delegated();
+    const child = proof?.ok ? { agentId: proof.agentId, taskCallId: proof.taskCallId } : null;
+    // Still made by whom it was: the root model for this admission, or the same live Spec Lead in the same task.
+    const still = () => {
+      if (!child) return requested();
+      const now = delegated();
+      return Boolean(now?.ok) && now?.agentId === child.agentId && now?.taskCallId === child.taskCallId;
+    };
+    const decision = matchPermission(request, invocation, { ...asked, tools, requested: requested() ? [toolCallId] : [], child });
+    if ('reason' in decision) {
+      if (!open() && decision.reason === 'not_model_requested') return refuse('not_pending');
+      return refuse(decision.reason === 'not_model_requested' && proof && !proof.ok && proof.reason !== 'unrequested' ? `spec_lead_${proof.reason}` : decision.reason);
+    }
+    /** Count one approval, per side, under its closed key. @param {string} key */
+    const count = (key) => {
       const counts = ((run.report.toolApprovals ??= {})[side] ??= {});
-      counts[decision.relay] = (counts[decision.relay] ?? 0) + 1;
+      counts[key] = (counts[key] ?? 0) + 1;
+    };
+    if (decision.summary === undefined) {
+      if (!stepOpen(run, side, tools, log) || !still() || completed()) return refuse('approval_withdrawn');
+      count(decision.relay);
       return { kind: 'approve-once' };
     }
-    if (!decision.ask) return refuse(decision.reason === 'not_model_requested' && !open() ? 'not_pending' : decision.reason);
-    if (!phaseOpen(run, side, asked, log)) return refuse('not_pending');
-    record.asked();
-    const fingerprint = sha256(canonical({ toolCallId, kind, summary: decision.summary }));
+    // One of the open phase's exact actions: its approval is bound to the admission, its requester, the request's digest, and its effect.
+    const actor = child ?? 'root';
+    const fingerprint = sha256(canonical({ toolCallId, kind, relay: decision.relay, summary: decision.summary, admission, actor, requestSha256 }));
     const valid = () => {
-      if (!phaseOpen(run, side, asked, log) || !requested() || completed()) return false;
-      const again = matchPermission(request, invocation, { ...asked, tools, requested: [toolCallId] });
-      return again.ask && sha256(canonical({ toolCallId, kind, summary: again.summary })) === fingerprint;
+      if (run.report.consent?.status !== 'granted' || !phaseOpen(run, side, asked, log) || !still() || completed()) return false;
+      const again = matchPermission(request, invocation, { ...asked, tools, requested: child ? [] : [toolCallId], child });
+      return 'relay' in again && again.summary !== undefined
+        && sha256(canonical({ toolCallId, kind, relay: again.relay, summary: again.summary, admission, actor, requestSha256 })) === fingerprint;
     };
-    const answer = await run.human.ask(ANSWER_PROMPT, {
-      deadlineAt: deadline(run, NATIVE_LIMITS.permissionMs), valid, preface: `\n[${side.toUpperCase()} permission] ${terminalLines(decision.summary)}`,
-      action: permissionAction(side.toUpperCase()),
-    });
-    entry.answer = answer.ok ? answer.line : answer.reason;
-    if (!answer.ok) return refuse(answer.reason);
-    if (answer.line !== PERMISSION_ANSWERS.approve) return refuse('operator_rejected');
-    if (!valid()) {
-      entry.answer = 'approval_withdrawn';
-      return refuse('approval_withdrawn');
-    }
-    return { kind: 'approve-once', approvedInteractively: true };
+    if (!valid()) return refuse('approval_withdrawn');
+    count(decision.relay);
+    return record.consented();
   };
 }
 
@@ -4562,10 +5013,60 @@ async function startMains(run) {
     const metadata = await ask(() => session.rpc.tools.getCurrentMetadata(), 'tool metadata', 'tool_offering_mismatch');
     const names = Array.isArray(metadata?.tools) ? metadata.tools.map((/** @type {any} */ tool) => tool?.name) : [];
     check(run, `${side}_tool_offering`, DUDE_TOOLS.every((name) => names.includes(name)), `${names.length} tools offered`, 'tool_offering_mismatch');
+    // A's capture delegates its staging to the installed Spec Lead, which A's own session must list and its task tool select.
+    const delegate = side === 'a' ? specLeadOf(run, folders.workspace, core, agents, metadata) : null;
     run.mains[side] = { client: started.client, session, log, status: started.status, extension: { pid: extension.pid, key: extensionNode?.key },
-      agent: { id: agent.id, sha256: agentSha } };
+      agent: { id: agent.id, sha256: agentSha }, delegate };
     run.report.host.runtime ??= started.status;
   }
+}
+
+/**
+ * The installed Spec Lead that A's capture may delegate staging to, checked
+ * in A's own session as `a_spec_lead` and `a_task_tool` before any prompt:
+ * exactly one project agent at the rendered `SPEC_LEAD` path, whose file
+ * holds the rendered bytes, and of the names the runtime lists it by (its
+ * stable ID, name, and display name), those no other listed agent uses; and
+ * exactly one initialized `task` tool whose input schema declares the agent
+ * and mode arguments (`TASK`), with `sync` and at least one of those names
+ * among the values each accepts where it lists them. Only names checked here
+ * select the Spec Lead or identify it once started (`specLeadRequest`), so a
+ * free-text description or a display name some other agent shares never
+ * does. `invoke` is the one the capture instruction names: its listed name
+ * when the task tool accepts it, else the first that tool accepts. `named`
+ * is whether that schema declares a `name` argument or requires one, as the
+ * native task tool requires one (a call without it failed with
+ * `"name": Required`, run e9b8ef84-357e-44e6-8c38-9ee5de7970c3); it only has
+ * the capture instruction give each task a name, and selects or attributes
+ * nothing.
+ * @param {any} run @param {string} workspace @param {ReturnType<typeof renderedCore>} core @param {any} agents @param {any} metadata
+ * @returns {SpecLeadNames & {invoke: string, named: boolean}}
+ */
+function specLeadOf(run, workspace, core, agents, metadata) {
+  const file = path.join(workspace, ...SPEC_LEAD.split('/'));
+  const row = core.rows.find((entry) => entry[0] === SPEC_LEAD);
+  const listed = Array.isArray(agents?.agents) ? agents.agents.filter(isRecord) : [];
+  const found = listed.filter((agent) => agent.source === 'project' && typeof agent.path === 'string' && samePath(agent.path, file));
+  const digest = fs.existsSync(file) ? sha256(fs.readFileSync(file)) : '';
+  const lead = found.length === 1 && row && digest === row[2] ? found[0] : null;
+  /** @param {Record<string, unknown>} agent */
+  const labels = (agent) => [agent.id, agent.name, agent.displayName];
+  const names = lead ? [...new Set(labels(lead))].filter((value) => presentText(value, 128)
+    && listed.every((agent) => agent === lead || !labels(agent).includes(value))).map(String) : [];
+  check(run, 'a_spec_lead', names.length > 0, `${found.length} project agent(s) at the rendered dude-spec-lead.agent.md; file sha256 `
+    + `${digest.slice(0, 16)}; ${names.length} name(s) no other listed agent uses`, 'agent_unverified');
+  const tools = Array.isArray(metadata?.tools) ? metadata.tools.filter((/** @type {any} */ tool) => isRecord(tool) && tool.name === TASK.tool) : [];
+  const schema = tools.length === 1 && isRecord(tools[0].input_schema) ? tools[0].input_schema : {};
+  const properties = isRecord(schema.properties) ? schema.properties : {};
+  /** @param {unknown} property @param {string} value */
+  const accepts = (property, value) => isRecord(property) && (!Array.isArray(property.enum) || property.enum.includes(value));
+  const selectors = names.filter((value) => accepts(properties[TASK.agent], value));
+  const sync = accepts(properties[TASK.mode], TASK.sync);
+  check(run, 'a_task_tool', tools.length === 1 && selectors.length > 0 && sync, `${tools.length} ${TASK.tool} tool(s); ${selectors.length} of its `
+    + `${TASK.agent} value(s) select the Spec Lead; ${TASK.mode} ${sync ? 'accepts' : 'does not accept'} ${TASK.sync}`, 'tool_offering_mismatch');
+  const invoke = selectors.includes(String(lead?.name)) ? String(lead?.name) : selectors[0];
+  const named = Object.hasOwn(properties, 'name') || (Array.isArray(schema.required) && schema.required.includes('name'));
+  return Object.freeze({ names: Object.freeze(names), selectors: Object.freeze(selectors), invoke, named });
 }
 
 /**
@@ -4592,18 +5093,21 @@ async function sendPrompt(run, side, prompt, reason) {
 
 /**
  * Wait for the turn a message started to end: a root user message with that
- * ID, then a later idle, with no other root prompt between them. An aborted
- * turn stops the run.
+ * ID, then the root's own later idle (`turnEnd`), with no other root prompt
+ * between them; a sub-agent's idle, aborted or not, ends nothing here. An
+ * aborted turn stops the run. The turn has `turnMs` on the run clock; the
+ * consented scope's expiry ends it sooner when that comes first.
  * @param {any} run @param {'a' | 'b'} side @param {string} messageId @param {string} reason
+ * @param {number} [turnMs] Only A's capture passes its own, `NATIVE_LIMITS.captureTurnMs`.
  */
-async function waitForTurn(run, side, messageId, reason) {
+async function waitForTurn(run, side, messageId, reason, turnMs = NATIVE_LIMITS.turnMs) {
   const events = run.mains[side].log.state.events;
   const turn = await waitUntil(run, () => {
     const start = events.findIndex((/** @type {any} */ event) => event.type === 'user.message' && event.messageId === messageId);
-    const end = start < 0 ? -1 : events.findIndex((/** @type {any} */ event, /** @type {number} */ index) => index > start && event.type === 'session.idle');
+    const end = start < 0 ? -1 : turnEnd(events, messageId);
     if (end < 0) return null;
     return { idle: events[end], later: events.slice(start + 1, end).some((/** @type {any} */ event) => event.type === 'user.message' && event.root) };
-  }, deadline(run, NATIVE_LIMITS.turnMs), reason, `${side}'s turn did not end`);
+  }, deadline(run, turnMs), reason, `${side}'s turn did not end`);
   if (turn.later) stop(reason, `another root prompt reached ${side} during this instruction`);
   if (turn.idle.aborted) stop(reason, `${side}'s turn was aborted`);
 }
@@ -5092,13 +5596,18 @@ async function capture(run) {
   const layout = /** @type {Layout} */ (run.layout);
   const { values } = run.scope;
   const a = run.mains.a;
-  const message = await sendPrompt(run, 'a', capturePrompt(run.advice.operationId, values.slug,
-    { tempRoot: layout.a.temp, workspace: fs.realpathSync.native(layout.a.workspace) }), 'capture_not_completed');
+  /** @type {SpecLeadNames & {invoke: string, named: boolean}} */
+  const delegate = a.delegate;
+  const prompt = capturePrompt(run.advice.operationId, values.slug, { tempRoot: layout.a.temp,
+    workspace: fs.realpathSync.native(layout.a.workspace), specLead: delegate.invoke, named: delegate.named });
+  const message = await sendPrompt(run, 'a', prompt, 'capture_not_completed');
   // Under the typed consent, this step's reads inside A's own workspace are the relay's to approve until its turn ends; it allows no
-  // Dude tool call, and its typed actions are the capture phase's.
+  // Dude tool call, and the capture phase's exact actions, the Spec Lead's staging among them (`specLeadRequest`), are the relay's to
+  // approve while that phase is open.
   allowTools(run, 'a', toolAllowance(message, { workspace: layout.a.workspace }));
-  run.allow.a = { ...run.allow.a, phase: 'capture', admission: message, capture: { tempRoot: layout.a.temp, slug: values.slug, advice: run.advice.capture } };
-  await waitForTurn(run, 'a', message, 'capture_not_completed');
+  run.allow.a = { ...run.allow.a, phase: 'capture', admission: message, capture: { tempRoot: layout.a.temp, slug: values.slug, advice: run.advice.capture,
+    delegate: Object.freeze({ names: delegate.names, selectors: delegate.selectors }) } };
+  await waitForTurn(run, 'a', message, 'capture_not_completed', NATIVE_LIMITS.captureTurnMs);
   run.allow.a = { ...run.allow.a, phase: 'closed', capture: null };
   allowTools(run, 'a', null);
   const ideaPath = `.dude/ideas/102-${values.slug}.md`;
@@ -5115,15 +5624,21 @@ async function capture(run) {
   }
   const problems = checkReceipt(receipt, { slug: values.slug, capture: run.advice.capture, ideaPath, ledgerSha256: sha256(fs.readFileSync(ledger)) });
   check(run, 'capture_receipt', problems.length === 0, problems.join(', ') || 'local 100, peer 101, chosen 102, raised', 'capture_mismatch');
-  const publisher = a.log.state.events.find((/** @type {any} */ event) => event.type === 'tool.execution_start'
+  const publisher = a.log.state.events.find((/** @type {any} */ event) => event.type === 'tool.execution_start' && rootEvent(event)
     && PUBLISHER_COMMAND.test(String(event.arguments?.command ?? '').trim()) && requestedBy(a.log.state.events, event.toolCallId, message));
   const output = publisher && a.log.state.events.find((/** @type {any} */ event) => event.type === 'tool.execution_complete'
     && event.toolCallId === publisher.toolCallId);
-  check(run, 'capture_publisher', Boolean(output?.success) && String(output?.content ?? '').trim().replace(/\\/g, '/').endsWith(ideaPath),
-    publisher ? 'the actual publisher ran with --number-advice' : 'no publisher command requested for this instruction was observed', 'capture_mismatch');
+  const published = publisherCheck(publisher, output, ideaPath);
+  check(run, 'capture_publisher', published.passed, published.detail, 'capture_mismatch');
+  // The publisher read files the installed Spec Lead staged in two tasks of this instruction, never the root model's own.
+  const files = /** @type {RegExpExecArray} */ (PUBLISHER_COMMAND.exec(String(publisher.arguments.command).trim()));
+  const staging = checkStaging(a.log.state.events, { admission: message, names: delegate.names, selectors: delegate.selectors, ledger: unquote(files[2]),
+    advice: unquote(files[3]) });
+  check(run, 'capture_staging', staging.problems.length === 0, staging.problems.join(', ')
+    || `the Spec Lead staged the ledger and the advice in two synchronous tasks; ${staging.others} other task call(s)`, 'capture_mismatch');
   const journal = fs.readFileSync(journalPathOf(layout.a.workspace, run.advice.operationId));
   check(run, 'a_journal_unchanged', journal.equals(run.advice.journalBytes), 'A\'s answered journal kept exactly its eight records', 'journal_mismatch');
-  run.report.capture = { ideaPath, receipt: receipt?.selection ?? null };
+  run.report.capture = { ideaPath, receipt: receipt?.selection ?? null, staging: staging.tasks };
 }
 
 /** @param {any} run */

@@ -1347,28 +1347,47 @@ function afterViewDisclosure(parent, values) {
 
 /**
  * The main sessions' permission relay, which both native routes share, as
- * the human decides on it: which of Dude's own tool calls and which reads of
- * each session's own workspace this consent itself covers, which other
- * requests are shown for a typed approve-once, and that the activation
- * approvals stay typed. Nothing here happened.
+ * the human decides on it: every request this consent itself covers, which
+ * the relay approves once each without asking (each step's exact calls of
+ * Dude's own tools and reads of the session's own workspace, each progress
+ * file's exact edit, and the capture step's exact commands, staging files,
+ * and reads of the staging folder), the capture step's one exception for the
+ * installed Spec Lead, the report's account of those approvals, and that the
+ * activation approvals and the final reread stay typed. Nothing here
+ * happened.
  * @param {unknown} slug The plan's capture slug.
  */
 function mainRelayDisclosure(slug) {
   return 'Main-session permission requests go to a fixed relay, and only for a tool call that session\'s own root model requested for '
-    + 'its current step. Under this consent the relay itself approves once each, without asking you, only that step\'s exact calls to '
+    + 'its current step, or, in A\'s capture step alone, one that the installed Spec Lead (A\'s rendered '
+    + '.github/agents/dude-spec-lead.agent.md, checked by path and bytes) requested inside a synchronous task call that A\'s root model '
+    + 'made for that step, while that task runs. A Spec Lead request counts only when A\'s own session events show that root task call '
+    + 'and its start selecting the Spec Lead in sync mode, the runtime\'s start of one sub-agent for that call with no spawning '
+    + 'sub-agent, that sub-agent\'s own request of the call, and that permission request still pending; no other or nested sub-agent, '
+    + 'background task, earlier instruction, or ended task counts. Under this consent the relay itself approves once each, without asking '
+    + 'you, that step\'s exact calls to '
     + 'Dude\'s own tools, from the step\'s admitted instruction until its turn ends: in each proposal step, dude_a2a_propose with that '
     + 'session\'s a2a.json and profile; in the advice exchange, dude_a2a_conversation begin_receive and read for B, and begin_ask (slug '
     + `${slug}, the fixed question, and an integer tentative number) and read for A; in the cancellation exchange, the same for B, and `
     + `begin_ask (slug ${slug}-cancel), cancel, and read for A. Read and cancel need a well-formed operation ID, and the product checks `
     + 'which operation it names. In both exchanges and the capture step it also approves once each, the same way, a read that the '
     + 'session\'s own root model requests of its own workspace (a/w for A, b/w for B) or of anything below it while that step\'s turn '
-    + 'is open; never a read of the other workspace or anywhere else, a subagent\'s read, or one after that turn ends. A call or read '
-    + 'that managed policy marks as needing a person is rejected instead. The approval steps allow neither, and the capture step no '
-    + 'Dude tool call. The report counts these approvals per session by tool and operation, and those reads as workspace.read. Every '
-    + 'other request is shown for a freshly typed approve-once only when it is the pending progress file\'s exact edit, or in the '
-    + 'capture step the exact inventory command, one fixed Get-FileHash of a staged ledger, the publisher command for this slug with '
-    + 'staged files below a/t, new staging files below a/t, or a read of a/t itself or of anything below it. Everything else, including '
-    + 'removing the staging folder, is rejected. Both dude a2a approve lines are still yours to type.';
+    + 'is open, and in the capture step such a read of a/w by that Spec Lead; never a read of the other workspace or anywhere else, any '
+    + 'other subagent\'s read, or one after that turn ends. The approval steps allow neither, and the capture step no Dude tool call. '
+    + 'Inside the progress interval it also approves once each, the same way, each session\'s exact edit of its own progress file from '
+    + 'pending to complete, and while the capture step\'s turn is open: from A\'s root model only, the exact inventory command, one fixed '
+    + 'Get-FileHash of a staged ledger, and the publisher command for this slug with staged files below a/t; from the Spec Lead only, each '
+    + 'new staging file below a/t, as its own complete creation; and from either, a read of a/t itself or of anything below it. Right '
+    + 'before it approves one of these edits, commands, staging files, or reads of a/t, the relay checks again that the request is still '
+    + 'pending and unchanged, still made by the same model or Spec Lead, and still inside that interval or turn and this scope; otherwise '
+    + 'it rejects the request. A request that managed policy marks as needing a person is rejected instead. The report counts these '
+    + 'approvals per session by tool and operation, workspace reads as workspace.read, and the Spec Lead\'s as spec_lead.workspace.read; '
+    + 'progress edits as progress.edit, the inventory, hash, and publisher commands as capture.command, reads of a/t as capture.read, or '
+    + 'spec_lead.capture.read for the Spec Lead\'s, and staging files as spec_lead.capture.staging. It also keeps a permission entry, '
+    + 'answered consented, for each approval under those last five keys, within the same 50-entry bound as its rejections. Only A\'s root '
+    + 'model runs a command, and it stages nothing itself; the Spec Lead runs no command and calls no Dude or other tool. Everything else, '
+    + 'including removing the staging folder, is rejected. Both dude a2a approve lines and the final reread reviewed are still yours to '
+    + 'type.';
 }
 
 /**
@@ -1448,14 +1467,15 @@ function plannedNativeEffects(values, cli, sdk, payload) {
         + `When the worker's first model evidence call is held, ${PROGRESS_FIXTURES.a.path} and ${PROGRESS_FIXTURES.b.path} appear `
         + 'holding pending; each main\'s own model must change its file to complete through a native tool call inside that interval. '
         + 'No root prompt is sent while an operation is pending, and nothing given to A names B\'s records or the expected number. '
-        + `Then A decides explicitly whether to use the advice; its normal capture of ${values.slug} runs the actual publisher with `
-        + `--number-advice and writes the ledger and ${TRANSCRIPT_DIR}/captures/<operationId>.json.`,
+        + `Then A decides explicitly whether to use the advice; its normal capture of ${values.slug} has the installed Spec Lead stage the `
+        + 'ledger and the advice in two synchronous tasks, and A\'s root model runs the inventory, the hash, and the actual publisher with '
+        + `--number-advice, which writes the ledger and ${TRANSCRIPT_DIR}/captures/<operationId>.json.`,
     },
     {
       scope: 'permissions',
       detail: `${mainRelayDisclosure(values.slug)} The after-view control session has its own fixed relay, only for its one view's reads `
-        + 'of the files named there, asked the same way; it never answers for a main session or the worker. Worker permissions stay '
-        + 'denied by the product.',
+        + 'of the files named there, each of which you approve with a freshly typed approve-once; it never answers for a main session or '
+        + 'the worker. Worker permissions stay denied by the product.',
     },
     {
       scope: 'cancellation_and_teardown',
@@ -1580,8 +1600,9 @@ function plannedNormalEffects(values, cli, sdk) {
         + `When the worker's first model evidence call is held, ${PROGRESS_FIXTURES.a.path} and ${PROGRESS_FIXTURES.b.path} appear `
         + 'holding pending; each main\'s own model must change its file to complete through a native tool call inside that interval. '
         + 'No root prompt is sent while an operation is pending, and nothing given to A names B\'s records or the expected number. '
-        + `Then A decides explicitly whether to use the advice; its normal capture of ${values.slug} runs the actual publisher with `
-        + `--number-advice and writes the ledger and ${TRANSCRIPT_DIR}/captures/<operationId>.json.`,
+        + `Then A decides explicitly whether to use the advice; its normal capture of ${values.slug} has the installed Spec Lead stage the `
+        + 'ledger and the advice in two synchronous tasks, and A\'s root model runs the inventory, the hash, and the actual publisher with '
+        + `--number-advice, which writes the ledger and ${TRANSCRIPT_DIR}/captures/<operationId>.json.`,
     },
     {
       scope: 'permissions',

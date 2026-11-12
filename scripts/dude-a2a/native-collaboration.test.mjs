@@ -24,6 +24,7 @@
  */
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { EventEmitter, getEventListeners } from 'node:events';
 import crypto, { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -35,13 +36,14 @@ import zlib from 'node:zlib';
 
 import { createA2a, parseA2aConfig, A2A_PROPOSAL_BYTES } from '../../src/extensions/dude/lib/a2a.mjs';
 import { WORKER_BOUNDS, WORKER_TOOLS, startEvidenceWorker } from '../../src/extensions/dude/lib/a2a-peer-worker.mjs';
+import { createTranscriptRecorder } from '../../src/extensions/dude/lib/a2a-transcript.mjs';
 import {
   NATIVE_LIMITS, NativeStop, SDK_EVENT_TYPES, actionBlock, approvalAction, boundReport, canaryReads, canaryRecognition, capturePrompt, checkAfterViewControl, checkAnsweredJournal, checkCancellation,
-  checkInstructionOrder, checkNormalPreflight, checkPending, checkPreflight, checkProgress, checkReceipt, checkServedJournal, checkWorkerCleanup, consentLiteral,
+  checkInstructionOrder, checkNormalPreflight, checkPending, checkPreflight, checkProgress, checkReceipt, checkServedJournal, checkStaging, checkWorkerCleanup, consentLiteral,
   controlPermissionRelay, controlSources, controlTurnOver, conversationCalls, createSessionLog, currentWorkspace, descendantsOf, evidenceReleaseOf, exchangePrompt,
   humanQueue, immediateTimings, journalPathOf, journalTimings, layoutOf, matchControlPermission, matchPermission, nativeResult, normalEnvironment, observationDigest,
-  permissionRelay, permissionTarget, prepareFixtures, processTree, proposalOf, readAccount, readLiteralLine, recordedWorkspace, refusedEvents, runNativeQualification,
-  runtimeEnvironment, startupReleaseOf, summarizeEvent, terminalLines, terminalSafe, writeRelease,
+  permissionRelay, permissionTarget, prepareFixtures, processTree, proposalOf, publisherCheck, readAccount, readJournal, readLiteralLine, recordedWorkspace, refusedEvents,
+  runNativeQualification, runtimeEnvironment, specLeadRequest, startupReleaseOf, summarizeEvent, terminalLines, terminalSafe, writeRelease,
 } from './native-collaboration.mjs';
 import {
   AFTER_VIEW_CONTROL, CANARIES, PROGRESS_FIXTURES, afterViewPrompt, fixtureManifest, nativeScope, renderedCore,
@@ -268,6 +270,40 @@ function fakeTerminal(answers, { tty = true, onUnscripted } = {}) {
 /** The rule above and below every action block. */
 const RULE = '='.repeat(60);
 /**
+ * The built-in task tool's input schema as a main's initialized catalog offers it here: the required arguments an installed host's
+ * model fills (scripts/dude-canvas-ui/t012-installed-host.mjs), its `mode` with `sync`, and an optional model. A stand-in for the
+ * runtime's own schema, which no native capture has shown whole. Native run e9b8ef84-357e-44e6-8c38-9ee5de7970c3 showed that it
+ * requires `name`: a task call without one failed at once with `"name": Required`, as a call here does (`session.task`).
+ */
+const TASK_SCHEMA = Object.freeze({ type: 'object', properties: { name: { type: 'string' }, description: { type: 'string' }, agent_type: { type: 'string' },
+  prompt: { type: 'string' }, mode: { type: 'string', enum: ['sync', 'background'] }, model: { type: 'string' } },
+required: ['name', 'prompt', 'agent_type', 'description'] });
+/**
+ * Whether Dude's conversation tool returns this scripted result as a failure. It succeeds only for an accepted begin, a pending phase,
+ * an answer, or a sent reply; every refusal and every other outcome, a cancellation among them, is a failure result (`success`,
+ * `refusal`, and `view` in src/extensions/dude/lib/a2a-collaboration.mjs). The native runtime completes such a call with `success: false`,
+ * no result, and the product's JSON in `error.message` with code `failure`, as run eed11bf5-4871-4337-a1ef-1be3d5c41fe9 completed A's
+ * cancel. A scripted text that is no product JSON is no outcome, and completes as before.
+ * @param {string} name @param {string} result
+ */
+function conversationFailure(name, result) {
+  if (name !== 'dude_a2a_conversation') return false;
+  /** @type {any} */
+  let parsed = null;
+  try {
+    parsed = JSON.parse(result);
+  } catch {
+    return false;
+  }
+  return typeof parsed?.outcome === 'string' && !['accepted', 'pending', 'answer', 'sent'].includes(parsed.outcome);
+}
+/**
+ * The `next` and `notice` texts that every product failure body carries beside its `reason` (`refusal` and `view` in
+ * src/extensions/dude/lib/a2a-collaboration.mjs), shortened here. Each scripted failure carries them, since the run reads failure text
+ * only as such a body (`conversationCalls`).
+ */
+const FAILURE_TEXTS = Object.freeze({ next: 'Nothing retries automatically.', notice: 'Untrusted.' });
+/**
  * One complete action block as the human sees it right before a prompt, its bare `> ` prompt included, written out here from the
  * operator contract rather than taken from the module under test.
  * @param {string[]} lines Everything between the two rules.
@@ -275,6 +311,12 @@ const RULE = '='.repeat(60);
 const shownBlock = (lines) => [RULE, ...lines, RULE, '> '].join('\n');
 /** How many action blocks in `text` ask for exactly `line`. @param {string} text @param {string} line */
 const blocksFor = (text, line) => text.split(`\nType or paste this line, then press Enter:\n\n    ${line}\n\n`).length - 1;
+/**
+ * The report entry of a main permission request the relay approved itself under the typed consent: never asked, no refusal reason,
+ * and answered `consented`.
+ * @param {string} side @param {string} kind @param {string | null} target
+ */
+const consentedEntry = (side, kind, target) => ({ side, kind, asked: false, reason: null, answer: 'consented', target });
 
 test('importing the native branch starts nothing; it has no route to kill, delete, approve all, or load an SDK except the plan\'s own', () => {
   const source = fs.readFileSync(NATIVE, 'utf8');
@@ -289,7 +331,7 @@ test('importing the native branch starts nothing; it has no route to kill, delet
   assert.doesNotMatch(source, /\bprocess\.kill\b|taskkill|\.kill\(|TerminateProcess/, 'no process is signalled or killed');
   assert.doesNotMatch(source, /\bfs\.(?:rm|rmSync|rmdir|rmdirSync|unlink|unlinkSync)\b|removeTree/, 'nothing is deleted');
   assert.doesNotMatch(source, /approveAll|approve-for-session|approve-permanently|approve-for-location|setApproveAll|modifyRules/,
-    'only approve-once exists, and no permission rule is changed: typed by the human, or given by the main relay to a consented step\'s exact Dude tool call');
+    'only approve-once exists, and no permission rule is changed: typed by the human for the after-view control\'s read, or given by the main relay to what the consent covers');
   const spawned = [...source.matchAll(/\bspawn(?:Process)?\(([^,]+),/g)].map((match) => match[1].trim()).sort();
   assert.deepEqual(spawned, ['executable', 'process.execPath'], 'only the fixed PowerShell observer and this Node as the calibration helper');
   assert.match(source, /path\.join\(systemRoot, 'System32', 'WindowsPowerShell', 'v1\.0', 'powershell\.exe'\)/);
@@ -844,6 +886,16 @@ test('fixture preparation renders the actual core and writes only fresh short ro
  * @property {(state: any) => void} [onSnapshot] Runs at the start of every synchronized observer snapshot.
  * @property {string} [source] An attribution on every relayed root message of a main session.
  * @property {(text: string, side: string) => string} [proposal] Change a main's complete proposal result before its session returns it.
+ * @property {(answer: any, side: string) => void} [agents] Change a main session's agent list, which by default holds the rendered Dude and
+ *   Spec Lead agents of its own workspace.
+ * @property {(answer: any, side: string) => void} [catalog] Change a main session's initialized tool catalog, which by default offers Dude's
+ *   two tools, view, and the built-in task tool (`TASK_SCHEMA`).
+ * @property {{rootStages?: boolean, childShell?: boolean, readBack?: boolean, ledgerTask?: Record<string, any>, adviceTask?: Record<string, any>,
+ *   publisher?: {success?: boolean, content?: string}}} [capture]
+ *   Vary one step of A's capture (`captureStep`): its root model stages the ledger itself; its first Spec Lead tries the hash command itself
+ *   before staging; each Spec Lead views the file it staged once more right after creating it; one Spec Lead task's mode, sub-agent
+ *   start data, idle data, or pause after that idle (`session.task`); or the success or content of the publisher's completion, which by
+ *   default is the native shell tool's (`session.command`).
  * @property {(side: string, prompt: string) => Array<[string, Record<string, unknown>]>} [strayTools] Extension tool calls, by name and
  *   arguments, that a main's model makes first in the turn of that prompt, each through its relay, before what the prompt asks for.
  * @property {(side: string, prompt: string) => [string, Record<string, unknown>] | null} [lateTool] One more extension tool call that a
@@ -877,6 +929,9 @@ function scriptedHost(f, time, options = {}) {
     /** @type {string[]} */ log: [],
     /** @type {Array<{side: string, prompt: string, messageId: string}>} */ prompts: [],
     /** @type {Array<{side: string, decision: string}>} */ permissions: [],
+    /** What A's capture did, in order, as its scripted model and the runtime around it did each step. @type {string[]} */ captureLog: [],
+    /** Each root shell command that ran, in order, as its completion stated it (`session.command`). @type {Array<{side: string, success: boolean, content: string}>} */
+    shells: [],
     /** Each answer a main's relay gave one of its extension tool calls, in order (`session.tool`, `session.modelRequest`). @type {Array<{side: string, tool: string, op: string | null, decision: any}>} */
     toolDecisions: [],
     /** Each answer a main's relay gave the read request of one of its model's views, in order (`session.view`). @type {Array<{side: string, path: string, decision: string}>} */
@@ -1045,8 +1100,12 @@ function scriptedHost(f, time, options = {}) {
       const extension = sessionConfig.requestExtensions ? spawnFake(this.runtime.key, f.cli) : null;
       if (extension) extensions[side] = extension;
       let messages = 0;
+      /** How many shell commands this session's root model ran (`command`). */
+      let shells = 0;
       // A main session's tool catalog, as the pinned SDK documents, lists only initialized tools: null until its own initializeAndValidate.
       let toolsInitialized = false;
+      /** The task tool's input schema in this session's last catalog answer; a task call must give each argument it requires. @type {any} */
+      let taskSchema = null;
       /** @type {{promise: Promise<boolean>, resolve: (value: boolean) => void}} */
       const ended = deferred();
       /** @type {any} */
@@ -1101,8 +1160,15 @@ function scriptedHost(f, time, options = {}) {
           extensions: { list: async () => (options.extensionsList ? options.extensionsList(side)
             : { extensions: extension ? [{ id: 'project:dude', name: 'dude', source: 'project', status: 'running', pid: extension.pid }] : [] }) },
           agent: {
-            list: async () => { state.log.push(`agent.list ${side}`); return { agents: [{ id: 'dude', name: 'dude', displayName: 'Dude', description: 'x', source: 'project',
-              path: path.join(sessionConfig.workingDirectory, '.github', 'agents', 'dude.agent.md') }] }; },
+            list: async () => {
+              state.log.push(`agent.list ${side}`);
+              const answer = { agents: [{ id: 'dude', name: 'dude', displayName: 'Dude', description: 'x', source: 'project',
+                path: path.join(sessionConfig.workingDirectory, '.github', 'agents', 'dude.agent.md') },
+              { id: 'dude-spec-lead', name: 'dude-spec-lead', displayName: 'Spec Lead', description: 'x', source: 'project', userInvocable: false,
+                path: path.join(sessionConfig.workingDirectory, '.github', 'agents', 'dude-spec-lead.agent.md') }] };
+              options.agents?.(answer, side);
+              return answer;
+            },
             select: async (/** @type {any} */ params) => ({ agent: { id: params.name } }),
             getCurrent: async () => ({ agent: { id: 'dude' } }),
           },
@@ -1115,7 +1181,12 @@ function scriptedHost(f, time, options = {}) {
             },
             getCurrentMetadata: async () => {
               state.log.push(`tools.getCurrentMetadata ${side}`);
-              return { tools: toolsInitialized ? [{ name: 'dude_a2a_propose' }, { name: 'dude_a2a_conversation' }, { name: 'view' }] : null };
+              // The built-in task tool with the arguments an installed host's model fills (t012-installed-host.mjs).
+              const answer = { tools: toolsInitialized ? [{ name: 'dude_a2a_propose' }, { name: 'dude_a2a_conversation' }, { name: 'view' },
+                { name: 'task', description: 'x', input_schema: structuredClone(TASK_SCHEMA) }] : null };
+              options.catalog?.(answer, side);
+              taskSchema = answer.tools?.find((/** @type {any} */ tool) => tool?.name === 'task')?.input_schema ?? null;
+              return answer;
             },
           },
           // The actual session's own account, as a version-3 run asks it.
@@ -1154,8 +1225,9 @@ function scriptedHost(f, time, options = {}) {
          * A root model call of an extension tool, such as Dude's own, for the current instruction. As the native runtime does in
          * normal mode for an extension tool that does not skip permission (run e3689559-574d-4b1c-a851-7281de20df9a), the model's
          * request is followed by a custom-tool permission request to the session's own relay; only an approve-once runs and completes
-         * the call, and any other answer completes it as rejected, never run. Each answer is kept in `state.toolDecisions`.
-         * Resolves to the call's ID once it ran, or null when it was refused.
+         * the call, and any other answer completes it as rejected, never run. Each answer is kept in `state.toolDecisions`. A call
+         * that ran completes with `result` as its content, or, for a conversation result the product returns as a failure, as the
+         * native runtime completes one (`conversationFailure`). Resolves to the call's ID once it ran, or null when it was refused.
          * @param {string} name @param {Record<string, unknown>} args @param {string} result
          */
         async tool(name, args, result) {
@@ -1182,7 +1254,8 @@ function scriptedHost(f, time, options = {}) {
                 return null;
               }
               session.emit({ type: 'tool.execution_start', data: { toolCallId, toolName: name, arguments: args } });
-              session.emit({ type: 'tool.execution_complete', data: { toolCallId, success: true, result: { content: result } } });
+              session.emit({ type: 'tool.execution_complete', data: conversationFailure(name, result)
+                ? { toolCallId, success: false, error: { message: result, code: 'failure' } } : { toolCallId, success: true, result: { content: result } } });
               return toolCallId;
             },
           };
@@ -1212,6 +1285,75 @@ function scriptedHost(f, time, options = {}) {
             ? { toolCallId, success: true, result: { content: stat.isDirectory() ? fs.readdirSync(target).join('\n') : fs.readFileSync(target, 'utf8') } }
             : { toolCallId, success: false, error: { message: 'Path does not exist' } } });
           return true;
+        },
+        /**
+         * A root model shell command for the current instruction, through the session's own relay: only an approve-once runs it,
+         * performing `effect`, whose return is the command's output; any other answer completes it as rejected, never run. Each
+         * answer is kept in `state.permissions`. A command that ran completes as the native shell tool's did in run
+         * 056b7f4c-eaa3-4cd5-bdfa-70d89edb1a72: its output without a final line break, then the status line
+         * `<shellId: N completed with exit code 0>`, N counting the session's commands that ran from 0. `completion` replaces that
+         * success or content; each completion is kept in `state.shells`. Resolves to whether it ran.
+         * @param {string} command @param {() => string} effect @param {{success?: boolean, content?: string}} [completion]
+         */
+        async command(command, effect, completion = {}) {
+          const toolCallId = `${side}-command-${randomUUID()}`;
+          session.emit({ type: 'assistant.message', data: { messageId: randomUUID(), originatingMessageId: session.current, content: '',
+            toolRequests: [{ toolCallId, name: 'powershell', arguments: { command, description: 'x' } }] } });
+          const decision = await sessionConfig.onPermissionRequest({ kind: 'shell', toolCallId, fullCommandText: command, intention: 'x', commands: [],
+            possiblePaths: [], possibleUrls: [], hasWriteFileRedirection: false, canOfferSessionApproval: false }, { sessionId: session.sessionId });
+          state.permissions.push({ side, decision: decision.kind, actor: 'root', what: command.split(' ')[0] });
+          if (decision.kind !== 'approve-once') {
+            session.emit({ type: 'tool.execution_complete', data: { toolCallId, success: false, error: { message: 'The user rejected this request.' } } });
+            return false;
+          }
+          session.emit({ type: 'tool.execution_start', data: { toolCallId, toolName: 'powershell', arguments: { command } } });
+          const output = effect();
+          const done = { success: completion.success ?? true,
+            content: completion.content ?? `${output.replace(/\r?\n$/, '')}\n<shellId: ${shells} completed with exit code 0>` };
+          shells += 1;
+          session.emit({ type: 'tool.execution_complete', data: { toolCallId, success: done.success, result: { content: done.content } } });
+          state.shells.push({ side, ...done });
+          return true;
+        },
+        /**
+         * The root model's one task call starting the installed Spec Lead for the current instruction, as the runtime runs it: the
+         * root requests the call (with `agent_type`, `mode`, and any `name` from `spawn`). A call that lacks an argument this session's
+         * task schema requires fails at once and starts nothing, as native run e9b8ef84-357e-44e6-8c38-9ee5de7970c3 refused one without
+         * its required `name` (whether the native runtime also starts such a call first is unobserved). Otherwise the root starts the
+         * call, and the runtime starts its one sub-agent for it as natively observed: `subagent.started` stating the selected agent type
+         * and sync execution, with `spawn.started` merged into its data, then that sub-agent's own prompt as its own user message (its
+         * agent ID, sent by A's session at idle under a task-registry ID). `work` plays that sub-agent's own model (`child`), and the
+         * sub-agent goes idle (`spawn.idle` as its data), then, `spawn.pauseMs` later (150 ms by default, longer than one poll of the
+         * run), completes, and the root's call completes. Resolves to what `work` resolved to, or false for a refused call.
+         * @param {{agentType: string, name?: string, mode?: string, started?: Record<string, unknown>, idle?: Record<string, unknown>,
+         *   pauseMs?: number}} spawn
+         * @param {(child: any) => Promise<boolean>} work
+         */
+        async task(spawn, work) {
+          const taskCallId = `${side}-task-${randomUUID()}`;
+          const args = { ...(spawn.name === undefined ? {} : { name: spawn.name }), description: 'Stage capture file', agent_type: spawn.agentType,
+            mode: spawn.mode ?? 'sync', prompt: 'Stage exactly one new file.' };
+          session.emit({ type: 'assistant.message', data: { messageId: randomUUID(), originatingMessageId: session.current, content: '',
+            toolRequests: [{ toolCallId: taskCallId, name: 'task', arguments: args }] } });
+          const missing = (Array.isArray(taskSchema?.required) ? taskSchema.required : []).find((/** @type {string} */ key) => !Object.hasOwn(args, key));
+          if (missing !== undefined) {
+            session.emit({ type: 'tool.execution_complete', data: { toolCallId: taskCallId, success: false,
+              error: { message: `${JSON.stringify(missing)}: Required`, code: 'failure' } } });
+            return false;
+          }
+          session.emit({ type: 'tool.execution_start', data: { toolCallId: taskCallId, toolName: 'task', arguments: args } });
+          const agentId = `spec-lead-${randomUUID()}`;
+          session.emit({ type: 'subagent.started', agentId, data: { toolCallId: taskCallId, agentName: 'dude-spec-lead', agentDisplayName: 'Spec Lead',
+            agentDescription: 'x', agentType: spawn.agentType, executionMode: 'sync', ...spawn.started } });
+          session.emit({ type: 'user.message', agentId, data: { content: args.prompt, messageId: `${agentId}-prompt`, source: `agent-${session.sessionId}`,
+            delivery: 'idle', parentAgentTaskId: `${agentId}-registry` } });
+          const done = await work(specLeadChild(session, side, agentId, taskCallId));
+          session.emit({ type: 'session.idle', agentId, data: { ...spawn.idle } });
+          state.captureLog.push(`spec lead idle${spawn.idle?.aborted ? ' (aborted)' : ''}`);
+          await sleep(spawn.pauseMs ?? 150);
+          session.emit({ type: 'subagent.completed', agentId, data: { toolCallId: taskCallId, agentName: 'dude-spec-lead', agentDisplayName: 'Spec Lead' } });
+          session.emit({ type: 'tool.execution_complete', data: { toolCallId: taskCallId, success: true, result: { content: done ? 'staged' : 'not staged' } } });
+          return done;
         },
       };
       sessions[side] = session;
@@ -1281,6 +1423,79 @@ function scriptedHost(f, time, options = {}) {
   const counts = { a: 0, b: 0 };
   /** Each main's model-requested call whose permission request its next turn delivers (`options.lateTool`). @type {Record<string, any>} */
   const lateCalls = { a: null, b: null };
+
+  /**
+   * The Spec Lead sub-agent's own model in a main session, as the runtime bridges it there: each of its tool calls is an assistant
+   * message of its own (its agent ID, its task call as `parentToolCallId`, and its own originating message), whose permission callback
+   * reaches the session's relay before that request's `permission.requested` event is delivered, as the public SDK hands a request to
+   * its handler before its event handlers. Only an approve-once runs the call; `permission.completed` follows each answer. Each answer is
+   * kept as the Spec Lead's, a view's in `state.reads` and any other in `state.permissions`.
+   * @param {any} session @param {string} side @param {string} agentId @param {string} taskCallId
+   */
+  const specLeadChild = (session, side, agentId, taskCallId) => {
+    /**
+     * @param {string} name @param {Record<string, unknown>} args @param {Record<string, unknown>} permission @param {() => string} effect
+     * @returns {Promise<{decision: string, ran: boolean}>}
+     */
+    const call = async (name, args, permission, effect) => {
+      const toolCallId = `${agentId}-call-${randomUUID()}`;
+      session.emit({ type: 'assistant.message', agentId, data: { messageId: randomUUID(), originatingMessageId: `${agentId}-prompt`,
+        parentToolCallId: taskCallId, content: '', toolRequests: [{ toolCallId, name, arguments: args }] } });
+      const request = { ...permission, toolCallId };
+      const pending = session.config.onPermissionRequest(request, { sessionId: session.sessionId });
+      const requestId = randomUUID();
+      session.emit({ type: 'permission.requested', agentId, data: { requestId, permissionRequest: request, ownerSessionId: session.sessionId } });
+      const decision = await pending;
+      session.emit({ type: 'permission.completed', agentId, data: { requestId, toolCallId,
+        result: { kind: decision.kind === 'approve-once' ? 'approved' : 'denied-interactively-by-user' } } });
+      if (decision.kind !== 'approve-once') {
+        session.emit({ type: 'tool.execution_complete', agentId, data: { toolCallId, parentToolCallId: taskCallId, success: false,
+          error: { message: 'The user rejected this request.' } } });
+        return { decision: decision.kind, ran: false };
+      }
+      session.emit({ type: 'tool.execution_start', agentId, data: { toolCallId, parentToolCallId: taskCallId, toolName: name, arguments: args } });
+      const content = effect();
+      session.emit({ type: 'tool.execution_complete', agentId, data: { toolCallId, parentToolCallId: taskCallId, success: true, result: { content } } });
+      return { decision: decision.kind, ran: true };
+    };
+    return {
+      agentId,
+      /** @param {string} target */
+      async view(target) {
+        const result = await call('view', { path: target }, { kind: 'read', path: target, intention: 'View the file' }, () => {
+          const stat = fs.statSync(target, { throwIfNoEntry: false });
+          return stat?.isDirectory() ? fs.readdirSync(target).join('\n') : stat ? fs.readFileSync(target, 'utf8') : '';
+        });
+        state.reads.push({ side, actor: 'spec-lead', path: target, decision: result.decision });
+        return result.ran;
+      },
+      /**
+       * A new staging file, created as native `apply_patch` Add File creates one on Windows. Its permission request takes the form native
+       * run be16d55a-639b-4c7f-8606-9c345faadcf5 raised for the ledger, which an earlier relay rule refused: `newFileContents` is the LF
+       * text given, while its one complete preview holds that text with CRLF line ends. The file is written with CRLF line ends, which
+       * separate observations on the same host showed Add File writes to disk.
+       * @param {string} target @param {string} content
+       */
+      async create(target, content) {
+        const written = content.replace(/\r?\n/g, '\r\n');
+        const result = await call('create', { path: target, file_text: content }, { kind: 'write', fileName: target, newFileContents: content, diff: '',
+          intention: 'Create file', canOfferSessionApproval: true, fileEdits: [{ after: { path: target, content: written } }] }, () => {
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          fs.writeFileSync(target, written, { flag: 'wx' });
+          return `Created file ${target}`;
+        });
+        state.permissions.push({ side, decision: result.decision, actor: 'spec-lead', what: 'create' });
+        return result.ran;
+      },
+      /** A shell command, which the Spec Lead may never run. @param {string} command */
+      async shell(command) {
+        const result = await call('powershell', { command, description: 'x' }, { kind: 'shell', fullCommandText: command, intention: 'x', commands: [],
+          possiblePaths: [], possibleUrls: [], hasWriteFileRedirection: false, canOfferSessionApproval: false }, () => 'ran');
+        state.permissions.push({ side, decision: result.decision, actor: 'spec-lead', what: 'shell' });
+        return result.ran;
+      },
+    };
+  };
 
   /**
    * Each main's own model edits its progress file while the evidence call is held, through the real permission relay: its poll's view
@@ -1429,7 +1644,8 @@ function scriptedHost(f, time, options = {}) {
       ex.b.add('cleanup', cleanupRecord(ex, storage, 'acknowledged'));
       ex.b.add('closed', { gaps: 0 });
       ex.bClosed = true;
-      await session.tool('dude_a2a_conversation', { op: 'read', operationId: ex.opB }, JSON.stringify({ outcome: 'cancelled', operationId: ex.opB }));
+      await session.tool('dude_a2a_conversation', { op: 'read', operationId: ex.opB }, JSON.stringify({ outcome: 'cancelled', reason: 'peer_cancelled',
+        delivery: 'may_have_occurred', operationId: ex.opB, ...FAILURE_TEXTS }));
       return;
     }
     await progress(session, 'b');
@@ -1480,11 +1696,12 @@ function scriptedHost(f, time, options = {}) {
       if (!(await appears(cue, session))) return;
       if (!(await session.view(cue))) return;
       if (!(await session.tool('dude_a2a_conversation', { op: 'cancel', operationId: ex.opA },
-        JSON.stringify({ outcome: 'cancelled', reason: 'cancelled', delivery: 'may_have_occurred', cancelled: true })))) return;
+        JSON.stringify({ outcome: 'cancelled', reason: 'cancelled', delivery: 'may_have_occurred', cancelled: true, ...FAILURE_TEXTS })))) return;
       ex.a.add('terminal', { outcome: 'cancelled', delivery: 'may_have_occurred' });
       ex.a.add('closed', { gaps: 0 });
       ex.cancelled.resolve(true);
-      await session.tool('dude_a2a_conversation', { op: 'read', operationId: ex.opA }, JSON.stringify({ outcome: 'cancelled', operationId: ex.opA }));
+      await session.tool('dude_a2a_conversation', { op: 'read', operationId: ex.opA }, JSON.stringify({ outcome: 'cancelled', reason: 'cancelled',
+        delivery: 'may_have_occurred', operationId: ex.opA, ...FAILURE_TEXTS }));
       return;
     }
     // The poll's first view comes before the progress file exists.
@@ -1550,38 +1767,73 @@ function scriptedHost(f, time, options = {}) {
   };
 
   /**
-   * A's capture: a view of its own ideas folder through the canonical workspace root its instruction names, the publisher command
-   * through the real permission relay, then its ledger and causal receipt.
-   * @param {any} session
+   * A's capture, its normal first capture with the staging delegated: its root model views its own ideas folder through the canonical
+   * root its instruction names and runs the inventory command; one Spec Lead task (`session.task`, with the agent name, and any task name,
+   * the instruction gives) reads the installed capture skill and creates the staged ledger; the root model runs the fixed hash of that
+   * ledger; a second Spec Lead task reads the skill and creates the advice, the answer's advice.capture unchanged with the three added
+   * fields; and the root model runs the publisher command. Every request goes through the real relay, each typed action is shown, and
+   * each Spec Lead goes idle and stays so a while before its task completes. Each Spec Lead creates its file as native `apply_patch` Add
+   * File did on Windows (`create`), so the ledger and the advice are staged with CRLF line ends, and the hash and the receipt name those
+   * bytes. The publisher's own outputs, the ledger and the causal receipt, are written here as it would write them: this fixture never
+   * runs the actual publisher. `options.capture` varies one step or, with `readBack`, has each Spec Lead view its staged file again before
+   * it goes idle.
+   * @param {any} session @param {string} prompt
    */
-  const captureStep = async (session) => {
+  const captureStep = async (session, prompt) => {
     await sleep(2);
-    if (!(await session.view(path.join(fs.realpathSync.native(layout.a.workspace), '.dude', 'ideas')))) return;
+    const variant = options.capture ?? {};
     const ex = state.exchanges[0];
+    const slug = f.plan.capture.slug;
+    const canonicalRoot = fs.realpathSync.native(layout.a.workspace);
+    const agentType = /agent_type "([^"]+)"/.exec(prompt)?.[1] ?? '';
+    // The ledger's and then the advice's task name, when the instruction gives them (`capturePrompt`).
+    const [ledgerName, adviceName] = [...prompt.matchAll(/with name "([^"]+)"/g)].map((match) => match[1]);
+    const skill = path.join(canonicalRoot, '.github', 'skills', 'dude-feature-definition', 'SKILL.md');
     const stage = path.join(layout.a.temp, 'stage');
-    fs.mkdirSync(stage, { recursive: true });
     const stagedLedger = path.join(stage, 'ledger.md');
     const stagedAdvice = path.join(stage, 'advice.json');
-    const command = `node .github/skills/dude-feature-definition/publish-first-capture.mjs --root . --slug ${f.plan.capture.slug} --stage ${stagedLedger} `
+    const ledgerText = ['---', `title: ${slug}`, `slug: ${slug}`, 'status: draft', 'spec_path:', '---', '', '## Idea', '', 'Synthetic.', ''].join('\n');
+    if (!(await session.view(path.join(canonicalRoot, '.dude', 'ideas')))) return;
+    if (!(await session.command('node .github/skills/dude-engine/feature.mjs ideas --root . --json', () => '{"ideas":[]}'))) return;
+    state.captureLog.push('inventory');
+    if (variant.rootStages) {
+      // The root model stages the ledger itself instead of delegating it.
+      const toolCallId = `a-create-${randomUUID()}`;
+      session.emit({ type: 'assistant.message', data: { messageId: randomUUID(), originatingMessageId: session.current, content: '',
+        toolRequests: [{ toolCallId, name: 'create', arguments: { path: stagedLedger, file_text: ledgerText } }] } });
+      const decision = await session.config.onPermissionRequest({ kind: 'write', toolCallId, fileName: stagedLedger, newFileContents: ledgerText, diff: '',
+        intention: 'Create the file', canOfferSessionApproval: false, fileEdits: [{ after: { path: stagedLedger, content: ledgerText } }] },
+      { sessionId: session.sessionId });
+      state.permissions.push({ side: 'a', decision: decision.kind, actor: 'root', what: 'create' });
+      session.emit({ type: 'tool.execution_complete', data: { toolCallId, success: false, error: { message: 'The user rejected this request.' } } });
+      return;
+    }
+    if (!(await session.task({ agentType, name: ledgerName, ...variant.ledgerTask }, async (child) => {
+      if (!(await child.view(skill))) return false;
+      if (variant.childShell && !(await child.shell(`(Get-FileHash -Algorithm SHA256 -LiteralPath '${stagedLedger}').Hash.ToLowerInvariant()`))) return false;
+      return (await child.create(stagedLedger, ledgerText)) && (!variant.readBack || child.view(stagedLedger));
+    }))) return;
+    const ledgerSha256 = sha256(fs.readFileSync(stagedLedger));
+    if (!(await session.command(`(Get-FileHash -Algorithm SHA256 -LiteralPath '${stagedLedger}').Hash.ToLowerInvariant()`, () => ledgerSha256))) return;
+    state.captureLog.push('hash');
+    const advice = `${JSON.stringify({ ...ex.capture, ledgerSha256, workspace: canonicalRoot, reason: 'Peer advice covers records this workspace lacks.' },
+      null, 2)}\n`;
+    if (!(await session.task({ agentType, name: adviceName, ...variant.adviceTask }, async (child) => (await child.view(skill)) && (await child.create(stagedAdvice, advice))
+      && (!variant.readBack || child.view(stagedAdvice))))) return;
+    const command = `node .github/skills/dude-feature-definition/publish-first-capture.mjs --root . --slug ${slug} --stage ${stagedLedger} `
       + `--number-advice ${stagedAdvice}`;
-    const toolCallId = `a-publish-${randomUUID()}`;
-    session.emit({ type: 'assistant.message', data: { messageId: randomUUID(), originatingMessageId: session.current, content: '',
-      toolRequests: [{ toolCallId, name: 'powershell', arguments: { command, description: 'publish' } }] } });
-    const decision = await session.config.onPermissionRequest({ kind: 'shell', toolCallId, fullCommandText: command, intention: 'x', commands: [], possiblePaths: [],
-      possibleUrls: [], hasWriteFileRedirection: false, canOfferSessionApproval: false }, { sessionId: session.sessionId });
-    state.permissions.push({ side: 'a', decision: decision.kind });
-    if (decision.kind !== 'approve-once') return;
-    session.emit({ type: 'tool.execution_start', data: { toolCallId, toolName: 'powershell', arguments: { command } } });
-    const ideaPath = `.dude/ideas/102-${f.plan.capture.slug}.md`;
-    const ledger = path.join(layout.a.workspace, ...ideaPath.split('/'));
-    fs.writeFileSync(ledger, `---\nslug: ${f.plan.capture.slug}\n---\n`);
-    const receiptFile = path.join(layout.a.workspace, '.dude', 'state', 'a2a', 'captures', `${ex.opA}.json`);
-    fs.mkdirSync(path.dirname(receiptFile), { recursive: true });
-    const { observedMaximum, version, ...conversation } = ex.capture;
-    fs.writeFileSync(receiptFile, JSON.stringify({ version: 1, kind: 'number_advice_receipt', ideaPath, slug: f.plan.capture.slug,
-      ledgerSha256: sha256(fs.readFileSync(ledger)), conversation,
-      selection: { freshLocalMaximum: 100, peerObservedMaximum: observedMaximum, localOnlyNumber: 101, chosenNumber: 102, influence: 'raised' } }));
-    session.emit({ type: 'tool.execution_complete', data: { toolCallId, success: true, result: { content: `Captured ${ideaPath}\n` } } });
+    await session.command(command, () => {
+      const ideaPath = `.dude/ideas/102-${slug}.md`;
+      const ledger = path.join(layout.a.workspace, ...ideaPath.split('/'));
+      fs.writeFileSync(ledger, fs.readFileSync(stagedLedger));
+      const receiptFile = path.join(layout.a.workspace, '.dude', 'state', 'a2a', 'captures', `${ex.opA}.json`);
+      fs.mkdirSync(path.dirname(receiptFile), { recursive: true });
+      const { observedMaximum, version, ...conversation } = ex.capture;
+      fs.writeFileSync(receiptFile, JSON.stringify({ version: 1, kind: 'number_advice_receipt', ideaPath, slug, ledgerSha256: sha256(fs.readFileSync(ledger)),
+        conversation, selection: { freshLocalMaximum: 100, peerObservedMaximum: observedMaximum, localOnlyNumber: 101, chosenNumber: 102, influence: 'raised' } }));
+      state.captureLog.push('publisher');
+      return `${ideaPath}\n`;
+    }, variant.publisher);
   };
 
   /**
@@ -1625,7 +1877,7 @@ function scriptedHost(f, time, options = {}) {
       ex.kind = index === 0 ? 'advice' : 'cancel';
       await (side === 'b' ? serve(session, ex) : ask(session, ex, prompt));
     } else if (prompt.startsWith('Feature 089 native qualification, capture step.')) {
-      await captureStep(session);
+      await captureStep(session, prompt);
     }
   };
   return { state, observer, sdk, discovery, sessions, layout, spawnFake };
@@ -1884,7 +2136,7 @@ test('literal approvals reach the exchange, both whole instructions go out toget
 });
 
 test('a complete controlled slice runs every native step on scripted public observations: the after-view control, both workers\' recorded storage classified by purpose, the held call with both mains\' own progress, the answer and its worker\'s own cleanup window, capture, cancellation, and the drained final observer, and still never qualifies', async () => {
-  const { result, host, layout, f } = await slice({ answers: ['approve-once', 'approve-once', 'approve-once', 'reread reviewed'] });
+  const { result, host, layout, f, terminal } = await slice({ answers: ['reread reviewed'] });
   const { report } = result;
   assert.equal(report.reason, null, report.detail);
   assert.deepEqual(failedChecks(report), []);
@@ -1895,15 +2147,42 @@ test('a complete controlled slice runs every native step on scripted public obse
   for (const id of ['canary_recognition', 'control_model', 'control_tools', 'control_session', 'control_initial_sources', 'after_view_control', 'control_cessation',
     'control_cessation_coverage', `worker_storage_${advice}`, `startup_${advice}_storage`, `worker_storage_${cancel}`, `startup_${cancel}_storage`,
     'advice_instruction_order', 'a_progress', 'b_progress', 'advice_bounds', 'advice_worker_cessation', 'advice_worker_cessation_coverage', 'a_answered_journal',
-    'b_served_journal', 'capture_receipt', 'capture_publisher', 'a_journal_unchanged', 'cancel_instruction_order', 'cancellation', 'no_late_revival',
+    'b_served_journal', 'a_spec_lead', 'a_task_tool', 'capture_receipt', 'capture_publisher', 'capture_staging', 'a_journal_unchanged',
+    'cancel_instruction_order', 'cancellation', 'no_late_revival',
     'cancelled_worker_cessation', 'cancelled_worker_cessation_coverage',
     'final_coverage', 'final_identity', 'final_storage', 'final_effects', 'final_control_cessation', 'final_advice_worker_cessation',
     'final_cancelled_worker_cessation', 'final_owned_tree_cessation', 'final_observer_exit', 'retained_matches_live', 'human_reread']) {
     assert.equal(checkOf(report, id)?.status, 'passed', id);
   }
   assert.match(checkOf(report, `worker_storage_${advice}`).detail, /^session workspace config\/session-state\/worker-session-0: the same directory by path, device, and inode$/);
-  assert.deepEqual(host.state.permissions.map((entry) => [entry.side, entry.decision]).sort(), [['a', 'approve-once'], ['a', 'approve-once'], ['b', 'approve-once'],
-    ['control', 'approve-once']], 'the control\'s read, both progress edits, and the publisher command each went through a relay and a typed approve-once');
+  assert.deepEqual(host.state.permissions.map((entry) => [entry.side, entry.decision]).sort(), [...Array(6).fill(['a', 'approve-once']), ['b', 'approve-once'],
+    ['control', 'approve-once']], 'the control\'s read, typed, and both progress edits and the capture\'s five actions, each approved once by the main relay');
+  // A's capture ran its normal procedure, owners separated: the root model's inventory, the Spec Lead's ledger, the root's hash, the Spec
+  // Lead's advice, and the root's publisher, each Spec Lead staying idle a while before its task completed, with the capture still open.
+  assert.deepEqual(host.state.captureLog, ['inventory', 'spec lead idle', 'hash', 'spec lead idle', 'publisher']);
+  assert.deepEqual(host.state.permissions.filter((entry) => entry.side === 'a' && entry.actor).map((entry) => [entry.actor, entry.what]),
+    [['root', 'node'], ['spec-lead', 'create'], ['root', '(Get-FileHash'], ['spec-lead', 'create'], ['root', 'node']]);
+  assert.deepEqual(report.capture.staging.map((/** @type {any} */ task) => [UUID_PATTERN.test(task.agentId.replace('spec-lead-', '')), /^a-task-/.test(task.toolCallId)]),
+    [[true, true], [true, true]], 'the two Spec Lead tasks that staged what the publisher read');
+  assert.match(checkOf(report, 'capture_staging').detail, /^the Spec Lead staged the ledger and the advice in two synchronous tasks; 0 other task call\(s\)$/);
+  // Each Spec Lead staged its file as native apply_patch Add File did on Windows: its request's newFileContents LF, its one preview and
+  // the file written CRLF, whose bytes the root model's hash and the receipt name.
+  const stage = path.join(layout.a.temp, 'stage');
+  for (const file of ['ledger.md', 'advice.json'].map((name) => path.join(stage, name))) {
+    const text = fs.readFileSync(file).toString('utf8');
+    assert.ok(text.includes('\r\n') && text.split('\r\n').length === text.split('\n').length, `${file} is staged with CRLF line ends only`);
+  }
+  // The human typed only the consent, the control's read, both approvals, and the reread. The main relay approved both progress edits
+  // and each capture action itself under the typed consent, never showing one, and kept each as consented, in the order it approved them;
+  // the two sessions' progress edits race, so they are compared by side.
+  assert.deepEqual(terminal.prompts, Array(5).fill('> '));
+  assert.deepEqual(permissionAsks(terminal.text).map(([label]) => label), ['CONTROL'], 'no main request was shown');
+  const [controlEntry, ...mainEntries] = report.permissions;
+  assert.deepEqual(controlEntry, { side: 'control', kind: 'read', asked: true, reason: null, answer: 'approve-once' }, 'the control\'s read, typed');
+  assert.deepEqual([...mainEntries.slice(0, 2)].sort((x, y) => x.side.localeCompare(y.side)),
+    [consentedEntry('a', 'write', path.join(layout.a.workspace, PROGRESS_FIXTURES.a.path)), consentedEntry('b', 'write', path.join(layout.b.workspace, PROGRESS_FIXTURES.b.path))]);
+  assert.deepEqual(mainEntries.slice(2), [consentedEntry('a', 'shell', null), consentedEntry('a', 'write', path.join(stage, 'ledger.md')),
+    consentedEntry('a', 'shell', null), consentedEntry('a', 'write', path.join(stage, 'advice.json')), consentedEntry('a', 'shell', null)]);
   // Each Dude tool call asked permission as a custom tool and was approved once by the main relay itself, never as typed, and only
   // counted: no per-call permission entry, and no prompt the human answered beyond the typed ones above. The two sessions' calls
   // interleave, so they are compared as sorted lists.
@@ -1912,13 +2191,16 @@ test('a complete controlled slice runs every native step on scripted public obse
     ...[['b', 'begin_receive'], ['a', 'begin_ask'], ['b', 'read'], ['a', 'read'], ['b', 'begin_receive'], ['a', 'begin_ask'], ['b', 'read'], ['a', 'cancel'],
       ['a', 'read']].map(([side, op]) => [side, 'dude_a2a_conversation', op])].map(([side, tool, op]) => ({ side, tool, op, decision: { kind: 'approve-once' } }))));
   // Each view of a main's own workspace asked read permission and was approved once by the relay too, and only counted: A's seven views
-  // (its ideas folder and both progress polls, its ideas folder in capture, and its ideas folder and both cue polls) and B's two polls.
+  // (its ideas folder and both progress polls, its ideas folder in capture, and its ideas folder and both cue polls), each capture Spec
+  // Lead's view of the installed capture skill under its own key, and B's two polls. Each phase action is counted under its own key.
   assert.deepEqual(report.toolApprovals, {
-    b: { dude_a2a_propose: 1, 'dude_a2a_conversation.begin_receive': 2, 'dude_a2a_conversation.read': 2, 'workspace.read': 2 },
-    a: { dude_a2a_propose: 1, 'dude_a2a_conversation.begin_ask': 2, 'dude_a2a_conversation.read': 2, 'dude_a2a_conversation.cancel': 1, 'workspace.read': 7 },
+    b: { dude_a2a_propose: 1, 'dude_a2a_conversation.begin_receive': 2, 'dude_a2a_conversation.read': 2, 'workspace.read': 2, 'progress.edit': 1 },
+    a: { dude_a2a_propose: 1, 'dude_a2a_conversation.begin_ask': 2, 'dude_a2a_conversation.read': 2, 'dude_a2a_conversation.cancel': 1, 'workspace.read': 7,
+      'spec_lead.workspace.read': 2, 'progress.edit': 1, 'capture.command': 3, 'spec_lead.capture.staging': 2 },
   });
-  assert.deepEqual(host.state.reads.map((entry) => entry.decision), Array(9).fill('approve-once'));
+  assert.deepEqual(host.state.reads.map((entry) => entry.decision), Array(11).fill('approve-once'));
   assert.deepEqual(report.permissions.filter((/** @type {any} */ entry) => entry.kind === 'custom-tool'), []);
+  assert.equal(report.permissionsOmitted, undefined, 'nothing was refused or omitted');
   assert.deepEqual(releases(layout), ['evidence-release.json', 'startup-release.json', 'startup-release.json'], 'one evidence release; the cancelled worker never got one');
   assert.equal(report.operations.advice.workerCleanup.ok, true);
   assert.equal(report.operations.advice.workerFinishedAt, readJournalTime(layout.b.workspace, host.state.exchanges[0].opB, 'worker_finished'), 'the answering worker\'s recorded finish anchors its window');
@@ -2009,24 +2291,25 @@ const approvalBlock = (side, enter) => shownBlock([`ACTION NEEDED: Approve sessi
 /** @param {string} code */
 const namedApproval = (code) => ['Type or paste this line, then press Enter:', '', `    dude a2a approve ${code}`];
 
-test('every human prompt of a run is a bare "> " under an action block naming the exact line to enter, its one alternative, and the time left: the consent, the control\'s read, both approvals, each main permission, and the retained reread, with every input valid and each pasted line relayed exactly as entered', async () => {
+test('every human prompt of a run is a bare "> " under an action block naming the exact line to enter, its one alternative, and the time left: the consent, the control\'s read, both approvals, and the retained reread, and nothing else, with every input valid and each pasted line relayed exactly as entered', async () => {
   /** @param {string} line */
   const pasted = (line) => ({ paste: `${line}\r\n` });
   const { result, host, terminal, layout } = await slice({ control: [pasted('approve-once')],
-    approvals: [pasted('dude a2a approve bbbbbbbbbbbb'), { paste: '  dude a2a approve aaaaaaaaaaaa \r' }],
-    answers: ['approve-once', pasted('approve-once'), 'approve-once', pasted('reread reviewed')] });
+    approvals: [pasted('dude a2a approve bbbbbbbbbbbb'), { paste: '  dude a2a approve aaaaaaaaaaaa \r' }], answers: [pasted('reread reviewed')] });
   const { report } = result;
   assert.equal(report.reason, null, report.detail);
   assert.deepEqual(failedChecks(report), [], 'every input is valid, so only what was shown is judged here');
-  assert.deepEqual(terminal.prompts, Array(8).fill('> '), 'each of the eight prompts is only "> "');
+  assert.deepEqual(terminal.prompts, Array(5).fill('> '), 'each of the five prompts is only "> "');
   const shown = terminal.text;
   assert.equal(blocksFor(shown, consentLiteral(result.scope.scopeSha256)), 1, 'the consent block names this scope\'s literal');
 
-  // The control's read and each main request keep their one-line summary, right above a block naming approve-once and reject.
+  // Only the control's read is a permission ask: it keeps its one-line summary, right above a block naming approve-once and reject. The
+  // main relay asks about none of the progress edits or capture actions, which the consent covers.
   const asks = permissionAsks(shown);
-  assert.deepEqual(asks.map(([label]) => label).sort(), ['A', 'A', 'B', 'CONTROL'], 'the control\'s read, both progress edits, and the publisher command');
+  assert.deepEqual(asks.map(([label]) => label), ['CONTROL'], 'the control\'s read alone');
   for (const [label, summary, block] of asks) assert.equal(block, permissionBlock(label, 'N seconds'), `${label}: ${summary}`);
-  assert.equal(asks.find(([label]) => label === 'CONTROL')?.[1], `read ${path.join(layout.control.workspace, 'dude-canary-denied-read.txt')}`);
+  assert.equal(asks[0][1], `read ${path.join(layout.control.workspace, 'dude-canary-denied-read.txt')}`);
+  assert.equal(blocksFor(shown, 'approve-once'), 1, 'one approve-once block, the control\'s');
 
   // Each approval block follows its complete proposal and names that proposal's own approval line; the entered line alone is relayed.
   for (const [side, code] of [['B', 'bbbbbbbbbbbb'], ['A', 'aaaaaaaaaaaa']]) {
@@ -2121,7 +2404,7 @@ test('the observed instruction order is an acceptance condition: B requesting be
 });
 
 test('the answering worker\'s own cleanup window is judged before capture: a descendant exiting 10 001 ms after its recorded finish fails, though it ended long before teardown', async () => {
-  const { result, host } = await slice({ host: { workerExitMs: 10_001 }, answers: ['approve-once', 'approve-once'] });
+  const { result, host } = await slice({ host: { workerExitMs: 10_001 }, answers: [] });
   const { report } = result;
   assert.equal(report.reason, 'cessation_unconfirmed', report.detail);
   assert.deepEqual(failedChecks(report), ['advice_worker_cessation', 'final_advice_worker_cessation'],
@@ -2134,7 +2417,7 @@ test('the answering worker\'s own cleanup window is judged before capture: a des
 });
 
 test('the drained final summary gets every check on the success path: a forbidden access first seen during the observer\'s stop fails the run', async () => {
-  const { result, host } = await slice({ answers: ['approve-once', 'approve-once', 'approve-once', 'reread reviewed'],
+  const { result, host } = await slice({ answers: ['reread reviewed'],
     host: { beforeFinal: (state) => state.files.push({ process: state.runtimes.a, class: 'real_home', op: 'read', count: 1 }) } });
   const { report } = result;
   assert.equal(report.reason, 'unexpected_native_effect', report.detail);
@@ -2147,7 +2430,7 @@ test('the drained final summary gets every check on the success path: a forbidde
 
 test('an overflowed session log ends the proof where it is next consulted: no evidence release, capture, or later exchange follows', async () => {
   const flood = Array.from({ length: NATIVE_LIMITS.toolRequests + 1 }, (_, index) => ({ toolCallId: `flood-${index}`, name: 'view', arguments: { path: 'x' } }));
-  const { result, host, layout } = await slice({ answers: ['approve-once', 'approve-once'], host: {
+  const { result, host, layout } = await slice({ answers: [], host: {
     duringHold: (session, side) => {
       if (side === 'b') session.emit({ type: 'assistant.message', data: { messageId: 'flood', originatingMessageId: session.current, content: '', toolRequests: flood } });
     },
@@ -2159,20 +2442,30 @@ test('an overflowed session log ends the proof where it is next consulted: no ev
   assert.equal(result.exitCode, 4);
 });
 
-test('the scope expiring while a valid permission request awaits its answer withdraws the approval: the late approve-once is refused, nothing is edited or released, and the run stops as expired', async () => {
-  // The scope ends 1 s before the answer, well inside the request's own 60 s bound, so only the scope can withdraw it.
-  const { result, host, layout, terminal } = await slice({ expiresInMs: 45_000,
-    answers: (time, f) => [{ type: 'approve-once', before: () => time.advance(Date.parse(f.plan.expiresAt) - time.now() + 1_000) }, 'approve-once'] });
+test('the scope expiring right before the relay would approve a valid progress edit withdraws that approval: the edit the consent covers is refused as approval_withdrawn, nothing is edited or released, and the run stops as expired', async () => {
+  // The scope ends while the first main to reach its edit is about to request it, after its poll's view found the file pending: its
+  // exact edit still matches, so only the scope, checked again right before the answer, can withdraw it.
+  /** @type {string | null} */
+  let first = null;
+  const { result, host, layout, terminal } = await slice({ expiresInMs: 45_000, host: (time) => ({ duringHold: (_session, side) => {
+    if (first) return;
+    first = side;
+    time.advance(46_000);
+  } }) });
   const { report } = result;
   assert.equal(report.reason, 'scope_expired', report.detail);
-  const answered = report.permissions.filter((/** @type {any} */ entry) => entry.asked && entry.side !== 'control');
-  assert.deepEqual(answered.map((/** @type {any} */ entry) => entry.answer), ['approval_withdrawn', 'request_withdrawn'],
-    'the typed approve-once arrived after the scope expired, and the other main\'s queued request was withdrawn before its turn');
-  assert.equal(blocksFor(terminal.text, 'approve-once'), 2, 'the control\'s read and one main request were shown; the queued one never');
+  const side = /** @type {'a' | 'b'} */ (first);
+  const main = report.permissions.filter((/** @type {any} */ entry) => entry.side !== 'control');
+  assert.deepEqual(main[0], { side, kind: 'write', asked: false, reason: 'approval_withdrawn', answer: null,
+    target: path.join(layout[side].workspace, PROGRESS_FIXTURES[side].path) }, 'the first edit matched, and the expired scope withdrew it');
+  assert.ok(main.every((/** @type {any} */ entry) => entry.reason !== null && entry.answer !== 'consented'), 'no main request was approved');
+  assert.equal(report.toolApprovals?.[side]?.['progress.edit'], undefined, 'and none was counted');
+  assert.equal(blocksFor(terminal.text, 'approve-once'), 1, 'only the control\'s read was shown');
+  assert.ok(host.state.permissions.some((entry) => entry.side !== 'control'));
   assert.deepEqual(host.state.permissions.filter((entry) => entry.side !== 'control').map((entry) => entry.decision),
     host.state.permissions.filter((entry) => entry.side !== 'control').map(() => 'reject'), 'every progress request was rejected');
-  for (const side of /** @type {const} */ (['a', 'b'])) {
-    assert.equal(fs.readFileSync(path.join(layout[side].workspace, PROGRESS_FIXTURES[side].path), 'utf8'), PROGRESS_FIXTURES[side].initial, `${side} edited nothing`);
+  for (const each of /** @type {const} */ (['a', 'b'])) {
+    assert.equal(fs.readFileSync(path.join(layout[each].workspace, PROGRESS_FIXTURES[each].path), 'utf8'), PROGRESS_FIXTURES[each].initial, `${each} edited nothing`);
   }
   assert.deepEqual(releases(layout), ['startup-release.json'], 'no evidence release');
 });
@@ -2257,7 +2550,7 @@ test('every file access a served worker made before its storage was associated i
   assert.deepEqual(releases(forged.layout), []);
 
   // Legitimate absence with no session writes passes every storage check, and grants nothing.
-  const clean = await slice({ host: { sessionStorage: 'none' }, answers: ['approve-once', 'approve-once', 'approve-once', 'reread reviewed'] });
+  const clean = await slice({ host: { sessionStorage: 'none' }, answers: ['reread reviewed'] });
   assert.equal(clean.result.report.reason, null, clean.result.report.detail);
   assert.deepEqual(failedChecks(clean.result.report), []);
   assert.deepEqual([clean.result.report.verdict, clean.result.exitCode], ['controlled_only', 4]);
@@ -2463,7 +2756,7 @@ test('the after-view control keeps its order: the baseline before its one prompt
 });
 
 test('storage is classified at every observation, not only at startup and the final drain: an undocumented write a worker first makes during the cancellation fails at that observation, before its cleanup window is judged', async () => {
-  const { result, host } = await slice({ answers: ['approve-once', 'approve-once', 'approve-once'], host: { whileCancelled: (worker, dir, state) => {
+  const { result, host } = await slice({ answers: [], host: { whileCancelled: (worker, dir, state) => {
     state.workerDirs.push({ process: worker.key, dir, area: 'config', op: 'create', path: `${state.relative}/stray.bin`, count: 1 });
   } } });
   const { report } = result;
@@ -2499,7 +2792,7 @@ test('a served worker\'s reads and opens in its configuration storage are classi
   }
   // At the final drain: first seen in the observer's drained final summary, on runs in which every other check passed.
   const late = await Promise.all(kinds.flatMap((sessionStorage) => files.map(async (file) => ({ sessionStorage, file,
-    ...(await slice({ answers: ['approve-once', 'approve-once', 'approve-once', 'reread reviewed'], host: { sessionStorage, beforeFinal: (state) => {
+    ...(await slice({ answers: ['reread reviewed'], host: { sessionStorage, beforeFinal: (state) => {
       const ex = state.exchanges[0];
       state.workerDirs.push(...reads(ex.worker, ex.dir, file));
     } } })) }))));
@@ -3115,8 +3408,8 @@ test('observation lost while a served worker\'s tree ends confirms no cessation 
     if (ex.snapshotsAfterClose > skip) state.health.eventsLost = 1;
   };
   const [advice, cancelled] = await Promise.all([
-    slice({ answers: ['approve-once', 'approve-once'], host: { onSnapshot: lossAt(0, 0) } }),
-    slice({ answers: ['approve-once', 'approve-once', 'approve-once'], host: { onSnapshot: lossAt(1, 1) } }),
+    slice({ answers: [], host: { onSnapshot: lossAt(0, 0) } }),
+    slice({ answers: [], host: { onSnapshot: lossAt(1, 1) } }),
   ]);
   assert.equal(advice.result.report.reason, 'observer_coverage_lost', advice.result.report.detail);
   assert.deepEqual([checkOf(advice.result.report, 'advice_worker_cessation_coverage')?.status, checkOf(advice.result.report, 'advice_worker_cessation_coverage')?.detail],
@@ -3134,7 +3427,7 @@ test('observation lost while a served worker\'s tree ends confirms no cessation 
 });
 
 test('the drained final summary must show its drain complete: a final summary whose consumer did not drain every buffered event fails final coverage with the closed coverage reason, though every other check passed', async () => {
-  const { result } = await slice({ answers: ['approve-once', 'approve-once', 'approve-once'], host: { finalDrain: { drained: false } } });
+  const { result } = await slice({ answers: [], host: { finalDrain: { drained: false } } });
   assert.equal(result.report.reason, 'observer_coverage_lost', result.report.detail);
   assert.deepEqual(failedChecks(result.report), ['final_coverage']);
   assert.equal(checkOf(result.report, 'final_coverage').detail, 'drain_incomplete');
@@ -3418,9 +3711,61 @@ test('progress counts only the main model\'s own completed edit of its own file,
   for (const [label, steps, reason] of cases) assert.deepEqual(checkProgress(session(steps), interval), { ok: false, reason }, label);
   assert.deepEqual(checkProgress(session([request(2_000, 'e2'), started(2_100, 'e2'), completed(2_300, 'e2')]),
     { ...interval, file: path.join(os.tmpdir(), 'dude-progress-fixture', 'progress-b.txt') }), { ok: false, reason: 'not_requested' }, 'the other main\'s file');
+
+  // A GPT-family main edits with `apply_patch`, whose arguments are one patch string, in the shape observed live. It counts only through
+  // the one file its patch adds or updates, never through a patch that deletes, moves, or names more than that one file.
+  const other = path.join(os.tmpdir(), 'dude-progress-fixture', 'progress-b.txt');
+  /** @param {string[]} lines @param {string} [eol] */
+  const patch = (lines, eol = '\n') => ['*** Begin Patch', ...lines, '*** End Patch', ''].join(eol);
+  /** @param {string} target */
+  const update = (target) => [`*** Update File: ${target}`, '@@', '-pending', '+complete'];
+  /** One `apply_patch` call requested, started, and completed inside the interval. @param {string} id @param {string} text @returns {Array<[number, any]>} */
+  const patched = (id, text) => [
+    [2_000, { type: 'assistant.message', timestamp: iso(2_000),
+      data: { messageId: `m-${id}`, originatingMessageId: 'adm-2', content: '', toolRequests: [{ toolCallId: id, name: 'apply_patch', arguments: text }] } }],
+    [2_100, { type: 'tool.execution_start', timestamp: iso(2_100), data: { toolCallId: id, toolName: 'apply_patch', arguments: text } }],
+    completed(2_300, id),
+  ];
+  assert.deepEqual(checkProgress(session(patched('a1', patch(update(file)))), interval),
+    { ok: true, toolCallId: 'a1', requestedAt: base + 2_000, completedAt: base + 2_300 }, 'a patch updating its own file');
+  assert.deepEqual(checkProgress(session(patched('a2', patch(update(file), '\r\n'))), interval),
+    { ok: true, toolCallId: 'a2', requestedAt: base + 2_000, completedAt: base + 2_300 }, 'the same patch with CRLF line ends');
+  /** @type {Array<[string, string]>} */
+  const uncounted = [
+    ['a patch updating another file', patch(update(other))],
+    ['a patch updating its own file and another', patch([...update(file), ...update(other)])],
+    ['a patch deleting its own file', patch([`*** Delete File: ${file}`])],
+    ['a patch updating its own file and moving it', patch([`*** Update File: ${file}`, `*** Move to: ${other}`, '@@', '-pending', '+complete'])],
+  ];
+  for (const [label, text] of uncounted) assert.deepEqual(checkProgress(session(patched('a3', text)), interval), { ok: false, reason: 'not_requested' }, label);
+
+  // Only that one file is kept, as the call's path; the digest is still of the exact patch string, as an unparsed one's is.
+  /** @param {string} toolName @param {unknown} args */
+  const start = (toolName, args) => summarizeEvent({ type: 'tool.execution_start', data: { toolCallId: 'a4', toolName, arguments: args } }, 0);
+  const text = patch(update(file));
+  const kept = start('apply_patch', text);
+  const unparsed = start('other_tool', text);
+  assert.deepEqual([kept.arguments, unparsed.arguments], [{ path: file }, null], 'only an apply_patch string is read as a patch');
+  assert.equal(kept.argumentsSha256, unparsed.argumentsSha256, 'the same digest as the same string kept as nothing');
+  assert.equal(kept.argumentsSha256, sha256(JSON.stringify(text)), 'the digest of the exact patch string, as sorted-key JSON');
+  /** A patch updating its own file, exactly `chars` long. @param {number} chars */
+  const sized = (chars) => text.replace('+complete', `+complete${'x'.repeat(chars - text.length)}`);
+  /** @type {Array<[string, unknown, {path: string} | null]>} */
+  const bounds = [
+    ['a patch adding its own file', patch([`*** Add File: ${file}`, '+complete']), { path: file }],
+    ['header text inside patch lines, never at a line start', patch([...update(file), `+*** Delete File: ${other}`, ` *** Move to: ${other}`]), { path: file }],
+    ['a patch of 2,048 characters', sized(2_048), { path: file }],
+    ['a patch of 2,049 characters', sized(2_049), null],
+    ['a path of 1,024 characters', patch(update('p'.repeat(1_024))), { path: 'p'.repeat(1_024) }],
+    ['a path of 1,025 characters', patch(update('p'.repeat(1_025))), null],
+    ['a patch naming no file', patch(['@@', '-pending', '+complete']), null],
+    ['a header naming no file', patch(['*** Update File: ', '@@', '-pending', '+complete']), null],
+    ['arguments that are no string', 42, null],
+  ];
+  for (const [label, args, expected] of bounds) assert.deepEqual(start('apply_patch', args).arguments, expected, label);
 });
 
-test('the permission relay asks only about the pending allowlisted action of a call the session\'s own model requested', () => {
+test('the permission relay approves, under the consent, only the pending allowlisted action of a call the session\'s own model requested, under its own closed key with its exact effect, and never one that managed policy marks as needing a person', () => {
   const root = tempDir('dude-nqm-');
   const file = path.join(root, 'w', 'progress-a.txt');
   const tempRoot = path.join(root, 't');
@@ -3435,18 +3780,23 @@ test('the permission relay asks only about the pending allowlisted action of a c
   /** @param {any} request @param {any} [allow] @param {any} [where] */
   const decide = (request, allow = progress, where = invocation) => {
     const decision = /** @type {any} */ (matchPermission(request, where, allow));
-    return decision.ask ? 'ask' : decision.relay ? `relay ${decision.relay}` : decision.reason;
+    return decision.relay ? `relay ${decision.relay}` : decision.reason;
   };
-  // The progress file's read is never asked: it is inside the workspace, whose reads only the exchange step's allowance lets the relay
-  // approve (see the workspace-read tests); without that allowance it is refused like any other read in this phase.
+  /** A managed-policy marker on a request's prompt, as the SDK passes one with the invocation. @param {string} kind */
+  const managedPrompt = (kind) => ({ sessionId: 's-a', promptRequest: { kind, managedApprovalRequired: true } });
+  // The progress file's read is no progress action: it is inside the workspace, whose reads only the exchange step's allowance lets the
+  // relay approve (see the workspace-read tests); without that allowance it is refused like any other read in this phase.
   assert.equal(decide({ kind: 'read', toolCallId: 'c1', path: file }), 'not_progress');
-  assert.equal(decide(edit('pending\n', 'complete\n')), 'ask');
+  assert.equal(decide(edit('pending\n', 'complete\n')), 'relay progress.edit');
   assert.match(/** @type {any} */ (matchPermission(edit('pending\n', 'complete\n'), invocation, progress)).summary, /"pending\\n" -> "complete\\n"$/);
   for (const [request, where, reason] of /** @type {Array<[any, any, string]>} */ ([
     [{ kind: 'read', toolCallId: 'c1', path: file }, { sessionId: 's-b' }, 'session_mismatch'],
     [{ kind: 'read', path: file }, invocation, 'unidentified'],
     [{ kind: 'read', toolCallId: 'c9', path: file }, invocation, 'not_model_requested'],
     [edit('pending\n', 'complete\n', { requestSandboxBypass: true }), invocation, 'sandbox_bypass'],
+    // Managed policy that requires a person forbids a host's own approval, so the exact edit is refused rather than approved.
+    [edit('pending\n', 'complete\n', { managedApprovalRequired: true }), invocation, 'managed_approval_required'],
+    [edit('pending\n', 'complete\n'), managedPrompt('write'), 'managed_approval_required'],
     [edit('pending\n', 'complete'), invocation, 'edit_not_exact'],
     [edit('pending\n', 'complete\n', { fileEdits: undefined }), invocation, 'edit_not_exact'],
     [{ ...edit('pending\n', 'complete\n'), fileEdits: [...edit('pending\n', 'complete\n').fileEdits, ...edit('pending\n', 'complete\n').fileEdits] }, invocation,
@@ -3468,10 +3818,12 @@ test('the permission relay asks only about the pending allowlisted action of a c
   const adviceFile = path.join(stage, 'advice.json');
   const publish = (/** @type {string} */ stageArg, /** @type {string} */ adviceArg, slug = 'delta') => shell(
     `node .github/skills/dude-feature-definition/publish-first-capture.mjs --root . --slug ${slug} --stage ${stageArg} --number-advice ${adviceArg}`);
-  assert.equal(decide(shell('node .github/skills/dude-engine/feature.mjs ideas --root . --json'), capture), 'ask');
-  assert.equal(decide(shell(`(Get-FileHash -Algorithm SHA256 -LiteralPath '${ledger}').Hash.ToLowerInvariant()`), capture), 'ask');
-  assert.equal(decide(publish(`"${ledger}"`, `'${adviceFile}'`), capture), 'ask');
-  assert.equal(decide(publish(ledger, adviceFile, '\'delta\''), capture), 'ask');
+  assert.equal(decide(shell('node .github/skills/dude-engine/feature.mjs ideas --root . --json'), capture), 'relay capture.command');
+  assert.equal(decide(shell(`(Get-FileHash -Algorithm SHA256 -LiteralPath '${ledger}').Hash.ToLowerInvariant()`), capture), 'relay capture.command');
+  assert.equal(decide(publish(`"${ledger}"`, `'${adviceFile}'`), capture), 'relay capture.command');
+  assert.equal(decide(publish(ledger, adviceFile, '\'delta\''), capture), 'relay capture.command');
+  assert.equal(/** @type {any} */ (matchPermission(shell('node .github/skills/dude-engine/feature.mjs ideas --root . --json'), invocation, capture)).summary,
+    'run node .github/skills/dude-engine/feature.mjs ideas --root . --json', 'the approval is bound to the exact command');
   for (const [request, reason] of /** @type {Array<[any, string]>} */ ([
     [publish(ledger, adviceFile, 'other'), 'command_not_allowed'],
     [publish(path.join(root, 'w', 'staged.md'), adviceFile), 'command_not_allowed'],
@@ -3483,40 +3835,133 @@ test('the permission relay asks only about the pending allowlisted action of a c
     [shell(`(Get-FileHash -Algorithm SHA256 -LiteralPath "${ledger}").Hash.ToLowerInvariant()`), 'command_not_allowed'],
     [shell('node .github/skills/dude-engine/feature.mjs ideas --root . --json', { hasWriteFileRedirection: true }), 'command_effects'],
     [shell('node .github/skills/dude-engine/feature.mjs ideas --root . --json', { possibleUrls: ['https://example.invalid/'] }), 'command_effects'],
+    [shell('node .github/skills/dude-engine/feature.mjs ideas --root . --json', { managedApprovalRequired: true }), 'managed_approval_required'],
   ])) {
     assert.equal(decide(request, capture), reason, request.fullCommandText);
   }
-  /** @param {string} target @param {string} content */
-  const write = (target, content) => ({ kind: 'write', toolCallId: 'c1', fileName: target, newFileContents: content, diff: '', intention: 'x',
-    canOfferSessionApproval: false });
-  assert.equal(decide(write(ledger, '# delta\n'), capture), 'ask');
-  assert.match(/** @type {any} */ (matchPermission(write(ledger, '# delta\n'), invocation, capture)).summary, new RegExp(`sha256 ${sha256('# delta\n')}\\)$`));
+  assert.equal(decide(publish(ledger, adviceFile), capture, managedPrompt('shell')), 'managed_approval_required', 'a marker on the command\'s prompt');
+  // A staging write is approved only as one new file whose complete preview is exactly that file's creation: one `apply_patch` call can
+  // add several files, while the approval names only the request's own file. Staging is the Spec Lead's alone: here it is the live one
+  // the relay proved made the request (`specLeadRequest`), which its root model did not request.
+  const spec = /** @type {const} */ ({ ...capture, requested: [], child: { agentId: 'sub-1', taskCallId: 't1' } });
+  /** @param {string} target @param {string} content @param {object} [extra] */
+  const write = (target, content, extra = {}) => ({ kind: 'write', toolCallId: 'c1', fileName: target, newFileContents: content, diff: '', intention: 'x',
+    canOfferSessionApproval: false, fileEdits: [{ after: { path: target, content } }], ...extra });
+  assert.equal(decide(write(ledger, '# delta\n'), spec), 'relay spec_lead.capture.staging');
+  assert.match(/** @type {any} */ (matchPermission(write(ledger, '# delta\n'), invocation, spec)).summary, new RegExp(`sha256 ${sha256('# delta\n')}\\)$`));
+  assert.equal(decide(write(ledger, '# delta\n', { managedApprovalRequired: true }), spec), 'managed_approval_required');
+  assert.equal(decide(write(ledger, '# delta\n'), spec, managedPrompt('write')), 'managed_approval_required');
+  assert.equal(decide(write(ledger, '# delta\n'), capture), 'staging_not_delegated', 'A\'s root model stages nothing itself');
   const staged = { ...advice, ledgerSha256: 'a'.repeat(64), workspace: path.join(root, 'w'), reason: 'Peer advice raises the number.' };
-  assert.equal(decide(write(adviceFile, JSON.stringify(staged)), capture), 'ask', 'the unchanged advice plus exactly the three added fields');
-  assert.equal(decide(write(adviceFile, JSON.stringify({ ...staged, observedMaximum: 100 })), capture), 'advice_changed');
-  assert.equal(decide(write(adviceFile, JSON.stringify({ ...staged, reason: undefined })), capture), 'advice_changed');
-  assert.equal(decide(write(adviceFile, JSON.stringify({ ...staged, extra: true })), capture), 'advice_changed');
+  assert.equal(decide(write(adviceFile, JSON.stringify(staged)), spec), 'relay spec_lead.capture.staging', 'the unchanged advice plus exactly the three added fields');
+  assert.equal(decide(write(adviceFile, JSON.stringify(staged)), capture), 'staging_not_delegated');
+  assert.equal(decide(write(adviceFile, JSON.stringify({ ...staged, observedMaximum: 100 })), spec), 'advice_changed');
+  assert.equal(decide(write(adviceFile, JSON.stringify({ ...staged, reason: undefined })), spec), 'advice_changed');
+  assert.equal(decide(write(adviceFile, JSON.stringify({ ...staged, extra: true })), spec), 'advice_changed');
   fs.writeFileSync(path.join(stage, 'existing.md'), 'x');
   for (const [target, content] of [[path.join(root, 'w', 'staged.md'), 'x'], [path.join(stage, 'existing.md'), 'y'], [tempRoot, 'x'],
     [path.join(stage, 'large.md'), 'x'.repeat(NATIVE_LIMITS.stagedBytes + 1)]]) {
-    assert.equal(decide(write(target, content), capture), 'staging_not_allowed', target);
+    assert.equal(decide(write(target, content), spec), 'staging_not_allowed', target);
   }
-  assert.equal(decide({ kind: 'read', toolCallId: 'c1', path: ledger }, capture), 'ask');
-  assert.equal(decide({ kind: 'read', toolCallId: 'c1', path: tempRoot }, capture), 'ask', 'a read of A\'s temp folder itself is asked too');
-  assert.equal(decide({ kind: 'read', toolCallId: 'c1', path: path.join(root, 'w', 'x.md') }, capture), 'not_capture');
+  /** One complete preview side creating `target` with `content`. @param {string} target @param {string} content */
+  const created = (target, content) => ({ after: { path: target, content } });
+  for (const [label, extra] of /** @type {Array<[string, object]>} */ ([
+    ['no complete preview', { fileEdits: undefined }],
+    ['a preview that is no list', { fileEdits: created(ledger, '# delta\n') }],
+    ['an empty preview', { fileEdits: [] }],
+    ['a second file created in the staging folder too', { fileEdits: [created(ledger, '# delta\n'), created(adviceFile, '{}')] }],
+    ['a second file created outside the staging folder too', { fileEdits: [created(ledger, '# delta\n'), created(path.join(root, 'w', 'outside.md'), 'x')] }],
+    ['a preview with a before side', { fileEdits: [{ before: { path: ledger, content: '' }, ...created(ledger, '# delta\n') }] }],
+    ['a preview of another file', { fileEdits: [created(path.join(stage, 'other.md'), '# delta\n')] }],
+    ['a preview with other contents', { fileEdits: [created(ledger, '# other\n')] }],
+    ['a preview path that is no string', { fileEdits: [{ after: { path: 42, content: '# delta\n' } }] }],
+  ])) {
+    assert.equal(decide(write(ledger, '# delta\n', extra), spec), 'staging_not_allowed', label);
+  }
+  for (const [allowed, key] of /** @type {Array<[any, string]>} */ ([[capture, 'capture.read'], [spec, 'spec_lead.capture.read']])) {
+    assert.equal(decide({ kind: 'read', toolCallId: 'c1', path: ledger }, allowed), `relay ${key}`);
+    assert.equal(decide({ kind: 'read', toolCallId: 'c1', path: tempRoot }, allowed), `relay ${key}`, 'a read of A\'s temp folder itself is approved too');
+    assert.equal(decide({ kind: 'read', toolCallId: 'c1', path: ledger, managedApprovalRequired: true }, allowed), 'managed_approval_required');
+    assert.equal(decide({ kind: 'read', toolCallId: 'c1', path: path.join(root, 'w', 'x.md') }, allowed), 'not_capture');
+  }
   assert.equal(decide({ kind: 'mcp', toolCallId: 'c1', serverName: 'x', toolName: 'y' }, capture), 'not_capture');
+  // Only the root model runs a command: the Spec Lead may run none, call no Dude or other tool, and request nothing but reads and staging.
+  for (const request of [shell('node .github/skills/dude-engine/feature.mjs ideas --root . --json'),
+    shell(`(Get-FileHash -Algorithm SHA256 -LiteralPath '${ledger}').Hash.ToLowerInvariant()`), publish(ledger, adviceFile),
+    { kind: 'custom-tool', toolCallId: 'c1', toolName: 'dude_a2a_conversation', toolDescription: 'x', args: { op: 'read', operationId: randomUUID() } },
+    { kind: 'mcp', toolCallId: 'c1', serverName: 'x', toolName: 'y' }, { kind: 'url', toolCallId: 'c1', url: 'https://example.invalid/' },
+    { kind: 'memory', toolCallId: 'c1', fact: 'x' }]) {
+    assert.equal(decide(request, spec), 'spec_lead_not_allowed', JSON.stringify(request).slice(0, 100));
+  }
+  // The Spec Lead counts in the capture phase alone: a proved one stands for nothing in the progress phase or with no phase open.
+  assert.equal(decide(edit('pending\n', 'complete\n'), { ...progress, requested: [], child: spec.child }), 'not_model_requested');
+  assert.equal(decide(write(ledger, '# delta\n'), { ...spec, phase: 'closed', capture: null }), 'not_model_requested');
+});
+
+test('a Spec Lead staging write is approved as the creation its one complete preview shows: on Windows, native run be16d55a-639b-4c7f-8606-9c345faadcf5\'s apply_patch Add File request for the ledger, which an earlier relay rule refused, previewed CRLF while newFileContents kept the patch\'s LF text, and separate observations on the same host showed Add File writing CRLF to disk, so the preview\'s text is bounded, checked, and bound to the approval by its byte count and SHA-256, and newFileContents may differ from it only by that conversion', () => {
+  const root = tempDir('dude-nqa-');
+  const tempRoot = path.join(root, 't');
+  const stage = path.join(tempRoot, 'stage-ledger-a7565dff');
+  fs.mkdirSync(stage, { recursive: true });
+  const advice = { version: 1, operationId: randomUUID(), observedMaximum: 101 };
+  const capture = /** @type {const} */ ({ sessionId: 's-a', requested: ['c1'], phase: 'capture', progress: null, capture: { tempRoot, slug: 'delta', advice } });
+  // The live Spec Lead the relay proved made the request (`specLeadRequest`), which its root model did not request.
+  const spec = /** @type {const} */ ({ ...capture, requested: [], child: { agentId: 'sub-1', taskCallId: 't1' } });
+  /** The effect a relay approval is bound to, or the refusal's reason. @param {any} request @param {any} [allow] */
+  const decide = (request, allow = spec) => {
+    const decision = /** @type {any} */ (matchPermission(request, { sessionId: 's-a' }, allow));
+    return decision.relay ? decision.summary : decision.reason;
+  };
+  /** The effect a staging approval is bound to for a new file holding exactly `text`. @param {string} file @param {string} text */
+  const created = (file, text) => `create ${file} (${Buffer.byteLength(text, 'utf8')} bytes, sha256 ${sha256(text)})`;
+  const ledger = path.join(stage, 'ledger.md');
+  const lf = ['---', 'title: delta', 'slug: delta', 'status: draft', 'spec_path:', '---', '', '## Idea', '', 'Synthetic.', ''].join('\n');
+  const crlf = lf.replace(/\n/g, '\r\n');
+  const native = addFileWrite('c1', ledger, lf);
+  assert.deepEqual([native.newFileContents, native.fileEdits], [lf, [{ after: { path: ledger, content: crlf } }]], 'the observed native shape');
+  assert.equal(decide(native), created(ledger, crlf), 'approved, bound to the byte count and SHA-256 of the CRLF text the runtime writes');
+  assert.equal(/** @type {any} */ (matchPermission(native, { sessionId: 's-a' }, spec)).relay, 'spec_lead.capture.staging');
+  assert.equal(decide(native, capture), 'staging_not_delegated', 'A\'s root model still stages nothing itself');
+  assert.equal(decide({ ...native, requestSandboxBypass: true }), 'sandbox_bypass');
+  // Equal contents are approved as before, each bound to its own count and digest.
+  assert.equal(decide(stagingWrite('c1', ledger, lf)), created(ledger, lf));
+  assert.equal(decide(stagingWrite('c1', ledger, crlf)), created(ledger, crlf));
+  // Each refusal changes one field of the native shape; every other input is as above.
+  const { newFileContents, ...unstated } = native;
+  for (const [label, request] of /** @type {Array<[string, any]>} */ ([
+    ['a preview one character longer than the conversion', { ...native, fileEdits: [{ after: { path: ledger, content: `${crlf}x` } }] }],
+    ['the reverse conversion: CRLF newFileContents and an LF preview', { ...native, newFileContents: crlf, fileEdits: [{ after: { path: ledger, content: lf } }] }],
+    ['no newFileContents', unstated],
+  ])) {
+    assert.equal(decide(request), 'staging_not_allowed', label);
+  }
+  // The size bound applies to the text written: LF text of exactly the bound is approved, but its CRLF form is over it.
+  const large = path.join(stage, 'large.md');
+  const lines = 'x\n'.repeat(NATIVE_LIMITS.stagedBytes / 2);
+  assert.equal(decide(stagingWrite('c1', large, lines)), created(large, lines), 'exactly the bound');
+  assert.equal(decide(addFileWrite('c1', large, lines)), 'staging_not_allowed', 'over the bound only through its CRLF line ends');
+  // The staged advice is judged as written too: CRLF advice with its fields unchanged is approved, and a changed field still refuses.
+  const adviceFile = path.join(stage, 'advice.json');
+  const staged = { ...advice, ledgerSha256: sha256(crlf), workspace: path.join(root, 'w'), reason: 'Peer advice raises the number.' };
+  /** @param {object} value */
+  const pretty = (value) => `${JSON.stringify(value, null, 2)}\n`;
+  assert.equal(decide(addFileWrite('c1', adviceFile, pretty(staged))), created(adviceFile, pretty(staged).replace(/\n/g, '\r\n')));
+  assert.equal(decide(addFileWrite('c1', adviceFile, pretty({ ...staged, observedMaximum: 100 }))), 'advice_changed');
 });
 
 test('the capture prompt names the staging folder, workspace, and fixed hash command, never the peer\'s records or a number', () => {
   // The operation ID is random and may hold any digits; the wording around it must name no B record, peer maximum, or expected
-  // number, so it is judged without that ID: for a fresh ID, and for one that itself holds both 101 and 102.
-  for (const operationId of [randomUUID(), '0a101b2c-1022-4333-8444-555555555555']) {
-    const prompt = capturePrompt(operationId, 'delta', { tempRoot: 'C:\\f\\a\\t', workspace: 'C:\\f\\a\\w' });
+  // number, so it is judged without that ID: for a fresh ID, and for one that itself holds both 101 and 102, with and without task names.
+  for (const operationId of [randomUUID(), '0a101b2c-1022-4333-8444-555555555555']) for (const named of [false, true]) {
+    const prompt = capturePrompt(operationId, 'delta', { tempRoot: 'C:\\f\\a\\t', workspace: 'C:\\f\\a\\w', specLead: 'dude-spec-lead', named });
     assert.ok(prompt.includes(operationId));
     assert.equal(prompt.split(operationId).length - 1, 1, 'the operation is named once');
-    assert.match(prompt, /directly under this session's temporary directory C:\\f\\a\\t\./);
-    assert.match(prompt, /canonical root is C:\\f\\a\\w\./);
-    assert.match(prompt, /\(Get-FileHash -Algorithm SHA256 -LiteralPath '<absolute staged ledger path>'\)\.Hash\.ToLowerInvariant\(\)/);
+    assert.ok(prompt.includes(' in one new folder directly under this session\'s temporary directory C:\\f\\a\\t, with its own file creation call; '),
+      'one new staging folder, the ledger created by its own call');
+    assert.ok(prompt.includes(' as a second new file in the same folder, with its own file creation call, '), 'the advice created by its own call');
+    assert.match(prompt, /canonical root is C:\\f\\a\\w,/);
+    assert.match(prompt, /\(Get-FileHash -Algorithm SHA256 -LiteralPath '<absolute staged ledger path>'\)\.Hash\.ToLowerInvariant\(\)$/m,
+      'the fixed hash command ends its line, so no punctuation joins it');
     assert.match(prompt, /Decide explicitly whether to use that advice/);
     const fixed = prompt.split(operationId).join('<operation>');
     for (const hidden of ['101', '102', 'peer-latest', 'observedMaximum']) assert.equal(fixed.includes(hidden), false, hidden);
@@ -3530,11 +3975,80 @@ test('the capture prompt names the staging folder, workspace, and fixed hash com
   assert.equal(exchangePrompt('receive-cancel', { slug: 'x', progressFile: 'progress-b.txt' }).includes('"op":"cancel"'), false);
 });
 
-test('the capture prompt has the session do every capture action itself, never through a subagent or another agent', () => {
-  const prompt = capturePrompt(randomUUID(), 'delta', { tempRoot: 'C:\\f\\a\\t', workspace: 'C:\\f\\a\\w' });
-  assert.equal(prompt.split('\n').find((line) => line.startsWith('Do every capture action')),
-    'Do every capture action yourself in this turn, including staging, hashing, and running the publisher; do not delegate to another agent '
-    + 'or use a subagent or task tool, because the operator rejects any action not requested by this session\'s own model.');
+test('the capture prompt runs A\'s normal first capture with its owners separated: the root model decides and runs the inventory, hash, and publisher, and the installed Spec Lead stages the ledger and then the advice in two synchronous task calls, running nothing', () => {
+  // Native run e4ae0b93-d94e-48c4-8414-29bbebfa0d2b stopped here: A's model declined because the prompt forbade the delegation its
+  // normal first capture requires, so nothing was staged or captured (capture_not_completed). Native run
+  // e9b8ef84-357e-44e6-8c38-9ee5de7970c3 stopped here too: its prompt gave no task name, which the native task tool requires, so A's first
+  // task call failed; and it listed reads of the staging folder as the only approved reads, so A told the Spec Lead to read nothing else,
+  // and the Spec Lead, unable to follow its procedure, staged nothing.
+  const operationId = randomUUID();
+  const prompt = capturePrompt(operationId, 'delta', { tempRoot: 'C:\\f\\a\\t', workspace: 'C:\\f\\a\\w', specLead: 'Spec Lead', named: true });
+  assert.deepEqual(prompt.split('\n'), [
+    'Feature 089 native qualification, capture step.',
+    `Operation ${operationId} ended with peer number advice for the slug delta.`,
+    'Decide explicitly whether to use that advice for the first capture of a new idea with slug delta and this idea text: "Record one synthetic '
+      + 'qualification idea; it has no product meaning."',
+    'If you decide not to use it, capture nothing and give the reason. If you decide to use it, capture that idea now through your normal '
+      + 'first-capture procedure, passing that operation\'s advice.capture as the number advice, in this order, and report the captured path:',
+    '1. Run the inventory command exactly: node .github/skills/dude-engine/feature.mjs ideas --root . --json',
+    '2. Delegate staging the ledger to the installed Spec Lead with one synchronous call of your task tool, with name "stage-ledger", agent_type '
+      + '"Spec Lead", and mode "sync". It creates the draft ledger as one new UTF-8 file in one new folder directly under this session\'s '
+      + 'temporary directory C:\\f\\a\\t, with its own file creation call; it writes nothing in the workspace and runs no command.',
+    '3. This workspace\'s canonical root is C:\\f\\a\\w, and the reason for using the advice is yours to write. Hash the staged ledger yourself by '
+      + 'running exactly (Get-FileHash -Algorithm SHA256 -LiteralPath \'<absolute staged ledger path>\').Hash.ToLowerInvariant()',
+    '4. Delegate staging the advice to the Spec Lead with a second synchronous call of your task tool, with name "stage-advice", agent_type '
+      + '"Spec Lead", and mode "sync", giving it advice.capture unchanged with that ledgerSha256, that workspace, and your reason. It creates the '
+      + 'advice JSON as a second new file in the same folder, with its own file creation call, and runs no command.',
+    '5. Run the publisher yourself: node .github/skills/dude-feature-definition/publish-first-capture.mjs --root . --slug delta --stage <absolute '
+      + 'staged ledger path> --number-advice <absolute staged advice path>',
+    'Only you run commands, and you stage nothing yourself; the Spec Lead only stages and starts no agent of its own, and nothing runs in the '
+      + 'background or in parallel.',
+    'Reads of this workspace, by you or by the Spec Lead (for example, its definition skill, project memory, and conventions), are approved '
+      + 'automatically.',
+    'So are the inventory command, that hash command, the publisher command, the Spec Lead\'s two new staging files, and reads of the staging '
+      + 'folder; anything else, including removing the staging folder, is refused, so leave the folder in place.',
+    'Each Spec Lead task must let the Spec Lead follow its normal procedure, including those workspace reads, before it stages; do not restrict '
+      + 'the Spec Lead\'s reads to the staging folder.',
+    'Do not begin, read, or cancel any A2A operation.',
+  ]);
+  assert.doesNotMatch(prompt, /yourself in this turn, including staging|do not delegate|subagent or task tool/, 'no rule against the delegation it requires');
+});
+
+test('the capture prompt lets the Spec Lead follow its normal procedure: reads of A\'s workspace, by A or by the Spec Lead, its definition skill, project memory, and conventions among them, are approved automatically, and so are the three commands, the two staging files, and reads of the staging folder, with no operator asked; and the Spec Lead\'s reads are never limited to that folder', () => {
+  // Native run e9b8ef84-357e-44e6-8c38-9ee5de7970c3: the prompt said the operator approved only the commands, the two staging files,
+  // and reads of the staging folder, so A told its Spec Lead that only those writes and reads of that folder were authorized. The Spec
+  // Lead could not load its definition skill or read project memory and conventions before writing, made no call, and staged nothing.
+  for (const named of [false, true]) {
+    const prompt = capturePrompt(randomUUID(), 'delta', { tempRoot: 'C:\\f\\a\\t', workspace: 'C:\\f\\a\\w', specLead: 'Spec Lead', named });
+    const lines = prompt.split('\n');
+    assert.ok(lines.includes('Reads of this workspace, by you or by the Spec Lead (for example, its definition skill, project memory, and '
+      + 'conventions), are approved automatically.'), `named ${named}: workspace reads by A and the Spec Lead need no approval`);
+    assert.ok(lines.includes('So are the inventory command, that hash command, the publisher command, the Spec Lead\'s two new staging files, and '
+      + 'reads of the staging folder; anything else, including removing the staging folder, is refused, so leave the folder in place.'),
+    `named ${named}: what else is approved automatically`);
+    assert.doesNotMatch(prompt, /operator is asked|operator approves|approve-once/i, `named ${named}: no operator is asked for anything`);
+    assert.ok(lines.includes('Each Spec Lead task must let the Spec Lead follow its normal procedure, including those workspace reads, before it '
+      + 'stages; do not restrict the Spec Lead\'s reads to the staging folder.'), `named ${named}: the Spec Lead keeps its normal procedure`);
+    assert.doesNotMatch(prompt, /operator approves only|reads of that folder|read only (?:the|that) (?:staging )?folder|Do not read elsewhere/i,
+      `named ${named}: no limit of reads to the staging folder`);
+  }
+});
+
+test('the capture prompt names each Spec Lead task only when A\'s task tool takes a name: "stage-ledger" and then "stage-advice", beside the agent and sync mode it selects; otherwise it says nothing about a name, and nothing else differs', () => {
+  // Native run e9b8ef84-357e-44e6-8c38-9ee5de7970c3: A's first task call had no name, and the native task tool refused it at once with
+  // "name": Required.
+  const operationId = randomUUID();
+  const where = { tempRoot: 'C:\\f\\a\\t', workspace: 'C:\\f\\a\\w', specLead: 'Spec Lead' };
+  const named = capturePrompt(operationId, 'delta', { ...where, named: true }).split('\n');
+  const plain = capturePrompt(operationId, 'delta', { ...where, named: false }).split('\n');
+  assert.deepEqual(capturePrompt(operationId, 'delta', where).split('\n'), plain, 'no name unless the caller says the task tool takes one');
+  assert.match(named[5], /^2\. Delegate staging the ledger .* call of your task tool, with name "stage-ledger", agent_type "Spec Lead", and mode "sync"\. /);
+  assert.match(named[7], /^4\. Delegate staging the advice .* call of your task tool, with name "stage-advice", agent_type "Spec Lead", and mode "sync", giving it /);
+  assert.match(plain[5], /^2\. Delegate staging the ledger .* call of your task tool, with agent_type "Spec Lead" and mode "sync"\. /);
+  assert.match(plain[7], /^4\. Delegate staging the advice .* call of your task tool, with agent_type "Spec Lead" and mode "sync", giving it /);
+  assert.doesNotMatch(plain.join('\n'), /\bname\b|stage-ledger|stage-advice/, 'nothing about a name');
+  assert.deepEqual(named.filter((_, index) => index !== 5 && index !== 7), plain.filter((_, index) => index !== 5 && index !== 7),
+    'only the two task steps differ');
 });
 
 test('proposals are taken only from the session\'s own complete root tool result within the fixed cap', () => {
@@ -3690,6 +4204,99 @@ test('journal, receipt, and cancellation checks accept the exact recorded shapes
   assert.deepEqual(checkCancellation({ call, cueAt, aRecords, bRecords: revived }), ['b_kinds'], 'no evidence after cancellation');
   assert.deepEqual(immediateTimings([call, { start: { ts: 0 }, complete: { ts: 1_001 } }, { start: { ts: null }, complete: { ts: 5 } }]),
     { maxMs: Number.POSITIVE_INFINITY, over: 2 });
+});
+
+test('a conversation call the product returns as a failure is read from its failure text: as native run eed11bf5-4871-4337-a1ef-1be3d5c41fe9 completed A\'s cancel, with success false, no result, and the product\'s JSON in error.message, the session log keeps that text whole within the content bound as error, and conversationCalls parses it to the cancelled result checkCancellation accepts while the call stays failed, as it parses a refusal; only such a product non-success result is read from that text, so unrelated JSON, an outcome without the product\'s failure texts, success-shaped text on a failed begin, failure text on a successful call, a failed call with no text kept, and one with no JSON stay null; a call with content is read from that content first, and a successful call is summarized and read as before', () => {
+  const admission = 'a-message-7';
+  const operationId = randomUUID();
+  const cueAt = Date.parse('2026-11-01T00:01:00.000Z');
+  // The product's own result texts (`success` and `view` in src/extensions/dude/lib/a2a-collaboration.mjs), with the fields run eed11bf5 showed.
+  const accepted = JSON.stringify({ outcome: 'accepted', operationId, role: 'ask', phase: 'requesting', conversationId: 'c-1' });
+  const cancelled = JSON.stringify({ outcome: 'cancelled', reason: 'cancelled', delivery: 'may_have_occurred', operationId, role: 'ask', conversationId: 'c-1',
+    cancelled: true, transcript: `C:\\t\\${operationId}.jsonl`, recording: 'complete', next: 'Nothing retries automatically.', notice: 'Untrusted.' });
+  // A refusal's own text (`refusal`), as a read naming an unknown operation gets.
+  const refused = JSON.stringify({ outcome: 'refused', reason: 'unknown_operation', next: 'Nothing was admitted or sent.', notice: 'Untrusted.' });
+  /** `cancelled` padded with trailing spaces, which JSON allows, to exactly `bytes`. @param {number} bytes */
+  const padded = (bytes) => `${cancelled}${' '.repeat(bytes - Buffer.byteLength(cancelled))}`;
+  const log = createSessionLog('a');
+  /**
+   * One root conversation call of the admission, started `startMs` after the cue and completed `ms` later with `data`.
+   * @param {string} toolCallId @param {Record<string, unknown>} args @param {Record<string, unknown>} data @param {number} startMs @param {number} ms
+   */
+  const call = (toolCallId, args, data, startMs, ms) => {
+    const stamp = (/** @type {number} */ offset) => new Date(cueAt + offset).toISOString();
+    log.onEvent({ type: 'assistant.message', timestamp: stamp(startMs - 1), data: { messageId: randomUUID(), originatingMessageId: admission, content: '',
+      toolRequests: [{ toolCallId, name: 'dude_a2a_conversation', arguments: args }] } });
+    log.onEvent({ type: 'tool.execution_start', timestamp: stamp(startMs), data: { toolCallId, toolName: 'dude_a2a_conversation', arguments: args } });
+    log.onEvent({ type: 'tool.execution_complete', timestamp: stamp(startMs + ms), data: { toolCallId, ...data } });
+  };
+  const read = { op: 'read', operationId };
+  const begin = { op: 'begin_ask', slug: 'delta-cancel', tentativeNumber: 101, question: 'x' };
+  /** @param {string} message */
+  const failed = (message) => ({ success: false, error: { message, code: 'failure' } });
+  call('c1', begin, { success: true, result: { content: accepted } }, -9_000, 12);
+  call('c2', { op: 'cancel', operationId }, failed(cancelled), 3_900, 9);
+  call('c3', read, { success: false }, 4_000, 3);
+  call('c4', read, { success: false, error: 'not a record' }, 4_100, 3);
+  call('c5', read, failed('Tool execution failed.'), 4_200, 3);
+  call('c6', read, failed(padded(16_384)), 4_300, 3);
+  call('c7', read, failed(padded(16_385)), 4_400, 3);
+  call('c8', read, { ...failed(cancelled), result: { content: accepted } }, 4_500, 3);
+  // Failure text that is no product non-success result stays null: unrelated JSON, an object without an outcome or an array, even one
+  // holding the cancelled result; a failure outcome without the texts every product failure body has; and success-shaped text, a failed
+  // begin's accepted result with its valid operation ID, also with every one of those texts. A successful call's failure text is never
+  // read. A refusal is such a result, as the cancellation is, and is read.
+  call('c9', read, failed(JSON.stringify({ error: { code: 'failure', message: 'Tool execution failed.' } })), 4_600, 3);
+  call('c10', read, failed(JSON.stringify([JSON.parse(cancelled)])), 4_700, 3);
+  call('c11', read, failed(JSON.stringify({ outcome: 'cancelled', operationId })), 4_800, 3);
+  call('c12', begin, failed(accepted), 4_900, 3);
+  call('c13', begin, failed(JSON.stringify({ ...JSON.parse(accepted), reason: 'none', next: 'Read it later.', notice: 'Untrusted.' })), 5_000, 3);
+  call('c14', read, { ...failed(cancelled), success: true }, 5_100, 3);
+  call('c15', read, failed(refused), 5_200, 3);
+  assert.equal(log.state.overflow, false);
+  const completed = log.state.events.filter((event) => event.type === 'tool.execution_complete');
+
+  // A successful completion is summarized exactly as before: the same fields, and no error.
+  assert.deepEqual(Object.keys(completed[0]), ['type', 'id', 'at', 'ts', 'root', 'form', 'agent', 'parentToolCallId', 'toolCallId', 'success', 'content',
+    'contentSha256', 'resultBytes', 'resultSha256', 'result']);
+  assert.deepEqual([completed[0].success, completed[0].content, completed[0].contentSha256, completed[0].resultBytes, completed[0].resultSha256, completed[0].result],
+    [true, accepted, sha256(accepted), Buffer.byteLength(accepted), sha256(accepted), accepted]);
+  // The failed cancel keeps the product's text as `error` beside the content, result, and digests of a call with no result.
+  const { success, content, contentSha256, resultBytes, resultSha256, result, error } = completed[1];
+  assert.deepEqual({ success, content, contentSha256, resultBytes, resultSha256, result, error },
+    { success: false, content: '', contentSha256: sha256(''), resultBytes: null, resultSha256: null, result: null, error: cancelled });
+  assert.deepEqual(completed.slice(2, 8).map((event) => ['error' in event, event.error]), [[false, undefined], [false, undefined],
+    [true, 'Tool execution failed.'], [true, padded(16_384)], [true, null], [true, cancelled]],
+  'none without a stated message; a text within the bound kept whole; one byte over kept as null, as an oversized content is');
+
+  const calls = conversationCalls(log.state.events, admission);
+  assert.deepEqual(calls.map((entry) => [entry.op, entry.complete.toolCallId, entry.result]), [
+    ['begin_ask', 'c1', JSON.parse(accepted)],
+    ['cancel', 'c2', JSON.parse(cancelled)],
+    ['read', 'c3', null],
+    ['read', 'c4', null],
+    ['read', 'c5', null],
+    ['read', 'c6', JSON.parse(cancelled)],
+    ['read', 'c7', null],
+    ['read', 'c8', JSON.parse(accepted)],
+    ['read', 'c9', null],
+    ['read', 'c10', null],
+    ['read', 'c11', null],
+    ['begin_ask', 'c12', null],
+    ['begin_ask', 'c13', null],
+    ['read', 'c14', null],
+    ['read', 'c15', JSON.parse(refused)],
+  ]);
+  assert.deepEqual(calls.slice(11, 14).map((entry) => entry.complete.success), [false, false, true], 'both begins failed, and c14 succeeded');
+  const cancel = /** @type {any} */ (calls[1]);
+  assert.equal(cancel.complete.success, false, 'the cancel is still a failed call');
+  const aRecords = journalOf(operationId, [['opened'], ['accepted'], ['request_prepared'], ['request_write_started'],
+    ['terminal', { outcome: 'cancelled', reason: 'cancelled', delivery: 'may_have_occurred' }], ['closed', { gaps: 0 }]]);
+  const bRecords = journalOf(randomUUID(), [['opened'], ['accepted'], ['request_admitted'], ['worker_started'], ['worker_preflight'], ['worker_ready'],
+    ['worker_request_admitted'], ['worker_evidence_pending'], ['terminal', { outcome: 'cancelled', reason: 'asker_disconnected', delivery: 'not_sent' }],
+    ['cleanup', { stop: 'clean', stopErrors: 0, forceStop: 'not_needed', storage: 'retained' }], ['closed', { gaps: 0 }]]);
+  assert.deepEqual(checkCancellation({ call: cancel, cueAt, aRecords, bRecords }), [], 'cancelled 3.9 s after the cue, in 9 ms');
+  assert.deepEqual(checkCancellation({ call: { ...cancel, result: null }, cueAt, aRecords, bRecords }), ['cancel_result'], 'its fields are still checked');
 });
 
 test('release files are exact, bounded, atomic, and never authority; reports are bounded and escaped for the terminal', () => {
@@ -5073,15 +5680,934 @@ test('instruction order is read from the runtimes\' own stamps: both admissions 
   for (const [label, change, problems] of cases) assert.deepEqual(checkInstructionOrder(timeline(change), sent, ops, waiting), problems, label);
 });
 
-test('the relay\'s lifetime: a request is withdrawn when its phase, scope, run, call, or exact content changes while it waits or after its answer, and the queue is bounded in length and time', async () => {
+/** The names a main session's agent list gives the rendered Spec Lead here, which its task tool may select it by (`TASK_SCHEMA`). */
+const SPEC_LEAD_NAMES = Object.freeze(['dude-spec-lead', 'Spec Lead']);
+
+/** Sorted-key JSON, as the run digests a request it never keeps, written out here from that contract. @param {unknown} value @returns {string} */
+function sortedJson(value) {
+  if (Array.isArray(value)) return `[${value.map(sortedJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${sortedJson(/** @type {any} */ (value)[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+/** A staging write request as the runtime raises it for one new file: its complete contents and its one creation preview. @param {string} toolCallId @param {string} target @param {string} content */
+function stagingWrite(toolCallId, target, content) {
+  return { kind: 'write', toolCallId, fileName: target, newFileContents: content, diff: '', intention: 'Create the file', canOfferSessionApproval: false,
+    fileEdits: [{ after: { path: target, content } }] };
+}
+
+/**
+ * The same staging write as `apply_patch` Add File raised it on Windows in native run be16d55a-639b-4c7f-8606-9c345faadcf5:
+ * `newFileContents` keeps the patch's LF text, while the one creation preview holds that text with CRLF line ends, as the runtime writes it.
+ * @param {string} toolCallId @param {string} target @param {string} content The LF text.
+ */
+function addFileWrite(toolCallId, target, content) {
+  return { ...stagingWrite(toolCallId, target, content), intention: 'Create file', canOfferSessionApproval: true,
+    fileEdits: [{ after: { path: target, content: content.replace(/\r?\n/g, '\r\n') } }] };
+}
+
+/**
+ * A's capture as its session events show the Spec Lead's part in it, delivered into `log` in the runtime's order: the admission's root
+ * user message; A's root task call of the Spec Lead, requested for that admission, and its start with the same arguments; the
+ * runtime's start of that call's one sub-agent; the sub-agent's own request of one tool call; and that request's permission event,
+ * which the runtime delivers after the relay's callback. Each step's data or envelope may be changed for one negative case.
+ * @param {{onEvent: (event: unknown) => void}} log @param {() => number} now @param {string} [admission]
+ */
+function specLeadEvents(log, now, admission = 'adm-c') {
+  /** @param {string} type @param {Record<string, unknown>} data @param {Record<string, unknown>} [envelope] */
+  const deliver = (type, data, envelope = {}) => log.onEvent({ type, id: randomUUID(), timestamp: new Date(now()).toISOString(), ...envelope, data });
+  return {
+    deliver,
+    admitted: () => deliver('user.message', { messageId: admission, content: 'capture' }),
+    /** @param {string} taskCallId @param {{args?: Record<string, unknown>, originating?: string, envelope?: Record<string, unknown>, start?: Record<string, unknown>}} [vary] */
+    task: (taskCallId, vary = {}) => {
+      const args = { name: 'capture-stage', description: 'Stage capture file', agent_type: 'dude-spec-lead', mode: 'sync', prompt: 'Stage one file.', ...vary.args };
+      deliver('assistant.message', { messageId: `m-${taskCallId}`, originatingMessageId: vary.originating ?? admission, content: '',
+        toolRequests: [{ toolCallId: taskCallId, name: 'task', arguments: args }] }, vary.envelope);
+      deliver('tool.execution_start', { toolCallId: taskCallId, toolName: 'task', arguments: { ...args, ...vary.start } }, vary.envelope);
+    },
+    /** @param {string} agentId @param {string} taskCallId @param {Record<string, unknown>} [data] */
+    spawned: (agentId, taskCallId, data = {}) => deliver('subagent.started', { toolCallId: taskCallId, agentName: 'dude-spec-lead',
+      agentDisplayName: 'Spec Lead', agentDescription: 'x', executionMode: 'sync', ...data }, { agentId }),
+    /**
+     * @param {unknown} agentId @param {string} toolCallId @param {string} name @param {Record<string, unknown>} args @param {string} [taskCallId]
+     * @param {Record<string, unknown>} [data]
+     */
+    requested: (agentId, toolCallId, name, args, taskCallId, data = {}) => deliver('assistant.message', { messageId: `m-${toolCallId}`,
+      originatingMessageId: `${agentId}-own`, ...(taskCallId ? { parentToolCallId: taskCallId } : {}), content: '',
+      toolRequests: [{ toolCallId, name, arguments: args }], ...data }, agentId === undefined ? {} : { agentId }),
+    /** @param {Record<string, unknown>} request @param {string | null} agentId @param {Record<string, unknown>} [data] */
+    permission: (request, agentId, data = {}) => {
+      const requestId = randomUUID();
+      deliver('permission.requested', { requestId, permissionRequest: request, ...data }, agentId === null ? {} : { agentId });
+      return requestId;
+    },
+  };
+}
+
+test('Spec Lead attribution: a request is the live Spec Lead\'s only through the root task call of the capture admission that started it, that call\'s start, the runtime\'s start of its one sub-agent with no spawning sub-agent, the sub-agent\'s own request, and one pending permission event of exactly that request; each fact removed or changed alone refuses with its own reason', () => {
+  const target = 'C:\\f\\a\\t\\stage\\ledger.md';
+  const create = stagingWrite('w1', target, '# x\n');
+  const delegate = { admission: 'adm-c', names: SPEC_LEAD_NAMES, selectors: SPEC_LEAD_NAMES };
+  /**
+   * One valid chain with any step replaced by `vary[step]`, then `vary.after`.
+   * @param {Record<string, (chain: ReturnType<typeof specLeadEvents>) => void>} [vary]
+   */
+  const attribute = (vary = {}) => {
+    const log = createSessionLog('a', () => 0);
+    const chain = specLeadEvents(log, () => 0);
+    /** @type {Record<string, (c: ReturnType<typeof specLeadEvents>) => void>} */
+    const steps = {
+      admitted: (c) => c.admitted(),
+      task: (c) => c.task('t1'),
+      spawned: (c) => c.spawned('sub-1', 't1'),
+      requested: (c) => c.requested('sub-1', 'w1', 'create', { path: target, file_text: '# x\n' }, 't1'),
+      permission: (c) => { c.permission(create, 'sub-1'); },
+    };
+    for (const [name, step] of Object.entries(steps)) (vary[name] ?? step)(chain);
+    vary.after?.(chain);
+    assert.equal(log.state.overflow, false);
+    return specLeadRequest(log.state.events, 'w1', sha256(sortedJson(create)), delegate);
+  };
+  assert.deepEqual(attribute(), { ok: true, agentId: 'sub-1', taskCallId: 't1' });
+  // A sub-agent's own originating message is its own; the permission event may state no agent at all, or its owner session.
+  assert.deepEqual(attribute({ permission: (c) => { c.permission(create, null, { ownerSessionId: 'child-session' }); } }), { ok: true, agentId: 'sub-1', taskCallId: 't1' });
+  assert.deepEqual(attribute({ requested: (c) => c.requested('sub-1', 'w1', 'create', { path: target }) }), { ok: true, agentId: 'sub-1', taskCallId: 't1' },
+    'a request that states no parent tool call is still its sub-agent\'s');
+  assert.deepEqual(attribute({ task: (c) => c.task('t1', { args: { agent_type: 'Spec Lead' } }) }), { ok: true, agentId: 'sub-1', taskCallId: 't1' },
+    'its listed display name selects it too, since no other listed agent uses it');
+  // As native run e9b8ef84-357e-44e6-8c38-9ee5de7970c3 showed the start: its agent type stated, then the sub-agent's own prompt, a user
+  // message by its agent ID that A's session sends at idle under a task-registry ID, which is no root prompt and ends nothing.
+  assert.deepEqual(attribute({ spawned: (c) => {
+    c.spawned('sub-1', 't1', { agentType: 'dude-spec-lead' });
+    c.deliver('user.message', { content: 'Stage one file.', messageId: 'sub-1-own', source: 'agent-s-a', delivery: 'idle', parentAgentTaskId: 'task-1' },
+      { agentId: 'sub-1' });
+  } }), { ok: true, agentId: 'sub-1', taskCallId: 't1' }, 'the native start and the sub-agent\'s own prompt');
+
+  /** @type {Array<[string, Record<string, (chain: ReturnType<typeof specLeadEvents>) => void>, string]>} */
+  const cases = [
+    ['no model request of the call', { requested: () => undefined }, 'unrequested'],
+    ['the root model\'s own request of the call', { requested: (c) => c.requested(undefined, 'w1', 'create', { path: target }) }, 'contradictory'],
+    ['a request whose agent ID is null', { requested: (c) => c.requested(null, 'w1', 'create', { path: target }) }, 'contradictory'],
+    ['two sub-agents requesting the same call', { after: (c) => c.requested('sub-2', 'w1', 'create', { path: target }) }, 'contradictory'],
+    ['the call requested twice in one message', { requested: (c) => c.requested('sub-1', 'w1', 'create', { path: target }, 't1',
+      { toolRequests: [{ toolCallId: 'w1', name: 'create', arguments: { path: target } }, { toolCallId: 'w1', name: 'create', arguments: { path: target } }] }) },
+    'contradictory'],
+    ['a parent tool call other than its task call', { requested: (c) => c.requested('sub-1', 'w1', 'create', { path: target }, 't9') }, 'contradictory'],
+    ['no start of that sub-agent', { spawned: () => undefined }, 'unspawned'],
+    ['that sub-agent started twice', { after: (c) => c.spawned('sub-1', 't1') }, 'unspawned'],
+    ['a second sub-agent started by the same call', { after: (c) => c.spawned('sub-2', 't1') }, 'unspawned'],
+    ['a sub-agent started by a call the root model never made', { task: () => undefined }, 'unspawned'],
+    ['a task call of an earlier admission', { task: (c) => c.task('t1', { originating: 'adm-0' }) }, 'unspawned'],
+    ['a task call another sub-agent made', { task: (c) => c.task('t1', { envelope: { agentId: 'sub-0' } }) }, 'unspawned'],
+    ['a task start with other arguments than requested', { task: (c) => c.task('t1', { start: { prompt: 'Stage a different file.' } }) }, 'unspawned'],
+    ['the start after the sub-agent\'s request', { spawned: () => undefined, after: (c) => c.spawned('sub-1', 't1') }, 'unspawned'],
+    ['no admission message', { admitted: () => undefined }, 'unspawned'],
+    ['a sub-agent spawned by another sub-agent', { spawned: (c) => c.spawned('sub-1', 't1', { parentId: 'task-registry-1' }) }, 'nested'],
+    ['a sub-agent whose spawning sub-agent is malformed', { spawned: (c) => c.spawned('sub-1', 't1', { parentId: '' }) }, 'nested'],
+    ['another agent selected', { task: (c) => c.task('t1', { args: { agent_type: 'Code Reviewer' } }) }, 'not_spec_lead'],
+    ['another agent started', { spawned: (c) => c.spawned('sub-1', 't1', { agentName: 'dude-reviewer' }) }, 'not_spec_lead'],
+    ['another agent type stated', { spawned: (c) => c.spawned('sub-1', 't1', { agentType: 'general-purpose' }) }, 'not_spec_lead'],
+    ['a malformed agent name', { spawned: (c) => c.spawned('sub-1', 't1', { agentName: '' }) }, 'not_spec_lead'],
+    ['a background task', { task: (c) => c.task('t1', { args: { mode: 'background' } }) }, 'not_sync'],
+    ['a task with no mode', { task: (c) => c.task('t1', { args: { mode: undefined } }) }, 'not_sync'],
+    ['a sub-agent running in the background', { spawned: (c) => c.spawned('sub-1', 't1', { executionMode: 'background' }) }, 'not_sync'],
+    ['the sub-agent completed', { after: (c) => c.deliver('subagent.completed', { toolCallId: 't1', agentName: 'dude-spec-lead' }, { agentId: 'sub-1' }) }, 'ended'],
+    ['the sub-agent failed', { after: (c) => c.deliver('subagent.failed', { toolCallId: 't1', agentName: 'dude-spec-lead', error: 'x' }, { agentId: 'sub-1' }) },
+      'ended'],
+    ['the task call completed', { after: (c) => c.deliver('tool.execution_complete', { toolCallId: 't1', success: true, result: { content: 'x' } }) }, 'ended'],
+    ['the sub-agent idle', { after: (c) => c.deliver('session.idle', {}, { agentId: 'sub-1' }) }, 'ended'],
+    ['the sub-agent\'s aborted idle', { after: (c) => c.deliver('session.idle', { aborted: true }, { agentId: 'sub-1' }) }, 'ended'],
+    ['the requested call completed', { after: (c) => c.deliver('tool.execution_complete', { toolCallId: 'w1', success: true, result: { content: 'x' } },
+      { agentId: 'sub-1' }) }, 'ended'],
+    ['a root idle after the admission', { after: (c) => c.deliver('session.idle', {}) }, 'ended'],
+    ['an idle whose agent ID is null', { after: (c) => c.deliver('session.idle', {}, { agentId: null }) }, 'ended'],
+    ['a later root prompt', { after: (c) => c.deliver('user.message', { messageId: 'adm-2', content: 'x' }) }, 'ended'],
+    ['no permission event', { permission: () => undefined }, 'permission_unmatched'],
+    ['a permission event of another request', { permission: (c) => { c.permission({ ...create, newFileContents: '# y\n' }, 'sub-1'); } }, 'permission_unmatched'],
+    ['two pending permission events of that request', { after: (c) => { c.permission(create, 'sub-1'); } }, 'permission_unmatched'],
+    ['its permission already completed', { permission: (c) => {
+      const requestId = c.permission(create, 'sub-1');
+      c.deliver('permission.completed', { requestId, toolCallId: 'w1', result: { kind: 'approved' } }, { agentId: 'sub-1' });
+    } }, 'permission_unmatched'],
+    ['its permission resolved by a hook', { permission: (c) => { c.permission(create, 'sub-1', { resolvedByHook: true }); } }, 'permission_unmatched'],
+    ['a permission event stating another agent', { permission: (c) => { c.permission(create, 'sub-2'); } }, 'contradictory'],
+    ['a permission event with a malformed agent ID', { permission: (c) => { c.permission(create, ''); } }, 'contradictory'],
+    ['a permission event owned by another agent', { permission: (c) => { c.permission(create, 'sub-1', { ownerAgentId: 'sub-2' }); } }, 'contradictory'],
+  ];
+  for (const [label, vary, reason] of cases) assert.deepEqual(attribute(vary), { ok: false, reason }, label);
+  assert.deepEqual(specLeadRequest([], 'w1', 'x', { ...delegate, admission: null }), { ok: false, reason: 'unrequested' }, 'no capture admission');
+});
+
+/**
+ * A's capture phase on a minimal run, through the actual relay: admission adm-c, its step allowing A's own workspace, and the Spec Lead
+ * names A's session lists. `ask` hands the relay a request's callback and then delivers that request's permission event, as the
+ * runtime does, or that event first with `eventFirst`; `requestId` is the last such event's. Its terminal scripts no answer: the main
+ * relay asks no one, so any prompt would show in `terminal.prompts`.
+ * @param {{expiresInMs?: number}} [options]
+ */
+function specLeadRelay({ expiresInMs = 3_600_000 } = {}) {
+  const root = tempDir('dude-nqs-');
+  const workspace = path.join(root, 'w');
+  const tempRoot = path.join(root, 't');
+  fs.mkdirSync(workspace, { recursive: true });
+  fs.mkdirSync(path.join(tempRoot, 'stage'), { recursive: true });
+  const clock = testClock();
+  const terminal = fakeTerminal([]);
+  const log = createSessionLog('a', clock.now);
+  const tools = { admission: 'adm-c', propose: null, conversation: null, workspace: { path: workspace, canonical: workspace } };
+  const allow = { sessionId: 's-a', phase: 'capture', admission: 'adm-c', progress: null, tools,
+    capture: { tempRoot, slug: 'delta', advice: null, delegate: { names: SPEC_LEAD_NAMES, selectors: SPEC_LEAD_NAMES } } };
+  const run = { clock: clock.now, expiresAtMs: clock.now() + expiresInMs, closing: false, report: /** @type {any} */ ({ consent: { status: 'granted' } }),
+    allow: /** @type {Record<string, any>} */ ({ a: allow }), human: humanQueue(terminal, clock.now), clients: [{ side: 'a', log }] };
+  const chain = specLeadEvents(log, clock.now);
+  const relay = permissionRelay(run, 'a', log);
+  const context = {
+    run, clock, terminal, log, allow, chain, workspace, tempRoot, requestId: '',
+    /** The Spec Lead's task for the capture admission: the root model's call and its start, then the runtime's start of its sub-agent. */
+    started: (agentId = 'sub-1', taskCallId = 't1') => {
+      chain.task(taskCallId);
+      chain.spawned(agentId, taskCallId);
+    },
+    /**
+     * @param {Record<string, unknown>} request @param {{agentId?: string | null, eventFirst?: boolean, invocation?: Record<string, unknown>}} [options]
+     */
+    ask: (request, { agentId = 'sub-1', eventFirst = false, invocation = { sessionId: 's-a' } } = {}) => {
+      if (eventFirst) context.requestId = chain.permission(request, agentId);
+      const pending = relay(request, invocation);
+      if (!eventFirst) context.requestId = chain.permission(request, agentId);
+      return pending;
+    },
+  };
+  return context;
+}
+
+test('Spec Lead relay: through the actual relay, the capture\'s proved Spec Lead has each staging file approved once without asking, as its own creation under its own key and kept as consented, though its callback comes before its own events; its reads of A\'s workspace are approved without asking under their own key, and its reads of A\'s temp folder under theirs; anything else it requests, a request no proof covers, and A\'s root model staging itself are refused without asking, each with its reason', async () => {
+  const stagedPath = (/** @type {any} */ context) => path.join(context.tempRoot, 'stage', 'ledger.md');
+  // A staging write whose sub-agent request event trails both its callback and its permission event: approved once by the relay itself.
+  const staged = specLeadRelay();
+  staged.chain.admitted();
+  staged.started();
+  const create = stagingWrite('w1', stagedPath(staged), '# x\n');
+  const asked = staged.ask(create);
+  staged.chain.requested('sub-1', 'w1', 'create', { path: stagedPath(staged), file_text: '# x\n' }, 't1');
+  assert.deepEqual(await within(asked, 5_000), { kind: 'approve-once' }, 'the relay\'s own answer, never claimed as a person\'s');
+  assert.deepEqual([staged.run.report.permissions, staged.run.report.toolApprovals, staged.terminal.prompts],
+    [[consentedEntry('a', 'write', stagedPath(staged))], { a: { 'spec_lead.capture.staging': 1 } }, []]);
+
+  // A read of A's workspace: approved by the relay itself, never shown, and counted as the Spec Lead's.
+  const reads = specLeadRelay();
+  reads.chain.admitted();
+  reads.started();
+  const skill = path.join(reads.workspace, '.github', 'skills', 'dude-feature-definition', 'SKILL.md');
+  reads.chain.requested('sub-1', 'r1', 'view', { path: skill }, 't1');
+  assert.deepEqual(await within(reads.ask({ kind: 'read', toolCallId: 'r1', path: skill, intention: 'View the file' }), 5_000), { kind: 'approve-once' });
+  assert.deepEqual([reads.run.report.toolApprovals, reads.run.report.permissions, reads.terminal.prompts], [{ a: { 'spec_lead.workspace.read': 1 } }, undefined, []]);
+
+  // A read of A's temp folder: approved by the relay itself as the Spec Lead's, as the root model's is under its own key.
+  const temp = specLeadRelay();
+  temp.chain.admitted();
+  temp.started();
+  temp.chain.requested('sub-1', 'r2', 'view', { path: stagedPath(temp) }, 't1');
+  assert.deepEqual(await within(temp.ask({ kind: 'read', toolCallId: 'r2', path: stagedPath(temp), intention: 'View the file' }), 5_000),
+    { kind: 'approve-once' });
+  assert.deepEqual([temp.run.report.permissions, temp.run.report.toolApprovals, temp.terminal.prompts],
+    [[consentedEntry('a', 'read', stagedPath(temp))], { a: { 'spec_lead.capture.read': 1 } }, []]);
+
+  // A staging write that managed policy marks as needing a person: refused, never approved by the relay.
+  const managed = specLeadRelay();
+  managed.chain.admitted();
+  managed.started();
+  managed.chain.requested('sub-1', 'w2', 'create', { path: stagedPath(managed), file_text: '# x\n' }, 't1');
+  assert.equal((await within(managed.ask({ ...stagingWrite('w2', stagedPath(managed), '# x\n'), managedApprovalRequired: true }), 5_000)).kind, 'reject');
+  assert.deepEqual([managed.run.report.permissions[0].reason, managed.run.report.toolApprovals, managed.terminal.prompts],
+    ['managed_approval_required', undefined, []]);
+
+  /**
+   * One request refused without asking: the chain `setup` delivers, then the request through the relay, whose wait for events that
+   * never come ends at its bound. Returns what the report kept.
+   * @param {(context: any) => Record<string, unknown>} setup @param {{agentId?: string | null, invocation?: Record<string, unknown>}} [options]
+   */
+  const refused = async (setup, options = {}) => {
+    const context = specLeadRelay();
+    context.chain.admitted();
+    const request = setup(context);
+    const timer = setTimeout(() => context.clock.advance(NATIVE_LIMITS.requestMs + 1), 300);
+    try {
+      assert.equal((await within(context.ask(request, options), 5_000)).kind, 'reject');
+    } finally {
+      clearTimeout(timer);
+    }
+    assert.deepEqual(context.terminal.prompts, [], 'nothing was shown');
+    assert.equal(context.run.report.toolApprovals, undefined, 'nothing was approved');
+    return context.run.report.permissions[0].reason;
+  };
+  /** The Spec Lead's own request of one call, after its task started. @param {string} id @param {string} name @param {Record<string, unknown>} args */
+  const own = (id, name, args) => (/** @type {any} */ context) => {
+    context.started();
+    context.chain.requested('sub-1', id, name, args, 't1');
+  };
+  const hash = (/** @type {string} */ file) => `(Get-FileHash -Algorithm SHA256 -LiteralPath '${file}').Hash.ToLowerInvariant()`;
+  /** @type {Array<[string, (context: any) => Record<string, unknown>, string, Record<string, unknown>?]>} */
+  const cases = [
+    ['the Spec Lead running the fixed hash command', (context) => {
+      own('s1', 'powershell', { command: hash(stagedPath(context)) })(context);
+      return { kind: 'shell', toolCallId: 's1', fullCommandText: hash(stagedPath(context)), intention: 'x', commands: [], possiblePaths: [], possibleUrls: [],
+        hasWriteFileRedirection: false, canOfferSessionApproval: false };
+    }, 'spec_lead_not_allowed'],
+    ['the Spec Lead calling a Dude tool', (context) => {
+      own('d1', 'dude_a2a_conversation', { op: 'read', operationId: randomUUID() })(context);
+      return { kind: 'custom-tool', toolCallId: 'd1', toolName: 'dude_a2a_conversation', toolDescription: 'x', args: { op: 'read', operationId: randomUUID() } };
+    }, 'spec_lead_not_allowed'],
+    ['the Spec Lead writing in the workspace', (context) => {
+      own('w2', 'create', { path: path.join(context.workspace, 'x.md') })(context);
+      return stagingWrite('w2', path.join(context.workspace, 'x.md'), '# x\n');
+    }, 'staging_not_allowed'],
+    ['the Spec Lead reading outside the workspace and temp folder', (context) => {
+      own('r3', 'view', { path: path.join(context.workspace, '..', 'other.md') })(context);
+      return { kind: 'read', toolCallId: 'r3', path: path.join(context.workspace, '..', 'other.md'), intention: 'x' };
+    }, 'outside_workspace'],
+    ['A\'s root model staging the ledger itself', (context) => {
+      context.chain.deliver('assistant.message', { messageId: 'm-root', originatingMessageId: 'adm-c', content: '',
+        toolRequests: [{ toolCallId: 'w3', name: 'create', arguments: { path: stagedPath(context) } }] });
+      return stagingWrite('w3', stagedPath(context), '# x\n');
+    }, 'staging_not_delegated', { agentId: null }],
+    ['a Spec Lead request from another session', (context) => {
+      own('w4', 'create', { path: stagedPath(context) })(context);
+      return stagingWrite('w4', stagedPath(context), '# x\n');
+    }, 'session_mismatch', { invocation: { sessionId: 's-b' } }],
+    ['a sub-agent the Spec Lead itself started', (context) => {
+      context.started();
+      context.chain.deliver('assistant.message', { messageId: 'm-t2', originatingMessageId: 'sub-1-own', content: '',
+        toolRequests: [{ toolCallId: 't2', name: 'task', arguments: { agent_type: 'dude-spec-lead', mode: 'sync', prompt: 'x', name: 'x', description: 'x' } }] },
+      { agentId: 'sub-1' });
+      context.chain.spawned('sub-2', 't2', { parentId: 'sub-1-task' });
+      context.chain.requested('sub-2', 'w5', 'create', { path: stagedPath(context) }, 't2');
+      return stagingWrite('w5', stagedPath(context), '# x\n');
+    }, 'spec_lead_nested', { agentId: 'sub-2' }],
+    ['another agent started by the root model', (context) => {
+      context.chain.task('t1', { args: { agent_type: 'explore' } });
+      context.chain.spawned('sub-1', 't1', { agentName: 'explore' });
+      context.chain.requested('sub-1', 'w6', 'create', { path: stagedPath(context) }, 't1');
+      return stagingWrite('w6', stagedPath(context), '# x\n');
+    }, 'spec_lead_not_spec_lead'],
+    ['a background Spec Lead task', (context) => {
+      context.chain.task('t1', { args: { mode: 'background' } });
+      context.chain.spawned('sub-1', 't1', { executionMode: 'background' });
+      context.chain.requested('sub-1', 'w7', 'create', { path: stagedPath(context) }, 't1');
+      return stagingWrite('w7', stagedPath(context), '# x\n');
+    }, 'spec_lead_not_sync'],
+    ['a sub-agent request of no task call at all', (context) => {
+      context.chain.requested('sub-9', 'w8', 'create', { path: stagedPath(context) });
+      return stagingWrite('w8', stagedPath(context), '# x\n');
+    }, 'spec_lead_unspawned', { agentId: 'sub-9' }],
+    ['no model request of the call ever arriving', (context) => {
+      context.started();
+      return stagingWrite('w9', stagedPath(context), '# x\n');
+    }, 'not_model_requested'],
+  ];
+  for (const [label, setup, reason, options] of cases) assert.equal(await refused(setup, options ?? {}), reason, label);
+
+  // Its permission event never arriving: the relay waits its bound for it, then refuses.
+  const unmatched = specLeadRelay();
+  unmatched.chain.admitted();
+  unmatched.started();
+  unmatched.chain.requested('sub-1', 'w10', 'create', { path: stagedPath(unmatched) }, 't1');
+  const timer = setTimeout(() => unmatched.clock.advance(NATIVE_LIMITS.requestMs + 1), 300);
+  try {
+    assert.equal((await within(permissionRelay(unmatched.run, 'a', unmatched.log)(stagingWrite('w10', stagedPath(unmatched), '# x\n'), { sessionId: 's-a' }),
+      5_000)).kind, 'reject');
+  } finally {
+    clearTimeout(timer);
+  }
+  assert.equal(unmatched.run.report.permissions[0].reason, 'spec_lead_permission_unmatched');
+});
+
+test('Spec Lead relay lifetime: its proof is computed again right before the answer, so a Spec Lead request is never approved once, before the relay answers, its task, its sub-agent, or its call ends, its permission completes elsewhere, another sub-agent claims its call, the root turn ends, a later root prompt arrives, the phase changes, the run closes, consent is not granted, the scope expires, or the log overflows; with nothing changed, it is approved once without asking', async () => {
+  /**
+   * One Spec Lead create through the actual relay, its callback first, as the runtime hands it over, then its permission event, with
+   * `change` applied in that same moment, before the relay looks at A's events again. A wait the change leaves unended is released at
+   * the relay's own short bound, which the clock passes shortly after.
+   * @param {(context: any) => void} change
+   */
+  const outcome = async (change) => {
+    const context = specLeadRelay();
+    context.chain.admitted();
+    context.started();
+    const target = path.join(context.tempRoot, 'stage', 'ledger.md');
+    context.chain.requested('sub-1', 'w1', 'create', { path: target, file_text: '# x\n' }, 't1');
+    const pending = context.ask(stagingWrite('w1', target, '# x\n'));
+    change(context);
+    const timer = setTimeout(() => context.clock.advance(NATIVE_LIMITS.requestMs + 1), 300);
+    try {
+      const answer = await within(pending, 5_000);
+      const entry = context.run.report.permissions?.[0] ?? null;
+      return { answer: answer.kind, interactive: answer.approvedInteractively === true, kept: entry && [entry.asked, entry.reason, entry.answer],
+        counted: context.run.report.toolApprovals?.a?.['spec_lead.capture.staging'] ?? 0, shown: context.terminal.prompts.length };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  /** @type {Array<[string, (context: any) => void, string]>} */
+  const changes = [
+    ['its task call completed', (context) => context.chain.deliver('tool.execution_complete', { toolCallId: 't1', success: true, result: { content: 'x' } }),
+      'spec_lead_ended'],
+    ['its sub-agent completed', (context) => context.chain.deliver('subagent.completed', { toolCallId: 't1', agentName: 'dude-spec-lead' }, { agentId: 'sub-1' }),
+      'spec_lead_ended'],
+    ['its sub-agent failed', (context) => context.chain.deliver('subagent.failed', { toolCallId: 't1', agentName: 'dude-spec-lead', error: 'x' }, { agentId: 'sub-1' }),
+      'spec_lead_ended'],
+    ['its sub-agent went idle, aborted', (context) => context.chain.deliver('session.idle', { aborted: true }, { agentId: 'sub-1' }), 'spec_lead_ended'],
+    ['its call completed', (context) => context.chain.deliver('tool.execution_complete', { toolCallId: 'w1', success: false, error: { message: 'x' } },
+      { agentId: 'sub-1' }), 'spec_lead_ended'],
+    ['its permission completed elsewhere', (context) => context.chain.deliver('permission.completed', { requestId: context.requestId, toolCallId: 'w1',
+      result: { kind: 'denied-by-rules' } }), 'spec_lead_permission_unmatched'],
+    ['another sub-agent claimed its call', (context) => context.chain.requested('sub-2', 'w1', 'create', { path: 'x' }), 'spec_lead_contradictory'],
+    // The root idle ends the step and the phase too, so the relay stops waiting at once, with nothing pending.
+    ['the root turn ended', (context) => context.chain.deliver('session.idle', {}), 'not_pending'],
+    ['a later root prompt arrived', (context) => context.chain.deliver('user.message', { messageId: 'adm-2', content: 'x' }), 'spec_lead_ended'],
+    // The proof itself still holds in these: what fails is the re-check right before the answer.
+    ['the phase changed', (context) => { context.run.allow.a = { ...context.run.allow.a }; }, 'approval_withdrawn'],
+    ['the run began closing', (context) => { context.run.closing = true; }, 'approval_withdrawn'],
+    ['consent was not granted', (context) => { context.run.report.consent = { status: 'refused' }; }, 'approval_withdrawn'],
+    ['the scope expired', (context) => context.clock.advance(context.run.expiresAtMs - context.clock.now() + 1_000), 'approval_withdrawn'],
+    ['the session log overflowed', (context) => { context.log.state.overflow = true; }, 'approval_withdrawn'],
+  ];
+  /** @type {Record<string, any>} */
+  const outcomes = { 'nothing changed': await outcome(() => undefined) };
+  /** @type {Record<string, any>} */
+  const expected = { 'nothing changed': { answer: 'approve-once', interactive: false, kept: [false, null, 'consented'], counted: 1, shown: 0 } };
+  for (const [label, change, reason] of changes) {
+    outcomes[label] = await outcome(change);
+    expected[label] = { answer: 'reject', interactive: false, kept: [false, reason, null], counted: 0, shown: 0 };
+  }
+  assert.deepEqual(outcomes, expected);
+});
+
+test('a Spec Lead\'s idle, aborted or not, never ends A\'s capture: the run waits through each staging task\'s idle, longer than its own polls, for the root model\'s own turn end, and the root model still hashes and publishes after it', async () => {
+  const { result, host } = await sliceV3({ answers: ['reread reviewed'],
+    host: { capture: { ledgerTask: { idle: { aborted: true }, pauseMs: 400 }, adviceTask: { pauseMs: 400 } } } });
+  const { report } = result;
+  assert.equal(report.reason, null, report.detail);
+  assert.deepEqual(failedChecks(report), []);
+  assert.deepEqual(host.state.captureLog, ['inventory', 'spec lead idle (aborted)', 'hash', 'spec lead idle', 'publisher'],
+    'the hash and the publisher came after a Spec Lead idle, with the capture still open');
+  for (const id of ['capture_files', 'capture_receipt', 'capture_publisher', 'capture_staging', 'a_journal_unchanged']) {
+    assert.equal(checkOf(report, id)?.status, 'passed', id);
+  }
+});
+
+test('A\'s publisher check names the condition that failed: no publisher command, a call that did not complete successfully, or printed output that, its native status line set aside, does not end with the idea path, shown by at most its last 120 characters, JSON-quoted, and by nothing when nothing else was printed; a passing call keeps its detail', () => {
+  const ideaPath = '.dude/ideas/102-delta.md';
+  const exit0 = '<shellId: 2 completed with exit code 0>';
+  const start = summarizeEvent({ type: 'tool.execution_start', data: { toolCallId: 'p1', toolName: 'powershell', arguments: { command: 'node x' } } }, 0);
+  /** The publisher call's summarized completion with `data`. @param {Record<string, unknown>} data */
+  const completed = (data) => summarizeEvent({ type: 'tool.execution_complete', data: { toolCallId: 'p1', ...data } }, 0);
+  /** A successful completion that printed `content`. @param {string} content */
+  const printed = (content) => completed({ success: true, result: { content } });
+  const passed = { passed: true, detail: 'the actual publisher ran with --number-advice' };
+  assert.deepEqual(publisherCheck(start, printed(`${ideaPath}\n${exit0}`), ideaPath), passed);
+  assert.deepEqual(publisherCheck(start, printed(`C:\\f\\a\\w\\.dude\\ideas\\102-delta.md\r\n${exit0} \r\n`), ideaPath), passed,
+    'an absolute Windows path, its status line after CRLF');
+  const unsuccessful = 'the publisher call did not complete successfully';
+  const mismatch = `the publisher's printed output, its native status line set aside, did not end with ${ideaPath}`;
+  for (const [label, publisher, output, detail] of /** @type {Array<[string, any, any, string]>} */ ([
+    ['no publisher command', undefined, undefined, 'no publisher command requested for this instruction was observed'],
+    ['no completion of it', start, undefined, unsuccessful],
+    ['a failed call that printed the idea path', start, completed({ success: false, result: { content: `${ideaPath}\n${exit0}` } }), unsuccessful],
+    ['a failed call whose error text is the idea path', start, completed({ success: false, error: { message: ideaPath, code: 'failure' } }), unsuccessful],
+    ['a status line for exit code 1', start, printed(`${ideaPath}\n<shellId: 2 completed with exit code 1>`),
+      `${mismatch}; it ended with ".dude/ideas/102-delta.md\\n<shellId: 2 completed with exit code 1>"`],
+    ['another idea path', start, printed(`.dude/ideas/101-delta.md\n${exit0}`), `${mismatch}; it ended with ".dude/ideas/101-delta.md"`],
+    ['nothing but the status line', start, printed(`\n${exit0}`), mismatch],
+    ['a long failure', start, printed(`[FAIL] ${'y'.repeat(200)}`), `${mismatch}; it ended with "...${'y'.repeat(120)}"`],
+  ])) {
+    assert.deepEqual(publisherCheck(publisher, output, ideaPath), { passed: false, detail }, label);
+  }
+});
+
+test('A\'s publisher check sets aside only the native shell tool\'s one status line for exit code 0: in whole runs, the default fixture\'s publisher result, the idea path and then <shellId: 2 completed with exit code 0> as native run 056b7f4c-eaa3-4cd5-bdfa-70d89edb1a72 completed it, passes capture_publisher with its unchanged detail, as does that line after CRLF with trailing whitespace; a status line for exit code 1, output naming another idea path, two status lines, or a failed call fails it with a detail naming the condition that failed, with the ledger and the receipt still captured', async () => {
+  const exit0 = '<shellId: 2 completed with exit code 0>';
+  /**
+   * One whole version-3 run whose publisher writes the ledger and the receipt as the default fixture does, then completes as `publisher`
+   * makes it from the captured idea's path, or as the native shell tool did when `publisher` is null (`session.command`). A run whose
+   * check fails stops at capture, so its human is asked for no re-read.
+   * @param {((ideaPath: string) => {success: boolean, content: string}) | null} publisher @param {boolean} passes
+   */
+  const published = (publisher, passes) => sliceV3({ answers: passes ? ['reread reviewed'] : [],
+    host: (time, f) => (publisher ? { capture: { publisher: publisher(`.dude/ideas/102-${f.plan.capture.slug}.md`) } } : {}) });
+  /** The detail of printed output that, its status line set aside, ended with `end`. @param {string} ideaPath @param {string} end */
+  const ended = (ideaPath, end) => `the publisher's printed output, its native status line set aside, did not end with ${ideaPath}; `
+    + `it ended with ${JSON.stringify(end)}`;
+  /** @type {Array<[string, (ideaPath: string) => {success: boolean, content: string}, (ideaPath: string) => string]>} */
+  const failing = [
+    ['a status line for exit code 1', (ideaPath) => ({ success: true, content: `${ideaPath}\n<shellId: 2 completed with exit code 1>` }),
+      (ideaPath) => ended(ideaPath, `${ideaPath}\n<shellId: 2 completed with exit code 1>`)],
+    ['output naming another idea path', (ideaPath) => ({ success: true, content: `${ideaPath.replace('/102-', '/101-')}\n${exit0}` }),
+      (ideaPath) => ended(ideaPath, ideaPath.replace('/102-', '/101-'))],
+    ['two status lines', (ideaPath) => ({ success: true, content: `${ideaPath}\n${exit0}\n${exit0}` }), (ideaPath) => ended(ideaPath, `${ideaPath}\n${exit0}`)],
+    ['a failed call', (ideaPath) => ({ success: false, content: `${ideaPath}\n${exit0}` }), () => 'the publisher call did not complete successfully'],
+  ];
+  const [native, crlf, ...failed] = await Promise.all([published(null, true),
+    published((ideaPath) => ({ success: true, content: `${ideaPath}\r\n${exit0} \r\n` }), true),
+    ...failing.map(([, publisher]) => published(publisher, false))]);
+
+  // The default fixture's inventory, hash, and publisher each completed as the native shell tool's did, its status line last.
+  const ideaPath = `.dude/ideas/102-${native.f.plan.capture.slug}.md`;
+  const ledgerSha256 = sha256(fs.readFileSync(path.join(native.layout.a.temp, 'stage', 'ledger.md')));
+  assert.deepEqual(native.host.state.shells, [
+    { side: 'a', success: true, content: '{"ideas":[]}\n<shellId: 0 completed with exit code 0>' },
+    { side: 'a', success: true, content: `${ledgerSha256}\n<shellId: 1 completed with exit code 0>` },
+    { side: 'a', success: true, content: `${ideaPath}\n${exit0}` },
+  ]);
+  for (const [label, { result }] of /** @type {Array<[string, any]>} */ ([['the native result', native], ['the status line after CRLF', crlf]])) {
+    assert.equal(result.report.reason, null, `${label}: ${result.report.detail}`);
+    assert.deepEqual(failedChecks(result.report), [], label);
+    assert.equal(checkOf(result.report, 'capture_publisher')?.status, 'passed', label);
+    assert.equal(checkOf(result.report, 'capture_publisher')?.detail, 'the actual publisher ran with --number-advice', label);
+  }
+  failing.forEach(([label, , detail], index) => {
+    const { result: { report }, f } = failed[index];
+    const expected = detail(`.dude/ideas/102-${f.plan.capture.slug}.md`);
+    assert.deepEqual([report.reason, failedChecks(report)], ['capture_mismatch', ['capture_publisher']], `${label}: ${report.detail}`);
+    assert.deepEqual([checkOf(report, 'capture_publisher')?.detail, report.detail], [expected, `capture_publisher: ${expected}`], label);
+    for (const id of ['capture_files', 'capture_receipt']) assert.equal(checkOf(report, id)?.status, 'passed', `${label}: ${id}`);
+  });
+});
+
+test('the capture\'s owners stay separated in a whole run: A\'s root model staging the ledger itself, its Spec Lead running the hash command itself, or a Spec Lead running as a background task is refused without asking, so nothing is staged or captured and the capture stops as not completed', async () => {
+  /** @type {Array<[string, any, Record<string, unknown>]>} */
+  const cases = [
+    ['the root model stages the ledger itself', { rootStages: true }, { side: 'a', kind: 'write', asked: false, reason: 'staging_not_delegated', answer: null }],
+    ['the Spec Lead runs the hash command itself', { childShell: true }, { side: 'a', kind: 'shell', asked: false, reason: 'spec_lead_not_allowed', answer: null }],
+    ['the Spec Lead runs as a background task', { ledgerTask: { mode: 'background', started: { executionMode: 'background' } } },
+      { side: 'a', kind: 'read', asked: false, reason: 'spec_lead_not_sync', answer: null }],
+  ];
+  for (const [label, capture, refusal] of cases) {
+    // Nothing is typed after the approvals: the relay approves both progress edits and the inventory itself, and refuses what follows.
+    const { result, layout } = await sliceV3({ answers: [], host: { capture } });
+    const { report } = result;
+    assert.equal(report.reason, 'capture_not_completed', `${label}: ${report.detail}`);
+    assert.deepEqual(failedChecks(report), ['capture_files'], label);
+    assert.deepEqual(report.permissions.filter((/** @type {any} */ entry) => entry.reason !== null).map(({ target, ...entry }) => entry), [refusal], label);
+    assert.deepEqual(report.permissions.filter((/** @type {any} */ entry) => entry.answer === 'consented').map((/** @type {any} */ entry) => [entry.side, entry.kind])
+      .sort(), [['a', 'shell'], ['a', 'write'], ['b', 'write']], `${label}: both progress edits and the inventory were approved`);
+    assert.equal(fs.existsSync(path.join(layout.a.temp, 'stage', 'ledger.md')), false, `${label}: nothing was staged`);
+    assert.equal(fs.existsSync(path.join(layout.a.workspace, '.dude', 'ideas', `102-${result.scope.values.slug}.md`)), false, `${label}: nothing was captured`);
+  }
+});
+
+test('a Spec Lead\'s read-back of the file it just staged leaves that file staged by it: in a whole run each Spec Lead creates its file and then views it, each call approved once by the actual relay under the consent, before it goes idle and its task completes, and after the root model\'s publisher the capture passes with those two tasks as the ones that staged the ledger and the advice', async () => {
+  // The relay approves both progress edits, the capture's five actions, and the two read-backs itself; only the reread is typed after
+  // the approvals. The publisher's outputs are the fixture's own.
+  const { result, terminal, layout } = await sliceV3({ answers: ['reread reviewed'], host: { capture: { readBack: true } } });
+  const { report } = result;
+  assert.equal(report.reason, null, report.detail);
+  assert.deepEqual(failedChecks(report), []);
+  for (const id of ['capture_files', 'capture_receipt', 'capture_publisher', 'capture_staging', 'a_journal_unchanged']) {
+    assert.equal(checkOf(report, id)?.status, 'passed', id);
+  }
+  const stage = path.join(layout.a.temp, 'stage');
+  const ledger = path.join(stage, 'ledger.md');
+  const advice = path.join(stage, 'advice.json');
+  assert.deepEqual(report.permissions.filter((/** @type {any} */ entry) => typeof entry.target === 'string' && entry.target.startsWith(stage)),
+    [consentedEntry('a', 'write', ledger), consentedEntry('a', 'read', ledger), consentedEntry('a', 'write', advice), consentedEntry('a', 'read', advice)]);
+  assert.deepEqual(['spec_lead.workspace.read', 'spec_lead.capture.staging', 'spec_lead.capture.read'].map((key) => report.toolApprovals.a[key]), [2, 2, 2],
+    'the two skill views, the two creations, and the two read-backs, each under its own key');
+  assert.deepEqual([terminal.prompts.length, permissionAsks(terminal.text)], [4, []], 'nothing but the consent, both approvals, and the reread was typed');
+  assert.deepEqual(report.capture.staging.map((/** @type {any} */ task) => /^a-task-/.test(task.toolCallId)), [true, true]);
+  assert.match(checkOf(report, 'capture_staging').detail, /^the Spec Lead staged the ledger and the advice in two synchronous tasks; 0 other task call\(s\)$/);
+});
+
+test('A\'s capture instruction names each Spec Lead task exactly when A\'s own initialized task tool takes a name, its input schema declaring that argument or requiring it; with neither it names none; and each whole run captures', async () => {
+  // The default catalog (`TASK_SCHEMA`) both declares and requires a name, as the native task tool requires one, and a task call
+  // without an argument the session's schema requires is refused (`session.task`), so every other whole run here needs both names.
+  /**
+   * One whole run whose A catalog's task schema `change` alters: its report and the capture instruction A was sent.
+   * @param {(schema: any) => void} change
+   */
+  const captured = async (change) => {
+    const { result, host } = await sliceV3({ answers: ['reread reviewed'],
+      host: { catalog: (answer, side) => {
+        const task = side === 'a' ? answer.tools?.find((/** @type {any} */ tool) => tool?.name === 'task') : null;
+        if (task) change(task.input_schema);
+      } } });
+    const sent = host.state.prompts.find((/** @type {any} */ entry) => entry.side === 'a' && entry.prompt.startsWith('Feature 089 native qualification, capture step.'));
+    return { report: result.report, prompt: sent?.prompt ?? null };
+  };
+  /** @param {any} schema */
+  const unrequired = (schema) => { schema.required = schema.required.filter((/** @type {string} */ key) => key !== 'name'); };
+  const [required, declared, neither] = await Promise.all([
+    captured((schema) => { delete schema.properties.name; }),
+    captured(unrequired),
+    captured((schema) => { delete schema.properties.name; unrequired(schema); }),
+  ]);
+  for (const [label, { report, prompt }, named] of /** @type {Array<[string, any, boolean]>} */ ([['required, not declared', required, true],
+    ['declared, not required', declared, true], ['neither declared nor required', neither, false]])) {
+    assert.equal(report.reason, null, `${label}: ${report.detail}`);
+    assert.deepEqual(failedChecks(report), [], label);
+    assert.equal(typeof prompt, 'string', `${label}: a capture instruction was sent`);
+    assert.deepEqual([prompt.includes('with name "stage-ledger", agent_type "dude-spec-lead", and mode "sync". '),
+      prompt.includes('with name "stage-advice", agent_type "dude-spec-lead", and mode "sync", '), prompt.includes('with name "')], [named, named, named], label);
+  }
+});
+
+test('A\'s capture turn has its own bound: a capture whose one turn runs longer than the 240-second bound of every other turn still completes inside its own 600-second bound, with nothing typed for it; the capture turn still ends at its own bound, and another step\'s turn still ends at 240 seconds', async () => {
+  // The capture's models spend 275 seconds before staging anything: past every other turn's bound, inside the capture's own.
+  const slowMs = 275_000;
+  assert.ok(NATIVE_LIMITS.turnMs < slowMs && slowMs < NATIVE_LIMITS.captureTurnMs, 'the premise: past the turn bound, inside the capture bound');
+  /**
+   * A main whose model, at the start of each turn on `side` whose prompt begins with `prefix`, spends `ms` on the run's clock before
+   * anything that prompt asks for. It makes no stray call: the stray-call hook is only where its turn begins.
+   * @param {string} side @param {string} prefix @param {number} ms
+   */
+  const lingering = (side, prefix, ms) => (/** @type {any} */ time) => ({
+    strayTools: (/** @type {string} */ at, /** @type {string} */ prompt) => {
+      if (at === side && prompt.startsWith(prefix)) time.advance(ms);
+      return [];
+    },
+  });
+  const [slow, overdue, proposal] = await Promise.all([
+    sliceV3({ host: lingering('a', 'Feature 089 native qualification, capture step.', slowMs), answers: ['reread reviewed'] }),
+    sliceV3({ host: lingering('a', 'Feature 089 native qualification, capture step.', NATIVE_LIMITS.captureTurnMs + 1),
+      answers: [] }),
+    sliceV3({ host: lingering('b', 'Feature 089 native qualification, proposal step.', NATIVE_LIMITS.turnMs + 1) }),
+  ]);
+
+  assert.equal(slow.result.report.reason, null, slow.result.report.detail);
+  assert.deepEqual(failedChecks(slow.result.report), []);
+  for (const id of ['capture_files', 'capture_receipt', 'capture_publisher', 'capture_staging']) {
+    assert.equal(checkOf(slow.result.report, id)?.status, 'passed', id);
+  }
+  assert.deepEqual([slow.terminal.prompts.length, slow.result.report.toolApprovals.a['capture.command']], [4, 3],
+    'the relay approved the capture\'s three commands itself; only the consent, both approvals, and the reread were typed');
+
+  assert.deepEqual([overdue.result.report.reason, overdue.result.report.detail], ['capture_not_completed', 'a\'s turn did not end']);
+  assert.deepEqual(phaseList(overdue.result.report).slice(-2), [['advice_exchange', 'passed'], ['capture', 'failed']]);
+
+  assert.deepEqual([proposal.result.report.reason, proposal.result.report.detail], ['proposal_unavailable', 'b\'s turn did not end']);
+  assert.deepEqual(phaseList(proposal.result.report).at(-1), ['approve_b', 'failed']);
+});
+
+test('staging is the Spec Lead\'s own successful creation of the exact file, never a read of it: on the actual relay, with each call approved once under the consent and every other fact valid, a task that views its file again after creating it still staged it, and a task that only views a file already in the stage, through the view tool or through str_replace_editor, whose view keeps the same bare path as its create, staged nothing', async () => {
+  const root = tempDir('dude-nsv-');
+  const by = { t1: { toolCallId: 't1', agentId: 'sub-1' }, t2: { toolCallId: 't2', agentId: 'sub-2' } };
+  /**
+   * What A's own events show for one capture admission on the actual relay, in a fresh stage: the ledger's Spec Lead task, then the
+   * advice's, each making `calls` on its own staging file in order, each call approved once by the relay itself, kept as consented, and
+   * successful, then going idle and completing, and its root task call completing successfully. A file its task does not create is put
+   * there first by no Spec Lead.
+   * @param {number} index @param {string[]} ledgerCalls @param {string[]} adviceCalls
+   */
+  const staging = async (index, ledgerCalls, adviceCalls) => {
+    const tempRoot = path.join(root, String(index), 't');
+    const workspace = path.join(root, String(index), 'w');
+    const stage = path.join(tempRoot, 'stage');
+    for (const folder of [stage, workspace]) fs.mkdirSync(folder, { recursive: true });
+    const clock = testClock();
+    const terminal = fakeTerminal([]);
+    const log = createSessionLog('a', clock.now);
+    const allow = { sessionId: 's-a', phase: 'capture', admission: 'adm-c', progress: null,
+      tools: { admission: 'adm-c', propose: null, conversation: null, workspace: { path: workspace, canonical: workspace } },
+      capture: { tempRoot, slug: 'delta', advice: null, delegate: { names: SPEC_LEAD_NAMES, selectors: SPEC_LEAD_NAMES } } };
+    const run = { clock: clock.now, expiresAtMs: clock.now() + 3_600_000, closing: false, report: /** @type {any} */ ({ consent: { status: 'granted' } }),
+      allow: /** @type {Record<string, any>} */ ({ a: allow }), human: humanQueue(terminal, clock.now), clients: [{ side: 'a', log }] };
+    const relay = permissionRelay(run, 'a', log);
+    const chain = specLeadEvents(log, clock.now);
+    chain.admitted();
+    const files = { ledger: path.join(stage, 'idea.md'), advice: path.join(stage, 'advice.json') };
+    /** @type {any[]} */
+    const approved = [];
+    for (const [{ toolCallId: taskCallId, agentId }, file, calls] of /** @type {Array<[{toolCallId: string, agentId: string}, string, string[]]>} */ ([
+      [by.t1, files.ledger, ledgerCalls], [by.t2, files.advice, adviceCalls]])) {
+      const content = `Synthetic ${path.basename(file)}.\n`;
+      if (!calls.includes('create')) fs.writeFileSync(file, content);
+      chain.task(taskCallId);
+      chain.spawned(agentId, taskCallId);
+      for (const [step, name] of calls.entries()) {
+        const toolCallId = `${agentId}-${step}`;
+        const args = name === 'create' ? { path: file, file_text: content } : name === 'view' ? { path: file } : { command: 'view', path: file };
+        chain.requested(agentId, toolCallId, name, args, taskCallId);
+        const request = name === 'create' ? stagingWrite(toolCallId, file, content) : { kind: 'read', toolCallId, path: file, intention: 'View the file' };
+        const answer = relay(request, { sessionId: 's-a' });
+        const requestId = chain.permission(request, agentId);
+        assert.deepEqual(await within(answer, 5_000), { kind: 'approve-once' }, `${name} by ${agentId}`);
+        approved.push(consentedEntry('a', name === 'create' ? 'write' : 'read', file));
+        chain.deliver('permission.completed', { requestId, toolCallId, result: { kind: 'approved' } }, { agentId });
+        chain.deliver('tool.execution_start', { toolCallId, toolName: name, arguments: args }, { agentId });
+        if (name === 'create') fs.writeFileSync(file, content, { flag: 'wx' });
+        chain.deliver('tool.execution_complete', { toolCallId, success: true, result: { content: name === 'create' ? `Created file ${file}` : content } },
+          { agentId });
+      }
+      chain.deliver('session.idle', {}, { agentId });
+      chain.deliver('subagent.completed', { toolCallId: taskCallId, agentName: 'dude-spec-lead' }, { agentId });
+      chain.deliver('tool.execution_complete', { toolCallId: taskCallId, success: true, result: { content: 'staged' } });
+    }
+    assert.deepEqual([run.report.permissions, terminal.prompts], [approved, []], 'each call was approved by the relay itself, and nothing was shown');
+    assert.equal(log.state.overflow, false);
+    return checkStaging(log.state.events, { admission: 'adm-c', names: SPEC_LEAD_NAMES, selectors: SPEC_LEAD_NAMES, ...files });
+  };
+  /** @type {Array<[string, string[], string[], any]>} */
+  const cases = [
+    ['each task creates its file', ['create'], ['create'], { problems: [], tasks: [by.t1, by.t2], others: 0 }],
+    ['each task views its file again after creating it', ['create', 'view'], ['create', 'view'], { problems: [], tasks: [by.t1, by.t2], others: 0 }],
+    ['the advice\'s task only views the advice', ['create'], ['view'], { problems: ['advice_not_staged_by_spec_lead'], tasks: [by.t1], others: 1 }],
+    ['the ledger\'s task only views the ledger', ['view'], ['create'],
+      { problems: ['ledger_not_staged_by_spec_lead', 'advice_not_staged_by_spec_lead'], tasks: [], others: 2 }],
+    ['the advice\'s task only views the advice through str_replace_editor', ['create'], ['str_replace_editor'],
+      { problems: ['advice_not_staged_by_spec_lead'], tasks: [by.t1], others: 1 }],
+  ];
+  /** @type {Record<string, any>} */
+  const outcomes = {};
+  /** @type {Record<string, any>} */
+  const expected = {};
+  for (const [index, [label, ledgerCalls, adviceCalls, staged]] of cases.entries()) {
+    outcomes[label] = await staging(index, ledgerCalls, adviceCalls);
+    expected[label] = staged;
+  }
+  assert.deepEqual(outcomes, expected);
+});
+
+test('a task call the runtime refuses at once starts no Spec Lead and stands in for none: as native run e9b8ef84-357e-44e6-8c38-9ee5de7970c3 refused A\'s first task call, which selected the Spec Lead without the name the task tool requires, a refused call before the ledger\'s task or between the two tasks, with or without a start of its own, leaves the Spec Lead of each later named call attributed and its two tasks the ones that staged the ledger and then the advice, the refused call only counted', () => {
+  const stage = 'C:\\f\\a\\t\\stage';
+  const files = { ledger: path.join(stage, 'idea.md'), advice: path.join(stage, 'advice.json') };
+  const delegate = { admission: 'adm-c', names: SPEC_LEAD_NAMES, selectors: SPEC_LEAD_NAMES };
+  /**
+   * A's capture events with one refused task call delivered at `position`: each staging task's create request is attributed while its
+   * permission is pending, then the create completes, the sub-agent completes, and its task call completes.
+   * @param {'first' | 'between'} position @param {boolean} started
+   */
+  const capture = (position, started) => {
+    const log = createSessionLog('a', () => 0);
+    const chain = specLeadEvents(log, () => 0);
+    chain.admitted();
+    const refused = () => {
+      const args = { description: 'Stage the ledger', agent_type: 'Spec Lead', mode: 'sync', prompt: 'Stage one file.' };
+      chain.deliver('assistant.message', { messageId: 'm-t0', originatingMessageId: 'adm-c', content: '',
+        toolRequests: [{ toolCallId: 't0', name: 'task', arguments: args }] });
+      if (started) chain.deliver('tool.execution_start', { toolCallId: 't0', toolName: 'task', arguments: args });
+      chain.deliver('tool.execution_complete', { toolCallId: 't0', success: false, error: { message: '"name": Required', code: 'failure' } });
+    };
+    /** @type {any[]} */
+    const attributed = [];
+    for (const [index, [taskCallId, agentId, file, name]] of /** @type {Array<[string, string, string, string]>} */ ([
+      ['t1', 'sub-1', files.ledger, 'stage-ledger'], ['t2', 'sub-2', files.advice, 'stage-advice']]).entries()) {
+      if (index === (position === 'first' ? 0 : 1)) refused();
+      chain.task(taskCallId, { args: { name } });
+      chain.spawned(agentId, taskCallId);
+      const toolCallId = `${agentId}-create`;
+      const content = `Synthetic ${path.basename(file)}.\n`;
+      chain.requested(agentId, toolCallId, 'create', { path: file, file_text: content }, taskCallId);
+      const request = stagingWrite(toolCallId, file, content);
+      const requestId = chain.permission(request, agentId);
+      attributed.push(specLeadRequest(log.state.events, toolCallId, sha256(sortedJson(request)), delegate));
+      chain.deliver('permission.completed', { requestId, toolCallId, result: { kind: 'approved' } }, { agentId });
+      chain.deliver('tool.execution_start', { toolCallId, toolName: 'create', arguments: { path: file, file_text: content } }, { agentId });
+      chain.deliver('tool.execution_complete', { toolCallId, success: true, result: { content: `Created file ${file}` } }, { agentId });
+      chain.deliver('subagent.completed', { toolCallId: taskCallId, agentName: 'dude-spec-lead' }, { agentId });
+      chain.deliver('tool.execution_complete', { toolCallId: taskCallId, success: true, result: { content: 'staged' } });
+    }
+    assert.equal(log.state.overflow, false);
+    return { attributed, staging: checkStaging(log.state.events, { ...delegate, ...files }) };
+  };
+  for (const position of /** @type {const} */ (['first', 'between'])) {
+    for (const started of [true, false]) {
+      assert.deepEqual(capture(position, started), {
+        attributed: [{ ok: true, agentId: 'sub-1', taskCallId: 't1' }, { ok: true, agentId: 'sub-2', taskCallId: 't2' }],
+        staging: { problems: [], tasks: [{ toolCallId: 't1', agentId: 'sub-1' }, { toolCallId: 't2', agentId: 'sub-2' }], others: 1 },
+      }, `a refused call ${position === 'first' ? 'before the ledger\'s task' : 'between the two tasks'}, ${started ? 'with' : 'without'} a start`);
+    }
+  }
+});
+
+/**
+ * One answered asking conversation in `root`'s own journal, written by the product's own transcript writer with the eight records an
+ * answered `dude_a2a_conversation` ask writes, as the publisher's own suite records one
+ * (src/skills/dude-feature-definition/publish-first-capture.test.mjs, `recordAnswer`): `slug` asked at tentative number 101, and the
+ * peer's reply observing 101 with one cited record. Returns the journal and the answer's advice.capture.
+ * @param {string} root @param {{slug: string, projectId: string}} asked
+ */
+function answeredConversation(root, { slug, projectId }) {
+  const operationId = randomUUID();
+  const conversationId = randomUUID();
+  const questionId = randomUUID();
+  const exchangeId = randomUUID();
+  const pin = sha256('dude-native-capture-test-peer-certificate');
+  const text = JSON.stringify({ version: 1, kind: 'number_advice', projectId, conversationId, slug, tentativeNumber: 101,
+    question: 'Which is the highest lifecycle number in your approved records?' });
+  const reference = 'b-workspace/.dude/ideas/101-beta.md';
+  const cited = Buffer.from(`Recorded capture for ${reference}.\n`);
+  const reply = {
+    outcome: 'answer',
+    exchangeId,
+    conclusion: JSON.stringify({ version: 1, kind: 'number_advice', projectId, conversationId, slug, observedMaximum: 101,
+      explanation: 'B read its highest approved record.' }),
+    limitations: 'Only B approved lifecycle records were inspected.',
+    evidence: [{ kind: 'file', reference, lines: null, text: cited.toString('utf8'), bytes: cited.length, sha256: sha256(cited), fileBytes: cited.length,
+      fileSha256: sha256(cited), readAt: '2026-11-01T07:59:00.000Z', mtime: '2026-11-01T07:00:00.000Z', claimedProvenance: 'missing' }],
+    questionId,
+  };
+  const replyRecord = { sequence: 5, sha256: sha256(JSON.stringify(reply)) };
+  const recording = createTranscriptRecorder({ root, now: () => Date.parse('2026-11-01T08:00:00Z') }).open({
+    operationId, role: 'ask', profileId: 'a', projectId, peer: { label: 'B', certSha256: pin }, configDigest: sha256('configuration'), contentBytes: 32_768,
+  });
+  for (const [kind, data] of /** @type {Array<[string, Record<string, unknown>]>} */ ([
+    ['accepted', { role: 'ask', budgetMs: 60_000, slug, tentativeNumber: 101 }],
+    ['request_prepared', { text }],
+    ['request_write_started', { body: JSON.stringify({ jsonrpc: '2.0', method: 'SendMessage', id: 1,
+      params: { message: { messageId: questionId, parts: [{ text, mediaType: 'text/plain' }] } } }) }],
+    ['reply_received', { reply }],
+    ['reply_validated', { observedMaximum: 101, reply: replyRecord }],
+    ['terminal', { outcome: 'answer', reason: null, delivery: 'reached_peer' }],
+  ])) assert.equal(recording.append({ kind, conversationId, data }), true, kind);
+  recording.close();
+  return {
+    journal: recording.path,
+    capture: { version: 1, slug, projectId, conversationId, operationId, questionId, exchangeId, peerCertSha256: pin, reply: replyRecord, observedMaximum: 101 },
+  };
+}
+
+/**
+ * The actual publisher's capture of what the actual relay let the Spec Lead stage, in a scratch copy of A's workspace as a run prepares
+ * it, with an answered eight-record journal from the product's own writer. `creation` is how the Spec Lead's tool creates one new file:
+ * the permission request it raises for that file's text, and the bytes it writes.
+ * @param {{request: (toolCallId: string, file: string, text: string) => Record<string, unknown>, written: (text: string) => string}} creation
+ * @returns {Promise<{ledger: Buffer, advice: Buffer, captured: Buffer}>} The staged ledger's and advice's bytes, and the captured ledger's.
+ */
+async function actualPublisherCapture(creation) {
+  // Scratch only: a fresh plan fixture's A workspace, prepared as a run prepares it (the rendered core and the synthetic record 100).
+  const f = planFixture();
+  const { scope } = scopeOf(f);
+  const layout = layoutOf(scope.values.fixtureParent);
+  prepareFixtures({ scope, layout, runId: randomUUID(), pins: { a: f.certs.a.pin, b: f.certs.b.pin } });
+  const { slug, projectId } = scope.values;
+  const workspace = layout.a.workspace;
+  const canonicalRoot = fs.realpathSync.native(workspace);
+  const conversation = answeredConversation(workspace, { slug, projectId });
+  const journalBefore = fs.readFileSync(conversation.journal);
+  assert.deepEqual(checkAnsweredJournal(readJournal(conversation.journal), conversation.capture.operationId), [], 'exactly the eight answered records');
+
+  // A's capture phase on the actual relay: the advice it uses is the answer's advice.capture, and its staging goes to the Spec Lead.
+  const clock = testClock();
+  const terminal = fakeTerminal([]);
+  const log = createSessionLog('a', clock.now);
+  const allow = { sessionId: 's-a', phase: 'capture', admission: 'adm-c', progress: null,
+    tools: { admission: 'adm-c', propose: null, conversation: null, workspace: { path: workspace, canonical: canonicalRoot } },
+    capture: { tempRoot: layout.a.temp, slug, advice: conversation.capture, delegate: { names: SPEC_LEAD_NAMES, selectors: SPEC_LEAD_NAMES } } };
+  const run = { clock: clock.now, expiresAtMs: clock.now() + 3_600_000, closing: false, report: /** @type {any} */ ({ consent: { status: 'granted' } }),
+    allow: /** @type {Record<string, any>} */ ({ a: allow }), human: humanQueue(terminal, clock.now), clients: [{ side: 'a', log }] };
+  const relay = permissionRelay(run, 'a', log);
+  const chain = specLeadEvents(log, clock.now);
+  chain.admitted();
+  /**
+   * One Spec Lead task creating one new staging file through the actual relay, as the runtime runs it: the root model's task call and
+   * its start, its sub-agent's start and create request, the relay's callback, then that request's permission event. Only an
+   * approve-once creates the file; the sub-agent then goes idle and completes, and so does the task call.
+   * @param {string} taskCallId @param {string} agentId @param {string} file @param {string} content
+   */
+  const stagedBy = async (taskCallId, agentId, file, content) => {
+    chain.task(taskCallId);
+    chain.spawned(agentId, taskCallId);
+    const toolCallId = `${agentId}-create`;
+    chain.requested(agentId, toolCallId, 'create', { path: file, file_text: content }, taskCallId);
+    const request = creation.request(toolCallId, file, content);
+    const answer = relay(request, { sessionId: 's-a' });
+    chain.permission(request, agentId);
+    const decision = await within(answer, 5_000);
+    if (decision.kind === 'approve-once') {
+      chain.deliver('tool.execution_start', { toolCallId, toolName: 'create', arguments: { path: file, file_text: content } }, { agentId });
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, creation.written(content), { flag: 'wx' });
+      chain.deliver('tool.execution_complete', { toolCallId, success: true, result: { content: `Created file ${file}` } }, { agentId });
+    }
+    chain.deliver('session.idle', {}, { agentId });
+    chain.deliver('subagent.completed', { toolCallId: taskCallId, agentName: 'dude-spec-lead' }, { agentId });
+    chain.deliver('tool.execution_complete', { toolCallId: taskCallId, success: true, result: { content: 'staged' } });
+    return decision;
+  };
+  const stage = path.join(layout.a.temp, 'stage');
+  const ledgerFile = path.join(stage, 'idea.md');
+  const ledgerText = ['---', `title: ${slug}`, `slug: ${slug}`, 'status: draft', 'spec_path: ', '---', '', '## Idea', '',
+    'Record one synthetic qualification idea; it has no product meaning.', '', '## Open Questions', '', '- None.', '', '## Assumptions', '', '- None.', '',
+    '## Coordinator Log', '', '- 2026-11-10 Captured.', ''].join('\n');
+  // On a refusal, the relay's report entries name its reason.
+  assert.deepEqual(await stagedBy('t1', 'sub-1', ledgerFile, ledgerText), { kind: 'approve-once' }, JSON.stringify(run.report.permissions));
+  // The root model's fixed hash command reports these bytes' digest; Node computes the same digest of them here.
+  const ledgerSha256 = sha256(fs.readFileSync(ledgerFile));
+  assert.equal(ledgerSha256, sha256(creation.written(ledgerText)), 'the digest of the ledger exactly as its tool wrote it');
+  const adviceFile = path.join(stage, 'advice.json');
+  const adviceText = `${JSON.stringify({ ...conversation.capture, ledgerSha256, workspace: canonicalRoot,
+    reason: 'Peer advice covers records this workspace lacks.' }, null, 2)}\n`;
+  assert.deepEqual(await stagedBy('t2', 'sub-2', adviceFile, adviceText), { kind: 'approve-once' }, JSON.stringify(run.report.permissions));
+  const staged = { ledger: fs.readFileSync(ledgerFile), advice: fs.readFileSync(adviceFile) };
+  assert.ok(staged.advice.equals(Buffer.from(creation.written(adviceText))), 'the advice is staged exactly as its tool wrote it');
+
+  // The root model's publisher command, approved once by the relay under the consent, then run as the actual publisher from A's workspace.
+  const command = `node .github/skills/dude-feature-definition/publish-first-capture.mjs --root . --slug ${slug} --stage ${ledgerFile} --number-advice ${adviceFile}`;
+  chain.deliver('assistant.message', { messageId: 'm-publish', originatingMessageId: 'adm-c', content: '',
+    toolRequests: [{ toolCallId: 'p1', name: 'powershell', arguments: { command, description: 'Publish the staged capture' } }] });
+  assert.deepEqual(await within(relay({ kind: 'shell', toolCallId: 'p1', fullCommandText: command, intention: 'x', commands: [], possiblePaths: [],
+    possibleUrls: [], hasWriteFileRedirection: false, canOfferSessionApproval: false }, { sessionId: 's-a' }), 5_000), { kind: 'approve-once' });
+  chain.deliver('tool.execution_start', { toolCallId: 'p1', toolName: 'powershell', arguments: { command } });
+  const published = spawnSync(process.execPath, [path.join('.github', 'skills', 'dude-feature-definition', 'publish-first-capture.mjs'), '--root', '.',
+    '--slug', slug, '--stage', ledgerFile, '--number-advice', adviceFile], { cwd: workspace, encoding: 'utf8', timeout: 120_000 });
+  chain.deliver('tool.execution_complete', { toolCallId: 'p1', success: published.status === 0, result: { content: published.stdout } });
+  const ideaPath = `.dude/ideas/102-${slug}.md`;
+  assert.deepEqual([published.status, published.stdout, published.stderr], [0, `${ideaPath}\n`, '']);
+  // The relay approved each staging file and the publisher command itself, asking no one, and kept each approval as consented.
+  assert.deepEqual([run.report.permissions, run.report.toolApprovals, terminal.prompts], [[consentedEntry('a', 'write', ledgerFile),
+    consentedEntry('a', 'write', adviceFile), consentedEntry('a', 'shell', null)], { a: { 'spec_lead.capture.staging': 2, 'capture.command': 1 } }, []]);
+
+  const ledger = fs.readFileSync(path.join(workspace, ...ideaPath.split('/')));
+  assert.ok(ledger.equals(staged.ledger) && ledger.equals(Buffer.from(creation.written(ledgerText))),
+    'the captured ledger is exactly the Spec Lead\'s staged bytes');
+  const receipt = JSON.parse(fs.readFileSync(path.join(workspace, '.dude', 'state', 'a2a', 'captures', `${conversation.capture.operationId}.json`), 'utf8'));
+  assert.deepEqual(checkReceipt(receipt, { slug, capture: conversation.capture, ideaPath, ledgerSha256: sha256(ledger) }), [],
+    'local 100, peer 101, chosen 102, raised, bound to the conversation and the ledger');
+  assert.deepEqual([receipt.ledgerSha256, receipt.advice.sha256, receipt.advice.reason, receipt.selection.influence],
+    [ledgerSha256, sha256(fs.readFileSync(adviceFile)), 'Peer advice covers records this workspace lacks.', 'raised']);
+  assert.ok(fs.readFileSync(conversation.journal).equals(journalBefore), 'A\'s answered journal is unchanged');
+  assert.ok(fs.existsSync(ledgerFile) && fs.existsSync(adviceFile), 'the stage stays for inspection');
+  // The run's own evidence that what the publisher read was staged by two Spec Lead tasks, in order, and by nothing else.
+  const owned = { admission: 'adm-c', names: SPEC_LEAD_NAMES, selectors: SPEC_LEAD_NAMES };
+  assert.deepEqual(checkStaging(log.state.events, { ...owned, ledger: ledgerFile, advice: adviceFile }),
+    { problems: [], tasks: [{ toolCallId: 't1', agentId: 'sub-1' }, { toolCallId: 't2', agentId: 'sub-2' }], others: 0 });
+  assert.deepEqual(checkStaging(log.state.events, { ...owned, ledger: adviceFile, advice: ledgerFile }).problems, ['advice_not_staged_by_spec_lead'],
+    'the ledger\'s task must come first');
+  assert.deepEqual(checkStaging(log.state.events, { ...owned, ledger: ledgerFile, advice: path.join(stage, 'other.json') }).problems,
+    ['advice_not_staged_by_spec_lead'], 'a file no Spec Lead created');
+  const torn = log.state.events.map((event) => (event.type === 'subagent.completed' && event.toolCallId === 't2' ? { ...event, cancelled: true } : event));
+  assert.deepEqual(checkStaging(torn, { ...owned, ledger: ledgerFile, advice: adviceFile }).problems, ['advice_not_staged_by_spec_lead'],
+    'a Spec Lead torn down by cancellation');
+  // The publisher ran dude-lint before keeping its files; the workspace as captured passes it too.
+  const lint = spawnSync(process.execPath, [path.join('.github', 'skills', 'dude-lint', 'lint.mjs'), '.'], { cwd: workspace, encoding: 'utf8', timeout: 120_000 });
+  assert.equal(lint.status, 0, `${lint.stdout}${lint.stderr}`);
+  return { ...staged, captured: ledger };
+}
+
+test('the actual publisher captures what the actual relay let the Spec Lead stage: in a scratch copy of A\'s workspace as a run prepares it, with an answered eight-record journal from the product\'s own writer, each Spec Lead staging file, approved once by the relay under the consent, becomes the publisher\'s --stage or --number-advice, and the actual publisher, run as A\'s root model runs it, captures 102 with influence raised, its receipt bound to the conversation and the ledger\'s hash, the journal unchanged, and the stage kept', async () => {
+  await actualPublisherCapture({ request: stagingWrite, written: (text) => text });
+});
+
+test('the actual publisher captures a stage written with CRLF line ends, as native apply_patch Add File writes one on Windows: with each staging request\'s newFileContents LF and its one preview CRLF, as native run be16d55a-639b-4c7f-8606-9c345faadcf5 showed, each staging file is approved as the creation of its CRLF bytes, the advice\'s ledgerSha256 is that of the CRLF ledger, and the actual publisher captures 102 with influence raised, dude-lint passing, and the journal unchanged', async () => {
+  const files = await actualPublisherCapture({ request: addFileWrite, written: (text) => text.replace(/\r?\n/g, '\r\n') });
+  for (const [name, bytes] of Object.entries(files)) {
+    const text = bytes.toString('utf8');
+    const lineEnds = text.split('\n').length - 1;
+    assert.ok(lineEnds > 0 && text.split('\r\n').length - 1 === lineEnds, `${name}: each of its ${lineEnds} line ends is CRLF`);
+  }
+});
+
+test('the relay\'s lifetime: an action of the open phase that the consent covers is approved once only while it still holds right before the answer, so a change of its phase, the consent, the scope, the run, its call, or its exact request withdraws it, even one that arrives together with the request\'s own event; and the shared human queue stays bounded in length and time', async (context) => {
   const root = tempDir('dude-nqx-');
   const file = path.join(root, 'w', 'progress-a.txt');
-  /** @param {any[]} answers @param {{expiresInMs?: number}} [options] */
-  const relay = (answers, { expiresInMs = 3_600_000 } = {}) => {
+  /** @param {{expiresInMs?: number}} [options] */
+  const relay = ({ expiresInMs = 3_600_000 } = {}) => {
     const clock = testClock();
-    const terminal = fakeTerminal(answers);
+    const terminal = fakeTerminal([]);
     const log = createSessionLog('a', clock.now);
-    const run = { clock: clock.now, expiresAtMs: clock.now() + expiresInMs, closing: false, report: /** @type {any} */ ({}),
+    const run = { clock: clock.now, expiresAtMs: clock.now() + expiresInMs, closing: false, report: /** @type {any} */ ({ consent: { status: 'granted' } }),
       allow: /** @type {Record<string, any>} */ ({ a: { sessionId: 's-a', phase: 'progress', admission: 'adm-1', progress: { file, initial: 'pending\n', final: 'complete\n' },
         capture: null } }),
       human: humanQueue(terminal, clock.now), clients: [{ side: 'a', log }] };
@@ -5093,67 +6619,83 @@ test('the relay\'s lifetime: a request is withdrawn when its phase, scope, run, 
       fileEdits: [{ before: { path: file, content: 'pending\n' }, after: { path: file, content: 'complete\n' } }] });
     return { run, log, clock, terminal, requested, edit, ask: permissionRelay(run, 'a', log) };
   };
+  /**
+   * What the relay answered, whether it claimed a person's approval, what the report kept and counted, and how many prompts were shown.
+   * @param {ReturnType<typeof relay>} relayed @param {any} answer
+   */
+  const outcome = (relayed, answer) => ({ answer: answer.kind, interactive: answer.approvedInteractively === true,
+    permissions: relayed.run.report.permissions ?? null, toolApprovals: relayed.run.report.toolApprovals ?? null, shown: relayed.terminal.prompts.length });
+  /** @param {string} reason @param {string} [target] */
+  const refused = (reason, target = file) => ({ answer: 'reject', interactive: false,
+    permissions: [{ side: 'a', kind: 'write', asked: false, reason, answer: null, target }], toolApprovals: null, shown: 0 });
 
-  const approved = relay(['approve-once']);
+  // The exact edit, requested for the phase's admission: approved once by the relay itself, kept as consented, and counted.
+  const approved = relay();
   approved.requested('c1');
-  assert.deepEqual(await approved.ask(approved.edit('c1'), { sessionId: 's-a' }), { kind: 'approve-once', approvedInteractively: true });
+  assert.deepEqual(outcome(approved, await approved.ask(approved.edit('c1'), { sessionId: 's-a' })), { answer: 'approve-once', interactive: false,
+    permissions: [consentedEntry('a', 'write', file)], toolApprovals: { a: { 'progress.edit': 1 } }, shown: 0 });
 
-  const earlier = relay(['approve-once']);
+  // A call requested for an earlier instruction is refused once the short wait for its own request ends, without asking.
+  const earlier = relay();
   earlier.requested('c1', 'adm-0');
   setTimeout(() => earlier.clock.advance(NATIVE_LIMITS.requestMs + 1), 20);
-  assert.equal((await earlier.ask(earlier.edit('c1'), { sessionId: 's-a' })).kind, 'reject');
-  assert.deepEqual([earlier.run.report.permissions[0].reason, earlier.terminal.prompts.length], ['not_model_requested', 0],
-    'a call requested for an earlier instruction is refused without asking');
+  assert.deepEqual(outcome(earlier, await earlier.ask(earlier.edit('c1'), { sessionId: 's-a' })), refused('not_model_requested'));
 
-  // A queued request whose call completed while it waited is never shown.
-  const stale = relay([{ type: 'approve-once', before: () => stale.log.onEvent({ type: 'tool.execution_complete', data: { toolCallId: 'c2', success: true,
-    result: { content: 'x' } } }) }]);
-  stale.requested('c1');
-  stale.requested('c2');
-  const [first, second] = await Promise.all([stale.ask(stale.edit('c1'), { sessionId: 's-a' }), stale.ask(stale.edit('c2'), { sessionId: 's-a' })]);
-  assert.deepEqual([first.kind, second.kind], ['approve-once', 'reject']);
-  assert.deepEqual([stale.run.report.permissions[1].answer, stale.terminal.prompts.length], ['request_withdrawn', 1]);
+  // Checked again right before the answer: each change arrives while the relay waits for the edit's own request event, together with that
+  // event, so the edit itself still matches and only that check can withdraw it.
+  for (const [label, change] of /** @type {Array<[string, (relayed: ReturnType<typeof relay>) => void]>} */ ([
+    ['its call completed', (relayed) => relayed.log.onEvent({ type: 'tool.execution_complete', data: { toolCallId: 'c1', success: true, result: { content: 'x' } } })],
+    ['the phase changed: a new allow object is a new phase', (relayed) => { relayed.run.allow.a = { ...relayed.run.allow.a }; }],
+    ['the run began closing', (relayed) => { relayed.run.closing = true; }],
+    ['consent was not granted', (relayed) => { relayed.run.report.consent = { status: 'refused' }; }],
+    ['the scope expired', (relayed) => relayed.clock.advance(relayed.run.expiresAtMs - relayed.clock.now() + 1_000)],
+    ['the session log overflowed', (relayed) => { relayed.log.state.overflow = true; }],
+  ])) {
+    const changed = relay();
+    const pending = changed.ask(changed.edit('c1'), { sessionId: 's-a' });
+    changed.requested('c1');
+    change(changed);
+    assert.deepEqual(outcome(changed, await within(pending, 5_000)), refused('approval_withdrawn'), label);
+  }
 
-  // Answered after the consented scope expired: withdrawn, though typed within the request's own bound. The scope keeps 30 seconds of
-  // real time before the prompt is shown and ends while the human types.
-  const late = relay([{ type: 'approve-once', before: () => late.clock.advance(late.run.expiresAtMs - late.clock.now() + 1_000) }], { expiresInMs: 30_000 });
-  late.requested('c1');
-  assert.equal((await late.ask(late.edit('c1'), { sessionId: 's-a' })).kind, 'reject');
-  assert.equal(late.run.report.permissions[0].answer, 'approval_withdrawn');
-
-  // The phase changed while the human typed: a new allow object is a new phase.
-  const moved = relay([{ type: 'approve-once', before: () => { moved.run.allow.a = { ...moved.run.allow.a }; } }]);
-  moved.requested('c1');
-  assert.equal((await moved.ask(moved.edit('c1'), { sessionId: 's-a' })).kind, 'reject');
-  assert.equal(moved.run.report.permissions[0].answer, 'approval_withdrawn');
-
-  // The run began closing while the human typed.
-  const closing = relay([{ type: 'approve-once', before: () => { closing.run.closing = true; } }]);
-  closing.requested('c1');
-  assert.equal((await closing.ask(closing.edit('c1'), { sessionId: 's-a' })).kind, 'reject');
-  assert.equal(closing.run.report.permissions[0].answer, 'approval_withdrawn');
-
-  // The exact request no longer matches: a staging target appeared before the answer.
+  // The exact request no longer matches right before the answer: another process creates the staging target between the relay's match
+  // and its answer. Staging is the Spec Lead's, so the request is a proved Spec Lead's create, delivered as the runtime delivers it: its
+  // callback first, then its permission event. The relay matched it with the target absent and found the target when it checked again.
   const tempRoot = path.join(root, 't');
   fs.mkdirSync(path.join(tempRoot, 'stage'), { recursive: true });
   const target = path.join(tempRoot, 'stage', 'ledger.md');
-  const changed = relay([{ type: 'approve-once', before: () => fs.writeFileSync(target, 'x') }]);
-  changed.run.allow.a = { sessionId: 's-a', phase: 'capture', admission: 'adm-1', progress: null, capture: { tempRoot, slug: 'delta', advice: null } };
-  changed.requested('c1');
-  assert.equal((await changed.ask({ kind: 'write', toolCallId: 'c1', fileName: target, newFileContents: '# x\n', diff: '', intention: 'x',
-    canOfferSessionApproval: false }, { sessionId: 's-a' })).kind, 'reject');
-  assert.equal(changed.run.report.permissions[0].answer, 'approval_withdrawn');
+  const raced = relay();
+  raced.run.allow.a = { sessionId: 's-a', phase: 'capture', admission: 'adm-1', progress: null,
+    capture: { tempRoot, slug: 'delta', advice: null, delegate: { names: SPEC_LEAD_NAMES, selectors: SPEC_LEAD_NAMES } } };
+  const chain = specLeadEvents(raced.log, raced.clock.now, 'adm-1');
+  const create = stagingWrite('c1', target, '# x\n');
+  chain.admitted();
+  chain.task('t1');
+  chain.spawned('sub-1', 't1');
+  chain.requested('sub-1', 'c1', 'create', { path: target, file_text: '# x\n' }, 't1');
+  const existsSync = fs.existsSync;
+  let looks = 0;
+  const appearing = context.mock.method(fs, 'existsSync', (/** @type {fs.PathLike} */ candidate) => (path.resolve(String(candidate)) === target
+    ? looks++ > 0 : existsSync(candidate)));
+  try {
+    const asked = raced.ask(create, { sessionId: 's-a' });
+    chain.permission(create, 'sub-1');
+    assert.deepEqual(outcome(raced, await within(asked, 5_000)), refused('approval_withdrawn', target));
+  } finally {
+    appearing.mock.restore();
+  }
+  assert.ok(looks >= 2, 'the relay looked for the target when it matched the request and again right before its answer');
 
-  // A slow answer runs past the bound that covers queue time and typing: the answer and everything queued behind it time out.
-  const slow = relay([{ type: 'approve-once', before: () => slow.clock.advance(NATIVE_LIMITS.permissionMs + 1) }]);
-  slow.requested('c1');
-  slow.requested('c2');
-  const slowAnswers = await Promise.all([slow.ask(slow.edit('c1'), { sessionId: 's-a' }), slow.ask(slow.edit('c2'), { sessionId: 's-a' })]);
-  assert.deepEqual(slowAnswers.map((answer) => answer.kind), ['reject', 'reject']);
-  assert.deepEqual(slow.run.report.permissions.map((/** @type {any} */ entry) => entry.answer), ['input_timeout', 'input_timeout']);
-  assert.equal(slow.terminal.prompts.length, 1, 'the queued request was never shown');
-
-  // The queue itself is bounded.
+  // The shared human queue, which the consent, both activation approvals, the after-view control's read, and the reread still use: one
+  // bound covers a prompt's wait in line and its typing, so a slow answer and everything queued behind it time out, and the queue is
+  // bounded in length.
+  const slowClock = testClock();
+  const slowTerminal = fakeTerminal([{ type: 'held', before: () => slowClock.advance(NATIVE_LIMITS.permissionMs + 1) }]);
+  const slowQueue = humanQueue(slowTerminal, slowClock.now);
+  const slowBy = slowClock.now() + NATIVE_LIMITS.permissionMs;
+  assert.deepEqual(await Promise.all([slowQueue.ask('> ', { deadlineAt: slowBy }), slowQueue.ask('> ', { deadlineAt: slowBy })]),
+    [{ ok: false, reason: 'input_timeout' }, { ok: false, reason: 'input_timeout' }]);
+  assert.equal(slowTerminal.prompts.length, 1, 'the queued prompt was never shown');
   const clock = testClock();
   const queue = humanQueue(fakeTerminal([]), clock.now);
   const waiting = Array.from({ length: NATIVE_LIMITS.humanQueue + 1 }, () => queue.ask('x: ', { deadlineAt: clock.now() + 50 }));
@@ -5161,31 +6703,31 @@ test('the relay\'s lifetime: a request is withdrawn when its phase, scope, run, 
   assert.ok((await Promise.all(waiting.slice(0, NATIVE_LIMITS.humanQueue))).every((answer) => !answer.ok));
 });
 
-test('the relay\'s lifetime: the root idle of a phase\'s admission, aborted or not, withdraws its typed request as soon as it is delivered, before the run closes the phase: in the capture and the progress phase the request is then refused before it is asked, its wait for a request event that never arrives ends, it is never shown from the queue, and an approve-once typed after that idle approves nothing; with no idle yet, or only an earlier turn\'s, the same request is approved once', async () => {
+test('the relay\'s lifetime: the root idle of a phase\'s admission, aborted or not, withdraws its consented approval as soon as it is delivered, before the run closes the phase: in the capture and the progress phase a request whose callback comes after that idle, or waits for a request event that arrives with it, is refused as approval_withdrawn, and one whose request event never arrives is not pending; with no idle yet, or only an earlier turn\'s, the same request is approved once without asking', async () => {
   const root = tempDir('dude-nqi-');
   const tempRoot = path.join(root, 't');
   const file = path.join(root, 'w', 'progress-a.txt');
   const command = `node .github/skills/dude-feature-definition/publish-first-capture.mjs --root . --slug delta --stage ${path.join(tempRoot, 'stage', 'ledger.md')} `
     + `--number-advice ${path.join(tempRoot, 'stage', 'advice.json')}`;
-  // One valid request in each of A's typed phases, both admitted as adm-1: the capture step's publisher command, and the progress file's
-  // exact edit. The phase stays installed throughout, because nothing here closes it as the run does once its turn ended: only that end,
-  // as the session's own events show it, can withdraw the request.
+  // One valid request in each of A's phases, both admitted as adm-1: the capture step's publisher command, and the progress file's exact
+  // edit. The phase stays installed throughout, because nothing here closes it as the run does once its turn ended: only that end, as the
+  // session's own events show it, can withdraw the approval.
   const phases = {
     capture: { allow: { phase: 'capture', progress: null, capture: { tempRoot, slug: 'delta', advice: null } }, tool: ['powershell', { command }],
-      request: { kind: 'shell', toolCallId: 'c1', fullCommandText: command, intention: 'x', commands: [], possiblePaths: [], possibleUrls: [],
-        hasWriteFileRedirection: false, canOfferSessionApproval: false } },
+      key: 'capture.command', request: { kind: 'shell', toolCallId: 'c1', fullCommandText: command, intention: 'x', commands: [], possiblePaths: [],
+        possibleUrls: [], hasWriteFileRedirection: false, canOfferSessionApproval: false } },
     progress: { allow: { phase: 'progress', progress: { file, initial: 'pending\n', final: 'complete\n' }, capture: null }, tool: ['edit', { path: file }],
-      request: { kind: 'write', toolCallId: 'c1', fileName: file, diff: '', intention: 'x', canOfferSessionApproval: false,
+      key: 'progress.edit', request: { kind: 'write', toolCallId: 'c1', fileName: file, diff: '', intention: 'x', canOfferSessionApproval: false,
         fileEdits: [{ before: { path: file, content: 'pending\n' }, after: { path: file, content: 'complete\n' } }] } },
   };
   /**
-   * @param {keyof typeof phases} phase @param {any[]} answers One answer per prompt, as `fakeTerminal` types them.
+   * @param {keyof typeof phases} phase
    * @param {{frozen?: boolean}} [options] A frozen clock never reaches the request wait's own bound, so only an event can end that wait.
    */
-  const relay = (phase, answers, { frozen = false } = {}) => {
+  const relay = (phase, { frozen = false } = {}) => {
     const clock = testClock();
     if (frozen) clock.freeze();
-    const terminal = fakeTerminal(answers);
+    const terminal = fakeTerminal([]);
     const log = createSessionLog('a', clock.now);
     const allow = { sessionId: 's-a', admission: 'adm-1', tools: null, ...phases[phase].allow };
     const run = { clock: clock.now, expiresAtMs: clock.now() + 3_600_000, closing: false, report: /** @type {any} */ ({ consent: { status: 'granted' } }),
@@ -5204,23 +6746,24 @@ test('the relay\'s lifetime: the root idle of a phase\'s admission, aborted or n
     };
   };
   /**
-   * The relay's answer, what the report kept then, how often the request was shown, and whether the phase was still installed.
+   * The relay's answer, whether it claimed a person's approval, what the report kept and counted then, how many prompts anyone was
+   * shown, and whether the phase was still installed.
    * @param {ReturnType<typeof relay>} context @param {any} answer
    */
   const outcome = (context, answer) => ({ answer: answer.kind, interactive: answer.approvedInteractively === true,
-    permissions: structuredClone(context.run.report.permissions ?? null), shown: context.terminal.text.split('[A permission]').length - 1,
-    installed: context.run.allow.a === context.allow });
+    permissions: structuredClone(context.run.report.permissions ?? null), toolApprovals: structuredClone(context.run.report.toolApprovals ?? null),
+    shown: context.terminal.prompts.length, installed: context.run.allow.a === context.allow });
   /** @type {Record<string, any>} */
   const outcomes = {};
 
   for (const phase of /** @type {const} */ (['capture', 'progress'])) {
-    // Every other input is valid: with no idle yet the request is asked and the typed approve-once approves it once, and so it does after
-    // an earlier turn's idle, which comes before the admission's own user message and ends nothing.
-    const open = relay(phase, ['approve-once']);
+    // Every other input is valid: with no idle yet the relay approves the request once itself, and so it does after an earlier turn's
+    // idle, which comes before the admission's own user message and ends nothing.
+    const open = relay(phase);
     open.admitted();
     open.requested();
     outcomes[`${phase}: no idle yet`] = outcome(open, await within(open.ask(), 5_000));
-    const earlier = relay(phase, ['approve-once']);
+    const earlier = relay(phase);
     earlier.idle({});
     earlier.admitted();
     earlier.requested();
@@ -5228,71 +6771,56 @@ test('the relay\'s lifetime: the root idle of a phase\'s admission, aborted or n
 
     for (const [label, data] of /** @type {Array<[string, Record<string, unknown>]>} */ ([['its turn ended', {}], ['its turn was aborted', { aborted: true }]])) {
       // The callback comes after the idle, its request already delivered.
-      const after = relay(phase, ['approve-once']);
+      const after = relay(phase);
       after.admitted();
       after.requested();
       after.idle(data);
       outcomes[`${phase}: ${label}, then the callback`] = outcome(after, await within(after.ask(), 5_000));
 
+      // The callback came first and waits for its trailing request event, which arrives together with the idle before the relay looks again.
+      const trailing = relay(phase, { frozen: true });
+      trailing.admitted();
+      const pending = trailing.ask();
+      trailing.requested();
+      trailing.idle(data);
+      outcomes[`${phase}: ${label} while the callback waited, with its request`] = outcome(trailing, await within(pending, 5_000));
+
       // The callback waits for a request event that never arrives: the idle ends that wait, which the frozen clock never would.
-      const unrequested = relay(phase, [], { frozen: true });
+      const unrequested = relay(phase, { frozen: true });
       unrequested.admitted();
       const waiting = unrequested.ask();
       unrequested.idle(data);
       outcomes[`${phase}: ${label} while the callback waited, with no request`] = outcome(unrequested, await within(waiting, 3_000));
       // A wait the idle did not end is released at its own bound, so nothing outlives this test.
       unrequested.clock.advance(NATIVE_LIMITS.requestMs + 1);
-
-      // The request waits in line behind another prompt, and the idle is delivered before its turn comes.
-      /** @type {any} */
-      let queued = null;
-      queued = relay(phase, [{ type: 'held', before: () => queued.idle(data) }, 'approve-once']);
-      queued.admitted();
-      queued.requested();
-      const holding = queued.run.human.ask('Hold: ', { deadlineAt: queued.clock.now() + 5_000 });
-      outcomes[`${phase}: ${label} while it waited in line`] = outcome(queued, await within(queued.ask(), 5_000));
-      assert.deepEqual(await holding, { ok: true, line: 'held' }, `${phase}: ${label} while it waited in line`);
-
-      // The request is shown, and the idle is delivered while the human types approve-once.
-      /** @type {any} */
-      let typed = null;
-      typed = relay(phase, [{ type: 'approve-once', before: () => typed.idle(data) }]);
-      typed.admitted();
-      typed.requested();
-      outcomes[`${phase}: ${label} while the human typed approve-once`] = outcome(typed, await within(typed.ask(), 5_000));
     }
   }
-  /** @param {string} kind @param {string | null} target */
-  const approved = (kind, target) => ({ answer: 'approve-once', interactive: true,
-    permissions: [{ side: 'a', kind, asked: true, reason: null, answer: 'approve-once', target }], shown: 1, installed: true });
-  /** @param {string} kind @param {string | null} target @param {string} reason Refused before it was asked. */
-  const unasked = (kind, target, reason) => ({ answer: 'reject', interactive: false, permissions: [{ side: 'a', kind, asked: false, reason, answer: null, target }],
-    shown: 0, installed: true });
-  /** @param {string} kind @param {string | null} target @param {string} reason Withdrawn once asked. @param {number} shown */
-  const withdrawn = (kind, target, reason, shown) => ({ answer: 'reject', interactive: false,
-    permissions: [{ side: 'a', kind, asked: true, reason, answer: reason, target }], shown, installed: true });
+  /** @param {string} kind @param {string | null} target @param {string} key */
+  const approved = (kind, target, key) => ({ answer: 'approve-once', interactive: false, permissions: [consentedEntry('a', kind, target)],
+    toolApprovals: { a: { [key]: 1 } }, shown: 0, installed: true });
+  /** @param {string} kind @param {string | null} target @param {string} reason */
+  const refused = (kind, target, reason) => ({ answer: 'reject', interactive: false, permissions: [{ side: 'a', kind, asked: false, reason, answer: null, target }],
+    toolApprovals: null, shown: 0, installed: true });
   /**
-   * What each case shows in one phase, whose request is of `kind` and names `target`. Once its turn ended no phase or step is open, so a
-   * request whose event never came is refused as not pending, not as one its model did not request.
-   * @param {string} phase @param {string} kind @param {string | null} target
+   * What each case shows in one phase, whose request is of `kind`, names `target`, and is counted under `key`. Once its turn ended no
+   * phase or step is open, so a request whose event never came is refused as not pending, not as one its model did not request.
+   * @param {string} phase @param {string} kind @param {string | null} target @param {string} key
    */
-  const expected = (phase, kind, target) => ({
-    [`${phase}: no idle yet`]: approved(kind, target),
-    [`${phase}: only an earlier turn's idle`]: approved(kind, target),
-    [`${phase}: its turn ended, then the callback`]: unasked(kind, target, 'not_pending'),
-    [`${phase}: its turn ended while the callback waited, with no request`]: unasked(kind, target, 'not_pending'),
-    [`${phase}: its turn ended while it waited in line`]: withdrawn(kind, target, 'request_withdrawn', 0),
-    [`${phase}: its turn ended while the human typed approve-once`]: withdrawn(kind, target, 'approval_withdrawn', 1),
-    [`${phase}: its turn was aborted, then the callback`]: unasked(kind, target, 'not_pending'),
-    [`${phase}: its turn was aborted while the callback waited, with no request`]: unasked(kind, target, 'not_pending'),
-    [`${phase}: its turn was aborted while it waited in line`]: withdrawn(kind, target, 'request_withdrawn', 0),
-    [`${phase}: its turn was aborted while the human typed approve-once`]: withdrawn(kind, target, 'approval_withdrawn', 1),
+  const expected = (phase, kind, target, key) => ({
+    [`${phase}: no idle yet`]: approved(kind, target, key),
+    [`${phase}: only an earlier turn's idle`]: approved(kind, target, key),
+    [`${phase}: its turn ended, then the callback`]: refused(kind, target, 'approval_withdrawn'),
+    [`${phase}: its turn ended while the callback waited, with its request`]: refused(kind, target, 'approval_withdrawn'),
+    [`${phase}: its turn ended while the callback waited, with no request`]: refused(kind, target, 'not_pending'),
+    [`${phase}: its turn was aborted, then the callback`]: refused(kind, target, 'approval_withdrawn'),
+    [`${phase}: its turn was aborted while the callback waited, with its request`]: refused(kind, target, 'approval_withdrawn'),
+    [`${phase}: its turn was aborted while the callback waited, with no request`]: refused(kind, target, 'not_pending'),
   });
   // The capture request's shell command parses to no command names here, so it names no target; the edit names its file.
-  assert.deepEqual(outcomes, { ...expected('capture', 'shell', null), ...expected('progress', 'write', file) });
+  assert.deepEqual(outcomes, { ...expected('capture', 'shell', null, phases.capture.key), ...expected('progress', 'write', file, phases.progress.key) });
 });
 
-test('each permission prompt keeps its one-line summary, then an action block naming approve-once, reject as the alternative, and the time actually left, counting any wait in line', async () => {
+test('the after-view control\'s permission prompt, the only one a run shows, keeps its one-line summary, then an action block naming approve-once, reject as the alternative, and the time actually left, counting any wait in line; two main requests at once are each approved by the relay with no prompt', async () => {
   // The control relay on a frozen clock: its read is shown with its whole 60 seconds, and a pasted approve-once approves it once.
   const files = controlFiles();
   const control = controlRelay([{ paste: 'approve-once\r' }], { frozen: true });
@@ -5302,15 +6830,26 @@ test('each permission prompt keeps its one-line summary, then an action block na
   assert.equal(control.terminal.text, `\n[CONTROL permission] read ${files.target}\n${permissionBlock('CONTROL', '60 seconds')}approve-once\n`);
   assert.deepEqual(control.terminal.prompts, ['> ']);
 
-  // Two main requests at once on a frozen clock: the second waits in line while the human takes 15 seconds over the first, so its own
-  // 60-second bound, which counts that wait, has 45 seconds left when it is shown.
+  // Its read waits in line while the human takes 15 seconds over an earlier prompt on the same frozen clock, so its own 60-second bound,
+  // which counts that wait, has 45 seconds left when it is shown.
+  const queued = controlRelay([{ type: 'held', before: () => queued.clock.advance(15_000) }, { paste: ' approve-once\r\n' }], { frozen: true });
+  const holding = queued.run.human.ask('Hold: ', { deadlineAt: queued.clock.now() + 120_000 });
+  queued.requested('v1');
+  assert.deepEqual(await queued.ask({ kind: 'read', toolCallId: 'v1', path: files.target, intention: 'x' }, { sessionId: 's-k' }),
+    { kind: 'approve-once', approvedInteractively: true });
+  assert.deepEqual(await holding, { ok: true, line: 'held' });
+  assert.ok(queued.terminal.text.endsWith(`\n[CONTROL permission] read ${files.target}\n${permissionBlock('CONTROL', '45 seconds')} approve-once\n`),
+    queued.terminal.text);
+  assert.deepEqual(queued.terminal.prompts, ['Hold: ', '> ']);
+
+  // Two main requests at once: the relay approves each exact edit once itself, under the consent, and shows nothing.
   const root = tempDir('dude-nqb-');
   const file = path.join(root, 'w', 'progress-a.txt');
   const clock = testClock();
   clock.freeze();
-  const terminal = fakeTerminal([{ type: 'approve-once', before: () => clock.advance(15_000) }, { paste: ' approve-once\r\n' }]);
+  const terminal = fakeTerminal([]);
   const log = createSessionLog('a', clock.now);
-  const run = { clock: clock.now, expiresAtMs: clock.now() + 3_600_000, closing: false, report: /** @type {any} */ ({}),
+  const run = { clock: clock.now, expiresAtMs: clock.now() + 3_600_000, closing: false, report: /** @type {any} */ ({ consent: { status: 'granted' } }),
     allow: /** @type {Record<string, any>} */ ({ a: { sessionId: 's-a', phase: 'progress', admission: 'adm-1', progress: { file, initial: 'pending\n',
       final: 'complete\n' }, capture: null } }),
     human: humanQueue(terminal, clock.now), clients: [{ side: 'a', log }] };
@@ -5323,10 +6862,8 @@ test('each permission prompt keeps its one-line summary, then an action block na
   const edit = (id) => ({ kind: 'write', toolCallId: id, fileName: file, diff: '', intention: 'x', canOfferSessionApproval: false,
     fileEdits: [{ before: { path: file, content: 'pending\n' }, after: { path: file, content: 'complete\n' } }] });
   const answers = await Promise.all(['c1', 'c2'].map((id) => relay(edit(id), { sessionId: 's-a' })));
-  assert.deepEqual(answers.map((answer) => answer.kind), ['approve-once', 'approve-once'], 'the typed and the pasted approve-once each approve once');
-  const summary = `[A permission] edit ${file}: ${JSON.stringify('pending\n')} -> ${JSON.stringify('complete\n')}`;
-  assert.equal(terminal.text, `\n${summary}\n${permissionBlock('A', '60 seconds')}approve-once\n\n${summary}\n${permissionBlock('A', '45 seconds')} approve-once\n`);
-  assert.deepEqual(terminal.prompts, ['> ', '> ']);
+  assert.deepEqual(answers, [{ kind: 'approve-once' }, { kind: 'approve-once' }], 'each approved once by the relay, neither as a person\'s');
+  assert.deepEqual([terminal.text, terminal.prompts, run.report.toolApprovals], ['', [], { a: { 'progress.edit': 2 } }]);
 });
 
 test('only the final bounded report decides the exit: a success-shaped native report of exactly 64 KiB exits 0, and one byte more exits 4 as an overflow', () => {
@@ -5806,7 +7343,7 @@ test('account answers, worker cleanup records, the normal runtime environment, a
 });
 
 test('a complete controlled version-3 slice runs normal collaboration end to end: normal-mode clients on the bound basis, both accounts checked before every prompt, the normal worker\'s readiness, held call, both mains\' progress, the answer, capture, cancellation, and honest bounded stops, with strict isolation deferred, and still never qualifies', async () => {
-  const { result, host, layout, f } = await sliceV3({ answers: ['approve-once', 'approve-once', 'approve-once', 'reread reviewed'] });
+  const { result, host, layout, f } = await sliceV3({ answers: ['reread reviewed'] });
   const { report } = result;
   assert.equal(report.reason, null, report.detail);
   assert.deepEqual(failedChecks(report), []);
@@ -5823,8 +7360,9 @@ test('a complete controlled version-3 slice runs normal collaboration end to end
   const [advice, cancel] = host.state.exchanges.map((/** @type {any} */ ex) => ex.opB.slice(0, 8));
   for (const id of ['b_account', 'a_account', 'b_agent_source', 'b_agent_selected', 'b_model', 'b_tool_offering', 'b_approval_event', 'a_approval_event',
     'advice_instruction_order', `preflight_${advice}`, `worker_workdir_${advice}`, `held_call_${host.state.exchanges[0].workerId.slice(0, 8)}`, 'a_progress',
-    'b_progress', 'a_answered_journal', 'b_served_journal', 'a_answer', 'advice_bounds', 'advice_worker_stop', 'capture_files', 'capture_receipt',
-    'capture_publisher', 'a_journal_unchanged', 'cancel_instruction_order', `preflight_${cancel}`, 'cancellation', 'no_late_revival', 'cancelled_worker_stop',
+    'b_progress', 'a_answered_journal', 'b_served_journal', 'a_answer', 'advice_bounds', 'advice_worker_stop', 'a_spec_lead', 'a_task_tool', 'capture_files',
+    'capture_receipt', 'capture_publisher', 'capture_staging', 'a_journal_unchanged', 'cancel_instruction_order', `preflight_${cancel}`, 'cancellation',
+    'no_late_revival', 'cancelled_worker_stop',
     'cancel_bounds', 'final_b_stop', 'final_a_stop', 'retained_matches_live', 'human_reread']) {
     assert.equal(checkOf(report, id)?.status, 'passed', id);
   }
@@ -5869,6 +7407,39 @@ test('a complete controlled version-3 slice runs normal collaboration end to end
   assert.equal(report.capture.ideaPath, `.dude/ideas/102-${f.plan.capture.slug}.md`);
 });
 
+test('a complete controlled version-3 run asks the human for exactly four lines, in order: the consent, B\'s approval line, A\'s approval line, and reread reviewed; the relay approves both progress edits and every capture action itself under that consent, never as a person\'s approval, and the report keeps each as consented', async () => {
+  // The terminal scripts exactly these four lines: any further prompt would fail this slice as unscripted.
+  const { result, host, terminal, layout } = await sliceV3({ answers: ['reread reviewed'] });
+  const { report } = result;
+  assert.equal(report.reason, null, report.detail);
+  assert.deepEqual(failedChecks(report), []);
+  for (const id of ['a_progress', 'b_progress', 'capture_files', 'capture_receipt', 'capture_publisher', 'capture_staging', 'human_reread']) {
+    assert.equal(checkOf(report, id)?.status, 'passed', id);
+  }
+  // Four prompts, each a bare "> " under an action block naming its one line, and no other block or permission ask.
+  assert.deepEqual(terminal.prompts, Array(4).fill('> '));
+  assert.deepEqual([...terminal.text.matchAll(/\nType or paste this line, then press Enter:\n\n {4}([^\n]+)\n/g)].map((match) => match[1]),
+    [consentLiteral(result.scope.scopeSha256), 'dude a2a approve bbbbbbbbbbbb', 'dude a2a approve aaaaaaaaaaaa', 'reread reviewed']);
+  assert.deepEqual([blocksFor(terminal.text, 'approve-once'), permissionAsks(terminal.text)], [0, []], 'no permission request was shown');
+  assert.equal(report.consent.status, 'granted');
+  assert.deepEqual(host.state.prompts.filter((entry) => entry.prompt.startsWith('dude a2a ')).map((entry) => [entry.side, entry.prompt]),
+    [['b', 'dude a2a approve bbbbbbbbbbbb'], ['a', 'dude a2a approve aaaaaaaaaaaa']], 'only the typed approval lines were relayed as root prompts');
+  // The relay approved both progress edits and A's five capture actions itself, once each: the host ran every one, and the report keeps
+  // each as consented, never asked, in the order the relay approved them; the two sessions' progress edits race, so they are compared by
+  // side.
+  assert.deepEqual(host.state.permissions.map((entry) => entry.decision), Array(7).fill('approve-once'));
+  const stage = path.join(layout.a.temp, 'stage');
+  const kept = /** @type {any[]} */ (report.permissions);
+  assert.deepEqual([...kept.slice(0, 2)].sort((x, y) => x.side.localeCompare(y.side)), [consentedEntry('a', 'write', path.join(layout.a.workspace,
+    PROGRESS_FIXTURES.a.path)), consentedEntry('b', 'write', path.join(layout.b.workspace, PROGRESS_FIXTURES.b.path))]);
+  assert.deepEqual(kept.slice(2), [consentedEntry('a', 'shell', null), consentedEntry('a', 'write', path.join(stage, 'ledger.md')),
+    consentedEntry('a', 'shell', null), consentedEntry('a', 'write', path.join(stage, 'advice.json')), consentedEntry('a', 'shell', null)]);
+  assert.equal(report.permissionsOmitted, undefined);
+  assert.deepEqual([report.toolApprovals.a['progress.edit'], report.toolApprovals.b['progress.edit'], report.toolApprovals.a['capture.command'],
+    report.toolApprovals.a['spec_lead.capture.staging']], [1, 1, 3, 2]);
+  assert.deepEqual([report.verdict, result.exitCode], ['controlled_only', 4], 'still only a controlled run');
+});
+
 test('a version-3 main whose own runtime or actual session cannot show its expected account stops before any prompt, with its closed reason, and is still stopped', async () => {
   /** @type {Array<[string, string, 'runtime' | 'session', (status: any) => unknown, string]>} */
   const cases = [
@@ -5896,18 +7467,20 @@ test('a version-3 main whose own runtime or actual session cannot show its expec
 test('a version-3 main reads its tool offering only once its own session\'s tools are initialized: on a host whose catalog lists nothing until then, as the pinned SDK documents, each main initializes right before its one catalog read, and both dude tools are offered', async () => {
   // Every other input is valid: a main that reads its catalog before initializing it stops in start_mains as tool_offering_mismatch,
   // with 0 tools offered, before any prompt.
-  const { result, host } = await sliceV3({ answers: ['approve-once', 'approve-once', 'approve-once', 'reread reviewed'] });
+  const { result, host } = await sliceV3({ answers: ['reread reviewed'] });
   const { report } = result;
   assert.equal(report.reason, null, report.detail);
   assert.deepEqual(failedChecks(report), []);
-  for (const side of ['b', 'a']) assert.equal(checkOf(report, `${side}_tool_offering`)?.detail, '3 tools offered', side);
+  for (const side of ['b', 'a']) assert.equal(checkOf(report, `${side}_tool_offering`)?.detail, '4 tools offered', side);
+  assert.match(checkOf(report, 'a_task_tool')?.detail, /^1 task tool\(s\); 2 of its agent_type value\(s\) select the Spec Lead; mode accepts sync$/,
+    'A\'s task tool is read from the same initialized catalog');
   assert.deepEqual(host.state.log.filter((entry) => entry.startsWith('tools.')), ['tools.initializeAndValidate b', 'tools.getCurrentMetadata b',
     'tools.initializeAndValidate a', 'tools.getCurrentMetadata a'], 'each main initializes its own session\'s tools once, right before its one catalog read');
 });
 
 test('a version-3 account change before a later prompt stops the run right there: the capture prompt is never sent, though the advice exchange finished', async () => {
   // A's session answers five times: at its creation, before its proposal, its approval, its exchange, and its capture prompt.
-  const { result, host } = await sliceV3({ answers: ['approve-once', 'approve-once'],
+  const { result, host } = await sliceV3({ answers: [],
     host: { normal: { account: (side, source, count, status) => (side === 'a' && source === 'session' && count === 5 ? { ...status, login: 'someone-else' } : status) } } });
   const { report } = result;
   assert.equal(report.reason, 'auth_mismatch', report.detail);
@@ -5931,10 +7504,10 @@ test('a version-3 account answer held past the consented scope\'s expiry, or pas
     ? new Promise((resolve) => { setImmediate(() => { time.advance(advance(time, f)); resolve(status); }); }) : status) } });
   const [expired, overdue] = await Promise.all([
     // A half-minute scope ends during the hold, inside the call's own 60-second bound.
-    sliceV3({ expiresInMs: 30_000, answers: ['approve-once', 'approve-once'],
+    sliceV3({ expiresInMs: 30_000, answers: [],
       host: heldA((/** @type {any} */ time, /** @type {any} */ f) => Date.parse(f.plan.expiresAt) - time.now() + 1) }),
     // The call's own bound ends during the hold, well inside the scope's hour.
-    sliceV3({ answers: ['approve-once', 'approve-once'], host: heldA(() => NATIVE_LIMITS.runtimeMs + 1) }),
+    sliceV3({ answers: [], host: heldA(() => NATIVE_LIMITS.runtimeMs + 1) }),
   ]);
 
   assert.equal(expired.result.report.reason, 'scope_expired', expired.result.report.detail);
@@ -6067,7 +7640,7 @@ test('a version-3 run that stops because B\'s worker ended names the journaled w
 });
 
 test('version-3 stop errors never turn green: a worker whose recorded stop erred fails before capture, and a main whose own stop erred fails the run after force-stop, with cessation still unconfirmed', async () => {
-  const worker = await sliceV3({ answers: ['approve-once', 'approve-once'], host: { normal: { cleanup: (data, ex) => {
+  const worker = await sliceV3({ answers: [], host: { normal: { cleanup: (data, ex) => {
     if (ex.kind === 'advice') Object.assign(data, { stop: 'errors', stopErrors: 1, forceStop: 'completed' });
   } } } });
   assert.equal(worker.result.report.reason, 'stop_failed', worker.result.report.detail);
@@ -6076,7 +7649,7 @@ test('version-3 stop errors never turn green: a worker whose recorded stop erred
   assert.equal(worker.host.state.prompts.some((entry) => entry.prompt.startsWith('Feature 089 native qualification, capture step.')), false, 'no capture followed');
   assert.equal(worker.result.report.operations.advice.workerCleanup.cessation, 'unconfirmed');
 
-  const main = await sliceV3({ answers: ['approve-once', 'approve-once', 'approve-once'],
+  const main = await sliceV3({ answers: [],
     host: { normal: { stop: (side) => (side === 'a' ? [new Error('stop failed')] : []) } } });
   const { report } = main.result;
   assert.equal(report.reason, 'stop_failed', report.detail);
@@ -6097,7 +7670,7 @@ test('a version-3 main stop passes only when it answered within its own half of 
   const slowA = (ms) => (/** @type {any} */ time) => ({ normal: { stop: (/** @type {string} */ side) => (side === 'a'
     ? new Promise((resolve) => { setImmediate(() => { time.advance(ms); resolve([]); }); }) : []) } });
   // Every companion input is valid, the retained reread's acknowledgement included, so only the stop's timing can fail the run.
-  const answers = ['approve-once', 'approve-once', 'approve-once', 'reread reviewed'];
+  const answers = ['reread reviewed'];
   const [late, beyond, onTime] = await Promise.all([6_000, 10_001, 4_000].map((ms) => sliceV3({ answers, host: slowA(ms) })));
   /** @type {Array<[string, any, number]>} */
   const runs = [['6 seconds', late, 6_000], ['10,001 ms', beyond, 10_001], ['4 seconds', onTime, 4_000]];
@@ -6202,7 +7775,7 @@ test('custom-tool relay: matchPermission relays only the current step\'s exact c
   const decide = (request, tools, where = invocation) => {
     const decision = /** @type {any} */ (matchPermission(request, where, { sessionId: 's-a', requested: ['c1'], phase: 'closed', admission: null,
       progress: null, capture: null, tools }));
-    return decision.ask ? 'ask' : decision.relay ? `relay ${decision.relay}` : decision.reason;
+    return decision.relay ? `relay ${decision.relay}` : decision.reason;
   };
   assert.equal(ASKED_QUESTION, 'Which is the highest lifecycle number in your approved records?');
   for (const [label, request, tools, expected, where] of /** @type {Array<[string, any, any, string, any?]>} */ ([
@@ -6271,13 +7844,13 @@ test('custom-tool relay: matchPermission relays only the current step\'s exact c
     'not_pending');
 });
 
-test('custom-tool relay: the main relay approves the current step\'s exact call once, without asking or an interactive claim, and only counts it per side; it refuses a call another admission requested, a call after its step\'s turn ended, a completed call, and any call of a closing, unconsented, or expired run, while every other kind still needs a typed approve-once', async () => {
+test('custom-tool relay: the main relay approves the current step\'s exact call once, without asking or an interactive claim, and only counts it per side; it refuses a call another admission requested, a call after its step\'s turn ended, a completed call, and any call of a closing, unconsented, or expired run, while the progress phase\'s exact edit is approved the same way under its own key', async () => {
   const root = tempDir('dude-nqt-');
   const file = path.join(root, 'w', 'progress-b.txt');
-  /** @param {{consent?: string, expiresInMs?: number, answers?: any[]}} [options] */
-  const relay = ({ consent = 'granted', expiresInMs = 3_600_000, answers = [] } = {}) => {
+  /** @param {{consent?: string, expiresInMs?: number}} [options] */
+  const relay = ({ consent = 'granted', expiresInMs = 3_600_000 } = {}) => {
     const clock = testClock();
-    const terminal = fakeTerminal(answers);
+    const terminal = fakeTerminal([]);
     const log = createSessionLog('b', clock.now);
     // B's exchange step, admitted as adm-1: begin receiving and read.
     const tools = { admission: 'adm-1', propose: null, conversation: { ops: ['begin_receive', 'read'], slug: null } };
@@ -6368,15 +7941,16 @@ test('custom-tool relay: the main relay approves the current step\'s exact call 
     assert.deepEqual([context.run.report.permissions, context.run.report.toolApprovals], [refusal('approval_withdrawn'), undefined], label);
   }
 
-  // Every other kind keeps its typed approve-once, even while the step allows Dude tool calls.
-  const typed = relay({ answers: ['approve-once'] });
-  typed.run.allow.b = { ...typed.run.allow.b, phase: 'progress', admission: 'adm-1', progress: { file, initial: 'pending\n', final: 'complete\n' } };
-  typed.requested('e1', 'edit', { path: file });
+  // The progress phase's exact edit is the consent's too, even while the step allows Dude tool calls: approved once by the relay itself
+  // under its own key, and kept as consented.
+  const phased = relay();
+  phased.run.allow.b = { ...phased.run.allow.b, phase: 'progress', admission: 'adm-1', progress: { file, initial: 'pending\n', final: 'complete\n' } };
+  phased.requested('e1', 'edit', { path: file });
   const edit = { kind: 'write', toolCallId: 'e1', fileName: file, diff: '', intention: 'x', canOfferSessionApproval: false,
     fileEdits: [{ before: { path: file, content: 'pending\n' }, after: { path: file, content: 'complete\n' } }] };
-  assert.deepEqual(await typed.ask(edit, where), { kind: 'approve-once', approvedInteractively: true });
-  assert.deepEqual([typed.terminal.prompts.length, typed.run.report.permissions, typed.run.report.toolApprovals],
-    [1, [{ side: 'b', kind: 'write', asked: true, reason: null, answer: 'approve-once', target: file }], undefined]);
+  assert.deepEqual(await phased.ask(edit, where), { kind: 'approve-once' });
+  assert.deepEqual([phased.terminal.prompts.length, phased.run.report.permissions, phased.run.report.toolApprovals],
+    [0, [consentedEntry('b', 'write', file)], { b: { 'progress.edit': 1 } }]);
 });
 
 test('custom-tool relay: the root idle of a step\'s admission, aborted or not, ends that step\'s allowance as soon as it is delivered, before the run clears it: the step\'s exact call is then refused and nothing is counted, whether its callback comes after that idle, waits for a request that arrives with it, or waits for one that never arrives; with no idle yet, or only an earlier turn\'s, the same call is approved once', async () => {
@@ -6468,7 +8042,7 @@ test('custom-tool relay: the root idle of a step\'s admission, aborted or not, e
 });
 
 test('custom-tool relay: as the native run showed, each Dude tool call asks permission in normal mode; under the typed consent the main relay approves only each step\'s exact calls without asking, so a complete version-3 slice runs end to end and its report counts them per side', async () => {
-  const { result, host, terminal } = await sliceV3({ answers: ['approve-once', 'approve-once', 'approve-once', 'reread reviewed'] });
+  const { result, host, terminal } = await sliceV3({ answers: ['reread reviewed'] });
   const { report } = result;
   // Native run e3689559-574d-4b1c-a851-7281de20df9a stopped here: B's dude_a2a_propose call was refused without a rule as
   // not_model_requested, so no complete proposal result was observed (proposal_unavailable).
@@ -6478,8 +8052,9 @@ test('custom-tool relay: as the native run showed, each Dude tool call asks perm
   assert.deepEqual(phaseList(report).map(([id]) => id), ['consent', 'revalidate', 'prepare', 'start_mains', 'approve_b', 'approve_a', 'advice_exchange', 'capture',
     'cancel_exchange', 'teardown', 'retained_reread']);
   assert.deepEqual(report.toolApprovals, {
-    b: { dude_a2a_propose: 1, 'dude_a2a_conversation.begin_receive': 2, 'dude_a2a_conversation.read': 2, 'workspace.read': 2 },
-    a: { dude_a2a_propose: 1, 'dude_a2a_conversation.begin_ask': 2, 'dude_a2a_conversation.read': 2, 'dude_a2a_conversation.cancel': 1, 'workspace.read': 7 },
+    b: { dude_a2a_propose: 1, 'dude_a2a_conversation.begin_receive': 2, 'dude_a2a_conversation.read': 2, 'workspace.read': 2, 'progress.edit': 1 },
+    a: { dude_a2a_propose: 1, 'dude_a2a_conversation.begin_ask': 2, 'dude_a2a_conversation.read': 2, 'dude_a2a_conversation.cancel': 1, 'workspace.read': 7,
+      'spec_lead.workspace.read': 2, 'progress.edit': 1, 'capture.command': 3, 'spec_lead.capture.staging': 2 },
   }, 'bounded counts by side, tool, and operation, never one entry per call');
   // B's five calls (one proposal, two begins, two reads) and A's six (one proposal, two begins, two reads, one cancel).
   assert.equal(host.state.toolDecisions.length, 11);
@@ -6488,16 +8063,15 @@ test('custom-tool relay: as the native run showed, each Dude tool call asks perm
   }
   // A asked for exactly the slug and question each instruction named: the plan's slug, then its cancel slug.
   assert.deepEqual(host.state.exchanges.map((/** @type {any} */ ex) => ex.kind), ['advice', 'cancel']);
-  // The human typed only what a run asks without Dude tool calls: consent, two approvals, three approve-once, and the reread.
-  assert.equal(terminal.prompts.length, 7);
-  assert.deepEqual(permissionAsks(terminal.text).map(([side, summary]) => [side, summary.split(' ')[0]]).sort(), [['A', 'edit'], ['A', 'run'], ['B', 'edit']],
-    'the progress edits and the publisher command are shown; no Dude tool call is');
+  // The human typed only the consent, both approvals, and the reread: no Dude tool call, progress edit, or capture action was shown.
+  assert.equal(terminal.prompts.length, 4);
+  assert.deepEqual(permissionAsks(terminal.text), []);
   assert.deepEqual([report.verdict, result.exitCode], ['controlled_only', 4]);
 });
 
 test('custom-tool relay: a Dude tool call in an approval or capture turn, a proposal call whose request arrives after its turn ended, a malformed read, and another Dude tool are refused with their own reasons and only that, and the complete version-3 slice still runs', async () => {
   let exchanges = 0;
-  const { result, host } = await sliceV3({ answers: ['approve-once', 'approve-once', 'approve-once', 'reread reviewed'], host: (_time, f) => ({ strayTools: (side, prompt) => {
+  const { result, host } = await sliceV3({ answers: ['reread reviewed'], host: (_time, f) => ({ strayTools: (side, prompt) => {
     if (side === 'b' && prompt.startsWith('dude a2a approve ')) return [['dude_a2a_conversation', { op: 'begin_receive' }]];
     if (side === 'b' && prompt.startsWith('Feature 089 native qualification. Do every step') && exchanges++ === 0) {
       return [['dude_a2a_conversation', { op: 'read', operationId: 'not-an-operation' }], ['dude_a2a_reply', { conclusion: 'stray' }]];
@@ -6526,9 +8100,10 @@ test('custom-tool relay: a Dude tool call in an approval or capture turn, a prop
     [['b', 'dude_a2a_propose', null], ['b', 'dude_a2a_conversation', 'begin_receive'], ['b', 'dude_a2a_conversation', 'read'], ['b', 'dude_a2a_reply', null],
       ['a', 'dude_a2a_conversation', 'read']]);
   assert.deepEqual(report.toolApprovals, {
-    b: { dude_a2a_propose: 1, 'dude_a2a_conversation.begin_receive': 2, 'dude_a2a_conversation.read': 2, 'workspace.read': 2 },
-    a: { dude_a2a_propose: 1, 'dude_a2a_conversation.begin_ask': 2, 'dude_a2a_conversation.read': 2, 'dude_a2a_conversation.cancel': 1, 'workspace.read': 7 },
-  }, 'only the steps\' own calls were approved');
+    b: { dude_a2a_propose: 1, 'dude_a2a_conversation.begin_receive': 2, 'dude_a2a_conversation.read': 2, 'workspace.read': 2, 'progress.edit': 1 },
+    a: { dude_a2a_propose: 1, 'dude_a2a_conversation.begin_ask': 2, 'dude_a2a_conversation.read': 2, 'dude_a2a_conversation.cancel': 1, 'workspace.read': 7,
+      'spec_lead.workspace.read': 2, 'progress.edit': 1, 'capture.command': 3, 'spec_lead.capture.staging': 2 },
+  }, 'only the steps\' own calls and the phases\' own actions were approved');
   assert.deepEqual([report.verdict, result.exitCode], ['controlled_only', 4]);
 });
 
@@ -6541,11 +8116,11 @@ test('custom-tool relay: a Dude tool call in an approval or capture turn, a prop
 // ---------------------------------------------------------------------------
 
 test('workspace reads: as the native run showed, each main\'s model views its own workspace from the start of its exchange, and each view asks read permission in normal mode; under the typed consent the relay approves those reads once each without asking, so a complete version-3 slice runs end to end and counts them per side', async () => {
-  const { result, host, terminal, layout } = await sliceV3({ answers: ['approve-once', 'approve-once', 'approve-once', 'reread reviewed'] });
+  const { result, host, terminal, layout } = await sliceV3({ answers: ['reread reviewed'] });
   const { report } = result;
   // Native run 15b73114-21ee-4744-bfe3-2993edfeaa88 stopped here: both views were refused as not_model_requested, neither model went on,
   // and the advice exchange never began (operation_not_started).
-  assert.deepEqual([report.reason, report.detail, (report.permissions ?? []).filter((/** @type {any} */ entry) => !entry.asked)], [null, null, []],
+  assert.deepEqual([report.reason, report.detail, (report.permissions ?? []).filter((/** @type {any} */ entry) => entry.reason !== null)], [null, null, []],
     'no request was refused');
   assert.deepEqual(failedChecks(report), []);
   assert.deepEqual(phaseList(report).map(([id]) => id), ['consent', 'revalidate', 'prepare', 'start_mains', 'approve_b', 'approve_a', 'advice_exchange', 'capture',
@@ -6557,19 +8132,22 @@ test('workspace reads: as the native run showed, each main\'s model views its ow
   const progressA = path.join(layout.a.workspace, PROGRESS_FIXTURES.a.path);
   const progressB = path.join(layout.b.workspace, PROGRESS_FIXTURES.b.path);
   const cue = path.join(layout.a.workspace, 'cancel-a.txt');
-  const viewed = (/** @type {string} */ side) => host.state.reads.filter((entry) => entry.side === side).map((entry) => [entry.path, entry.decision]);
+  const viewed = (/** @type {string} */ side, actor = undefined) => host.state.reads.filter((entry) => entry.side === side && entry.actor === actor)
+    .map((entry) => [entry.path, entry.decision]);
   assert.deepEqual(viewed('a'), [ideas, progressA, progressA, path.join(fs.realpathSync.native(layout.a.workspace), '.dude', 'ideas'), ideas, cue, cue]
     .map((file) => [file, 'approve-once']));
   assert.deepEqual(viewed('b'), [progressB, progressB].map((file) => [file, 'approve-once']));
   assert.deepEqual([report.toolApprovals.a['workspace.read'], report.toolApprovals.b['workspace.read']], [7, 2], 'counted per side under one key');
-  // The human typed only consent, both approvals, the three typed approve-once (both progress edits and the publisher command), and the
-  // reread; no read was shown.
-  assert.equal(terminal.prompts.length, 7);
-  assert.deepEqual(permissionAsks(terminal.text).map(([side, summary]) => [side, summary.split(' ')[0]]).sort(), [['A', 'edit'], ['A', 'run'], ['B', 'edit']]);
+  // In capture, each Spec Lead's view of the installed capture skill is approved the same way, and counted under its own key.
+  const skill = path.join(fs.realpathSync.native(layout.a.workspace), '.github', 'skills', 'dude-feature-definition', 'SKILL.md');
+  assert.deepEqual([viewed('a', 'spec-lead'), report.toolApprovals.a['spec_lead.workspace.read']], [[[skill, 'approve-once'], [skill, 'approve-once']], 2]);
+  // The human typed only consent, both approvals, and the reread; no read, edit, command, or staging file was shown.
+  assert.equal(terminal.prompts.length, 4);
+  assert.deepEqual(permissionAsks(terminal.text), []);
   assert.deepEqual([report.verdict, result.exitCode], ['controlled_only', 4]);
 });
 
-test('workspace reads: matchPermission relays a read of the session\'s own workspace folder or anything below it, by the layout\'s or the canonical spelling, only while the step allows that workspace; it refuses a read outside it, in the other session\'s workspace, by a relative or other spelling, or marked as needing a person, and the progress and capture phases keep their own typed actions', () => {
+test('workspace reads: matchPermission relays a read of the session\'s own workspace folder or anything below it, by the layout\'s or the canonical spelling, only while the step allows that workspace; it refuses a read outside it, in the other session\'s workspace, by a relative or other spelling, or marked as needing a person, and the progress and capture phases keep their own exact actions', () => {
   const root = tempDir('dude-nqw-');
   const workspace = path.join(root, 'a', 'w');
   // A distinct canonical spelling stands for the real path the capture instruction names when the layout's path is not canonical.
@@ -6588,7 +8166,7 @@ test('workspace reads: matchPermission relays a read of the session\'s own works
   /** @param {any} request @param {any} [allowed] @param {any} [where] */
   const decide = (request, allowed = allow(), where = { sessionId: 's-a' }) => {
     const decision = /** @type {any} */ (matchPermission(request, where, allowed));
-    return decision.ask ? 'ask' : decision.relay ? `relay ${decision.relay}` : decision.reason;
+    return decision.relay ? `relay ${decision.relay}` : decision.reason;
   };
   const windows = process.platform === 'win32';
   for (const [label, target] of /** @type {Array<[string, string]>} */ ([
@@ -6626,20 +8204,20 @@ test('workspace reads: matchPermission relays a read of the session\'s own works
   assert.equal(decide(read(ideas), allow({ tools: proposal })), 'not_pending', 'the proposal step');
   assert.equal(decide(read(ideas), allow({ tools: null })), 'not_pending', 'no open step or phase');
 
-  // The progress phase inside the exchange step: its file's reads are the workspace's, and only its exact edit is asked.
+  // The progress phase inside the exchange step: its file's reads are the workspace's, and its exact edit is the phase's own action.
   const progress = allow({ phase: 'progress', admission: 'adm-1', progress: { file, ...PROGRESS_FIXTURES.a } });
   const edit = { kind: 'write', toolCallId: 'c1', fileName: file, diff: '', intention: 'x', canOfferSessionApproval: false,
     fileEdits: [{ before: { path: file, content: 'pending\n' }, after: { path: file, content: 'complete\n' } }] };
   assert.equal(decide(read(file), progress), 'relay workspace.read');
-  assert.equal(decide(edit, progress), 'ask');
+  assert.equal(decide(edit, progress), 'relay progress.edit');
   assert.equal(decide(read(path.join(other, PROGRESS_FIXTURES.b.path)), progress), 'outside_workspace');
   assert.equal(decide({ kind: 'shell', toolCallId: 'c1', fullCommandText: 'Get-Content progress-a.txt' }, progress), 'not_progress');
 
-  // The capture step allows its workspace and no Dude tool call; its phase keeps asking about its temp folder.
+  // The capture step allows its workspace and no Dude tool call; its phase keeps reads of its temp folder as its own action.
   const captureStep = { admission: 'adm-2', propose: null, conversation: null, workspace: { path: workspace, canonical: canonicalRoot } };
   const capture = allow({ tools: captureStep, phase: 'capture', admission: 'adm-2', capture: { tempRoot, slug: 'delta', advice: null } });
   assert.equal(decide(read(path.join(canonicalRoot, '.dude', 'ideas')), capture), 'relay workspace.read');
-  assert.equal(decide(read(path.join(tempRoot, 'stage', 'ledger.md')), capture), 'ask', 'a read of A\'s temp folder is still asked');
+  assert.equal(decide(read(path.join(tempRoot, 'stage', 'ledger.md')), capture), 'relay capture.read', 'a read of A\'s temp folder is the capture phase\'s');
   assert.equal(decide(read(path.join(other, 'x.md')), capture), 'outside_workspace');
   assert.equal(decide({ kind: 'custom-tool', toolCallId: 'c1', toolName: 'dude_a2a_conversation', toolDescription: 'x', args: { op: 'read', operationId: randomUUID() } },
     capture), 'tool_not_allowed');
@@ -6737,7 +8315,7 @@ test('workspace reads: the main relay approves a read inside its own workspace o
   assert.deepEqual([closed.run.report.permissions, closed.terminal.prompts], [refusal('not_pending', ideas), []]);
 });
 
-test('workspace reads: each main permission entry names a bounded, non-secret target, and the report keeps at most 50 refusals and counts the rest, while every asked request keeps its entry, so the report stays well under its bound', async () => {
+test('workspace reads: each main permission entry names a bounded, non-secret target, and the report keeps at most 50 entries for requests no person was asked about, refused or approved under the consent alike, and counts the further refusals, while a request a person answered keeps its entry, so the report stays well under its bound', async () => {
   // The target: a read's path, a write's file, a tool's name, a shell request's parsed command names, an extension's name; never a
   // command's text, a tool's arguments, a URL, or a memory's fact.
   assert.equal(permissionTarget({ kind: 'read', path: 'C:\\w\\x.md' }), 'C:\\w\\x.md');
@@ -6756,37 +8334,53 @@ test('workspace reads: each main permission entry names a bounded, non-secret ta
   assert.ok(Buffer.byteLength(cut, 'utf8') <= NATIVE_LIMITS.targetBytes, `${Buffer.byteLength(cut, 'utf8')} bytes`);
   assert.ok(cut.startsWith('C:\\éé') && cut.endsWith(`... (${Buffer.byteLength(long, 'utf8')} bytes)`), cut);
 
-  // 55 reads outside the workspace, each with a maximal path: the first 50 keep their entries, the other 5 are only counted.
+  // One shared bound: a request the relay approves itself under the consent keeps its entry as a refusal does, answered consented, and
+  // counts toward the same 50. The progress phase's exact edit, approved first, then 55 reads outside the workspace, each with a maximal
+  // path: the edit and the first 49 refusals keep their entries, and the other 6 refusals are only counted.
   const root = tempDir('dude-nqc-');
   const workspace = path.join(root, 'a', 'w');
   const file = path.join(workspace, PROGRESS_FIXTURES.a.path);
   const clock = testClock();
-  const terminal = fakeTerminal(['approve-once']);
+  const terminal = fakeTerminal([]);
   const log = createSessionLog('a', clock.now);
   const tools = { admission: 'adm-1', propose: null, conversation: { ops: ['begin_ask', 'read'], slug: 'delta' }, workspace: { path: workspace, canonical: workspace } };
   const run = { clock: clock.now, expiresAtMs: clock.now() + 3_600_000, closing: false, report: /** @type {any} */ ({ consent: { status: 'granted' } }),
-    allow: /** @type {Record<string, any>} */ ({ a: { sessionId: 's-a', phase: 'closed', admission: null, progress: null, capture: null, tools } }),
+    allow: /** @type {Record<string, any>} */ ({ a: { sessionId: 's-a', phase: 'progress', admission: 'adm-1', progress: { file, ...PROGRESS_FIXTURES.a },
+      capture: null, tools } }),
     human: humanQueue(terminal, clock.now), clients: [{ side: 'a', log }] };
   const ask = permissionRelay(run, 'a', log);
   /** @param {string} id @param {string} name @param {Record<string, unknown>} args */
   const requested = (id, name, args) => log.onEvent({ type: 'assistant.message', timestamp: new Date(clock.now()).toISOString(),
     data: { messageId: `m-${id}`, originatingMessageId: 'adm-1', content: '', toolRequests: [{ toolCallId: id, name, arguments: args }] } });
+  /** @param {string} id */
+  const edit = (id) => ({ kind: 'write', toolCallId: id, fileName: file, diff: '', intention: 'x', canOfferSessionApproval: false,
+    fileEdits: [{ before: { path: file, content: 'pending\n' }, after: { path: file, content: 'complete\n' } }] });
+  requested('e1', 'edit', { path: file });
+  assert.deepEqual(await ask(edit('e1'), { sessionId: 's-a' }), { kind: 'approve-once' });
   for (let index = 0; index < 55; index += 1) {
     const target = path.join(root, 'elsewhere', `${index}`.padStart(2, '0'), 'x'.repeat(400));
     requested(`v${index}`, 'view', { path: target });
     assert.equal((await ask({ kind: 'read', toolCallId: `v${index}`, path: target, intention: 'x' }, { sessionId: 's-a' })).kind, 'reject');
   }
-  assert.deepEqual([run.report.permissions.length, run.report.permissionsOmitted], [50, 5]);
-  assert.ok(run.report.permissions.every((/** @type {any} */ entry) => entry.reason === 'outside_workspace'
+  assert.deepEqual([run.report.permissions.length, run.report.permissionsOmitted], [50, 6]);
+  assert.deepEqual(run.report.permissions[0], consentedEntry('a', 'write', file));
+  assert.ok(run.report.permissions.slice(1).every((/** @type {any} */ entry) => entry.reason === 'outside_workspace'
     && Buffer.byteLength(entry.target, 'utf8') <= NATIVE_LIMITS.targetBytes));
-  // A request the human is asked about after that still keeps its entry: the progress phase's exact edit, typed approve-once.
-  run.allow.a = { ...run.allow.a, phase: 'progress', admission: 'adm-1', progress: { file, ...PROGRESS_FIXTURES.a } };
-  requested('e1', 'edit', { path: file });
-  assert.deepEqual(await ask({ kind: 'write', toolCallId: 'e1', fileName: file, diff: '', intention: 'x', canOfferSessionApproval: false,
-    fileEdits: [{ before: { path: file, content: 'pending\n' }, after: { path: file, content: 'complete\n' } }] }, { sessionId: 's-a' }),
-  { kind: 'approve-once', approvedInteractively: true });
-  assert.deepEqual(run.report.permissions.at(-1), { side: 'a', kind: 'write', asked: true, reason: null, answer: 'approve-once', target: file });
-  assert.deepEqual([run.report.permissions.length, run.report.permissionsOmitted], [51, 5]);
+  // An approval beyond the bound keeps no entry and adds nothing to permissionsOmitted, which counts refusals: its count under its key
+  // still accounts for it.
+  requested('e2', 'edit', { path: file });
+  assert.deepEqual(await ask(edit('e2'), { sessionId: 's-a' }), { kind: 'approve-once' });
+  assert.deepEqual([run.report.permissions.length, run.report.permissionsOmitted, run.report.toolApprovals], [50, 6, { a: { 'progress.edit': 2 } }]);
+  assert.equal(terminal.prompts.length, 0, 'the main relay asked no one');
   const bytes = Buffer.byteLength(`${JSON.stringify({ permissions: run.report.permissions, permissionsOmitted: run.report.permissionsOmitted }, null, 2)}\n`, 'utf8');
   assert.ok(bytes < NATIVE_LIMITS.reportBytes / 2, `the kept entries take ${bytes} bytes, well under the ${NATIVE_LIMITS.reportBytes}-byte report`);
+  // A request shown to a person for a typed answer, which only the after-view control's relay makes, still keeps its entry beyond the
+  // bound.
+  const control = controlRelay(['approve-once']);
+  control.run.report.permissions = structuredClone(run.report.permissions);
+  control.requested('v1');
+  assert.deepEqual(await control.ask({ kind: 'read', toolCallId: 'v1', path: controlFiles().target, intention: 'x' }, { sessionId: 's-k' }),
+    { kind: 'approve-once', approvedInteractively: true });
+  assert.deepEqual([control.run.report.permissions.length, control.run.report.permissions.at(-1)],
+    [51, { side: 'control', kind: 'read', asked: true, reason: null, answer: 'approve-once' }]);
 });
