@@ -12,7 +12,7 @@ import { run, parseArgs, applyLightweightWorkRequest } from './board.mjs';
 import { collectLifecycleModel } from './backlog.mjs';
 import { parseTasks, renderBoard } from '../dude-engine/lib/tasks.mjs';
 import { buildLightweightWorkPostimages } from '../dude-engine/lib/lightweight-work-postimage.mjs';
-import { canonicalJson } from '../dude-work/recovery.mjs';
+import { canonicalJson, terminalFreshClaimMarkerV1 } from '../dude-work/recovery.mjs';
 
 /** Absolute path to the board CLI, spawned as a child process end-to-end. */
 const BOARD_CLI = fileURLToPath(new URL('./board.mjs', import.meta.url));
@@ -3190,6 +3190,195 @@ test('terminal administrative reconciliation: blocked same-task close preserves 
         assert.deepEqual(postimages.get(relative), preimages.get(relative), `${relative}: unchanged fixture postimage`);
       }
     }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- Feature 094 T003: terminal-qualified fresh claim -----------------------
+
+const TERMINAL_CLAIM_IDENTITIES = Object.freeze({
+  requestIdentity: sha256('terminal-work claim: new explicit request'),
+  admissionIdentity: sha256('terminal-work claim: fresh admission'),
+  manifestIdentity: sha256('terminal-work claim: terminal evidence manifest'),
+  dispositionIdentity: sha256('terminal-work claim: terminal disposition'),
+});
+
+/** The exact Work-owned marker for this lane's target. @param {Record<string, string>} [fields] */
+function terminalClaimMarker(fields = {}) {
+  return terminalFreshClaimMarkerV1({ time: LANE_STAMP, taskKey: LANE_TASK_KEY, ...TERMINAL_CLAIM_IDENTITIES, ...fields });
+}
+
+/**
+ * A lane whose target is an `[~]` task left by a terminal run whose original
+ * owner already disposed of its pair; optionally blocked.
+ * @param {string|null} [blocker]
+ */
+function scaffoldTerminalClaimLane(blocker = null) {
+  const root = scaffoldLane(renderBoard(parseTasks(LANE_TASKS_FIXTURE.replace(
+    `- [ ] ${LANE_TASK_KEY} [US3] Implement the lane boundary`,
+    `- [~] ${LANE_TASK_KEY} [US3] Implement the lane boundary${blocker === null ? '' : `\n    blocked-by: ${blocker}`}`,
+  ))));
+  const snapshotPath = laneSnapshotPath(root);
+  const snapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
+  snapshot[LANE_TASKS].glyphs[LANE_TASK_KEY] = '~';
+  fs.writeFileSync(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`);
+  return root;
+}
+
+/** The one exact alternative over the current owner bytes. @param {string} root @param {Record<string, unknown>} [overrides] */
+function terminalClaimMutation(root, overrides = {}) {
+  return laneMutation({
+    reason: 'terminal-fresh-claim',
+    admissionIdentity: TERMINAL_CLAIM_IDENTITIES.admissionIdentity,
+    fromGlyph: '~',
+    toGlyph: '~',
+    eventLines: { kind: 'none' },
+    ownerLog: laneOwnerAppend(root, [terminalClaimMarker()]),
+    ...overrides,
+  });
+}
+
+/**
+ * A complete request whose permit is freshly rebuilt over its own mutation,
+ * so only the receiver's own checks can refuse it.
+ * @param {string} root @param {Record<string, unknown>} [overrides] @param {Record<string, unknown>} [options]
+ */
+function terminalClaimRequest(root, overrides = {}, options = {}) {
+  return laneRequest(root, { mutation: terminalClaimMutation(root, overrides), glyph: '~', ...options });
+}
+
+test('terminal-work claim: the exact unblocked same-glyph alternative appends one marker, refreshes the snapshot, and reports no target change', () => {
+  const root = scaffoldTerminalClaimLane();
+  try {
+    const before = laneSurfaces(root);
+    const request = terminalClaimRequest(root);
+    const requestBefore = canonicalJson(request);
+    const predicted = predictedLanePostimages(request);
+    assert.ok(!('reason' in predicted), JSON.stringify(predicted));
+    assert.deepEqual(laneSurfaces(root), before, 'prediction has no filesystem effect');
+
+    const result = applyLightweightWorkRequest(request);
+    assertAutonomousCommittedResult(result, root, 'terminal fresh claim');
+    assert.equal(canonicalJson(request), requestBefore, 'the receiver does not alter caller bytes');
+    const after = laneSurfaces(root);
+    assert.deepEqual(after, predicted, 'the unchanged postimage builder produces every committed byte');
+    assert.ok(after.tasks.equals(before.tasks), 'tasks.md stays byte-identical: same glyph, null blocker, no event');
+    assert.equal(
+      after.owner.toString('utf8'),
+      `${before.owner.toString('utf8')}${terminalClaimMarker()}\n`,
+      'exactly one append-only owner marker',
+    );
+    assert.match(terminalClaimMarker(), new RegExp(
+      `^- ${LANE_STAMP} - work: Freshly claimed ${LANE_TASK_KEY} for new explicit Work request ${TERMINAL_CLAIM_IDENTITIES.requestIdentity}`
+      + ` under admission ${TERMINAL_CLAIM_IDENTITIES.admissionIdentity}, bound to terminal evidence ${TERMINAL_CLAIM_IDENTITIES.manifestIdentity}`
+      + ` and disposition ${TERMINAL_CLAIM_IDENTITIES.dispositionIdentity}; the prior Work run remains terminal\\.$`,
+    ));
+    const snapshot = JSON.parse(after.taskState.toString('utf8'));
+    assert.equal(snapshot[LANE_TASKS].glyphs[LANE_TASK_KEY], '~');
+    assert.equal(snapshot[LANE_TASKS].glyphs[LANE_OTHER_KEY], ' ', 'unrelated task glyph preserved');
+    assert.equal(snapshot[LANE_TASKS].updated_at, '2026-07-25T12:00:00.000Z', 'snapshot stamp derives from the mutation');
+    const parsed = parseTasks(after.tasks.toString('utf8'));
+    assert.deepEqual([parsed.byId.get(LANE_TASK_KEY).glyph, parsed.byId.get(LANE_TASK_KEY).blockedBy], ['~', null]);
+    assert.equal(result.receipt.targetStateChanged, false, 'glyph and blocker are unchanged');
+    assert.equal(result.receipt.permitHash, request.permit.permitHash);
+    assert.equal(result.receipt.mutationIdentity, sha256(canonicalJson(request.mutation)), 'the receipt binds the admission identity');
+
+    // The marker is append-only evidence: the identical claim over the new bytes is a replay.
+    assertLaneRefusal(root, terminalClaimRequest(root), 'permit-replayed', 'replayed terminal fresh claim');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('terminal-work claim: the reason, admission identity, and marker are refused off the exact alternative, with every other field valid', () => {
+  const root = scaffoldTerminalClaimLane();
+  const pendingRoot = scaffoldLane();
+  const blockedRoot = scaffoldTerminalClaimLane('waiting on another owner');
+  try {
+    /** @param {Record<string, string>} fields */
+    const marker = (fields) => laneOwnerAppend(root, [terminalClaimMarker(fields)]);
+    /** @type {[string, Record<string, unknown>, string][]} */
+    const cases = [
+      ['the reason on another kind', {
+        kind: 'task-blocked', toGlyph: '!', blocker: { kind: 'add', before: null, after: 'waiting on another owner' },
+      }, 'mutation-schema-mismatch'],
+      ['tracked use', { lane: 'tracked' }, 'mutation-schema-mismatch'],
+      ['completed glyph', { toGlyph: 'x' }, 'transition-not-allowed'],
+      ['blocker added', { blocker: { kind: 'add', before: null, after: 'waiting on another owner' } }, 'transition-not-allowed'],
+      ['event lines', { eventLines: laneEventEffect([laneEvent('terminal-fresh-claim')]) }, 'mutation-schema-mismatch'],
+      ['no owner marker', { ownerLog: { kind: 'none' } }, 'mutation-schema-mismatch'],
+      ['a second owner line', {
+        ownerLog: laneOwnerAppend(root, [terminalClaimMarker(), '- 2026-07-25T12:00:00Z - another coordinator line']),
+      }, 'mutation-schema-mismatch'],
+      ['a free-text owner line', { ownerLog: laneOwnerAppend(root, ['- 2026-07-25T12:00:00Z - lane claim']) }, 'mutation-schema-mismatch'],
+      ['a marker for another admission', { ownerLog: marker({ admissionIdentity: sha256('another admission') }) }, 'mutation-schema-mismatch'],
+      ['a marker for another task', { ownerLog: marker({ taskKey: LANE_OTHER_KEY }) }, 'mutation-schema-mismatch'],
+      ['a marker at another time', { ownerLog: marker({ time: '2026-07-25T12:00:01Z' }) }, 'mutation-schema-mismatch'],
+      ['a malformed admission identity', { admissionIdentity: 'not-a-hash' }, 'invalid-canonical-value'],
+      ['another task target', {
+        target: { ...LANE_TARGET, taskKey: LANE_OTHER_KEY }, ownerLog: marker({ taskKey: LANE_OTHER_KEY }),
+      }, 'target-mismatch'],
+    ];
+    for (const [label, overrides, reason] of cases) {
+      assertLaneRefusal(root, terminalClaimRequest(root, overrides), reason, label);
+    }
+    const missing = terminalClaimMutation(root);
+    delete missing.admissionIdentity;
+    assertLaneRefusal(root, laneRequest(root, { mutation: missing, glyph: '~' }), 'invalid-request-shape', 'a missing admission identity');
+
+    // The ordinary vocabulary and matrix are unchanged: no field on an ordinary
+    // claim, no same-glyph ordinary claim, and no pending or blocked fresh claim.
+    assertLaneRefusal(root, laneRequest(root, {
+      glyph: '~',
+      mutation: laneMutation({ reason: 'resume-claim', fromGlyph: '~', eventLines: { kind: 'none' }, ownerLog: marker({}) }),
+    }), 'transition-not-allowed', 'an ordinary same-glyph claim');
+    assertLaneRefusal(pendingRoot, laneRequest(pendingRoot, {
+      mutation: laneMutation({ admissionIdentity: TERMINAL_CLAIM_IDENTITIES.admissionIdentity }),
+    }), 'unknown-field', 'an admission identity on an initial claim');
+    assertLaneRefusal(pendingRoot, laneRequest(pendingRoot, {
+      mutation: terminalClaimMutation(pendingRoot, { fromGlyph: ' ' }),
+    }), 'transition-not-allowed', 'a pending task through the terminal reason');
+    assertLaneRefusal(blockedRoot, terminalClaimRequest(blockedRoot, {
+      blocker: { kind: 'unchanged', before: 'waiting on another owner', after: 'waiting on another owner' },
+    }, { blockedBy: 'waiting on another owner' }), 'transition-not-allowed', 'a blocked in-progress task');
+    assertLaneRefusal(blockedRoot, terminalClaimRequest(blockedRoot, {
+      blocker: { kind: 'remove', before: 'waiting on another owner', after: null },
+    }, { blockedBy: 'waiting on another owner' }), 'transition-not-allowed', 'blocker removal through the terminal reason');
+  } finally {
+    for (const directory of [root, pendingRoot, blockedRoot]) fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('terminal-work claim: only the freshly bound permit and current prestate commit the admission identity', () => {
+  const root = scaffoldTerminalClaimLane();
+  try {
+    const another = sha256('another self-consistent admission');
+    const swapped = terminalClaimRequest(root);
+    swapped.mutation = terminalClaimMutation(root, {
+      admissionIdentity: another, ownerLog: laneOwnerAppend(root, [terminalClaimMarker({ admissionIdentity: another })]),
+    });
+    assertLaneRefusal(root, swapped, 'mutation-identity-mismatch', 'another admission under this permit');
+
+    assertLaneRefusal(root, terminalClaimRequest(root, {}, { glyph: ' ' }), 'lane-prestate-mismatch', 'a permit over a pending prestate');
+    const staleState = terminalClaimRequest(root);
+    staleState.state = {
+      ...LANE_RUN_STATE,
+      overallUsed: 1,
+      completed: [{ evidenceHash: sha256('old evidence'), approachHash: sha256('old approach'), resultHash: sha256('old result') }],
+    };
+    assertLaneRefusal(root, staleState, 'run-state-mismatch', 'old nonzero accounting is not the permit subject');
+
+    const staleOwner = terminalClaimRequest(root);
+    fs.appendFileSync(path.join(root, ...LANE_IDEA.split('/')), '- 2026-07-25T11:00:00Z - a later coordinator line\n');
+    assertLaneRefusal(root, staleOwner, 'owner-prestate-mismatch', 'owner bytes changed after the permit');
+    const staleBoard = terminalClaimRequest(root);
+    fs.appendFileSync(path.join(root, ...LANE_TASKS.split('/')), '- 2026-07-25T11:00:00Z - a later history line\n');
+    assertLaneRefusal(root, staleBoard, 'expected-capture-mismatch', 'tasks.md changed after the permit');
+
+    const fresh = applyLightweightWorkRequest(terminalClaimRequest(root));
+    assertAutonomousCommittedResult(fresh, root, 'the freshly rebound claim');
+    assert.equal(fresh.receipt.targetStateChanged, false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

@@ -712,6 +712,59 @@ test('an abort raised during a passing post-handshake check still stops the ask 
   assert.equal(peer.questions.length, 0);
 });
 
+test('an onWrite hook sees the exact request body after the last binding check and before any byte; a refused or throwing hook leaves the ask unsent', async () => {
+  for (const [label, verdict] of /** @type {Array<[string, () => boolean]>} */ ([
+    ['recorded', () => true],
+    ['recording refused', () => false],
+    ['recording threw', () => { throw new Error('disk full'); }],
+  ])) {
+    const peer = serveFixture();
+    /** @type {Array<ReturnType<typeof duplexPair>>} */
+    const connections = [];
+    /** @type {string[]} */
+    const order = [];
+    /** @type {{text: string, written: number} | null} */
+    let seen = null;
+    const client = await prepareClient(askOptions({ checkBinding: () => { order.push('binding'); return true; } }),
+      { createSecureContext: acceptAnyPem, connect: connectTo(http.createServer(peer.app), { connections }) });
+
+    const outcome = await client.send('Is claim X supported?', {
+      signal: new AbortController().signal,
+      onWrite: (text) => {
+        order.push('record');
+        seen = { text, written: connections[0].written[0] };
+        return verdict();
+      },
+    }).then((reply) => ({ reply, error: null }), (/** @type {unknown} */ error) => ({ reply: null, error }));
+
+    assert.deepEqual(order, ['binding', 'record'], `${label}: called once, after the last binding check`);
+    assert.ok(seen);
+    assert.equal(seen.written, 0, `${label}: nothing was written before the hook ran`);
+    if (label === 'recorded') {
+      assert.ok(outcome.reply, label);
+      const body = JSON.parse(seen.text);
+      assert.equal(body.params.message.parts[0].text, 'Is claim X supported?');
+      assert.equal(body.params.message.messageId, outcome.reply.questionId, 'the recorded body is the request that was answered');
+      assert.equal(peer.questions.length, 1);
+    } else {
+      assert.ok(outcome.error instanceof A2aTransportError, label);
+      assert.deepEqual([outcome.error.code, outcome.error.sent], ['recording_failed', false], `${label}: definite non-delivery`);
+      assert.equal(connections[0].written[0], 0, `${label}: no request byte was written`);
+      assert.equal(connections[0].client.destroyed, true, `${label}: the socket is closed at once`);
+      assert.equal(peer.questions.length, 0, label);
+    }
+  }
+
+  let hooked = 0;
+  const unbound = await prepareClient(askOptions({ checkBinding: () => false }),
+    { createSecureContext: acceptAnyPem, connect: connectTo(http.createServer(serveFixture().app)) });
+  const error = await transportFailure(unbound.send('Is claim X supported?', {
+    signal: new AbortController().signal, onWrite: () => { hooked += 1; return true; },
+  }));
+  assert.equal(error.code, 'activation_ended');
+  assert.equal(hooked, 0, 'a failed binding check never reaches the hook');
+});
+
 /**
  * A real ask activation, approved through the chat commands, whose prepared
  * SDK client reaches `server` over in-memory connections. Questions go
@@ -1111,6 +1164,59 @@ test('the serving response lifecycle: a completed request body is not client los
   assert.equal(withheld.status, 500);
   assert.ok(Buffer.byteLength(withheld.text) <= 512);
   assert.equal(await tight[0].delivery.written, 'too_large', 'a withheld reply is reported as not sent');
+});
+
+test('a serving write hook sees the exact reply body before any byte; a refused or throwing hook withholds all of it, drops the connection, and reports it unrecorded', async () => {
+  /** @type {Array<{delivery: import('./lib/a2a-transport.mjs').Delivery, respond: (reply: any) => void}>} */
+  const admitted = [];
+  const fixture = serveFixture({ onQuestion: (_question, delivery) => new Promise((respond) => { admitted.push({ delivery, respond }); }) });
+  const answer = { outcome: 'answer', exchangeId: randomUUID(), conclusion: 'Recorded before it is written: é, ✓.', limitations: 'none', evidence: [] };
+  for (const [label, verdict] of /** @type {Array<[string, () => boolean]>} */ ([
+    ['recorded', () => true],
+    ['recording refused', () => false],
+    ['recording threw', () => { throw new Error('disk full'); }],
+  ])) {
+    const request = openRequest(fixture.app, JSON.stringify(questionRequest()));
+    await waitFor(() => admitted.length === 1, `${label}: question admitted`);
+    const { delivery, respond } = /** @type {(typeof admitted)[number]} */ (admitted.pop());
+    /** @type {Array<{body: string, written: number}>} */
+    const seen = [];
+    delivery.onWrite((body) => {
+      seen.push({ body, written: request.pair.written[1] });
+      return verdict();
+    });
+    const measured = delivery.measure(answer);
+    respond(answer);
+    const response = await request.response;
+    assert.equal(seen.length, 1, `${label}: the hook runs once`);
+    assert.equal(seen[0].written, 0, `${label}: it runs before any response byte`);
+    assert.equal(Buffer.byteLength(seen[0].body, 'utf8'), measured, `${label}: it sees exactly the measured body`);
+    assert.deepEqual(JSON.parse(seen[0].body).result.message.parts, [{ data: answer, mediaType: 'application/json' }]);
+    if (label === 'recorded') {
+      assert.deepEqual([response.status, response.text], [200, seen[0].body], 'the written body is the recorded one');
+      assert.equal(await delivery.written, 'sent');
+    } else {
+      assert.equal(response.status, null, `${label}: the connection dropped without a response`);
+      assert.equal(request.pair.written[1], 0, `${label}: no reply byte was written`);
+      assert.equal(await delivery.written, 'unrecorded', `${label}: reported as withheld, not as client loss`);
+    }
+  }
+
+  // An over-budget reply never reaches the hook: it is withheld and reported as before.
+  /** @type {typeof admitted} */
+  const tight = [];
+  const small = serveFixture({ contentBytes: 512, onQuestion: (_question, delivery) => new Promise((respond) => { tight.push({ delivery, respond }); }) });
+  const over = openRequest(small.app, JSON.stringify(questionRequest()));
+  await waitFor(() => tight.length === 1, 'tight question admitted');
+  let hooked = 0;
+  tight[0].delivery.onWrite(() => {
+    hooked += 1;
+    return true;
+  });
+  tight[0].respond({ ...answer, conclusion: 'x'.repeat(600) });
+  assert.equal((await over.response).status, 500);
+  assert.equal(await tight[0].delivery.written, 'too_large');
+  assert.equal(hooked, 0, 'only a body that will be written is recorded');
 });
 
 test('the asking side accepts only the exact answer envelope and recomputes each excerpt, so tampered or incomplete answers are uncertain and never delivered', async () => {

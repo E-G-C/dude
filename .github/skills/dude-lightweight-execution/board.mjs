@@ -61,6 +61,7 @@ import {
   validateProjectionPermitV1,
   validateLaneMutationPermitV1,
   validateLightweightAtomicReceiptV1,
+  parseTerminalFreshClaimMarkerV1,
 } from '../dude-work/recovery.mjs';
 import { commitDefinitionRecoveryV1 } from '../dude-feature-definition/atomic-file-batch.mjs';
 
@@ -323,6 +324,10 @@ const LANE_KIND_REASONS = Object.freeze({
   'controlled-end': Object.freeze(['controlled-unresolved-end']),
   'incident-supersession': Object.freeze(['incident-supersession']),
 });
+// One Lightweight-only claim alternative, outside the shared vocabulary above:
+// an unblocked `[~]` task claimed again for a new explicit request after its
+// original terminal owner fenced, retained, and disposed of its exact pair.
+const TERMINAL_FRESH_CLAIM_REASON = 'terminal-fresh-claim';
 const FEATURE_007_TARGET = Object.freeze({
   specPath: '.dude/specs/007-technical-docs-pack-remediation/spec.md',
   lane: 'lightweight',
@@ -774,6 +779,27 @@ function requireClosedTransition(mutation, blocker) {
 }
 
 /**
+ * The exact terminal fresh-claim alternative: unblocked `~` to `~`, no event
+ * lines, and one append-only owner-log marker carrying the mutation's own
+ * admission identity, task, and snapshot time.
+ * @param {Record<string, unknown>} mutation @param {{kind:string,before:string|null,after:string|null}} blocker
+ * @param {{kind:string}} eventLines @param {{kind:string,exactLines:string[]}} ownerLog
+ * @param {{taskKey:string}} target
+ */
+function requireTerminalFreshClaim(mutation, blocker, eventLines, ownerLog, target) {
+  const nullBlocker = blocker.kind === 'unchanged' && blocker.before === null && blocker.after === null;
+  if (mutation.fromGlyph !== '~' || mutation.toGlyph !== '~' || !nullBlocker) refuse('transition-not-allowed');
+  if (eventLines.kind !== 'none' || ownerLog.kind !== 'append-exact' || ownerLog.exactLines.length !== 1) {
+    refuse('mutation-schema-mismatch');
+  }
+  const marker = parseTerminalFreshClaimMarkerV1(ownerLog.exactLines[0]);
+  if (marker === null || marker.admissionIdentity !== mutation.admissionIdentity
+    || marker.taskKey !== target.taskKey || marker.time !== mutation.snapshotUpdatedAt) {
+    refuse('mutation-schema-mismatch');
+  }
+}
+
+/**
  * Validate one complete closed lane-specific mutation object and recompute its
  * whole-object identity. Never derived from an abstract kind, reason, target,
  * event hash, or prestate summary.
@@ -783,20 +809,23 @@ function requireClosedTransition(mutation, blocker) {
 function requireLightweightMutation(value, operation, target) {
   if (!isPlainRecord(value)) refuse('mutation-schema-mismatch');
   const incident = value.kind === 'incident-supersession';
+  // Only the exact claim alternative may carry this reason and its admission identity.
+  const terminalFresh = value.reason === TERMINAL_FRESH_CLAIM_REASON;
   if (operation === 'work-project' && value.kind !== 'append-event') refuse('mutation-schema-mismatch');
   if (operation === 'work-set' && value.kind === 'append-event') refuse('mutation-schema-mismatch');
   const mutation = exactRecord(value, incident
     ? ['version', 'lane', 'kind', 'reason', 'intentIdentity', 'previewIdentity', 'target',
       'fromGlyph', 'toGlyph', 'blocker', 'eventLines', 'ownerLog', 'snapshotUpdatedAt']
-    : ['version', 'lane', 'kind', 'reason', 'target', 'fromGlyph', 'toGlyph',
-      'blocker', 'eventLines', 'ownerLog', 'snapshotUpdatedAt']);
+    : ['version', 'lane', 'kind', 'reason', ...(terminalFresh ? ['admissionIdentity'] : []), 'target',
+      'fromGlyph', 'toGlyph', 'blocker', 'eventLines', 'ownerLog', 'snapshotUpdatedAt']);
   if (mutation.version !== 1) refuse('mutation-schema-mismatch');
   if (mutation.lane !== 'lightweight') refuse('mutation-schema-mismatch');
   const kind = /** @type {string} */ (mutation.kind);
   if (!Object.hasOwn(LANE_KIND_REASONS, kind)) refuse('mutation-schema-mismatch');
-  if (!LANE_KIND_REASONS[kind].includes(/** @type {string} */ (mutation.reason))) {
+  if (terminalFresh ? kind !== 'claim' : !LANE_KIND_REASONS[kind].includes(/** @type {string} */ (mutation.reason))) {
     refuse('mutation-schema-mismatch');
   }
+  if (terminalFresh) requireHash(mutation.admissionIdentity);
   const mutationTarget = requireLightweightTarget(mutation.target);
   if (canonicalJson(mutationTarget) !== canonicalJson(target)) refuse('target-mismatch');
   if (incident) {
@@ -814,7 +843,8 @@ function requireLightweightMutation(value, operation, target) {
   const eventLines = requireEventLineEffect(mutation.eventLines);
   const ownerLog = requireOwnerLogEffect(mutation.ownerLog);
   if (kind === 'append-event' && eventLines.lines.length !== 1) refuse('event-line-mismatch');
-  requireClosedTransition(mutation, blocker);
+  if (terminalFresh) requireTerminalFreshClaim(mutation, blocker, eventLines, ownerLog, mutationTarget);
+  else requireClosedTransition(mutation, blocker);
   return { mutation, blocker, eventLines, ownerLog, mutationIdentity: sha256(canonicalJson(mutation)) };
 }
 
@@ -1149,7 +1179,10 @@ function commitLightweightWorkRequest(requestValue, context) {
       tasksPoststateHash: /** @type {any} */ (post.tasks.descriptor).sha256,
       taskStatePoststateHash: /** @type {any} */ (post.taskState.descriptor).sha256,
       ownerPoststateHash: /** @type {any} */ (post.owner.descriptor).sha256,
-      targetStateChanged: !['append-event', 'controlled-end'].includes(/** @type {string} */ (derived.mutation.kind)),
+      // A projection, a controlled end, and the same-glyph terminal fresh claim
+      // leave the task's glyph and blocker unchanged.
+      targetStateChanged: !['append-event', 'controlled-end'].includes(/** @type {string} */ (derived.mutation.kind))
+        && derived.mutation.reason !== TERMINAL_FRESH_CLAIM_REASON,
     };
     const receipt = { ...body, receiptHash: sha256(canonicalJson(body)) };
     validateLightweightAtomicReceiptV1(receipt);

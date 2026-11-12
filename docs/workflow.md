@@ -16,7 +16,10 @@ lifecycle number, one higher than the highest number already in the workspace.
 The package later keeps that number. Inventory lists ideas in capture order and
 never recycles a gap. Numbers are local to the workspace, so ideas with
 different slugs can share one after branches merge; see
-[Definition Rules](reference.md#definition-rules). Scheduling still follows
+[Definition Rules](reference.md#definition-rules). A first capture can take
+optional number advice from an approved two-Dude
+[collaboration](agent-to-agent-communication.md#collaboration-between-two-dudes),
+which informs the choice without reserving a number. Scheduling still follows
 priority, dependencies, and execution state. Commands use the exact unnumbered
 frontmatter slug.
 
@@ -42,6 +45,10 @@ Ship-authorized, rather than user ratification.
 When Work begins, pre-Work answerability ends. Ship returns each Work outcome
 unchanged, with no reclassification, retry, or override; Work keeps its existing
 authority, audit, and reporting.
+
+After an earlier Work hard stop, a new Ship request for the same in-progress
+task hands Work the old run's terminal evidence. Work alone decides whether a
+fresh run may start, and Ship asks you for no technical fact or cleanup consent.
 
 ### GitHub Issue Intake
 
@@ -556,13 +563,21 @@ and the resumed operation. That notice renders exactly once, on the first
 successful corrected or resumed outcome, and a run whose first successful
 outcome is an end omits it.
 
-Stale ownership claims and checkpoints are cleaned up by hand. The refusal names
-the bounded ownership-claim and checkpoint pair for its canonical
-workspace-target key. Confirm independently that no invocation remains for that
-key, remove only that pair, and let the next load and claim preflight prove both
-artifacts absent before a fresh claim. Partial cleanup, a changed artifact,
-reappearance, or failed absence validation is a hard stop that keeps blocking
-replacement work.
+With the bundled driver, the original owner of a hard stop, while it is still
+live, can retire its own run, keep that run's evidence outside the workspace,
+and remove its own claim and checkpoint when every effect it entered is
+accounted for as built-in and settled. A later explicit request can then start
+a fresh run of the same in-progress task, or it gets the one missing proof that
+prevents that. See
+[terminal stops and fresh admission](commands.md#terminal-stops-and-fresh-admission).
+
+Any other leftover ownership claims and checkpoints are cleaned up by hand.
+The refusal names the bounded ownership-claim and checkpoint pair for its
+canonical workspace-target key. Confirm independently that no invocation remains
+for that key, remove only that pair, and let the next load and claim preflight
+prove both artifacts absent before a fresh claim. Partial cleanup, a changed
+artifact, reappearance, or failed absence validation is a hard stop that keeps
+blocking replacement work.
 
 Work never imports features, auto-commits, creates a lane or board, or bypasses
 the active lane's close protocol. Use [`@dude flag ...`](commands.md#dude-flag)

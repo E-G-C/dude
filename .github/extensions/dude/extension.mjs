@@ -6,11 +6,25 @@
  * authoritative projection, serves the work and Needs You workspace, and
  * closes cleanly. The joined provider owns bounded human and pack handoffs;
  * its existing tool also receives correlated owner results, never pack writes.
+ *
+ * The joined SDK comes only through the fixed extension loader
+ * (./lib/a2a-sdk-loader.mjs): it resolves the public
+ * `@github/copilot-sdk/extension` specifier, inspects that exact artifact, and
+ * imports the same resolved URL. When the loader refuses, this extension does
+ * not join; there is no other SDK path or fallback. The session is joined
+ * exactly once, with no permission handler and no tool filter.
+ *
  * Agent2Agent communication is off by default: it observes this one session's
- * events and registers its propose, ask, receive, reply, and verify tools. Proposal
- * preparation returns the complete native tool result, but starts no
- * listener, loads no SDK runtime, runs no command, and sends nothing. Only
- * the owner's exact next eligible local chat approval can activate it.
+ * events and registers its propose, ask, receive, reply, verify, and
+ * conversation tools. Proposal preparation returns the complete native tool
+ * result, but starts no listener, loads no worker SDK or A2A runtime, runs no
+ * command, and sends nothing. Only the owner's exact next eligible local chat
+ * approval can activate it. A conversation records into a bounded local
+ * journal under `.dude/state/a2a/`, opened only when an approved conversation
+ * begins and before anything is admitted, sent, or given to a worker; a begin
+ * refuses when it cannot be opened. The provider receives this extension's
+ * joined-loader provenance and process ID, which a served worker records with
+ * its readiness; it receives no session or permission handler.
  *
  * Wiring only; the loopback server lives in ./lib/canvas-server.mjs and the
  * browser entry in ./ui/index.html. `stdout` is reserved for JSON-RPC, so
@@ -28,17 +42,22 @@
  * so the app's own GitHub token is never read.
  */
 
-import { createCanvas, joinSession } from '@github/copilot-sdk/extension';
 import { createA2a } from './lib/a2a.mjs';
+import { loadExtensionSdk } from './lib/a2a-sdk-loader.mjs';
 import { createBundleUpgrade } from './lib/bundle-upgrade.mjs';
 import { closeInstance, openInstance } from './lib/canvas-server.mjs';
 import { createGitHubSession } from './lib/github-session.mjs';
 import { createNeedsYou } from './lib/needs-you.mjs';
 import { createReview } from './lib/review.mjs';
 
+const joined = await loadExtensionSdk();
+if (typeof joined.api.createCanvas !== 'function' || typeof joined.api.joinSession !== 'function') {
+  throw new Error('The loaded extension SDK has no createCanvas or joinSession; this extension does not join.');
+}
+const { createCanvas, joinSession } = /** @type {typeof import('@github/copilot-sdk/extension')} */ (/** @type {unknown} */ (joined.api));
 const root = process.cwd();
 const needsYou = createNeedsYou({ root, reviewAdapter: createReview({ root }) });
-const a2a = createA2a({ root });
+const a2a = createA2a({ root, extension: { loader: joined.provenance, pid: process.pid } });
 // Made before the join, like the other providers, so a Canvas opened at any
 // moment gets it; it does nothing until `startSessionCheck` below.
 const updates = createBundleUpgrade({ root });

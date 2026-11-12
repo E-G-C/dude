@@ -98,6 +98,19 @@ the feature:
   fail. Priority, dependencies, and execution use their own authorities. The
   [Feature Definition skill](../.github/skills/dude-feature-definition/SKILL.md)
   owns the allocation and first-definition rules.
+- A first capture may take optional peer number advice from one recorded
+  agent-to-agent conversation, only after an explicit decision to use it. The
+  publisher still re-inventories locally, chooses
+  `max(fresh local maximum, accepted peer observed maximum) + 1`, records a
+  receipt under `.dude/state/a2a/captures/`, and reserves nothing. Without
+  advice, allocation is unchanged. The serving peer's evidence worker records
+  its readiness before its first prompt, and native qualification of this
+  collaboration is incomplete. On Windows, that worker may reuse the Copilot
+  runtime's own saved sign-in instead of a token file; Dude implements no
+  sign-in for it. Native attempts with that sign-in reached the worker's
+  readiness, including its expected account, but no attempt has passed, and
+  strict isolated-worker qualification is deferred, not passed. See
+  [Collaboration between two Dudes](agent-to-agent-communication.md#collaboration-between-two-dudes).
 - Commands normally select the exact unnumbered frontmatter `slug:`. An explicit
   path selects only that exact numbered ledger.
 - An idea begins with `# Idea: <title>`. Its frontmatter uses only
@@ -359,13 +372,23 @@ resumed operation. That notice renders exactly once, on the first successful
 corrected or resumed outcome, and a run whose first successful outcome is an end
 omits it.
 
-Stale ownership claims and checkpoints are cleaned up by hand. The refusal names
-the bounded ownership-claim and checkpoint pair for its canonical
-workspace-target key. Confirm independently that no invocation remains for that
-key, remove only that pair, and let the next load and claim preflight prove both
-artifacts absent before a fresh claim. Partial cleanup, a changed artifact,
-reappearance, or failed absence validation is a hard stop that keeps blocking
-replacement work.
+When the bundled driver runs autonomous Lightweight Work, a hard stop's
+still-live original owner may release its ownership claim and checkpoint
+itself. It fences the old invocation for good, retains its evidence outside the
+workspace, and removes the exact pair only after it accounts for every effect as
+built-in and settled; otherwise the pair stays and one missing proof is
+reported. Taking that in-progress task again needs a new explicit request and
+the retained evidence, and the new run never inherits the old run's accounting
+or learning. The [Work command reference](commands.md#terminal-stops-and-fresh-admission)
+summarizes the outcomes.
+
+Any other leftover ownership claims and checkpoints are cleaned up by hand.
+The refusal names the bounded ownership-claim and checkpoint pair for its
+canonical workspace-target key. Confirm independently that no invocation remains
+for that key, remove only that pair, and let the next load and claim preflight
+prove both artifacts absent before a fresh claim. Partial cleanup, a changed
+artifact, reappearance, or failed absence validation is a hard stop that keeps
+blocking replacement work.
 
 An `autonomous` run ends only on a stop condition from the list in the
 [Work command reference](commands.md#dude-work). Surfacing progress is not one,

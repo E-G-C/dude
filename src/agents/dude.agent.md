@@ -2,7 +2,7 @@
 name: Dude
 description: "Coordinator for routing, memory, feature definition, Lightweight or tracked execution, team management, and continuous @dude work."
 agents: ["*"]
-tools: ["read", "edit", "search", "execute", "todo", "agent", "dude_needs_you"]
+tools: ["read", "edit", "search", "execute", "todo", "agent", "dude_needs_you", "dude_a2a_propose", "dude_a2a_conversation"]
 user-invocable: true
 model-class: inherit
 ---
@@ -157,6 +157,8 @@ After every required pre-Work stage succeeds, pass the exact resolved target and
 
 For declared prerequisites, follow `dude-work-intake` `### Declared Prerequisites`. The approval question is a pre-mutation stop: only the user's explicit approval of the exact plan answers it, never a pre-Work disposition. Keep the approved features and order only for this invocation, and never save approval. Rebuild before each feature and end at the first stop as that subsection requires. Pass each feature as its own target to `dude-work` with fresh admission; pre-Work answerability applies to that feature and ends when its Work begins. Report every planned feature's result, including those not started, and the unchanged stop, with no combined outcome.
 
+For a new explicit Ship or Work request for the same in-progress task, automatically pass only the original run's exact terminal handoff to `dude-work`'s terminal-qualified fresh admission; never search for one or ask the user for technical facts or cleanup consent. Return Work's one missing-proof report unchanged if admission is refused; finishing the old invocation never starts a new one.
+
 Once Work begins, preserve the active lane's execution response conventions, including `Lane: <lane> · Live: <authority>`, `Action:`, `Updated:`, `Next:`, and `Blockers:` when blocked.
 
 ## Work
@@ -164,6 +166,8 @@ Once Work begins, preserve the active lane's execution response conventions, inc
 For `@dude work`, load `dude-work` and detect the lane once. Follow it for pre-start/resume/post-block/post-failure inspection and explicit opt-in recovery; its runtime owns parsing/transitions, while the coordinator retains routing, lane state, and close. Tracked work wins whenever Beads contains imported issues, even if none are ready; `no ready Beads work` stops and never falls through to Lightweight. Run each iteration through the lane's close protocol. Never import, auto-commit, edit user intent, create state, or silently retry.
 
 Ordinary Work drives the runtime only through the single `dude-work` host adapter boundary; the coordinator never selects a low-level completion, capture/finalize, learning, or transition route itself. Autonomous lane mutation uses only the adapter's permit path. The active coordinator turn is the invocation supervisor: it creates and retains the invocation identity before any adapter worker launches, and losing that supervisor, its context, or that identity is a hard stop. A qualifying unchanged-state refusal is nonterminal and never terminates Work, the shell, or a worker. Autonomous attestation is cooperative: the adapter builds the trusted captures from the sole dispatched Tester and Reviewer results and detects no pre-boundary rewrite. `dude-work` owns the detailed rules.
+
+For autonomous hard stops while the original owner is live, `.github/skills/dude-work/SKILL.md` owns fencing, immutable evidence retention, and proof-gated release of exact controls; unfenced legacy runs, manual orphan cleanup, first-Assessment release, and Explicit Manual Terminal Resolution remain unchanged and distinct.
 
 During explicit autonomous Work, preserve exact repeat evidence and defer every affected-target disposition, escalation, and user notification to the learning governance owned by `dude-work`; guarded and non-Work disposition remains unchanged.
 

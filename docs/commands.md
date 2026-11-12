@@ -223,6 +223,14 @@ permission.
 When Work begins, pre-Work answerability ends. Ship returns every Work outcome
 unchanged, with no reclassification, minimization, extra retry, or override.
 
+If an earlier Work run on the target ended in a hard stop whose original owner
+left a terminal handoff, a new Ship request gives Work that exact handoff. Work
+either starts a genuinely fresh run or reports the one missing proof with the
+next owner action, and Ship passes that report on as Work wrote it. You are
+never asked for technical facts or cleanup consent, and finishing the old run
+never starts a new one. See
+[terminal stops and fresh admission](#terminal-stops-and-fresh-admission).
+
 A package is never refreshed behind your back. Ship performs no proactive
 redefinition, staleness check, drift check, or intent merge. Changed intent needs
 an explicit `@dude brainstorm`, and a deliberate package refresh needs an
@@ -323,6 +331,17 @@ see [Definition Rules](reference.md#definition-rules). It does not set priority,
 dependency, or execution order. The exact unnumbered frontmatter slug remains
 the normal selector, so commands still use `authentication`; an explicit path
 must name the exact numbered ledger.
+
+A first capture may also use optional peer number advice. When an approved
+[agent-to-agent collaboration](agent-to-agent-communication.md#collaboration-between-two-dudes)
+returns a recorded `dude_a2a_conversation` answer and the coordinator
+explicitly decides to use it, the publisher receives `--number-advice`,
+re-inventories locally, and chooses
+`max(fresh local maximum, accepted peer observed maximum) + 1`, writing a
+receipt beside that conversation's transcript. Reading an answer captures and
+stages nothing, invalid advice stops before any write with no automatic local
+fallback, and capture without advice is unchanged. Advice reserves nothing:
+ideas with different slugs may still share a number.
 
 The lifecycle status vocabulary is `draft|defined|resolved`. A new file starts
 with `# Idea: <title>` and frontmatter containing the exact unnumbered `slug:`,
@@ -627,16 +646,21 @@ feature. Under `autonomous`, that Inspection additionally acquires exactly one
 plan. An explicit feature-only inspection is read-only: it cannot authorize
 work, consume a budget, or mutate workflow state. Optional session history is
 used only when it can be exactly bound; its unavailability alone is not a
-blocker. Inspection admits one self-contained `dude-work-model-view-v1` packet
-and one Assessment bound to that Inspection's `evidenceHash`. The lossless model
-view shares only exact, complete, validated verification or review payloads and
-complete byte-identical event bodies through private packet-local current-run
-references into earlier literal task history.
+blocker. Inspection admits one self-contained packet and one Assessment bound
+to that Inspection's `evidenceHash`. That packet uses `dude-work-model-view-v2`
+only if, for the same evidence and owner suffix, v2 is strictly shorter in
+complete canonical bytes than `dude-work-model-view-v1`; a tie keeps
+v1. Either lossless view shares only exact, complete, validated verification or
+review payloads and complete byte-identical event bodies through private
+packet-local current-run references into earlier task history. v2 also carries
+exact canonical history event lines as structured spans and pools whole
+repeated readable strings in one text table, leaving everything else literal.
 Every original byte, descriptor, ordered occurrence, and authority binding
 remains reconstructible; sharing grants no authority. Raw machine Inspection
 evidence, trusted captures, and audit files retain their established forms.
-Task history stays complete and literal; the current-run model view stays
-complete and exactly reconstructible.
+Stored task history is never rewritten: v1 carries it literally and v2 restores
+its exact bytes. The current-run model view stays complete and exactly
+reconstructible.
 Readable text and bindings belong in that same packet before the learning
 exchange is bound; no late attachment or second packet can amend it.
 
@@ -866,6 +890,28 @@ by evidence is reported unresolved rather than given a name it cannot support.
 `@dude work` is the optional accelerator described in
 [docs/workflow.md](workflow.md). The full skill lives at
 [.github/skills/dude-work/SKILL.md](../.github/skills/dude-work/SKILL.md).
+
+#### Terminal stops and fresh admission
+
+With the bundled driver, the original owner of an autonomous Lightweight hard
+stop can release its own claim and checkpoint. While it is still live, it fences
+its run so that run can never continue, keeps the terminal result, controls,
+captures, and effect record as files outside the workspace, and removes its
+exact pair only when every effect it entered was built-in and settled. The hard
+stop itself comes back unchanged. A run that authorized an attempt or exposed a
+specialist pair, lost its owner, or cannot account for an effect keeps its pair
+and reports one missing proof. Legacy and unfenced runs keep the manual cleanup
+rules.
+
+Only a new explicit Work or Ship request can take that in-progress task again.
+Work checks the kept evidence, the current task and definition, the absence of
+the old controls, learning, and capacity, then either starts a run with fresh
+accounting or reports the first missing proof and its owner action. The task
+stays `[~]`, and the old run's state, counters, and learning remain evidence.
+Neither the first-Assessment release above nor the explicit manual terminal
+resolution grants this admission. The
+[driver cookbook](../.github/skills/dude-work/COOKBOOK.md) has the commands,
+files, and outcome examples; the Work skill owns the rules.
 
 ### Completion closeouts
 

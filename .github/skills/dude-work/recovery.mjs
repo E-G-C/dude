@@ -3508,54 +3508,166 @@ function modelPayloadContext(target, items) {
 }
 
 /**
- * Index only the literal history actually available in this packet. Full-set
- * trusted-payload context must never supply an omitted history anchor.
+ * Read only the task history actually available in this packet. Full-set
+ * trusted-payload context must never supply an omitted history anchor. A line
+ * that is exactly the event prefix, one validated canonical current-format event,
+ * and one LF becomes a structured span; every other byte, including CRLF,
+ * noncanonical, unknown, malformed, and unrelated lines, stays literal. Another
+ * task's valid event may be structured but never anchors a reference here.
  * @param {unknown} target @param {Record<string,unknown>[]} available
- * @returns {Map<string,[number,number]>}
+ * @returns {{position:number,body:Record<string,unknown>,spans:(string|Record<string,unknown>)[],
+ *   events:Map<string,[number,number]>}|null}
  */
-function modelHistoryEvents(target, available) {
-  /** @type {Map<string,[number,number]>} */
-  const events = new Map();
+function modelTaskHistory(target, available) {
   const canonical = canonicalTarget(target);
-  if (canonical.lane !== 'lightweight' || !canonical.taskKey) return events;
+  if (canonical.lane !== 'lightweight' || !canonical.taskKey) return null;
   const histories = available.filter(item => item.source === 'task-history' && item.status === 'present');
-  if (histories.length !== 1) return events;
+  if (histories.length !== 1) return null;
   const item = histories[0];
-  let history;
+  let body;
   try {
-    const body = assertExactRecord(
+    body = assertExactRecord(
       JSON.parse(/** @type {string} */ (item.text)),
       ['path', 'canonicalTasks', 'dependencies', 'discovered', 'history'], [], 'model task-history',
     );
     if (body.path !== canonical.specPath.replace(/spec\.md$/, 'tasks.md')
-      || canonicalJson(body) !== item.text) return events;
+      || canonicalJson(body) !== item.text) return null;
     assertDenseDataArray(body.canonicalTasks, 'model task-history.canonicalTasks');
     assertDenseDataArray(body.dependencies, 'model task-history.dependencies');
     assertUnicodeScalarString(body.discovered, 'model task-history.discovered');
     assertUnicodeScalarString(body.history, 'model task-history.history');
-    history = /** @type {string} */ (body.history);
   } catch (error) {
     if (!(error instanceof SyntaxError || error instanceof TypeError)) throw error;
-    return events;
+    return null;
   }
+  const history = /** @type {string} */ (body.history);
   const position = available.indexOf(item);
+  const anchorTarget = canonicalJson(canonical);
+  /** @type {Map<string,[number,number]>} */
+  const events = new Map();
+  /** @type {(string|Record<string,unknown>)[]} */
+  const spans = [];
+  let literal = '';
   for (const [lineIndex, line] of logicalLines(history).entries()) {
-    if (!line.text.startsWith(LANE_EVENT_PREFIX)
-      || history.slice(line.start + line.text.length, line.end) !== '\n') continue;
+    const event = history.slice(line.start + line.text.length, line.end) === '\n'
+      ? modelCanonicalEvent(line.text)
+      : null;
+    if (event === null) {
+      literal += history.slice(line.start, line.end);
+      continue;
+    }
+    if (literal !== '') spans.push(literal);
+    literal = '';
+    spans.push(event);
     const suffix = line.text.slice(LANE_EVENT_PREFIX.length);
-    try {
-      const event = /** @type {Record<string,unknown>} */ (
-        validateT002AuthoritativeEvent(JSON.parse(suffix), 'model history event')
-      );
-      if (canonicalJson(event) !== suffix
-        || canonicalJson(event.target) !== canonicalJson(canonical)) continue;
-      if (!events.has(suffix)) events.set(suffix, [position, lineIndex]);
-    } catch (error) {
-      if (!(error instanceof SyntaxError || error instanceof TypeError)) throw error;
-      // Eligibility only: unchanged raw history still reaches authority readers.
+    if (canonicalJson(event.target) === anchorTarget && !events.has(suffix)) {
+      events.set(suffix, [position, lineIndex]);
     }
   }
-  return events;
+  if (literal !== '') spans.push(literal);
+  return { position, body, spans, events };
+}
+
+/** One exact canonical current-format event line, or null.
+ * @param {string} line @returns {Record<string,unknown>|null} */
+function modelCanonicalEvent(line) {
+  if (!line.startsWith(LANE_EVENT_PREFIX)) return null;
+  const suffix = line.slice(LANE_EVENT_PREFIX.length);
+  try {
+    const event = /** @type {Record<string,unknown>} */ (
+      validateT002AuthoritativeEvent(JSON.parse(suffix), 'model history event')
+    );
+    return canonicalJson(event) === suffix ? event : null;
+  } catch (error) {
+    if (!(error instanceof SyntaxError || error instanceof TypeError)) throw error;
+    // Eligibility only: unchanged raw history still reaches authority readers.
+    return null;
+  }
+}
+
+/** The `texts` member every v2 packet adds: key, separator, and empty array. */
+const MODEL_VIEW_V2_METADATA_BYTES = Buffer.byteLength(',"texts":[]');
+
+/** @param {Record<string,unknown>} item @returns {ReadableTextV1|null} */
+function modelReadableText(item) {
+  if (item.tag !== 'verification' && item.tag !== 'review') return null;
+  const payload = /** @type {Record<string,unknown>} */ (item.payload);
+  return Object.hasOwn(payload, 'text') ? /** @type {ReadableTextV1} */ (payload.text) : null;
+}
+
+/** @param {ReadableTextV1} text */
+function modelReadableRows(text) {
+  return /** @type {Record<string,string>[]} */ (
+    text.type === 'verification-text' ? text.checks : text.findings
+  );
+}
+
+/**
+ * Derive the lossless v2 candidate for exactly the evidence and owner suffix of
+ * one v1 packet. Every v1 item, frame, occurrence, descriptor, binding, and
+ * current-run reference stays. The one eligible task history becomes structured
+ * spans, and complete byte-identical strings repeated at validated readable
+ * positions are pooled in a packet-local table, ordered by first occurrence and
+ * canonical field order. A group is pooled only when its table entry, separator,
+ * and digit-length references cost less than its repeated literals.
+ * `savedBytes` is the exact canonical v1-minus-v2 difference: members serialize
+ * in sorted order, so `texts` follows `target`, both format strings have equal
+ * length, and each replaced value changes the total by its own serialized size.
+ * @param {{format:string,target:Record<string,unknown>,items:Record<string,unknown>[]}} literal
+ * @param {ReturnType<typeof modelTaskHistory>} history
+ */
+function modelViewV2(literal, history) {
+  let savedBytes = -MODEL_VIEW_V2_METADATA_BYTES;
+  const items = [...literal.items];
+  const historyIndex = history === null ? -1 : items.findIndex((item) => {
+    const occurrence = /** @type {ModelFrame[]} */ (item.frames)[0].occurrences[0];
+    return item.tag === 'literal' && occurrence.source === 'task-history' && occurrence.position === history.position;
+  });
+  if (history !== null && historyIndex >= 0) {
+    const structured = {
+      tag: 'task-history',
+      body: { ...history.body, history: history.spans },
+      frames: items[historyIndex].frames,
+    };
+    savedBytes += Buffer.byteLength(canonicalJson(items[historyIndex])) - Buffer.byteLength(canonicalJson(structured));
+    items[historyIndex] = structured;
+  }
+  /** @type {Map<string,number>} */
+  const counts = new Map();
+  for (const item of items) {
+    const text = modelReadableText(item);
+    if (text === null) continue;
+    for (const row of modelReadableRows(text)) {
+      for (const field of Object.keys(row).sort()) counts.set(row[field], (counts.get(row[field]) ?? 0) + 1);
+    }
+  }
+  /** @type {string[]} */
+  const texts = [];
+  /** @type {Map<string,number>} */
+  const references = new Map();
+  for (const [value, count] of counts) {
+    if (count < 2) continue;
+    const literalBytes = Buffer.byteLength(JSON.stringify(value));
+    const referenceBytes = Buffer.byteLength(`{"textRef":${texts.length}}`);
+    const saving = (count - 1) * literalBytes - (texts.length > 0 ? 1 : 0) - count * referenceBytes;
+    if (saving <= 0) continue;
+    references.set(value, texts.length);
+    texts.push(value);
+    savedBytes += saving;
+  }
+  const pooled = references.size === 0 ? items : items.map((item) => {
+    const text = modelReadableText(item);
+    if (text === null) return item;
+    const field = text.type === 'verification-text' ? 'checks' : 'findings';
+    const rows = modelReadableRows(text).map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [
+      key, references.has(value) ? { textRef: references.get(value) } : value,
+    ])));
+    return { ...item, payload: { .../** @type {Record<string,unknown>} */ (item.payload), text: { ...text, [field]: rows } } };
+  });
+  return {
+    packet: { format: 'dude-work-model-view-v2', target: literal.target, texts, items: pooled },
+    savedBytes,
+  };
 }
 
 /**
@@ -3601,7 +3713,8 @@ function packetProjection(target, value, context) {
   const originals = /** @type {Record<string, unknown>[]} */ (assertDenseDataArray(value, 'EvidenceItem list'));
   const payloads = context ?? modelPayloadContext(target, originals);
   const available = originals.filter(isAvailable);
-  const historyEvents = modelHistoryEvents(target, available);
+  const history = modelTaskHistory(target, available);
+  const historyEvents = history?.events ?? new Map();
   /** @param {unknown} value */
   const canonicalBytes = (value) => Buffer.byteLength(canonicalJson(value));
   /** @type {{source:string,position:number,literal:LiteralModelItem,typed:TypedModelItem|null}[]} */
@@ -3681,11 +3794,14 @@ function packetProjection(target, value, context) {
     }
   }
   selected.sort((left, right) => left.position - right.position);
-  return {
+  const literal = {
     format: 'dude-work-model-view-v1',
     target: canonicalTarget(target),
     items: selected.map(({ item }) => item),
   };
+  // One complete packet: v2 only when strictly smaller for this exact evidence; ties keep v1.
+  const compact = modelViewV2(literal, history);
+  return compact.savedBytes > 0 ? compact.packet : literal;
 }
 
 /** @param {unknown} target @param {unknown[]} items @param {boolean} overflow */
@@ -9445,36 +9561,11 @@ export function finalizeCompletionV2(stateValue, inputValue, occurrenceEventsVal
     }
     throw error;
   }
-  const governanceIdentity = sha256(canonicalJson({
-    version: 1,
-    target: pendingCompletion.target,
-    repeatIdentity: sha256(canonicalJson(repeat)),
-  }));
-  const governanceCore = {
-    version: 1,
-    governanceIdentity,
-    target: pendingCompletion.target,
-    trigger: repeat,
-    failedApproachSet,
-    phase: 'required',
-    revision: 1,
-    triggerEvidenceHash: sha256(canonicalJson({
-      trigger: repeat,
-      failedApproachSetIdentity: failedApproachSet.setIdentity,
-    })),
-  };
-  const governanceEvent = buildGovernanceEventV1(governanceCore);
-  const projectionBatch = buildProjectionBatchV1(
-    'governance-required',
+  const { governance, governanceEvent, projectionBatch } = requiredLearningGovernanceV1(
     /** @type {Record<string, unknown>} */ (pendingCompletion.target),
-    [governanceEvent],
-    'finalizeCompletionV2 governance required',
+    repeat,
+    failedApproachSet,
   );
-  const governance = {
-    ...governanceCore,
-    projectionCommitment: projectionCommitmentOfBatchV1(projectionBatch),
-  };
-  validateLearningGovernanceV1(governance);
   nextState.learningGovernance = governance;
   validateRunState(nextState);
   return respond({
@@ -9488,6 +9579,90 @@ export function finalizeCompletionV2(stateValue, inputValue, occurrenceEventsVal
     governanceEvent,
     projectionBatch,
   });
+}
+
+/**
+ * Build the required-learning case for one repeat and its derived failed-approach
+ * set: the governance record, its event, and the exact projection batch.
+ * Finalization records it, and the known-completion fit check measures the same
+ * batch before the completion capture is accepted.
+ * @param {Record<string, unknown>} target @param {Record<string, unknown>} repeat
+ * @param {Record<string, unknown>} failedApproachSet
+ */
+function requiredLearningGovernanceV1(target, repeat, failedApproachSet) {
+  const governanceIdentity = sha256(canonicalJson({
+    version: 1,
+    target,
+    repeatIdentity: sha256(canonicalJson(repeat)),
+  }));
+  const governanceCore = {
+    version: 1,
+    governanceIdentity,
+    target,
+    trigger: repeat,
+    failedApproachSet,
+    phase: 'required',
+    revision: 1,
+    triggerEvidenceHash: sha256(canonicalJson({
+      trigger: repeat,
+      failedApproachSetIdentity: failedApproachSet.setIdentity,
+    })),
+  };
+  const governanceEvent = buildGovernanceEventV1(governanceCore);
+  const projectionBatch = buildProjectionBatchV1(
+    'governance-required',
+    target,
+    [governanceEvent],
+    'finalizeCompletionV2 governance required',
+  );
+  const governance = {
+    ...governanceCore,
+    projectionCommitment: projectionCommitmentOfBatchV1(projectionBatch),
+  };
+  validateLearningGovernanceV1(governance);
+  return { governance, governanceEvent, projectionBatch };
+}
+
+/**
+ * The required-learning batch that finalizing this pending completion derives
+ * once its exact occurrence batch is retained, read from a predicted Inspection
+ * after those writes. It mirrors finalization: a bound or occupied learning case,
+ * a definition reconciliation, incomplete or conflicting retention, no repeat, or
+ * a refusal leaves no further write to measure, and finalization keeps sole
+ * authority over the actual outcome.
+ * @param {Record<string, unknown>} state @param {Record<string, unknown>} batch
+ * @param {Record<string, unknown>} inspection
+ * @returns {Record<string, unknown>|null}
+ */
+function predictedRequiredLearningBatchV2(state, batch, inspection) {
+  const pendingRows = /** @type {Record<string, unknown>[]} */ (state.pending);
+  if (batch.purpose !== 'occurrence-retention'
+    || !Object.hasOwn(state, 'pendingCompletion')
+    || Object.hasOwn(state, 'learningGovernance')
+    || pendingRows.length !== 1
+    || pendingRows[0].action === 'reconcile-derived-definition') return null;
+  const target = /** @type {Record<string, unknown>} */ (
+    /** @type {Record<string, unknown>} */ (state.pendingCompletion).target
+  );
+  if (/** @type {unknown[]} */ (inspection.blockers).length > 0
+    || targetKey(inspection.target) !== targetKey(target)) return null;
+  try {
+    const retained = dualRetainedOccurrenceEventsV2(inspection);
+    validateRetainedOccurrenceAuthorityV2(retained.retained, trustedEnvelopeIndexFromInspectionV2(inspection));
+    if (/** @type {Record<string, unknown>[]} */ (batch.events).some((event) => (
+      retained.currentCounts.get(/** @type {string} */ (event.eventHash)) !== 1
+      || retained.laneCounts.get(/** @type {string} */ (event.eventHash)) !== 1
+    ))) return null;
+    const repeat = deriveEarliestRepeatRelationshipV1(retained.retained);
+    if (!repeat) return null;
+    // A failed-approach-set excess is finalization's own refusal, with no write;
+    // its TypeError leaves this footprint unestablished below.
+    return requiredLearningGovernanceV1(target, repeat, deriveFailedApproachSetV1(repeat, retained.retained))
+      .projectionBatch;
+  } catch (error) {
+    if (!(error instanceof TypeError) || capacityDiagnostic(error) !== null) throw error;
+    return null;
+  }
 }
 
 /** @param {Record<string, unknown>} source @param {Record<string, unknown>} target */
@@ -12164,7 +12339,13 @@ export function prepareProjectionV2(stateValue, inputValue, batchValue, dependen
     if ('reason' in remaining) {
       return { inspection, transition: { prepared: false, reason: remaining.reason, state } };
     }
-    const reason = preflightLightweightWorkV2(acquired, bound, remaining.items);
+    const lane = bound;
+    const reason = preflightLightweightWorkV2(
+      acquired,
+      lane,
+      remaining.items,
+      (predicted) => requiredLearningItemsV2(state, batch, target, lane, predicted),
+    );
     if (reason) return { inspection, transition: { prepared: false, reason, state } };
   }
   const planWithoutIdentity = {
@@ -12182,6 +12363,28 @@ export function prepareProjectionV2(stateValue, inputValue, batchValue, dependen
       plan: { ...planWithoutIdentity, planIdentity: sha256(canonicalJson(planWithoutIdentity)) },
     },
   };
+}
+
+/**
+ * Measurement-only items for the required learning that finalization derives
+ * once this exact occurrence batch is retained, so a completion's whole known
+ * lane footprint is measured before any part of it is accepted or written. They
+ * carry no permit and grant nothing; the later preparation of that batch
+ * reacquires and rederives them.
+ * @param {Record<string, unknown>} state @param {Record<string, unknown>} batch
+ * @param {Record<string, unknown>} target @param {Record<string, unknown>} bound
+ * @param {Record<string, unknown>} predicted Inspection after the occurrence writes.
+ */
+function requiredLearningItemsV2(state, batch, target, bound, predicted) {
+  const learning = predictedRequiredLearningBatchV2(state, batch, predicted);
+  if (learning === null) return [];
+  const items = /** @type {Record<string, unknown>[]} */ (learning.events)
+    .map((event, index) => v2ProjectionPlanItem(event, `required learning events[${index}]`));
+  // An event already retained on both surfaces needs no write; any other
+  // prefix refusal stays with that batch's own preparation.
+  const remaining = remainingProjectionItemsV2(predicted, items);
+  if ('reason' in remaining) return [];
+  return remaining.items.map((item) => ({ ...item, mutation: v2ProjectionMutationV1(target, bound, item) }));
 }
 
 /** Derive one exact same-state projection mutation for a bound plan item. @param {Record<string, unknown>} target @param {Record<string, unknown>} bound @param {Record<string, unknown>} item */
@@ -12267,11 +12470,14 @@ export function retainedProjectionPrefixV2(inspection, batchValue) {
  * Measure exact postimages over the complete private acquisition, never over
  * truncated Inspection text. Each iteration measures the lane-first window
  * and then the same current-run capture the runner will publish for its receipt.
+ * After `items`, `next` may derive further fully known items from the Inspection
+ * predicted after their writes; those continue from the same postimages.
  * @param {ReturnType<typeof acquireInspection>} acquired
  * @param {Record<string, unknown>} bound @param {Record<string, unknown>[]} items
+ * @param {(predicted:Record<string, unknown>)=>Record<string, unknown>[]} [next]
  * @returns {string|null}
  */
-function preflightLightweightWorkV2(acquired, bound, items) {
+function preflightLightweightWorkV2(acquired, bound, items, next) {
   const { target, context, dependencies } = acquired;
   const mapping = /** @type {Record<string, unknown>} */ (bound.mapping);
   const prestate = /** @type {Record<string, unknown>} */ (bound.prestate);
@@ -12294,6 +12500,7 @@ function preflightLightweightWorkV2(acquired, bound, items) {
 
   let raw = acquired.rawInputs;
   let ownerBytes = owner.bytes;
+  let predicted = /** @type {Record<string, unknown>} */ (acquired.inspection);
   /** @param {typeof raw} candidate */
   const measure = candidate => {
     assertSourceEntryLimit(candidate, 'known Lightweight postimage', 'autonomous', target);
@@ -12314,9 +12521,14 @@ function preflightLightweightWorkV2(acquired, bound, items) {
         'known Lightweight postimage', `exceeds the model packet resource limit of ${MAX_PACKET_BYTES} bytes`,
       );
     }
+    predicted = measured.inspection;
     return measured.inspection.blockers.length === 0 ? null : 'projection-stale';
   };
-  for (const item of items) {
+  function* knownItems() {
+    yield* items;
+    if (next) yield* next(predicted);
+  }
+  for (const item of knownItems()) {
     const mutation = /** @type {Record<string, unknown>} */ (item.mutation);
     const ownerLog = /** @type {Record<string, unknown>} */ (mutation.ownerLog);
     if (ownerLog.kind === 'append-exact'
@@ -13498,6 +13710,17 @@ const V2_LANE_KIND_REASONS = Object.freeze({
   'controlled-end': Object.freeze(['controlled-unresolved-end']),
   'incident-supersession': Object.freeze(['incident-supersession']),
 });
+// One Lightweight-only claim alternative, not a shared lane reason: a new
+// explicit request claims an unblocked `[~]` task whose original terminal owner
+// fenced, retained, and disposed of its exact pair. The tracked vocabulary and
+// every ordinary transition above stay unchanged.
+const TERMINAL_FRESH_CLAIM_REASON = 'terminal-fresh-claim';
+const TERMINAL_FRESH_CLAIM_MARKER_PATTERN = new RegExp([
+  '^- (\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z) - work: Freshly claimed (T\\d{3,}@[a-z0-9]{8})',
+  ' for new explicit Work request ([0-9a-f]{64}) under admission ([0-9a-f]{64}),',
+  ' bound to terminal evidence ([0-9a-f]{64}) and disposition ([0-9a-f]{64});',
+  ' the prior Work run remains terminal\\.$',
+].join(''));
 const V2_AUTHORIZED_PHASES = Object.freeze([
   'alternative-authorized-pending-lane', 'alternative-authorized', 'alternative-verified',
 ]);
@@ -13827,13 +14050,19 @@ function validateLaneMutationV1(value, target, label) {
   const lightweight = record.lane === 'lightweight';
   const incident = record.kind === 'incident-supersession';
   if (incident && !lightweight) invalid(`${label}.kind`, 'incident supersession is Lightweight only');
+  // The terminal fresh claim is one exact Lightweight claim alternative; its
+  // reason and required admission identity are refused everywhere else.
+  const terminalFresh = record.reason === TERMINAL_FRESH_CLAIM_REASON;
+  if (terminalFresh && (!lightweight || record.kind !== 'claim')) {
+    invalid(`${label}.reason`, 'terminal-fresh-claim is only the Lightweight same-glyph claim alternative');
+  }
   const stateFields = lightweight ? ['fromGlyph', 'toGlyph'] : ['fromStatus', 'toStatus'];
   const mutation = assertExactRecord(
     value,
     incident
       ? ['version', 'lane', 'kind', 'reason', 'intentIdentity', 'previewIdentity', 'target', 'fromGlyph', 'toGlyph', 'blocker', 'eventLines', 'ownerLog', 'snapshotUpdatedAt']
       : [
-        'version', 'lane', 'kind', 'reason', 'target', ...stateFields,
+        'version', 'lane', 'kind', 'reason', ...(terminalFresh ? ['admissionIdentity'] : []), 'target', ...stateFields,
         'blocker', 'eventLines', 'ownerLog', ...(lightweight ? ['snapshotUpdatedAt'] : []),
       ],
     [],
@@ -13847,12 +14076,16 @@ function validateLaneMutationV1(value, target, label) {
   );
   assertEnum(
     mutation.reason,
-    incident ? ['incident-supersession'] : ['event-projection', ...V2_LANE_REASONS],
+    incident
+      ? ['incident-supersession']
+      : terminalFresh ? [TERMINAL_FRESH_CLAIM_REASON] : ['event-projection', ...V2_LANE_REASONS],
     `${label}.reason`,
   );
-  if (!V2_LANE_KIND_REASONS[/** @type {string} */ (mutation.kind)].includes(/** @type {string} */ (mutation.reason))) {
+  if (!terminalFresh
+    && !V2_LANE_KIND_REASONS[/** @type {string} */ (mutation.kind)].includes(/** @type {string} */ (mutation.reason))) {
     invalid(`${label}.reason`, 'must match its exact mutation kind');
   }
+  if (terminalFresh) assertHash(mutation.admissionIdentity, `${label}.admissionIdentity`);
   const mutationTarget = validateAffectedTargetV2(mutation.target, `${label}.target`);
   if (mutationTarget.lane !== mutation.lane) invalid(`${label}.lane`, 'must match the mutation target lane');
   if (targetKey(mutationTarget) !== targetKey(target)) invalid(`${label}.target`, 'must be the exact affected target');
@@ -13874,8 +14107,123 @@ function validateLaneMutationV1(value, target, label) {
   if (mutation.kind === 'append-event' && eventLines.events.length !== 1) {
     invalid(`${label}.eventLines`, 'projection requires exactly one append line matching its item event');
   }
-  requireClosedLaneTransitionV2(mutation, from, to, /** @type {string} */ (blocker.kind), blocker, label);
-  return { mutation, mutationIdentity: sha256(canonicalJson(mutation)), events: eventLines.events };
+  const marker = terminalFresh
+    ? requireTerminalFreshClaimV2(mutation, from, to, blocker, eventLines.effect, mutationTarget, label)
+    : (requireClosedLaneTransitionV2(mutation, from, to, /** @type {string} */ (blocker.kind), blocker, label), null);
+  return { mutation, mutationIdentity: sha256(canonicalJson(mutation)), events: eventLines.events, marker };
+}
+
+/**
+ * The exact terminal fresh-claim alternative: an unblocked `~` to `~` claim
+ * with no event lines and one append-only owner-log marker that carries the
+ * mutation's own admission identity, task, and snapshot time.
+ * @param {Record<string, unknown>} mutation @param {string} from @param {string} to
+ * @param {Record<string, unknown>} blocker @param {Record<string, unknown>} eventLines
+ * @param {Record<string, unknown>} target @param {string} label
+ */
+function requireTerminalFreshClaimV2(mutation, from, to, blocker, eventLines, target, label) {
+  const ownerLog = /** @type {Record<string, unknown>} */ (mutation.ownerLog);
+  const lines = ownerLog.kind === 'append-exact' ? /** @type {unknown[]} */ (ownerLog.exactLines) : [];
+  const marker = lines.length === 1 ? parseTerminalFreshClaimMarkerV1(lines[0]) : null;
+  if (from !== '~' || to !== '~'
+    || blocker.kind !== 'unchanged' || blocker.before !== null || blocker.after !== null
+    || eventLines.kind !== 'none'
+    || marker === null
+    || marker.admissionIdentity !== mutation.admissionIdentity
+    || marker.taskKey !== target.taskKey
+    || marker.time !== mutation.snapshotUpdatedAt) {
+    invalid(label, 'is not the exact unblocked same-glyph terminal fresh claim');
+  }
+  return /** @type {NonNullable<typeof marker>} */ (marker);
+}
+
+/**
+ * Render the one exact append-only owner-log marker of a terminal fresh claim.
+ * It binds the new request and its admission to the original terminal evidence
+ * and disposition identities and states that the original run remains terminal.
+ * It carries identities only, never a raw worker token.
+ * @param {{time:string, taskKey:string, requestIdentity:string, admissionIdentity:string, manifestIdentity:string, dispositionIdentity:string}} fields
+ */
+export function terminalFreshClaimMarkerV1(fields) {
+  const line = `- ${fields.time} - work: Freshly claimed ${fields.taskKey} for new explicit Work request `
+    + `${fields.requestIdentity} under admission ${fields.admissionIdentity}, bound to terminal evidence `
+    + `${fields.manifestIdentity} and disposition ${fields.dispositionIdentity}; the prior Work run remains terminal.`;
+  if (parseTerminalFreshClaimMarkerV1(line) === null) {
+    invalid('terminal fresh claim marker', 'must render one exact canonical line');
+  }
+  return line;
+}
+
+/**
+ * Parse one exact terminal fresh-claim marker; any other line is null.
+ * @param {unknown} line
+ * @returns {{time:string, taskKey:string, requestIdentity:string, admissionIdentity:string, manifestIdentity:string, dispositionIdentity:string}|null}
+ */
+export function parseTerminalFreshClaimMarkerV1(line) {
+  if (typeof line !== 'string') return null;
+  const match = TERMINAL_FRESH_CLAIM_MARKER_PATTERN.exec(line);
+  if (match === null) return null;
+  const [, time, taskKey, requestIdentity, admissionIdentity, manifestIdentity, dispositionIdentity] = match;
+  return { time, taskKey, requestIdentity, admissionIdentity, manifestIdentity, dispositionIdentity };
+}
+
+/**
+ * Validate one exact terminal fresh-claim mutation for its target and return
+ * its whole-object identity and marker fields. Every other mutation refuses.
+ * @param {unknown} value @param {unknown} targetValue
+ */
+export function validateTerminalFreshClaimMutationV1(value, targetValue) {
+  const label = 'TerminalFreshClaimMutationV1';
+  const target = validateAffectedTargetV2(targetValue, `${label} target`);
+  if (assertRecord(value, label).reason !== TERMINAL_FRESH_CLAIM_REASON) {
+    invalid(`${label}.reason`, 'must be terminal-fresh-claim');
+  }
+  const derived = validateLaneMutationV1(value, target, label);
+  return {
+    mutation: derived.mutation,
+    mutationIdentity: derived.mutationIdentity,
+    marker: /** @type {NonNullable<typeof derived.marker>} */ (derived.marker),
+  };
+}
+
+/**
+ * Build the exact same-glyph terminal fresh-claim mutation; every receiver
+ * still validates it.
+ * @param {{target:Record<string, unknown>, ownerPath:string, expectedOwnerHash:string, time:string,
+ *   requestIdentity:string, admissionIdentity:string, manifestIdentity:string, dispositionIdentity:string}} fields
+ */
+export function buildTerminalFreshClaimMutationV1(fields) {
+  const target = validateAffectedTargetV2(fields.target, 'terminal fresh claim target');
+  const mutation = {
+    version: 1,
+    lane: 'lightweight',
+    kind: 'claim',
+    reason: TERMINAL_FRESH_CLAIM_REASON,
+    admissionIdentity: fields.admissionIdentity,
+    target: canonicalTarget(target),
+    fromGlyph: '~',
+    toGlyph: '~',
+    blocker: { kind: 'unchanged', before: null, after: null },
+    eventLines: { kind: 'none' },
+    ownerLog: {
+      kind: 'append-exact',
+      ownerPath: fields.ownerPath,
+      expectedOwnerHash: fields.expectedOwnerHash,
+      exactLines: [terminalFreshClaimMarkerV1({
+        time: fields.time,
+        taskKey: /** @type {string} */ (target.taskKey),
+        requestIdentity: fields.requestIdentity,
+        admissionIdentity: fields.admissionIdentity,
+        manifestIdentity: fields.manifestIdentity,
+        dispositionIdentity: fields.dispositionIdentity,
+      })],
+      terminator: 'LF',
+      appendIfAbsent: true,
+    },
+    snapshotUpdatedAt: fields.time,
+  };
+  validateLaneMutationV1(mutation, target, 'terminal fresh claim mutation');
+  return mutation;
 }
 
 /** @param {Record<string, unknown>} body */
@@ -14569,12 +14917,14 @@ function consumeAttemptPermitV2(state, target, inspection, permitValue) {
 
 /**
  * Issue one post-authorization or projection lane permit from the complete
- * closed lane-specific mutation object.
+ * closed lane-specific mutation object. A terminal fresh claim also carries its
+ * terminal admission material; the issuer rederives that claim's binding and
+ * eligibility from it and fresh evidence, never trusting a supplied identity.
  * @param {unknown} stateValue @param {unknown} inputValue @param {unknown} mutationValue
  * @param {unknown} lanePrestateValue @param {unknown} targetMappingValue
- * @param {unknown} [dependencies] @param {boolean} [transport]
+ * @param {unknown} [dependencies] @param {boolean} [transport] @param {unknown} [terminalAdmissionValue]
  */
-export function issueLanePermitV2(stateValue, inputValue, mutationValue, lanePrestateValue, targetMappingValue, dependencies, transport = false) {
+export function issueLanePermitV2(stateValue, inputValue, mutationValue, lanePrestateValue, targetMappingValue, dependencies, transport = false, terminalAdmissionValue = undefined) {
   const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
   if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
     invalid('issueLanePermitV2', 'requires autonomous policy');
@@ -14624,6 +14974,15 @@ export function issueLanePermitV2(stateValue, inputValue, mutationValue, lanePre
   if (mutation.kind !== 'incident-supersession'
     && !lanePrestateMatchesFreshEvidenceV2(inspection, target, bound.prestate)) {
     return respond({ issued: false, reason: 'lane-prestate-mismatch', state });
+  }
+  if ((mutation.reason === TERMINAL_FRESH_CLAIM_REASON) !== (terminalAdmissionValue !== undefined)) {
+    return respond({ issued: false, reason: 'permit-transition-mismatch', state });
+  }
+  if (terminalAdmissionValue !== undefined) {
+    const reason = terminalFreshClaimIssuanceReasonV2(
+      acquired, state, mutation, bound, terminalAdmissionValue, { inputValue, dependencies, transport },
+    );
+    if (reason) return respond({ issued: false, reason, state });
   }
   const governance = activeGovernanceCaseV2(state);
   const governed = governance && targetKey(governance.target) === targetKey(target) ? governance : null;
@@ -14876,7 +15235,7 @@ function requiredLanePermitPhaseV2(state, mutation, governance, inspection) {
   const ungoverned = { governanceIdentity: null, governancePhase: null, attemptIdentity: null };
   const reason = /** @type {string} */ (mutation.reason);
   if (reason === 'incident-supersession' || reason === 'initial-claim'
-    || reason === 'resume-claim' || reason === 'task-blocked') {
+    || reason === 'resume-claim' || reason === 'task-blocked' || reason === TERMINAL_FRESH_CLAIM_REASON) {
     return governance ? { reason: 'learning-phase-mismatch' } : ungoverned;
   }
   if (!governance) {
@@ -15467,6 +15826,719 @@ export function prepareIncidentCorrectionV2(stateValue, inputValue, requestValue
   });
 }
 
+// === Feature 094: terminal-qualified fresh admission ========================
+// A new explicit request may claim an unblocked `[~]` task again only through
+// the original owner's own retained handoff: its fence, immutable evidence, and
+// `disposed` disposition. Admission consumes that evidence and current
+// surfaces read-only; it never imports the original accepted state, its
+// budgets, selected alternative, or governance identity, and it is no registry.
+
+const TERMINAL_MANIFEST_FILE = 'terminal-evidence.json';
+const TERMINAL_DISPOSITION_FILE = 'terminal-disposition.json';
+// The fixed producer-derived manifest members, by role and run-local name, in order.
+const TERMINAL_MEMBER_FILES = Object.freeze([
+  Object.freeze(['original-terminal', 'terminal-original.json']),
+  Object.freeze(['captures', 'retained-evidence.json']),
+  Object.freeze(['controls', 'terminal-controls.json']),
+  Object.freeze(['host-fence', 'terminal-fence.json']),
+  Object.freeze(['effects', 'terminal-effects.json']),
+]);
+/** The exact fixed run-local files one terminal handoff consists of; nothing else is read. */
+export const TERMINAL_HANDOFF_FILES = Object.freeze([
+  TERMINAL_MANIFEST_FILE, TERMINAL_DISPOSITION_FILE, ...TERMINAL_MEMBER_FILES.map(([, name]) => name),
+]);
+const TERMINAL_RETAINED_STREAMS = Object.freeze(['currentRun', 'verification', 'review', 'lint']);
+// The fence fields its manifest binding repeats; each must agree exactly.
+const TERMINAL_FENCE_FIELDS = Object.freeze([
+  'checkpointKey', 'invocationIdentity', 'admissionIdentity', 'supervisorAuthorityIdentity', 'workerTokenHash',
+  'workerGeneration', 'acceptedStateHash', 'acceptedStateByteLength', 'acceptedRevision', 'checkpointHostRevision',
+  'fenceHostRevision', 'claimHash', 'checkpointHash',
+]);
+const TERMINAL_MISSING_PROOF_KINDS_V1 = Object.freeze([
+  'owner-fence', 'exact-control-pair', 'effect-settlement', 'retained-source',
+  'current-target', 'learning-authority', 'capacity', 'removal-absence',
+]);
+/** One bounded Work-owned statement per missing admission proof, never rejected input. @type {Readonly<Record<string, readonly [string, string]>>} */
+const TERMINAL_ADMISSION_PROOF_TEXT = Object.freeze({
+  'owner-fence': [
+    'the original live Work owner fenced its own pair and published its terminal handoff before it returned',
+    'coordinator: report this stop; only the original owner\'s own disposed handoff for this target admits a fresh claim',
+  ],
+  'exact-control-pair': [
+    'the retained original claim and checkpoint bytes agree with the fence',
+    'coordinator: keep the retained evidence and report the inconsistent controls; never reconstruct them',
+  ],
+  'effect-settlement': [
+    'no entered effect authority, or every original effect settled through the built-in runtime and lane owner',
+    'coordinator: route the unsettled or unobserved effect to its owner; no fresh claim follows',
+  ],
+  'retained-source': [
+    'every retained terminal file and capture readable, intact, and bound to the manifest',
+    'coordinator: report the unavailable or changed retained source; never rebuild it',
+  ],
+  'current-target': [
+    'the exact owner, an unblocked in-progress task first in precedence with done dependencies, and requirement and lane surfaces equal to the retained basis',
+    'coordinator: reconcile the changed definition or lane through its owner; this handoff admits no claim',
+  ],
+  'learning-authority': [
+    'current learning rules derive no repeat, or the existing required learning from absent or exactly matching projection',
+    'coordinator: report the later, resolved, or unavailable learning; fresh admission never reopens it',
+  ],
+  capacity: [
+    'the retained sources, the new runner admission packet, and the known claim footprint fit their fixed limits',
+    'coordinator: report the exhausted fixed limit; no limit changes',
+  ],
+  'removal-absence': [
+    'fresh absence of both original controls and no conflicting live claim',
+    'coordinator: keep the present artifacts; only their owner or the existing manual cleanup may act on them',
+  ],
+});
+
+/** @param {string} kind @param {string} subject */
+function terminalAdmissionRefusalV1(kind, subject) {
+  const [required, nextOwnerAction] = TERMINAL_ADMISSION_PROOF_TEXT[kind];
+  return { version: 1, outcome: 'refused', missingProof: { kind, subject, required, nextOwnerAction } };
+}
+
+/**
+ * Consume one terminal evidence manifest. Its closed shape is the producer's
+ * contract, which the host validates where the handoff enters; admission
+ * consumes only its fixed members, its inventory identity, and bindings it
+ * compares by exact equality, so any other value fails closed.
+ * @param {unknown} value
+ */
+function terminalManifestV1(value) {
+  const label = 'terminal evidence manifest';
+  if (!isPlainRecord(value)) invalid(label, 'must be one manifest object');
+  const manifest = /** @type {Record<string, unknown>} */ (value);
+  if (manifest.version !== 1 || manifest.kind !== 'terminal-work-evidence' || !isPlainRecord(manifest.binding)) {
+    invalid(label, 'must be one version 1 terminal-work-evidence manifest');
+  }
+  const files = assertDenseDataArray(manifest.files, `${label}.files`);
+  if (files.length !== TERMINAL_MEMBER_FILES.length || files.some((row, index) => !isPlainRecord(row)
+    || /** @type {Record<string, unknown>} */ (row).role !== TERMINAL_MEMBER_FILES[index][0]
+    || /** @type {Record<string, unknown>} */ (row).name !== TERMINAL_MEMBER_FILES[index][1])) {
+    invalid(`${label}.files`, 'must list exactly the fixed producer-derived members in order');
+  }
+  if (manifest.inventoryHash !== sha256(canonicalJson({ binding: manifest.binding, files: manifest.files }))) {
+    invalid(`${label}.inventoryHash`, 'must bind the complete binding and ordered members');
+  }
+  return manifest;
+}
+
+/**
+ * The disposition's own conclusion for one manifest: disposed with both
+ * artifacts freshly absent, the first proof a refusal recorded, or unusable.
+ * @param {unknown} value @param {string} manifestIdentity
+ * @returns {{disposed:true}|{disposed:false, kind:string, subject:string}|null}
+ */
+function terminalDispositionConclusionV1(value, manifestIdentity) {
+  if (!isPlainRecord(value)) return null;
+  const disposition = /** @type {Record<string, any>} */ (value);
+  if (disposition.version !== 1 || disposition.manifestIdentity !== manifestIdentity) return null;
+  if (disposition.outcome === 'disposed') {
+    return canonicalJson(disposition.removal) === canonicalJson({ checkpoint: 'absent', claim: 'absent' })
+      && disposition.missingProof === null ? { disposed: true } : null;
+  }
+  const proof = disposition.outcome === 'refused' && isPlainRecord(disposition.missingProof)
+    ? /** @type {Record<string, unknown>} */ (disposition.missingProof)
+    : null;
+  if (proof === null || !TERMINAL_MISSING_PROOF_KINDS_V1.includes(/** @type {string} */ (proof.kind))) return null;
+  try {
+    return { disposed: false, kind: /** @type {string} */ (proof.kind), subject: assertV2ShortText(proof.subject, 'subject') };
+  } catch {
+    return null;
+  }
+}
+
+/** The fresh accepted state every new autonomous invocation starts from: current policy, zero accounting. @param {unknown} policy */
+function freshRunStateV1(policy) {
+  const state = {
+    policy: { ...assertRecord(policy, 'fresh admission policy') },
+    overallUsed: 0,
+    recoveryUsed: [],
+    pending: [],
+    completed: [],
+  };
+  validateRunState(state);
+  if (state.policy.mode !== 'autonomous') invalid('fresh admission policy.mode', 'must be autonomous');
+  return state;
+}
+
+/**
+ * One versioned identity over everything a fresh admission was derived from.
+ * It is correlation and integrity under the cooperative host model, never a
+ * permission or imported attempt authority.
+ * @param {{requestIdentity:string, policy:unknown, freshStateHash:string, manifestIdentity:string,
+ *   dispositionIdentity:string, owner:Record<string, unknown>, target:Record<string, unknown>,
+ *   inspectionHash:string, targetMappingHash:string, lanePrestateHash:string}} fields
+ */
+function terminalAdmissionIdentityV1(fields) {
+  return sha256(canonicalJson({
+    version: 1,
+    domain: 'dude-work/terminal-fresh-admission',
+    requestIdentity: fields.requestIdentity,
+    policy: fields.policy,
+    freshStateHash: fields.freshStateHash,
+    manifestIdentity: fields.manifestIdentity,
+    dispositionIdentity: fields.dispositionIdentity,
+    owner: fields.owner,
+    target: canonicalTarget(fields.target),
+    inspectionHash: fields.inspectionHash,
+    targetMappingHash: fields.targetMappingHash,
+    lanePrestateHash: fields.lanePrestateHash,
+  }));
+}
+
+/** Exact canonical equality that never throws: a non-canonical value is simply unequal. @param {unknown} left @param {unknown} right */
+function sameCanonicalV1(left, right) {
+  try {
+    return canonicalJson(left) === canonicalJson(right);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The exact owner, requirement, and lane surfaces one fresh acquisition holds,
+ * as path descriptors of the surfaces a terminal manifest binds. A surface the
+ * acquisition could not read is null; its path stays known.
+ * @param {ReturnType<typeof acquireInspection>} acquired
+ */
+function terminalCurrentSurfacesV2(acquired) {
+  const target = acquired.target;
+  const specPath = /** @type {string} */ (target.specPath);
+  const directory = specPath.slice(0, -'spec.md'.length);
+  /** @param {string} relative @param {unknown} value */
+  const describe = (relative, value) => {
+    const bytes = byteSequence(value);
+    return bytes === null ? null : { path: relative, ...contentDescriptor(bytes) };
+  };
+  /** @type {string|null} */
+  let ideaPath = null;
+  try {
+    ideaPath = /** @type {string} */ (inspectionSourceBodyV2(acquired.inspection, 'owner-log').ideaPath);
+  } catch {
+    // An unresolved owner leaves every owner-bound surface unavailable.
+  }
+  const owner = ideaPath === null ? undefined : acquired.rawInputs.directIdeas.find((idea) => idea.path === ideaPath);
+  const taskState = acquired.taskState !== null && 'bytes' in acquired.taskState ? acquired.taskState.bytes : null;
+  const paths = {
+    spec: specPath,
+    plan: `${directory}plan.md`,
+    tasks: `${directory}tasks.md`,
+    owner: ideaPath ?? 'owner-log',
+    taskState: TASK_STATE_PATH,
+  };
+  return {
+    ideaPath,
+    paths,
+    tasksBytes: byteSequence(acquired.rawInputs.tasks.bytes),
+    ownerBytes: owner === undefined ? null : owner.bytes,
+    requirements: {
+      spec: describe(paths.spec, acquired.context.definitionSpec?.bytes ?? null),
+      plan: describe(paths.plan, acquired.rawInputs.definitionPlan?.bytes ?? null),
+    },
+    lane: {
+      tasks: describe(paths.tasks, acquired.rawInputs.tasks.bytes),
+      owner: owner === undefined ? null : describe(paths.owner, owner.bytes),
+      taskState: describe(paths.taskState, taskState),
+    },
+  };
+}
+
+/**
+ * The path of the first current surface that differs from the manifest's
+ * retained requirements and lane poststate, or null. Unchanged full
+ * `tasks.md` bytes also keep the bound task unit unchanged.
+ * @param {Record<string, any>} binding @param {ReturnType<typeof terminalCurrentSurfacesV2>} surfaces
+ */
+function terminalSurfaceDriftV2(binding, surfaces) {
+  const requirements = isPlainRecord(binding.requirements) ? binding.requirements : {};
+  const lane = isPlainRecord(binding.lanePoststate) ? binding.lanePoststate : {};
+  for (const [retained, current, subject] of [
+    [requirements.spec, surfaces.requirements.spec, surfaces.paths.spec],
+    [requirements.plan, surfaces.requirements.plan, surfaces.paths.plan],
+    [lane.tasks, surfaces.lane.tasks, surfaces.paths.tasks],
+    [lane.owner, surfaces.lane.owner, surfaces.paths.owner],
+    [lane.taskState, surfaces.lane.taskState, surfaces.paths.taskState],
+  ]) {
+    if (current === null || !sameCanonicalV1(retained, current)) return subject;
+  }
+  return null;
+}
+
+/**
+ * Normal precedence for an in-progress target: the exact task once, unblocked
+ * `[~]`, every dependency done, and no earlier unblocked in-progress task.
+ * Returns the first failing subject, or null.
+ * @param {Buffer|null} tasks @param {Record<string, unknown>} target
+ */
+function terminalTargetPrecedenceV2(tasks, target) {
+  const tasksPath = v2TasksPathForTarget(target);
+  if (tasks === null) return tasksPath;
+  let parsed;
+  try {
+    parsed = parseVisibleTasks(tasks, { path: tasksPath, state: 'terminal fresh admission' }).parsed;
+  } catch {
+    return tasksPath;
+  }
+  if (parsed.boardIssue || parsed.warnings.length !== 0) return tasksPath;
+  const rows = parsed.tasks.filter((task) => task.id === target.taskKey);
+  if (rows.length !== 1) return /** @type {string} */ (target.taskKey);
+  const [task] = rows;
+  if (task.glyph !== '~' || task.blockedBy !== null) return /** @type {string} */ (target.taskKey);
+  const unfinished = task.deps.find((dependency) => parsed.byId.get(dependency)?.state !== 'done');
+  if (unfinished !== undefined) return unfinished;
+  const [first] = parsed.tasks
+    .filter((entry) => entry.state === 'in-progress' && entry.blockedBy === null)
+    .sort((left, right) => left.order - right.order || left.num - right.num);
+  return first.id === target.taskKey ? null : first.id;
+}
+
+/**
+ * The caller's fresh lane binding, closed-validated and equal to the exact
+ * acquired bytes and unblocked `[~]` facts; otherwise null.
+ * @param {Record<string, unknown>} binding @param {Record<string, unknown>} target
+ * @param {ReturnType<typeof terminalCurrentSurfacesV2>} surfaces
+ */
+function terminalLaneBindingV2(binding, target, surfaces) {
+  try {
+    const mapping = validateTargetMappingV1(binding.targetMapping, target, 'fresh admission targetMapping');
+    const prestate = validateLanePrestateV1(binding.lanePrestate, target, mapping.mapping, 'fresh admission lanePrestate');
+    const { tasks, owner, taskState } = surfaces.lane;
+    if (tasks === null || owner === null || taskState === null
+      || prestate.prestate.glyph !== '~' || prestate.prestate.blockedBy !== null
+      || canonicalJson(prestate.prestate.tasksDescriptor) !== canonicalJson({ sha256: tasks.sha256, byteLength: tasks.byteLength })
+      || canonicalJson(prestate.prestate.taskStateDescriptor) !== canonicalJson({ sha256: taskState.sha256, byteLength: taskState.byteLength })
+      || canonicalJson(prestate.prestate.ownerDescriptor) !== canonicalJson({ sha256: owner.sha256, byteLength: owner.byteLength })
+      || mapping.mapping.ownerBindingHash !== sha256(canonicalJson({
+        ideaPath: owner.path,
+        specPath: target.specPath,
+        ownerCapture: { sha256: owner.sha256, byteLength: owner.byteLength },
+      }))) {
+      return null;
+    }
+    return { ...mapping, ...prestate };
+  } catch {
+    return null;
+  }
+}
+
+/** Parse one exact retained JSON file; a missing or unparseable file is null. @param {unknown} value */
+function terminalJsonFileV1(value) {
+  const bytes = byteSequence(value);
+  if (bytes === null) return { bytes: null, value: null };
+  try {
+    return { bytes, value: /** @type {unknown} */ (JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))) };
+  } catch {
+    return { bytes, value: null };
+  }
+}
+
+/**
+ * The retained original terminal is exactly the one the manifest binds; its
+ * accepted state stays evidence only.
+ * @param {unknown} value @param {Record<string, any>} binding
+ */
+function terminalOriginalMatchesV1(value, binding) {
+  if (!isPlainRecord(value)) return false;
+  const original = /** @type {Record<string, unknown>} */ (value);
+  try {
+    if (sha256(canonicalJson(original)) !== binding.terminalHash || original.outcome !== 'hard-stop'
+      || original.reason !== binding.terminalReason || original.stateHash !== binding.acceptedStateHash
+      || original.acceptedRevision !== binding.acceptedRevision || typeof original.stateBase64 !== 'string') {
+      return false;
+    }
+    const bytes = Buffer.from(original.stateBase64, 'base64');
+    if (bytes.toString('base64') !== original.stateBase64 || sha256(bytes) !== binding.acceptedStateHash
+      || bytes.byteLength !== binding.acceptedStateByteLength) return false;
+    validateRunState(JSON.parse(bytes.toString('utf8')));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The retained original controls agree with the fence binding. @param {unknown} value @param {Record<string, any>} binding */
+function terminalControlsMatchV1(value, binding) {
+  try {
+    const controls = assertExactRecord(value, ['version', 'claim', 'checkpoint'], [], 'terminal controls');
+    if (controls.version !== 1) return false;
+    /** @param {unknown} capture */
+    const decode = (capture) => {
+      const envelope = assertExactRecord(capture, ['base64', 'sha256', 'byteLength'], [], 'terminal control capture');
+      const bytes = Buffer.from(/** @type {string} */ (envelope.base64), 'base64');
+      if (bytes.toString('base64') !== envelope.base64 || sha256(bytes) !== envelope.sha256
+        || bytes.byteLength !== envelope.byteLength) invalid('terminal control capture', 'must be exact bytes');
+      return /** @type {Record<string, unknown>} */ (JSON.parse(bytes.toString('utf8')));
+    };
+    const claim = decode(controls.claim);
+    const checkpoint = decode(controls.checkpoint);
+    return claim.claimHash === binding.claimHash && claim.checkpointKey === binding.checkpointKey
+      && claim.invocationIdentity === binding.invocationIdentity
+      && checkpoint.recordHash === binding.checkpointHash && checkpoint.checkpointKey === binding.checkpointKey
+      && checkpoint.invocationIdentity === binding.invocationIdentity
+      && checkpoint.hostRevision === binding.checkpointHostRevision;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The first unsettled or unobserved effect subject in retained effect
+ * evidence, or null when only built-in, completely observed, settled effects
+ * were entered and no dispatch authority or exchange escaped.
+ * @param {unknown} value
+ */
+function terminalUnsettledEffectV1(value) {
+  const file = 'terminal-effects.json';
+  if (!isPlainRecord(value)) return file;
+  const effects = /** @type {Record<string, any>} */ (value);
+  if (effects.unaccounted !== null) {
+    return typeof effects.unaccounted === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(effects.unaccounted)
+      ? effects.unaccounted
+      : file;
+  }
+  if (effects.qualified !== true || effects.pendingEffect !== null
+    || !sameCanonicalV1(effects.ports, { runtime: 'built-in', laneOwner: 'built-in', observation: 'complete' })) {
+    return file;
+  }
+  const exchange = effects.exchange;
+  if (!isPlainRecord(exchange) || exchange.outstanding !== null) return file;
+  if (exchange.specialistPairExposed !== false || exchange.initialSpecialistPair !== false) return 'specialist-pair';
+  return null;
+}
+
+/**
+ * Read-only fresh admission for a new explicit Work request on an unblocked
+ * in-progress Lightweight task. It consumes the current policy, the caller's
+ * fresh lane binding and control observation, and the exact bytes of the
+ * original owner's retained handoff files, and acquires current evidence
+ * itself. It writes nothing and never imports the original accepted state,
+ * its budgets, selected alternative, or governance identity.
+ *
+ * The result is either an eligible admission (target, fresh state, current
+ * Inspection hash, evidence identities, required next learning gate, and
+ * admission identity) or exactly one first missing proof, in this fixed
+ * order: current target and precedence; the original fence, disposition, and
+ * every retained file; unchanged requirements and lane surfaces; fresh control
+ * absence; retained-occurrence authority and settled effects; learning
+ * readiness; and the runner and claim capacity. An acquisition that cannot be
+ * admitted stops at the first check it blocks.
+ * @param {unknown} requestValue @param {unknown} [dependencies]
+ */
+export function deriveFreshAdmissionV1(requestValue, dependencies) {
+  const label = 'FreshAdmissionRequestV1';
+  const request = assertExactRecord(requestValue, [
+    'version', 'root', 'target', 'requestIdentity', 'policy', 'binding', 'controls', 'handoff', 'operationTime',
+  ], [], label);
+  if (request.version !== 1) invalid(`${label}.version`, 'must be the literal 1');
+  if (typeof request.root !== 'string' || request.root.length === 0) invalid(`${label}.root`, 'must be a nonempty string');
+  const root = request.root;
+  const target = canonicalTarget(validateAffectedTargetV2(request.target, `${label}.target`));
+  if (target.lane !== 'lightweight') invalid(`${label}.target`, 'must be one Lightweight task target');
+  assertHash(request.requestIdentity, `${label}.requestIdentity`);
+  const state = freshRunStateV1(request.policy);
+  const binding = assertExactRecord(request.binding, ['targetMapping', 'lanePrestate'], [], `${label}.binding`);
+  const controls = assertExactRecord(request.controls, ['checkpointKey', 'status'], [], `${label}.controls`);
+  assertHash(controls.checkpointKey, `${label}.controls.checkpointKey`);
+  assertV2ShortText(controls.status, `${label}.controls.status`);
+  const handoff = assertExactRecord(request.handoff, [...TERMINAL_HANDOFF_FILES], [], `${label}.handoff`);
+  for (const name of TERMINAL_HANDOFF_FILES) {
+    if (handoff[name] !== null && byteSequence(handoff[name]) === null) {
+      invalid(`${label}.handoff.${name}`, 'must be the exact file bytes or null when unavailable');
+    }
+  }
+  assertV2CanonicalUtcTimestamp(request.operationTime, `${label}.operationTime`);
+  const refuse = terminalAdmissionRefusalV1;
+  const specPath = /** @type {string} */ (target.specPath);
+  const tasksPath = v2TasksPathForTarget(target);
+  const emptyInput = {
+    root, specPath, target, lane: { kind: 'lightweight' },
+    currentRun: [], review: [], verification: [], lint: [], policyMode: 'autonomous',
+  };
+  /** @param {unknown} error @param {string} subject */
+  const acquisitionRefusal = (error, subject) => {
+    const capacity = capacityDiagnostic(error);
+    if (capacity !== null) return refuse('capacity', capacitySubject(capacity));
+    if (error instanceof TypeError) return refuse('retained-source', subject);
+    throw error;
+  };
+
+  // 1. The current workspace: exact owner, durable target, and precedence.
+  let workspace;
+  try {
+    workspace = acquireInspection(emptyInput, dependencies, false, 'autonomous', { lightweightPostimages: true });
+  } catch (error) {
+    const capacity = capacityDiagnostic(error);
+    if (capacity === null) throw error;
+    return refuse('capacity', capacitySubject(capacity));
+  }
+  if (workspace.inspection.overflow) return refuse('capacity', 'model-packet');
+  try {
+    requireResolvedOwnerMappingV2(workspace.inspection, target, label);
+  } catch {
+    return refuse('current-target', /** @type {string} */ (target.taskKey));
+  }
+  const workspaceBlockers = /** @type {Record<string, unknown>[]} */ (workspace.inspection.blockers);
+  if (workspaceBlockers.length !== 0) return refuse('current-target', /** @type {string} */ (workspaceBlockers[0].subject));
+  const surfaces = terminalCurrentSurfacesV2(workspace);
+  const owner = { ideaPath: /** @type {string} */ (surfaces.ideaPath), specPath };
+  const precedence = terminalTargetPrecedenceV2(surfaces.tasksBytes, target);
+  if (precedence !== null) return refuse('current-target', precedence);
+  const bound = terminalLaneBindingV2(binding, target, surfaces);
+  if (bound === null) return refuse('current-target', tasksPath);
+
+  // 2. The original owner's fence, disposition, and every retained file.
+  let manifest;
+  let manifestIdentity;
+  try {
+    manifest = terminalManifestV1(terminalJsonFileV1(handoff[TERMINAL_MANIFEST_FILE]).value);
+    manifestIdentity = sha256(canonicalJson(manifest));
+  } catch {
+    return refuse('owner-fence', TERMINAL_MANIFEST_FILE);
+  }
+  const dispositionValue = terminalJsonFileV1(handoff[TERMINAL_DISPOSITION_FILE]).value;
+  const conclusion = terminalDispositionConclusionV1(dispositionValue, manifestIdentity);
+  if (conclusion === null) return refuse('owner-fence', TERMINAL_DISPOSITION_FILE);
+  // A refused disposition already names the first proof the original owner lacked.
+  if (!conclusion.disposed) return refuse(conclusion.kind, conclusion.subject);
+  const dispositionIdentity = sha256(canonicalJson(dispositionValue));
+  const retained = /** @type {Record<string, any>} */ (manifest.binding);
+  if (retained.workspaceIdentity !== sha256(canonicalJson({ version: 1, root }))
+    || !sameCanonicalV1(retained.owner, owner) || !sameCanonicalV1(retained.target, target)) {
+    return refuse('current-target', /** @type {string} */ (target.taskKey));
+  }
+  /** @type {Record<string, unknown>} */
+  const members = {};
+  for (const file of /** @type {Record<string, any>[]} */ (manifest.files)) {
+    const member = terminalJsonFileV1(handoff[file.name]);
+    if (member.bytes === null || member.value === null || member.bytes.byteLength !== file.byteLength
+      || sha256(member.bytes) !== file.sha256) {
+      return refuse('retained-source', file.name);
+    }
+    members[file.role] = member.value;
+  }
+  if (!terminalOriginalMatchesV1(members['original-terminal'], retained)) {
+    return refuse('retained-source', 'terminal-original.json');
+  }
+  if (!sameCanonicalV1(members['host-fence'], {
+    version: 1,
+    kind: 'terminal-owner-fence',
+    ...Object.fromEntries(TERMINAL_FENCE_FIELDS.map((field) => [field, retained[field]])),
+  })) {
+    return refuse('owner-fence', 'terminal-fence.json');
+  }
+  if (!terminalControlsMatchV1(members.controls, retained)) return refuse('exact-control-pair', 'terminal-controls.json');
+  let captures;
+  try {
+    captures = assertExactRecord(members.captures, [...TERMINAL_RETAINED_STREAMS], [], 'retained captures');
+    for (const field of TERMINAL_RETAINED_STREAMS) assertDenseDataArray(captures[field], `retained captures.${field}`);
+  } catch {
+    return refuse('retained-source', 'retained-evidence.json');
+  }
+  const drift = terminalSurfaceDriftV2(retained, surfaces);
+  if (drift !== null) return refuse('current-target', drift);
+
+  // 3. Fresh absence of both original controls; exclusive creation stays the atomicity boundary.
+  if (controls.checkpointKey !== retained.checkpointKey || controls.status !== 'absent') {
+    return refuse('removal-absence', /** @type {string} */ (controls.checkpointKey));
+  }
+
+  // 4. Retained-occurrence authority over the exact original captures, then settled effects.
+  const input = {
+    ...emptyInput,
+    ...Object.fromEntries(TERMINAL_RETAINED_STREAMS.map((field) => [field, captures[field]])),
+  };
+  let admitted;
+  try {
+    admitted = acquireInspection(
+      decodeTransportInput(input, `${label} retained input`, false),
+      dependencies,
+      true,
+      'autonomous',
+      { lightweightPostimages: true },
+    );
+  } catch (error) {
+    return acquisitionRefusal(error, 'retained-evidence.json');
+  }
+  const inspection = /** @type {Record<string, unknown>} */ (admitted.inspection);
+  if (inspection.overflow) return refuse('capacity', 'model-packet');
+  const reacquired = terminalCurrentSurfacesV2(admitted);
+  if (reacquired.ideaPath !== surfaces.ideaPath
+    || !sameCanonicalV1(reacquired.requirements, surfaces.requirements)
+    || !sameCanonicalV1(reacquired.lane, surfaces.lane)) {
+    return refuse('current-target', tasksPath);
+  }
+  const blockers = /** @type {Record<string, unknown>[]} */ (inspection.blockers);
+  if (blockers.length !== 0) return refuse('retained-source', /** @type {string} */ (blockers[0].subject));
+  const retention = inspectRetainedOccurrencesV2(inspection);
+  if (retention.blocker) return refuse('retained-source', /** @type {string} */ (retention.source));
+  const unsettled = terminalUnsettledEffectV1(members.effects);
+  if (unsettled !== null) return refuse('effect-settlement', unsettled);
+
+  // 5. Current learning, as the runner itself decides at start: no repeat goes to
+  // ordinary Assessment; a repeat must restore through the existing required
+  // route over these same captures, and that route must see this Inspection.
+  let learningGate = 'assessment';
+  if (deriveEarliestRepeatRelationshipV1(retention.retained) !== null) {
+    let learning;
+    try {
+      learning = resumeGovernanceV2(state, decodeTransportInput(input, `${label} learning input`, false), dependencies, true);
+    } catch (error) {
+      const capacity = capacityDiagnostic(error);
+      if (capacity !== null) return refuse('capacity', capacitySubject(capacity));
+      if (!(error instanceof TypeError)) throw error;
+      return refuse('learning-authority', /** @type {string} */ (target.taskKey));
+    }
+    if (learning.inspection.evidenceHash !== inspection.evidenceHash) return refuse('current-target', tasksPath);
+    if (learning.transition?.resumed !== true) return refuse('learning-authority', /** @type {string} */ (target.taskKey));
+    learningGate = 'resume-learning';
+  }
+
+  // 6. The runner's own admission packet and the complete known claim footprint.
+  if (captures.currentRun.length !== 0) {
+    const live = currentRunCapture(target, []);
+    const runnerInput = {
+      ...input,
+      currentRun: [...captures.currentRun, { ...live, bytes: { base64: live.bytes.toString('base64') } }],
+    };
+    let runnerInspection;
+    try {
+      runnerInspection = acquireInspection(
+        decodeTransportInput(runnerInput, `${label} runner admission input`, false), dependencies, true, 'autonomous',
+      ).inspection;
+    } catch (error) {
+      return acquisitionRefusal(error, 'retained-evidence.json');
+    }
+    if (runnerInspection.overflow) return refuse('capacity', 'model-packet');
+    if (runnerInspection.blockers.length !== 0 || inspectRetainedOccurrencesV2(runnerInspection).blocker) {
+      return refuse('retained-source', 'current-run');
+    }
+  }
+  const admissionIdentity = terminalAdmissionIdentityV1({
+    requestIdentity: request.requestIdentity,
+    policy: state.policy,
+    freshStateHash: v2RunStateHash(state),
+    manifestIdentity,
+    dispositionIdentity,
+    owner,
+    target,
+    inspectionHash: /** @type {string} */ (inspection.evidenceHash),
+    targetMappingHash: bound.targetMappingHash,
+    lanePrestateHash: bound.lanePrestateHash,
+  });
+  const mutation = buildTerminalFreshClaimMutationV1({
+    target,
+    ownerPath: owner.ideaPath,
+    expectedOwnerHash: sha256(/** @type {Buffer} */ (surfaces.ownerBytes)),
+    time: request.operationTime,
+    requestIdentity: request.requestIdentity,
+    admissionIdentity,
+    manifestIdentity,
+    dispositionIdentity,
+  });
+  let footprint;
+  try {
+    footprint = preflightLightweightWorkV2(admitted, bound, [{ mutation }]);
+  } catch (error) {
+    const capacity = capacityDiagnostic(error);
+    if (capacity === null) throw error;
+    return refuse('capacity', capacitySubject(capacity));
+  }
+  if (footprint !== null) return refuse('current-target', footprint.startsWith('owner') ? owner.ideaPath : tasksPath);
+  return {
+    version: 1,
+    outcome: 'eligible',
+    target,
+    owner,
+    state,
+    inspectionHash: inspection.evidenceHash,
+    evidence: { manifestIdentity, dispositionIdentity },
+    learningGate,
+    requestIdentity: request.requestIdentity,
+    admissionIdentity,
+  };
+}
+
+/**
+ * The issuer's own fresh derivation for one terminal fresh-claim permit: the
+ * carried handoff is still the disposed original, the state is exactly fresh
+ * for its policy, current surfaces equal the retained basis, retained evidence
+ * and learning still admit it, the marker binds the same request and evidence,
+ * and the mutation's admission identity equals the identity rederived from this
+ * fresh acquisition. A self-consistent supplied identity is never enough.
+ * Returns a closed refusal reason, or null.
+ * @param {ReturnType<typeof acquireInspection>} acquired @param {Record<string, unknown>} state
+ * @param {Record<string, unknown>} mutation @param {Record<string, any>} bound @param {unknown} terminalAdmissionValue
+ * @param {{inputValue:unknown, dependencies:unknown, transport:boolean}} source The issuer's own acquisition input.
+ */
+function terminalFreshClaimIssuanceReasonV2(acquired, state, mutation, bound, terminalAdmissionValue, source) {
+  const mismatch = 'permit-transition-mismatch';
+  let admission;
+  let manifest;
+  let manifestIdentity;
+  let dispositionIdentity;
+  try {
+    admission = assertExactRecord(
+      terminalAdmissionValue, ['requestIdentity', 'manifest', 'disposition'], [], 'terminalAdmission',
+    );
+    assertHash(admission.requestIdentity, 'terminalAdmission.requestIdentity');
+    manifest = terminalManifestV1(admission.manifest);
+    manifestIdentity = sha256(canonicalJson(manifest));
+    if (terminalDispositionConclusionV1(admission.disposition, manifestIdentity)?.disposed !== true) return mismatch;
+    dispositionIdentity = sha256(canonicalJson(admission.disposition));
+    if (canonicalJson(freshRunStateV1(state.policy)) !== canonicalJson(state)) return mismatch;
+  } catch {
+    return mismatch;
+  }
+  const target = canonicalTarget(acquired.target);
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  const surfaces = terminalCurrentSurfacesV2(acquired);
+  const owner = { ideaPath: surfaces.ideaPath, specPath: target.specPath };
+  const retained = /** @type {Record<string, any>} */ (manifest.binding);
+  if (retained.workspaceIdentity !== sha256(canonicalJson({ version: 1, root: acquired.root }))
+    || !sameCanonicalV1(retained.owner, owner) || !sameCanonicalV1(retained.target, target)) {
+    return mismatch;
+  }
+  if (terminalSurfaceDriftV2(retained, surfaces) !== null) return 'lane-prestate-mismatch';
+  if (terminalTargetPrecedenceV2(surfaces.tasksBytes, target) !== null) return 'lane-prestate-mismatch';
+  const retention = inspectRetainedOccurrencesV2(inspection);
+  if (retention.blocker) return mismatch;
+  if (deriveEarliestRepeatRelationshipV1(retention.retained) !== null) {
+    // The existing resume route over the issuer's own input must see this Inspection and restore.
+    try {
+      const learning = resumeGovernanceV2(state, source.inputValue, source.dependencies, source.transport);
+      if (learning.inspection.evidenceHash !== inspection.evidenceHash) return 'lane-prestate-mismatch';
+      if (learning.transition?.resumed !== true) return mismatch;
+    } catch {
+      return mismatch;
+    }
+  }
+  const ownerLog = /** @type {Record<string, unknown>} */ (mutation.ownerLog);
+  const marker = parseTerminalFreshClaimMarkerV1(/** @type {unknown[]} */ (ownerLog.exactLines)[0]);
+  if (marker === null || ownerLog.ownerPath !== owner.ideaPath
+    || marker.requestIdentity !== admission.requestIdentity
+    || marker.manifestIdentity !== manifestIdentity
+    || marker.dispositionIdentity !== dispositionIdentity) {
+    return mismatch;
+  }
+  const identity = terminalAdmissionIdentityV1({
+    requestIdentity: /** @type {string} */ (admission.requestIdentity),
+    policy: state.policy,
+    freshStateHash: v2RunStateHash(state),
+    manifestIdentity,
+    dispositionIdentity,
+    owner,
+    target,
+    inspectionHash: /** @type {string} */ (inspection.evidenceHash),
+    targetMappingHash: bound.targetMappingHash,
+    lanePrestateHash: bound.lanePrestateHash,
+  });
+  return identity === mutation.admissionIdentity ? null : mismatch;
+}
+
 /**
  * Execute one closed recovery command without scheduling or invoking owners.
  * @param {unknown} commandValue
@@ -15582,7 +16654,7 @@ export function runCommand(commandValue, requestValue, dependencies) {
       const request = assertExactRecord(
         requestValue,
         ['mode', 'state', 'input', 'mutation', 'lanePrestate', 'targetMapping'],
-        [],
+        ['terminalAdmission'],
         'transition.issue-lane-permit request',
       );
       const input = decodeTransportInput(request.input, 'transition.issue-lane-permit request.input', false);
@@ -15594,6 +16666,7 @@ export function runCommand(commandValue, requestValue, dependencies) {
         request.targetMapping,
         dependencies,
         true,
+        Object.hasOwn(request, 'terminalAdmission') ? request.terminalAdmission : undefined,
       );
     }
     if (mode === 'commit-lane-receipt') {

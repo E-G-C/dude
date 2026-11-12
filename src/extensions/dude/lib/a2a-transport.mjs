@@ -5,8 +5,9 @@
  * Serving binds exactly one configured loopback or private-LAN literal with
  * mutual TLS and a pinned peer certificate. An admitted question's response
  * stays open while the serving session answers it; the handle passed to
- * `onQuestion` measures the exact encoded reply, reports client loss from
- * the response lifecycle, and reports whether the reply was written. Asking
+ * `onQuestion` measures the exact encoded reply, can hand that exact body to
+ * a caller's write hook before its first byte, reports client loss from the
+ * response lifecycle, and reports whether the reply was written. Asking
  * connects to exactly one configured endpoint, verifies the pinned server
  * certificate, and rechecks the approved binding before any request byte is
  * written. An answer is accepted only in its exact envelope: excerpt hashes
@@ -18,7 +19,10 @@
  * Importing this module loads no SDK code. The bundled runtime
  * (`./a2a-runtime.mjs`) is imported only by `startServer` and `prepareClient`,
  * which `a2a.mjs` calls only after a local activation. `prepareClient().send`
- * is called only by the `dude_a2a_ask` tool in `a2a.mjs`.
+ * is called only by the `dude_a2a_ask` tool in `a2a.mjs` and by a
+ * `dude_a2a_conversation` ask in `a2a-collaboration.mjs`, which records the
+ * exact request body through `onWrite` before its first byte; a conversation
+ * answer's exact reply body is recorded the same way through `Delivery.onWrite`.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import http from 'node:http';
@@ -181,7 +185,10 @@ const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
  * @typedef {object} Delivery
  * @property {AbortSignal} signal Aborts when the response closes before it finished: the asker can no longer receive a reply.
  * @property {(reply: ServeReply) => number} measure Exact encoded size of the response body that would carry `reply`.
- * @property {Promise<'sent' | 'too_large' | 'lost' | 'failed'>} written Settles when the response finishes or closes early.
+ * @property {(hook: (body: string) => boolean) => void} onWrite Registers a hook that receives the exact response body
+ *   synchronously before its first byte, once it fits `contentBytes`; false or a throw withholds it and drops the connection.
+ * @property {Promise<'sent' | 'too_large' | 'lost' | 'failed' | 'unrecorded'>} written Settles when the response finishes
+ *   or closes early; `unrecorded` when the write hook withheld the body, so none of it was written.
  */
 /**
  * @typedef {'ok'|'encryption_required'|'certificate_required'|'certificate_mismatch'|
@@ -751,19 +758,28 @@ function replyBody(rpcId, ids, reply) {
 }
 
 /**
+ * A write hook one admitted response's caller registered, and whether it withheld the body.
+ * @typedef {{hook: ((body: string) => boolean) | null, withheld: boolean}} WriteWatch
+ */
+
+/**
  * Track one admitted question's open response. The request stream has
  * already ended when the handler runs and a completed request body also
  * emits `close`, so only the response closing before it finished means the
  * asker can no longer receive a reply.
  * @param {ServerResponse} response @param {unknown} rpcId @param {ReplyIds} ids
  * @param {WeakSet<ServerResponse>} overBudget Responses whose body limitResponse withheld.
+ * @param {WeakMap<ServerResponse, WriteWatch>} watches Write hooks limitResponse runs before a body's first byte.
  * @returns {Delivery}
  */
-function createDelivery(response, rpcId, ids, overBudget) {
+function createDelivery(response, rpcId, ids, overBudget, watches) {
   const lost = new AbortController();
-  /** @type {(outcome: 'sent' | 'too_large' | 'lost' | 'failed') => void} */
+  /** @type {WriteWatch} */
+  const watch = { hook: null, withheld: false };
+  watches.set(response, watch);
+  /** @type {(outcome: 'sent' | 'too_large' | 'lost' | 'failed' | 'unrecorded') => void} */
   let settle = () => undefined;
-  /** @type {Promise<'sent' | 'too_large' | 'lost' | 'failed'>} */
+  /** @type {Promise<'sent' | 'too_large' | 'lost' | 'failed' | 'unrecorded'>} */
   const written = new Promise((resolve) => { settle = resolve; });
   const onFinish = () => {
     response.removeListener('finish', onFinish);
@@ -778,7 +794,7 @@ function createDelivery(response, rpcId, ids, overBudget) {
     response.removeListener('finish', onFinish);
     response.removeListener('close', onClose);
     lost.abort();
-    settle('lost');
+    settle(watch.withheld ? 'unrecorded' : 'lost');
   };
   if (response.destroyed || response.closed) {
     lost.abort();
@@ -790,6 +806,7 @@ function createDelivery(response, rpcId, ids, overBudget) {
   return {
     signal: lost.signal,
     measure: (reply) => Buffer.byteLength(replyBody(rpcId, ids, reply), 'utf8'),
+    onWrite: (hook) => { watch.hook = hook; },
     written,
   };
 }
@@ -801,8 +818,9 @@ function createDelivery(response, rpcId, ids, overBudget) {
  * @param {A2aRuntime} runtime @param {ServeOptions} options @param {object} card
  * @param {WeakMap<object, {response: ServerResponse, rpcId: unknown}>} admitted
  * @param {WeakSet<ServerResponse>} overBudget
+ * @param {WeakMap<ServerResponse, WriteWatch>} watches
  */
-function createRequestHandler(runtime, options, card, admitted, overBudget) {
+function createRequestHandler(runtime, options, card, admitted, overBudget, watches) {
   const unsupported = async () => {
     throw new runtime.UnsupportedOperationError('This Dude peer supports only direct SendMessage.');
   };
@@ -833,7 +851,7 @@ function createRequestHandler(runtime, options, card, admitted, overBudget) {
       const ids = { messageId: randomUUID(), contextId: randomUUID(), replyTo: message.messageId };
       // The body arrived after the first check; recheck before handing it over.
       if (!options.checkBinding()) return replyMessage(runtime, ids, { outcome: 'unavailable', reason: 'activation_ended' });
-      const delivery = createDelivery(admission.response, admission.rpcId, ids, overBudget);
+      const delivery = createDelivery(admission.response, admission.rpcId, ids, overBudget, watches);
       // The raw envelope was validated before the SDK parsed it.
       const inner = envelope(message.metadata, [], ['requested']);
       const requested = (inner && inner.requested !== undefined && readRequested(inner.requested)) || [];
@@ -870,13 +888,16 @@ function createRequestHandler(runtime, options, card, admitted, overBudget) {
  * are refused before they could write. An over-budget body is replaced by an
  * explicit, bounded 500 failure (empty when even that cannot fit); it is never
  * truncated or sent. Nothing is written to a destroyed response: a withdrawn
- * reply or a lost client.
+ * reply or a lost client. A body within the budget whose caller registered a
+ * write hook goes to that hook first, synchronously; when the hook does not
+ * return true, nothing of it is written and the connection is dropped.
  * @param {A2aRuntime} runtime @param {ServerResponse} response @param {number} limit
  * @param {() => unknown} requestId The JSON-RPC id, once known, for the failure envelope.
  * @param {(reason: string) => void} onRefused
  * @param {WeakSet<ServerResponse>} overBudget Records responses whose body was withheld.
+ * @param {WeakMap<ServerResponse, WriteWatch>} watches Write hooks by admitted response.
  */
-function limitResponse(runtime, response, limit, requestId, onRefused, overBudget) {
+function limitResponse(runtime, response, limit, requestId, onRefused, overBudget, watches) {
   const end = response.end;
   Object.defineProperty(response, 'end', {
     configurable: true,
@@ -887,7 +908,26 @@ function limitResponse(runtime, response, limit, requestId, onRefused, overBudge
       const size = typeof chunk === 'string'
         ? Buffer.byteLength(chunk, typeof encoding === 'string' && Buffer.isEncoding(encoding) ? encoding : 'utf8')
         : chunk instanceof Uint8Array ? chunk.length : 0;
-      if (size <= limit) return Reflect.apply(end, response, args);
+      if (size <= limit) {
+        const watch = watches.get(response);
+        const hook = watch?.hook;
+        if (watch && hook) {
+          watch.hook = null;
+          const body = typeof chunk === 'string' ? chunk : chunk instanceof Uint8Array ? Buffer.from(chunk).toString('utf8') : '';
+          let recorded = false;
+          try {
+            recorded = hook(body) === true;
+          } catch {
+            recorded = false;
+          }
+          if (!recorded) {
+            watch.withheld = true;
+            response.destroy();
+            return response;
+          }
+        }
+        return Reflect.apply(end, response, args);
+      }
       overBudget.add(response);
       onRefused('response_over_budget');
       if (response.headersSent) {
@@ -928,6 +968,8 @@ export function createServeApp(runtime, options) {
   const rpcIds = new WeakMap();
   /** @type {WeakSet<ServerResponse>} */
   const overBudget = new WeakSet();
+  /** @type {WeakMap<ServerResponse, WriteWatch>} */
+  const watches = new WeakMap();
   /** @param {ServerResponse} response @param {number} status @param {string} reason */
   const refuse = (response, status, reason) => {
     options.onRefused(reason);
@@ -951,7 +993,7 @@ export function createServeApp(runtime, options) {
   app.disable('x-powered-by');
   app.set('etag', false);
   app.use((_request, response, next) => {
-    limitResponse(runtime, response, options.contentBytes, () => rpcIds.get(response), options.onRefused, overBudget);
+    limitResponse(runtime, response, options.contentBytes, () => rpcIds.get(response), options.onRefused, overBudget, watches);
     next();
   });
   app.use((request, response, next) => {
@@ -1018,7 +1060,7 @@ export function createServeApp(runtime, options) {
       }
     });
   }, runtime.jsonRpcHandler({
-    requestHandler: createRequestHandler(runtime, options, card, admitted, overBudget),
+    requestHandler: createRequestHandler(runtime, options, card, admitted, overBudget, watches),
     userBuilder: async () => ({ isAuthenticated: true, userName: options.peer.label }),
   }));
   app.use((_request, response) => refuse(response, 404, 'not_found'));
@@ -1287,10 +1329,14 @@ export async function prepareClient(options, adapters = {}) {
      * Send one question and read its correlated reply. The caller's signal
      * bounds the whole send, including its deadline; the caller owns outcome
      * mapping, and `A2aTransportError.sent` says whether delivery is uncertain.
-     * @param {string} question @param {{signal: AbortSignal, requested?: RequestedOperation[]}} call
+     * `onWrite`, when given, receives the exact request body synchronously
+     * after the last binding check, so a caller can record it before any byte
+     * leaves; false or a throw keeps the question unsent (`recording_failed`).
+     * @param {string} question
+     * @param {{signal: AbortSignal, requested?: RequestedOperation[], onWrite?: (body: string) => boolean}} call
      * @returns {Promise<AskReply>}
      */
-    async send(question, { signal, requested = [] }) {
+    async send(question, { signal, requested = [], onWrite }) {
       if (!isMessageText(question) || !readRequested(requested)) throw new A2aTransportError('invalid_question');
       const state = { sent: false, status: /** @type {number | null} */ (null) };
       /** @type {typeof fetch} */
@@ -1315,6 +1361,19 @@ export async function prepareClient(options, adapters = {}) {
         if (!bound || init.signal?.aborted) {
           socket.destroy();
           throw bound ? abortError(init.signal ?? undefined, false) : new A2aTransportError('activation_ended');
+        }
+        if (onWrite) {
+          let recorded = false;
+          try {
+            // Exactly the bytes about to be written.
+            recorded = onWrite(body.toString('utf8')) === true;
+          } catch {
+            recorded = false;
+          }
+          if (!recorded || init.signal?.aborted) {
+            socket.destroy();
+            throw recorded ? abortError(init.signal ?? undefined, false) : new A2aTransportError('recording_failed');
+          }
         }
         return postPinned(context, socket, headers, body, init.signal ?? undefined, state);
       };

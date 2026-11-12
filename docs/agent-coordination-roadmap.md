@@ -12,6 +12,18 @@ intent. It authorizes no capture, definition, implementation, or runtime activat
 As with a [product brief](prd-drafts.md), any later selected increment needs its
 own bounded definition through `@dude` and `@dude-spec-lead`.
 
+**Feature 089 update.** The idea captured from milestone A,
+`feature-number-reservations`, was later redefined at the user's direction, so
+this roadmap's single-host allocator framing is not its basis. Feature 089 lets
+two independent Dudes exchange number advice over approved Agent2Agent (A2A)
+messages, without a shared checkout, Git directory, filesystem, or host, and A
+may explicitly use B's observation in its own first capture. It provides no
+reservation, lock, or uniqueness guarantee: different slugs may still share a
+number under Feature 076. Its native qualification remains incomplete. Milestone
+A below is retained unchanged as the original planning input; Feature 089 does
+not implement it, and it is not accepted architecture. See
+[Collaboration between two Dudes](agent-to-agent-communication.md#collaboration-between-two-dudes).
+
 ## Goal and first boundary
 
 The user wants agents to avoid overlapping feature numbers and suggested
@@ -61,6 +73,9 @@ can be selected and defined separately. All exit criteria are future acceptance
 evidence; no tests, benchmarks, or runtime experiments were executed for this document.
 
 ### A. Collision-safe first capture
+
+*Original planning input; Feature 089 was redefined away from this allocator.
+See the Feature 089 update above.*
 
 **Outcome:** participating worktrees can capture concurrently without assigning
 the same new number. No chat platform, UI, or always-on management backend is required.

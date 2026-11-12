@@ -16,6 +16,7 @@ import {
 import { parseIdeaIdentity, parseSpecIdentity } from './feature-identity.mjs';
 import { deriveLifecycleModel } from '../../dude-lightweight-execution/backlog.mjs';
 import { canonicalJson } from '../../dude-work/recovery.mjs';
+import { chooseAdvisedNumber } from '../../dude-feature-definition/capture-number-advice.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const FEATURE_CLI = path.join(ROOT, 'src/skills/dude-engine/feature.mjs');
@@ -684,6 +685,71 @@ test('T001 first capture allocates local max-plus-one after same-prefix peers wi
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  }
+});
+
+test('T007 advised selection keeps 076 identities: same-prefix peers set the fresh local number, advice only raises it, and 999 still stops', () => {
+  const cases = [
+    { name: 'reported prefix peers and a higher peer observation', records: REPORTED_PREFIX_PEERS, peer: 101, expected: ['102', 'raised'] },
+    { name: 'reported prefix peers and a peer sharing their prefix', records: REPORTED_PREFIX_PEERS, peer: 74, expected: ['076', 'none'] },
+    { name: 'reported prefix peers and an empty peer scope', records: REPORTED_PREFIX_PEERS, peer: 0, expected: ['076', 'none'] },
+    {
+      name: 'a gap below a shared prefix is never filled',
+      records: [
+        { number: '001', slug: 'first', status: 'draft' },
+        { number: '005', slug: 'peer-one', status: 'draft' },
+        { number: '005', slug: 'peer-two', status: 'defined' },
+      ],
+      peer: 3,
+      expected: ['006', 'none'],
+    },
+    {
+      name: 'shared 998 and a peer 998',
+      records: [{ number: '998', slug: 'peer-one', status: 'resolved' }, { number: '998', slug: 'peer-two', status: 'draft' }],
+      peer: 998,
+      expected: ['999', 'none'],
+    },
+    { name: 'local 997 and a peer 998', records: [{ number: '997', slug: 'local', status: 'draft' }], peer: 998, expected: ['999', 'raised'] },
+  ];
+  for (const fixture of cases) {
+    const root = temporaryRoot();
+    try {
+      // Arrange
+      for (const record of fixture.records) writeLifecycleRecord(root, record);
+      const inventory = inventoryLifecycleIdentities({ root });
+
+      // Act
+      const selection = chooseAdvisedNumber({ observedMaximum: fixture.peer }, /** @type {number} */ (inventory.nextNumberValue));
+
+      // Assert
+      assert.deepEqual(inventory.diagnostics, [], fixture.name);
+      assert.deepEqual([selection.number, selection.influence], fixture.expected, fixture.name);
+      assert.equal(selection.localOnlyNumber, inventory.nextNumberValue, `${fixture.name}: local-only is the ordinary allocation`);
+      assert.ok(parseIdeaIdentity(`.dude/ideas/${selection.number}-next-idea.md`), `${fixture.name}: a valid fresh identity`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  const exhausted = temporaryRoot();
+  try {
+    writeLifecycleRecord(exhausted, { number: '999', slug: 'last-one', status: 'draft' });
+    writeLifecycleRecord(exhausted, { number: '999', slug: 'last-two', status: 'defined' });
+    const inventory = inventoryLifecycleIdentities({ root: exhausted });
+    assert.deepEqual([inventory.exhausted, inventory.nextNumberValue], [true, null]);
+    assert.throws(() => chooseAdvisedNumber({ observedMaximum: 0 }, /** @type {any} */ (inventory.nextNumberValue)),
+      /the fresh local inventory has no next lifecycle number/);
+  } finally {
+    fs.rmSync(exhausted, { recursive: true, force: true });
+  }
+  assert.throws(() => chooseAdvisedNumber({ observedMaximum: 999 }, 76), /001-999 is exhausted by the accepted peer observation 999/);
+});
+
+test('T007 advised capture sources and generated counterparts stay byte-identical', () => {
+  for (const name of ['publish-first-capture.mjs', 'capture-number-advice.mjs']) {
+    const source = fs.readFileSync(path.join(ROOT, 'src/skills/dude-feature-definition', name));
+    const generated = fs.readFileSync(path.join(ROOT, '.github/skills/dude-feature-definition', name));
+    assert.ok(generated.equals(source), `.github/skills/dude-feature-definition/${name} must match its source; run node scripts/build-dev.mjs`);
   }
 });
 

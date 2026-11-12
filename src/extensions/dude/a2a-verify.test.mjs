@@ -1187,3 +1187,92 @@ test("the asker's validator refuses forged or inconsistent run records", async (
     assert.equal(readAnswer(value), null, label);
   }
 });
+
+// Standing pairing: a paired serving profile's commands stay a separately approved scope in every automatic activation,
+// and the run's own boundary rereads the standing record. Each fixture's typed approval at setup is a synthetic test
+// input that enrolls the pairing, never human consent.
+
+/**
+ * Stop the fixture's activation, apply `between`, then request its profile again as a later turn would: a matching
+ * standing pairing activates on that request alone, and anything else gets its proposal.
+ * @param {Awaited<ReturnType<typeof servingFixture>>} fixture @param {() => void} [between]
+ */
+async function requestAgain(fixture, between) {
+  const mark = fixture.logs.length;
+  fixture.provider.onEvent(/** @type {any} */ ({ type: 'user.message', data: { content: 'dude a2a stop' } }));
+  await until(() => fixture.logs.slice(mark).some((line) => line.startsWith('A2A activation ended: stopped by dude a2a stop.')), 'stop');
+  between?.();
+  return fixture.call('dude_a2a_propose', { configPath: fixture.configPath, profileId: 'b-serve' });
+}
+
+/** The fixture profile's standing record. @param {Awaited<ReturnType<typeof servingFixture>>} fixture */
+const pairingRecord = (fixture) => path.join(`${fs.realpathSync.native(fixture.configPath)}.pairings`, `${sha256('b-serve')}.json`);
+
+test('a paired serving profile runs its separately approved command in each automatic activation within that activation\'s own run limit; a share-only pairing or a changed command definition runs nothing', async () => {
+  const fixture = await servingFixture({ verification: { repeatUse: 1 }, profile: { pairing: true } });
+  for (const round of [1, 2]) {
+    const activated = await requestAgain(fixture);
+    assert.equal(activated.resultType, 'success', activated.textResultForLlm);
+    assert.match(activated.textResultForLlm,
+      /^Activation: active; serve profile b-serve; listening https:\/\/127\.0\.0\.1:18443\/\nAuthority: the standing pairing from an earlier exact local approval;/);
+    assert.match(activated.textResultForLlm,
+      /dude_a2a_verify runs only approved command check for the current exchange, one run at a time, until activation ends and within 1 run$/);
+    assert.doesNotMatch(activated.textResultForLlm, /dude a2a approve|Proposal only/);
+    const { exchangeId, handedOver, finish } = await fixture.admit();
+    const ran = await fixture.verify(exchangeId);
+    assert.deepEqual([ran.outcome, ran.attachable], ['ran', true], JSON.stringify(ran));
+    assert.equal((await fixture.verify(exchangeId)).reason, 'run_repeat_exhausted', `round ${round}: this activation's own limit`);
+    assert.equal(fixture.commandSpawns().length, round, `round ${round}: exactly one run in this activation`);
+    const replying = fixture.call('dude_a2a_reply', {
+      exchangeId, conclusion: 'A fresh run passed.', limitations: 'One suite.', evidence: [{ run: ran.record.runId }],
+    });
+    assert.deepEqual((await handedOver).evidence, [ran.record], `round ${round}: the record reaches the asker`);
+    finish('sent');
+    assert.equal((await replying).outcome, 'sent');
+  }
+  const notices = fixture.logs.filter((line) => line.startsWith('A2A standing pairing in use:'));
+  assert.equal(notices.length, 2, 'each automatic activation gave its notice');
+  assert.match(notices[0], /\nCOMMANDS: check, separately approved; until activation ends; 1 run\n/);
+
+  const shareOnly = await servingFixture({ verification: null, profile: { pairing: true } });
+  const shared = await requestAgain(shareOnly);
+  assert.match(shared.textResultForLlm, /^Activation: active; serve profile b-serve; [\s\S]*No verification command is approved$/);
+  assert.match(String(shareOnly.logs.find((line) => line.startsWith('A2A standing pairing in use:'))), /\nCOMMANDS: none\n/);
+  const opened = await shareOnly.admit();
+  const refused = await shareOnly.call('dude_a2a_verify', { exchangeId: opened.exchangeId, commandId: 'check', params: { mode: 'pass' } });
+  assert.deepEqual([refused.outcome, refused.reason], ['refused', 'no_commands_approved']);
+  assert.equal(shareOnly.commandSpawns().length, 0, 'a share-only pairing runs no command');
+
+  const changed = await servingFixture({ profile: { pairing: true } });
+  const reproposed = await requestAgain(changed, () => {
+    const document = JSON.parse(fs.readFileSync(changed.configPath, 'utf8'));
+    document.commands.check.timeoutMs = 20_000;
+    fs.writeFileSync(changed.configPath, JSON.stringify(document));
+  });
+  assert.equal(reproposed.resultType, 'success', reproposed.textResultForLlm);
+  assert.match(reproposed.textResultForLlm, /^Proposal only: nothing is activated\./, 'a changed command definition needs fresh approval');
+  assert.match(reproposed.textResultForLlm, /\nRun limits: 20000 ms; 4096 bytes per stream\n/, 'which shows the changed definition');
+  const noActivation = await changed.call('dude_a2a_verify', { exchangeId: randomUUID(), commandId: 'check', params: { mode: 'pass' } });
+  assert.equal(noActivation.reason, 'no_activation');
+  assert.equal(changed.commandSpawns().length, 0, 'the changed scope runs nothing');
+});
+
+test('deleting the standing record while a paired run\'s revision probe is held refuses before the command starts and ends the activation', async (context) => {
+  if (!GIT) {
+    context.skip('git is not on PATH, so this case did not run');
+    return;
+  }
+  const fixture = await servingFixture({ useGit: true, revision: 'pin', holdGit: true, profile: { pairing: true } });
+  const activated = await requestAgain(fixture);
+  assert.match(activated.textResultForLlm, /^Activation: active; serve profile b-serve/);
+  const { exchangeId } = await fixture.admit();
+  const pending = fixture.verify(exchangeId);
+  await until(() => fixture.heldGit.length === 1, 'HEAD probe held');
+  fs.rmSync(pairingRecord(fixture));
+  fixture.heldGit[0].release(`${fixture.head}\n`);
+  const result = await pending;
+  assert.deepEqual([result.outcome, result.reason], ['refused', 'activation_ended'], JSON.stringify(result));
+  assert.equal(fixture.commandSpawns().length, 0, 'no command started');
+  assert.ok(fixture.logs.some((line) => line.startsWith(
+    'A2A activation ended: the standing pairing record was deleted, changed, or can no longer be read safely.')));
+});

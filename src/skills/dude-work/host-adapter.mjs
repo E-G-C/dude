@@ -60,6 +60,9 @@ const AUTONOMOUS_OPERATIONS = new Set([
   'commit-lane-receipt',
   'audit-run',
 ]);
+// Routes entered by these operations commit or settle a lane effect; the
+// owner's provenance keeps their exact inert runtime request and result.
+const SETTLEMENT_OPERATIONS = new Set(['commit-lane-receipt', 'settle-effect']);
 const RESERVED_ROUTE_FIELDS = Object.freeze(['route', 'mode', 'command', 'transition']);
 const CORRECTABLE_OPERATIONS = OPERATIONS;
 const INCIDENT_CLASSES = Object.freeze([
@@ -381,7 +384,8 @@ function validateCorrection(session, value) {
 
 /**
  * The typed one-shot recovery notice. It is presentation data only: no ledger,
- * event, report, or second audit surface ever receives it.
+ * event, report, or second audit surface ever receives it. The original owner's
+ * sealed terminal evidence alone keeps a still-pending notice, inert and unrendered.
  * @param {unknown} value @param {string} label
  */
 function validateRecoveryNotice(value, label) {
@@ -565,6 +569,23 @@ export function validateHostAdapterSession(value) {
   return session;
 }
 
+/**
+ * The accumulated earlier capture streams and optional fresh lane binding that a
+ * completion-fit check measures. They are evidence for that measurement only and
+ * never reach the capture request, so they cannot select a trusted capture.
+ * @param {unknown} value
+ */
+function completionFitRequest(value) {
+  const label = 'HostAdapterRequest.attemptResult.completionFit';
+  const fit = exactRecord(value, ['captures'], ['laneBinding'], label);
+  const captures = exactRecord(fit.captures, ['verification', 'review', 'lint'], [], `${label}.captures`);
+  for (const stream of ['verification', 'review', 'lint']) denseArray(captures[stream], `${label}.captures.${stream}`);
+  if (Object.hasOwn(fit, 'laneBinding')) {
+    exactRecord(fit.laneBinding, ['lanePrestate', 'targetMapping', 'operationTime'], [], `${label}.laneBinding`);
+  }
+  return fit;
+}
+
 /** @param {unknown} value */
 export function validateHostAdapterRequest(value, stateValue) {
   const safe = detachedData(value, 'HostAdapterRequest');
@@ -613,7 +634,9 @@ export function validateHostAdapterRequest(value, stateValue) {
       );
     }
   } else if (request.operation === 'record-attempt-result') {
-    const attempt = exactRecord(request.attemptResult, ['input', 'result'], [], 'HostAdapterRequest.attemptResult');
+    const attempt = exactRecord(
+      request.attemptResult, ['input', 'result'], ['completionFit'], 'HostAdapterRequest.attemptResult',
+    );
     const resultKind = validateAttemptResult(attempt.result, 'HostAdapterRequest.attemptResult.result');
     if (stateValue !== undefined) {
       const state = /** @type {Record<string, unknown>} */ (
@@ -638,6 +661,12 @@ export function validateHostAdapterRequest(value, stateValue) {
         invalid('HostAdapterRequest.attemptResult.input', 'must match the pending attempt target');
       }
     }
+    if (Object.hasOwn(attempt, 'completionFit')) {
+      if (resultKind !== 'trusted') {
+        invalid('HostAdapterRequest.attemptResult.completionFit', 'applies only to the autonomous specialist pair');
+      }
+      completionFitRequest(attempt.completionFit);
+    }
   } else if (request.operation === 'advance-governance') {
     if (stateValue === undefined) invalid('HostAdapterRequest.governance', 'requires the current accepted RunState');
     deriveGovernanceRuntimeRequestV1(stateValue, request.governance);
@@ -652,12 +681,25 @@ export function validateHostAdapterRequest(value, stateValue) {
       );
     }
   } else if (request.operation === 'authorize-lane-effect') {
-    exactRecord(
+    // Only a terminal fresh claim carries its terminal admission material; the
+    // recovery issuer rederives that claim's binding and eligibility from it.
+    const laneEffect = exactRecord(
       request.laneEffect,
       ['input', 'mutation', 'lanePrestate', 'targetMapping'],
-      [],
+      ['terminalAdmission'],
       'HostAdapterRequest.laneEffect',
     );
+    if (Object.hasOwn(laneEffect, 'terminalAdmission')) {
+      const admission = exactRecord(
+        laneEffect.terminalAdmission,
+        ['requestIdentity', 'manifest', 'disposition'],
+        [],
+        'HostAdapterRequest.laneEffect.terminalAdmission',
+      );
+      hash(admission.requestIdentity, 'HostAdapterRequest.laneEffect.terminalAdmission.requestIdentity');
+      validateTerminalEvidenceManifestV1(admission.manifest);
+      validateTerminalDispositionV1(admission.disposition);
+    }
   } else if (request.operation === 'apply-lane-effect') {
     // The adapter supplies the accepted state and canonical target itself; a
     // caller may reference only the permit it was issued and the fresh bindings.
@@ -1261,8 +1303,9 @@ function handleLegacyCompletion(session, response, completionInput) {
   return acceptState(session, successor.state, /** @type {string} */ (completion.reason));
 }
 
-/** @param {Record<string, unknown>} session @param {Record<string, unknown>} trusted @param {unknown} response */
-function handleTrustedCapture(session, trusted, response) {
+/** @param {Record<string, unknown>} session @param {Record<string, unknown>} trusted @param {unknown} response
+ * @param {(effect:Record<string, unknown>)=>void} [beforeAcceptance] Runs only after every binding check. */
+function handleTrustedCapture(session, trusted, response, beforeAcceptance) {
   const top = exactRecord(response, ['inspection', 'completion'], [], 'recovery trusted capture response');
   const inspection = requireSessionInspection(
     /** @type {Record<string, unknown>} */ (top.inspection),
@@ -1342,7 +1385,54 @@ function handleTrustedCapture(session, trusted, response) {
   } catch {
     return hardStop(session, 'effect-contract-mismatch');
   }
+  // A known completion that cannot fit stops here, before this provisional capture is accepted.
+  beforeAcceptance?.(effect);
   return effectRequired({ ...session, pendingEffect: effect }, 'occurrence-retention-required');
+}
+
+/**
+ * Measure the now-known completion before its provisional capture is accepted: the
+ * complete accumulated capture every later operation acquires and, with a fresh lane
+ * binding, each remaining lane-first and receipt prefix through the existing
+ * preparation and postimage oracle, including the required learning that
+ * finalization deterministically derives once those occurrences are retained. A
+ * capacity refusal or overflow throws through the runtime boundary as this
+ * operation's evidence stop, so the predecessor, counters, pending authorization,
+ * and earlier effects stay unchanged and no lane write follows. The derived plan
+ * grants no permit and is discarded with this operation's material; later
+ * boundaries reacquire and rederive. Another unprepared reason leaves fit
+ * unestablished for that authoritative later preparation.
+ * @param {Record<string, unknown>} session @param {Record<string, unknown>} effect
+ * @param {Record<string, unknown>} captureInput @param {Record<string, unknown>} fit
+ * @param {(command:string, request:unknown)=>unknown} invoke
+ */
+function preflightCompletionFit(session, effect, captureInput, fit, invoke) {
+  const captures = /** @type {Record<string, unknown[]>} */ (fit.captures);
+  const input = { ...captureInput };
+  for (const stream of ['verification', 'review', 'lint']) {
+    const rows = [...captures[stream]];
+    for (const row of /** @type {unknown[]} */ (captureInput[stream])) {
+      if (!rows.some((entry) => canonicalJson(entry) === canonicalJson(row))) rows.push(row);
+    }
+    input[stream] = rows;
+  }
+  const binding = Object.hasOwn(fit, 'laneBinding') ? /** @type {Record<string, unknown>} */ (fit.laneBinding) : null;
+  const top = exactRecord(invoke('transition', {
+    mode: 'prepare-projection',
+    state: clone(effect.provisionalState),
+    input,
+    projectionBatch: clone(effect.projectionBatch),
+    ...(binding === null ? {} : {
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+      operationTime: binding.operationTime,
+    }),
+  }), ['inspection', 'transition'], [], 'recovery completion fit response');
+  requireSessionInspection(
+    /** @type {Record<string, unknown>} */ (top.inspection),
+    session,
+    'recovery completion fit response.inspection',
+  );
 }
 
 /**
@@ -1533,13 +1623,19 @@ function recordAttemptResult(session, request, invoke) {
     if (pending.action === 'reconcile-derived-definition') {
       return hardStop(session, 'definition-reconciliation-attestation-unsupported');
     }
+    // The capture and its fit check use exactly these built records, never a rebuilt copy.
     const attestation = prepareSpecialistResult(state, semanticResult);
+    const captureInput = { .../** @type {Record<string, unknown>} */ (attempt.input), ...attestation.streams };
     return handleTrustedCapture(session, attestation.trusted, invoke('complete', {
         mode: 'capture',
         state: JSON.parse(/** @type {string} */ (session.acceptedStateBytes)),
-        input: { .../** @type {Record<string, unknown>} */ (attempt.input), ...attestation.streams },
+        input: captureInput,
         completion: attestation.completion,
-    }));
+    }), Object.hasOwn(attempt, 'completionFit')
+      ? (effect) => preflightCompletionFit(
+        session, effect, captureInput, /** @type {Record<string, unknown>} */ (attempt.completionFit), invoke,
+      )
+      : undefined);
   }
   const completionInput = {
     target,
@@ -1825,6 +1921,17 @@ function createLaneLedger() {
   const permits = new Map();
   return {
     permits,
+    /**
+     * Every semantic operation this handle actually entered, with its runtime
+     * routes and lane-writer outcomes. Entries are the handle's own observations,
+     * never caller data. Every entered operation is recorded; only an actual
+     * observation loss marks provenance incomplete. Each lane write keeps the
+     * exact request the lane owner received, the prestate its permit binds, and
+     * the owner's own result; each publication or settlement route keeps its
+     * exact inert runtime request and result.
+     * @type {{complete:boolean,operations:{operation:string,routes:Record<string, unknown>[],lane:Record<string, unknown>[],outcome:string|null,reason:string|null}[]}}
+     */
+    provenance: { complete: true, operations: [] },
     /** @param {{request:Record<string,unknown>,inspectionIdentity:unknown}|null} [preparation] */
     release(preparation) {
       for (const entry of permits.values()) {
@@ -1978,6 +2085,7 @@ function authorizeLaneEffect(session, request, invoke, ledger) {
     mutation: laneEffect.mutation,
     lanePrestate: laneEffect.lanePrestate,
     targetMapping: laneEffect.targetMapping,
+    ...(Object.hasOwn(laneEffect, 'terminalAdmission') ? { terminalAdmission: laneEffect.terminalAdmission } : {}),
   };
   const top = exactRecord(invoke('transition', preparationRequest),
     ['inspection', 'transition'], [], 'recovery lane permit response');
@@ -2051,8 +2159,9 @@ function authorizeLaneEffect(session, request, invoke, ledger) {
  * @param {Record<string, unknown>} session @param {Record<string, unknown>} request
  * @param {ReturnType<typeof trustedPorts>} ports @param {ReturnType<typeof createLaneLedger>} ledger
  * @param {(command:string, request:unknown)=>unknown} invoke
+ * @param {{lane:Record<string, unknown>[]}|null} [entered] This operation's provenance entry.
  */
-function applyLaneEffect(session, request, ports, ledger, invoke) {
+function applyLaneEffect(session, request, ports, ledger, invoke, entered = null) {
   if (/** @type {Record<string, unknown>} */ (session.target).lane !== 'lightweight') {
     return hardStop(session, 'lane-owner-unavailable');
   }
@@ -2174,24 +2283,44 @@ function applyLaneEffect(session, request, ports, ledger, invoke) {
     expected: clone(application.expected),
     mutation: clone(application.mutation),
   });
+  // The writer outcome is provenance: only an exact committed receipt or a
+  // refusal that leaves every surface unchanged accounts for this entry. The
+  // write also keeps its complete original material: the exact request the lane
+  // owner received (permit, mutation, mapping, subject state, and preimages),
+  // the prepared prestate its permit binds, and the owner's own result.
+  const written = {
+    permitHash: permit.permitHash,
+    kind: permit.kind,
+    status: 'entered',
+    receiptHash: null,
+    request: laneRequest,
+    lanePrestate: preparation.request.lanePrestate,
+    result: null,
+  };
+  if (entered !== null) entered.lane.push(written);
   let outcome;
   try {
     outcome = ports.laneOwner.apply(laneRequest);
   } catch {
+    written.status = 'threw';
     return hardStop(session, 'lane-owner-threw');
   }
   let laneResult;
   try {
     laneResult = record(detachedData(outcome, 'lane owner result'), 'lane owner result');
   } catch {
+    written.status = 'malformed';
     return hardStop(session, 'lane-owner-result-malformed');
   }
+  written.result = laneResult;
   if (laneResult.ok !== true) {
     // A refusal leaves every authoritative surface byte-for-byte unchanged; an
     // indeterminate outcome is the existing irreducible hard stop.
     if (laneResult.phase !== 'refused' || typeof laneResult.reason !== 'string') {
+      written.status = 'indeterminate';
       return hardStop(session, 'lane-effect-indeterminate');
     }
+    written.status = 'refused';
     return closedIncident(session, 'apply-lane-effect', 'evidence-drift', laneResult.reason);
   }
   let receipt;
@@ -2208,8 +2337,11 @@ function applyLaneEffect(session, request, ports, ledger, invoke) {
       invalid('lane owner result.receipt', 'must bind the exact permit, mapping, prestate, and target');
     }
   } catch {
+    written.status = 'receipt-mismatch';
     return hardStop(session, 'lane-receipt-binding-mismatch');
   }
+  written.status = 'applied';
+  written.receiptHash = receipt.receiptHash;
   entry.stage = 'applied';
   entry.receipt = clone(receipt);
   ledger.release(preparation);
@@ -2522,9 +2654,20 @@ function trustedPorts(dependenciesValue, mode = 'admitted') {
   const dependencies = exactRecord(
     dependenciesValue === undefined ? {} : dependenciesValue,
     mode === 'admitted' ? ['supervisorSession', 'noEffectAuthority'] : ['noEffectAuthority', 'checkpoint'],
-    mode === 'admitted' ? ['runtime', 'checkpoint', 'laneOwner'] : ['runtime', 'laneOwner'],
+    mode === 'admitted'
+      ? ['runtime', 'checkpoint', 'laneOwner', 'runtimeEvidence']
+      : ['runtime', 'laneOwner', 'runtimeEvidence'],
     'host adapter dependencies',
   );
+  // A trusted host collector sees inert copies of each actual port input and
+  // result. It cannot choose a route, replace a result, or reach live data.
+  let runtimeEvidence = null;
+  if (Object.hasOwn(dependencies, 'runtimeEvidence')) {
+    if (typeof dependencies.runtimeEvidence !== 'function' || utilTypes.isProxy(dependencies.runtimeEvidence)) {
+      invalid('host adapter dependencies.runtimeEvidence', 'must be a non-Proxy function');
+    }
+    runtimeEvidence = /** @type {(observation:unknown)=>unknown} */ (dependencies.runtimeEvidence);
+  }
   const supervisorSession = mode === 'admitted'
     ? exactRecord(
       dependencies.supervisorSession,
@@ -2571,6 +2714,8 @@ function trustedPorts(dependenciesValue, mode = 'admitted') {
     identity: DEFAULT_LANE_OWNER_AUTHORITY,
     apply: (laneRequest) => applyLightweightWorkRequest(laneRequest),
   });
+  // As with the runtime, only the actual selection here is the built-in writer.
+  const laneOwnerIsDefault = !Object.hasOwn(dependencies, 'laneOwner');
   if (Object.hasOwn(dependencies, 'laneOwner')) {
     const owner = exactRecord(dependencies.laneOwner, ['identity', 'apply'], [], 'host adapter dependencies.laneOwner');
     hash(owner.identity, 'host adapter dependencies.laneOwner.identity');
@@ -2619,9 +2764,11 @@ function trustedPorts(dependenciesValue, mode = 'admitted') {
     }),
     checkpoint,
     laneOwner,
+    laneOwnerIsDefault,
     runtimeIdentity,
     runtimeIsDefault,
     runtimeInvoke,
+    runtimeEvidence,
   });
 }
 
@@ -2712,6 +2859,9 @@ function admitSupervisorSession(ports, provisional, mode = 'initial', priorWorke
   const prior = /** @type {Record<string, unknown>} */ (priorWorker);
   if (invocationIdentity !== prior.invocationIdentity) {
     invalid('host adapter supervisor admission.invocationIdentity', 'must be the retained supervisor invocation identity');
+  }
+  if (admitted?.fenced) {
+    invalid('host adapter supervisor admission.invocationIdentity', 'must not replace a terminally fenced owner');
   }
   if (admission.workerGeneration !== /** @type {number} */ (prior.workerGeneration) + 1
     || admission.workerToken === prior.workerToken) {
@@ -2993,7 +3143,9 @@ function validateCheckpointResult(value, operation, checkpointKey) {
       : status === 'cleared'
         ? []
         : ['diagnostic'];
-  const result = exactRecord(safe, ['version', 'status', 'checkpointKey', ...extra], [], label);
+  // A failed clear may name the artifacts it removed and then freshly observed absent.
+  const optional = operation === 'clear' && status === 'failed' ? ['removed'] : [];
+  const result = exactRecord(safe, ['version', 'status', 'checkpointKey', ...extra], optional, label);
   if (result.version !== 1) invalid(`${label}.version`, 'must be the literal 1');
   hash(result.checkpointKey, `${label}.checkpointKey`);
   if (result.checkpointKey !== checkpointKey) {
@@ -3008,6 +3160,12 @@ function validateCheckpointResult(value, operation, checkpointKey) {
   }
   if (extra[0] === 'reason') text(result.reason, `${label}.reason`);
   if (extra[0] === 'diagnostic') validateCheckpointDiagnostic(result.diagnostic, `${label}.diagnostic`);
+  if (Object.hasOwn(result, 'removed')) {
+    const removed = canonicalJson(denseArray(result.removed, `${label}.removed`));
+    if (![['checkpoint'], ['claim'], ['checkpoint', 'claim']].some((allowed) => canonicalJson(allowed) === removed)) {
+      invalid(`${label}.removed`, 'must name distinct removed artifacts in removal order');
+    }
+  }
   return result;
 }
 
@@ -3166,13 +3324,57 @@ function inFlightDescriptor(session, operation, request) {
  * @param {NonNullable<ReturnType<typeof trustedPorts>['checkpoint']>} store
  * @param {Record<string, unknown>} binding @param {Record<string, unknown>} prestate
  * @param {string} createdAt @param {Record<string, unknown>} claimed @param {string} claimHash
+ * @param {{claim:string,checkpoint:string}|null} [submitted] The exact claim and checkpoint bytes this
+ * owner submitted at creation; each validated later write replaces the checkpoint. Absent on resume.
  */
-function createCheckpointHost(store, binding, prestate, createdAt, claimed, claimHash) {
+function createCheckpointHost(store, binding, prestate, createdAt, claimed, claimHash, submitted = null) {
   const checkpointKey = checkpointKeyOf(binding);
   let last = claimed;
   let projectionApplication = null;
+  const original = submitted === null ? null : { claim: submitted.claim, checkpoint: submitted.checkpoint };
   const host = {
     checkpointKey,
+    /** The privately retained original pair bytes and their bound expectation, never reconstructed. */
+    retained() {
+      return original === null ? null : {
+        claimBytes: original.claim,
+        checkpointBytes: original.checkpoint,
+        claimHash,
+        record: last,
+      };
+    },
+    /**
+     * Read-only presence of each bound artifact and whether it equals the retained original.
+     * `present` or `same` is null when the store cannot establish it.
+     */
+    observe() {
+      /** @param {boolean|null} present @param {boolean|null} same */
+      const artifact = (present, same) => ({ present, same });
+      let loaded;
+      try {
+        loaded = validateCheckpointResult(store.load(binding), 'load', checkpointKey);
+      } catch {
+        return { checkpoint: artifact(null, null), claim: artifact(null, null) };
+      }
+      if (loaded.status === 'absent') return { checkpoint: artifact(false, null), claim: artifact(false, null) };
+      if (loaded.status === 'loaded') {
+        return {
+          checkpoint: artifact(true, original !== null && canonicalJson(loaded.record) === original.checkpoint),
+          claim: artifact(true, loaded.claimHash === claimHash),
+        };
+      }
+      if (loaded.status === 'corrupt') {
+        const observed = /** @type {Record<string, unknown>} */ (loaded.diagnostic);
+        // Unreadable or foreign-key bytes cannot be this owner's valid original;
+        // a readable partial artifact remains unverified.
+        const same = observed.detail === 'partial-artifacts' ? null : false;
+        return {
+          checkpoint: artifact(/** @type {boolean} */ (observed.checkpointPresent), observed.checkpointPresent ? same : null),
+          claim: artifact(/** @type {boolean} */ (observed.claimPresent), observed.claimPresent ? same : null),
+        };
+      }
+      return { checkpoint: artifact(null, null), claim: artifact(null, null) };
+    },
     /** @param {Record<string, unknown>} session @param {boolean} [requireSettled] */
     verify(session, requireSettled = false) {
       let loaded;
@@ -3219,6 +3421,7 @@ function createCheckpointHost(store, binding, prestate, createdAt, claimed, clai
       const written = /** @type {Record<string, unknown>} */ (updated.record);
       if (written.recordHash !== next.recordHash || updated.claimHash !== claimHash) return 'checkpoint-update-failed';
       last = written;
+      if (original !== null) original.checkpoint = canonicalJson(next);
       return null;
     },
     /** @param {Record<string, unknown>} session @param {string} operation @param {Record<string, unknown>} [request] */
@@ -3251,8 +3454,14 @@ function createCheckpointHost(store, binding, prestate, createdAt, claimed, clai
         ? null
         : host.commit(session, descriptor);
     },
-    /** @param {Record<string, unknown>} session @param {string} reason */
-    clear(session, reason) {
+    /**
+     * The existing guarded store clear, with the per-artifact removals the store
+     * itself confirmed: both on success, otherwise only those it unlinked and then
+     * freshly observed absent. `failure` keeps the ordinary clear contract.
+     * @param {Record<string, unknown>} session @param {string} reason
+     * @returns {{failure:string|null, removed:string[]}}
+     */
+    clearWithProgress(session, reason) {
       let cleared;
       try {
         cleared = validateCheckpointResult(
@@ -3261,9 +3470,17 @@ function createCheckpointHost(store, binding, prestate, createdAt, claimed, clai
           checkpointKey,
         );
       } catch {
-        return 'checkpoint-cleanup-failed';
+        return { failure: 'checkpoint-cleanup-failed', removed: [] };
       }
-      return cleared.status === 'cleared' ? null : 'checkpoint-cleanup-failed';
+      if (cleared.status === 'cleared') return { failure: null, removed: ['checkpoint', 'claim'] };
+      return {
+        failure: 'checkpoint-cleanup-failed',
+        removed: Object.hasOwn(cleared, 'removed') ? [.../** @type {string[]} */ (cleared.removed)] : [],
+      };
+    },
+    /** @param {Record<string, unknown>} session @param {string} reason */
+    clear(session, reason) {
+      return host.clearWithProgress(session, reason).failure;
     },
   };
   return host;
@@ -3717,6 +3934,10 @@ export function createTemporaryCheckpointStore(optionsValue) {
     },
     clear(bindingValue, worker, expected, reason) {
       let key = null;
+      // Each artifact this clear unlinked whose latest observation here was absence.
+      // An unlink alone never counts, and a later sighting withdraws the fact.
+      /** @type {Set<string>} */
+      const removed = new Set();
       try {
         const binding = validateCheckpointBinding(bindingValue, 'checkpoint store clear binding');
         key = checkpointKeyOf(binding);
@@ -3741,20 +3962,29 @@ export function createTemporaryCheckpointStore(optionsValue) {
         if (probeFile(checkpointPath).present) {
           invalid('checkpoint store clear', 'must establish checkpoint absence before claim removal');
         }
+        removed.add('checkpoint');
         const claimBytes = readBounded(claimPath);
         if (claimBytes === null || parseClaim(claimBytes).claimHash !== expectation.claimHash) {
           invalid('checkpoint store clear', 'must retain the expected claim before removal');
         }
         if (probeFile(checkpointPath).present) {
+          removed.delete('checkpoint');
           invalid('checkpoint store clear', 'must keep the checkpoint absent before claim removal');
         }
         fs.rmSync(claimPath);
-        if (probeFile(checkpointPath).present || probeFile(claimPath).present) {
+        const checkpointBack = probeFile(checkpointPath).present;
+        if (checkpointBack) removed.delete('checkpoint');
+        const claimBack = probeFile(claimPath).present;
+        if (!claimBack) removed.add('claim');
+        if (checkpointBack || claimBack) {
           invalid('checkpoint store clear', 'must leave no ownership claim or checkpoint behind');
         }
         return { version: 1, status: 'cleared', checkpointKey: key };
       } catch (error) {
-        return failure(key === null ? sha256('checkpoint-key-underivable') : key, error);
+        const failed = failure(key === null ? sha256('checkpoint-key-underivable') : key, error);
+        return removed.size === 0
+          ? failed
+          : { ...failed, removed: ['checkpoint', 'claim'].filter((kind) => removed.has(kind)) };
       }
     },
   });
@@ -3939,8 +4169,28 @@ function classifiedRuntimeIncident(ports, probe, incidentClass, reason, observat
   return incident;
 }
 
-/** @param {ReturnType<typeof trustedPorts>} ports @param {Record<string, unknown>} session @param {string} semanticOperation @param {string} command @param {unknown} request */
-function invokeRuntime(ports, session, semanticOperation, command, request) {
+/**
+ * Hand the trusted host collector one frozen inert observation. Its return
+ * value is ignored, and a failure leaves this owner's provenance incomplete
+ * instead of changing the operation or its route.
+ * @param {ReturnType<typeof trustedPorts>} ports
+ * @param {{complete:boolean}|null} provenance @param {Record<string, unknown>} observation
+ */
+function observeRuntime(ports, provenance, observation) {
+  if (ports.runtimeEvidence === null) return;
+  try {
+    ports.runtimeEvidence(freezeData(observation));
+  } catch {
+    if (provenance !== null) provenance.complete = false;
+  }
+}
+
+/**
+ * @param {ReturnType<typeof trustedPorts>} ports @param {Record<string, unknown>} session @param {string} semanticOperation @param {string} command @param {unknown} request
+ * @param {{routes:Record<string, unknown>[]}|null} [entry] The entered operation this route belongs to.
+ * @param {{complete:boolean}|null} [provenance] The owning handle's provenance ledger.
+ */
+function invokeRuntime(ports, session, semanticOperation, command, request, entry = null, provenance = null) {
   const lowLevelRequest = freezeData(clone(request));
   const operationIdentity = randomBytes(32).toString('hex');
   const probeBody = {
@@ -3965,10 +4215,25 @@ function invokeRuntime(ports, session, semanticOperation, command, request) {
     requestIdentity: sha256(canonicalJson(probeBody)),
   });
   const probe = captureNoEffectProbe(ports, probeRequest);
+  const route = entry === null ? null : {
+    command,
+    mode: typeof lowLevelRequest.mode === 'string' ? lowLevelRequest.mode : null,
+    status: 'entered',
+  };
+  // A commit or settlement route is the effect's own settlement proof, so it
+  // keeps the exact inert request and result it exchanged with the runtime.
+  const settlement = route !== null && SETTLEMENT_OPERATIONS.has(semanticOperation);
+  if (settlement) Object.assign(route, { request: lowLevelRequest, result: null });
+  if (route !== null) entry.routes.push(route);
+  // The exact inert input is observed before the reducer runs, so a later
+  // refusal or failure cannot erase what this port actually received.
+  observeRuntime(ports, provenance, { phase: 'input', command, request: lowLevelRequest });
   let output;
   try {
     output = ports.runtimeInvoke(command, lowLevelRequest);
   } catch (error) {
+    if (route !== null) route.status = 'threw';
+    observeRuntime(ports, provenance, { phase: 'result', command, output: null });
     const capacity = recognizedRuntimeCapacity(ports, command, lowLevelRequest, error);
     // Matching rederivation proves the capacity refusal is runtime-genuine; it
     // proves nothing about what an injected port already did. The default port
@@ -3989,7 +4254,19 @@ function invokeRuntime(ports, session, semanticOperation, command, request) {
     if (capacity && incident.provenNoEffect) throw capacityIncident(capacity);
     throw incident;
   }
-  if (output === undefined || output === null || output === '') {
+  if (route !== null) route.status = 'returned';
+  const empty = output === undefined || output === null || output === '';
+  let safe = null;
+  if (!empty) {
+    try {
+      safe = detachedData(output, 'host runtime result');
+    } catch {
+      safe = null;
+    }
+  }
+  if (settlement) /** @type {Record<string, unknown>} */ (route).result = safe;
+  observeRuntime(ports, provenance, { phase: 'result', command, output: safe });
+  if (empty) {
     throw classifiedRuntimeIncident(
       ports,
       probe,
@@ -4001,7 +4278,7 @@ function invokeRuntime(ports, session, semanticOperation, command, request) {
   }
   let envelope;
   try {
-    const safe = detachedData(output, 'host runtime result');
+    if (safe === null) invalid('host runtime result', 'must be detachable JSON data');
     const candidate = record(safe, 'host runtime result');
     enumeration(candidate.status, ['returned', 'empty', 'nonzero'], 'host runtime result.status');
     envelope = candidate.status === 'returned'
@@ -4117,6 +4394,8 @@ function invokeRuntime(ports, session, semanticOperation, command, request) {
 function survivingAuthorityFailure(session, ports, host, checks = {}) {
   const admitted = ADMITTED_INVOCATIONS.get(/** @type {string} */ (session.invocationIdentity));
   const authorities = /** @type {Record<string, unknown>} */ (session.authorities);
+  // A terminal fence is irreversible: no handle of this invocation executes again.
+  if (admitted?.fenced) return 'owner-fenced';
   if (admitted && (admitted.workerToken !== session.workerToken
     || admitted.workerGeneration !== session.workerGeneration)) return 'stale-worker';
   if (ports.supervisorSession.authority !== undefined) {
@@ -4209,48 +4488,64 @@ function runOperation(session, requestValue, ports, host = null, ledger = create
     if (registered.reason) return hardStop(workingSession, registered.reason);
     workingSession = /** @type {Record<string, unknown>} */ (registered.session);
   }
+  // From here the operation is entered: its routes, writer outcome, and result
+  // become this handle's own provenance, whatever the outcome.
+  const provenance = ledger.provenance;
+  /** @type {{operation:string,routes:Record<string, unknown>[],lane:Record<string, unknown>[],outcome:string|null,reason:string|null}} */
+  const entered = { operation: /** @type {string} */ (request.operation), routes: [], lane: [], outcome: null, reason: null };
+  provenance.operations.push(entered);
   const invoke = (command, lowLevelRequest) => invokeRuntime(
     ports,
     workingSession,
     /** @type {string} */ (request.operation),
     command,
     lowLevelRequest,
+    entered,
+    provenance,
   );
-  try {
-    if (request.operation === 'fresh-inspection') return freshInspection(workingSession, request, invoke);
-    if (request.operation === 'authorize-attempt') return authorizeAttemptOperation(workingSession, request, invoke);
-    if (request.operation === 'record-attempt-result') return recordAttemptResult(workingSession, request, invoke);
-    if (request.operation === 'settle-effect') return settleEffect(workingSession, request, invoke);
-    if (request.operation === 'advance-governance') return advanceGovernance(workingSession, request, invoke);
-    if (request.operation === 'prepare-authoritative-projection') {
-      return prepareAuthoritativeProjection(workingSession, request, invoke, ledger);
-    }
-    if (request.operation === 'authorize-lane-effect') {
-      return authorizeLaneEffect(workingSession, request, invoke, ledger);
-    }
-    if (request.operation === 'apply-lane-effect') return applyLaneEffect(workingSession, request, ports, ledger, invoke);
-    if (request.operation === 'commit-lane-receipt') {
-      return commitLaneReceipt(workingSession, request, invoke, ledger);
-    }
-    return auditRun(workingSession, request, invoke);
-  } catch (error) {
-    if (error instanceof RuntimeIncident && error.capacity) {
-      return hardStop(workingSession, 'evidence-incomplete', error.capacity);
-    }
-    if (error instanceof RuntimeIncident && error.provenNoEffect) {
-      if (request.operation === 'record-attempt-result' && (workingSession.pendingEffect !== null
-        || Object.hasOwn(workingSession.acceptedState, 'pendingCompletion'))) {
-        return hardStop(workingSession, 'effect-unverified');
+  const dispatch = () => {
+    try {
+      if (request.operation === 'fresh-inspection') return freshInspection(workingSession, request, invoke);
+      if (request.operation === 'authorize-attempt') return authorizeAttemptOperation(workingSession, request, invoke);
+      if (request.operation === 'record-attempt-result') return recordAttemptResult(workingSession, request, invoke);
+      if (request.operation === 'settle-effect') return settleEffect(workingSession, request, invoke);
+      if (request.operation === 'advance-governance') return advanceGovernance(workingSession, request, invoke);
+      if (request.operation === 'prepare-authoritative-projection') {
+        return prepareAuthoritativeProjection(workingSession, request, invoke, ledger);
       }
-      const lost = survivingAuthorityFailure(workingSession, ports, host);
-      if (lost) return hardStop(workingSession, lost);
-      return closedIncident(workingSession, /** @type {string} */ (request.operation), error.incidentClass, error.message);
+      if (request.operation === 'authorize-lane-effect') {
+        return authorizeLaneEffect(workingSession, request, invoke, ledger);
+      }
+      if (request.operation === 'apply-lane-effect') {
+        return applyLaneEffect(workingSession, request, ports, ledger, invoke, entered);
+      }
+      if (request.operation === 'commit-lane-receipt') {
+        return commitLaneReceipt(workingSession, request, invoke, ledger);
+      }
+      return auditRun(workingSession, request, invoke);
+    } catch (error) {
+      if (error instanceof RuntimeIncident && error.capacity) {
+        return hardStop(workingSession, 'evidence-incomplete', error.capacity);
+      }
+      if (error instanceof RuntimeIncident && error.provenNoEffect) {
+        if (request.operation === 'record-attempt-result' && (workingSession.pendingEffect !== null
+          || Object.hasOwn(workingSession.acceptedState, 'pendingCompletion'))) {
+          return hardStop(workingSession, 'effect-unverified');
+        }
+        const lost = survivingAuthorityFailure(workingSession, ports, host);
+        if (lost) return hardStop(workingSession, lost);
+        return closedIncident(workingSession, /** @type {string} */ (request.operation), error.incidentClass, error.message);
+      }
+      return hardStop(
+        workingSession,
+        error instanceof RuntimeIncident ? error.message : 'runtime-output-malformed',
+      );
     }
-    return hardStop(
-      workingSession,
-      error instanceof RuntimeIncident ? error.message : 'runtime-output-malformed',
-    );
-  }
+  };
+  const result = /** @type {Record<string, unknown>} */ (dispatch());
+  entered.outcome = /** @type {string} */ (result.outcome);
+  entered.reason = /** @type {string} */ (result.reason);
+  return result;
 }
 
 /**
@@ -4290,7 +4585,8 @@ function openCheckpointHost(store, binding, prestate, session) {
   }
   const createdAt = nowStamp();
   const initialRecord = buildCheckpointRecord(binding, prestate, session, null, createdAt);
-  const claimHash = buildCheckpointClaim(initialRecord).claimHash;
+  const initialClaim = buildCheckpointClaim(initialRecord);
+  const claimHash = initialClaim.claimHash;
   let claimed;
   try {
     claimed = validateCheckpointResult(store.claim(binding, initialRecord), 'claim', checkpointKey);
@@ -4311,6 +4607,8 @@ function openCheckpointHost(store, binding, prestate, session) {
       createdAt,
       /** @type {Record<string, unknown>} */ (claimed.record),
       claimHash,
+      // The store persists exactly these canonical bytes; retain them as submitted.
+      { claim: canonicalJson(initialClaim), checkpoint: canonicalJson(initialRecord) },
     ),
   };
 }
@@ -4358,6 +4656,55 @@ function validateHandoffReceipt(value, label) {
 }
 
 /**
+ * Account for every effect this original handle entered from its own route,
+ * writer, receipt, and settlement provenance, never from equal counters or
+ * state. Returns the first unaccounted subject, or null when only built-in pure
+ * routes ran and every built-in lane write holds its exact committed receipt
+ * with settled publication. The built-in recovery runtime is a pure
+ * read/reducer boundary; the built-in lane owner is the only writer.
+ * @param {Record<string, unknown>} session @param {ReturnType<typeof trustedPorts>} ports
+ * @param {ReturnType<typeof createLaneLedger>} ledger @param {Record<string, unknown>} record The last committed checkpoint.
+ */
+function unaccountedEffect(session, ports, ledger, record) {
+  // An injected port is compatible, but its entered effects are not observable here.
+  if (!ports.runtimeIsDefault) return 'runtime-port';
+  if (!ports.laneOwnerIsDefault) return 'lane-owner-port';
+  if (!ledger.provenance.complete) return 'runtime-observation';
+  for (const entry of ledger.provenance.operations) {
+    // Accepted attempt authority lets implementation and specialists act outside this owner.
+    if (entry.operation === 'authorize-attempt' && entry.outcome === 'accepted') return 'authorize-attempt';
+    if (entry.operation === 'record-attempt-result') return 'record-attempt-result';
+    for (const lane of entry.lane) {
+      if (lane.status === 'refused') continue;
+      if (lane.status !== 'applied') return 'apply-lane-effect';
+      if (ledger.permits.get(/** @type {string} */ (lane.permitHash))?.stage !== 'committed') return 'commit-lane-receipt';
+    }
+  }
+  const state = /** @type {Record<string, unknown>} */ (session.acceptedState);
+  if (/** @type {unknown[]} */ (state.pending).length !== 0) return 'pending-attempt';
+  if (Object.hasOwn(state, 'pendingCompletion')) return 'pending-completion';
+  if (Object.hasOwn(state, 'evaluationSequences')
+    && /** @type {unknown[]} */ (state.evaluationSequences).length !== 0) return 'pending-evaluation';
+  if (session.pendingEffect !== null) return 'pending-effect';
+  const inFlight = /** @type {Record<string, unknown>|null} */ (record.inFlight);
+  if (inFlight !== null && inFlight.expectedEffectIdentity !== null) return /** @type {string} */ (inFlight.semanticOperation);
+  return null;
+}
+
+/** The full committed receipts behind this handle's applied lane writes, in order. @param {ReturnType<typeof createLaneLedger>} ledger */
+function committedLaneReceipts(ledger) {
+  const receipts = [];
+  for (const entry of ledger.provenance.operations) {
+    for (const lane of entry.lane) {
+      const permit = ledger.permits.get(/** @type {string} */ (lane.permitHash));
+      if (lane.status !== 'applied' || permit?.stage !== 'committed' || permit.receipt === null) continue;
+      receipts.push(clone(permit.receipt));
+    }
+  }
+  return receipts;
+}
+
+/**
  * One worker's handle over the accepted state, its checkpoint, and its terminal boundary.
  * @param {Record<string, unknown>} session @param {ReturnType<typeof trustedPorts>} ports
  * @param {ReturnType<typeof createCheckpointHost>|null} checkpointHost @param {unknown} ownershipReport
@@ -4367,6 +4714,8 @@ function hostAdapterHandle(session, ports, checkpointHost, ownershipReport) {
   let host = checkpointHost;
   let ownership = ownershipReport;
   const ledger = createLaneLedger();
+  // Set once by the terminal seal; a sealed handle never reaches a port again.
+  let sealed = false;
 
   /** @param {Record<string, unknown>} stopped @param {string} reason */
   function fail(stopped, reason) {
@@ -4385,6 +4734,8 @@ function hostAdapterHandle(session, ports, checkpointHost, ownershipReport) {
       return ownership;
     },
     run(requestValue) {
+      // A sealed terminal owner refuses reuse without reaching any port or the checkpoint.
+      if (sealed) return hardStop(current, 'owner-fenced');
       const priorHostRevision = /** @type {number} */ (current.hostRevision);
       const result = /** @type {Record<string, unknown>} */ (runOperation(current, requestValue, ports, host, ledger));
       const next = /** @type {Record<string, unknown>} */ (result.session);
@@ -4408,6 +4759,8 @@ function hostAdapterHandle(session, ports, checkpointHost, ownershipReport) {
     end(reasonValue) {
       enumeration(reasonValue, END_REASONS, 'host adapter end reason');
       const reason = /** @type {string} */ (reasonValue);
+      // No end, including a hard-stop release, clears anything after the terminal seal.
+      if (sealed) return hardStop(current, 'owner-fenced');
       ledger.release();
       if (current.status === 'ended') return terminalResult(current);
       if (current.status === 'hard-stop'
@@ -4436,7 +4789,283 @@ function hostAdapterHandle(session, ports, checkpointHost, ownershipReport) {
       current = /** @type {Record<string, unknown>} */ (advanceHost(current, { status: 'ended', disposition: reason }));
       return checkedResult({ version: 1, outcome: 'ended', reason, session: current });
     },
+    /**
+     * Terminal lifecycle framing for the original live owner, not a semantic
+     * operation or model request. Validates this handle's admitted supervisor,
+     * invocation, and worker authority, then irreversibly fences it: no later
+     * run, end, handoff, or resume of this invocation executes. Accepted state
+     * bytes, hash, revision, and accounting stay unchanged; the fence advances
+     * only a local host revision distinct from the last checkpoint revision.
+     * The result holds inert fence, control-byte, and effect evidence plus one
+     * private one-use disposal capability over the exact bound pair. The effect
+     * evidence keeps the session's exact correction and pending recovery notice;
+     * the seal never consumes, renders, or discharges either. Callable once.
+     */
+    sealTerminalOwner() {
+      /** @param {string} refusal @param {unknown} [observed] */
+      const refused = (refusal, observed = null) => Object.freeze({
+        fence: null, refusal, pairFailure: null, controls: null, effects: null, observed, dispose: null,
+      });
+      if (sealed) return refused('owner-fence-consumed');
+      sealed = true;
+      ledger.release();
+      if (ports.supervisorSession.authority === undefined) return refused('owner-replaced');
+      if (host === null) return refused('owner-pair-unavailable');
+      const lost = survivingAuthorityFailure(current, ports, null, { requireSupervisor: true });
+      if (lost) return refused(lost, host.observe());
+      const retained = host.retained();
+      if (retained === null) return refused('owner-controls-unavailable', host.observe());
+      // The checkpoint keeps only a correction summary and never the notice, so
+      // the exact original records are taken before the fence advances the host.
+      const correction = current.correction === null ? null : clone(current.correction);
+      const recoveryNotice = current.recoveryNotice === null ? null : clone(current.recoveryNotice);
+      ADMITTED_INVOCATIONS.set(/** @type {string} */ (current.invocationIdentity), {
+        workerToken: current.workerToken,
+        workerGeneration: current.workerGeneration,
+        fenced: true,
+      });
+      current = /** @type {Record<string, unknown>} */ (advanceHost(current));
+      const authorities = /** @type {Record<string, unknown>} */ (current.authorities);
+      const record = /** @type {Record<string, unknown>} */ (retained.record);
+      const fence = freezeData({
+        version: 1,
+        kind: 'terminal-owner-fence',
+        checkpointKey: host.checkpointKey,
+        invocationIdentity: current.invocationIdentity,
+        admissionIdentity: authorities.admissionIdentity,
+        supervisorAuthorityIdentity: authorities.supervisorAuthorityIdentity,
+        workerTokenHash: sha256(/** @type {string} */ (current.workerToken)),
+        workerGeneration: current.workerGeneration,
+        acceptedStateHash: current.acceptedStateHash,
+        acceptedStateByteLength: Buffer.byteLength(/** @type {string} */ (current.acceptedStateBytes)),
+        acceptedRevision: current.acceptedRevision,
+        checkpointHostRevision: record.hostRevision,
+        fenceHostRevision: current.hostRevision,
+        claimHash: retained.claimHash,
+        checkpointHash: record.recordHash,
+      });
+      const controls = freezeData({
+        version: 1,
+        claim: capturedBytesV1(retained.claimBytes),
+        checkpoint: capturedBytesV1(retained.checkpointBytes),
+      });
+      const effects = freezeData({
+        version: 1,
+        ports: {
+          runtime: ports.runtimeIsDefault ? 'built-in' : 'injected',
+          laneOwner: ports.laneOwnerIsDefault ? 'built-in' : 'injected',
+          observation: ledger.provenance.complete ? 'complete' : 'incomplete',
+        },
+        operations: clone(ledger.provenance.operations),
+        receipts: committedLaneReceipts(ledger),
+        pendingEffect: current.pendingEffect === null
+          ? null
+          : /** @type {Record<string, unknown>} */ (current.pendingEffect).effectIdentity,
+        inFlight: record.inFlight === null ? null : clone(record.inFlight),
+        correction,
+        recoveryNotice,
+        unaccounted: unaccountedEffect(current, ports, ledger, record),
+      });
+      const pairFailure = host.verify(current);
+      let disposalUsed = false;
+      /**
+       * Remove only the exact bound pair, once, through the existing guarded
+       * store clear: checkpoint first, then claim, with absence at each boundary.
+       * No retry, restore, or reactivation follows any outcome.
+       * @param {string} manifestIdentity The retained terminal evidence this disposal answers.
+       */
+      const dispose = (manifestIdentity) => {
+        /**
+         * @param {string} stage @param {boolean} attempted @param {boolean} cleared @param {unknown} observed
+         * @param {string[]} [removed] The artifacts the guarded clear itself removed and freshly found absent.
+         */
+        const disposal = (stage, attempted, cleared, observed, removed = []) => Object.freeze({
+          stage, manifestIdentity, attempted, cleared, observed, removed: Object.freeze([...removed]),
+        });
+        if (disposalUsed) return disposal('consumed', false, false, null);
+        disposalUsed = true;
+        hash(manifestIdentity, 'terminal disposal manifestIdentity');
+        const owner = ADMITTED_INVOCATIONS.get(/** @type {string} */ (fence.invocationIdentity));
+        if (host === null || !owner?.fenced || owner.workerToken !== current.workerToken
+          || owner.workerGeneration !== current.workerGeneration) {
+          return disposal('owner', false, false, host === null ? null : host.observe());
+        }
+        // The capability never removes controls whose entered effects this owner cannot account for.
+        if (effects.unaccounted !== null) return disposal('effects', false, false, host.observe());
+        const before = host.observe();
+        if (host.verify(current) !== null || before.checkpoint.same !== true || before.claim.same !== true) {
+          return disposal('pair', false, false, before);
+        }
+        // Known partial progress survives even when the later observation cannot establish anything.
+        const { failure, removed } = host.clearWithProgress(current, 'terminal-disposition');
+        const after = host.observe();
+        if (failure === null) host = null;
+        const absent = failure === null && after.checkpoint.present === false && after.claim.present === false;
+        return disposal(absent ? 'removed' : 'removal', true, failure === null, after, removed);
+      };
+      return Object.freeze({
+        fence, refusal: null, pairFailure, controls, effects, observed: host.observe(), dispose,
+      });
+    },
   });
+}
+
+// The fixed producer-derived run-local members of one terminal evidence manifest, in order.
+const TERMINAL_EVIDENCE_FILES = Object.freeze([
+  Object.freeze({ role: 'original-terminal', name: 'terminal-original.json' }),
+  Object.freeze({ role: 'captures', name: 'retained-evidence.json' }),
+  Object.freeze({ role: 'controls', name: 'terminal-controls.json' }),
+  Object.freeze({ role: 'host-fence', name: 'terminal-fence.json' }),
+  Object.freeze({ role: 'effects', name: 'terminal-effects.json' }),
+]);
+const TERMINAL_MISSING_PROOF_KINDS = Object.freeze([
+  'owner-fence', 'exact-control-pair', 'effect-settlement', 'retained-source',
+  'current-target', 'learning-authority', 'capacity', 'removal-absence',
+]);
+
+/** @param {unknown} value @param {string} label */
+function workspaceRelativePath(value, label) {
+  text(value, label);
+  const relative = /** @type {string} */ (value);
+  if (relative.includes('\\') || relative.startsWith('/') || /^[A-Za-z]:/.test(relative)
+    || relative.split('/').some((part) => part === '' || part === '.' || part === '..')) {
+    invalid(label, 'must be a canonical workspace-relative path');
+  }
+}
+
+/** @param {unknown} value @param {string} label */
+function terminalContentDescriptor(value, label) {
+  const descriptor = exactRecord(value, ['path', 'sha256', 'byteLength'], [], label);
+  workspaceRelativePath(descriptor.path, `${label}.path`);
+  hash(descriptor.sha256, `${label}.sha256`);
+  integer(descriptor.byteLength, `${label}.byteLength`);
+  return descriptor;
+}
+
+/**
+ * Validate one closed terminal evidence manifest: the original owner's binding,
+ * its fixed ordered run-local members, and the inventory hash over both. The
+ * identities establish correlation and integrity under the cooperative host
+ * model; they are not bearer permission.
+ * @param {unknown} value
+ */
+export function validateTerminalEvidenceManifestV1(value) {
+  const label = 'TerminalEvidenceManifestV1';
+  const manifest = exactRecord(
+    detachedData(value, label),
+    ['version', 'kind', 'binding', 'files', 'inventoryHash'],
+    [],
+    label,
+  );
+  if (manifest.version !== 1) invalid(`${label}.version`, 'must be the literal 1');
+  if (manifest.kind !== 'terminal-work-evidence') invalid(`${label}.kind`, 'must be terminal-work-evidence');
+  const binding = exactRecord(manifest.binding, [
+    'workspaceIdentity', 'owner', 'target', 'invocationIdentity', 'admissionIdentity',
+    'supervisorAuthorityIdentity', 'workerTokenHash', 'workerGeneration', 'checkpointKey', 'claimHash',
+    'checkpointHash', 'acceptedStateHash', 'acceptedStateByteLength', 'acceptedRevision',
+    'checkpointHostRevision', 'fenceHostRevision', 'requirements', 'lanePoststate',
+    'terminalOutcome', 'terminalReason', 'terminalHash',
+  ], [], `${label}.binding`);
+  for (const field of [
+    'workspaceIdentity', 'invocationIdentity', 'admissionIdentity', 'supervisorAuthorityIdentity',
+    'workerTokenHash', 'checkpointKey', 'claimHash', 'checkpointHash', 'acceptedStateHash', 'terminalHash',
+  ]) {
+    hash(binding[field], `${label}.binding.${field}`);
+  }
+  integer(binding.workerGeneration, `${label}.binding.workerGeneration`, true);
+  for (const field of ['acceptedStateByteLength', 'acceptedRevision', 'checkpointHostRevision', 'fenceHostRevision']) {
+    integer(binding[field], `${label}.binding.${field}`);
+  }
+  if (/** @type {number} */ (binding.fenceHostRevision) <= /** @type {number} */ (binding.checkpointHostRevision)) {
+    invalid(`${label}.binding.fenceHostRevision`, 'must be a local revision after the checkpoint host revision');
+  }
+  const owner = exactRecord(binding.owner, ['ideaPath', 'specPath'], [], `${label}.binding.owner`);
+  workspaceRelativePath(owner.ideaPath, `${label}.binding.owner.ideaPath`);
+  workspaceRelativePath(owner.specPath, `${label}.binding.owner.specPath`);
+  const target = /** @type {Record<string, unknown>} */ (canonicalTarget(validateTarget(binding.target)));
+  if (canonicalJson(target) !== canonicalJson(binding.target) || target.lane !== 'lightweight'
+    || target.specPath !== owner.specPath) {
+    invalid(`${label}.binding.target`, 'must be the owner\'s canonical Lightweight target');
+  }
+  if (binding.checkpointKey !== checkpointKeyOf({ workspaceIdentity: binding.workspaceIdentity, target })) {
+    invalid(`${label}.binding.checkpointKey`, 'must bind the canonical workspace and target');
+  }
+  const specDirectory = /** @type {string} */ (target.specPath).slice(0, -'spec.md'.length);
+  const requirements = exactRecord(binding.requirements, ['spec', 'plan', 'taskUnit'], [], `${label}.binding.requirements`);
+  const lanePoststate = exactRecord(binding.lanePoststate, ['tasks', 'owner', 'taskState'], [], `${label}.binding.lanePoststate`);
+  const expectedPaths = [
+    [requirements.spec, target.specPath, 'requirements.spec'],
+    [requirements.plan, `${specDirectory}plan.md`, 'requirements.plan'],
+    [requirements.taskUnit, `${specDirectory}tasks.md`, 'requirements.taskUnit'],
+    [lanePoststate.tasks, `${specDirectory}tasks.md`, 'lanePoststate.tasks'],
+    [lanePoststate.owner, owner.ideaPath, 'lanePoststate.owner'],
+    [lanePoststate.taskState, null, 'lanePoststate.taskState'],
+  ];
+  for (const [descriptorValue, expectedPath, field] of expectedPaths) {
+    const descriptor = terminalContentDescriptor(descriptorValue, `${label}.binding.${field}`);
+    if (expectedPath !== null && descriptor.path !== expectedPath) {
+      invalid(`${label}.binding.${field}.path`, 'must name the target\'s exact surface');
+    }
+  }
+  if (binding.terminalOutcome !== 'hard-stop') invalid(`${label}.binding.terminalOutcome`, 'must be hard-stop');
+  text(binding.terminalReason, `${label}.binding.terminalReason`);
+  const files = denseArray(manifest.files, `${label}.files`);
+  if (files.length !== TERMINAL_EVIDENCE_FILES.length) {
+    invalid(`${label}.files`, `must list exactly the ${TERMINAL_EVIDENCE_FILES.length} fixed run-local members`);
+  }
+  files.forEach((row, index) => {
+    const file = exactRecord(row, ['role', 'name', 'sha256', 'byteLength'], [], `${label}.files[${index}]`);
+    if (file.role !== TERMINAL_EVIDENCE_FILES[index].role || file.name !== TERMINAL_EVIDENCE_FILES[index].name) {
+      invalid(`${label}.files[${index}]`, 'must be the fixed producer-derived member in order');
+    }
+    hash(file.sha256, `${label}.files[${index}].sha256`);
+    integer(file.byteLength, `${label}.files[${index}].byteLength`);
+  });
+  hash(manifest.inventoryHash, `${label}.inventoryHash`);
+  if (manifest.inventoryHash !== sha256(canonicalJson({ binding, files }))) {
+    invalid(`${label}.inventoryHash`, 'must bind the complete binding and ordered members');
+  }
+  return manifest;
+}
+
+/**
+ * Validate one closed terminal disposition: either the exact pair freshly
+ * established absent after disposal, or a refusal with each artifact's known
+ * removal fact and exactly one first missing proof.
+ * @param {unknown} value
+ */
+export function validateTerminalDispositionV1(value) {
+  const label = 'TerminalDispositionV1';
+  const disposition = exactRecord(
+    detachedData(value, label),
+    ['version', 'manifestIdentity', 'outcome', 'removal', 'missingProof'],
+    [],
+    label,
+  );
+  if (disposition.version !== 1) invalid(`${label}.version`, 'must be the literal 1');
+  if (disposition.manifestIdentity !== null) hash(disposition.manifestIdentity, `${label}.manifestIdentity`);
+  enumeration(disposition.outcome, ['disposed', 'refused'], `${label}.outcome`);
+  const removal = exactRecord(disposition.removal, ['checkpoint', 'claim'], [], `${label}.removal`);
+  if (disposition.outcome === 'disposed') {
+    if (disposition.manifestIdentity === null) invalid(`${label}.manifestIdentity`, 'must bind retained evidence when disposed');
+    if (removal.checkpoint !== 'absent' || removal.claim !== 'absent') {
+      invalid(`${label}.removal`, 'must freshly establish both artifacts absent when disposed');
+    }
+    if (disposition.missingProof !== null) invalid(`${label}.missingProof`, 'must be null when disposed');
+    return disposition;
+  }
+  for (const artifact of ['checkpoint', 'claim']) {
+    enumeration(removal[artifact], ['retained', 'removed', 'unestablished'], `${label}.removal.${artifact}`);
+  }
+  const missing = exactRecord(
+    disposition.missingProof,
+    ['kind', 'subject', 'required', 'nextOwnerAction'],
+    [],
+    `${label}.missingProof`,
+  );
+  enumeration(missing.kind, TERMINAL_MISSING_PROOF_KINDS, `${label}.missingProof.kind`);
+  for (const field of ['subject', 'required', 'nextOwnerAction']) text(missing[field], `${label}.missingProof.${field}`);
+  return disposition;
 }
 
 /**
@@ -4554,6 +5183,10 @@ export function handoffHostWorker(inputValue, dependencies) {
     ownership: ownershipDiagnostic(checkpointKey, diagnostic ?? null, reason),
     receipt: null,
   });
+  // A terminally fenced invocation never gains a replacement worker.
+  if (ADMITTED_INVOCATIONS.get(/** @type {string} */ (input.invocationIdentity))?.fenced) {
+    return stop('owner-fenced');
+  }
   if (observedExit.workerToken !== prior.workerToken
     || observedExit.workerGeneration !== prior.workerGeneration) {
     return stop('prior-worker-exit-unproven');
@@ -4691,6 +5324,10 @@ export function resumeHostAdapter(inputValue, dependencies) {
     return stop(unbound, 'resume-input-not-authorized');
   }
   const checkpointKey = checkpointKeyOf(binding);
+  // A terminally fenced invocation never resumes, whatever its checkpoint says.
+  if (ADMITTED_INVOCATIONS.get(/** @type {string} */ (input.invocationIdentity))?.fenced) {
+    return stop(checkpointKey, 'owner-fenced');
+  }
   if (receipt.invocationIdentity !== input.invocationIdentity
     || receipt.workerToken !== worker.workerToken
     || receipt.workerGeneration !== worker.workerGeneration) {

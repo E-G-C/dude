@@ -1,6 +1,6 @@
 # Work Driver Cookbook
 
-`driver.mjs` in this directory runs autonomous Lightweight Work, including the Work portion of Ship, through the official setup adapter and runner. It claims one pending task, bridges the runner's challenges through files outside the workspace, builds and preflights each response with the official validators, captures attempt baselines, and reads one ownership pair. The coordinator keeps every semantic decision and dispatches the implementation, the Tester, the independent Reviewer, and any required learning review to its owner; the driver makes no model call and adds no command, grammar, lane, board, or project state. The Work skill in `SKILL.md` beside this file stays authoritative for policy, stops, and cleanup.
+`driver.mjs` in this directory runs autonomous Lightweight Work, including the Work portion of Ship, through the official setup adapter and runner. It claims one pending task, or admits a new request for an in-progress task from its earlier run's terminal handoff, bridges the runner's challenges through files outside the workspace, builds and preflights each response with the official validators, captures attempt baselines, and reads one ownership pair. The coordinator keeps every semantic decision and dispatches the implementation, the Tester, the independent Reviewer, and any required learning review to its owner; the driver makes no model call and adds no command, grammar, lane, board, or project state. The Work skill in `SKILL.md` beside this file stays authoritative for policy, stops, and cleanup.
 
 Run every command from the workspace root, where `--root .` names the workspace. `node .github/skills/dude-work/driver.mjs --help` prints the usage. The examples use these placeholders:
 
@@ -26,7 +26,7 @@ Run every command from the workspace root, where `--root .` names the workspace.
 
 | Subcommand | Purpose | Exit codes other than 0 |
 |---|---|---|
-| `claim` | Recheck admission and claim one pending task | 2, 3, or 4 refused; 5 stopped (section 2) |
+| `claim` | Recheck admission and claim one pending task, or an in-progress task from its terminal handoff | 2, 3, or 4 refused; 5 stopped (section 2) |
 | `run` | Run the official runner and bridge its challenges through files | 1 runner hard stop; 2 refused before the runner started |
 | `assess` | Build, validate, and publish one Assessment response | 1 refused; nothing published |
 | `respond` | Preflight and publish the specialist pair or a learning review, or only the cancel envelope with `--cancel` | 1 refused; nothing published |
@@ -41,8 +41,8 @@ Every subcommand exits 64 on a usage error and 70 on an unexpected failure, with
 | Step | Workspace writes | Outside the workspace |
 |---|---|---|
 | Selection | None | None |
-| `claim` | Only through the official lane effect: `[ ]` to `[~]` in `tasks.md`, the task-state snapshot glyph and time, and one owner log line, `- <UTC> - work: Claimed <taskKey> for the user-authorized autonomous Work invocation; implementation has not started.` | `<claim>/setup-report.json`, `supervisor.json`, and on success `runner-request.json`; a setup ownership pair that setup removes again |
-| `run` | Only through the runner's lane effects: one `dude-run-event` approach line per recorded attempt, plus finding, governance, or learning-review lines, under `## Lightweight Execution History` in `tasks.md`; at settlement `[~]` to `[x]` and the snapshot glyph. The runner writes no owner log line. | The `<exchange>` files; the ownership pair, held during the run, cleared at an `ended` outcome, and possibly left by a hard stop |
+| `claim` | Only through the official lane effect: `[ ]` to `[~]` in `tasks.md`, the task-state snapshot glyph and time, and one owner log line, `- <UTC> - work: Claimed <taskKey> for the user-authorized autonomous Work invocation; implementation has not started.` A claim from a terminal handoff leaves `tasks.md` unchanged and writes only the snapshot time and one marker line (section 2). | `<claim>/setup-report.json`, `supervisor.json`, and on success `runner-request.json`, which embeds any `--retained-evidence` or handoff captures; a setup ownership pair that setup removes again |
+| `run` | Only through the runner's lane effects: one `dude-run-event` approach line per recorded attempt, plus finding, governance, or learning-review lines, under `## Lightweight Execution History` in `tasks.md`; at settlement `[~]` to `[x]` and the snapshot glyph. The runner writes no owner log line. | The `<exchange>` files, including any terminal files (section 3); `runner-request-used.json` beside a request claimed from a terminal handoff; the ownership pair, held during the run, cleared at an `ended` outcome or by the original owner's disposition, and otherwise possibly left by a hard stop |
 | `assess`, `respond` | None | `response-<n>.json` beside its challenge |
 | `snapshot`, `diff` | None | The `--out` file |
 | `ownership` | None | None |
@@ -69,9 +69,9 @@ Selection is read-only and uses the existing readers.
    node .github/skills/dude-lightweight-execution/board.mjs next .dude/specs/<NNN>-<slug>/tasks.md
    ```
 
-   `parse --json` must report no `warnings`. An unblocked `[~]` task comes before any new claim, and this procedure has no resume command, so stop and report it. `next` prints the first ready task key, or nothing, which is the `no ready task` natural stop.
+   `parse --json` must report no `warnings`. An unblocked `[~]` task comes before any new claim, and this procedure has no resume command, so stop and report it. The one exception is a new explicit Work or Ship request for that task when you hold the terminal handoff its earlier run reported: claim it from that handoff (section 2). `next` prints the first ready task key, or nothing, which is the `no ready task` natural stop.
 
-`claim` repeats these checks itself before any mutation. It also requires the exact breadcrumb `<!-- audit log: <ideaPath>#coordinator-log -->` in `tasks.md`, completed dependencies, the first-ready order, an owner file that ends with LF, and a fresh Inspection with no blockers, no overflow, and no missing retained-occurrence evidence.
+`claim` repeats these checks itself before any mutation. It also requires the exact breadcrumb `<!-- audit log: <ideaPath>#coordinator-log -->` in `tasks.md`, completed dependencies, the first-ready order, an owner file that ends with LF, and a fresh Inspection with no blockers, no overflow, and no missing retained-occurrence evidence. When the task's lane history already holds attempts, that Inspection needs the task's original captures through `--retained-evidence` (section 2).
 
 ## 2. Claim the task
 
@@ -81,7 +81,17 @@ For the first task of the invocation:
 node .github/skills/dude-work/driver.mjs claim --root . --spec <specPath> --task <taskKey> -- <work arguments>
 ```
 
-Everything after `--` goes unchanged to the Work invocation parser. The driver refuses any policy other than `autonomous`, and a feature selector in those arguments must resolve to the same owner. `--out <dir>` names a new claim directory outside the workspace; without it, `claim` creates a fresh `dw-XXXXXX` directory under the operating system temporary directory. `--state` is only for continuation (section 9).
+Everything after `--` goes unchanged to the Work invocation parser. The driver refuses any policy other than `autonomous`, and a feature selector in those arguments must resolve to the same owner. `--out <dir>` names a new claim directory outside the workspace; without it, `claim` creates a fresh `dw-XXXXXX` directory under the operating system temporary directory (both as described for `run --dir` in section 3). `--state` is only for continuation (section 9), and `--terminal-evidence` only for a claim from a terminal handoff (below).
+
+A pending task whose lane history already holds attempts, for example one that an approved redefinition returned to `[ ]`, needs the original captures of those attempts. Without them `claim` exits 2 at `inspection` because the retained-occurrence evidence is missing. Pass the `retained-evidence.json` that the earlier attempt's `run` wrote:
+
+```text
+node .github/skills/dude-work/driver.mjs claim --root . --spec <specPath> --task <taskKey> --retained-evidence <exchange>/retained-evidence.json -- <work arguments>
+```
+
+The owner selects that exact file; the driver never searches sessions, history, or checkpoints for one. `claim` reads it once and requires exactly the four streams `currentRun`, `verification`, `review`, and `lint`. Before any claim or lane write, the runtime Inspection validates every capture, its target and transport, and the retained-occurrence evidence. A second runtime Inspection checks the input the runner itself will build, which adds one initially empty live current-run capture after seeded current-run history, so every source limit comes from the runtime. A refused file or capture exits 2 at `inspection` and writes nothing to the workspace. The claim's first Inspection and every setup step carry those exact captures, in order and with duplicates, and on success `runner-request.json` embeds the same object as `retainedEvidence`. Run that request without `--retained-evidence`: `run` refuses a second source, and a later change to the file cannot reach the run. `setup-report.json` also records the file, its entry count per stream, and the hash of the captures each setup step carried.
+
+The captures are evidence only. They grant no approval, start nothing by themselves, and restore no counter, state, permit, or pending effect, so the new invocation starts from the empty state or its own `--state`. The run that wrote the file stays ended, and a state it returned stays evidence (section 8). Before any Assessment, the runner rederives learning from the same captures, as it does for every request that carries them.
 
 The claim runs in a fixed order. It mints a one-shot setup supervisor identity and keeps it in `supervisor.json`, outside the checkpoint. Through the setup adapter it runs `fresh-inspection`, `authorize-lane-effect` with the `initial-claim` mutation, `apply-lane-effect`, and `commit-lane-receipt`. The committed receipt settles setup, so `settle-effect` is never called. Setup then ends with `controlled-end`, the official store must report the pair absent, and the driver rereads the exact owner, task mapping, and unblocked `[~]` before it publishes `runner-request.json` with the unchanged accepted state. A refused step gets the adapter's one correction, then a fresh Inspection and one retry.
 
@@ -89,10 +99,67 @@ On success `claim` prints `"exitCode": 0` with `out`, `report`, and `runnerReque
 
 | Exit | Meaning | Next |
 |---|---|---|
-| 2 | Refused before any claim. The `stage` is one of `invocation`, `policy`, `target`, `lane`, `owner`, `selector`, `state`, `tasks`, `task`, `owner-log`, or `inspection`. A refused `--root` or `--out` also exits 2 and writes no report. | Report the stop; nothing was written to the workspace |
-| 3 | Adapter admission refused, for example because an ownership pair already exists for this task | Report it; a present pair follows section 10 |
+| 2 | Refused before any claim. The `stage` is one of `invocation`, `policy`, `target`, `lane`, `owner`, `selector`, `state`, `tasks`, `task`, `owner-log`, or `inspection`; a claim from a terminal handoff has no `task` stage and adds `terminal-evidence`, `ownership`, and `admission`. A refused `--root` or `--out` also exits 2 and writes no report. | Report the stop; nothing was written to the workspace. At `admission`, report the one printed `missingProof` (below) |
+| 3 | Adapter admission refused, for example because an ownership pair already exists for this task; its `stage` is `admission` too, but it carries no `missingProof` | Report it; a present pair follows section 10 |
 | 4 | Refused before any lane write; setup cancelled its own pair and proved it absent | Report the stop |
 | 5 | Stopped after a lane write was entered, or the setup pair could not be released | Hard stop: read `pair` and `ownership` in the report, then section 10 |
+
+### Claim an in-progress task from its terminal handoff
+
+Use this form only for a new explicit Work or Ship request for the unblocked `[~]` task whose earlier run stopped with a `disposed` terminal disposition (section 8). The coordinator decides that a request is new and explicit; an old request, a cancellation, a question about the stop, a saved file, or the end of the old run never is. Pass the exact `terminalEvidence` path that run reported, where `<exchange>` is the stopped run's directory:
+
+```text
+node .github/skills/dude-work/driver.mjs claim --root . --spec <specPath> --task <taskKey> --terminal-evidence <exchange>/terminal-evidence.json -- <work arguments>
+```
+
+The driver reads that manifest and its fixed sibling files, `terminal-disposition.json`, `terminal-original.json`, `retained-evidence.json`, `terminal-controls.json`, `terminal-fence.json`, and `terminal-effects.json`, and nothing else; it never searches sessions, temporary directories, or checkpoints for a handoff. A file with another name exits 2 at stage `terminal-evidence`. Combining the option with `--state` or `--retained-evidence` exits 64: the new run imports no accepted state, and the handoff's own `retained-evidence.json` supplies the original captures.
+
+Admission is read-only. It checks, in this order: the current target and normal precedence; the original fence, disposition, and retained files; unchanged spec, plan, task unit, and lane surfaces; fresh absence of both original controls; retained-occurrence authority and settled effects; learning; and capacity. The first failed check exits 2 at stage `admission` with one `missingProof`, and nothing is written to the workspace.
+
+An eligible admission runs the setup sequence above with a `terminal-fresh-claim` mutation instead of `initial-claim`. The task stays `[~]`, `tasks.md` and its history are unchanged, the task-state snapshot records the time, and the owner log gets one marker:
+
+```text
+- <UTC> - work: Freshly claimed <taskKey> for new explicit Work request <requestIdentity> under admission <admissionIdentity>, bound to terminal evidence <manifestIdentity> and disposition <dispositionIdentity>; the prior Work run remains terminal.
+```
+
+`runner-request.json` carries a fresh state for the parsed Work arguments, the handoff's original captures as `retainedEvidence`, and a `priorTerminal` object. `setup-report.json` adds `admission`, whose `learningGate` is `assessment` or `resume-learning`; `terminalEvidence`, with the manifest and disposition identities; `retainedEvidence`; and `terminalRequest`, which binds the issued request's real path, SHA-256, byte length, and the admission-bound spec, plan, and task-unit descriptors.
+
+The marker consumes the handoff: a second claim from it exits 2 with `current-target`, because the owner log changed. The request is single use as well. `run` accepts it only from the claim directory that issued it, with unchanged bytes and no `--retained-evidence`; otherwise it exits 2 before creating anything. At its real start `run` creates `runner-request-used.json` beside the request, and every later `run` of that request exits 2 as already used, even after a failed or uncertain start. A spec, plan, task-unit, or lane change after the claim stops the run as `hard-stop`/`request-invalid` before the runner takes ownership, and the request stays used. Nothing erases a committed marker or start record to retry; a later request needs the most recent terminal handoff and a new claim.
+
+The new run takes fresh identities and accounting. Its first challenge is an Assessment, or a `learning-review` when `learningGate` is `resume-learning` (section 7). The old run's state, counters, obligations, and learning stay evidence in its directory.
+
+A refused admission prints its one missing proof, here for a handoff whose run had already authorized an attempt:
+
+```json
+{
+  "ok": false,
+  "command": "claim",
+  "exitCode": 2,
+  "stage": "admission",
+  "detail": "fresh admission refused: effect-settlement (authorize-attempt)",
+  "out": "<claim>",
+  "report": "<claim>/setup-report.json",
+  "missingProof": {
+    "kind": "effect-settlement",
+    "subject": "authorize-attempt",
+    "required": "no entered effect authority, or every original effect settled through the built-in runtime and lane owner",
+    "nextOwnerAction": "coordinator: route the unsettled or unobserved effect to its owner; no fresh claim follows"
+  }
+}
+```
+
+Report the proof once and relay its `nextOwnerAction`. Do not ask the user to fill the gap, since a user's facts or cleanup consent supply no proof, and do not retry the claim to get a different answer. When the original disposition was itself refused, admission reports that disposition's kind and subject.
+
+| `kind` | Typical cause |
+|---|---|
+| `current-target` | The task is no longer the first unblocked `[~]` task with done dependencies, or the spec, plan, `tasks.md`, owner log, or task-state snapshot changed since the stop, including a marker from an earlier fresh claim |
+| `owner-fence` | No proof of an original fence and published handoff: a legacy run, a run that returned no handoff, or a missing or mismatched manifest or disposition, or a mismatched fence file |
+| `retained-source` | A retained file or capture is missing, changed, or no longer proves its retained occurrences |
+| `exact-control-pair` | The retained claim and checkpoint bytes disagree with the fence |
+| `removal-absence` | An original claim or checkpoint is still present, for example after a partial removal, or another claim holds the key |
+| `effect-settlement` | The original run authorized an attempt, exposed a specialist pair, or left an unsettled or unobserved effect |
+| `learning-authority` | The captures carry later, resolved, conflicting, stale, or one-sided learning |
+| `capacity` | The retained sources, the runner's admission packet, or the claim's known writes exceed a fixed limit |
 
 ## 3. Run the exchange
 
@@ -102,7 +169,7 @@ Start `run` as an attached asynchronous shell command, never detached, and leave
 node .github/skills/dude-work/driver.mjs run --request <claim>/runner-request.json
 ```
 
-`--dir <dir>` names a new exchange directory outside the workspace; without it, `run` creates a fresh `dw-XXXXXX` directory under the operating system temporary directory. `--retained-evidence <file>` is described in section 8. The process runs the official runner in place and prints one JSON line per event: `started` with `pid`, `dir`, and `status`; `input-required` for each challenge with `n`, `kind`, `challenge`, `packet`, and `response`; and `finished` with the terminal fields. It waits for each response without a timeout. Do not stop the process while it waits; answer the challenge or cancel it (sections 6 and 7).
+`--dir <dir>` names a new exchange directory outside the workspace; without it, `run` creates a fresh `dw-XXXXXX` directory under the operating system temporary directory. The driver refuses a directory that already exists, creates any missing parent with ordinary permissions, and makes only the new directory private: on POSIX it gets mode `0700`, and every file the driver publishes in it is created as `0600`. A parent is never narrowed. Windows gets no mode change, so the directory inherits its parent's access control; keep `--dir` under a parent that only you can read, such as your user temporary directory. `--retained-evidence <file>` is described in section 8. The process runs the official runner in place and prints one JSON line per event: `started` with `pid`, `dir`, and `status`; `input-required` for each challenge with `n`, `kind`, `challenge`, `packet`, and `response`; and `finished` with the terminal fields. It waits for each response without a timeout. Do not stop the process while it waits; answer the challenge or cancel it (sections 6 and 7).
 
 `<exchange>/status.json` holds the current `state`: `running`, `waiting` with the current challenge, or `finished` with the terminal fields. Answer only the newest `n`, exactly once.
 
@@ -110,13 +177,19 @@ node .github/skills/dude-work/driver.mjs run --request <claim>/runner-request.js
 |---|---|---|
 | `status.json` | At every state change, replacing the previous file | `state`, `pid`, `updatedAt`, and the current challenge or the terminal fields |
 | `challenge-<n>.json` | Once per challenge | The runner's bound challenge: `kind`, `target`, `stateBase64`, `stateHash`, `inspection`, `challengeIdentity`, and, for a `specialist-pair`, `assessmentIdentity` or, for a `learning-review`, `governanceIdentity` |
-| `packet-<n>.json` | For `assessment` and `learning-review` challenges | The `dude-work-model-view-v1` model packet |
+| `packet-<n>.json` | For `assessment` and `learning-review` challenges | The model packet: `dude-work-model-view-v1`, or `dude-work-model-view-v2` when v2 is smaller (see Pitfalls) |
 | `response-<n>.json` | By `assess` or `respond` | The matching response or cancel envelope |
-| `result.json` | At the end | The complete runner result, including `steps`, `haltReport`, and any blocker, capacity, cleanup, and ownership fields |
+| `result.json` | At the end | The complete runner result, including `steps`, `haltReport`, and any blocker, capacity, cleanup, ownership, and `terminalDisposition` fields |
 | `accepted-state.json` | Only after `ended`/`task-settled` | The settled state for the next claim in the same invocation |
 | `retained-evidence.json` | When the runtime received capture inputs | The original `currentRun`, `verification`, `review`, and `lint` captures |
+| `terminal-original.json` | At a hard stop that enters the original owner's disposition | The original terminal result, before any disposition field |
+| `terminal-controls.json` | Same | The exact claim and checkpoint bytes the owner created and last wrote, including its raw worker token |
+| `terminal-fence.json` | Same | The owner's fence: identities, hashes, and revisions |
+| `terminal-effects.json` | Same | Every operation the owner entered and the effect record behind its qualification |
+| `terminal-evidence.json` | Same, after every file above | The manifest: binding, ordered member hashes, and inventory hash. This file is the terminal handoff |
+| `terminal-disposition.json` | After the removal or refusal | `disposed` or `refused`, the removal facts, and at most one missing proof |
 
-Each file appears complete because the driver writes a sibling temporary file and renames it into place.
+Each file appears complete because the driver writes a sibling temporary file and renames it into place. At a hard stop that enters the disposition, the original owner first fences its own run, so the old invocation can never run, end, hand off, or resume again. It then writes the terminal files content first and the manifest last, rereads each against the bytes it meant to write, and rechecks the current owner, task, requirement, and lane surfaces. Only then does it remove its exact pair once, checkpoint first, and publish the disposition. Each terminal file is written once and never replaced. Never edit, merge, or rebuild one; `terminal-controls.json` holds raw control bytes, so keep it private and out of reports.
 
 ## 4. Answer an `assessment` challenge
 
@@ -284,7 +357,7 @@ Only the live `run` process that published the challenge can receive the respons
 
 ## 8. Read the terminal result
 
-When `run` finishes, read `<exchange>/status.json` or the `finished` event. Both carry `outcome`, `reason`, and `haltReport`; `detail`, `blocker`, `capacity`, `cleanup`, `cleanupReason`, `orphan`, and `ownership` when the runner returned them; and the paths of `result.json`, `accepted-state.json`, and `retained-evidence.json`, with `null` for a file that was not written.
+When `run` finishes, read `<exchange>/status.json` or the `finished` event. Both carry `outcome`, `reason`, and `haltReport`; `detail`, `blocker`, `capacity`, `cleanup`, `cleanupReason`, `orphan`, `ownership`, and `terminalDisposition` when the runner returned them; and the paths of `result.json`, `accepted-state.json`, `retained-evidence.json`, and `terminalEvidence` (the run's `terminal-evidence.json`), with `null` for a file that was not written.
 
 | `outcome` / `reason` | `run` exit | Meaning | Next |
 |---|---|---|---|
@@ -292,8 +365,10 @@ When `run` finishes, read `<exchange>/status.json` or the `finished` event. Both
 | `ended` / `cancelled` | 0 | The runner accepted the cancel and cleared the pair; the task stays `[~]` | Stop and report; select no next task in this invocation |
 | `ended` / `controlled-unresolved-end` | 0 | A verified no-progress learning result ended the run and cleared the pair; the task stays `[~]` and is not complete | Stop and report that learning found no credible alternative; select no next task in this invocation |
 | `ended` / another reason | 0 | The runner ended without settling the task | Stop and report the reason and the next owner action |
-| `hard-stop` / any reason | 1 | A named or unresolved halt | Stop and report `reason`, `detail`, `haltReport`, `blocker`, `capacity`, and the cleanup fields. Never retry silently. Check the pair (section 10). |
-| Refused before the runner started | 2 | An unreadable request, a missing workspace, a reused or in-workspace `--dir`, or a second retained-evidence source | Nothing ran and nothing was written; correct the input |
+| `hard-stop` / any reason, `terminalDisposition.outcome` `disposed` | 1 | The original owner fenced its run, retained its terminal handoff, and removed its own pair once (`cleanup: "cleared"`, `orphan: false`); the stop itself is unchanged | Stop and report `reason`, `detail`, `haltReport`, `blocker`, and `capacity`. Never retry silently. Keep `terminalEvidence` for a later new request (section 2) |
+| `hard-stop` / any reason, `terminalDisposition.outcome` `refused` | 1 | The disposition stopped at its first missing proof; `removal` records each artifact as `retained`, `removed`, or `unestablished` | Stop and report the halt fields and the one `missingProof`. Never retry silently. Check the pair (section 10) |
+| `hard-stop` / any reason, no `terminalDisposition` | 1 | The Work skill's original-owner first-Assessment release, with its own `cleanup` fields, or a request the runner refused before it took ownership | Stop and report the halt and cleanup fields. Never retry silently. Check the pair (section 10) |
+| Refused before the runner started | 2 | An unreadable request, a missing workspace, a reused or in-workspace `--dir`, a second retained-evidence source, or a request claimed from a terminal handoff that was copied, changed, or already used | Nothing ran and nothing was written to the workspace. Correct the input; a used request never runs again (section 2) |
 
 A resolved `haltReport` names `reason`, `stopClass`, `target`, `subject`, `nextAction`, and `evidenceHash`; an unresolved one lists its `unresolved` fields. The stop class fixes the next action:
 
@@ -307,7 +382,27 @@ A resolved `haltReport` names `reason`, `stopClass`, `target`, `subject`, `nextA
 
 `cleanup` and `orphan` describe resources only, never execution success. A state returned in `result.json` after a cancel or hard stop is evidence; it never becomes continuation state.
 
-`retained-evidence.json` holds the original capture inputs the runtime actually received, in received order and with duplicates, copied without change. A stop during a later capture keeps every earlier attempt's captures. Never edit, merge, rebuild, or normalize the file, and never fill a gap from packets, stdout, lane history, or a checkpoint. It is the existing handoff for a separately authorized fresh request whose task already has attempts in its lane history: pass it with `run --retained-evidence <file>`. The driver refuses a request that already carries `retainedEvidence`, and the runner validates provenance and every limit again before it takes ownership. Without the required captures the runner refuses admission, for example as `hard-stop`/`evidence-incomplete` with the detail `retainedEvidence: missing current-run`. This procedure starts no such request, because `claim` only claims a pending task. If the captures are unavailable, report that source as unavailable and keep the stop.
+`terminalDisposition` is auxiliary. It sits beside the stop and never replaces its `reason`, `blocker`, `capacity`, `haltReport`, accepted state, or counters. `disposed` means only that the original owner released its own pair: the task stays `[~]`, the goal does not continue, and no claim follows. A refused disposition names exactly one missing proof. After a run that authorized an attempt, for example, it reads:
+
+```json
+{
+  "version": 1,
+  "manifestIdentity": "<sha256>",
+  "outcome": "refused",
+  "removal": { "checkpoint": "retained", "claim": "retained" },
+  "missingProof": {
+    "kind": "effect-settlement",
+    "subject": "authorize-attempt",
+    "required": "no entered effect authority, or every entered effect settled through the built-in runtime and lane owner",
+    "nextOwnerAction": "coordinator: keep the pair and route the unsettled or unobserved effect to its owner"
+  },
+  "dispositionIdentity": "<sha256>"
+}
+```
+
+A refused owner may still have written `terminal-evidence.json`; a claim from it reports the same kind and subject (section 2). `manifestIdentity` is `null` when no manifest could be retained, and `dispositionIdentity` is `null` when the disposition itself could not be published.
+
+`retained-evidence.json` holds the original capture inputs the runtime actually received, in received order and with duplicates, copied without change. A stop during a later capture keeps every earlier attempt's captures. Never edit, merge, rebuild, or normalize the file, and never fill a gap from packets, stdout, lane history, or a checkpoint. It is the existing handoff for a separately authorized fresh request whose task already has attempts in its lane history. For a pending task, pass it to `claim --retained-evidence <file>`, which validates it before any write and embeds it in the request (section 2). For a request that carries no captures, pass it with `run --retained-evidence <file>`. The driver refuses a request that already carries `retainedEvidence` when the option is given too, and a claim from a terminal handoff takes the file from the handoff, never from the option. The runner validates provenance and every limit again before it takes ownership. Without the required captures the runner refuses admission, for example as `hard-stop`/`evidence-incomplete` with the detail `retainedEvidence: missing current-run`. If the captures are unavailable, report that source as unavailable and keep the stop.
 
 ## 9. Continue in the same invocation
 
@@ -336,20 +431,20 @@ Only `ended`/`task-settled` continues, and only inside the same invocation while
 | Imported Beads issues | Tracked Execution owns the work; never fall back to Lightweight |
 | Unclear lane or owner, a resolver diagnostic, or unreadable Beads | `ambiguous state: <detail>` |
 | `next` prints nothing | `no ready task` |
-| An unblocked `[~]` task blocks the claim | The in-progress task; this procedure has no resume command |
-| `claim` exit 2, 3, or 4 | The refusal's `stage` and `detail` |
+| An unblocked `[~]` task blocks the claim | The in-progress task; this procedure has no resume command. Only a new explicit request with that task's terminal handoff may claim it again (section 2) |
+| `claim` exit 2, 3, or 4 | The refusal's `stage` and `detail`, and its one `missingProof` when it has one |
 | Changed or ambiguous intent | Cancel, then `clarification required: <detail>` |
 | Failed verification or rejected review without recovery | Cancel, then `verification failed on <taskKey>` or `reviewer rejected <taskKey>` |
 | A learning review the owner cannot complete, or a refused result it does not correct | Cancel, then report that learning review is required and name the learning-governance owner |
-| `claim` exit 5 or a `run` hard stop | The reason, `haltReport`, and resource fields, then the cleanup boundary below |
+| `claim` exit 5 or a `run` hard stop | The reason, `haltReport`, resource fields, and any `terminalDisposition`, then the cleanup boundary below |
 
-The driver has no cleanup command and never removes an ownership pair. After a hard stop or a `claim` exit 5:
+The driver has no cleanup command, and it never removes a pair on a caller's behalf. The automatic releases at a hard stop belong to the original owner alone: when `terminalDisposition.outcome` is `disposed`, that owner removed its exact pair once before `run` returned, and the first-Assessment release clears its pair under its own narrower rules. A refused disposition keeps every remaining artifact, and its `missingProof` is no consent for manual cleanup or proof that the supervisor is gone. Legacy or unfenced runs, lost runs, and every other hard stop or `claim` exit 5 keep the manual rules:
 
 1. Read the exact pair with `ownership`. Exit 0 (`absent`) leaves nothing to remove; Work still stops and the task keeps its glyph. Exit 1 (`loaded` or `corrupt`) means the pair remains, and it blocks every later claim of this task.
 2. Report a remaining pair and hand the decision to the user or operator.
 3. Manual removal can follow only after the user or operator independently confirms that no invocation or coordinator supervisor remains for that key. It then follows the exact-pair procedure in the Work skill's `## Checkpoint Lifecycle And Manual Cleanup`, including its post-clean absence proof.
 
-A PID, a process age, a timestamp, a saved state file, or an `ownership` result grants no cleanup, takeover, or continuation authority. Cleanup never resumes the stopped run, revives its state, or starts another task. A later run needs a separate explicit request and fresh admission.
+A PID, a process age, a timestamp, a saved state file, an `ownership` result, or a terminal file grants no cleanup, takeover, or continuation authority. Cleanup never resumes the stopped run, revives its state, or starts another task. A later run needs a separate explicit request and fresh admission; a run whose pair was cleaned by hand has no disposed handoff, so `--terminal-evidence` refuses it.
 
 ## 11. Close out
 
@@ -363,4 +458,6 @@ The runner writes no task-close log line, and the driver has no close command. A
 - Answer only the newest challenge, and only through `assess` or `respond`. A response bound to another challenge stops the run as `challenge-response-foreign` or `challenge-response-replayed`, a wrong kind as `challenge-response-out-of-order`, and a malformed envelope as `challenge-response-invalid`; each keeps the pair.
 - `assess` and `respond` write `response-<n>.json` beside the file named `challenge-<n>.json`, so pass the challenge file in `<exchange>` itself. A second response to the same challenge is refused, and the first response stays untouched.
 - One run answers at most 75 challenges under `--max unlimited`, or three times the `--max` value plus one. The next challenge stops the run as `challenge-budget-exhausted`.
-- The model packet is limited to 256 KiB. An overflowing Inspection is a descriptor-only `evidence-incomplete` stop with no retry or splitting, and `claim` and `assess` both refuse one. Passing `respond` preflight does not prove the evidence fits: a large record can still overflow the packet when the runner captures it, which stops the run as `evidence-incomplete`.
+- The model packet is limited to 256 KiB. An overflowing Inspection is a descriptor-only `evidence-incomplete` stop with no retry or splitting, and `claim` and `assess` both refuse one.
+- `packet-<n>.json` is `dude-work-model-view-v1` or `dude-work-model-view-v2`. Both are complete, lossless, and limited the same way; a packet is v2 only if that form is strictly shorter than v1 in complete canonical bytes, and a tie keeps v1. A v2 packet carries `format`, `target`, `texts`, and `items`: exact canonical history event lines become structured spans, and whole repeated readable strings that save bytes become `{textRef:n}` references into `texts`. Read whichever format arrives, and never rewrite one into the other.
+- Passing `respond` preflight does not prove the evidence fits. When the runner records the pair, it measures the accumulated captures and every known lane and receipt write the completion would make, including required learning, before it accepts the capture. A first known excess stops the run as `evidence-incomplete` with no lane write and no model call, keeps the pending authorization, and keeps the rejected pair in `retained-evidence.json` beside the earlier originals.

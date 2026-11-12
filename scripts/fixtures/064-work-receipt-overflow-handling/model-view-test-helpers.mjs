@@ -195,13 +195,101 @@ function assertReadablePreimages(text, envelope, verification) {
   }
 }
 
-/** Test-only inverse of the closed compact model view. @param {Record<string, unknown>} packet */
+/** Independent structured-history inverse: literal spans verbatim and each event span
+ * as exactly the prefix, its canonical JSON, and one LF at a logical line start.
+ * @param {Record<string, unknown>} body @param {Record<string, unknown>} target */
+function structuredHistoryText(body, target) {
+  assert.deepEqual(Object.keys(body).sort(), ['canonicalTasks', 'dependencies', 'discovered', 'history', 'path']);
+  assert.equal(body.path, /** @type {string} */ (target.specPath).replace(/spec\.md$/, 'tasks.md'));
+  assert.ok(Array.isArray(body.history), 'structured history is one span array');
+  let history = '';
+  let literal = false;
+  for (const span of /** @type {unknown[]} */ (body.history)) {
+    if (typeof span === 'string') {
+      assert.ok(span.length > 0, 'a literal span is nonempty');
+      assert.equal(literal, false, 'adjacent literal spans are one span');
+      history += span;
+      literal = true;
+      continue;
+    }
+    assert.ok(span !== null && typeof span === 'object' && !Array.isArray(span), 'a structured span is one event');
+    assert.equal(typeof /** @type {Record<string, unknown>} */ (span).type, 'string');
+    assert.ok(history === '' || /[\r\n]$/.test(history), 'a structured event begins a logical line');
+    history += `- dude-run-event: ${recoveryRuntime.canonicalJson(span)}\n`;
+    literal = false;
+  }
+  return recoveryRuntime.canonicalJson({ ...body, history });
+}
+
+/** @param {unknown} value @returns {number} */
+function textReferenceCount(value) {
+  if (Array.isArray(value)) return value.reduce((total, entry) => total + textReferenceCount(entry), 0);
+  if (value === null || typeof value !== 'object') return 0;
+  return (Object.hasOwn(value, 'textRef') ? 1 : 0)
+    + Object.values(value).reduce((total, entry) => total + textReferenceCount(entry), 0);
+}
+
+/**
+ * Independent closed text-table oracle. Entries are distinct complete strings;
+ * references resolve only inside this packet, first-use order is table order,
+ * every entry is repeated, and no pooled string also stays literal.
+ * @param {Record<string, unknown>} packet
+ */
+function packetTextTable(packet) {
+  const table = /** @type {unknown[]} */ (packet.texts);
+  assert.ok(Array.isArray(table), 'texts is one array');
+  table.forEach((value, index) => {
+    assert.equal(typeof value, 'string', 'a table entry is one complete string, never a reference');
+    assert.equal(table.indexOf(value), index, 'a table entry appears once');
+  });
+  const uses = table.map(() => 0);
+  let introduced = 0;
+  /** @param {unknown} value */
+  const resolve = (value) => {
+    if (typeof value === 'string') {
+      assert.equal(table.includes(value), false, 'a pooled string is referenced at every readable position');
+      return value;
+    }
+    assert.ok(value !== null && typeof value === 'object' && !Array.isArray(value), 'a readable value is a string or reference');
+    assert.deepEqual(Object.keys(value), ['textRef']);
+    const index = /** @type {Record<string, unknown>} */ (value).textRef;
+    assert.ok(Number.isSafeInteger(index) && /** @type {number} */ (index) >= 0
+      && /** @type {number} */ (index) < table.length, 'a reference resolves inside this packet table');
+    if (uses[/** @type {number} */ (index)] === 0) {
+      assert.equal(index, introduced, 'table entries follow first reference order');
+      introduced += 1;
+    }
+    uses[/** @type {number} */ (index)] += 1;
+    return /** @type {string} */ (table[/** @type {number} */ (index)]);
+  };
+  return {
+    /** Resolve one payload's readable rows once, in canonical field order. @param {Record<string, unknown>} text */
+    text(text) {
+      const field = text.type === 'verification-text' ? 'checks' : 'findings';
+      const rows = /** @type {unknown} */ (text[field]);
+      if (!Array.isArray(rows)) return text;
+      return {
+        ...text,
+        [field]: rows.map((row) => Object.fromEntries(Object.keys(row).sort().map(key => [key, resolve(row[key])]))),
+      };
+    },
+    finish() {
+      assert.ok(uses.every(count => count >= 2), 'every table entry is a repeated readable string');
+      assert.equal(textReferenceCount(packet.items), uses.reduce((total, count) => total + count, 0),
+        'references appear only at supported readable positions');
+    },
+  };
+}
+
+/** Test-only inverse of both closed model views. @param {Record<string, unknown>} packet */
 export function expandModelPacket(packet) {
   const exactKeys = (value, fields) => {
     assert.deepEqual(Object.keys(value).sort(), [...fields].sort());
   };
-  exactKeys(packet, ['format', 'target', 'items']);
-  assert.equal(packet.format, 'dude-work-model-view-v1');
+  const compact = packet.format === 'dude-work-model-view-v2';
+  exactKeys(packet, compact ? ['format', 'target', 'texts', 'items'] : ['format', 'target', 'items']);
+  if (!compact) assert.equal(packet.format, 'dude-work-model-view-v1');
+  const table = compact ? packetTextTable(packet) : null;
   const rows = [];
   const verifications = new Map();
   const reviews = [];
@@ -210,15 +298,19 @@ export function expandModelPacket(packet) {
   const historyLiterals = new Map();
   let previousItem = -1;
   for (const item of /** @type {Record<string, unknown>[]} */ (packet.items)) {
-    assert.ok(['literal', 'current-run', 'verification', 'review'].includes(/** @type {string} */ (item.tag)));
+    assert.ok([
+      'literal', 'current-run', 'verification', 'review', ...(compact ? ['task-history'] : []),
+    ].includes(/** @type {string} */ (item.tag)));
     const trusted = item.tag === 'verification' || item.tag === 'review';
     exactKeys(
       item,
       item.tag === 'literal' ? ['tag', 'text', 'frames']
-        : item.tag === 'current-run' ? ['tag', 'body', 'frames'] : ['tag', 'payload', 'frames'],
+        : item.tag === 'current-run' || item.tag === 'task-history' ? ['tag', 'body', 'frames'] : ['tag', 'payload', 'frames'],
     );
     const frames = /** @type {Record<string, unknown>[]} */ (item.frames);
     assert.ok(frames.length > 0);
+    /** @type {Record<string, unknown>|null} */
+    let resolvedPayload = null;
     if (!trusted) assert.equal(frames.length, 1);
     else {
       const payload = /** @type {Record<string,unknown>} */ (item.payload);
@@ -229,6 +321,11 @@ export function expandModelPacket(packet) {
           : ['type', 'version', 'target', 'verdict', 'findings']),
         ...(Object.hasOwn(payload, 'text') ? ['text'] : [])],
       );
+      // One physical payload resolves its table references once for every frame.
+      resolvedPayload = cloneCanonical(payload);
+      if (table && Object.hasOwn(payload, 'text')) {
+        resolvedPayload.text = table.text(/** @type {Record<string, unknown>} */ (resolvedPayload.text));
+      }
     }
     const firstOccurrences = /** @type {Record<string, unknown>[]} */ (frames[0].occurrences);
     assert.ok(/** @type {number} */ (firstOccurrences[0].position) > previousItem);
@@ -248,6 +345,10 @@ export function expandModelPacket(packet) {
       if (item.tag === 'current-run') {
         assert.equal(occurrences.length, 1);
         assert.equal(occurrences[0].source, 'current-run');
+      }
+      if (item.tag === 'task-history') {
+        assert.equal(occurrences.length, 1);
+        assert.equal(occurrences[0].source, 'task-history');
       }
       if (trusted) {
         if (Object.hasOwn(frame, 'reference')) {
@@ -269,7 +370,9 @@ export function expandModelPacket(packet) {
         assert.equal(/** @type {Record<string, unknown>} */ (frame.descriptor).status, 'present');
         assert.notEqual(item.text, '[]');
       }
-      let text = item.text;
+      let text = item.tag === 'task-history'
+        ? structuredHistoryText(/** @type {Record<string, unknown>} */ (item.body), /** @type {Record<string, unknown>} */ (packet.target))
+        : item.text;
       if (item.tag === 'current-run') {
         const body = /** @type {Record<string, unknown>} */ (item.body);
         exactKeys(body, ['target', 'state', 'records']);
@@ -333,7 +436,7 @@ export function expandModelPacket(packet) {
           Object.keys(/** @type {Record<string, unknown>} */ (frame.binding))
             .every(field => !Object.hasOwn(/** @type {object} */ (item.payload), field)),
         );
-        const { text: readableText, ...payload } = cloneCanonical(item.payload);
+        const { text: readableText, ...payload } = cloneCanonical(resolvedPayload);
         const envelope = {
           ...payload,
           ...cloneCanonical(frame.binding),
@@ -390,7 +493,7 @@ export function expandModelPacket(packet) {
       for (const occurrence of occurrences) {
         exactKeys(occurrence, ['source', 'position']);
         assert.ok(Number.isSafeInteger(occurrence.position));
-        if (item.tag === 'literal' && occurrence.source === 'task-history') {
+        if ((item.tag === 'literal' || item.tag === 'task-history') && occurrence.source === 'task-history') {
           historyLiterals.set(occurrence.position, text);
         }
         rows.push({
@@ -401,6 +504,7 @@ export function expandModelPacket(packet) {
       }
     }
   }
+  table?.finish();
   rows.sort((left, right) => left.position - right.position);
   assert.deepEqual(rows.map(({ position }) => position), rows.map((_, index) => index));
   const attachedCaptures = new Set();
@@ -735,9 +839,14 @@ export function acquisitionMetrics(root, reference, input) {
 
 const measuredRuntimePromises = new Map();
 
-/** @param {boolean} literalHistory @param {'tie'|'larger'} [historyCost] @param {boolean} [historicalPacketLimit] */
-async function measuredRuntime(literalHistory = false, historyCost, historicalPacketLimit = false) {
-  const key = `${literalHistory}:${historyCost ?? 'actual'}:${historicalPacketLimit}`;
+/**
+ * @param {boolean} literalHistory @param {'tie'|'larger'} [historyCost] @param {boolean} [historicalPacketLimit]
+ * @param {'v1'|'v2'} [modelView] Force one complete candidate instead of the strict-smaller selection.
+ */
+async function measuredRuntime(literalHistory = false, historyCost, historicalPacketLimit = false, modelView) {
+  // Literal-history and reference-cost controls replay the v1 renderer they were frozen against.
+  const view = modelView ?? (literalHistory || historyCost ? 'v1' : undefined);
+  const key = `${literalHistory}:${historyCost ?? 'actual'}:${historicalPacketLimit}:${view ?? 'selected'}`;
   if (measuredRuntimePromises.has(key)) return measuredRuntimePromises.get(key);
   const promise = (async () => {
     const runtimeUrl = new URL('../../../src/skills/dude-work/recovery.mjs', import.meta.url);
@@ -748,6 +857,12 @@ async function measuredRuntime(literalHistory = false, historyCost, historicalPa
       const declaration = 'const MAX_PACKET_BYTES = 262_144;';
       assert.equal(source.split(declaration).length, 2);
       source = source.replace(declaration, 'const MAX_PACKET_BYTES = 131_072;');
+    }
+    if (view) {
+      // Suppress only the v1/v2 choice; both candidates stay complete production renderings.
+      const choice = 'return compact.savedBytes > 0 ? compact.packet : literal;';
+      assert.equal(source.split(choice).length, 2);
+      source = source.replace(choice, view === 'v2' ? 'return compact.packet;' : 'return literal;');
     }
     if (literalHistory || historyCost) {
       const selection = 'currentRun && canonicalBytes(currentRun) < canonicalBytes(unit.literal)';
@@ -807,6 +922,10 @@ async function measuredRuntime(literalHistory = false, historyCost, historicalPa
       '  return testLastMeasurement;',
       '}',
       'export { packetProjection as testPacketProjection };',
+      'export function testMeasureItems(target, values) {',
+      '  testMeasurements = [];',
+      '  return measuredInspection(target, values);',
+      '}',
       'export function testPrepareMeasured(state, input, batch, laneBinding) {',
       '  testMeasurements = [];',
       '  let result = null;',
@@ -841,27 +960,46 @@ function modelMeasurement(measured) {
  * Observe the private complete packet used by the unchanged production renderer.
  * The public overflow Inspection remains descriptor-only.
  * @param {Record<string, unknown>} input
- * @param {{literalHistory?:boolean,historicalPacketLimit?:boolean}} [options]
+ * @param {{literalHistory?:boolean,historicalPacketLimit?:boolean,modelView?:'v1'|'v2'}} [options]
  */
 export async function measurePrivateModelView(input, options = {}) {
-  const runtime = await measuredRuntime(options.literalHistory, undefined, options.historicalPacketLimit);
+  const runtime = await measuredRuntime(
+    options.literalHistory, undefined, options.historicalPacketLimit, options.modelView,
+  );
   const measured = runtime.testAcquireMeasured(input);
   return modelMeasurement(measured);
 }
 
 /** Render exactly these available positions, without a hidden full-packet anchor.
  * @param {unknown} target @param {unknown[]} items
- * @param {{literalHistory?:boolean,historyCost?:'tie'|'larger'}} [options] */
+ * @param {{literalHistory?:boolean,historyCost?:'tie'|'larger',modelView?:'v1'|'v2'}} [options] */
 export async function renderPrivateModelProjection(target, items, options = {}) {
-  const runtime = await measuredRuntime(options.literalHistory, options.historyCost);
+  const runtime = await measuredRuntime(options.literalHistory, options.historyCost, false, options.modelView);
   return runtime.testPacketProjection(target, items);
+}
+
+/** Measure normalized items exactly as production Inspection does, including the
+ * maximal owner suffix and first crossing, under one renderer selection.
+ * @param {unknown} target @param {unknown[]} items @param {{modelView?:'v1'|'v2'}} [options] */
+export async function measurePrivateInspection(target, items, options = {}) {
+  const runtime = await measuredRuntime(false, undefined, false, options.modelView);
+  return modelMeasurement(runtime.testMeasureItems(target, items));
+}
+
+/** The complete in-memory recovery runtime with one forced renderer selection, for
+ * replaying measurements recorded against that format; never current policy.
+ * @param {{modelView:'v1'|'v2'}} options */
+export async function privateRecoveryRuntime(options) {
+  return measuredRuntime(false, undefined, false, options.modelView);
 }
 
 /** Observe pure production preflight; this does not apply a permit or start a host.
  * @param {{state:unknown,input:unknown,batch:unknown,laneBinding:unknown}} input
- * @param {{literalHistory?:boolean,historicalPacketLimit?:boolean}} [options] */
+ * @param {{literalHistory?:boolean,historicalPacketLimit?:boolean,modelView?:'v1'|'v2'}} [options] */
 export async function measurePrivatePreflight(input, options = {}) {
-  const runtime = await measuredRuntime(options.literalHistory, undefined, options.historicalPacketLimit);
+  const runtime = await measuredRuntime(
+    options.literalHistory, undefined, options.historicalPacketLimit, options.modelView,
+  );
   const measured = runtime.testPrepareMeasured(input.state, input.input, input.batch, input.laneBinding);
   return {
     result: measured.result,
