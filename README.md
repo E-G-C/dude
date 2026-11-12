@@ -212,11 +212,13 @@ unqualified. Feature 089 adds optional nonblocking collaboration on top of it:
 two independent Dudes exchange number advice through
 `dude_a2a_conversation`, each records a bounded local transcript you can watch
 live and reread, and A may explicitly use the advice in a first capture.
-Ordinary capture is unchanged. Native qualification of that collaboration
-remains incomplete: native attempts of its normal route have not passed, and
-its strict qualification has never run natively. See
-[Agent-to-agent communication](docs/agent-to-agent-communication.md). Installed
-pack files use the reserved `dude-pack-*` namespace and survive core upgrades.
+Ordinary capture is unchanged. One
+[native run of its normal route](docs/agent-to-agent-communication.md#first-passing-normal-route-run)
+passed on 2026-11-12 on one Windows computer; its strict qualification has
+never run natively, so native qualification of that collaboration remains
+incomplete. See [Agent-to-agent communication](docs/agent-to-agent-communication.md).
+Installed pack files use the reserved `dude-pack-*` namespace and survive core
+upgrades.
 
 ## What Dude Writes
 

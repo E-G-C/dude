@@ -46,14 +46,15 @@
  * an invalid, incomplete, or expired one before any import or effect; then
  * ./native-collaboration.mjs asks the human, on an interactive terminal, for a
  * freshly typed consent literal bound to the scope digest, and runs the fixed
- * qualification described there. That branch is implemented. Native version-3
- * attempts have reached both mains' saved-sign-in account checks, both
- * proposals and the human activation approvals, both conversation starts, and
- * B's worker readiness; the latest attempt's worker ended with
- * unexpected_native_effect after its prompt was admitted, before it read any
- * evidence. No attempt has passed, the strict version-2 qualification has never
- * run natively, and strict isolation stays deferred. Success is not inferred
- * from this preview or from tests.
+ * qualification described there. That branch is implemented. After earlier
+ * native version-3 attempts failed, one of them when B's worker ended with
+ * unexpected_native_effect after its prompt was admitted, one version-3 run
+ * (41f9334f, 2026-11-12) passed as collaboration_qualified on one Windows
+ * computer. That history grants nothing: each new plan needs its own fresh
+ * consent, current account checks, and native evidence. The strict version-2
+ * qualification has never run natively, and strict isolation stays deferred.
+ * Success is not inferred from this preview, from tests, or from an earlier
+ * run.
  *
  * Exit status: 0 only for a native run whose every check passed (version 2
  * `qualified`, version 3 `collaboration_qualified`); 1 when the
@@ -458,9 +459,10 @@ const STAGES = Object.freeze([
 ]);
 /**
  * The proof sources a version-3 normal-collaboration run needs, stated from
- * current source, never from the plan. Native attempts have produced some of
- * their records, as each detail says, but no run has passed, so none is
- * established.
+ * current source, never from the plan. One recorded native run observed the
+ * account, worker, and SDK sources below, as their details say; that history
+ * establishes none of them for a new scope, whose own run must observe each
+ * again.
  */
 const PROOF_V3 = Object.freeze([
   {
@@ -476,8 +478,9 @@ const PROOF_V3 = Object.freeze([
     status: 'unverified',
     detail: 'Each main\'s own client (getAuthStatus) and its actual new session (gitHubAuth.getStatus) must report the expected '
       + 'account before its first prompt and again before each later one, and B\'s served worker records the same pair for its own '
-      + 'runtime and session in worker_preflight version 2. Native attempts have observed these answers, host form included, for both '
-      + 'mains and B\'s worker, but no run has passed; a pass would be a point-in-time observation, not an account lock.',
+      + 'runtime and session in worker_preflight version 2. The recorded 2026-11-12 pass (run 41f9334f) observed these answers, host '
+      + 'form included, for both mains and B\'s workers; that was a point-in-time observation, not an account lock, and this scope\'s '
+      + 'run must observe its own.',
     sources: ['scripts/dude-a2a/native-collaboration.mjs', 'src/extensions/dude/lib/a2a-peer-worker.mjs', 'copilot-sdk types.d.ts: getAuthStatus'],
   },
   {
@@ -486,8 +489,9 @@ const PROOF_V3 = Object.freeze([
     detail: 'B\'s actual served worker records its version-2 readiness (worker_preflight with both accounts and its normal session '
       + 'storage, worker_ready, worker_request_admitted, and worker_evidence_pending) in B\'s journal before its prompt, and the native '
       + 'branch checks those records against the operation, session, permit, loaders, SDK files, extension process ID, model, and '
-      + 'expected account before writing each release. A native attempt\'s worker recorded its readiness, which matched those checks, '
-      + 'and its admission, then ended with unexpected_native_effect before worker_evidence_pending.',
+      + 'expected account before writing each release. An earlier attempt\'s worker ended with unexpected_native_effect before '
+      + 'worker_evidence_pending; in the recorded 2026-11-12 pass, both served workers\' records matched those checks through '
+      + 'worker_evidence_pending. Neither result is this scope\'s observation.',
     sources: ['src/extensions/dude/lib/a2a-peer-worker.mjs', 'src/extensions/dude/lib/a2a-collaboration.mjs', 'scripts/dude-a2a/native-collaboration.mjs'],
   },
   {
@@ -495,17 +499,18 @@ const PROOF_V3 = Object.freeze([
     status: 'unverified',
     detail: 'The fixed loaders record the SDK file the extension and its worker imported; the native branch matches those records to '
       + 'this plan\'s hashed SDK files. A folder, hash, or this runner\'s own import shows nothing alone: createSession silently falls '
-      + 'back to the bundled SDK from an invalid extensionSdkPath, and joinSession ignores the setting. A native attempt\'s records '
-      + 'matched its plan\'s SDK files, but that attempt did not pass.',
+      + 'back to the bundled SDK from an invalid extensionSdkPath, and joinSession ignores the setting. In the recorded 2026-11-12 '
+      + 'pass, B\'s records matched that run\'s plan SDK files; this scope\'s run must match its own.',
     sources: ['src/extensions/dude/lib/a2a-sdk-loader.mjs', 'copilot-sdk types.d.ts: extensionSdkPath'],
   },
 ]);
 /** Why a version-3 preview's native stages stay blocked even for a complete plan. */
 const NATIVE_BRANCH_V3 = Object.freeze({ id: 'native_run_not_started', status: 'implemented_unverified', detail: 'The normal-collaboration '
   + 'native branch is implemented: `--native --plan <absolute-v3-plan.json>` asks for fresh terminal consent and then runs the fixed '
-  + 'collaboration qualification through each role\'s existing saved sign-in. Native attempts have reached both mains\' account '
-  + 'checks, both proposals and approvals, and B\'s worker readiness, but none has passed, and no preview result stands in for a run. '
-  + 'Its best result is collaboration_qualified; strict isolation stays deferred, not run and not passed.' });
+  + 'collaboration qualification through each role\'s existing saved sign-in. One recorded native run, 41f9334f on 2026-11-12, '
+  + 'passed as collaboration_qualified after earlier attempts failed. That history grants nothing and is not this scope\'s result: '
+  + 'a run of this plan still needs fresh consent, current account checks, and its own native evidence, and no preview result '
+  + 'stands in for a run. Its best result is collaboration_qualified; strict isolation stays deferred, not run and not passed.' });
 /** The version-3 native stages, in order. A preview never runs them. */
 const STAGES_V3 = Object.freeze([
   {

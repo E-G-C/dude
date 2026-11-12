@@ -1197,25 +1197,35 @@ test('a complete version-3 plan previews as blocked for normal collaboration onl
   assert.notEqual(v2.report.scopeSha256, report.scopeSha256, 'a strict digest never stands for a normal scope');
 });
 
-test('a version-3 preview states what native attempts reached, passes nothing, and keeps no never-run or fake-only claim', async (context) => {
+test('a version-3 preview records its one native pass only as history, grants this scope nothing from it, and keeps no never-run or fake-only claim', async (context) => {
   const f = fixtureV3();
   const { report } = previewV3(f, f.planV3);
   assertNormalPreviewBlocked(report);
   const proof = /** @type {Record<string, string>} */ (Object.fromEntries(report.proof.map((/** @type {any} */ entry) => [entry.id, entry.detail])));
   for (const [label, text, pattern] of /** @type {Array<[string, string, RegExp]>} */ ([
-    ['account answers were observed natively, and no run passed', proof.account_observation,
-      /Native attempts have observed these answers, host form included, for both mains and B's worker, but no run has passed; a pass would be a point-in-time observation, not an account lock\.$/],
-    ['the served worker reached readiness and admission, never the held call', proof.served_worker_observation,
-      /A native attempt's worker recorded its readiness, which matched those checks, and its admission, then ended with unexpected_native_effect before worker_evidence_pending\.$/],
-    ['loader records matched natively, and that attempt did not pass', proof.actual_sdk_use,
-      /A native attempt's records matched its plan's SDK files, but that attempt did not pass\.$/],
-    ['the native branch has run natively and passed nothing', report.nativeBranch.detail,
-      /Native attempts have reached both mains' account checks, both proposals and approvals, and B's worker readiness, but none has passed, and no preview result stands in for a run\./],
+    ['the recorded pass observed the account answers, and this scope must observe its own', proof.account_observation,
+      /The recorded 2026-11-12 pass \(run 41f9334f\) observed these answers, host form included, for both mains and B's workers; that was a point-in-time observation, not an account lock, and this scope's run must observe its own\.$/],
+    ['the served-worker history keeps the earlier failure beside the pass, neither as this scope\'s observation', proof.served_worker_observation,
+      /An earlier attempt's worker ended with unexpected_native_effect before worker_evidence_pending; in the recorded 2026-11-12 pass, both served workers' records matched those checks through worker_evidence_pending\. Neither result is this scope's observation\.$/],
+    ['loader records matched in the recorded pass, and this scope must match its own', proof.actual_sdk_use,
+      /In the recorded 2026-11-12 pass, B's records matched that run's plan SDK files; this scope's run must match its own\.$/],
+    ['the native branch names its one recorded pass and grants this plan nothing from it', report.nativeBranch.detail,
+      /One recorded native run, 41f9334f on 2026-11-12, passed as collaboration_qualified after earlier attempts failed\. That history grants nothing and is not this scope's result: a run of this plan still needs fresh consent, current account checks, and its own native evidence, and no preview result stands in for a run\./],
   ])) {
     await context.test(label, () => assert.match(text, pattern));
   }
-  await context.test('no claim that only fake SDKs ran or that nothing ran natively', () => {
-    assert.doesNotMatch(JSON.stringify([report.proof, report.nativeBranch]), /Only fake SDKs have produced|No native run has produced|It has never run natively|account answers, including its host form, are unobserved/);
+  await context.test('no claim that only fake SDKs ran, that nothing ran natively, or that no run has passed', () => {
+    assert.doesNotMatch(JSON.stringify([report.proof, report.nativeBranch]),
+      /Only fake SDKs have produced|No native run has produced|It has never run natively|account answers, including its host form, are unobserved|no run has passed|none has passed|did not pass/);
+  });
+  await context.test('the recorded pass never becomes this scope\'s grant or observation, or a strict, pairing, or platform claim', () => {
+    // assertNormalPreviewBlocked above still holds: grant missing, every stage blocked, each proof missing or unverified, strict deferred.
+    const history = JSON.stringify([report.proof, report.nativeBranch, report.permission, report.stages, report.strict]);
+    const stronger = /(?:this|the current) scope (?:passed|is qualified|is observed)|(?:consent|approval|grant) (?:carries over|transfers|is reused)|strict (?:isolation|qualification) (?:passed|is complete)|\b(?:LAN|macOS|Linux|App|pairing)\b[^."]* (?:is|was) qualified/i;
+    assert.doesNotMatch(history, stronger);
+    for (const claim of ['this scope passed', 'the earlier consent carries over', 'strict isolation passed', 'macOS is qualified', 'pairing was qualified']) {
+      assert.match(`${history} ${claim}`, stronger, `the guard detects: ${claim}`);
+    }
   });
 });
 

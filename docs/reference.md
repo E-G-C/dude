@@ -107,10 +107,12 @@ the feature:
   its readiness before its first prompt, and native qualification of this
   collaboration is incomplete. On Windows, that worker may reuse the Copilot
   runtime's own saved sign-in instead of a token file; Dude implements no
-  sign-in for it. Native attempts with that sign-in reached the worker's
-  readiness, including its expected account, but no attempt has passed, and
-  strict isolated-worker qualification is deferred, not passed. See
-  [Collaboration between two Dudes](agent-to-agent-communication.md#collaboration-between-two-dudes).
+  sign-in for it. One native run with that sign-in passed on 2026-11-12, for
+  the observed same-computer Windows route only, and strict isolated-worker
+  qualification is deferred, not passed. See
+  [Collaboration between two Dudes](agent-to-agent-communication.md#collaboration-between-two-dudes)
+  and its
+  [first passing normal-route run](agent-to-agent-communication.md#first-passing-normal-route-run).
 - Commands normally select the exact unnumbered frontmatter `slug:`. An explicit
   path selects only that exact numbered ledger.
 - An idea begins with `# Idea: <title>`. Its frontmatter uses only
