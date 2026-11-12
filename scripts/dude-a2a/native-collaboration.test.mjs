@@ -62,6 +62,17 @@ after(() => {
   for (const directory of scratch) fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
+/**
+ * Hold this test's event loop open until the test ends. For a test that drives, outside its production host, a part whose waits poll
+ * on unref'd timers so that no wait alone holds a process open: in production that host holds the process open, and each call names
+ * it. Node 24's test runner keeps a file running while a test is pending; Node 20 and 22 end it and cancel every pending test instead.
+ * @param {import('node:test').TestContext} t
+ */
+function holdLoop(t) {
+  const hold = setInterval(() => {}, 2 ** 30);
+  t.after(() => clearInterval(hold));
+}
+
 /** A short test-owned folder by its real path. @param {string} [prefix] */
 function tempDir(prefix = 'dude-nq-') {
   const directory = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
@@ -189,7 +200,7 @@ function planFixture({ expiresInMs = 3_600_000 } = {}) {
 
 /** The validated scope of a plan fixture, as the runner passes it. @param {ReturnType<typeof planFixture>} f */
 function scopeOf(f) {
-  const scoped = nativeScope({ file: f.planFile, repoRoot: path.join(f.base, 'not-the-repository') });
+  const scoped = nativeScope({ file: f.planFile, repoRoot: path.join(f.base, 'not-the-repository'), platform: 'win32' });
   assert.ok(scoped.scope, JSON.stringify(scoped.report.checks.filter((/** @type {any} */ check) => !['ok', 'not_inspected'].includes(check.status))));
   return { scope: /** @type {any} */ (scoped.scope), plan: scoped.plan };
 }
@@ -500,7 +511,7 @@ async function controlled(f, adapters) {
     plan,
     adapters: {
       platform: 'win32',
-      rescope: () => nativeScope({ file: f.planFile, repoRoot: path.join(f.base, 'not-the-repository') }),
+      rescope: () => nativeScope({ file: f.planFile, repoRoot: path.join(f.base, 'not-the-repository'), platform: 'win32' }),
       loadSdk: async () => { calls.loadSdk += 1; throw new Error('the SDK must not load in this case'); },
       startObserver: () => {
         calls.startObserver += 1;
@@ -548,7 +559,7 @@ test('nothing native happens without fresh literal consent for the exact scope, 
       terminal,
       rescope: () => {
         change(f);
-        return nativeScope({ file: f.planFile, repoRoot: path.join(f.base, 'not-the-repository') });
+        return nativeScope({ file: f.planFile, repoRoot: path.join(f.base, 'not-the-repository'), platform: 'win32' });
       },
     });
     assert.equal(result.report.consent.status, 'granted', label);
@@ -2036,6 +2047,48 @@ test('the observer is owned before it is ready: a refusal closes it with EOF and
   assert.equal(uncalibrated.calls.loadSdk, 0);
   assert.equal(host.state.stopped, 1, 'the observer\'s own session is still stopped and drained');
   assert.equal(checkOf(uncalibrated.report, 'final_coverage')?.status, 'passed', 'the final summary is checked on a failure path too');
+});
+
+test('a native run holds its own process open until it has its report: an observer that refuses and exits leaves the run only unref\'d polls, and it still ends with its report and status 4, never with status 0 and nothing printed', () => {
+  const f = planFixture();
+  const repoRoot = path.join(f.base, 'not-the-repository');
+  // The fixed observer refusing for want of its privilege (native-observer.ps1, Stop-Refused): one refused line, then exit 3.
+  const refusal = `process.stdout.write(${JSON.stringify(`${JSON.stringify({ event: 'refused', reason: 'observer_privilege_missing' })}\n`)}); process.exitCode = 3;`;
+  // A Node process of its own with no test runner, so nothing but the run can hold it open; it prints the result once the run resolves,
+  // as `main` does. Only the observer's executable and the person are stood in for: the actual observer client starts a real process
+  // and polls for its reply and exit, and the consent line is typed once the prompt has waited out the human gap, after which the prompt
+  // pauses its input, as it pauses a terminal's.
+  const program = path.join(tempDir('dude-nqh-'), 'run.mjs');
+  fs.writeFileSync(program, String.raw`import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { consentLiteral, runNativeQualification, startObserver } from ${JSON.stringify(pathToFileURL(NATIVE).href)};
+import { nativeScope } from ${JSON.stringify(pathToFileURL(path.join(HERE, 'qualify-collaboration.mjs')).href)};
+
+const rescope = () => nativeScope({ file: ${JSON.stringify(f.planFile)}, repoRoot: ${JSON.stringify(repoRoot)}, platform: 'win32' });
+const { scope, plan } = rescope();
+const input = Object.assign(new EventEmitter(), {
+  isTTY: true, readableEnded: false, destroyed: false, readableLength: 0, setRawMode() {}, pause() {},
+  resume() { setTimeout(() => input.emit('data', Buffer.from(consentLiteral(scope.scopeSha256) + '\r')), 300); },
+});
+const adapters = {
+  platform: 'win32',
+  rescope,
+  startObserver: (options) => startObserver({ ...options, spawnProcess: (_command, _args, spawnOptions) => spawn(process.execPath, ['-e', ${JSON.stringify(refusal)}], spawnOptions) }),
+};
+runNativeQualification({ scope, plan, io: { stdin: input, stderr: { isTTY: true, write: () => true } }, adapters }).then(({ report, exitCode }) => {
+  process.stdout.write(JSON.stringify(report) + '\n');
+  process.exitCode = exitCode;
+});
+`);
+  const result = spawnSync(process.execPath, [program], { encoding: 'utf8', timeout: 60_000, windowsHide: true });
+  const stdout = String(result.stdout ?? '');
+  assert.deepEqual([result.error?.message ?? null, result.status, result.signal], [null, 4, null],
+    `the run's process ends by itself, with the run's status: stdout ${JSON.stringify(stdout.slice(0, 200))}, stderr ${JSON.stringify(String(result.stderr ?? '').slice(0, 2_000))}`);
+  const report = JSON.parse(stdout);
+  assert.equal(report.reason, 'observer_privilege_missing', report.detail);
+  assert.deepEqual(phaseList(report), [['consent', 'passed'], ['revalidate', 'passed'], ['prepare', 'passed'], ['observe', 'failed']]);
+  assert.deepEqual(report.observer, { startup: 'not_ready', exit: { exited: true, code: 3 } }, 'the helper\'s own exit was awaited after it had ended');
+  assert.equal(checkOf(report, 'final_observer_exit')?.status, 'passed');
 });
 
 test('the control runtime recognizes every canary form from parsed discovery, then exactly one fresh model-running session must show the after-view activation: a host that sends no discovery notification after the genuine view stops the run there, and no main starts', async () => {
@@ -3612,7 +3665,8 @@ async function recorded(journal, kind) {
   throw new Error(`no ${kind} record`);
 }
 
-test('the actual worker sends its prompt and reads evidence only after the exact releases written here; an injected SDK never passes the preflight check', async () => {
+test('the actual worker sends its prompt and reads evidence only after the exact releases written here; an injected SDK never passes the preflight check', async (t) => {
+  holdLoop(t); // In production the extension host the worker runs in holds its process open.
   const { worker, journal, root, runId, manifest, reads } = qualifiedWorker();
   const startup = await worker.startup;
   assert.equal(startup.ok, true, JSON.stringify(startup));
@@ -6600,6 +6654,7 @@ test('the actual publisher captures a stage written with CRLF line ends, as nati
 });
 
 test('the relay\'s lifetime: an action of the open phase that the consent covers is approved once only while it still holds right before the answer, so a change of its phase, the consent, the scope, the run, its call, or its exact request withdraws it, even one that arrives together with the request\'s own event; and the shared human queue stays bounded in length and time', async (context) => {
+  holdLoop(context); // In production only a native run's runtime calls the relay, and the run's invocation holds its process open (runNativeQualification).
   const root = tempDir('dude-nqx-');
   const file = path.join(root, 'w', 'progress-a.txt');
   /** @param {{expiresInMs?: number}} [options] */
@@ -7187,7 +7242,8 @@ function normalQualifiedWorker() {
   return { worker, journal, root, runId, manifest, reads, base, fake };
 }
 
-test('the actual existing-sign-in worker, on this runner\'s latch manifest, records the version-2 readiness this receiver accepts except its injected loader, and reads evidence only after the exact releases written here; neither branch\'s record passes the other receiver', async () => {
+test('the actual existing-sign-in worker, on this runner\'s latch manifest, records the version-2 readiness this receiver accepts except its injected loader, and reads evidence only after the exact releases written here; neither branch\'s record passes the other receiver', async (t) => {
+  holdLoop(t); // In production the extension host the worker runs in holds its process open.
   const { worker, journal, root, runId, manifest, reads, base, fake } = normalQualifiedWorker();
   const startup = await worker.startup;
   assert.equal(startup.ok, true, JSON.stringify(startup));

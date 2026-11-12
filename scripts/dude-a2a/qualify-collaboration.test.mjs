@@ -987,6 +987,13 @@ function canonicalJson(value) {
  */
 function fixtureV3() {
   const f = fixture();
+  // The version-3 branch runs only on Windows, and its previews here model that host, so its CLI is the .exe launcher on every host:
+  // on Windows the fixture's own, elsewhere a copy of it that stays executable for a preview on the real host.
+  const cli = path.join(f.tools, 'copilot.exe');
+  if (!WINDOWS) {
+    fs.copyFileSync(f.cli, cli);
+    fs.chmodSync(cli, 0o755);
+  }
   const bases = /** @type {Record<'a' | 'b' | 'worker', string>} */ (Object.fromEntries(['a', 'b', 'worker'].map((role) => {
     const directory = path.join(f.base, 'sign-in', role);
     fs.mkdirSync(directory, { recursive: true });
@@ -1006,7 +1013,7 @@ function fixtureV3() {
     operator: f.plan.operator,
     coordinator: f.plan.coordinator,
     fixtureParent: f.fixtureParent,
-    artifacts: { cli: f.cli, sdk: f.sdk, sdkAppliedAt: 'createSession' },
+    artifacts: { cli, sdk: f.sdk, sdkAppliedAt: 'createSession' },
     models: { ...f.plan.models },
     auth: { kind: 'existing-sign-in', a: signIn('a', 'fixture-a'), b: signIn('b', 'Fixture-B'), worker: signIn('worker', 'fixture-w') },
     tls: structuredClone(f.plan.tls),

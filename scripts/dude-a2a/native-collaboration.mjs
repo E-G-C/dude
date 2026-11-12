@@ -3869,10 +3869,29 @@ export function matchControlPermission(request, invocation, allow) {
  * bounded report and exit status from `nativeResult`: 0 only for a native run
  * with every check passed whose bounded report still says so; 4 for every
  * refusal or failure. Never rejects.
+ *
+ * The invocation holds its process open from its start until it has that
+ * result. The run's waits poll on unref'd timers (`delay`), so that no wait
+ * alone holds a process open, and a run can be left with nothing else: once
+ * its prompt has paused the terminal, an observer that refuses and exits, or
+ * runtimes that have all ended, leave only those polls, and the process would
+ * end before the report exists, printing nothing, with status 0. The hold
+ * ends with the invocation on every path, so a poll still pending after it
+ * returns holds nothing open.
  * @param {{scope: any, plan: {file: string, bytes: number, sha256: string}, io?: {stdin: any, stderr: any}, adapters?: NativeAdapters}} input
  * @returns {Promise<{report: Record<string, any>, exitCode: number}>}
  */
-export async function runNativeQualification({ scope, plan, io = process, adapters }) {
+export async function runNativeQualification(input) {
+  const hold = setInterval(() => {}, 2 ** 30);
+  try {
+    return await qualifyNatively(input);
+  } finally {
+    clearInterval(hold);
+  }
+}
+
+/** The run itself, inside the hold its invocation owns (`runNativeQualification`). @param {Parameters<typeof runNativeQualification>[0]} input */
+async function qualifyNatively({ scope, plan, io = process, adapters }) {
   const controlled = adapters !== undefined;
   // The branch is the scope's own, fixed before anything happens: a version-3 scope never runs a strict step, and a strict run
   // that fails never continues as a normal one.

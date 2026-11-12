@@ -37,12 +37,27 @@ const SYSTEM_ROOT = process.env.SystemRoot ?? 'C:\\Windows';
 const POWERSHELL = path.join(SYSTEM_ROOT, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 const CAN_COMPILE = process.platform === 'win32' && fs.existsSync(POWERSHELL);
 const SKIP = CAN_COMPILE ? false : 'needs Windows PowerShell 5.1';
+// The runner forms the observer's paths (its class roots, the Windows PowerShell path, and that process's PATH) by this host's path
+// rules, and only a Windows run ever forms them; on another host they are not Windows paths, so the checks of those paths need Windows.
+const WINDOWS_PATHS = process.platform === 'win32' ? false : 'needs Windows path rules';
 
 /** @type {string[]} */
 const scratch = [];
 after(() => {
   for (const directory of scratch) fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
+
+/**
+ * Hold this test's event loop open until the test ends: for a test that drives the runner's observer client directly, whose waits
+ * poll on unref'd timers so that no wait alone holds a process open. In production only a native run starts that client, and the
+ * run's own invocation holds the process open until it has its report (`runNativeQualification`). Node 24's test runner keeps a file
+ * running while a test is pending; Node 20 and 22 end it and cancel every pending test instead.
+ * @param {import('node:test').TestContext} t
+ */
+function holdLoop(t) {
+  const hold = setInterval(() => {}, 2 ** 30);
+  t.after(() => clearInterval(hold));
+}
 
 /** A short test-owned folder by its real path. @param {string} [prefix] */
 function tempDir(prefix = 'dude-no-') {
@@ -135,14 +150,17 @@ test('the runner and the observer agree on the closed input, path classes, and l
     'the tracker charges worker storage rows to the same fixed 64-KiB summary budget while accumulating');
   assert.deepEqual(input.limits, { processes: 128, summaryBytes: 65_536 });
   assert.deepEqual(input.classes.map((entry) => entry.name), [...OBSERVER_CLASSES]);
-  for (const entry of input.classes) {
-    assert.ok(entry.roots.length >= 1 && entry.roots.length <= 8, entry.name);
-    for (const root of entry.roots) assert.ok(/^[A-Za-z]:\\/.test(root) && !root.includes('/'), `${entry.name} ${root}`);
-  }
+  for (const entry of input.classes) assert.ok(entry.roots.length >= 1 && entry.roots.length <= 8, entry.name);
   for (const canary of input.canaries) assert.match(canary, /^(work|config|home)(\/[A-Za-z0-9._-]{0,63}[A-Za-z0-9_-]){1,8}$/);
   assert.equal(input.workerParent, layout.b.temp, 'worker storage is recognized only below B\'s own temp folder');
   assert.deepEqual(input.controlRoots, { work: layout.control.workspace, config: layout.control.config, home: layout.control.home });
   assert.deepEqual(input.classes.find((entry) => entry.name === 'payload')?.roots, ['C:\\tools\\cli\\payload\\index.js'], 'the payload is its own file class');
+});
+
+test('every class root the runner gives the observer is an absolute Windows path, spelled with backslashes only', { skip: WINDOWS_PATHS }, () => {
+  for (const entry of syntheticInput().input.classes) {
+    for (const root of entry.roots) assert.ok(/^[A-Za-z]:\\/.test(root) && !root.includes('/'), `${entry.name} ${root}`);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -186,7 +204,8 @@ function handClock() {
   return { now: () => Date.now() + offset, advance: (/** @type {number} */ ms) => { offset += ms; } };
 }
 
-test('the runner starts only the fixed script under Windows PowerShell with a closed environment; each reply follows its own marker, and a final stop waits for the helper\'s actual exit', async () => {
+test('the runner starts only the fixed script under Windows PowerShell with a closed environment; each reply follows its own marker, and a final stop waits for the helper\'s actual exit', { skip: WINDOWS_PATHS }, async (t) => {
+  holdLoop(t);
   const proof = tempDir('dude-nop-');
   /** @type {any[]} */
   const calls = [];
@@ -248,7 +267,8 @@ test('the runner starts only the fixed script under Windows PowerShell with a cl
   assert.deepEqual([lossyStop.summary, lossyStop.reason, lossyStop.exit.exited], [null, 'observer_overflow', true], 'a refused final stop is reported, never a summary');
 });
 
-test('a missing or late ready line leaves the helper owned: EOF ends it, its exit is awaited within the bound, and a helper that never exits is reported unconfirmed, never killed', async () => {
+test('a missing or late ready line leaves the helper owned: EOF ends it, its exit is awaited within the bound, and a helper that never exits is reported unconfirmed, never killed', async (t) => {
+  holdLoop(t);
   // The helper becomes ready only after the startup bound: readiness fails, and closing its input makes it end its own session and exit.
   const clock = handClock();
   /** @type {any} */
