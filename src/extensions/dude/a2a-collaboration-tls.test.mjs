@@ -1026,6 +1026,9 @@ async function startPairing() {
  */
 async function enroll(peer, profileId, port) {
   const record = recordPath(peer.dirs.config, profileId);
+  // The proposal shows only the rest after its Config path when the record's folder is literally that path plus `.pairings`.
+  const rest = `.pairings${path.sep}${path.basename(record)}`;
+  const shown = record === `${peer.dirs.config}${rest}` ? `Config path + ${rest}` : record;
   const { result, text: proposal } = await requestProfile(peer, profileId);
   assert.equal(result.resultType, 'success', proposal);
   const lines = proposal.split('\n');
@@ -1033,7 +1036,7 @@ async function enroll(peer, profileId, port) {
   for (const line of [
     'PAIRING: this approval persists for later matching sessions on this machine; any binding change needs new full approval; '
       + 'numeric repeat use resets per activation; absolute expiries do not extend',
-    `Pairing record: ${record}; holds a digest only; revoke: dude a2a stop, then delete that file; stop or a config edit alone does not revoke`,
+    `Pairing record: ${shown}; digest only; revoke: dude a2a stop, then delete that file; stop or a config edit alone does not revoke`,
     'Pairing trust: ordinary root input does not prove human authorship; an unrestricted local file writer can forge or remove this grant',
   ]) assert.ok(lines.includes(line), `${profileId}: the proposal shows ${line.slice(0, 48)}...`);
   assert.match(proposal, /^Approval: dude a2a approve [0-9a-f]{12}; .+; also saves the PAIRING grant$/m);

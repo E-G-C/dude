@@ -7101,7 +7101,7 @@ test('version-3 preparation writes only the workspaces, their temp folders, the 
     if (side === 'b') {
       assert.ok(text.includes('Worker sign-in and model: existing saved sign-in, expected Fixture-W at https://github.com on the runtime and its session'));
       assert.ok(text.includes(`QUALIFICATION: run ${runId}; fixture ${layout.fixture} sha256:${prepared.manifest.sha256}; latches only, with no canaries or probes`));
-      assert.ok(text.includes(`Worker storage: real home and app data, and ${f.bases.worker} for normal configuration`));
+      assert.ok(text.includes(`Worker storage: real home, app data, and ${f.bases.worker} for normal config, sessions, logs, and sign-in lookup`));
       assert.throws(() => proposalOf(log.state.events, { ...expected, signIn: { host: 'https://github.com', login: 'someone-else' } }),
         (error) => error instanceof NativeStop && error.reason === 'proposal_unavailable', 'another expected account is another proposal');
     }

@@ -900,8 +900,9 @@ test('T008 operator guide documents two-Dude collaboration and its first normal-
   assert.doesNotMatch(prose, /every other unexpected event, tool call, or permission request still ends the worker/,
     'no stale claim that every other notice ends an existing-sign-in worker');
   // The existing-sign-in proposal discloses that the worker's normal startup may start the owner's MCP servers and plugins, apart from
-  // the two evidence tools its model is offered.
-  assert.match(section, /Its `Worker startup` line says that the runtime may start the owner's configured MCP servers and plugins, while the worker's model is offered only the two evidence tools\./);
+  // the two evidence tools its model is offered, which only the shared Worker reads line names.
+  assert.match(section, /Its `Worker runtime` line also says that the runtime's startup may start the owner's configured MCP servers and plugins, and the `Worker reads` line says that the worker's model is offered only the two evidence tools\./);
+  assert.doesNotMatch(prose, /`Worker startup` line/, 'no stale Worker startup line');
   assert.match(section, /In the \[passing native run\]\(#first-passing-normal-route-run\), each worker's runtime and session reported the expected account and each recorded its version 2 readiness; the answering worker read its evidence and answered, and both workers' stops reported no errors, with cessation unconfirmed\. An earlier attempt's worker had ended with `unexpected_native_effect` after its prompt was admitted, before it read any evidence\. That pass is one point-in-time result on one computer, and strict isolated-worker qualification is deferred, not passed\./);
   assert.doesNotMatch(section, /Only fake SDKs have run this branch|Whether a native runtime reports these accounts and this storage as the SDK declares is unknown/,
     'no stale fake-only status for the branch');
@@ -1024,9 +1025,13 @@ test('Feature 095 T005 operator guide documents standing pairing without upgradi
   const lines = guide.split(/\r?\n/);
   for (const line of [
     'PAIRING: this approval persists for later matching sessions on this machine; any binding change needs new full approval; numeric repeat use resets per activation; absolute expiries do not extend',
-    'Pairing record: <record path>; holds a digest only; revoke: dude a2a stop, then delete that file; stop or a config edit alone does not revoke',
+    'Pairing record: <record path>; digest only; revoke: dude a2a stop, then delete that file; stop or a config edit alone does not revoke',
     'Pairing trust: ordinary root input does not prove human authorship; an unrestricted local file writer can forge or remove this grant',
   ]) assert.ok(lines.includes(line), `documented PAIRING line: ${line}`);
+  // The record is shown after the Config path only when its folder is literally that path plus .pairings, and a proposal
+  // that approves no command leaves out the command-only text.
+  assert.match(propose, /When the record's folder is exactly the `Config` line's path followed by `\.pairings`, as it is when you request the configuration by its real path, `<record path>` reads `Config path \+ \.pairings\/<sha256\(profile ID\)>\.json`, with `\\` on Windows\. Append the part after `Config path \+ ` to that path for the full record path\. A configuration path through a link, a short name, or another letter case shows the full record path instead, which makes the proposal longer\./);
+  assert.match(propose, /A serving proposal that approves no command, paired or not, leaves out the command-only text: the revision-probe and project-code risks in `Risks` and the command sentences in `Result exposure`\./);
   assert.match(propose, /This holds for a paired profile too: a matching standing record never bypasses the cap\./);
   assert.match(propose, /give fresh local approval for each activation of an unpaired profile\. A smaller paired profile skips that only through its own exact, matching standing pairing; no larger or refused profile lends it approval\./);
   assert.match(reuse, /For a profile with `"pairing": true`, the same request first runs every check above, including the 4,490-byte cap on the complete proposal it would show\./);

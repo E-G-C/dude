@@ -168,9 +168,8 @@ const APPROVE = /^dude a2a approve (\S+)$/;
 const CODE = /^[0-9a-f]{12}$/;
 const STOP = 'dude a2a stop';
 const USAGE = 'request a proposal with dude_a2a_propose, review its entire native result, then use dude a2a approve <code> or dude a2a stop';
-const SERVE_RISKS = 'Risks: Ordinary host permissions are not global isolation. Peer/source text can persuade models or cause disclosure. '
-  + 'Host-approved injection can spoof root approval. Revision probes miss ignored/transient changes; project code can exceed '
-  + 'declared effects. Host prompts remain unchanged. Stop does not guarantee termination or recall disclosure.';
+/** The risks that only an approved command adds to a serving proposal. */
+const COMMAND_RISKS = 'Revision probes miss ignored/transient changes; project code can exceed declared effects. ';
 const ASK_RISKS = 'Risks: No global isolation; model persuasion/disclosure and injected-root approval spoofing remain possible. '
   + 'Host prompts stay unchanged; disclosure cannot be recalled.';
 const PROPOSAL_REVIEW = 'Review: if any native result detail is hidden, truncated, or inaccessible, do not approve. '
@@ -1233,9 +1232,9 @@ function collaborationLines(profile, signIn) {
       + `worker ${CONVERSATION_LIMITS.workerMs} ms; operation ${conversationLimit(profile)} ms; cleanup ${CONVERSATION_LIMITS.cleanupMs} ms`,
     worker.auth
       // The resolved base directory the approval binds, which the worker uses.
-      ? `Worker storage: real home and app data, and ${/** @type {SignInBinding} */ (signIn).baseDirectory} for normal configuration, sessions, `
-        + 'logging, and sign-in lookup, not isolated; its own work folder and temp folder for TEMP, TMP, and TMPDIR; once a runtime may have '
-        + 'started, its cessation is unconfirmed and nothing is deleted'
+      ? `Worker storage: real home, app data, and ${/** @type {SignInBinding} */ (signIn).baseDirectory} for normal config, sessions, logs, `
+        + 'and sign-in lookup, not isolated; its own work folder and temp folder for TEMP, TMP, and TMPDIR; once a runtime may have started, '
+        + 'its cessation is unconfirmed and nothing is deleted'
       : 'Worker storage: one owned temporary directory with work, config, home, and temp folders, which HOME, USERPROFILE, TEMP, TMP, and TMPDIR name; '
         + 'once a runtime may have started, its cessation is unconfirmed and the directory is kept and reported, never deleted',
     ...qualificationLines(worker.qualification),
@@ -1244,20 +1243,21 @@ function collaborationLines(profile, signIn) {
 }
 
 /**
- * An existing-sign-in worker's runtime, account, and startup lines: the
- * runtime finds its own saved sign-in, which each actual runtime and session
- * must report as the expected account; nothing here reads, copies, or shows a
- * credential. Its normal startup may also start the owner's configured MCP
- * servers and plugins, while the session's tool filters offer its model only
- * the two evidence tools.
+ * An existing-sign-in worker's runtime and account lines: the runtime finds
+ * its own saved sign-in, which each actual runtime and session must report as
+ * the expected account; nothing here reads, copies, or shows a credential.
+ * Its normal startup may also start the owner's configured MCP servers and
+ * plugins, while the session's tool filters offer its model only the two
+ * evidence tools that the shared `Worker reads` line names, so neither line
+ * repeats that rule.
  * @param {WorkerConfig} worker @param {SignInConfig} auth
  */
 function signInWorkerLines(worker, auth) {
   return [
-    `Worker runtime: ${worker.path}; argv []; environment names ${environmentNames(worker.env)}; values hidden; Windows only`,
+    `Worker runtime: ${worker.path}; argv []; environment names ${environmentNames(worker.env)}; values hidden; Windows only; `
+      + 'startup may start the owner\'s configured MCP servers and plugins',
     `Worker sign-in and model: existing saved sign-in, expected ${auth.expectedAccount.login} at ${auth.expectedAccount.host} on the runtime and `
       + `its session, checked, not locked; nothing is read, copied, or shown here; no login or fallback; model ${worker.model}`,
-    'Worker startup: may start the owner\'s configured MCP servers and plugins; its model is offered only the evidence tools',
   ];
 }
 
@@ -1293,16 +1293,32 @@ function qualificationLines(qualification) {
  * approving it saves and for how long, the record's exact path, how to revoke
  * it, and what ordinary local trust cannot prove. It follows every scope it
  * covers. None for an ordinary profile, so that proposal is unchanged.
- * @param {Profile} profile @param {string} file The selected profile's record path.
+ * @param {Profile} profile @param {string} configPath The path the `Config` line shows.
+ * @param {string} file The selected profile's record path.
  */
-function pairingLines(profile, file) {
+function pairingLines(profile, configPath, file) {
   if (!profile.pairing) return [];
   return [
     'PAIRING: this approval persists for later matching sessions on this machine; any binding change needs new full approval; '
       + 'numeric repeat use resets per activation; absolute expiries do not extend',
-    `Pairing record: ${file}; holds a digest only; revoke: dude a2a stop, then delete that file; stop or a config edit alone does not revoke`,
+    `Pairing record: ${shownRecord(configPath, file)}; digest only; revoke: dude a2a stop, then delete that file; `
+      + 'stop or a config edit alone does not revoke',
     'Pairing trust: ordinary root input does not prove human authorship; an unrestricted local file writer can forge or remove this grant',
   ];
+}
+
+/**
+ * A record path as the proposal shows it. When the record's folder is
+ * literally the `Config` line's path plus `.pairings`, the line shows only
+ * the rest after that path, and appending it to that path gives the exact
+ * full path. Otherwise, as when a link, a short name, or letter case makes the
+ * given path differ from the canonical one the record is named from, the
+ * full path is shown.
+ * @param {string} configPath The path the `Config` line shows. @param {string} file The record's full path.
+ */
+function shownRecord(configPath, file) {
+  const rest = `.pairings${path.sep}${path.basename(file)}`;
+  return file === `${configPath}${rest}` ? `Config path + ${rest}` : file;
 }
 
 /**
@@ -1332,7 +1348,7 @@ function renderProposal(proposal) {
       `Limits: ${profile.contentBytes} bytes per message; ${profile.askTimeoutMs} ms ask timeout`,
       `Validity/repeat use: ${validity(profile.expiresAt)}; ${repeat(profile.repeatUse, 'exchange')}`,
       ...collaborationLines(profile, proposal.signIn),
-      ...pairingLines(profile, proposal.pairingFile),
+      ...pairingLines(profile, proposal.configPath, proposal.pairingFile),
       ASK_RISKS,
       'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted. '
         + 'This asking profile grants no local verification operation.',
@@ -1343,6 +1359,8 @@ function renderProposal(proposal) {
     ].join('\n');
   }
   const verification = profile.verification;
+  // Command-only risk and exposure text follows the commands this proposal actually approves, never another profile setting.
+  const commanded = proposal.commands.length > 0;
   return [
     ...header,
     `Peer: ${profile.peer.label}; client address ${profile.peer.address}; ${fingerprint}`,
@@ -1360,11 +1378,12 @@ function renderProposal(proposal) {
       `Command validity/repeat use: ${validity(verification.expiresAt)}; ${repeat(verification.repeatUse, 'run')}`,
     ] : []),
     ...collaborationLines(profile, proposal.signIn),
-    ...pairingLines(profile, proposal.pairingFile),
-    SERVE_RISKS,
-    'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted; '
-      + (verification ? 'command output is not automatically redacted and may contain sensitive information. Commands never widen SHARING.'
-        : 'command output is not automatically redacted. No command is approved by this proposal.'),
+    ...pairingLines(profile, proposal.configPath, proposal.pairingFile),
+    'Risks: Ordinary host permissions are not global isolation. Peer/source text can persuade models or cause disclosure. '
+      + `Host-approved injection can spoof root approval. ${commanded ? COMMAND_RISKS : ''}Host prompts remain unchanged. `
+      + 'Stop does not guarantee termination or recall disclosure.',
+    'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted'
+      + (commanded ? '; command output is not automatically redacted and may contain sensitive information. Commands never widen SHARING.' : '.'),
     PROPOSAL_REVIEW,
     PROPOSAL_LIFETIME,
     `Approval: dude a2a approve ${proposal.code}; current matching proposal/context only, consumed once`

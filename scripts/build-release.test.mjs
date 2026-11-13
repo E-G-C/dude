@@ -577,6 +577,16 @@ function releasedPairingRecord(owner, profileId) {
 }
 
 /**
+ * A record as the released proposal displays it beside a `Config` line showing `configPath`: only the rest after that
+ * path when the record's folder is literally that path plus `.pairings`, else the full record path.
+ * @param {string} configPath @param {string} record
+ */
+function shownReleasedPairingRecord(configPath, record) {
+  const rest = `.pairings${path.sep}${path.basename(record)}`;
+  return record === `${configPath}${rest}` ? `Config path + ${rest}` : record;
+}
+
+/**
  * Start a disposable release's own extension in a fake host: a package-shaped
  * stand-in for `@github/copilot-sdk/extension` that records the join and the
  * session log. The released runtime file is wrapped so each import is counted,
@@ -866,8 +876,8 @@ function expectedReleasedProposal(releaseRoot, owner, profileId, generation, cod
       ...(pairing ? [
         'PAIRING: this approval persists for later matching sessions on this machine; any binding change needs new full approval; '
           + 'numeric repeat use resets per activation; absolute expiries do not extend',
-        `Pairing record: ${releasedPairingRecord(owner, profileId)}; holds a digest only; revoke: dude a2a stop, then delete that file; `
-          + 'stop or a config edit alone does not revoke',
+        `Pairing record: ${shownReleasedPairingRecord(configPath, releasedPairingRecord(owner, profileId))}; digest only; `
+          + 'revoke: dude a2a stop, then delete that file; stop or a config edit alone does not revoke',
         'Pairing trust: ordinary root input does not prove human authorship; an unrestricted local file writer can forge or remove this grant',
       ] : []),
     ] : [
@@ -899,10 +909,11 @@ function expectedReleasedProposal(releaseRoot, owner, profileId, generation, cod
       ] : []),
     ]),
     ask ? 'Risks: No global isolation; model persuasion/disclosure and injected-root approval spoofing remain possible. Host prompts stay unchanged; disclosure cannot be recalled.'
-      : 'Risks: Ordinary host permissions are not global isolation. Peer/source text can persuade models or cause disclosure. Host-approved injection can spoof root approval. Revision probes miss ignored/transient changes; project code can exceed declared effects. Host prompts remain unchanged. Stop does not guarantee termination or recall disclosure.',
+      : commands ? 'Risks: Ordinary host permissions are not global isolation. Peer/source text can persuade models or cause disclosure. Host-approved injection can spoof root approval. Revision probes miss ignored/transient changes; project code can exceed declared effects. Host prompts remain unchanged. Stop does not guarantee termination or recall disclosure.'
+        : 'Risks: Ordinary host permissions are not global isolation. Peer/source text can persuade models or cause disclosure. Host-approved injection can spoof root approval. Host prompts remain unchanged. Stop does not guarantee termination or recall disclosure.',
     ask ? 'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted. This asking profile grants no local verification operation.'
       : commands ? 'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted; command output is not automatically redacted and may contain sensitive information. Commands never widen SHARING.'
-        : 'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted; command output is not automatically redacted. No command is approved by this proposal.',
+        : 'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted.',
     'Review: if any native result detail is hidden, truncated, or inaccessible, do not approve. An assistant summary or private-log relay cannot replace it.',
     'Lifetime: this result is a snapshot, not live status. Normal tool completion preserves an otherwise valid pending proposal. Stop, cancellation, expiry, replacement, intervening/queued input, or changed session/provider/workspace/config/TLS bindings invalidates it. Historical text may remain visible.',
     `Approval: dude a2a approve ${code}; ${ask ? 'this current local proposal only' : 'current matching proposal/context only'}, consumed once`

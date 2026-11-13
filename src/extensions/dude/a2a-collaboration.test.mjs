@@ -79,6 +79,29 @@ function tempDir(prefix) {
   return directory;
 }
 
+/**
+ * A scratch folder of exactly `length` characters and as many UTF-8 bytes, so every path under it has the same length and
+ * size on any OS: a short temporary folder, resolved so that a path shown from it and the canonical path a pairing record
+ * is named from agree, lengthened by one more folder. When this host's resolved temporary folder is not ASCII-only or
+ * leaves no room for that folder, it adds none and reports why as `unmet`.
+ * @param {number} length
+ * @returns {{directory: string} | {unmet: string}}
+ */
+function paddedDir(length) {
+  const root = fs.realpathSync.native(tempDir('d-'));
+  const bytes = Buffer.byteLength(root, 'utf8');
+  if (bytes !== root.length || root.length > length - 2) {
+    return {
+      unmet: `canonical temporary folder ${root} has ${root.length} characters and ${bytes} UTF-8 bytes; an exactly ${length}-character, `
+        + `${length}-byte base needs an ASCII-only one of at most ${length - 2} characters, then a separator and a padding folder; `
+        + 'a shorter ASCII-only TMPDIR, TMP, or TEMP runs this case',
+    };
+  }
+  const directory = path.join(root, 'p'.repeat(length - root.length - 1));
+  fs.mkdirSync(directory);
+  return { directory };
+}
+
 /** @template T @returns {{promise: Promise<T>, resolve: (value: T) => void}} */
 function deferred() {
   /** @type {(value: T) => void} */
@@ -511,13 +534,16 @@ async function approve(side, configPath, profileId) {
  *   recorderFor?: {a?: any, b?: any},
  *   askClient?: {url: string, send: (question: string, call: any) => Promise<any>},
  *   signIn?: boolean,
+ *   base?: string,
  * }} [options] `askClient` replaces A's prepared SDK client with a crafted one. `journals` gives both providers their
  *   default transcript journal; `recorderFor` gives one side an explicit recorder instead of the bounded test double,
  *   or a function that builds one from the pair's folders and clock. `signIn` gives B's worker the existing-sign-in
- *   branch on Windows, with test-owned owner locations and base directory in place of the token file.
+ *   branch on Windows, with test-owned owner locations and base directory in place of the token file, and a Windows
+ *   runtime name on any host. `base` puts every folder under that existing folder, such as a `paddedDir` one, instead
+ *   of a new temporary one.
  */
 async function collaborationPair(options = {}) {
-  const base = tempDir('dude-a2a-collab-');
+  const base = options.base ?? tempDir('dude-a2a-collab-');
   const dirs = {
     base,
     aRoot: path.join(base, 'a-workspace'),
@@ -525,7 +551,7 @@ async function collaborationPair(options = {}) {
     ownerA: path.join(base, 'a-owner'),
     ownerB: path.join(base, 'b-owner'),
     workerTemp: path.join(base, 'worker-temp'),
-    runtimePath: path.join(base, 'fixture-runtime', process.platform === 'win32' ? 'copilot.exe' : 'copilot'),
+    runtimePath: path.join(base, 'fixture-runtime', options.signIn || process.platform === 'win32' ? 'copilot.exe' : 'copilot'),
     configA: path.join(base, 'a-owner', 'a2a.json'),
     configB: path.join(base, 'b-owner', 'a2a.json'),
     tokenFile: path.join(base, 'b-owner', 'worker-token.txt'),
@@ -797,9 +823,9 @@ test('collaboration profiles are closed: serving requires one worker over approv
   }
 });
 
+/** These serving profiles approve no command, so their risks leave out only the command-only ones. */
 const SERVE_RISKS = 'Risks: Ordinary host permissions are not global isolation. Peer/source text can persuade models or cause disclosure. '
-  + 'Host-approved injection can spoof root approval. Revision probes miss ignored/transient changes; project code can exceed declared effects. '
-  + 'Host prompts remain unchanged. Stop does not guarantee termination or recall disclosure.';
+  + 'Host-approved injection can spoof root approval. Host prompts remain unchanged. Stop does not guarantee termination or recall disclosure.';
 const ASK_RISKS = 'Risks: No global isolation; model persuasion/disclosure and injected-root approval spoofing remain possible. '
   + 'Host prompts stay unchanged; disclosure cannot be recalled.';
 const REVIEW = 'Review: if any native result detail is hidden, truncated, or inaccessible, do not approve. An assistant summary or private-log relay cannot replace it.';
@@ -821,6 +847,16 @@ const fingerprint = (hex) => `SHA-256 ${hex.toUpperCase().replace(/(..)(?!$)/g, 
 const recordPath = (configPath, profileId) => path.join(`${fs.realpathSync.native(configPath)}.pairings`, `${sha256(profileId)}.json`);
 
 /**
+ * The record as a proposal whose `Config` line shows `configPath` displays it: only the rest after that path when the
+ * record's folder is literally that path plus `.pairings`, else the full record path.
+ * @param {string} configPath @param {string} profileId
+ */
+function shownRecord(configPath, profileId) {
+  const rest = `.pairings${path.sep}${sha256(profileId)}.json`;
+  return recordPath(configPath, profileId) === `${configPath}${rest}` ? `Config path + ${rest}` : recordPath(configPath, profileId);
+}
+
+/**
  * The PAIRING section an opted-in profile's proposal adds after every scope it covers.
  * @param {string} configPath @param {string} profileId
  */
@@ -828,7 +864,7 @@ function expectedPairing(configPath, profileId) {
   return [
     'PAIRING: this approval persists for later matching sessions on this machine; any binding change needs new full approval; '
       + 'numeric repeat use resets per activation; absolute expiries do not extend',
-    `Pairing record: ${recordPath(configPath, profileId)}; holds a digest only; revoke: dude a2a stop, then delete that file; `
+    `Pairing record: ${shownRecord(configPath, profileId)}; digest only; revoke: dude a2a stop, then delete that file; `
       + 'stop or a config edit alone does not revoke',
     'Pairing trust: ordinary root input does not prove human authorship; an unrestricted local file writer can forge or remove this grant',
   ];
@@ -887,10 +923,9 @@ function expectedProposal(pair, profileId, generation, code) {
     'WORKER: separate from SHARING and COMMANDS; dude_a2a_conversation begin_receive starts it only for an authenticated question about this project',
     ...(signIn ? [
       `Worker runtime: ${worker.runtime.path}; argv []; environment names inherit SystemRoot, USERPROFILE, APPDATA, LOCALAPPDATA; fixed none; `
-        + 'values hidden; Windows only',
+        + 'values hidden; Windows only; startup may start the owner\'s configured MCP servers and plugins',
       'Worker sign-in and model: existing saved sign-in, expected Fixture-Owner at https://github.com on the runtime and its session, checked, '
         + `not locked; nothing is read, copied, or shown here; no login or fallback; model ${worker.model}`,
-      'Worker startup: may start the owner\'s configured MCP servers and plugins; its model is offered only the evidence tools',
     ] : [
       `Worker runtime: ${worker.runtime.path}; argv ${JSON.stringify(worker.runtime.args)}; environment names inherit none; fixed FIXTURE_SETTING; `
         + 'values hidden; logged-in user off',
@@ -900,7 +935,7 @@ function expectedProposal(pair, profileId, generation, code) {
       + 'other tools and every permission are configured off, which the host has not proven',
     'Worker limits: one at a time; 32768 bytes per result and answer; startup 10000 ms; worker 90000 ms; operation 120000 ms; cleanup 10000 ms',
     signIn
-      ? `Worker storage: real home and app data, and ${fs.realpathSync.native(signIn.baseDirectory)} for normal configuration, sessions, logging, `
+      ? `Worker storage: real home, app data, and ${fs.realpathSync.native(signIn.baseDirectory)} for normal config, sessions, logs, `
         + 'and sign-in lookup, not isolated; its own work folder and temp folder for TEMP, TMP, and TMPDIR; once a runtime may have started, '
         + 'its cessation is unconfirmed and nothing is deleted'
       : 'Worker storage: one owned temporary directory with work, config, home, and temp folders, which HOME, USERPROFILE, TEMP, TMP, and TMPDIR name; '
@@ -908,8 +943,7 @@ function expectedProposal(pair, profileId, generation, code) {
     RECORDING,
     ...pairing,
     SERVE_RISKS,
-    'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted; '
-      + 'command output is not automatically redacted. No command is approved by this proposal.',
+    'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted.',
     REVIEW,
     LIFETIME,
     `Approval: dude a2a approve ${code}; current matching proposal/context only, consumed once; grants SHARING and the separate WORKER scope together${standing}`,
@@ -1058,6 +1092,62 @@ test('a paired worker proposal keeps the fixed 4490-byte cap with multibyte text
     assert.match(String(pair.b.logs.slice(before).find(outcomeLine)), /^Activation: active; serve profile b-serve/);
     assert.match(fs.readFileSync(record, 'utf8'), /^\{"version":1,"bindingSha256":"[0-9a-f]{64}"\}\n$/);
     assert.equal(pair.worker.state.loads, 0);
+  } finally {
+    pair.cleanup();
+  }
+});
+
+test('a paired existing-sign-in worker keeps every scope and the PAIRING section within 4490 bytes with long paths on any OS; its owner\'s approval saves only that owner\'s digest-only record and starts no worker', async (context) => {
+  // An ASCII-only base of exactly 71 characters gives every path the lengths at which this proposal once measured 4,799
+  // bytes and was refused, and the same size on any host that can provide that base. Other hosts skip this case before
+  // building anything, except under CI, whose controlled run must not skip it silently.
+  const padded = paddedDir(71);
+  if ('unmet' in padded) {
+    if (process.env.CI) assert.fail(padded.unmet);
+    context.skip(padded.unmet);
+    return;
+  }
+  const pair = await collaborationPair({
+    approve: false,
+    signIn: true,
+    base: padded.directory,
+    serve: (profile) => { profile.pairing = true; },
+    ask: (profile) => { profile.pairing = true; },
+  });
+  try {
+    const records = { b: recordPath(pair.dirs.configB, 'b-serve'), a: recordPath(pair.dirs.configA, 'a-ask') };
+    const signIn = /** @type {NonNullable<Pair['signIn']>} */ (pair.signIn);
+    const lengths = {
+      workspace: pair.dirs.bRoot.length,
+      config: pair.dirs.configB.length,
+      runtime: pair.dirs.runtimePath.length,
+      signInBase: fs.realpathSync.native(signIn.baseDirectory).length,
+      record: records.b.length,
+    };
+    assert.deepEqual(lengths, { workspace: 83, config: 88, runtime: 99, signInBase: 87, record: 167 });
+
+    const result = await pair.b.call('dude_a2a_propose', { configPath: pair.dirs.configB, profileId: 'b-serve' });
+    assert.equal(result.resultType, 'success', result.textResultForLlm);
+    const { generation, code } = proposalIdentity(result);
+    assert.equal(result.textResultForLlm, expectedProposal(pair, 'b-serve', generation, code), 'every scope and the PAIRING section, exactly');
+    assert.ok(result.textResultForLlm.split('\n').includes(expectedPairing(pair.dirs.configB, 'b-serve')[1])
+      && expectedPairing(pair.dirs.configB, 'b-serve')[1].startsWith(`Pairing record: Config path + .pairings${path.sep}`),
+    'the canonical base shows the record after the Config path');
+    const bytes = Buffer.byteLength(result.textResultForLlm, 'utf8');
+    context.diagnostic(`paired existing-sign-in proposal: ${bytes} of 4490 UTF-8 bytes; path lengths ${JSON.stringify(lengths)}`);
+    assert.ok(bytes <= 4490, `${bytes} bytes`);
+    assert.equal(fs.existsSync(path.dirname(records.b)), false, 'preparing saves nothing');
+
+    // Only B's owner approves; this synthetic root input is a test input, not consent.
+    pair.b.event(rootMessage(`dude a2a approve ${code}`));
+    const outcome = await pair.b.logLine((line) => /^(?:Activation: active|A2A approval refused|A2A paired, inactive)/.test(line), 'B approval');
+    assert.match(outcome, /^Activation: active; serve profile b-serve/, outcome);
+    assert.match(fs.readFileSync(records.b, 'utf8'), /^\{"version":1,"bindingSha256":"[0-9a-f]{64}"\}\n$/, "B's own record holds only a digest");
+    assert.deepEqual(fs.readdirSync(path.dirname(records.b)), [path.basename(records.b)], 'one record and no temporary file');
+    assert.ok(pair.b.logs.includes(`A2A pairing saved: ${records.b}. It persists for later matching local sessions until you use dude a2a stop, then delete that file.`));
+    assert.equal(fs.existsSync(path.dirname(records.a)), false, "B's approval creates no grant for A");
+    assert.equal(pair.a.logs.some((line) => /^(?:Activation: active|A2A pairing saved)/.test(line)), false, 'and activates nothing for A');
+    assert.equal(pair.worker.state.loads, 0, 'enrollment starts no worker; only a later authenticated question can');
   } finally {
     pair.cleanup();
   }
