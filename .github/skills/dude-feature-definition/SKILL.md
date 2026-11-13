@@ -22,6 +22,18 @@ State one testable obligation per requirement, with a clear actor, action, and c
 
 Preserve required sections, exact identifiers, acceptance criteria, safety rules, and uncertainty. Cross-reference shared rules rather than repeating whole contracts, but keep the conditions needed to understand each requirement beside it. This style guidance never authorizes rewriting user-owned text or history, or skipping definition gates.
 
+## Cross-Feature Continuity
+
+When accepted intent calls for a shared outcome across declared prerequisites, represent it as an ordinary target feature, with no separate Epic record or identity. State the shared user outcome in the target's spec. Add an acceptance scenario that exercises the needed prerequisite outputs together, as the combined check. Derive a bounded verification task for the combined check, distinct from checking prerequisite completion, or include it in an existing bounded task when the same verification proves it. A feature with dependencies but no shared-outcome intent gets no Epic classification, extra stage, or mandatory combined check.
+
+Use only the target's explicitly declared prerequisites to select the features involved; relatedness, similar names, and lifecycle numbers supply no membership or execution order. Read the exact completed prerequisite packages supplied by the existing handoff in `dude-work-intake` `### Declared Prerequisites` as read-only context. Preserve exact ownership under `## Ownership`, and never rebuild a package path from a number, name, or directory. Do not follow a completed prerequisite's own declared prerequisites or sweep unrelated packages for more context.
+
+Reference the relevant accepted upstream contracts, decisions, outputs, and evidence, each with enough source identity to find what the target relies on. Put technology-agnostic obligations in the spec, and technical application and source references in the plan or task detail. An exact spec path plus the relevant section or artifact path is a sufficient reference, so add no new table, manifest, snapshot, or handoff file to carry it. Read referenced material before relying on it. Do not copy a whole upstream artifact or log.
+
+Keep proposals distinct from accepted decisions, and historical evidence distinct from fresh verification of the target. Upstream approvals, passing results, and evidence are context only; none is the target's approval, fresh verification, task completion, Work claim, or definition-write authority.
+
+If required material is missing or unavailable, or is available but leaves an outcome-changing fact or conflict unresolved, use the existing definition clarification or contract-mismatch handling. Do not alter the upstream package, invent a user answer, or silently relax the target's acceptance condition. An already-defined target keeps its existing route: Ship sends it to Work as-is, and cross-feature continuity grants no new definition-write or recovery authority.
+
 ## Brainstorm
 
 `brainstorm <idea>` creates or refreshes exactly one direct `.dude/ideas/<NNN>-<slug>.md`; brainstorm does not create or write `.dude/specs/`.

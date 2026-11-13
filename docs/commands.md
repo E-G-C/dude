@@ -172,8 +172,14 @@ plan recheck before each feature and advancement only when the previous feature
 is complete and the remaining order exactly matches the approved features not yet
 completed in this run, in their approved order. The first definition
 stop or Work end other than `no ready task` ends the run; the final reply reports
-every feature, including any not started, names the unchanged stop, and claims no
-combined outcome. Plans holding only the target add no question, reply text, or
+every feature, including any not started, and names the unchanged stop. Neither
+completed prerequisites nor a shared Ship request proves a combined outcome. The
+reply claims one only when the target completes normally and its specified
+combined check was accepted through Work's existing verification and independent
+review, naming the checked condition and its evidence. When the combined check is
+absent, not run, failed, or blocked, or the target is unfinished, the reply
+reports the actual state and claims no combined success.
+Plans holding only the target add no question, reply text, or
 write, and imported tracked work keeps its existing behavior with no plan.
 
 Before Work begins on an explicit Ship invocation, the existing pre-Work stage
@@ -289,6 +295,23 @@ Already complete, skipped: user-accounts.
 Nothing has changed.
 Next: Do you approve running exactly this plan in this order? Reply yes to approve, or no to stop.
 ```
+
+To give several features a shared outcome, make the outcome an ordinary target
+feature. For example, to show that `invoice-export` and `invoice-import` work
+together, brainstorm an `invoice-roundtrip` feature whose idea records both as
+prerequisites with the existing `depends-on: invoice-export invoice-import`
+declaration. Its goal is that exporting and then importing an invoice preserves
+its number, currency, and total. The `invoice-roundtrip` spec owns that
+condition, and its tasks verify it. Ship the target as usual:
+
+```text
+@dude ship invoice-roundtrip
+```
+
+Because you named only `invoice-roundtrip`, an unfinished prerequisite still
+needs your approval of the exact plan before anything starts. Complete
+prerequisites are skipped and do not prove the round trip. Progress stays per
+feature: [`@dude status`](#dude-status) shows each feature's own stage.
 
 ### `@dude brainstorm`
 

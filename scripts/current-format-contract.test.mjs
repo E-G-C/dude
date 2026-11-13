@@ -5842,9 +5842,10 @@ test('088 Ship: declared-prerequisite rules are section-bound and fail isolated 
           /name the feature and stop where the run ended/,
           /existing pre-Work dispositions and closeout/,
         ]],
-        ['FR-031 no combined outcome or new Git authority', 'Claim no', [
-          /combined outcome/,
-          /existing no-Git rule across the whole run/,
+        // 094 qualifies FR-031's combined-outcome restriction; the `094 Epic
+        // continuity:` cases bind it, so this rule keeps the no-Git half.
+        ['FR-031 no new Git authority across the run', 'Keep the existing', [
+          /no-Git rule across the whole run/,
         ]],
       ],
     },
@@ -5875,7 +5876,6 @@ test('088 Ship: declared-prerequisite rules are section-bound and fail isolated 
         ['coordinator reports separate results and the unchanged stop', 'Report every', [
           /planned feature's result, including those not started/,
           /unchanged stop/,
-          /no combined outcome/,
         ]],
       ],
     },
@@ -5913,7 +5913,6 @@ test('088 Ship: declared-prerequisite rules are section-bound and fail isolated 
           /Work end other than `no ready task` ends the run/,
           /final reply reports every feature, including any not started/,
           /names the unchanged stop/,
-          /claims no combined outcome/,
         ]],
         ['docs preserve target-only and tracked paths', 'Plans holding only the target', [
           /add no question, reply text, or write/,
@@ -5978,6 +5977,413 @@ test('088 Ship: declared-prerequisite rules are section-bound and fail isolated 
         }
       });
     }
+  }
+});
+
+const EPIC_CONTINUITY_HEADING = '## Cross-Feature Continuity';
+const EPIC_CONTINUITY_CONTEXT = `${SHIP_DEFINITION_OWNER} ${EPIC_CONTINUITY_HEADING}`;
+// Each [label, anchor, signals] rule is owned by the one sentence holding its anchor.
+// The shipped prose carries no requirement IDs, so the signals bind its wording.
+// FR-010's existing as-is handoff assertions in the Ship cases above stay as they are.
+/** @type {Array<[string, string, RegExp[]]>} */
+const EPIC_CONTINUITY_RULES = [
+  ['FR-001 a shared outcome over declared prerequisites is an ordinary target without an Epic record', 'When accepted intent calls for', [
+    /a shared outcome across declared prerequisites/,
+    /represent it as an ordinary target feature/,
+    /with no separate Epic record or identity/,
+  ]],
+  ['FR-002 the target spec states the shared user outcome', 'State the', [
+    /shared user outcome in the target's spec/,
+  ]],
+  ['FR-003 an acceptance scenario exercises the prerequisite outputs together', 'Add an acceptance scenario', [
+    /that exercises the needed prerequisite outputs together/,
+    /as the combined check/,
+  ]],
+  ['FR-004 a bounded combined verification task stays distinct from prerequisite completion', 'Derive a bounded verification task', [
+    /for the combined check/,
+    /distinct from checking prerequisite completion/,
+    /or include it in an existing bounded task when the same verification proves it/,
+  ]],
+  ['no extra stage for dependent features without shared-outcome intent', 'A feature with dependencies', [
+    /but no shared-outcome intent/,
+    /gets no Epic classification, extra stage, or mandatory combined check/,
+  ]],
+  ['FR-005 only declared prerequisites select the features involved', 'Use only', [
+    /the target's explicitly declared prerequisites to select the features involved/,
+    /relatedness, similar names, and lifecycle numbers supply no membership or execution order/,
+  ]],
+  ['FR-006 exact completed prerequisite packages are read-only context', 'Read the exact', [
+    /completed prerequisite packages supplied by the existing handoff/,
+    /in `dude-work-intake` `### Declared Prerequisites`/,
+    /as read-only context/,
+  ]],
+  ['FR-006 exact ownership never rebuilds a package path', 'Preserve exact ownership', [
+    /under `## Ownership`/,
+    /never rebuild a package path from a number, name, or directory/,
+  ]],
+  ['FR-005 a completed prerequisite keeps its boundary without a package sweep', 'Do not follow', [
+    /a completed prerequisite's own declared prerequisites/,
+    /or sweep unrelated packages for more context/,
+  ]],
+  ['FR-007 relied-on upstream material is referenced with source identity', 'Reference the relevant', [
+    /accepted upstream contracts, decisions, outputs, and evidence/,
+    /each with enough source identity to find what the target relies on/,
+  ]],
+  ['FR-007 obligations stay in the spec and source references in the plan or tasks', 'Put technology-agnostic', [
+    /obligations in the spec/,
+    /technical application and source references in the plan or task detail/,
+  ]],
+  ['FR-007 an exact path reference suffices without a new artifact', 'An exact spec path', [
+    /plus the relevant section or artifact path is a sufficient reference/,
+    /add no new table, manifest, snapshot, or handoff file to carry it/,
+  ]],
+  ['FR-007 referenced material is read before it is relied on', 'Read referenced material', [
+    /before relying on it/,
+  ]],
+  ['FR-007 no whole upstream artifact or log is copied', 'Do not copy', [
+    /a whole upstream artifact or log/,
+  ]],
+  ['FR-008 proposals and historical evidence stay distinct', 'Keep proposals', [
+    /distinct from accepted decisions/,
+    /historical evidence distinct from fresh verification of the target/,
+  ]],
+  ['FR-008 upstream approvals and evidence are context only', 'Upstream approvals', [
+    /passing results, and evidence are context only/,
+    /none is the target's approval, fresh verification, task completion, Work claim, or definition-write authority/,
+  ]],
+  ['FR-009 missing material or an unresolved fact or conflict uses existing handling', 'If required material', [
+    /is missing or unavailable/,
+    /is available but leaves an outcome-changing fact or conflict unresolved/,
+    /use the existing definition clarification or contract-mismatch handling/,
+  ]],
+  ['FR-009 no upstream edit, invented answer, or relaxed condition', 'Do not alter', [
+    /the upstream package/,
+    /invent a user answer/,
+    /silently relax the target's acceptance condition/,
+  ]],
+  ['FR-010 an already-defined target goes to Work as-is without new authority', 'An already-defined target', [
+    /keeps its existing route/,
+    /Ship sends it to Work as-is/,
+    /cross-feature continuity grants no new definition-write or recovery authority/,
+  ]],
+];
+
+/** The definition owner's continuity section with soft wraps removed. */
+function epicContinuitySection() {
+  return unwrappedParagraphs(markdownSection(read(SHIP_DEFINITION_OWNER), EPIC_CONTINUITY_HEADING));
+}
+
+test('094 Epic continuity: the continuity section is a top-level definition skill section after Writing Definitions', () => {
+  const headings = visibleMarkdown(read(SHIP_DEFINITION_OWNER)).split('\n')
+    .filter((line) => /^#{1,6}[ \t]/.test(line))
+    .map((line) => line.trim());
+  assert.deepEqual(headings.filter((line) => line.startsWith('# ')), ['# Feature Definition'], `${SHIP_DEFINITION_OWNER}: one skill title`);
+  assert.equal(headings[0], '# Feature Definition', `${SHIP_DEFINITION_OWNER}: every section sits under the skill title`);
+  assert.deepEqual(
+    headings.filter((line) => line === EPIC_CONTINUITY_HEADING),
+    [EPIC_CONTINUITY_HEADING],
+    `${SHIP_DEFINITION_OWNER}: one visible top-level continuity section`,
+  );
+  const writing = headings.indexOf('## Writing Definitions');
+  assert.ok(writing > 0, `${SHIP_DEFINITION_OWNER}: Writing Definitions is a visible section`);
+  assert.ok(headings.indexOf(EPIC_CONTINUITY_HEADING) > writing, `${EPIC_CONTINUITY_CONTEXT} appears after Writing Definitions`);
+});
+
+test('094 Epic continuity: every continuity sentence is owned by exactly one bound rule', () => {
+  const unowned = sentences(epicContinuitySection())
+    .map((sentence) => ({
+      sentence,
+      owners: EPIC_CONTINUITY_RULES.filter(([, anchor]) => sentence.includes(anchor)).map(([label]) => label),
+    }))
+    .filter(({ owners }) => owners.length !== 1);
+  assert.deepEqual(unowned, [], `${EPIC_CONTINUITY_CONTEXT}: each sentence has one owning rule`);
+});
+
+for (const requirement of EPIC_CONTINUITY_RULES) {
+  const [label, anchor, signals] = requirement;
+  test(`094 Epic continuity: ${label}`, () => {
+    const section = epicContinuitySection();
+    assertShipParagraphRequirements(section, [requirement], EPIC_CONTINUITY_CONTEXT);
+
+    const [block] = anchoredRuleBlocks(section, anchor);
+    const owners = sentences(block.raw).filter((sentence) => sentence.includes(anchor));
+    assert.equal(owners.length, 1, `${EPIC_CONTINUITY_CONTEXT}: one sentence owns ${label}`);
+    const [rule] = owners;
+    assert.ok(blockSatisfiesParagraphRequirement(rule, signals), `${EPIC_CONTINUITY_CONTEXT}: ${label} is bound within its sentence`);
+    assert.equal(section.split(rule).length - 1, 1, `${EPIC_CONTINUITY_CONTEXT}: unique deletion for ${label}`);
+
+    // Other rules are compared with their current result, so a deleted sentence
+    // fails only its own case rather than every case in this group.
+    const deleted = section.replace(rule, '');
+    const others = EPIC_CONTINUITY_RULES.filter(([other]) => other !== label);
+    assert.deepEqual(
+      missingParagraphRequirements(deleted, [requirement]),
+      [label],
+      `${EPIC_CONTINUITY_CONTEXT}: deleting its sentence fails ${label}`,
+    );
+    assert.deepEqual(
+      missingParagraphRequirements(deleted, others),
+      missingParagraphRequirements(section, others),
+      `${EPIC_CONTINUITY_CONTEXT}: deleting only ${label} leaves every other rule unchanged`,
+    );
+    assert.throws(
+      () => assertShipParagraphRequirements(deleted, [requirement], EPIC_CONTINUITY_CONTEXT),
+      `${EPIC_CONTINUITY_CONTEXT}: isolated deletion fails the contract assertion`,
+    );
+    assertClauseDeletionFalsifiers(
+      section,
+      requirement,
+      signals.map((signal) => rule.match(signal)?.[0] ?? ''),
+      EPIC_CONTINUITY_CONTEXT,
+    );
+  });
+}
+
+// 094 qualifies 088 FR-031 on every active Ship surface. Completed prerequisites
+// or a shared Ship request never prove a combined outcome; only normal target
+// completion with its specified combined check accepted through Work's existing
+// verification and independent review supports that claim, which names the
+// checked condition and its evidence. Each [label, anchor, signals, falsifier]
+// rule is owned by the one sentence holding its anchor. Deleting its falsifier,
+// which may be one clause of that sentence, fails that rule alone. A clause
+// falsifier leaves out any conjunction it shares with a neighbouring clause, so
+// deleting one clause never disturbs another rule's text. The 088 cases above
+// keep the first stop, per-feature results, and the no-Git rule.
+/** @type {Array<{relative: string, heading: string, subsection?: string, rules: Array<[string, string, RegExp[], string]>}>} */
+const EPIC_REPORTING_SURFACES = [
+  {
+    relative: SHIP_RESOLVER_OWNER,
+    heading: '## Ship',
+    subsection: '### Declared Prerequisites',
+    rules: [
+      ['FR-006 intake step 5 points definition to Cross-Feature Continuity', 'Definition uses that context', [
+        /under `dude-feature-definition` `## Cross-Feature Continuity`/,
+      ], 'Definition uses that context under `dude-feature-definition` `## Cross-Feature Continuity`.'],
+      ['FR-011 intake infers no combined outcome from completed prerequisites or one Ship request', 'Do not infer', [
+        /a combined outcome from completed prerequisites/,
+        /or from running the features in one Ship request/,
+      ], 'Do not infer a combined outcome from completed prerequisites or from running the features in one Ship request.'],
+      ['FR-012 intake claims a combined outcome only after normal target completion', 'Claim the combined outcome only when', [
+        /the target completes normally/,
+      ], 'the target completes normally'],
+      ['FR-012 intake requires the specified combined check accepted through Work verification and independent review', 'Claim the combined outcome only when', [
+        /its specified combined check was accepted/,
+        /through Work's existing verification and independent review/,
+      ], "its specified combined check was accepted through Work's existing verification and independent review"],
+      ['FR-012 intake names the checked condition and its evidence', 'Name the checked condition', [
+        /and its evidence/,
+      ], 'Name the checked condition and its evidence.'],
+      ['FR-013 intake claims no combined success for an absent, unrun, failed, or blocked check or an unfinished target', 'When the combined check is', [
+        /\babsent\b/,
+        /\bnot run\b/,
+        /\bfailed\b/,
+        /\bor blocked\b/,
+        /\bor the target is unfinished\b/,
+        /report the actual state and claim no combined success/,
+      ], 'When the combined check is absent, not run, failed, or blocked, or the target is unfinished, report the actual state and claim no combined success.'],
+      ['FR-013 intake reports a passed check on an unfinished target without the combined outcome', 'A passed individual check', [
+        /may be reported as such while the target is unfinished/,
+        /without claiming the combined outcome/,
+      ], 'A passed individual check may be reported as such while the target is unfinished, without claiming the combined outcome.'],
+    ],
+  },
+  {
+    relative: SHIP_COORDINATOR,
+    heading: '## Ship',
+    rules: [
+      ['FR-011 coordinator infers no combined outcome from completed prerequisites or a shared Ship request', 'Infer no combined outcome', [
+        /from completed prerequisites or a shared Ship request/,
+      ], 'Infer no combined outcome from completed prerequisites or a shared Ship request; '],
+      ['FR-012 coordinator claims a combined outcome only after normal target completion', 'claim it only when', [
+        /the target completes normally/,
+      ], 'the target completes normally'],
+      ['FR-012 coordinator requires the specified combined check accepted through Work verification and independent review', 'claim it only when', [
+        /its specified combined check was accepted/,
+        /through Work's existing verification and independent review/,
+      ], "its specified combined check was accepted through Work's existing verification and independent review"],
+      ['FR-012 coordinator names the checked condition and its evidence', 'naming the checked condition', [
+        /and its evidence/,
+      ], ', naming the checked condition and its evidence'],
+      ['FR-013 coordinator otherwise reports the actual state with no combined success', 'otherwise report the actual state', [
+        /with no combined success/,
+      ], '; otherwise report the actual state with no combined success'],
+    ],
+  },
+  {
+    relative: SHIP_COMMAND_DOC,
+    heading: SHIP_COMMAND_DOC_SECTION,
+    rules: [
+      ['FR-011 docs infer no combined outcome from completed prerequisites or a shared Ship request', 'Neither completed prerequisites', [
+        /nor a shared Ship request proves a combined outcome/,
+      ], 'Neither completed prerequisites nor a shared Ship request proves a combined outcome.'],
+      ['FR-012 docs claim a combined outcome only after normal target completion', 'The reply claims one only when', [
+        /the target completes normally/,
+      ], 'the target completes normally'],
+      ['FR-012 docs require the specified combined check accepted through Work verification and independent review', 'The reply claims one only when', [
+        /its specified combined check was accepted/,
+        /through Work's existing verification and independent review/,
+      ], "its specified combined check was accepted through Work's existing verification and independent review"],
+      ['FR-012 docs name the checked condition and its evidence', 'naming the checked condition', [
+        /and its evidence/,
+      ], ', naming the checked condition and its evidence'],
+      ['FR-013 docs claim no combined success for an absent, unrun, failed, or blocked check or an unfinished target', 'When the combined check is', [
+        /\babsent\b/,
+        /\bnot run\b/,
+        /\bfailed\b/,
+        /\bor blocked\b/,
+        /\bor the target is unfinished\b/,
+        /the reply reports the actual state and claims no combined success/,
+      ], 'When the combined check is absent, not run, failed, or blocked, or the target is unfinished, the reply reports the actual state and claims no combined success.'],
+    ],
+  },
+];
+
+/**
+ * One reporting surface, bound like the 088 cases: intake list items stay
+ * separate, and other sections lose their soft wraps.
+ * @param {{relative: string, heading: string, subsection?: string}} surface
+ */
+function epicReportingSection({ relative, heading, subsection }) {
+  const owner = markdownSection(read(relative), heading);
+  return subsection ? markdownSection(owner, subsection) : unwrappedParagraphs(owner);
+}
+
+for (const surface of EPIC_REPORTING_SURFACES) {
+  const context = `${surface.relative} ${surface.heading}${surface.subsection ? ` ${surface.subsection}` : ''}`;
+  const bound = surface.rules.map(([label, anchor, signals]) => /** @type {[string, string, RegExp[]]} */ ([label, anchor, signals]));
+  for (const [index, [label, anchor, signals, falsifier]] of surface.rules.entries()) {
+    const requirement = bound[index];
+    test(`094 Epic continuity: ${label}`, () => {
+      const section = epicReportingSection(surface);
+      assertShipParagraphRequirements(section, [requirement], context);
+
+      const [block] = anchoredRuleBlocks(section, anchor);
+      const owners = sentences(block.raw).filter((sentence) => sentence.includes(anchor));
+      assert.equal(owners.length, 1, `${context}: one sentence owns ${label}`);
+      const [rule] = owners;
+      assert.ok(blockSatisfiesParagraphRequirement(rule, signals), `${context}: ${label} is bound within its sentence`);
+      assert.equal(section.split(rule).length - 1, 1, `${context}: one owning sentence for ${label}`);
+      assert.ok(rule.includes(falsifier.trim()), `${context}: the ${label} falsifier lies in its owning sentence`);
+      assert.equal(section.split(falsifier).length - 1, 1, `${context}: unique deletion for ${label}`);
+
+      // Other rules on this surface keep their current result, so deleting this
+      // clause or sentence fails only its own case.
+      const deleted = section.replace(falsifier, '');
+      const others = bound.filter(([other]) => other !== label);
+      assert.deepEqual(
+        missingParagraphRequirements(deleted, [requirement]),
+        [label],
+        `${context}: deleting ${JSON.stringify(falsifier)} fails ${label}`,
+      );
+      assert.deepEqual(
+        missingParagraphRequirements(deleted, others),
+        missingParagraphRequirements(section, others),
+        `${context}: deleting only ${label} leaves every other reporting rule unchanged`,
+      );
+      assert.throws(
+        () => assertShipParagraphRequirements(deleted, [requirement], context),
+        `${context}: isolated deletion fails the contract assertion`,
+      );
+
+      // Each signal is a falsifier too, so every named condition and
+      // non-success case is required by its owning sentence.
+      for (const signal of signals) {
+        const words = rule.match(signal)?.[0] ?? '';
+        assert.equal(rule.split(words).length - 1, 1, `${context}: ${label} has one ${signal} clause`);
+        assert.deepEqual(
+          missingParagraphRequirements(section.replace(rule, () => rule.replace(words, '')), [requirement]),
+          [label],
+          `${context}: deleting ${JSON.stringify(words)} fails ${label}`,
+        );
+      }
+
+      if (label.startsWith('FR-006 ')) {
+        assert.ok(rule.includes(`\`${EPIC_CONTINUITY_HEADING}\``), `${context}: the pointer names ${EPIC_CONTINUITY_HEADING}`);
+        assert.notEqual(epicContinuitySection(), '', `${EPIC_CONTINUITY_CONTEXT} exists for the intake pointer`);
+      }
+    });
+  }
+}
+
+test('094 Epic continuity: the command reference shows the ordinary invoice-roundtrip target through existing Ship', () => {
+  const source = read(SHIP_COMMAND_DOC);
+  const section = unwrappedParagraphs(markdownSection(source, SHIP_COMMAND_DOC_SECTION));
+  const context = `${SHIP_COMMAND_DOC} ${SHIP_COMMAND_DOC_SECTION} shared-outcome example`;
+
+  assertShipParagraphRequirements(section, [
+    ['the shared outcome is an ordinary target feature', 'To give several features a shared outcome', [
+      /make the outcome an ordinary target feature/,
+    ]],
+    ['brainstorm records the existing prerequisite declaration', 'For example, to show that', [
+      /`invoice-export` and `invoice-import` work together/,
+      /brainstorm an `invoice-roundtrip` feature whose idea records both as prerequisites/,
+      /with the existing `depends-on: invoice-export invoice-import` declaration/,
+    ]],
+    ['the target states the round-trip goal', 'Its goal is that', [
+      /exporting and then importing an invoice preserves its number, currency, and total/,
+    ]],
+    ['the target spec owns the condition and its tasks verify it', 'spec owns that condition', [
+      /The `invoice-roundtrip`/,
+      /and its tasks verify it/,
+    ]],
+    ['an unnamed unfinished prerequisite keeps exact-plan approval', 'Because you named only', [
+      /`invoice-roundtrip`, an unfinished prerequisite still needs your approval of the exact plan before anything starts/,
+    ]],
+    ['complete prerequisites do not prove the round trip', 'Complete prerequisites are skipped', [
+      /and do not prove the round trip/,
+    ]],
+    ['progress stays with existing per-feature status', 'Progress stays per feature', [
+      /\[`@dude status`\]\(#dude-status\)/,
+      /shows each feature's own stage/,
+    ]],
+  ], context);
+
+  assert.deepEqual(
+    shipReferenceFences(source).map((fence) => fence.trim()).filter((fence) => fence.includes('invoice-roundtrip')),
+    ['@dude ship invoice-roundtrip'],
+    `${context}: the target runs through the existing Ship form`,
+  );
+  assert.deepEqual(
+    source.split('\n').filter((line) => line === '### `@dude status`'),
+    ['### `@dude status`'],
+    `${context}: the status link has one target heading`,
+  );
+});
+
+// 088 once forbade every combined claim. 094 qualifies that rule, so neither an
+// active Ship surface nor a generated copy may keep the blanket form.
+const EPIC_BLANKET_COMBINED_PROHIBITION = /\b(?:claims?|with) no combined outcome\b/i;
+
+test('094 Epic continuity: no active Ship surface keeps the blanket combined-outcome prohibition', () => {
+  const surfaces = [
+    ...SHIP_AUTONOMY_PROJECTION_PAIRS
+      .filter(([source]) => source === SHIP_RESOLVER_OWNER || source === SHIP_COORDINATOR)
+      .flat(),
+    SHIP_COMMAND_DOC,
+  ];
+  assert.equal(surfaces.length, 5, 'intake, coordinator, both generated copies, and the command reference');
+  for (const relative of surfaces) {
+    assert.doesNotMatch(
+      visibleMarkdown(read(relative)).replace(/\s+/g, ' '),
+      EPIC_BLANKET_COMBINED_PROHIBITION,
+      `${relative}: no blanket combined-outcome prohibition`,
+    );
+  }
+
+  for (const retired of [
+    'Claim no combined outcome, and keep the existing no-Git rule across the whole run.',
+    "Report every planned feature's result, including those not started, and the unchanged stop, with no combined outcome.",
+    'the final reply reports every feature, including any not started, names the unchanged stop, and claims no combined outcome.',
+  ]) {
+    assert.match(retired, EPIC_BLANKET_COMBINED_PROHIBITION, `detects the retired 088 form: ${retired}`);
+  }
+  for (const qualified of [
+    'Do not infer a combined outcome from completed prerequisites or from running the features in one Ship request.',
+    'Infer no combined outcome from completed prerequisites or a shared Ship request',
+    'report the actual state and claim no combined success',
+    'otherwise report the actual state with no combined success',
+  ]) {
+    assert.doesNotMatch(qualified, EPIC_BLANKET_COMBINED_PROHIBITION, `allows the qualified form: ${qualified}`);
   }
 });
 

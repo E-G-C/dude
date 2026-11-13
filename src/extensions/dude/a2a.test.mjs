@@ -34,10 +34,13 @@ const LIFETIME = 'Lifetime: this result is a snapshot, not live status. Normal t
 const NEXT = 'Next: after complete review, type or paste the exact current approval as the next eligible local root input. To decline or cancel, use dude a2a stop.';
 const PAIRING_APPROVAL = '; also saves the PAIRING grant';
 const SERVE_RISKS = 'Risks: Ordinary host permissions are not global isolation. Peer/source text can persuade models or cause disclosure. Host-approved injection can spoof root approval. Revision probes miss ignored/transient changes; project code can exceed declared effects. Host prompts remain unchanged. Stop does not guarantee termination or recall disclosure.';
+/** A serving proposal that approves no command leaves out only the command-only risks. */
+const SERVE_SHARE_RISKS = 'Risks: Ordinary host permissions are not global isolation. Peer/source text can persuade models or cause disclosure. Host-approved injection can spoof root approval. Host prompts remain unchanged. Stop does not guarantee termination or recall disclosure.';
 const ASK_RISKS = 'Risks: No global isolation; model persuasion/disclosure and injected-root approval spoofing remain possible. Host prompts stay unchanged; disclosure cannot be recalled.';
 const ASK_EXPOSURE = 'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted. This asking profile grants no local verification operation.';
 const SERVE_COMMAND_EXPOSURE = 'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted; command output is not automatically redacted and may contain sensitive information. Commands never widen SHARING.';
-const SERVE_SHARE_EXPOSURE = 'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted; command output is not automatically redacted. No command is approved by this proposal.';
+/** ...and only the command-output exposure text. */
+const SERVE_SHARE_EXPOSURE = 'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted.';
 const EMPTY_QUEUE = Object.freeze({ items: [], steeringMessages: [], inFlightSteeringCount: 0 });
 const LOOPBACK = () => ({ lo: [{ address: '127.0.0.1', netmask: '255.0.0.0', family: /** @type {const} */ ('IPv4'), mac: '00:00:00:00:00:00', internal: true, cidr: '127.0.0.1/8' }] });
 
@@ -367,13 +370,23 @@ function expectedRecord(configPath, profileId) {
 }
 
 /**
+ * The record as a proposal whose `Config` line shows `configPath` displays it: only the rest after that path when the
+ * record's folder is literally that path plus `.pairings`, else the full record path.
+ * @param {string} configPath @param {string} profileId
+ */
+function expectedShownRecord(configPath, profileId) {
+  const rest = `.pairings${path.sep}${sha256(profileId)}.json`;
+  return expectedRecord(configPath, profileId) === `${configPath}${rest}` ? `Config path + ${rest}` : expectedRecord(configPath, profileId);
+}
+
+/**
  * The PAIRING section an opted-in profile's proposal adds after every scope it covers.
  * @param {string} configPath @param {string} profileId
  */
 function expectedPairingLines(configPath, profileId) {
   return [
     'PAIRING: this approval persists for later matching sessions on this machine; any binding change needs new full approval; numeric repeat use resets per activation; absolute expiries do not extend',
-    `Pairing record: ${expectedRecord(configPath, profileId)}; holds a digest only; revoke: dude a2a stop, then delete that file; stop or a config edit alone does not revoke`,
+    `Pairing record: ${expectedShownRecord(configPath, profileId)}; digest only; revoke: dude a2a stop, then delete that file; stop or a config edit alone does not revoke`,
     'Pairing trust: ordinary root input does not prove human authorship; an unrestricted local file writer can forge or remove this grant',
   ];
 }
@@ -434,7 +447,7 @@ function expectedProposalText(fixture, profileId, providerGeneration, code) {
       `Command validity/repeat use: ${expectedValidity(verification.expiresAt)}; ${expectedRepeat(verification.repeatUse, 'run')}`,
     ] : []),
     ...pairing,
-    SERVE_RISKS,
+    verification ? SERVE_RISKS : SERVE_SHARE_RISKS,
     verification ? SERVE_COMMAND_EXPOSURE : SERVE_SHARE_EXPOSURE,
     REVIEW,
     LIFETIME,
@@ -1100,7 +1113,7 @@ test('a valid external serve profile returns the exact complete label-value prop
   assert.deepEqual(fixture.transport.calls, [], 'a proposal starts no transport');
 });
 
-test('an ask proposal shows sharing and ask limits only, and a serve profile without commands says none are approved', async () => {
+test('an ask proposal shows sharing and ask limits only, and a serve profile without commands says none are approved and leaves out only the command-only risk and exposure text', async () => {
   const ask = providerFixture();
   const askProposal = await propose(ask, 'a-ask');
   const generation = /^Local: session-B; provider ([0-9a-f-]{36}); workspace /m.exec(askProposal.text)?.[1];
@@ -1140,15 +1153,54 @@ test('an ask proposal shows sharing and ask limits only, and a serve profile wit
     `Purpose: Confirm recorded test results; evidence roots ${sharingOnly.dirs.evidence}`,
     'Sharing limits: 65536 bytes per message; validity until 2026-10-01T00:00:00Z; repeat use every in-scope exchange while active',
     'COMMANDS: none approved; separate from SHARING',
-    SERVE_RISKS,
-    'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted; command output is not automatically redacted. No command is approved by this proposal.',
+    'Risks: Ordinary host permissions are not global isolation. Peer/source text can persuade models or cause disclosure. Host-approved injection can spoof root approval. Host prompts remain unchanged. Stop does not guarantee termination or recall disclosure.',
+    'Result exposure: this full proposal and its code are model-readable data, not approval. Private keys and fixed environment values are omitted.',
     REVIEW,
     LIFETIME,
     `Approval: dude a2a approve ${serveProposal.code}; current matching proposal/context only, consumed once`,
     NEXT,
   ]);
   assert.doesNotMatch(serveProposal.text, /\n(?:Command|Executable|Revision|Git):/);
+  assert.doesNotMatch(serveProposal.text, /Revision probes|project code|command output|No command is approved/,
+    'with no approved command, the command-only risks and the command-output exposure text are left out');
   for (const proposal of [askProposal, serveProposal]) assert.doesNotMatch(proposal.text, new RegExp(`${SECRET}|fixture (?:certificate|key) text`));
+});
+
+test('a serving proposal renders the full command risks and exposure text exactly when it approves a command, whatever its pairing or worker settings', async () => {
+  /** @param {any} document @param {ReturnType<typeof directories>} dirs */
+  const tokenWorker = (document, dirs) => Object.assign(document, workerProfileDocument(dirs));
+  /** @param {any} document */
+  const commands = (document) => { document.profiles['b-serve'].verification = { commands: ['unit-tests'], revision: 'worktree', repeatUse: 1 }; };
+  /** @param {any} document */
+  const paired = (document) => { document.profiles['b-serve'].pairing = true; };
+  /** @param {any} document */
+  const shareOnly = (document) => { delete document.profiles['b-serve'].verification; };
+  /** @type {Array<[string, boolean, (document: any, dirs: ReturnType<typeof directories>) => void, boolean]>} */
+  const shapes = [
+    ['commands', true, () => undefined, false],
+    ['paired commands', true, paired, false],
+    ['a token worker with commands', true, (document, dirs) => { tokenWorker(document, dirs); commands(document); }, false],
+    ['an existing-sign-in worker with commands', true, commands, true],
+    ['share-only', false, shareOnly, false],
+    ['paired share-only', false, (document) => { shareOnly(document); paired(document); }, false],
+    ['a paired token worker', false, (document, dirs) => { tokenWorker(document, dirs); paired(document); }, false],
+    ['a paired existing-sign-in worker', false, paired, true],
+  ];
+  for (const [label, commanded, change, signIn] of shapes) {
+    const fixture = signIn ? signInFixture({ change }) : (() => {
+      const dirs = directories();
+      return providerFixture({ dirs, document: (document) => change(document, dirs) });
+    })();
+    // The rendered text, also where a worker and its command together exceed the fixed cap and the result is refused.
+    const captured = captureProposalRender(fixture);
+    await captured.result;
+    const lines = captured.text.split('\n');
+    assert.equal(lines.at(-1), NEXT, `${label}: the complete proposal was rendered`);
+    assert.equal(lines.find((line) => line.startsWith('COMMANDS: ')), commanded ? 'COMMANDS: unit-tests; separate from SHARING'
+      : 'COMMANDS: none approved; separate from SHARING', label);
+    assert.equal(lines.find((line) => line.startsWith('Risks: ')), commanded ? SERVE_RISKS : SERVE_SHARE_RISKS, label);
+    assert.equal(lines.find((line) => line.startsWith('Result exposure: ')), commanded ? SERVE_COMMAND_EXPOSURE : SERVE_SHARE_EXPOSURE, label);
+  }
 });
 
 test('the fixed proposal byte limit admits 4490 and refuses 4491 before queueing, disclosure, or approval', async (context) => {
@@ -2799,13 +2851,15 @@ test('an existing-sign-in proposal discloses the expected account, the resolved 
     const worker = lines.findIndex((line) => line.startsWith('WORKER: '));
     assert.deepEqual(lines.slice(worker + 1, worker + 4), [
       `Worker runtime: ${path.join(fixture.dirs.external, 'copilot.exe')}; argv []; environment names inherit SystemRoot, USERPROFILE, APPDATA, `
-        + 'LOCALAPPDATA; fixed none; values hidden; Windows only',
+        + 'LOCALAPPDATA; fixed none; values hidden; Windows only; startup may start the owner\'s configured MCP servers and plugins',
       'Worker sign-in and model: existing saved sign-in, expected Fixture-Owner at https://github.com on the runtime and its session, checked, '
         + 'not locked; nothing is read, copied, or shown here; no login or fallback; model fixture-model',
-      'Worker startup: may start the owner\'s configured MCP servers and plugins; its model is offered only the evidence tools',
-    ]);
-    assert.ok(lines.includes(`Worker storage: real home and app data, and ${fs.realpathSync.native(path.join(fixture.dirs.base, 'copilot-home'))} `
-      + 'for normal configuration, sessions, logging, and sign-in lookup, not isolated; its own work folder and temp folder for TEMP, TMP, and '
+      `Worker reads: only dude_a2a_evidence_inventory and dude_a2a_evidence_read, over lifecycle records in ${fixture.dirs.evidence}; `
+        + 'other tools and every permission are configured off, which the host has not proven',
+    ], 'the shared Worker reads line alone states that the worker model is offered only the two evidence tools');
+    assert.equal(lines.some((line) => line.startsWith('Worker startup: ')), false, 'the startup effect is on the runtime line');
+    assert.ok(lines.includes(`Worker storage: real home, app data, and ${fs.realpathSync.native(path.join(fixture.dirs.base, 'copilot-home'))} `
+      + 'for normal config, sessions, logs, and sign-in lookup, not isolated; its own work folder and temp folder for TEMP, TMP, and '
       + 'TMPDIR; once a runtime may have started, its cessation is unconfirmed and nothing is deleted'), proposal.text);
     assert.doesNotMatch(proposal.text, /token file|logged-in user off|QUALIFICATION/);
     for (const value of Object.values(fixture.environment)) assert.equal(proposal.text.includes(value), false, `${value} stays hidden`);
@@ -3296,6 +3350,18 @@ function savedNotice(file) {
 }
 
 /**
+ * The full record path a reader derives from a proposal's text alone: the `Config` line's path followed by the rest the
+ * `Pairing record` line shows after `Config path + `, or that line's full path.
+ * @param {string} text
+ */
+function recordFromProposal(text) {
+  const configPath = /^Config: (.+); digest sha256:[0-9a-f]{64}; profile [A-Za-z0-9][A-Za-z0-9_.-]*$/m.exec(text)?.[1];
+  const shown = /^Pairing record: (.+); digest only; revoke: dude a2a stop, then delete that file; /m.exec(text)?.[1];
+  assert.ok(configPath && shown, text);
+  return shown.startsWith('Config path + ') ? `${configPath}${shown.slice('Config path + '.length)}` : shown;
+}
+
+/**
  * Replace one `fs` function for the production code under test until the returned restore runs.
  * @param {string} name @param {(original: Function) => Function} replace
  */
@@ -3325,7 +3391,7 @@ test('a pairing proposal adds the complete PAIRING section and saves, starts, an
   const generation = /^Local: session-B; provider ([0-9a-f-]{36}); workspace /m.exec(text)?.[1];
   assert.ok(code && generation, text);
   assert.equal(text, expectedProposalText(fixture, 'b-serve', generation, code), 'every existing disclosure and the PAIRING section, exactly');
-  assert.ok(text.split('\n').some((line) => line.startsWith(`Pairing record: ${record.file}; `)), 'the exact external record path');
+  assert.equal(recordFromProposal(text), record.file, 'the proposal text alone gives the exact external record path');
   assert.doesNotMatch(text, new RegExp(`${SECRET}|fixture (?:certificate|key) text`), 'no secret is shown');
   assert.equal(fs.existsSync(record.folder), false, 'preparing creates no pairing storage');
   assert.deepEqual(fixture.transport.calls, [], 'and starts no transport');
@@ -3353,6 +3419,61 @@ test('a pairing proposal adds the complete PAIRING section and saves, starts, an
   assert.equal(record.read(), null, 'and saves nothing');
   assert.equal(fixture.transport.calls.length, 1);
   assert.equal(processes, 0, 'no command or revision probe ran');
+});
+
+test('the Pairing record line shows only the rest after the Config path when the record folder is literally that path plus .pairings, so the text alone gives the exact record, and the full record path when a link or letter case makes the given path differ', async (context) => {
+  const rest = `.pairings${path.sep}${sha256('b-serve')}.json`;
+  /** @param {string} shown */
+  const recordLine = (shown) => `Pairing record: ${shown}; digest only; revoke: dude a2a stop, then delete that file; stop or a config edit alone does not revoke`;
+
+  // The configuration requested by its canonical path: the record's folder is that exact path plus `.pairings`.
+  const fixture = pairingFixture();
+  const canonical = fs.realpathSync.native(fixture.dirs.configPath);
+  const record = expectedRecord(canonical, 'b-serve');
+  assert.equal(record, `${canonical}${rest}`);
+  const relative = await propose(fixture, 'b-serve', canonical);
+  assert.equal(relative.resultType, 'success', relative.text);
+  assert.ok(relative.text.split('\n').includes(recordLine(`Config path + ${rest}`)), relative.text);
+  assert.ok(relative.text.split('\n').includes(`Config: ${canonical}; digest sha256:${sha256(fs.readFileSync(canonical))}; profile b-serve`));
+  assert.equal(recordFromProposal(relative.text), record, 'the Config path followed by the shown rest is the exact record path');
+  assert.match(await approve(fixture, String(relative.code)), /^Activation: active; serve profile b-serve/);
+  assert.match(fs.readFileSync(record, 'utf8'), /^\{"version":1,"bindingSha256":"[0-9a-f]{64}"\}\n$/, 'the approval saved exactly that file');
+  assert.equal(fixture.logs.filter((line) => line.message === savedNotice(record)).length, 1, 'and its notice names the full path');
+  fixture.provider.onEvent(userMessage('dude a2a stop'));
+  await settle();
+
+  /**
+   * The same configuration requested by a path that differs from its canonical one shows the full record path.
+   * @param {ReturnType<typeof providerFixture>} other @param {string} configPath @param {string} label
+   */
+  const assertFullRecord = async (other, configPath, label) => {
+    const full = expectedRecord(configPath, 'b-serve');
+    assert.equal(full, expectedRecord(other.dirs.configPath, 'b-serve'), `${label}: the same record`);
+    assert.notEqual(full, `${configPath}${rest}`, `${label}: its folder is not the given path plus .pairings`);
+    const proposal = await propose(other, 'b-serve', configPath);
+    assert.equal(proposal.resultType, 'success', `${label}: ${proposal.text}`);
+    const lines = proposal.text.split('\n');
+    assert.ok(lines.includes(`Config: ${configPath}; digest sha256:${sha256(fs.readFileSync(configPath))}; profile b-serve`), label);
+    assert.ok(lines.includes(recordLine(full)), `${label}: ${proposal.text}`);
+    assert.equal(recordFromProposal(proposal.text), full, label);
+    assert.equal(proposal.text.includes('Config path + '), false, label);
+  };
+
+  // A linked folder: a junction on Windows, which needs no privilege, else a symbolic link.
+  const linked = pairingFixture();
+  const alias = path.join(linked.dirs.base, 'owner-alias');
+  const linkUnavailable = linkFolder(linked.dirs.external, alias);
+  if (linkUnavailable) context.diagnostic(`the linked configuration path form not run: ${linkUnavailable}`);
+  else await assertFullRecord(linked, path.join(alias, 'a2a.json'), 'a linked folder');
+
+  // Another letter case, where the file system ignores case; the canonical path keeps the case on disk.
+  const cased = pairingFixture();
+  const upper = path.join(path.dirname(cased.dirs.external), path.basename(cased.dirs.external).toUpperCase(), 'a2a.json');
+  if (!fs.existsSync(upper) || fs.realpathSync.native(upper) === upper) {
+    context.diagnostic('the differently cased configuration path form not run: this file system distinguishes letter case');
+  } else {
+    await assertFullRecord(cased, upper, 'another letter case');
+  }
 });
 
 test('only the current ready code as the next eligible root input saves a pairing: other codes, origins, events, queued input, cancellation, replacement, expiry, drift, and context loss save none', async () => {

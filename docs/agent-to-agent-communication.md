@@ -606,9 +606,19 @@ path, described in [Standing pairing](#standing-pairing):
 
 ```text
 PAIRING: this approval persists for later matching sessions on this machine; any binding change needs new full approval; numeric repeat use resets per activation; absolute expiries do not extend
-Pairing record: <record path>; holds a digest only; revoke: dude a2a stop, then delete that file; stop or a config edit alone does not revoke
+Pairing record: <record path>; digest only; revoke: dude a2a stop, then delete that file; stop or a config edit alone does not revoke
 Pairing trust: ordinary root input does not prove human authorship; an unrestricted local file writer can forge or remove this grant
 ```
+
+When the record's folder is exactly the `Config` line's path followed by
+`.pairings`, as it is when you request the configuration by its real path,
+`<record path>` reads `Config path + .pairings/<sha256(profile ID)>.json`,
+with `\` on Windows. Append the part after `Config path + ` to that path for
+the full record path. A configuration path through a link, a short name, or
+another letter case shows the full record path instead, which makes the
+proposal longer. A serving proposal that approves no command, paired or not,
+leaves out the command-only text: the revision-probe and project-code risks in
+`Risks` and the command sentences in `Result exposure`.
 
 Private key material and fixed environment values are omitted from proposals.
 That omission does not redact secrets placed in argv or prose, or anything a
@@ -1193,9 +1203,9 @@ existing-sign-in worker's `WORKER` scope names its expected login and host
 instead of a token file, the resolved base directory the approval binds, and
 the runtime's normal effects: the real home and app data, configuration,
 sessions, logging, and sign-in lookup, which are not isolated. Its
-`Worker startup` line says that the runtime may start the owner's configured
-MCP servers and plugins, while the worker's model is offered only the two
-evidence tools. A
+`Worker runtime` line also says that the runtime's startup may start the
+owner's configured MCP servers and plugins, and the `Worker reads` line says
+that the worker's model is offered only the two evidence tools. A
 qualification profile adds a `QUALIFICATION` line with its run, fixture, and
 manifest digest, and lines for its probes and release latches; a version 2
 profile has latches only. The serving

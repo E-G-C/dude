@@ -2077,3 +2077,194 @@ test("088 Ship plan: help lists all five read-only forms without requiring a tar
     }
   });
 });
+
+// 094 Epic continuity: an ordinary target feature holds a shared outcome over its
+// declared prerequisites. Rewriting a fixture task glyph only simulates recorded
+// state; no case runs Work, checks a real invoice, or changes the runtime it reads.
+const INVOICE_IMPORT = "011-invoice-import";
+const INVOICE_EXPORT = "012-invoice-export";
+const INVOICE_EXPORT_LEGACY = "013-invoice-export-legacy";
+const INVOICE_ROUNDTRIP = "014-invoice-roundtrip";
+const INVOICE_TARGET = `.dude/ideas/${INVOICE_ROUNDTRIP}.md`;
+const INVOICE_PREREQUISITES = [INVOICE_EXPORT, INVOICE_IMPORT];
+const INVOICE_GOAL = "Exporting an invoice and then importing that file preserves its number, currency, and total.";
+const INVOICE_SCENARIO = "Given an invoice file written by invoice-export, when invoice-import reads that file, "
+  + "then the imported invoice has the same number, currency, and total.";
+const INVOICE_CHECK = "Verify that an invoice exported and then imported keeps its number, currency, and total";
+const INVOICE_TASKS = new Map([
+  [INVOICE_EXPORT, "Write an invoice export file"],
+  [INVOICE_IMPORT, "Read an invoice import file"],
+  [INVOICE_EXPORT_LEGACY, "Keep the retired invoice export format"],
+]);
+
+/** One simulated task line for an ordinary feature that is not the target. */
+function invoiceTask(feature, glyph) {
+  return `- [${glyph}] T001@aaaaaaaa ${INVOICE_TASKS.get(feature)}\n`;
+}
+
+/** A glyph defines the feature with one task; null leaves it a captured draft. */
+function writeInvoiceFeature(root, feature, glyph) {
+  if (glyph === null) writeIdea(root, feature.slice(4), { number: feature.slice(0, 3) });
+  else {
+    writeIdea(root, feature.slice(4), { feature });
+    writePackage(root, feature, { tasks: invoiceTask(feature, glyph) });
+  }
+}
+
+/** Simulate the target's own recorded task glyphs: its feature task, then its combined check. */
+function writeInvoiceTargetTasks(root, [build, check]) {
+  writeFile(root, `.dude/specs/${INVOICE_ROUNDTRIP}/tasks.md`, [
+    "# Tasks: invoice-roundtrip", "", "## Phase 1: Round trip", "",
+    `- [${build}] T001@aaaaaaaa Pass the invoice-export file to invoice-import`,
+    `- [${check}] T002@bbbbbbbb ${INVOICE_CHECK}`,
+    "   deps: T001@aaaaaaaa",
+    "",
+  ].join("\n"));
+}
+
+/** The target declares only export and import and names a similar feature in prose; null glyphs leave a draft. */
+function writeInvoiceTarget(root, glyphs) {
+  const idea = {
+    dependsOn: "invoice-export invoice-import",
+    body: "Round-trip invoices through the current export and import. Related by name only: invoice-export-legacy.",
+  };
+  if (glyphs === null) {
+    writeIdea(root, "invoice-roundtrip", { number: "014", ...idea });
+    return;
+  }
+  writeIdea(root, "invoice-roundtrip", { feature: INVOICE_ROUNDTRIP, ...idea });
+  writeFile(root, `.dude/specs/${INVOICE_ROUNDTRIP}/spec.md`, [
+    "# Feature Specification: Invoice round trip", "",
+    "## Goal", "", INVOICE_GOAL, "",
+    "## User Stories & Testing", "",
+    "### User Story 1 - Round-trip an invoice (Priority: P1)", "",
+    "Combined acceptance scenario:", "", `1. ${INVOICE_SCENARIO}`, "",
+  ].join("\n"));
+  writeInvoiceTargetTasks(root, glyphs);
+}
+
+/** Write all four ordinary features; by default every non-target feature is complete. */
+function writeInvoiceFeatures(root, { exported = "x", imported = "x", legacy = "x", target = null } = {}) {
+  writeInvoiceFeature(root, INVOICE_EXPORT, exported);
+  writeInvoiceFeature(root, INVOICE_IMPORT, imported);
+  writeInvoiceFeature(root, INVOICE_EXPORT_LEGACY, legacy);
+  writeInvoiceTarget(root, target);
+}
+
+/** Return one read's result after proving that it changed zero fixture bytes. */
+function readUnchanged(root, label, read) {
+  const before = snapshotTree(root);
+  const result = read();
+  assert.deepEqual(snapshotTree(root), before, `${label} changes zero fixture files or directories`);
+  return result;
+}
+
+test("094 Epic continuity: unfinished prerequisites run before the target and complete ones hand off exact spec paths", () => {
+  withShipRoots((root) => writeInvoiceFeatures(root, { exported: "~", imported: " " }), (root) => {
+    const target = shipEntry(INVOICE_ROUNDTRIP, { requested: true, prerequisites: INVOICE_PREREQUISITES });
+    assertShipPlan(root, INVOICE_TARGET, shipPlan(INVOICE_ROUNDTRIP, [
+      shipEntry(INVOICE_EXPORT, { stage: "In progress" }),
+      shipEntry(INVOICE_IMPORT, { stage: "Defined" }),
+      target,
+    ]));
+
+    writeFile(root, `.dude/specs/${INVOICE_EXPORT}/tasks.md`, invoiceTask(INVOICE_EXPORT, "x"));
+    assertShipPlan(root, INVOICE_TARGET, shipPlan(INVOICE_ROUNDTRIP, [
+      shipEntry(INVOICE_IMPORT, { stage: "Defined" }),
+      target,
+    ], [shipSkipped(INVOICE_EXPORT)]));
+
+    writeFile(root, `.dude/specs/${INVOICE_IMPORT}/tasks.md`, invoiceTask(INVOICE_IMPORT, "x"));
+    const plan = assertShipPlan(root, INVOICE_TARGET, shipPlan(INVOICE_ROUNDTRIP, [target],
+      [shipSkipped(INVOICE_EXPORT), shipSkipped(INVOICE_IMPORT)]));
+
+    // Definition receives the exact skipped specPath for each declared prerequisite.
+    const context = plan.order[0].prerequisites
+      .map((ideaPath) => plan.skipped.find((entry) => entry.ideaPath === ideaPath)?.specPath);
+    assert.deepEqual(context, INVOICE_PREREQUISITES.map((feature) => `.dude/specs/${feature}/spec.md`));
+    for (const specPath of context) {
+      assert.ok(fs.lstatSync(path.join(root, ...String(specPath).split("/"))).isFile(), `${specPath} is a regular package file`);
+    }
+  });
+});
+
+test("094 Epic continuity: a similarly named unrelated feature never joins the plan or the target's dependencies", () => {
+  for (const [legacy, stage] of [[null, "Captured"], ["~", "In progress"], ["x", "Completed"]]) {
+    withShipRoots((root) => writeInvoiceFeatures(root, { imported: " ", legacy }), (root) => {
+      const items = readUnchanged(root, `${stage} collector`, () => collectLifecycleItems({ root }));
+      const unrelated = items.find((item) => item.ideaPath === `.dude/ideas/${INVOICE_EXPORT_LEGACY}.md`);
+      assert.equal(unrelated?.authoritySlug, "invoice-export-legacy", `${stage}: the unrelated feature is a valid inventory item`);
+      assert.equal(unrelated?.packageComplete, stage === "Completed", `${stage}: the unrelated feature's own completion`);
+      const { relationships } = deriveLifecycleModel({ items, order: [] });
+      assert.deepEqual(
+        relationships.declared.map((relation) => `${relation.toSlug} <- ${relation.fromSlug}`),
+        ["invoice-roundtrip <- invoice-export", "invoice-roundtrip <- invoice-import"],
+        `${stage}: only declared prerequisites relate to the target`,
+      );
+      assert.deepEqual(relationships.provisional, [], `${stage}: naming a feature in prose relates nothing`);
+      assertShipPlan(root, INVOICE_TARGET, shipPlan(INVOICE_ROUNDTRIP, [
+        shipEntry(INVOICE_IMPORT, { stage: "Defined" }),
+        shipEntry(INVOICE_ROUNDTRIP, { requested: true, prerequisites: INVOICE_PREREQUISITES }),
+      ], [shipSkipped(INVOICE_EXPORT)]));
+    });
+  }
+});
+
+test("094 Epic continuity: with prerequisites complete, the target's own tasks give its open, blocked, and completed stages", () => {
+  withShipRoots((root) => writeInvoiceFeatures(root, { target: [" ", " "] }), (root) => {
+    for (const state of [
+      { name: "open target", glyphs: [" ", " "], stage: "Defined", group: "next", heading: "Next" },
+      { name: "open combined check", glyphs: ["x", " "], stage: "In progress", group: "next", heading: "Next" },
+      { name: "blocked combined check", glyphs: ["x", "!"], stage: "Blocked", group: "blocked", heading: "Blocked" },
+      { name: "completed own tasks", glyphs: ["x", "x"], stage: "Completed", group: "completed", heading: "Completed" },
+    ]) {
+      writeInvoiceTargetTasks(root, state.glyphs);
+      assertShipPlan(root, INVOICE_TARGET, shipPlan(INVOICE_ROUNDTRIP, [
+        shipEntry(INVOICE_ROUNDTRIP, { stage: state.stage, requested: true, prerequisites: INVOICE_PREREQUISITES }),
+      ], [shipSkipped(INVOICE_EXPORT), shipSkipped(INVOICE_IMPORT)]));
+
+      const items = readUnchanged(root, `${state.name} collector`, () => collectLifecycleItems({ root }));
+      const groups = new Map(deriveLifecycleModel({ items, order: [] }).items.map((item) => [item.slug, item.group]));
+      assert.deepEqual(
+        ["invoice-export", "invoice-import", "invoice-roundtrip"].map((slug) => groups.get(slug)),
+        ["completed", "completed", state.group],
+        `${state.name}: complete prerequisites leave the target to its own tasks`,
+      );
+
+      const view = readUnchanged(root, `${state.name} printed view`, () => runCli(root, []));
+      assert.equal(view.status, 0, view.stderr);
+      assert.ok(view.stdout.split("\n").includes(`  014 invoice-roundtrip · ${state.stage}`), `${state.name}: printed stage`);
+      assert.ok(printedGroups(view.stdout).get(state.heading)?.includes("014 invoice-roundtrip"), `${state.name}: printed group`);
+    }
+  });
+});
+
+test("094 Epic continuity: the ordinary target states its goal, combined scenario, and canonical verification task", () => {
+  withShipRoots((root) => writeInvoiceFeatures(root, { target: [" ", " "] }), (root) => {
+    const spec = fs.readFileSync(path.join(root, ".dude", "specs", INVOICE_ROUNDTRIP, "spec.md"), "utf8");
+    assert.ok(spec.includes(`\n## Goal\n\n${INVOICE_GOAL}\n`), "the target spec states its shared goal");
+    assert.ok(spec.includes(`\n1. ${INVOICE_SCENARIO}\n`), "a user story holds the combined acceptance scenario");
+
+    const target = readUnchanged(root, "collector", () => collectLifecycleItems({ root }))
+      .find((item) => item.ideaPath === INVOICE_TARGET);
+    for (const slug of target?.dependsOn ?? []) {
+      assert.ok(INVOICE_SCENARIO.includes(slug), `the combined scenario exercises declared prerequisite ${slug}`);
+    }
+    assert.deepEqual({
+      specPath: target?.specPath,
+      dependsOn: target?.dependsOn,
+      tasksAvailable: target?.tasksAvailable,
+      taskWarnings: target?.taskWarnings,
+      tasks: target?.tasks,
+    }, {
+      specPath: `.dude/specs/${INVOICE_ROUNDTRIP}/spec.md`,
+      dependsOn: ["invoice-export", "invoice-import"],
+      tasksAvailable: true,
+      taskWarnings: [],
+      tasks: [
+        { id: "T001@aaaaaaaa", description: "Pass the invoice-export file to invoice-import", deps: [] },
+        { id: "T002@bbbbbbbb", description: INVOICE_CHECK, deps: ["T001@aaaaaaaa"] },
+      ],
+    }, "the real task parser reads the combined check as a canonical task after the feature task");
+  });
+});
