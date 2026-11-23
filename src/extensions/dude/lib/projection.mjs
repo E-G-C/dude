@@ -316,16 +316,20 @@ function isMissing(error) {
 /** @param {string} key @param {string|null} value */
 function isHostGitConfig(key, value) {
   // These exact settings affect credentials, transport or repository safety,
-  // not discovery locations. Only the disabled fsmonitor form is needed here.
+  // not discovery locations. Only fsmonitor's disabled forms are needed here:
+  // '' or false, which Git parses case-insensitively.
   if (/[\x00-\x1f\x7f\u2028\u2029]/.test(key)) return false;
   return /^(?:safe\.(?:barerepository|directory)|credential\.interactive)$/i.test(key)
     || /^(?:credential(?:\.[^\x00-\x1f\x7f]*)?\.helper|http(?:\.[^\x00-\x1f\x7f]*)?\.extraheader)$/i.test(key)
-    || (key.toLowerCase() === 'core.fsmonitor' && value === '');
+    || (key.toLowerCase() === 'core.fsmonitor' && (value === '' || value?.toLowerCase() === 'false'));
 }
 
 /**
  * Classify only the host's command-scope overlay, without resolving config
- * files or executing helpers. Unknown settings/selectors remain fail-closed.
+ * files or executing helpers. A GIT_CONFIG_SYSTEM selector is accepted unread:
+ * Git honors core.worktree only from the repository's own config, so system
+ * config cannot redirect discovery. Other selectors and unknown settings
+ * remain fail-closed.
  */
 function gitConfigAllowsLocalDiscovery() {
   const config = new Map();
@@ -333,7 +337,7 @@ function gitConfigAllowsLocalDiscovery() {
     if (!/^GIT_CONFIG(?:_.*)?$/i.test(key)) continue;
     const name = key.toUpperCase();
     if (config.has(name)) return false;
-    if (name === 'GIT_CONFIG_COUNT' || name === 'GIT_CONFIG_PARAMETERS'
+    if (name === 'GIT_CONFIG_COUNT' || name === 'GIT_CONFIG_PARAMETERS' || name === 'GIT_CONFIG_SYSTEM'
       || /^GIT_CONFIG_(?:KEY|VALUE)_(?:0|[1-9][0-9]*)$/.test(name)) {
       config.set(name, value ?? '');
     } else if (value || /^GIT_CONFIG_(?:KEY|VALUE)(?:_|$)/.test(name)) {
@@ -344,6 +348,7 @@ function gitConfigAllowsLocalDiscovery() {
   const parameters = config.get('GIT_CONFIG_PARAMETERS') ?? '';
   config.delete('GIT_CONFIG_COUNT');
   config.delete('GIT_CONFIG_PARAMETERS');
+  config.delete('GIT_CONFIG_SYSTEM');
   const count = countText === '' ? 0
     : countText.trimEnd() === countText && /^[ \t\r\n\v\f]*[+-]?[0-9]+$/.test(countText)
       ? Number(countText) : NaN;

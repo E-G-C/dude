@@ -19,7 +19,7 @@ import { readNowProjection, readWorkIndex } from './lib/projection.mjs';
 
 const BD_LIST = ['list', '--all', '--limit', '0', '--json'];
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-// Same key/form overlay as the app host; no real credential values or helpers.
+// Earlier app host key/form overlay; no real credential values or helpers.
 const OPTIONAL_BEADS_APP_GIT_ENV = {
   GIT_CONFIG_COUNT: '3',
   GIT_CONFIG_KEY_0: 'safe.barerepository',
@@ -29,6 +29,19 @@ const OPTIONAL_BEADS_APP_GIT_ENV = {
   GIT_CONFIG_KEY_2: 'core.fsmonitor',
   GIT_CONFIG_VALUE_2: '',
   GIT_CONFIG_PARAMETERS: "'credential.https://fixture.invalid.helper=' 'credential.https://fixture.invalid.helper=!must-not-execute-fixture-helper'",
+};
+// The current app host disables fsmonitor with `false` and adds a system
+// config selector; the reader must accept it without opening the named file.
+const OPTIONAL_BEADS_CURRENT_APP_GIT_ENV = {
+  GIT_CONFIG_COUNT: '3',
+  GIT_CONFIG_KEY_0: 'safe.bareRepository',
+  GIT_CONFIG_VALUE_0: 'explicit',
+  GIT_CONFIG_KEY_1: 'credential.interactive',
+  GIT_CONFIG_VALUE_1: 'never',
+  GIT_CONFIG_KEY_2: 'core.fsmonitor',
+  GIT_CONFIG_VALUE_2: 'false',
+  GIT_CONFIG_SYSTEM: 'absent-fixture-system.gitconfig',
+  GIT_CONFIG_PARAMETERS: OPTIONAL_BEADS_APP_GIT_ENV.GIT_CONFIG_PARAMETERS,
 };
 
 /** @returns {string} */
@@ -531,6 +544,7 @@ test('066 optional-Beads Git configuration preserves app-like and zero-count def
           if (!control.nativeUnavailable) assertOptionalCounts(control, owned, expected);
           for (const [label, env] of [
             ['app counted plus old quoted helpers', OPTIONAL_BEADS_APP_GIT_ENV],
+            ['current app false fsmonitor plus system selector', OPTIONAL_BEADS_CURRENT_APP_GIT_ENV],
             ['count zero', { GIT_CONFIG_COUNT: '0' }],
           ]) {
             await t.test(`${linked ? 'linked' : 'ordinary'} / ${generated ? 'generated' : 'source'} / ${native ? 'native no database' : 'real ENOENT'} / ${label}`, (t) => {
@@ -576,6 +590,8 @@ test('066 optional-Beads Git configuration validates complete keys and quoting w
     ['counted key case', counted('SaFe.BareRepository', 'explicit'), true],
     ['host transport header', counted('http.https://fixture.invalid.extraHeader', 'inert-fixture-header'), true],
     ['host safe directory', counted('safe.directory', '/inert-fixture-location'), true],
+    ['counted disabled fsmonitor', counted('core.fsmonitor', 'false'), true],
+    ['quoted disabled fsmonitor value case', parameters("'core.fsmonitor'='FALSE'"), true],
     ['new quoted helpers', parameters("'credential.helper'='' 'credential.https://fixture.invalid.helper'='!must-not-execute-fixture-helper'"), true],
     ['old quoted apostrophe and bang', parameters(String.raw`'credential.https://fixture.invalid/owner'\''s.helper=!inert'\!'helper'`), true],
     ['new quoted equals in subsection', parameters("'credential.https://fixture.invalid/a=b.helper'=''"), true],
@@ -598,6 +614,7 @@ test('066 optional-Beads Git configuration validates complete keys and quoting w
     ['counted conditional include', counted('includeIf.gitdir:fixture.path', '../external-config')],
     ['unclassified key', counted('unknown.setting', 'value')],
     ['disabled fsmonitor only', counted('core.fsmonitor', '!must-not-execute-fixture-helper')],
+    ['implicit true fsmonitor', parameters("'core.fsmonitor'")],
     ['key prefix is not classification', counted('credential.helper.core.worktree', '../external')],
     ['newline in key', counted('credential.fixture\ninclude.path.helper', '')],
     ['newline after exact key', counted('safe.barerepository\n', 'explicit')],
@@ -619,7 +636,8 @@ test('066 optional-Beads Git configuration validates complete keys and quoting w
     ['space before equals', parameters("'credential.helper' =''")],
     ['space after equals', parameters("'credential.helper'= ''")],
     ['extra equals', parameters("'credential.helper'==''")],
-    ...['GIT_CONFIG', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_FUTURE']
+    ['GIT_CONFIG_SYSTEM', { ...OPTIONAL_BEADS_APP_GIT_ENV, GIT_CONFIG_SYSTEM: 'inert-override' }, true],
+    ...['GIT_CONFIG', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_FUTURE']
       .map(key => [key, { ...OPTIONAL_BEADS_APP_GIT_ENV, [key]: 'inert-override' }]),
   ];
   const root = optionalBeadsRoot();
